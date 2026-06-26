@@ -4,13 +4,13 @@
 
 :root {
   color-scheme: light;
-  --background: 220 20% 97%;
-  --foreground: 222 20% 22%;
-  --muted: 220 18% 94%;
-  --muted-foreground: 220 9% 42%;
-  --accent: 226 64% 52%;
+  --background: 190 34% 96%;
+  --foreground: 205 28% 20%;
+  --muted: 188 28% 93%;
+  --muted-foreground: 203 15% 42%;
+  --accent: 178 58% 36%;
   --accent-foreground: 0 0% 100%;
-  --border: 220 16% 86%;
+  --border: 194 22% 84%;
 }
 
 * {

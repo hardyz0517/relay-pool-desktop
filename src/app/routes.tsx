@@ -6,6 +6,7 @@ import {
   GitBranch,
   LayoutDashboard,
   Settings,
+  Radar,
 } from "lucide-react";
 import type { AppRoute } from "@/lib/types/navigation";
 
@@ -21,6 +22,12 @@ export const appRoutes: AppRoute[] = [
     label: "中转池",
     description: "站点列表、优先级和连接状态",
     icon: DatabaseZap,
+  },
+  {
+    id: "channels",
+    label: "渠道状态",
+    description: "延迟、可用率和请求状态条",
+    icon: Radar,
   },
   {
     id: "collectors",

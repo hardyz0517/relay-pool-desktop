@@ -11,6 +11,8 @@ export { mockPricingRows, pricingStatusLabels } from "./pricing";
 export type { MockPricingRow, MockPricingStatus, MockStationPrice } from "./pricing";
 export { mockRoutingSettings, routeStrategyLabels } from "./routing";
 export type { MockRoutingSettings } from "./routing";
+export { mockChannelHealths } from "./channels";
+export type { MockChannelHealth, MockChannelStatus } from "./channels";
 export { mockSettings } from "./settings";
 export type { MockSettings } from "./settings";
 export { mockStations, stationStatusLabels, stationTypeLabels } from "./stations";

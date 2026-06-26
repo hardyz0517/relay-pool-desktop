@@ -1,6 +1,8 @@
+import { BadgeDollarSign, Layers3, TrendingDown } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   DataTableLite,
+  InspectorPanel,
   SectionCard,
   StatusBadge,
   type DataTableColumn,
@@ -22,45 +24,28 @@ const pricingColumns: DataTableColumn<MockPricingRow>[] = [
   {
     key: "model",
     header: "模型",
-    render: (row) => <span className="font-medium text-slate-800">{row.model}</span>,
+    render: (row) => <span className="font-semibold text-slate-800">{row.model}</span>,
   },
-  {
-    key: "station",
-    header: "推荐站点",
-    render: (row) => row.recommendedStationName,
-  },
+  { key: "station", header: "推荐站点", render: (row) => row.recommendedStationName },
   {
     key: "input",
-    header: "输入价格",
+    header: "输入 / 1M",
     className: "text-right",
     render: (row) => <PriceValue value={row.inputCnyPer1M} />,
   },
   {
     key: "output",
-    header: "输出价格",
+    header: "输出 / 1M",
     className: "text-right",
     render: (row) => <PriceValue value={row.outputCnyPer1M} />,
   },
-  {
-    key: "count",
-    header: "可用站点",
-    className: "w-24 text-right",
-    render: (row) => `${row.stationCount} 个`,
-  },
+  { key: "count", header: "站点", className: "w-20 text-right", render: (row) => `${row.stationCount}` },
   {
     key: "delta",
     header: "变化",
     className: "w-20 text-right",
     render: (row) => (
-      <span
-        className={
-          row.deltaPercent > 0
-            ? "text-amber-700"
-            : row.deltaPercent < 0
-              ? "text-emerald-700"
-              : "text-slate-500"
-        }
-      >
+      <span className={row.deltaPercent > 0 ? "text-amber-700" : "text-emerald-700"}>
         {row.deltaPercent > 0 ? "+" : ""}
         {row.deltaPercent.toFixed(1)}%
       </span>
@@ -80,33 +65,14 @@ const pricingColumns: DataTableColumn<MockPricingRow>[] = [
 
 const stationColumns: DataTableColumn<MockStationPrice>[] = [
   { key: "station", header: "站点", render: (row) => row.stationName },
-  {
-    key: "input",
-    header: "输入",
-    className: "text-right",
-    render: (row) => <PriceValue value={row.inputCnyPer1M} />,
-  },
-  {
-    key: "output",
-    header: "输出",
-    className: "text-right",
-    render: (row) => <PriceValue value={row.outputCnyPer1M} />,
-  },
-  { key: "modelRatio", header: "模型倍率", render: (row) => row.modelRatio },
-  { key: "groupRatio", header: "分组倍率", render: (row) => row.groupRatio },
+  { key: "input", header: "输入", className: "text-right", render: (row) => <PriceValue value={row.inputCnyPer1M} /> },
+  { key: "output", header: "输出", className: "text-right", render: (row) => <PriceValue value={row.outputCnyPer1M} /> },
+  { key: "ratio", header: "倍率", render: (row) => `${row.modelRatio} / ${row.groupRatio}` },
   {
     key: "health",
     header: "健康",
     render: (row) => (
-      <StatusBadge
-        tone={
-          row.health === "正常"
-            ? "healthy"
-            : row.health === "警告"
-              ? "warning"
-              : "error"
-        }
-      >
+      <StatusBadge tone={row.health === "正常" ? "healthy" : row.health === "警告" ? "warning" : "error"}>
         {row.health}
       </StatusBadge>
     ),
@@ -115,73 +81,73 @@ const stationColumns: DataTableColumn<MockStationPrice>[] = [
 
 export function PricingPage() {
   const selected = mockPricingRows[0];
+  const cheapest = mockPricingRows.reduce((min, row) =>
+    row.outputCnyPer1M < min.outputCnyPer1M ? row : min,
+  );
 
   return (
-    <PageScaffold
-      eyebrow="Pricing"
-      title="价格表"
-      description="用假数据展示模型价格归一化、推荐站点和各站价格对比。"
-    >
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_420px]">
-        <SectionCard
-          title="模型价格"
-          description="普通轻量表格；复杂排序和虚拟滚动后续再考虑 TanStack Table。"
-          contentClassName="p-0"
-        >
+    <PageScaffold title="价格表" description="模型价格归一化和推荐站点对比；当前为 mock 快照。">
+      <div className="grid gap-3 md:grid-cols-3">
+        <SoftMetric icon={BadgeDollarSign} label="最低输出价" value={`¥${cheapest.outputCnyPer1M.toFixed(2)}`} detail={cheapest.model} />
+        <SoftMetric icon={Layers3} label="覆盖模型" value={`${mockPricingRows.length}`} detail="mock rows" />
+        <SoftMetric icon={TrendingDown} label="价格变化" value="-6.4%" detail="gpt-4.1" />
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_390px]">
+        <SectionCard title="模型价格" description="主表保持紧凑，后续可接 pricing snapshots。" contentClassName="p-0">
           <DataTableLite
             columns={pricingColumns}
             rows={mockPricingRows}
             getRowKey={(row) => row.model}
             selectedKey={selected.model}
-            className="rounded-none border-0"
+            className="rounded-none border-0 shadow-none"
           />
         </SectionCard>
 
-        <SectionCard
-          title={`${selected.model} 详情`}
-          description="同一模型在不同站点的价格对比。"
-        >
-          <div className="mb-3 flex flex-wrap gap-2">
-            {selected.recommendReasons.map((reason) => (
-              <StatusBadge key={reason} tone="info">
-                {reason}
-              </StatusBadge>
-            ))}
-          </div>
-          <DataTableLite
-            columns={stationColumns}
-            rows={selected.stationPrices}
-            getRowKey={(row) => row.stationName}
-          />
-          <div className="mt-3 rounded-md border border-border bg-slate-50 px-3 py-2">
-            <div className="mb-2 text-xs font-medium text-muted-foreground">
-              原始倍率折叠展示
+        <InspectorPanel title={`${selected.model} inspector`} description="站点价格、推荐原因和原始倍率。">
+          <div className="space-y-3 p-4">
+            <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-3 text-sm text-slate-700">
+              推荐：{selected.recommendReasons.join(" / ")}
             </div>
-            <div className="grid gap-2 text-xs text-slate-700">
-              {selected.stationPrices.map((price) => (
-                <div
-                  key={price.stationName}
-                  className="flex items-center justify-between rounded bg-white px-2 py-1 ring-1 ring-border"
-                >
-                  <span>{price.stationName}</span>
-                  <span>
-                    model {price.modelRatio} / group {price.groupRatio}
-                  </span>
-                </div>
-              ))}
+            <DataTableLite
+              columns={stationColumns}
+              rows={selected.stationPrices}
+              getRowKey={(row) => row.stationName}
+              className="shadow-none"
+            />
+            <div className="rounded-2xl border border-cyan-100 bg-white/80 p-3 text-xs text-muted-foreground">
+              原始倍率默认弱化显示；后续接入真实采集后再提供展开明细。
             </div>
           </div>
-        </SectionCard>
+        </InspectorPanel>
       </div>
     </PageScaffold>
   );
 }
 
 function PriceValue({ value }: { value: number }) {
+  return <span className="font-semibold tabular-nums text-slate-800">¥{value.toFixed(2)}</span>;
+}
+
+function SoftMetric({
+  icon: Icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: typeof BadgeDollarSign;
+  label: string;
+  value: string;
+  detail: string;
+}) {
   return (
-    <span className="font-medium tabular-nums text-slate-800">
-      ¥{value.toFixed(2)}
-      <span className="ml-1 text-xs font-normal text-muted-foreground">/1M</span>
-    </span>
+    <div className="rounded-2xl border border-white/70 bg-white/95 p-4 shadow-[0_12px_30px_rgba(33,79,88,0.07)]">
+      <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-teal-100 text-teal-700">
+        <Icon className="h-4 w-4" />
+      </div>
+      <div className="mt-3 text-xs text-muted-foreground">{label}</div>
+      <div className="mt-0.5 text-2xl font-semibold text-slate-800">{value}</div>
+      <div className="text-xs text-muted-foreground">{detail}</div>
+    </div>
   );
 }

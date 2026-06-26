@@ -6,6 +6,7 @@ import { LogsPage } from "@/features/logs/LogsPage";
 import { PricingPage } from "@/features/pricing/PricingPage";
 import { RoutingPage } from "@/features/routing/RoutingPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
+import { ChannelStatusPage } from "@/features/channels/ChannelStatusPage";
 import { StationsPage } from "@/features/stations/StationsPage";
 import type { AppRouteId } from "@/lib/types/navigation";
 
@@ -16,6 +17,8 @@ export function App() {
     switch (activeRouteId) {
       case "stations":
         return <StationsPage />;
+      case "channels":
+        return <ChannelStatusPage />;
       case "collectors":
         return <CollectorsPage />;
       case "pricing":

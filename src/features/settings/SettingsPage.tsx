@@ -1,8 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Save } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button } from "@/components/ui/button";
-import { KeyValueRow, MaskedSecret, SectionCard, StatusBadge } from "@/components/ui";
+import { Button, MaskedSecret, SectionCard } from "@/components/ui";
 import { getSettings, updateSettings } from "@/lib/api/settings";
 import {
   routingStrategyLabels,
@@ -62,12 +61,11 @@ export function SettingsPage() {
     setSaving(true);
     setMessage(null);
     setError(null);
-
     try {
       const nextSettings = await updateSettings(formToInput(form));
       setSettings(nextSettings);
       setForm(settingsToForm(nextSettings));
-      setMessage("设置已保存到本地 SQLite。");
+      setMessage("设置已保存。");
     } catch (requestError) {
       setError(readError(requestError));
     } finally {
@@ -77,97 +75,97 @@ export function SettingsPage() {
 
   return (
     <PageScaffold
-      eyebrow="Settings"
       title="设置"
-      description="本地设置已部分接入 SQLite；当前仍不启动真实代理或采集器。"
+      description="本地设置部分持久化；真实代理和采集器仍未启用。"
+      width="settings"
+      actions={
+        <Button disabled={saving || loading} form="settings-form" type="submit">
+          <Save className="h-4 w-4" />
+          {saving ? "保存中" : "保存设置"}
+        </Button>
+      }
     >
-      <div className="grid gap-4 xl:grid-cols-2">
-        <SectionCard
-          title="本地代理"
-          description="端口和本地 key 已来自持久化设置；代理服务仍未实现。"
-          action={<StatusBadge tone={loading ? "disabled" : "info"}>本地 SQLite</StatusBadge>}
-        >
-          <dl>
-            <KeyValueRow label="代理端口" value={settings.localProxyPort} />
-            <KeyValueRow
-              label="Base URL"
-              value={`http://127.0.0.1:${settings.localProxyPort}/v1`}
-            />
-            <KeyValueRow
-              label="Local Key"
-              value={<MaskedSecret value={settings.localKeyMasked} />}
-            />
-          </dl>
-          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            Local Key 当前保存在 settings 表；后续接入真实代理前需要迁移到本地加密或系统密钥链。
-          </div>
+      <form id="settings-form" className="grid gap-3" onSubmit={handleSubmit}>
+        <SectionCard title="本地代理" description="端口和本地 key 已来自 SQLite。">
+          <SettingRow
+            control={
+              <input
+                className={inputClassName}
+                max="65535"
+                min="1"
+                type="number"
+                value={form.localProxyPort}
+                onChange={(event) => setForm({ ...form, localProxyPort: event.target.value })}
+              />
+            }
+            description="后续真实 proxy 会使用该端口。"
+            label="代理端口"
+          />
+          <SettingRow
+            control={<code className="text-xs text-slate-700">http://127.0.0.1:{settings.localProxyPort}/v1</code>}
+            description="复制到 CCSwitch 或其他 OpenAI-compatible 客户端。"
+            label="Base URL"
+          />
+          <SettingRow
+            control={<MaskedSecret value={settings.localKeyMasked} />}
+            description="P2.5 只脱敏展示；后续需要迁移到加密存储。"
+            label="Local Key"
+          />
         </SectionCard>
 
-        <SectionCard title="可保存设置" description="这些字段刷新应用后会保留。">
-          <form className="grid gap-3" onSubmit={handleSubmit}>
-            <div className="grid gap-3 md:grid-cols-2">
-              <Field label="本地代理端口">
-                <input
-                  className={inputClassName}
-                  min="1"
-                  max="65535"
-                  type="number"
-                  value={form.localProxyPort}
-                  onChange={(event) =>
-                    setForm({ ...form, localProxyPort: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label="默认路由策略">
-                <select
-                  className={inputClassName}
-                  value={form.defaultRoutingStrategy}
-                  onChange={(event) =>
-                    setForm({
-                      ...form,
-                      defaultRoutingStrategy: event.target.value as RoutingStrategy,
-                    })
-                  }
-                >
-                  {Object.entries(routingStrategyLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <Field label="低余额阈值">
-                <input
-                  className={inputClassName}
-                  min="0"
-                  step="0.01"
-                  type="number"
-                  value={form.lowBalanceThresholdCny}
-                  onChange={(event) =>
-                    setForm({ ...form, lowBalanceThresholdCny: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label="采集频率（分钟）">
-                <input
-                  className={inputClassName}
-                  min="1"
-                  type="number"
-                  value={form.collectorIntervalMinutes}
-                  onChange={(event) =>
-                    setForm({
-                      ...form,
-                      collectorIntervalMinutes: event.target.value,
-                    })
-                  }
-                />
-              </Field>
-            </div>
-
-            <Field label="托盘行为">
+        <SectionCard title="路由与采集" description="保存设置形态，不触发真实业务。">
+          <SettingRow
+            control={
+              <select
+                className={inputClassName}
+                value={form.defaultRoutingStrategy}
+                onChange={(event) =>
+                  setForm({ ...form, defaultRoutingStrategy: event.target.value as RoutingStrategy })
+                }
+              >
+                {Object.entries(routingStrategyLabels).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            }
+            description="真实路由服务接入后使用。"
+            label="默认路由策略"
+          />
+          <SettingRow
+            control={
+              <input
+                className={inputClassName}
+                min="0"
+                step="0.01"
+                type="number"
+                value={form.lowBalanceThresholdCny}
+                onChange={(event) =>
+                  setForm({ ...form, lowBalanceThresholdCny: event.target.value })
+                }
+              />
+            }
+            description="低于该值时后续路由可过滤站点。"
+            label="低余额阈值"
+          />
+          <SettingRow
+            control={
+              <input
+                className={inputClassName}
+                min="1"
+                type="number"
+                value={form.collectorIntervalMinutes}
+                onChange={(event) =>
+                  setForm({ ...form, collectorIntervalMinutes: event.target.value })
+                }
+              />
+            }
+            description="采集器接入后使用。"
+            label="采集频率"
+          />
+          <SettingRow
+            control={
               <select
                 className={inputClassName}
                 value={form.trayBehavior}
@@ -181,65 +179,52 @@ export function SettingsPage() {
                   </option>
                 ))}
               </select>
-            </Field>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button disabled={saving || loading} type="submit">
-                <Save className="h-4 w-4" />
-                {saving ? "保存中" : "保存设置"}
-              </Button>
-              {(message || error) && (
-                <span
-                  className={
-                    error
-                      ? "text-sm text-rose-700"
-                      : "text-sm text-emerald-700"
-                  }
-                >
-                  {error ?? message}
-                </span>
-              )}
-            </div>
-          </form>
+            }
+            description="系统托盘行为占位。"
+            label="托盘行为"
+          />
         </SectionCard>
 
         <SectionCard title="数据与安全">
-          <dl>
-            <KeyValueRow label="数据目录" value={settings.dataDir} />
-            <KeyValueRow
-              label="API Key 存储"
-              value="P2 暂存 SQLite 明文；P3/P4 前必须迁移到本地加密或系统密钥链。"
-            />
-          </dl>
+          <SettingRow
+            control={<code className="truncate text-xs text-slate-700">{settings.dataDir}</code>}
+            description="SQLite 文件不在仓库目录。"
+            label="数据目录"
+          />
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs leading-5 text-amber-800">
+            API Key 当前阶段暂存 SQLite 明文；P3/P4 前必须迁移到本地加密或系统密钥链。
+          </div>
         </SectionCard>
 
-        <SectionCard title="导入 / 导出" description="Phase 2 仍只保留入口。">
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" disabled>
-              导入配置
-            </Button>
-            <Button variant="outline" disabled>
-              导出配置
-            </Button>
-            <Button variant="outline" disabled>
-              打开数据目录
-            </Button>
+        {(message || error) && (
+          <div className={error ? "text-sm text-rose-700" : "text-sm text-emerald-700"}>
+            {error ?? message}
           </div>
-          <div className="mt-3 rounded-md border border-border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
-            不提交 key、cookie、日志、本地数据库或用户本地数据。
-          </div>
-        </SectionCard>
-      </div>
+        )}
+      </form>
     </PageScaffold>
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function SettingRow({
+  label,
+  description,
+  control,
+}: {
+  label: string;
+  description?: string;
+  control: ReactNode;
+}) {
   return (
-    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-      {label}
-      {children}
-    </label>
+    <div className="grid min-h-14 grid-cols-[minmax(0,1fr)_260px] items-center gap-4 border-b border-cyan-100 py-3 last:border-b-0">
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-slate-800">{label}</div>
+        {description && (
+          <div className="mt-0.5 text-xs text-muted-foreground">{description}</div>
+        )}
+      </div>
+      <div className="min-w-0 justify-self-end">{control}</div>
+    </div>
   );
 }
 
@@ -268,4 +253,4 @@ function readError(error: unknown) {
 }
 
 const inputClassName =
-  "h-8 rounded-md border border-border bg-white px-2.5 text-sm text-slate-800 outline-none transition focus:border-blue-300 focus:ring-2 focus:ring-blue-100";
+  "h-8 w-full rounded-xl border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";

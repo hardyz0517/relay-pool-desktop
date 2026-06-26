@@ -1,83 +1,72 @@
+import { Plus } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button } from "@/components/ui/button";
-import { KeyValueRow, SectionCard, StatusBadge } from "@/components/ui";
+import {
+  Button,
+  InspectorPanel,
+  PropertyList,
+  PropertyRow,
+  SectionCard,
+  SegmentedControl,
+  StatusBadge,
+} from "@/components/ui";
 import { mockRoutingSettings, routeStrategyLabels } from "@/lib/mock";
 
 export function RoutingPage() {
   const routing = mockRoutingSettings;
 
   return (
-    <PageScaffold
-      eyebrow="Routing"
-      title="路由规则"
-      description="静态规则表单 UI：展示策略、fallback、阈值和模型固定路由，不保存设置。"
-    >
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <SectionCard title="默认策略" description="Phase 1 只做视觉切换，不保存。">
-          <div className="grid gap-2 sm:grid-cols-3">
-            {(["manual", "cheapest", "stable"] as const).map((strategy) => (
-              <button
-                key={strategy}
-                type="button"
-                className={
-                  strategy === routing.defaultStrategy
-                    ? "rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
-                    : "rounded-md border border-border bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+    <PageScaffold title="路由规则" description="静态规则设置 UI；当前不保存真实路由配置。">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <SectionCard title="策略设置" description="规则形态先对齐，真实路由留到后续阶段。">
+          <div className="space-y-4">
+            <div>
+              <div className="mb-2 text-xs font-medium text-muted-foreground">默认策略</div>
+              <SegmentedControl
+                value={routing.defaultStrategy}
+                options={(["manual", "cheapest", "stable"] as const).map((value) => ({
+                  value,
+                  label: routeStrategyLabels[value],
+                }))}
+              />
+            </div>
+            <PropertyList className="overflow-hidden rounded-2xl border border-cyan-100 bg-white/75">
+              <PropertyRow
+                label="失败自动切换"
+                description="上游失败后选择下一个候选站点"
+                value={
+                  <StatusBadge tone={routing.fallbackEnabled ? "healthy" : "disabled"}>
+                    {routing.fallbackEnabled ? "已开启" : "已关闭"}
+                  </StatusBadge>
                 }
-              >
-                {routeStrategyLabels[strategy]}
-              </button>
-            ))}
+              />
+              <PropertyRow label="低余额停用" description="余额低于阈值时不参与路由" value={`¥${routing.lowBalanceThresholdCny}`} />
+              <PropertyRow label="熔断时间" description="失败站点冷却时间" value={`${routing.circuitBreakerMinutes} 分钟`} />
+              <PropertyRow label="健康缓存" description="健康状态缓存时长" value={`${routing.healthCacheSeconds} 秒`} />
+            </PropertyList>
           </div>
         </SectionCard>
 
-        <SectionCard title="运行开关">
-          <dl>
-            <KeyValueRow
-              label="失败自动切换"
-              value={
-                <StatusBadge tone={routing.fallbackEnabled ? "healthy" : "disabled"}>
-                  {routing.fallbackEnabled ? "已开启" : "已关闭"}
-                </StatusBadge>
-              }
-            />
-            <KeyValueRow
-              label="低余额停用"
-              value={`低于 ¥${routing.lowBalanceThresholdCny}`}
-            />
-            <KeyValueRow
-              label="熔断时间"
-              value={`${routing.circuitBreakerMinutes} 分钟`}
-            />
-            <KeyValueRow
-              label="健康缓存"
-              value={`${routing.healthCacheSeconds} 秒`}
-            />
-          </dl>
-        </SectionCard>
-
-        <SectionCard
+        <InspectorPanel
           title="模型固定路由"
-          description="未来可按模型指定站点，当前仅展示假数据。"
-          action={<Button variant="outline">添加规则</Button>}
-          className="xl:col-span-2"
+          description="紧凑列表占位；不保存。"
+          actions={
+            <Button variant="secondary">
+              <Plus className="h-4 w-4" />
+              添加
+            </Button>
+          }
         >
-          <div className="grid gap-2">
+          <div className="divide-y divide-cyan-100">
             {routing.modelOverrides.map((override) => (
-              <div
-                key={override.model}
-                className="grid gap-2 rounded-md border border-border bg-slate-50 px-3 py-2 text-sm md:grid-cols-[1fr_1fr_1.4fr_auto]"
-              >
-                <span className="font-medium text-slate-800">{override.model}</span>
-                <span>{override.stationName}</span>
-                <span className="text-muted-foreground">{override.reason}</span>
-                <Button variant="ghost" className="h-7 px-2 text-xs">
-                  移除
-                </Button>
+              <div key={override.model} className="px-4 py-3">
+                <div className="text-sm font-semibold text-slate-800">{override.model}</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {override.stationName} · {override.reason}
+                </div>
               </div>
             ))}
           </div>
-        </SectionCard>
+        </InspectorPanel>
       </div>
     </PageScaffold>
   );

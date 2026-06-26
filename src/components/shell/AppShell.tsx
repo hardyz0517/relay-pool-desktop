@@ -20,17 +20,17 @@ export function AppShell({
 
   return (
     <div className="flex h-screen min-h-[640px] overflow-hidden bg-background text-foreground">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-white">
-        <div className="border-b border-border px-4 py-3">
-          <div className="text-sm font-semibold tracking-wide text-slate-800">
+      <aside className="flex w-[196px] shrink-0 flex-col border-r border-cyan-100 bg-white/90 backdrop-blur">
+        <div className="border-b border-border px-3 py-2.5">
+          <div className="truncate text-[13px] font-semibold tracking-wide text-slate-800">
             Relay Pool Desktop
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">
+          <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
             本地 AI 中转池调度器
           </div>
         </div>
 
-        <nav className="flex-1 space-y-1 p-2">
+        <nav className="flex-1 space-y-0.5 p-1.5">
           {appRoutes.map((route) => {
             const Icon = route.icon;
             const active = route.id === activeRouteId;
@@ -41,10 +41,10 @@ export function AppShell({
                 type="button"
                 onClick={() => onRouteChange(route.id)}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors",
+                  "flex h-9 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left text-[13px] transition-colors",
                   active
-                    ? "bg-accent/10 text-accent"
-                    : "text-muted-foreground hover:bg-muted hover:text-slate-700",
+                    ? "bg-teal-50 text-teal-700 shadow-[inset_3px_0_0_rgb(13,148,136)]"
+                    : "text-slate-600 hover:bg-cyan-50 hover:text-slate-800",
                 )}
               >
                 <Icon className="h-4 w-4 shrink-0" />
@@ -54,7 +54,7 @@ export function AppShell({
           })}
         </nav>
 
-        <div className="border-t border-border px-4 py-3 text-xs text-muted-foreground">
+        <div className="border-t border-cyan-100 px-3 py-2.5 text-xs text-muted-foreground">
           <div className="flex items-center justify-between">
             <span>Local Proxy</span>
             <span className="flex items-center gap-1 text-amber-600">
@@ -66,9 +66,9 @@ export function AppShell({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-white px-4">
+        <header className="flex h-11 shrink-0 items-center justify-between border-b border-cyan-100 bg-white/88 px-4 backdrop-blur">
           <div>
-            <div className="text-sm font-medium text-slate-800">
+            <div className="text-[13px] font-medium text-slate-800">
               {activeRoute?.label}
             </div>
             <div className="text-xs text-muted-foreground">
@@ -76,19 +76,19 @@ export function AppShell({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="hidden items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-700 lg:flex">
-              <Circle className="h-2 w-2 fill-current" />
+          <div className="flex items-center overflow-hidden rounded-xl border border-cyan-100 bg-cyan-50/70 text-xs text-slate-600">
+            <div className="hidden items-center gap-1.5 border-r border-cyan-100 px-2.5 py-1.5 lg:flex">
+              <Circle className="h-2 w-2 fill-current text-amber-500" />
               <span>代理未启动</span>
             </div>
-            <div className="hidden rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground md:block">
-              策略：手动优先
+            <div className="hidden border-r border-cyan-100 px-2.5 py-1.5 md:block">
+              手动优先
             </div>
-            <div className="hidden items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground md:flex">
+            <div className="hidden items-center gap-1.5 border-r border-cyan-100 px-2.5 py-1.5 md:flex">
               <Power className="h-3.5 w-3.5" />
               <span>127.0.0.1:8787/v1</span>
             </div>
-            <Button variant="outline" className="h-8 px-2" title="复制本地入口">
+            <Button variant="ghost" className="h-7 rounded-none px-2" title="复制本地入口">
               <Copy className="h-4 w-4" />
             </Button>
           </div>
