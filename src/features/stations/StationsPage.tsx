@@ -1,17 +1,29 @@
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { PlaceholderPanel } from "@/components/shell/PlaceholderPanel";
+import { StationDetailPanel } from "./components/StationDetailPanel";
+import { StationListItem } from "./components/StationListItem";
+import { mockStations } from "@/lib/mock";
 
 export function StationsPage() {
+  const selectedStation = mockStations[0];
+
   return (
     <PageScaffold
       eyebrow="Stations"
       title="中转池"
-      description="未来用于管理 Sub2API / NewAPI / OpenAI-compatible 站点、启用状态和拖拽优先级。"
+      description="左侧为站点排序与状态，右侧为所选站点详情。当前仅使用假数据。"
     >
-      <PlaceholderPanel
-        title="站点管理占位"
-        items={["站点列表", "站点详情", "余额信息", "健康检测状态"]}
-      />
+      <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <div className="space-y-2">
+          {mockStations.map((station) => (
+            <StationListItem
+              key={station.id}
+              station={station}
+              active={station.id === selectedStation.id}
+            />
+          ))}
+        </div>
+        <StationDetailPanel station={selectedStation} />
+      </div>
     </PageScaffold>
   );
 }
