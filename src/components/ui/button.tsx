@@ -19,9 +19,9 @@ export function Button({
         variant === "default" &&
           "bg-accent text-accent-foreground hover:bg-accent/90",
         variant === "ghost" &&
-          "text-muted-foreground hover:bg-muted hover:text-foreground",
+          "text-muted-foreground hover:bg-muted hover:text-slate-700",
         variant === "outline" &&
-          "border border-border bg-transparent text-foreground hover:bg-muted",
+          "border border-border bg-white text-slate-700 hover:bg-muted",
         className,
       )}
       {...props}
