@@ -1,4 +1,5 @@
 pub mod collectors;
+pub mod database;
 pub mod health;
 pub mod logs;
 pub mod pricing;

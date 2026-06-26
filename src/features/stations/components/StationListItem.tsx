@@ -3,19 +3,21 @@ import { StationStatusDot } from "./StationStatusDot";
 import {
   stationStatusLabels,
   stationTypeLabels,
-  type MockStation,
-} from "@/lib/mock";
+  type Station,
+} from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 
 type StationListItemProps = {
-  station: MockStation;
+  station: Station;
   active?: boolean;
+  onSelect: () => void;
 };
 
-export function StationListItem({ station, active }: StationListItemProps) {
+export function StationListItem({ station, active, onSelect }: StationListItemProps) {
   return (
     <button
       type="button"
+      onClick={onSelect}
       className={cn(
         "w-full rounded-lg border px-3 py-2 text-left transition-colors",
         active
@@ -33,12 +35,14 @@ export function StationListItem({ station, active }: StationListItemProps) {
             <StationStatusDot status={station.status} />
           </div>
           <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-            <span>{stationTypeLabels[station.type]}</span>
-            <span>¥{station.balanceCny.toFixed(2)}</span>
+            <span>{stationTypeLabels[station.stationType]}</span>
+            <span>
+              {station.balanceCny === null ? "余额未采集" : `¥${station.balanceCny.toFixed(2)}`}
+            </span>
           </div>
           <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-            <span>{station.latencyMs > 0 ? `${station.latencyMs} ms` : "--"}</span>
-            <span>{station.lastCheckedAt}</span>
+            <span>{station.latencyMs ? `${station.latencyMs} ms` : "--"}</span>
+            <span>{station.lastCheckedAt ?? "未检测"}</span>
             <span>{stationStatusLabels[station.status]}</span>
             <span>{station.enabled ? "已启用" : "已禁用"}</span>
           </div>

@@ -1,3 +1,6 @@
+pub mod settings;
+pub mod stations;
+
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]

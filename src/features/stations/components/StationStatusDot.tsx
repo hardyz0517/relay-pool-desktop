@@ -1,15 +1,16 @@
 import { cn } from "@/lib/utils";
-import type { MockStationStatus } from "@/lib/mock";
+import type { StationStatus } from "@/lib/types/stations";
 
 type StationStatusDotProps = {
-  status: MockStationStatus;
+  status: StationStatus;
 };
 
-const statusClassName: Record<MockStationStatus, string> = {
+const statusClassName: Record<StationStatus, string> = {
   healthy: "bg-emerald-500",
   warning: "bg-amber-500",
   error: "bg-rose-500",
   disabled: "bg-slate-400",
+  unchecked: "bg-blue-400",
 };
 
 export function StationStatusDot({ status }: StationStatusDotProps) {
