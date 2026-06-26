@@ -29,6 +29,7 @@ pnpm tauri:dev
 - 预留 `src/components/ui` 作为 shadcn/ui 组件目录。
 - Tauri 2 Rust 端目录已建立。
 - AppShell 已包含左侧导航、顶部状态栏和七个占位页面。
+- 第一版 UI 方向为参考 CCSwitch 的浅色、简约、克制、紧凑桌面工具风格；深色主题仅作为后续可选项预留。
 
 ## 项目边界
 
