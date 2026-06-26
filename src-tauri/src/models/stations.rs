@@ -9,6 +9,7 @@ pub struct Station {
     pub base_url: String,
     pub api_key_masked: String,
     pub api_key_present: bool,
+    pub key_count: i64,
     pub enabled: bool,
     pub priority: i64,
     pub credit_per_cny: f64,

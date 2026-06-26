@@ -35,6 +35,8 @@ yarn-error.log*
 # Secrets
 *key*
 *keys*
+!src/lib/api/stationKeys.ts
+!src/lib/types/stationKeys.ts
 *cookie*
 *cookies*
 *.pem

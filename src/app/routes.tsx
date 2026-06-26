@@ -31,8 +31,8 @@ export const appRoutes: AppRoute[] = [
   },
   {
     id: "collectors",
-    label: "Sub2API 采集",
-    description: "登录态、捕获接口和倍率快照",
+    label: "信息采集",
+    description: "账号、余额、分组、倍率和接口能力",
     icon: Activity,
   },
   {

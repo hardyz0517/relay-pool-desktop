@@ -14,6 +14,7 @@ export type Station = {
   baseUrl: string;
   apiKeyMasked: string;
   apiKeyPresent: boolean;
+  keyCount: number;
   enabled: boolean;
   priority: number;
   creditPerCny: number;

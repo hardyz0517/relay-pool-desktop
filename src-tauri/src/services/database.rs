@@ -1,20 +1,25 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::{Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
 use crate::models::{
+    collector::CollectorSnapshot,
+    credentials::{StationCredentials, UpdateStationCredentialsInput},
     settings::{AppSettings, UpdateSettingsInput},
+    station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, UpdateStationInput},
 };
 
+#[derive(Clone)]
 pub struct AppDatabase {
-    connection: Mutex<Connection>,
+    connection: Arc<Mutex<Connection>>,
     db_path: PathBuf,
 }
 
@@ -36,9 +41,11 @@ impl AppDatabase {
             .map_err(|error| format!("初始化 SQLite schema 失败: {error}"))?;
         seed_default_settings(&connection)
             .map_err(|error| format!("初始化默认设置失败: {error}"))?;
+        migrate_default_station_keys(&connection)
+            .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
 
         Ok(Self {
-            connection: Mutex::new(connection),
+            connection: Arc::new(Mutex::new(connection)),
             db_path,
         })
     }
@@ -105,6 +112,20 @@ impl AppDatabase {
                 ],
             )
             .map_err(|error| format!("创建站点失败: {error}"))?;
+
+        create_station_key_in_connection(
+            &connection,
+            CreateStationKeyInput {
+                station_id: id.clone(),
+                name: "Default Key".to_string(),
+                api_key: input.api_key,
+                enabled: input.enabled,
+                priority: Some(0),
+                group_name: None,
+                tier_label: None,
+                note: Some("由站点默认 API Key 创建。".to_string()),
+            },
+        )?;
 
         station_by_id(&connection, &id)
     }
@@ -253,6 +274,171 @@ impl AppDatabase {
 
         settings_from_connection(&connection, self.db_path.to_string_lossy().as_ref())
     }
+
+    pub fn list_station_keys(&self, station_id: String) -> Result<Vec<StationKey>, String> {
+        let connection = self.connection()?;
+        list_station_keys_from_connection(&connection, &station_id)
+    }
+
+    pub fn create_station_key(&self, input: CreateStationKeyInput) -> Result<StationKey, String> {
+        let connection = self.connection()?;
+        create_station_key_in_connection(&connection, input)
+    }
+
+    pub fn update_station_key(&self, input: UpdateStationKeyInput) -> Result<StationKey, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, &input.station_id)?;
+        update_station_key_in_connection(&connection, input)
+    }
+
+    pub fn delete_station_key(&self, id: String) -> Result<(), String> {
+        let connection = self.connection()?;
+        let station_id: Option<String> = connection
+            .query_row(
+                "SELECT station_id FROM station_keys WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("读取 Key 失败: {error}"))?;
+
+        let Some(station_id) = station_id else {
+            return Err("Station Key 不存在，无法删除".to_string());
+        };
+
+        connection
+            .execute("DELETE FROM station_keys WHERE id = ?1", params![id])
+            .map_err(|error| format!("删除 Station Key 失败: {error}"))?;
+        normalize_station_key_priorities(&connection, &station_id)?;
+        Ok(())
+    }
+
+    pub fn reorder_station_keys(
+        &self,
+        station_id: String,
+        key_ids: Vec<String>,
+    ) -> Result<Vec<StationKey>, String> {
+        if key_ids.is_empty() {
+            return Err("Key 排序列表不能为空".to_string());
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始 Key 排序事务失败: {error}"))?;
+        for (index, id) in key_ids.iter().enumerate() {
+            let updated = transaction
+                .execute(
+                    "UPDATE station_keys SET priority = ?1, updated_at = ?2 WHERE id = ?3 AND station_id = ?4",
+                    params![index as i64, now_string(), id, station_id],
+                )
+                .map_err(|error| format!("更新 Key 排序失败: {error}"))?;
+            if updated == 0 {
+                return Err(format!("Station Key 不存在，无法排序: {id}"));
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("保存 Key 排序失败: {error}"))?;
+        list_station_keys_from_connection(&connection, &station_id)
+    }
+
+    pub fn get_station_credentials(
+        &self,
+        station_id: String,
+    ) -> Result<StationCredentials, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, &station_id)?;
+        station_credentials_from_connection(&connection, &station_id)
+    }
+
+    pub fn update_station_credentials(
+        &self,
+        input: UpdateStationCredentialsInput,
+    ) -> Result<StationCredentials, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, &input.station_id)?;
+        let station_id = input.station_id.clone();
+        upsert_station_credentials(&connection, input)?;
+        station_credentials_from_connection(&connection, &station_id)
+    }
+
+    pub fn clear_station_credentials(
+        &self,
+        station_id: String,
+    ) -> Result<StationCredentials, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, &station_id)?;
+        connection
+            .execute(
+                "DELETE FROM station_credentials WHERE station_id = ?1",
+                params![station_id],
+            )
+            .map_err(|error| format!("清除登录信息失败: {error}"))?;
+        station_credentials_from_connection(&connection, &station_id)
+    }
+
+    pub fn insert_collector_snapshot(
+        &self,
+        station_id: &str,
+        source: &str,
+        status: &str,
+        summary_json: Value,
+        normalized_json: Value,
+        raw_json_redacted: Option<Value>,
+        error_message: Option<String>,
+    ) -> Result<CollectorSnapshot, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, station_id)?;
+        insert_collector_snapshot_in_connection(
+            &connection,
+            station_id,
+            source,
+            status,
+            summary_json,
+            normalized_json,
+            raw_json_redacted,
+            error_message,
+        )
+    }
+
+    pub fn list_collector_snapshots(
+        &self,
+        station_id: String,
+    ) -> Result<Vec<CollectorSnapshot>, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, &station_id)?;
+        list_collector_snapshots_from_connection(&connection, &station_id)
+    }
+
+    pub fn get_latest_collector_snapshot(
+        &self,
+        station_id: String,
+    ) -> Result<Option<CollectorSnapshot>, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, &station_id)?;
+        latest_collector_snapshot_from_connection(&connection, &station_id)
+    }
+
+    pub fn update_station_login_status(
+        &self,
+        station_id: &str,
+        login_status: &str,
+        login_error: Option<String>,
+    ) -> Result<(), String> {
+        let connection = self.connection()?;
+        update_station_login_status_in_connection(
+            &connection,
+            station_id,
+            login_status,
+            login_error,
+        )
+    }
+
+    pub fn station_for_collector(&self, station_id: &str) -> Result<Station, String> {
+        let connection = self.connection()?;
+        station_by_id(&connection, station_id)
+    }
 }
 
 fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
@@ -289,6 +475,60 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS station_credentials (
+            id TEXT PRIMARY KEY,
+            station_id TEXT NOT NULL UNIQUE,
+            login_username TEXT,
+            login_password TEXT,
+            remember_password INTEGER NOT NULL DEFAULT 0,
+            login_status TEXT NOT NULL DEFAULT 'unknown',
+            login_error TEXT,
+            last_login_at TEXT,
+            session_status TEXT NOT NULL DEFAULT 'none',
+            session_expires_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS station_keys (
+            id TEXT PRIMARY KEY,
+            station_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            api_key TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            priority INTEGER NOT NULL DEFAULT 0,
+            group_name TEXT,
+            tier_label TEXT,
+            status TEXT NOT NULL DEFAULT 'unchecked',
+            last_checked_at TEXT,
+            last_used_at TEXT,
+            note TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_station_keys_station_priority
+            ON station_keys(station_id, priority ASC, created_at ASC);
+
+        CREATE TABLE IF NOT EXISTS collector_snapshots (
+            id TEXT PRIMARY KEY,
+            station_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            status TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            summary_json TEXT NOT NULL,
+            normalized_json TEXT NOT NULL,
+            raw_json_redacted TEXT,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_collector_snapshots_station_created
+            ON collector_snapshots(station_id, created_at DESC);
         ",
     )
 }
@@ -323,26 +563,29 @@ fn row_to_station(row: &rusqlite::Row<'_>) -> rusqlite::Result<Station> {
         base_url: row.get(3)?,
         api_key_masked: mask_secret(&api_key),
         api_key_present: !api_key.is_empty(),
-        enabled: i64_to_bool(row.get(5)?),
-        priority: row.get(6)?,
-        credit_per_cny: row.get(7)?,
-        balance_raw: row.get(8)?,
-        balance_cny: row.get(9)?,
-        low_balance_threshold_cny: row.get(10)?,
-        status: row.get(11)?,
-        latency_ms: row.get(12)?,
-        last_checked_at: row.get(13)?,
-        last_pricing_fetched_at: row.get(14)?,
-        note: row.get(15)?,
-        created_at: row.get(16)?,
-        updated_at: row.get(17)?,
+        key_count: row.get(5)?,
+        enabled: i64_to_bool(row.get(6)?),
+        priority: row.get(7)?,
+        credit_per_cny: row.get(8)?,
+        balance_raw: row.get(9)?,
+        balance_cny: row.get(10)?,
+        low_balance_threshold_cny: row.get(11)?,
+        status: row.get(12)?,
+        latency_ms: row.get(13)?,
+        last_checked_at: row.get(14)?,
+        last_pricing_fetched_at: row.get(15)?,
+        note: row.get(16)?,
+        created_at: row.get(17)?,
+        updated_at: row.get(18)?,
     })
 }
 
 fn list_stations_from_connection(connection: &Connection) -> Result<Vec<Station>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, name, station_type, base_url, api_key, enabled, priority,
+            "SELECT id, name, station_type, base_url, api_key,
+                    (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
+                    enabled, priority,
                     credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
                     status, latency_ms, last_checked_at, last_pricing_fetched_at,
                     note, created_at, updated_at
@@ -363,7 +606,9 @@ fn list_stations_from_connection(connection: &Connection) -> Result<Vec<Station>
 fn station_by_id(connection: &Connection, id: &str) -> Result<Station, String> {
     connection
         .query_row(
-            "SELECT id, name, station_type, base_url, api_key, enabled, priority,
+            "SELECT id, name, station_type, base_url, api_key,
+                    (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
+                    enabled, priority,
                     credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
                     status, latency_ms, last_checked_at, last_pricing_fetched_at,
                     note, created_at, updated_at
@@ -375,6 +620,525 @@ fn station_by_id(connection: &Connection, id: &str) -> Result<Station, String> {
         .optional()
         .map_err(|error| format!("读取站点失败: {error}"))?
         .ok_or_else(|| "站点不存在".to_string())
+}
+
+fn validate_station_exists(connection: &Connection, station_id: &str) -> Result<(), String> {
+    let exists: Option<String> = connection
+        .query_row(
+            "SELECT id FROM stations WHERE id = ?1",
+            params![station_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取站点失败: {error}"))?;
+
+    if exists.is_none() {
+        return Err("站点不存在".to_string());
+    }
+
+    Ok(())
+}
+
+fn migrate_default_station_keys(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare(
+        "SELECT id, api_key, enabled, created_at
+           FROM stations
+          WHERE api_key IS NOT NULL
+            AND TRIM(api_key) != ''
+            AND NOT EXISTS (
+                SELECT 1 FROM station_keys WHERE station_keys.station_id = stations.id
+            )",
+    )?;
+
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, String>(3)?,
+        ))
+    })?;
+
+    for row in rows {
+        let (station_id, api_key, enabled, created_at) = row?;
+        connection.execute(
+            "INSERT INTO station_keys (
+                id, station_id, name, api_key, enabled, priority, group_name, tier_label,
+                status, last_checked_at, last_used_at, note, created_at, updated_at
+             ) VALUES (?1, ?2, 'Default Key', ?3, ?4, 0, NULL, NULL, 'unchecked',
+                NULL, NULL, '由 Phase 2 站点 API Key 自动迁移。', ?5, ?6)",
+            params![
+                generate_id("key"),
+                station_id,
+                api_key,
+                enabled,
+                created_at,
+                now_string(),
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn row_to_station_key(row: &rusqlite::Row<'_>) -> rusqlite::Result<StationKey> {
+    let api_key: String = row.get(3)?;
+
+    Ok(StationKey {
+        id: row.get(0)?,
+        station_id: row.get(1)?,
+        name: row.get(2)?,
+        api_key_masked: mask_secret(&api_key),
+        api_key_present: !api_key.trim().is_empty(),
+        enabled: i64_to_bool(row.get(4)?),
+        priority: row.get(5)?,
+        group_name: row.get(6)?,
+        tier_label: row.get(7)?,
+        status: row.get(8)?,
+        last_checked_at: row.get(9)?,
+        last_used_at: row.get(10)?,
+        note: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
+    })
+}
+
+fn list_station_keys_from_connection(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<Vec<StationKey>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, station_id, name, api_key, enabled, priority, group_name, tier_label,
+                    status, last_checked_at, last_used_at, note, created_at, updated_at
+               FROM station_keys
+              WHERE station_id = ?1
+              ORDER BY priority ASC, created_at ASC",
+        )
+        .map_err(|error| format!("读取 Station Key 列表失败: {error}"))?;
+
+    let rows = statement
+        .query_map(params![station_id], row_to_station_key)
+        .map_err(|error| format!("查询 Station Key 失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析 Station Key 失败: {error}"))?;
+    Ok(rows)
+}
+
+fn create_station_key_in_connection(
+    connection: &Connection,
+    input: CreateStationKeyInput,
+) -> Result<StationKey, String> {
+    validate_station_exists(connection, &input.station_id)?;
+    if input.name.trim().is_empty() {
+        return Err("Key 名称不能为空".to_string());
+    }
+    if input.api_key.trim().is_empty() {
+        return Err("API Key 不能为空".to_string());
+    }
+
+    let id = generate_id("key");
+    let now = now_string();
+    let priority = match input.priority {
+        Some(priority) => priority,
+        None => next_station_key_priority(connection, &input.station_id)?,
+    };
+
+    connection
+        .execute(
+            "INSERT INTO station_keys (
+                id, station_id, name, api_key, enabled, priority, group_name, tier_label,
+                status, last_checked_at, last_used_at, note, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'unchecked', NULL, NULL, ?9, ?10, ?11)",
+            params![
+                id,
+                input.station_id,
+                input.name.trim(),
+                input.api_key.trim(),
+                bool_to_i64(input.enabled),
+                priority,
+                normalize_optional_string(input.group_name),
+                normalize_optional_string(input.tier_label),
+                normalize_optional_string(input.note),
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("创建 Station Key 失败: {error}"))?;
+
+    station_key_by_id(connection, &id)
+}
+
+fn update_station_key_in_connection(
+    connection: &Connection,
+    input: UpdateStationKeyInput,
+) -> Result<StationKey, String> {
+    if input.name.trim().is_empty() {
+        return Err("Key 名称不能为空".to_string());
+    }
+
+    let existing_api_key: Option<String> = connection
+        .query_row(
+            "SELECT api_key FROM station_keys WHERE id = ?1 AND station_id = ?2",
+            params![input.id, input.station_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取 Station Key 失败: {error}"))?;
+
+    let Some(existing_api_key) = existing_api_key else {
+        return Err("Station Key 不存在，无法更新".to_string());
+    };
+
+    let next_api_key = input
+        .api_key
+        .as_ref()
+        .map(|api_key| api_key.trim().to_string())
+        .filter(|api_key| !api_key.is_empty())
+        .unwrap_or(existing_api_key);
+    let now = now_string();
+
+    connection
+        .execute(
+            "UPDATE station_keys
+                SET name = ?1,
+                    api_key = ?2,
+                    enabled = ?3,
+                    priority = ?4,
+                    group_name = ?5,
+                    tier_label = ?6,
+                    status = ?7,
+                    note = ?8,
+                    updated_at = ?9
+              WHERE id = ?10 AND station_id = ?11",
+            params![
+                input.name.trim(),
+                next_api_key,
+                bool_to_i64(input.enabled),
+                input.priority,
+                normalize_optional_string(input.group_name),
+                normalize_optional_string(input.tier_label),
+                input.status,
+                normalize_optional_string(input.note),
+                now,
+                input.id,
+                input.station_id,
+            ],
+        )
+        .map_err(|error| format!("更新 Station Key 失败: {error}"))?;
+
+    station_key_by_id(connection, &input.id)
+}
+
+fn station_key_by_id(connection: &Connection, id: &str) -> Result<StationKey, String> {
+    connection
+        .query_row(
+            "SELECT id, station_id, name, api_key, enabled, priority, group_name, tier_label,
+                    status, last_checked_at, last_used_at, note, created_at, updated_at
+               FROM station_keys
+              WHERE id = ?1",
+            params![id],
+            row_to_station_key,
+        )
+        .optional()
+        .map_err(|error| format!("读取 Station Key 失败: {error}"))?
+        .ok_or_else(|| "Station Key 不存在".to_string())
+}
+
+fn next_station_key_priority(connection: &Connection, station_id: &str) -> Result<i64, String> {
+    connection
+        .query_row(
+            "SELECT COALESCE(MAX(priority), -1) + 1 FROM station_keys WHERE station_id = ?1",
+            params![station_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("计算 Key 排序失败: {error}"))
+}
+
+fn normalize_station_key_priorities(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<(), String> {
+    let ids = {
+        let mut statement = connection
+            .prepare(
+                "SELECT id FROM station_keys WHERE station_id = ?1 ORDER BY priority ASC, created_at ASC",
+            )
+            .map_err(|error| format!("读取 Key 排序失败: {error}"))?;
+        let rows = statement
+            .query_map(params![station_id], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("查询 Key 排序失败: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("解析 Key 排序失败: {error}"))?;
+        rows
+    };
+
+    for (index, id) in ids.iter().enumerate() {
+        connection
+            .execute(
+                "UPDATE station_keys SET priority = ?1, updated_at = ?2 WHERE id = ?3",
+                params![index as i64, now_string(), id],
+            )
+            .map_err(|error| format!("整理 Key 排序失败: {error}"))?;
+    }
+
+    Ok(())
+}
+
+fn station_credentials_from_connection(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<StationCredentials, String> {
+    let credentials = connection
+        .query_row(
+            "SELECT station_id, login_username, login_password, remember_password,
+                    login_status, login_error, last_login_at, session_status,
+                    session_expires_at, updated_at
+               FROM station_credentials
+              WHERE station_id = ?1",
+            params![station_id],
+            |row| {
+                let password: Option<String> = row.get(2)?;
+                Ok(StationCredentials {
+                    station_id: row.get(0)?,
+                    login_username: row.get(1)?,
+                    password_present: password
+                        .map(|value| !value.trim().is_empty())
+                        .unwrap_or(false),
+                    remember_password: i64_to_bool(row.get(3)?),
+                    login_status: row.get(4)?,
+                    login_error: row.get(5)?,
+                    last_login_at: row.get(6)?,
+                    session_status: row.get(7)?,
+                    session_expires_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| format!("读取登录信息失败: {error}"))?;
+
+    Ok(credentials.unwrap_or_else(|| StationCredentials {
+        station_id: station_id.to_string(),
+        login_username: None,
+        password_present: false,
+        remember_password: false,
+        login_status: "unknown".to_string(),
+        login_error: None,
+        last_login_at: None,
+        session_status: "none".to_string(),
+        session_expires_at: None,
+        updated_at: None,
+    }))
+}
+
+fn upsert_station_credentials(
+    connection: &Connection,
+    input: UpdateStationCredentialsInput,
+) -> Result<(), String> {
+    let existing_password: Option<String> = connection
+        .query_row(
+            "SELECT login_password FROM station_credentials WHERE station_id = ?1",
+            params![input.station_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取旧密码失败: {error}"))?
+        .flatten();
+
+    let password = if input.remember_password {
+        input
+            .login_password
+            .as_ref()
+            .map(|password| password.trim().to_string())
+            .filter(|password| !password.is_empty())
+            .or(existing_password)
+    } else {
+        None
+    };
+    let now = now_string();
+
+    connection
+        .execute(
+            "INSERT INTO station_credentials (
+                id, station_id, login_username, login_password, remember_password,
+                login_status, login_error, last_login_at, session_status,
+                session_expires_at, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 'saved', NULL, NULL, 'none', NULL, ?6, ?7)
+             ON CONFLICT(station_id) DO UPDATE SET
+                login_username = excluded.login_username,
+                login_password = excluded.login_password,
+                remember_password = excluded.remember_password,
+                login_status = 'saved',
+                login_error = NULL,
+                updated_at = excluded.updated_at",
+            params![
+                generate_id("credentials"),
+                input.station_id,
+                normalize_optional_string(input.login_username),
+                password,
+                bool_to_i64(input.remember_password),
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("保存登录信息失败: {error}"))?;
+
+    Ok(())
+}
+
+fn update_station_login_status_in_connection(
+    connection: &Connection,
+    station_id: &str,
+    login_status: &str,
+    login_error: Option<String>,
+) -> Result<(), String> {
+    let now = now_string();
+    connection
+        .execute(
+            "INSERT INTO station_credentials (
+                id, station_id, remember_password, login_status, login_error,
+                session_status, created_at, updated_at
+             ) VALUES (?1, ?2, 0, ?3, ?4, 'none', ?5, ?6)
+             ON CONFLICT(station_id) DO UPDATE SET
+                login_status = excluded.login_status,
+                login_error = excluded.login_error,
+                updated_at = excluded.updated_at",
+            params![
+                generate_id("credentials"),
+                station_id,
+                login_status,
+                normalize_optional_string(login_error),
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("更新登录状态失败: {error}"))?;
+    Ok(())
+}
+
+fn insert_collector_snapshot_in_connection(
+    connection: &Connection,
+    station_id: &str,
+    source: &str,
+    status: &str,
+    summary_json: Value,
+    normalized_json: Value,
+    raw_json_redacted: Option<Value>,
+    error_message: Option<String>,
+) -> Result<CollectorSnapshot, String> {
+    let id = generate_id("snapshot");
+    let now = now_string();
+    let raw_json_string = raw_json_redacted
+        .as_ref()
+        .map(|value| serde_json::to_string(value))
+        .transpose()
+        .map_err(|error| format!("序列化脱敏 raw 失败: {error}"))?;
+    connection
+        .execute(
+            "INSERT INTO collector_snapshots (
+                id, station_id, source, status, fetched_at, summary_json,
+                normalized_json, raw_json_redacted, error_message, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                id,
+                station_id,
+                source,
+                status,
+                now,
+                serde_json::to_string(&summary_json)
+                    .map_err(|error| format!("序列化 summary 失败: {error}"))?,
+                serde_json::to_string(&normalized_json)
+                    .map_err(|error| format!("序列化 normalized 失败: {error}"))?,
+                raw_json_string,
+                normalize_optional_string(error_message),
+                now,
+            ],
+        )
+        .map_err(|error| format!("保存采集快照失败: {error}"))?;
+
+    collector_snapshot_by_id(connection, &id)
+}
+
+fn row_to_collector_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<CollectorSnapshot> {
+    let summary_string: String = row.get(5)?;
+    let normalized_string: String = row.get(6)?;
+    let raw_string: Option<String> = row.get(7)?;
+
+    Ok(CollectorSnapshot {
+        id: row.get(0)?,
+        station_id: row.get(1)?,
+        source: row.get(2)?,
+        status: row.get(3)?,
+        fetched_at: row.get(4)?,
+        summary_json: parse_json_value(&summary_string),
+        normalized_json: parse_json_value(&normalized_string),
+        raw_json_redacted: raw_string.as_deref().map(parse_json_value),
+        error_message: row.get(8)?,
+        created_at: row.get(9)?,
+    })
+}
+
+fn collector_snapshot_by_id(
+    connection: &Connection,
+    id: &str,
+) -> Result<CollectorSnapshot, String> {
+    connection
+        .query_row(
+            "SELECT id, station_id, source, status, fetched_at, summary_json,
+                    normalized_json, raw_json_redacted, error_message, created_at
+               FROM collector_snapshots
+              WHERE id = ?1",
+            params![id],
+            row_to_collector_snapshot,
+        )
+        .optional()
+        .map_err(|error| format!("读取采集快照失败: {error}"))?
+        .ok_or_else(|| "采集快照不存在".to_string())
+}
+
+fn list_collector_snapshots_from_connection(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<Vec<CollectorSnapshot>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, station_id, source, status, fetched_at, summary_json,
+                    normalized_json, raw_json_redacted, error_message, created_at
+               FROM collector_snapshots
+              WHERE station_id = ?1
+              ORDER BY created_at DESC",
+        )
+        .map_err(|error| format!("读取采集快照列表失败: {error}"))?;
+    let rows = statement
+        .query_map(params![station_id], row_to_collector_snapshot)
+        .map_err(|error| format!("查询采集快照失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析采集快照失败: {error}"))?;
+    Ok(rows)
+}
+
+fn latest_collector_snapshot_from_connection(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<Option<CollectorSnapshot>, String> {
+    connection
+        .query_row(
+            "SELECT id, station_id, source, status, fetched_at, summary_json,
+                    normalized_json, raw_json_redacted, error_message, created_at
+               FROM collector_snapshots
+              WHERE station_id = ?1
+              ORDER BY created_at DESC
+              LIMIT 1",
+            params![station_id],
+            row_to_collector_snapshot,
+        )
+        .optional()
+        .map_err(|error| format!("读取最近采集快照失败: {error}"))
+}
+
+fn parse_json_value(value: &str) -> Value {
+    serde_json::from_str(value).unwrap_or_else(|_| json!({ "parseError": true }))
 }
 
 fn settings_from_connection(
