@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+dist-ssr/
+
+# Tauri / Rust build output
+target/
+src-tauri/target/
+
+# Environment and local config
+.env
+.env.*
+!.env.example
+*.local
+
+# Local data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data/
+local-data/
+
+# Logs
+/logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Secrets
+*key*
+*keys*
+*cookie*
+*cookies*
+*.pem
+*.p12
+*.pfx
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
