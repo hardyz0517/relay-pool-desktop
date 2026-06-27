@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -18,7 +19,11 @@ import {
   SectionCard,
   StatusBadge,
 } from "@/components/ui";
+import { getProxyStatus, listRequestLogs } from "@/lib/api/proxy";
+import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import { mockDashboard, requestStatusLabels, stationStatusLabels } from "@/lib/mock";
+import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
+import type { KeyPoolItem } from "@/lib/types/stationKeys";
 
 const healthTone = {
   healthy: "healthy",
@@ -35,6 +40,34 @@ const requestTone = {
 
 export function DashboardPage() {
   const dashboard = mockDashboard;
+  const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
+  const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
+  const [keyPoolItems, setKeyPoolItems] = useState<KeyPoolItem[]>([]);
+
+  useEffect(() => {
+    void Promise.all([getProxyStatus(), listRequestLogs(), listKeyPoolItems()])
+      .then(([status, logs, keys]) => {
+        setProxyStatus(status);
+        setRequestLogs(logs);
+        setKeyPoolItems(keys);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const todayRequests = useMemo(() => {
+    const today = new Date().toDateString();
+    return requestLogs.filter((log) => {
+      const numeric = Number(log.startedAt);
+      const date = Number.isFinite(numeric) && numeric > 1000000000000
+        ? new Date(numeric)
+        : new Date(log.startedAt);
+      return !Number.isNaN(date.getTime()) && date.toDateString() === today;
+    }).length;
+  }, [requestLogs]);
+  const recentError = requestLogs.find((log) => log.status === "failed")?.errorMessage ?? "最近没有代理错误";
+  const proxyRunning = proxyStatus?.running ?? dashboard.proxyRunning;
+  const proxyBaseUrl = proxyStatus ? `http://${proxyStatus.bindAddr}:${proxyStatus.port}/v1` : dashboard.baseUrl;
+  const enabledKeyCount = keyPoolItems.filter((key) => key.enabled).length;
 
   return (
     <PageScaffold
@@ -43,13 +76,13 @@ export function DashboardPage() {
       actions={<Button variant="secondary">复制 CCSwitch 配置</Button>}
     >
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-[repeat(4,minmax(0,1fr))]">
-        <MetricCard icon={Server} label="可用站点" value={`${dashboard.enabledStationCount}`} detail="启用中" />
+        <MetricCard icon={Server} label="可用 Key" value={`${enabledKeyCount}`} detail="Key 池启用中" />
         <MetricCard icon={AlertTriangle} label="余额告警" value={`${dashboard.balanceAlertCount}`} detail="低于阈值" tone="warning" />
-        <MetricCard icon={Activity} label="今日请求" value={dashboard.todayRequests.toLocaleString("zh-CN")} detail="含 fallback" />
+        <MetricCard icon={Activity} label="今日请求" value={todayRequests.toLocaleString("zh-CN")} detail="真实代理日志" />
         <MetricCard icon={BadgeDollarSign} label="今日成本" value={`¥${dashboard.todayCostCny.toFixed(2)}`} detail="估算" />
         <MetricCard icon={KeyRound} label="今日 Token" value="42.8k" detail="输入/输出合计" />
         <MetricCard icon={Clock3} label="平均延迟" value="1.8s" detail="最近请求" />
-        <MetricCard icon={Radio} label="本地代理" value={dashboard.proxyRunning ? "运行" : "未启"} detail="127.0.0.1" tone={dashboard.proxyRunning ? "good" : "warning"} />
+        <MetricCard icon={Radio} label="本地代理" value={proxyRunning ? "运行" : "未启"} detail="127.0.0.1" tone={proxyRunning ? "good" : "warning"} />
         <MetricCard icon={Route} label="路由策略" value="手动" detail="优先级" />
       </div>
 
@@ -57,10 +90,10 @@ export function DashboardPage() {
         <div className="grid gap-3">
           <SectionCard
             title="本地代理入口"
-            description="P2.5 仅展示入口状态；真实代理在后续阶段接入。"
+            description="P5 本地 OpenAI-compatible 入口；仅监听 127.0.0.1。"
             action={
-              <StatusBadge tone={dashboard.proxyRunning ? "healthy" : "warning"}>
-                {dashboard.proxyRunning ? "运行中" : "未启动"}
+              <StatusBadge tone={proxyRunning ? "healthy" : "warning"}>
+                {proxyRunning ? "运行中" : "未启动"}
               </StatusBadge>
             }
           >
@@ -69,7 +102,7 @@ export function DashboardPage() {
                 <div className="text-xs text-muted-foreground">Base URL</div>
                 <div className="mt-1 flex min-w-0 items-center gap-2">
                   <code className="min-w-0 flex-1 truncate text-[15px] font-semibold text-slate-800">
-                    {dashboard.baseUrl}
+                    {proxyBaseUrl}
                   </code>
                   <Button variant="outline">复制</Button>
                 </div>
@@ -131,7 +164,7 @@ export function DashboardPage() {
             ))}
           </div>
           <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/80 p-3 text-xs leading-5 text-amber-800">
-            Lantern NewAPI 余额接近阈值；Harbor Compatible 最近一次健康检测被限流。
+            {recentError}
           </div>
         </SectionCard>
       </div>

@@ -5,13 +5,14 @@ use crate::{
         capture::{CapturedHttpEventInput, CaptureSessionStatus},
         collector::{CollectorRunResult, CollectorSnapshot},
         credentials::{StationCredentials, UpdateStationCredentialsInput},
+        proxy::{ProxyStatus, RequestLog},
         settings::{AppSettings, UpdateSettingsInput},
         station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
         station_keys::KeyPoolItem,
         stations::{CreateStationInput, Station, UpdateStationInput},
         AppStatus,
     },
-    services::{capture, collectors, database::AppDatabase},
+    services::{capture, collectors, database::AppDatabase, proxy::runtime::ProxyRuntimeState},
 };
 
 #[tauri::command]
@@ -64,6 +65,52 @@ pub fn update_settings(
     input: UpdateSettingsInput,
 ) -> Result<AppSettings, String> {
     database.update_settings(input)
+}
+
+#[tauri::command]
+pub fn get_proxy_status(
+    database: State<'_, AppDatabase>,
+    proxy: State<'_, ProxyRuntimeState>,
+) -> Result<ProxyStatus, String> {
+    let settings = database.get_settings()?;
+    Ok(proxy.status(settings.local_proxy_port))
+}
+
+#[tauri::command]
+pub fn start_local_proxy(
+    database: State<'_, AppDatabase>,
+    proxy: State<'_, ProxyRuntimeState>,
+) -> Result<ProxyStatus, String> {
+    let settings = database.get_settings()?;
+    proxy.start(database.inner().clone(), settings.local_proxy_port)
+}
+
+#[tauri::command]
+pub fn stop_local_proxy(
+    database: State<'_, AppDatabase>,
+    proxy: State<'_, ProxyRuntimeState>,
+) -> Result<ProxyStatus, String> {
+    let settings = database.get_settings()?;
+    proxy.stop(settings.local_proxy_port)
+}
+
+#[tauri::command]
+pub fn restart_local_proxy(
+    database: State<'_, AppDatabase>,
+    proxy: State<'_, ProxyRuntimeState>,
+) -> Result<ProxyStatus, String> {
+    let settings = database.get_settings()?;
+    proxy.restart(database.inner().clone(), settings.local_proxy_port)
+}
+
+#[tauri::command]
+pub fn list_request_logs(database: State<'_, AppDatabase>) -> Result<Vec<RequestLog>, String> {
+    database.list_request_logs()
+}
+
+#[tauri::command]
+pub fn clear_request_logs(database: State<'_, AppDatabase>) -> Result<(), String> {
+    database.clear_request_logs()
 }
 
 #[tauri::command]

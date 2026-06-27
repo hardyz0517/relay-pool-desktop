@@ -14,6 +14,7 @@ pub fn run() {
             );
             app.manage(database);
             app.manage(services::capture::session::CaptureSessionStore::default());
+            app.manage(services::proxy::runtime::ProxyRuntimeState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -25,6 +26,12 @@ pub fn run() {
             commands::reorder_stations,
             commands::get_settings,
             commands::update_settings,
+            commands::get_proxy_status,
+            commands::start_local_proxy,
+            commands::stop_local_proxy,
+            commands::restart_local_proxy,
+            commands::list_request_logs,
+            commands::clear_request_logs,
             commands::list_station_keys,
             commands::create_station_key,
             commands::update_station_key,

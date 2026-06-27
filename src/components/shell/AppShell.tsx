@@ -18,6 +18,7 @@ export function AppShell({
 }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false);
   const activeRoute = appRoutes.find((route) => route.id === activeRouteId);
+  const sidebarGridClass = "grid-cols-[20px_minmax(0,1fr)]";
 
   return (
     <div className="flex h-screen min-h-[640px] overflow-hidden bg-background text-foreground">
@@ -27,7 +28,7 @@ export function AppShell({
           collapsed ? "w-[64px]" : "w-[196px]",
         )}
       >
-        <div className="grid h-[57px] grid-cols-[64px_minmax(0,1fr)] items-center overflow-hidden border-b border-border">
+        <div className="grid h-[57px] grid-cols-[20px_minmax(0,1fr)] items-center gap-3 overflow-hidden border-b border-border px-4">
           <div className="flex items-center justify-center">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-cyan-100 bg-teal-50 text-teal-700">
               <Square className="h-4 w-4 fill-current" />
@@ -35,7 +36,7 @@ export function AppShell({
           </div>
           <div
             className={cn(
-              "min-w-0 overflow-hidden pr-3 transition-opacity duration-200 ease-out",
+              "min-w-0 overflow-hidden transition-opacity duration-200 ease-out",
               collapsed ? "opacity-0" : "opacity-100",
             )}
           >
@@ -63,7 +64,7 @@ export function AppShell({
                 title={route.label}
                 aria-label={route.label}
                 className={cn(
-                  "grid h-9 w-full cursor-pointer grid-cols-[64px_minmax(0,1fr)] items-center overflow-hidden rounded-md text-left text-[13px] transition-colors",
+                  "grid h-9 w-full cursor-pointer grid-cols-[20px_minmax(0,1fr)] items-center gap-3 overflow-hidden rounded-md px-4 text-left text-[13px] transition-colors",
                   active
                     ? "bg-teal-50 text-teal-700 shadow-[inset_3px_0_0_rgb(13,148,136)]"
                     : "text-slate-600 hover:bg-cyan-50 hover:text-slate-800",
@@ -74,7 +75,7 @@ export function AppShell({
                 </span>
                 <span
                   className={cn(
-                    "min-w-0 overflow-hidden pr-2 transition-opacity duration-200 ease-out",
+                    "min-w-0 overflow-hidden transition-opacity duration-200 ease-out",
                     collapsed ? "opacity-0" : "opacity-100",
                   )}
                 >
@@ -86,13 +87,13 @@ export function AppShell({
         </nav>
 
         <div className="border-t border-cyan-100 px-0 py-2.5 text-xs text-muted-foreground">
-          <div className="grid grid-cols-[64px_minmax(0,1fr)] items-center">
+          <div className="grid grid-cols-[20px_minmax(0,1fr)] items-center gap-3 px-4">
             <span className="flex items-center justify-center">
               <Circle className="h-2 w-2 fill-current text-amber-600" />
             </span>
             <span
               className={cn(
-                "min-w-0 overflow-hidden pr-3 transition-opacity duration-200 ease-out",
+                "min-w-0 overflow-hidden transition-opacity duration-200 ease-out",
                 collapsed ? "opacity-0" : "opacity-100",
               )}
             >
@@ -105,7 +106,7 @@ export function AppShell({
           <div className="mt-2">
             <Button
               variant="ghost"
-              className="grid h-8 w-full grid-cols-[64px_minmax(0,1fr)] items-center overflow-hidden rounded-lg px-0 text-[13px]"
+              className="grid h-8 w-full grid-cols-[20px_minmax(0,1fr)] items-center gap-3 overflow-hidden rounded-lg px-4 text-[13px]"
               onClick={() => setCollapsed((value) => !value)}
               title={collapsed ? "展开侧边栏" : "收起侧边栏"}
               aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
@@ -115,7 +116,7 @@ export function AppShell({
               </span>
               <span
                 className={cn(
-                  "min-w-0 overflow-hidden pr-2 transition-opacity duration-200 ease-out",
+                  "min-w-0 overflow-hidden transition-opacity duration-200 ease-out",
                   collapsed ? "opacity-0" : "opacity-100",
                 )}
               >

@@ -1,8 +1,15 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Save } from "lucide-react";
+import { Play, RotateCcw, Save, Square } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, MaskedSecret, SectionCard } from "@/components/ui";
+import { Button, MaskedSecret, SectionCard, StatusBadge } from "@/components/ui";
+import {
+  getProxyStatus,
+  restartLocalProxy,
+  startLocalProxy,
+  stopLocalProxy,
+} from "@/lib/api/proxy";
 import { getSettings, updateSettings } from "@/lib/api/settings";
+import type { ProxyStatus } from "@/lib/types/proxy";
 import {
   routingStrategyLabels,
   trayBehaviorLabels,
@@ -30,11 +37,22 @@ const fallbackSettings: AppSettings = {
   dataDir: "等待 Tauri 数据目录",
 };
 
+const fallbackProxyStatus: ProxyStatus = {
+  running: false,
+  bindAddr: "127.0.0.1",
+  port: 8787,
+  startedAt: null,
+  lastError: null,
+  activeRequests: 0,
+};
+
 export function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings>(fallbackSettings);
+  const [proxyStatus, setProxyStatus] = useState<ProxyStatus>(fallbackProxyStatus);
   const [form, setForm] = useState<SettingsFormState>(settingsToForm(fallbackSettings));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [proxyBusy, setProxyBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,12 +65,43 @@ export function SettingsPage() {
     setError(null);
     try {
       const nextSettings = await getSettings();
+      const nextProxyStatus = await getProxyStatus();
       setSettings(nextSettings);
+      setProxyStatus(nextProxyStatus);
       setForm(settingsToForm(nextSettings));
     } catch (requestError) {
       setError(readError(requestError));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleProxyAction(action: "start" | "stop" | "restart") {
+    setProxyBusy(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const nextStatus =
+        action === "start"
+          ? await startLocalProxy()
+          : action === "stop"
+            ? await stopLocalProxy()
+            : await restartLocalProxy();
+      setProxyStatus(nextStatus);
+      setMessage(
+        action === "stop"
+          ? "本地代理已停止。"
+          : `本地代理运行于 http://${nextStatus.bindAddr}:${nextStatus.port}/v1。`,
+      );
+    } catch (requestError) {
+      setError(readError(requestError));
+      try {
+        setProxyStatus(await getProxyStatus());
+      } catch {
+        // Keep the visible error from the failed action.
+      }
+    } finally {
+      setProxyBusy(false);
     }
   }
 
@@ -76,7 +125,7 @@ export function SettingsPage() {
   return (
     <PageScaffold
       title="设置"
-      description="本地设置部分持久化；真实代理和采集器仍未启用。"
+      description="管理本地 OpenAI-compatible 代理、路由偏好和数据目录。"
       width="settings"
       actions={
         <Button disabled={saving || loading} form="settings-form" type="submit">
@@ -86,7 +135,50 @@ export function SettingsPage() {
       }
     >
       <form id="settings-form" className="grid gap-3" onSubmit={handleSubmit}>
-        <SectionCard title="本地代理" description="端口和本地 key 已来自 SQLite。">
+        <SectionCard
+          title="本地代理"
+          description="P5 MVP 仅监听 127.0.0.1，外部工具可使用这个 OpenAI-compatible 入口。"
+          action={
+            <StatusBadge tone={proxyStatus.running ? "healthy" : "disabled"}>
+              {proxyStatus.running ? "运行中" : "已停止"}
+            </StatusBadge>
+          }
+        >
+          <SettingRow
+            control={
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  disabled={proxyBusy || proxyStatus.running}
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void handleProxyAction("start")}
+                >
+                  <Play className="h-4 w-4" />
+                  启动
+                </Button>
+                <Button
+                  disabled={proxyBusy || !proxyStatus.running}
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleProxyAction("stop")}
+                >
+                  <Square className="h-4 w-4" />
+                  停止
+                </Button>
+                <Button
+                  disabled={proxyBusy}
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleProxyAction("restart")}
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  重启
+                </Button>
+              </div>
+            }
+            description={`活动请求 ${proxyStatus.activeRequests} 个；${proxyStatus.lastError ?? "最近没有运行时错误"}`}
+            label="运行状态"
+          />
           <SettingRow
             control={
               <input
@@ -98,7 +190,7 @@ export function SettingsPage() {
                 onChange={(event) => setForm({ ...form, localProxyPort: event.target.value })}
               />
             }
-            description="后续真实 proxy 会使用该端口。"
+            description="保存后重启代理生效；端口冲突会返回可读错误。"
             label="代理端口"
           />
           <SettingRow
@@ -113,7 +205,7 @@ export function SettingsPage() {
           />
         </SectionCard>
 
-        <SectionCard title="路由与采集" description="保存设置形态，不触发真实业务。">
+        <SectionCard title="路由与采集" description="P5 默认按 Key 池全局 priority fallback。">
           <SettingRow
             control={
               <select
@@ -130,7 +222,7 @@ export function SettingsPage() {
                 ))}
               </select>
             }
-            description="真实路由服务接入后使用。"
+            description="复杂策略仍是后续阶段；P5 使用 Key 池优先级。"
             label="默认路由策略"
           />
           <SettingRow

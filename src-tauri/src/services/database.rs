@@ -12,10 +12,12 @@ use tauri::{AppHandle, Manager};
 use crate::models::{
     collector::CollectorSnapshot,
     credentials::{StationCredentials, UpdateStationCredentialsInput},
+    proxy::{CreateRequestLogInput, RequestLog},
     settings::{AppSettings, UpdateSettingsInput},
     station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, UpdateStationInput},
 };
+use crate::services::proxy::RouteCandidate;
 
 #[derive(Clone)]
 pub struct AppDatabase {
@@ -348,6 +350,11 @@ impl AppDatabase {
         list_key_pool_items_from_connection(&connection)
     }
 
+    pub fn proxy_route_candidates(&self) -> Result<Vec<RouteCandidate>, String> {
+        let connection = self.connection()?;
+        proxy_route_candidates_from_connection(&connection)
+    }
+
     pub fn reorder_key_pool(&self, key_ids: Vec<String>) -> Result<Vec<KeyPoolItem>, String> {
         if key_ids.is_empty() {
             return Err("Key 排序列表不能为空".to_string());
@@ -463,6 +470,24 @@ impl AppDatabase {
         latest_collector_snapshot_from_connection(&connection, &station_id)
     }
 
+    pub fn insert_request_log(&self, input: CreateRequestLogInput) -> Result<RequestLog, String> {
+        let connection = self.connection()?;
+        insert_request_log_in_connection(&connection, input)
+    }
+
+    pub fn list_request_logs(&self) -> Result<Vec<RequestLog>, String> {
+        let connection = self.connection()?;
+        list_request_logs_from_connection(&connection)
+    }
+
+    pub fn clear_request_logs(&self) -> Result<(), String> {
+        let connection = self.connection()?;
+        connection
+            .execute("DELETE FROM request_logs", [])
+            .map_err(|error| format!("清空请求日志失败: {error}"))?;
+        Ok(())
+    }
+
     pub fn update_station_login_status(
         &self,
         station_id: &str,
@@ -572,6 +597,27 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_collector_snapshots_station_created
             ON collector_snapshots(station_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS request_logs (
+            id TEXT PRIMARY KEY,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            duration_ms INTEGER,
+            method TEXT NOT NULL,
+            path TEXT NOT NULL,
+            model TEXT,
+            stream INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            station_key_id TEXT,
+            station_id TEXT,
+            upstream_base_url TEXT,
+            fallback_count INTEGER NOT NULL DEFAULT 0,
+            error_message TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_request_logs_created
+            ON request_logs(created_at DESC);
         ",
     )
 }
@@ -823,6 +869,126 @@ fn list_key_pool_items_from_connection(connection: &Connection) -> Result<Vec<Ke
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析 Key 池失败: {error}"))?;
 
+    Ok(rows)
+}
+
+fn proxy_route_candidates_from_connection(connection: &Connection) -> Result<Vec<RouteCandidate>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT k.id, k.station_id, s.base_url, k.api_key, k.priority
+               FROM station_keys k
+               JOIN stations s ON s.id = k.station_id
+              WHERE k.enabled = 1
+                AND s.enabled = 1
+                AND TRIM(k.api_key) != ''
+              ORDER BY k.priority ASC, k.created_at ASC",
+        )
+        .map_err(|error| format!("读取 Key 池候选失败: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(RouteCandidate {
+                station_key_id: row.get(0)?,
+                station_id: row.get(1)?,
+                upstream_base_url: row.get(2)?,
+                api_key: row.get(3)?,
+                priority: row.get(4)?,
+            })
+        })
+        .map_err(|error| format!("查询 Key 池候选失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析 Key 池候选失败: {error}"))?;
+    Ok(rows)
+}
+
+fn insert_request_log_in_connection(
+    connection: &Connection,
+    input: CreateRequestLogInput,
+) -> Result<RequestLog, String> {
+    let id = generate_id("request");
+    let created_at = now_string();
+    connection
+        .execute(
+            "INSERT INTO request_logs (
+                id, started_at, finished_at, duration_ms, method, path, model, stream,
+                status, station_key_id, station_id, upstream_base_url, fallback_count,
+                error_message, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                id,
+                input.started_at,
+                input.finished_at,
+                input.duration_ms,
+                input.method,
+                input.path,
+                normalize_optional_string(input.model),
+                bool_to_i64(input.stream),
+                input.status,
+                normalize_optional_string(input.station_key_id),
+                normalize_optional_string(input.station_id),
+                normalize_optional_string(input.upstream_base_url),
+                input.fallback_count,
+                normalize_optional_string(input.error_message),
+                created_at,
+            ],
+        )
+        .map_err(|error| format!("保存请求日志失败: {error}"))?;
+
+    request_log_by_id(connection, &id)
+}
+
+fn row_to_request_log(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLog> {
+    Ok(RequestLog {
+        id: row.get(0)?,
+        started_at: row.get(1)?,
+        finished_at: row.get(2)?,
+        duration_ms: row.get(3)?,
+        method: row.get(4)?,
+        path: row.get(5)?,
+        model: row.get(6)?,
+        stream: i64_to_bool(row.get(7)?),
+        status: row.get(8)?,
+        station_key_id: row.get(9)?,
+        station_id: row.get(10)?,
+        upstream_base_url: row.get(11)?,
+        fallback_count: row.get(12)?,
+        error_message: row.get(13)?,
+        created_at: row.get(14)?,
+    })
+}
+
+fn request_log_by_id(connection: &Connection, id: &str) -> Result<RequestLog, String> {
+    connection
+        .query_row(
+            "SELECT id, started_at, finished_at, duration_ms, method, path, model, stream,
+                    status, station_key_id, station_id, upstream_base_url, fallback_count,
+                    error_message, created_at
+               FROM request_logs
+              WHERE id = ?1",
+            params![id],
+            row_to_request_log,
+        )
+        .optional()
+        .map_err(|error| format!("读取请求日志失败: {error}"))?
+        .ok_or_else(|| "请求日志不存在".to_string())
+}
+
+fn list_request_logs_from_connection(connection: &Connection) -> Result<Vec<RequestLog>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, started_at, finished_at, duration_ms, method, path, model, stream,
+                    status, station_key_id, station_id, upstream_base_url, fallback_count,
+                    error_message, created_at
+               FROM request_logs
+              ORDER BY created_at DESC
+              LIMIT 500",
+        )
+        .map_err(|error| format!("读取请求日志列表失败: {error}"))?;
+
+    let rows = statement
+        .query_map([], row_to_request_log)
+        .map_err(|error| format!("查询请求日志失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析请求日志失败: {error}"))?;
     Ok(rows)
 }
 
