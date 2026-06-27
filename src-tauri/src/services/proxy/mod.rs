@@ -1,6 +1,10 @@
 use serde_json::Value;
 
+use crate::models::proxy::{ClientRequestKind, UpstreamApiFormat};
+
+pub mod adapters;
 pub mod runtime;
+pub mod router;
 
 #[derive(Debug, Clone)]
 pub struct RouteCandidate {
@@ -8,11 +12,25 @@ pub struct RouteCandidate {
     pub station_id: String,
     pub upstream_base_url: String,
     pub api_key: String,
+    pub upstream_api_format: UpstreamApiFormat,
     pub priority: i64,
 }
 
 pub fn enabled_candidates(mut candidates: Vec<RouteCandidate>) -> Vec<RouteCandidate> {
     candidates.sort_by_key(|candidate| candidate.priority);
+    candidates
+}
+
+pub fn preferred_candidates(
+    mut candidates: Vec<RouteCandidate>,
+    request_kind: ClientRequestKind,
+) -> Vec<RouteCandidate> {
+    candidates.sort_by_key(|candidate| {
+        (
+            request_kind_rank(&candidate.upstream_api_format, &request_kind),
+            candidate.priority,
+        )
+    });
     candidates
 }
 
@@ -26,6 +44,14 @@ pub fn extract_chat_request_metadata(body: &Value) -> (Option<String>, bool) {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     (model, stream)
+}
+
+pub fn extract_request_kind(body: &Value) -> crate::models::proxy::ClientRequestKind {
+    if body.get("input").is_some() || body.get("instructions").is_some() {
+        crate::models::proxy::ClientRequestKind::Responses
+    } else {
+        crate::models::proxy::ClientRequestKind::ChatCompletions
+    }
 }
 
 pub fn build_upstream_url(base_url: &str, path: &str) -> String {
@@ -43,6 +69,23 @@ pub fn build_upstream_url(base_url: &str, path: &str) -> String {
 
 pub fn should_fallback(status: u16) -> bool {
     status == 429 || (500..=599).contains(&status)
+}
+
+fn request_kind_rank(format: &UpstreamApiFormat, request_kind: &ClientRequestKind) -> u8 {
+    match request_kind {
+        ClientRequestKind::ChatCompletions => match format {
+            UpstreamApiFormat::OpenAiChatCompletions
+            | UpstreamApiFormat::Auto
+            | UpstreamApiFormat::CustomOpenAiCompatible => 0,
+            UpstreamApiFormat::OpenAiResponses => 1,
+        },
+        ClientRequestKind::Responses => match format {
+            UpstreamApiFormat::OpenAiResponses
+            | UpstreamApiFormat::Auto
+            | UpstreamApiFormat::CustomOpenAiCompatible => 0,
+            UpstreamApiFormat::OpenAiChatCompletions => 1,
+        },
+    }
 }
 
 pub fn openai_error(message: &str, status: &str) -> Value {
@@ -88,6 +131,20 @@ mod tests {
 
         let ids: Vec<_> = sorted.iter().map(|item| item.station_key_id.as_str()).collect();
         assert_eq!(ids, vec!["key-a", "key-c", "key-b"]);
+    }
+
+    #[test]
+    fn preferred_candidates_prioritizes_matching_upstream_format() {
+        let candidates = vec![
+            candidate_with_format("responses", 0, UpstreamApiFormat::OpenAiResponses),
+            candidate_with_format("chat", 10, UpstreamApiFormat::OpenAiChatCompletions),
+            candidate_with_format("auto", 20, UpstreamApiFormat::Auto),
+        ];
+
+        let sorted = preferred_candidates(candidates, ClientRequestKind::Responses);
+
+        let ids: Vec<_> = sorted.iter().map(|item| item.station_key_id.as_str()).collect();
+        assert_eq!(ids, vec!["responses", "auto", "chat"]);
     }
 
     #[test]
@@ -148,11 +205,20 @@ mod tests {
     }
 
     fn candidate(id: &str, priority: i64) -> RouteCandidate {
+        candidate_with_format(id, priority, UpstreamApiFormat::Auto)
+    }
+
+    fn candidate_with_format(
+        id: &str,
+        priority: i64,
+        upstream_api_format: UpstreamApiFormat,
+    ) -> RouteCandidate {
         RouteCandidate {
             station_key_id: id.to_string(),
             station_id: format!("station-{id}"),
             upstream_base_url: "https://example.test/v1".to_string(),
             api_key: format!("sk-{id}"),
+            upstream_api_format,
             priority,
         }
     }

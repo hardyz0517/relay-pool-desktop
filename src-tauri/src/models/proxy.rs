@@ -9,6 +9,7 @@ pub struct ProxyStatus {
     pub started_at: Option<String>,
     pub last_error: Option<String>,
     pub active_requests: u32,
+    pub request_count: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,4 +48,20 @@ pub struct CreateRequestLogInput {
     pub started_at: String,
     pub finished_at: Option<String>,
     pub duration_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientRequestKind {
+    ChatCompletions,
+    Responses,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpstreamApiFormat {
+    Auto,
+    OpenAiChatCompletions,
+    OpenAiResponses,
+    CustomOpenAiCompatible,
 }

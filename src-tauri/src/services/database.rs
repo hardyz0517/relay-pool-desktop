@@ -12,7 +12,7 @@ use tauri::{AppHandle, Manager};
 use crate::models::{
     collector::CollectorSnapshot,
     credentials::{StationCredentials, UpdateStationCredentialsInput},
-    proxy::{CreateRequestLogInput, RequestLog},
+    proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
     settings::{AppSettings, UpdateSettingsInput},
     station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, UpdateStationInput},
@@ -45,6 +45,8 @@ impl AppDatabase {
             .map_err(|error| format!("初始化默认设置失败: {error}"))?;
         migrate_default_station_keys(&connection)
             .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
+        migrate_station_proxy_columns(&connection)
+            .map_err(|error| format!("迁移站点代理字段失败: {error}"))?;
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -293,6 +295,23 @@ impl AppDatabase {
         update_station_key_in_connection(&connection, input)
     }
 
+    pub fn touch_station_key_usage(
+        &self,
+        station_key_id: &str,
+        status: &str,
+        last_used_at: Option<&str>,
+        last_checked_at: Option<&str>,
+    ) -> Result<(), String> {
+        let connection = self.connection()?;
+        touch_station_key_usage_in_connection(
+            &connection,
+            station_key_id,
+            status,
+            last_used_at,
+            last_checked_at,
+        )
+    }
+
     pub fn delete_station_key(&self, id: String) -> Result<(), String> {
         let connection = self.connection()?;
         let station_id: Option<String> = connection
@@ -520,6 +539,8 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             station_type TEXT NOT NULL,
             base_url TEXT NOT NULL,
             api_key TEXT NOT NULL,
+            upstream_api_format TEXT NOT NULL DEFAULT 'auto',
+            upstream_api_base_path TEXT NOT NULL DEFAULT '/v1',
             enabled INTEGER NOT NULL DEFAULT 1,
             priority INTEGER NOT NULL DEFAULT 0,
             credit_per_cny REAL NOT NULL DEFAULT 1,
@@ -652,27 +673,28 @@ fn row_to_station(row: &rusqlite::Row<'_>) -> rusqlite::Result<Station> {
         base_url: row.get(3)?,
         api_key_masked: mask_secret(&api_key),
         api_key_present: !api_key.is_empty(),
-        key_count: row.get(5)?,
-        enabled: i64_to_bool(row.get(6)?),
-        priority: row.get(7)?,
-        credit_per_cny: row.get(8)?,
-        balance_raw: row.get(9)?,
-        balance_cny: row.get(10)?,
-        low_balance_threshold_cny: row.get(11)?,
-        status: row.get(12)?,
-        latency_ms: row.get(13)?,
-        last_checked_at: row.get(14)?,
-        last_pricing_fetched_at: row.get(15)?,
-        note: row.get(16)?,
-        created_at: row.get(17)?,
-        updated_at: row.get(18)?,
+        key_count: row.get(7)?,
+        enabled: i64_to_bool(row.get(8)?),
+        priority: row.get(9)?,
+        credit_per_cny: row.get(10)?,
+        balance_raw: row.get(11)?,
+        balance_cny: row.get(12)?,
+        low_balance_threshold_cny: row.get(13)?,
+        status: row.get(14)?,
+        latency_ms: row.get(15)?,
+        last_checked_at: row.get(16)?,
+        last_pricing_fetched_at: row.get(17)?,
+        note: row.get(18)?,
+        created_at: row.get(19)?,
+        updated_at: row.get(20)?,
     })
 }
 
 fn list_stations_from_connection(connection: &Connection) -> Result<Vec<Station>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, name, station_type, base_url, api_key,
+            "SELECT id, name, station_type, base_url, api_key, upstream_api_format,
+                    upstream_api_base_path,
                     (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                     enabled, priority,
                     credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
@@ -695,7 +717,8 @@ fn list_stations_from_connection(connection: &Connection) -> Result<Vec<Station>
 fn station_by_id(connection: &Connection, id: &str) -> Result<Station, String> {
     connection
         .query_row(
-            "SELECT id, name, station_type, base_url, api_key,
+            "SELECT id, name, station_type, base_url, api_key, upstream_api_format,
+                    upstream_api_base_path,
                     (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                     enabled, priority,
                     credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
@@ -723,6 +746,28 @@ fn validate_station_exists(connection: &Connection, station_id: &str) -> Result<
 
     if exists.is_none() {
         return Err("站点不存在".to_string());
+    }
+
+    Ok(())
+}
+
+fn migrate_station_proxy_columns(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(stations)")?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if !rows.iter().any(|column| column == "upstream_api_format") {
+        connection.execute(
+            "ALTER TABLE stations ADD COLUMN upstream_api_format TEXT NOT NULL DEFAULT 'auto'",
+            [],
+        )?;
+    }
+    if !rows.iter().any(|column| column == "upstream_api_base_path") {
+        connection.execute(
+            "ALTER TABLE stations ADD COLUMN upstream_api_base_path TEXT NOT NULL DEFAULT '/v1'",
+            [],
+        )?;
     }
 
     Ok(())
@@ -875,7 +920,7 @@ fn list_key_pool_items_from_connection(connection: &Connection) -> Result<Vec<Ke
 fn proxy_route_candidates_from_connection(connection: &Connection) -> Result<Vec<RouteCandidate>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT k.id, k.station_id, s.base_url, k.api_key, k.priority
+            "SELECT k.id, k.station_id, s.base_url, k.api_key, s.upstream_api_format, k.priority
                FROM station_keys k
                JOIN stations s ON s.id = k.station_id
               WHERE k.enabled = 1
@@ -891,7 +936,8 @@ fn proxy_route_candidates_from_connection(connection: &Connection) -> Result<Vec
                 station_id: row.get(1)?,
                 upstream_base_url: row.get(2)?,
                 api_key: row.get(3)?,
-                priority: row.get(4)?,
+                upstream_api_format: parse_upstream_api_format(row.get::<_, String>(4)?),
+                priority: row.get(5)?,
             })
         })
         .map_err(|error| format!("查询 Key 池候选失败: {error}"))?
@@ -1095,6 +1141,33 @@ fn update_station_key_in_connection(
         .map_err(|error| format!("更新 Station Key 失败: {error}"))?;
 
     station_key_by_id(connection, &input.id)
+}
+
+fn touch_station_key_usage_in_connection(
+    connection: &Connection,
+    station_key_id: &str,
+    status: &str,
+    last_used_at: Option<&str>,
+    last_checked_at: Option<&str>,
+) -> Result<(), String> {
+    let now = now_string();
+    let updated = connection
+        .execute(
+            "UPDATE station_keys
+                SET status = ?1,
+                    last_used_at = COALESCE(?2, last_used_at),
+                    last_checked_at = COALESCE(?3, last_checked_at),
+                    updated_at = ?4
+              WHERE id = ?5",
+            params![status, last_used_at, last_checked_at, now, station_key_id],
+        )
+        .map_err(|error| format!("更新 Station Key 使用状态失败: {error}"))?;
+
+    if updated == 0 {
+        return Err("Station Key 不存在，无法更新状态".to_string());
+    }
+
+    Ok(())
 }
 
 fn station_key_by_id(connection: &Connection, id: &str) -> Result<StationKey, String> {
@@ -1433,6 +1506,15 @@ fn latest_collector_snapshot_from_connection(
 
 fn parse_json_value(value: &str) -> Value {
     serde_json::from_str(value).unwrap_or_else(|_| json!({ "parseError": true }))
+}
+
+fn parse_upstream_api_format(value: String) -> UpstreamApiFormat {
+    match value.as_str() {
+        "openai_chat_completions" => UpstreamApiFormat::OpenAiChatCompletions,
+        "openai_responses" => UpstreamApiFormat::OpenAiResponses,
+        "custom_openai_compatible" => UpstreamApiFormat::CustomOpenAiCompatible,
+        _ => UpstreamApiFormat::Auto,
+    }
 }
 
 fn settings_from_connection(
