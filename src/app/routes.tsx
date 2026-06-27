@@ -5,6 +5,7 @@ import {
   DatabaseZap,
   GitBranch,
   LayoutDashboard,
+  KeyRound,
   Settings,
   Radar,
 } from "lucide-react";
@@ -19,9 +20,15 @@ export const appRoutes: AppRoute[] = [
   },
   {
     id: "stations",
-    label: "中转池",
-    description: "站点列表、优先级和连接状态",
+    label: "中转站",
+    description: "站点账号、登录信息和采集来源",
     icon: DatabaseZap,
+  },
+  {
+    id: "keyPool",
+    label: "Key 池",
+    description: "所有站点 Key 的统一管理视图",
+    icon: KeyRound,
   },
   {
     id: "channels",

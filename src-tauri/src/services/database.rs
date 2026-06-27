@@ -13,7 +13,7 @@ use crate::models::{
     collector::CollectorSnapshot,
     credentials::{StationCredentials, UpdateStationCredentialsInput},
     settings::{AppSettings, UpdateSettingsInput},
-    station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
+    station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, UpdateStationInput},
 };
 
@@ -343,6 +343,40 @@ impl AppDatabase {
         list_station_keys_from_connection(&connection, &station_id)
     }
 
+    pub fn list_key_pool_items(&self) -> Result<Vec<KeyPoolItem>, String> {
+        let connection = self.connection()?;
+        list_key_pool_items_from_connection(&connection)
+    }
+
+    pub fn reorder_key_pool(&self, key_ids: Vec<String>) -> Result<Vec<KeyPoolItem>, String> {
+        if key_ids.is_empty() {
+            return Err("Key 排序列表不能为空".to_string());
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始 Key 池排序事务失败: {error}"))?;
+
+        for (index, id) in key_ids.iter().enumerate() {
+            let updated = transaction
+                .execute(
+                    "UPDATE station_keys SET priority = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![index as i64, now_string(), id],
+                )
+                .map_err(|error| format!("更新 Key 池排序失败: {error}"))?;
+            if updated == 0 {
+                return Err(format!("Station Key 不存在，无法排序: {id}"));
+            }
+        }
+
+        transaction
+            .commit()
+            .map_err(|error| format!("保存 Key 池排序失败: {error}"))?;
+
+        list_key_pool_items_from_connection(&connection)
+    }
+
     pub fn get_station_credentials(
         &self,
         station_id: String,
@@ -350,6 +384,15 @@ impl AppDatabase {
         let connection = self.connection()?;
         validate_station_exists(&connection, &station_id)?;
         station_credentials_from_connection(&connection, &station_id)
+    }
+
+    pub fn get_station_login_password(
+        &self,
+        station_id: String,
+    ) -> Result<Option<String>, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, &station_id)?;
+        station_login_password_from_connection(&connection, &station_id)
     }
 
     pub fn update_station_credentials(
@@ -725,6 +768,64 @@ fn list_station_keys_from_connection(
     Ok(rows)
 }
 
+fn list_key_pool_items_from_connection(connection: &Connection) -> Result<Vec<KeyPoolItem>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT
+                k.id,
+                k.station_id,
+                s.name,
+                s.station_type,
+                s.base_url,
+                k.name,
+                k.api_key,
+                k.enabled,
+                k.priority,
+                k.group_name,
+                k.tier_label,
+                k.status,
+                k.last_checked_at,
+                k.last_used_at,
+                k.note,
+                k.created_at,
+                k.updated_at
+             FROM station_keys k
+             INNER JOIN stations s ON s.id = k.station_id
+             ORDER BY k.priority ASC, k.created_at ASC",
+        )
+        .map_err(|error| format!("读取 Key 池失败: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            let api_key: String = row.get(6)?;
+            Ok(KeyPoolItem {
+                id: row.get(0)?,
+                station_id: row.get(1)?,
+                station_name: row.get(2)?,
+                station_type: row.get(3)?,
+                station_base_url: row.get(4)?,
+                name: row.get(5)?,
+                api_key_masked: mask_secret(&api_key),
+                api_key_present: !api_key.trim().is_empty(),
+                enabled: i64_to_bool(row.get(7)?),
+                priority: row.get(8)?,
+                group_name: row.get(9)?,
+                tier_label: row.get(10)?,
+                status: row.get(11)?,
+                last_checked_at: row.get(12)?,
+                last_used_at: row.get(13)?,
+                note: row.get(14)?,
+                created_at: row.get(15)?,
+                updated_at: row.get(16)?,
+            })
+        })
+        .map_err(|error| format!("查询 Key 池失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析 Key 池失败: {error}"))?;
+
+    Ok(rows)
+}
+
 fn create_station_key_in_connection(
     connection: &Connection,
     input: CreateStationKeyInput,
@@ -930,6 +1031,33 @@ fn station_credentials_from_connection(
         session_expires_at: None,
         updated_at: None,
     }))
+}
+
+fn station_login_password_from_connection(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<Option<String>, String> {
+    connection
+        .query_row(
+            "SELECT login_password
+               FROM station_credentials
+              WHERE station_id = ?1",
+            params![station_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取登录密码失败: {error}"))?
+        .map(|password| {
+            password.and_then(|value| {
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            })
+        })
+        .ok_or_else(|| "未找到登录信息".to_string())
 }
 
 fn upsert_station_credentials(
@@ -1299,6 +1427,10 @@ fn generate_id(prefix: &str) -> String {
 
 fn now_string() -> String {
     now_millis().to_string()
+}
+
+pub fn now_millis_for_services() -> u128 {
+    now_millis()
 }
 
 fn now_millis() -> u128 {

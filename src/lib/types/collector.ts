@@ -31,6 +31,10 @@ export type CollectorSummary = {
   detectedType?: string;
   conclusion?: string;
   message?: string;
+  loginStatus?: string;
+  loginRequired?: boolean;
+  nextStep?: string;
+  diagnosis?: string;
   endpointResults?: CollectorEndpointResult[];
   recognized?: CollectorRecognizedSummary;
   webviewRequired?: boolean;
@@ -46,4 +50,13 @@ export type CollectorEvent = {
 export type CollectorRunResult = {
   snapshot: CollectorSnapshot;
   events: CollectorEvent[];
+};
+
+export type CaptureSessionStatus = {
+  stationId: string;
+  status: "idle" | "capturing" | "failed" | string;
+  captureCount: number;
+  recognizedFieldCount: number;
+  pendingConfirmationCount: number;
+  lastError: string | null;
 };

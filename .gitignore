@@ -49,3 +49,5 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+.codegraph/

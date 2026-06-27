@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  ChevronDown,
   Copy,
   Database,
   Radar,
@@ -10,12 +11,19 @@ import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, EmptyState, SectionCard, StatusBadge } from "@/components/ui";
 import {
   collectStationInfo,
+  clearCaptureSession,
   detectStationInfo,
+  closeCaptureSession,
+  finishCaptureSession,
+  getCaptureSessionStatus,
   getLatestCollectorSnapshot,
   listCollectorSnapshots,
+  startCaptureSession,
+  testStationLogin,
 } from "@/lib/api/collector";
 import { listStations } from "@/lib/api/stations";
 import type {
+  CaptureSessionStatus,
   CollectorEndpointResult,
   CollectorSnapshot,
   CollectorSummary,
@@ -23,7 +31,15 @@ import type {
 import { stationTypeLabels, type Station } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 
-type TaskStatus = "idle" | "detecting" | "collecting" | "success" | "failed";
+type TaskStatus =
+  | "idle"
+  | "testingLogin"
+  | "collecting"
+  | "detecting"
+  | "capturing"
+  | "finishingCapture"
+  | "success"
+  | "failed";
 
 export function CollectorsPage() {
   const [stations, setStations] = useState<Station[]>([]);
@@ -32,6 +48,7 @@ export function CollectorsPage() {
   const [history, setHistory] = useState<CollectorSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [taskStatus, setTaskStatus] = useState<TaskStatus>("idle");
+  const [captureStatus, setCaptureStatus] = useState<CaptureSessionStatus | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,6 +59,8 @@ export function CollectorsPage() {
   const summary = toCollectorSummary(latestSnapshot?.summaryJson);
   const recognized = summary.recognized;
   const endpointResults = summary.endpointResults ?? [];
+  const normalized = latestSnapshot?.normalizedJson ?? {};
+  const modelCount = Array.isArray(normalized.models) ? normalized.models.length : 0;
 
   useEffect(() => {
     void refreshStations();
@@ -54,6 +73,7 @@ export function CollectorsPage() {
       return;
     }
     void refreshSnapshot(selectedStation.id);
+    void refreshCaptureStatus(selectedStation.id);
   }, [selectedStation?.id]);
 
   async function refreshStations() {
@@ -88,20 +108,11 @@ export function CollectorsPage() {
     }
   }
 
-  async function handleDetect() {
-    if (!selectedStation) return;
-    setTaskStatus("detecting");
-    setError(null);
-    setMessage(null);
+  async function refreshCaptureStatus(stationId: string) {
     try {
-      const result = await detectStationInfo(selectedStation.id);
-      setLatestSnapshot(result.snapshot);
-      await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id)]);
-      setTaskStatus("success");
-      setMessage("站点探测完成。");
-    } catch (requestError) {
-      setTaskStatus("failed");
-      setError(shortError(readError(requestError)));
+      setCaptureStatus(await getCaptureSessionStatus(stationId));
+    } catch {
+      setCaptureStatus(null);
     }
   }
 
@@ -115,9 +126,101 @@ export function CollectorsPage() {
       setLatestSnapshot(result.snapshot);
       await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id)]);
       setTaskStatus("success");
-      setMessage("采集快照已保存。");
+      setMessage("采集信息已完成。");
     } catch (requestError) {
       setTaskStatus("failed");
+      setError(shortError(readError(requestError)));
+    }
+  }
+
+  async function handleTestLogin() {
+    if (!selectedStation) return;
+    setTaskStatus("testingLogin");
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await testStationLogin(selectedStation.id);
+      setLatestSnapshot(result.snapshot);
+      await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id)]);
+      setTaskStatus("success");
+      setMessage("登录测试已完成。");
+    } catch (requestError) {
+      setTaskStatus("failed");
+      setError(shortError(readError(requestError)));
+    }
+  }
+
+  async function handleDetect() {
+    if (!selectedStation) return;
+    setTaskStatus("detecting");
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await detectStationInfo(selectedStation.id);
+      setLatestSnapshot(result.snapshot);
+      await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id)]);
+      setTaskStatus("success");
+      setMessage("高级探测已完成。");
+    } catch (requestError) {
+      setTaskStatus("failed");
+      setError(shortError(readError(requestError)));
+    }
+  }
+
+  async function handleStartCapture() {
+    if (!selectedStation) return;
+    setTaskStatus("capturing");
+    setError(null);
+    setMessage(null);
+    try {
+      const nextStatus = await startCaptureSession(selectedStation.id);
+      setCaptureStatus(nextStatus);
+      setMessage("实验性网页登录捕获已打开。");
+    } catch (requestError) {
+      setTaskStatus("failed");
+      setError(shortError(readError(requestError)));
+    }
+  }
+
+  async function handleFinishCapture() {
+    if (!selectedStation) return;
+    setTaskStatus("finishingCapture");
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await finishCaptureSession(selectedStation.id);
+      setLatestSnapshot(result.snapshot);
+      await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id), refreshCaptureStatus(selectedStation.id)]);
+      setTaskStatus("success");
+      setMessage("网页登录捕获快照已保存。");
+    } catch (requestError) {
+      setTaskStatus("failed");
+      setError(shortError(readError(requestError)));
+    }
+  }
+
+  async function handleClearCapture() {
+    if (!selectedStation) return;
+    setError(null);
+    try {
+      const nextStatus = await clearCaptureSession(selectedStation.id);
+      setCaptureStatus(nextStatus);
+      setTaskStatus("idle");
+      setMessage("捕获状态已清除。");
+    } catch (requestError) {
+      setError(shortError(readError(requestError)));
+    }
+  }
+
+  async function handleCloseCapture() {
+    if (!selectedStation) return;
+    setError(null);
+    try {
+      const nextStatus = await closeCaptureSession(selectedStation.id);
+      setCaptureStatus(nextStatus);
+      setTaskStatus("idle");
+      setMessage("网页登录捕获窗口已关闭。");
+    } catch (requestError) {
       setError(shortError(readError(requestError)));
     }
   }
@@ -129,28 +232,40 @@ export function CollectorsPage() {
     setMessage("已复制脱敏 JSON。");
   }
 
-  const actionBusy = taskStatus === "detecting" || taskStatus === "collecting";
+  const actionBusy = taskStatus === "testingLogin" || taskStatus === "collecting" || taskStatus === "detecting" || taskStatus === "finishingCapture";
+  const captureActive = captureStatus?.status === "capturing" || taskStatus === "capturing";
+  const conclusion = conclusionLabel(summary, latestSnapshot);
 
   return (
     <PageScaffold
       title="信息采集"
-      description="统一探测中转站账号、余额、分组、倍率和接口能力；Sub2API / NewAPI 采集器会按站点类型自动选择。"
+      description="填写中转站账号密码后，先做登录态采集；高级选项里保留接口探测和网页登录捕获兜底。"
       actions={
         <div className="flex items-center gap-2">
-          <select className={selectClassName} value={selectedStationId} onChange={(event) => setSelectedStationId(event.target.value)}>
+          <select
+            className={selectClassName}
+            value={selectedStationId}
+            onChange={(event) => setSelectedStationId(event.target.value)}
+          >
             {stations.map((station) => (
-              <option key={station.id} value={station.id}>{station.name}</option>
+              <option key={station.id} value={station.id}>
+                {station.name}
+              </option>
             ))}
           </select>
-          <Button variant="secondary" onClick={handleDetect} disabled={actionBusy || !selectedStation}>
-            <Radar className="h-4 w-4" />
-            {taskStatus === "detecting" ? "探测中" : "探测"}
-          </Button>
           <Button variant="secondary" onClick={handleCollect} disabled={actionBusy || !selectedStation}>
             <Database className="h-4 w-4" />
-            {taskStatus === "collecting" ? "采集中" : "采集"}
+            {taskStatus === "collecting" ? "采集中" : "采集信息"}
           </Button>
-          <Button variant="secondary" onClick={() => selectedStation && void refreshSnapshot(selectedStation.id)} disabled={!selectedStation || actionBusy}>
+          <Button variant="secondary" onClick={handleTestLogin} disabled={actionBusy || !selectedStation}>
+            <ShieldCheck className="h-4 w-4" />
+            {taskStatus === "testingLogin" ? "测试中" : "测试登录"}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => selectedStation && void refreshSnapshot(selectedStation.id)}
+            disabled={!selectedStation || actionBusy}
+          >
             <RefreshCcw className="h-4 w-4" />
             刷新
           </Button>
@@ -158,16 +273,21 @@ export function CollectorsPage() {
       }
     >
       {loading ? (
-        <div className="rounded-2xl border border-cyan-100 bg-white/85 px-4 py-5 text-sm text-muted-foreground">正在读取站点和采集快照...</div>
+        <div className="rounded-2xl border border-cyan-100 bg-white/85 px-4 py-5 text-sm text-muted-foreground">
+          正在读取站点和采集快照...
+        </div>
       ) : !selectedStation ? (
-        <EmptyState title="还没有可采集的站点" description="先在中转池添加一个站点账号，再回到这里探测余额、分组、倍率和接口能力。" />
+        <EmptyState
+          title="还没有可采集的站点"
+          description="先在中转站添加一个站点账号，再回到这里做登录态采集。"
+        />
       ) : (
         <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-3">
             <SectionCard
               title="采集结论"
               description={`${selectedStation.name} · ${stationTypeLabels[selectedStation.stationType]} · ${selectedStation.baseUrl}`}
-              action={<StatusBadge tone={toneForConclusion(conclusionLabel(summary, latestSnapshot))}>{conclusionLabel(summary, latestSnapshot)}</StatusBadge>}
+              action={<StatusBadge tone={toneForConclusion(conclusion)}>{conclusion}</StatusBadge>}
             >
               <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
                 <div className="rounded-2xl border border-cyan-100 bg-cyan-50/45 p-3">
@@ -176,66 +296,116 @@ export function CollectorsPage() {
                       <ShieldCheck className="h-5 w-5" />
                     </div>
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-800">{summary.message ?? fallbackMessage(latestSnapshot)}</div>
+                      <div className="text-sm font-semibold text-slate-800">
+                        {summary.message ?? fallbackMessage(latestSnapshot)}
+                      </div>
                       <div className="mt-1 text-xs leading-5 text-muted-foreground">
-                        采集器：{summary.adapter ?? adapterForStation(selectedStation)} · 识别类型：{summary.detectedType ?? "Unknown"}
+                        采集器：{summary.adapter ?? adapterForStation(selectedStation)} · 识别类型：
+                        {summary.detectedType ?? "Unknown"}
                       </div>
                     </div>
                   </div>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
                   <CompactFact label="最近采集" value={formatDateTime(latestSnapshot?.fetchedAt)} />
-                  <CompactFact label="当前任务" value={taskStatusLabel(taskStatus, summary)} />
+                  <CompactFact label="登录状态" value={summary.loginStatus ?? loginStateLabel(latestSnapshot?.status)} />
                 </div>
               </div>
-              {latestSnapshot?.errorMessage && (
-                <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs leading-5 text-amber-800">
-                  {shortError(latestSnapshot.errorMessage)}
-                </div>
-              )}
-            </SectionCard>
 
-            <SectionCard title="识别结果" description="只展示已经识别出的业务信息，空值会保留为待采集状态。">
-              <div className="grid gap-2 md:grid-cols-5">
-                <ResultTile label="余额" value={displayValue(recognized?.balanceLabel)} />
-                <ResultTile label="分组" value={countValue(recognized?.groupCount)} />
-                <ResultTile label="倍率" value={countValue(recognized?.rateCount)} />
-                <ResultTile label="Keys" value={countValue(recognized?.keyCount)} />
-                <ResultTile label="字段" value={countValue(recognized?.matchedFieldCount)} />
+              <div className="mt-3 grid gap-2 md:grid-cols-4">
+                <CompactFact label="余额" value={displayValue(recognized?.balanceLabel)} />
+                <CompactFact label="分组" value={countValue(recognized?.groupCount)} />
+                <CompactFact label="倍率" value={countValue(recognized?.rateCount)} />
+                <CompactFact label="Keys" value={countValue(recognized?.keyCount)} />
+              </div>
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                <CompactFact label="模型" value={countValue(modelCount)} />
+                <CompactFact label="字段" value={countValue(recognized?.matchedFieldCount)} />
               </div>
               <div className="mt-3 rounded-2xl border border-slate-200/70 bg-slate-50/70 px-3 py-2 text-xs leading-5 text-muted-foreground">
-                {recognized && recognized.matchedFieldCount > 0
-                  ? "这些字段来自接口探测的候选结果，后续 P4 会接入 WebView 登录捕获以提高准确率。"
-                  : summary.webviewRequired
-                    ? "未识别到可直接读取的余额、分组或倍率；可能需要登录，等待 P4 WebView 捕获。"
-                    : "等待探测或采集。"}
+                {summary.diagnosis ??
+                  summary.nextStep ??
+                  (summary.loginRequired
+                    ? "未采集到有效登录态信息，建议先测试登录。"
+                    : "采集已完成，若结果不完整可到高级选项里做进一步探测。")}
               </div>
             </SectionCard>
 
-            <SectionCard title="接口探测结果" description="404 代表该站点未开放对应接口，不等于采集失败。">
-              {endpointResults.length > 0 ? (
-                <div className="overflow-hidden rounded-2xl border border-cyan-100 bg-white/80">
-                  {endpointResults.map((endpoint) => (
-                    <EndpointRow key={`${endpoint.path}-${endpoint.result}`} endpoint={endpoint} />
-                  ))}
-                </div>
-              ) : (
-                <EmptyState title="暂无接口探测结果" description="点击“探测”后会显示常见接口的访问结果。" />
-              )}
+            <SectionCard title="采集摘要" description="主界面只展示用户看得懂的结果。">
+              <div className="grid gap-2 md:grid-cols-3">
+                <CompactFact label="站点账号" value={selectedStation.name} />
+                <CompactFact label="站点类型" value={stationTypeLabels[selectedStation.stationType]} />
+                <CompactFact label="API Keys" value={`${selectedStation.keyCount} keys`} />
+              </div>
+              <div className="mt-3 rounded-2xl border border-cyan-100 bg-white/85 px-3 py-2 text-sm text-slate-700">
+                {summary.loginRequired
+                  ? "这个站点当前更像需要登录后才能拿到完整信息。先测试登录，再做采集。"
+                  : "已尽量使用登录态接口读取余额、分组、倍率、key 和模型信息。"}
+              </div>
             </SectionCard>
           </div>
 
           <aside className="space-y-3">
-            <SectionCard title="采集上下文" description="当前站点与 adapter。">
-              <div className="space-y-2">
-                <CompactFact label="站点账号" value={selectedStation.name} />
-                <CompactFact label="站点类型" value={stationTypeLabels[selectedStation.stationType]} />
-                <CompactFact label="API Keys" value={`${selectedStation.keyCount} keys`} />
-                <CompactFact label="采集器" value={summary.adapter ?? adapterForStation(selectedStation)} />
-              </div>
-              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/80 p-3 text-xs leading-5 text-amber-800">
-                WebView 登录捕获将在 P4 接入。当前仅进行非登录态 / 半登录态接口探测与脱敏快照保存。
-              </div>
+            <SectionCard title="高级选项" description="接口探测与网页登录捕获都放这里。">
+              <details className="group rounded-2xl border border-slate-200 bg-slate-50/70">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-slate-700">
+                  高级功能
+                  <ChevronDown className="h-4 w-4 text-muted-foreground transition group-open:rotate-180" />
+                </summary>
+                <div className="border-t border-slate-200 p-3">
+                  <div className="space-y-2">
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start"
+                      onClick={handleDetect}
+                      disabled={actionBusy || !selectedStation}
+                    >
+                      <Radar className="h-4 w-4" />
+                      {taskStatus === "detecting" ? "高级探测中" : "重新探测接口"}
+                    </Button>
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs leading-5 text-amber-800">
+                      实验功能：用于验证码、2FA 或魔改站兜底，当前需要技术验证，不保证能捕获所有请求。
+                    </div>
+                    {captureActive ? (
+                      <div className="space-y-2">
+                        <Button
+                          variant="outline"
+                          className="w-full justify-start"
+                          onClick={handleFinishCapture}
+                          disabled={actionBusy || !selectedStation}
+                        >
+                          <ShieldCheck className="h-4 w-4" />
+                          {taskStatus === "finishingCapture" ? "保存中" : "完成采集"}
+                        </Button>
+                        <div className="grid gap-2">
+                          <CompactFact label="捕获状态" value={captureStatusLabel(captureStatus)} />
+                          <CompactFact label="接口数量" value={String(captureStatus?.captureCount ?? 0)} />
+                          <CompactFact label="候选字段" value={String(captureStatus?.recognizedFieldCount ?? 0)} />
+                          <CompactFact label="待确认" value={String(captureStatus?.pendingConfirmationCount ?? 0)} />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="outline" className="h-7 flex-1 px-2 text-xs" onClick={handleClearCapture} disabled={actionBusy}>
+                            清除状态
+                          </Button>
+                          <Button variant="outline" className="h-7 flex-1 px-2 text-xs" onClick={handleCloseCapture} disabled={actionBusy}>
+                            关闭窗口
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        className="w-full justify-start"
+                        onClick={handleStartCapture}
+                        disabled={actionBusy || !selectedStation}
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                        网页登录捕获（实验）
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </details>
             </SectionCard>
 
             <SectionCard title="历史快照" description="最近保存的采集记录。">
@@ -251,15 +421,23 @@ export function CollectorsPage() {
                         onClick={() => setLatestSnapshot(snapshot)}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="truncate text-sm font-medium text-slate-800">{itemSummary.adapter ?? sourceLabel(snapshot.source)}</span>
-                          <StatusBadge tone={toneForConclusion(conclusionLabel(itemSummary, snapshot))}>{conclusionLabel(itemSummary, snapshot)}</StatusBadge>
+                          <span className="truncate text-sm font-medium text-slate-800">
+                            {itemSummary.adapter ?? sourceLabel(snapshot.source)}
+                          </span>
+                          <StatusBadge tone={toneForConclusion(conclusionLabel(itemSummary, snapshot))}>
+                            {conclusionLabel(itemSummary, snapshot)}
+                          </StatusBadge>
                         </div>
-                        <div className="mt-1 truncate text-xs text-muted-foreground">{formatDateTime(snapshot.fetchedAt)} · {itemSummary.message ?? "暂无摘要"}</div>
+                        <div className="mt-1 truncate text-xs text-muted-foreground">
+                          {formatDateTime(snapshot.fetchedAt)} · {itemSummary.message ?? "暂无摘要"}
+                        </div>
                       </button>
                     );
                   })
                 ) : (
-                  <div className="rounded-2xl border border-dashed border-cyan-100 bg-cyan-50/45 px-3 py-4 text-sm text-muted-foreground">暂无历史快照。</div>
+                  <div className="rounded-2xl border border-dashed border-cyan-100 bg-cyan-50/45 px-3 py-4 text-sm text-muted-foreground">
+                    暂无历史快照。
+                  </div>
                 )}
               </div>
             </SectionCard>
@@ -278,7 +456,9 @@ export function CollectorsPage() {
                       复制脱敏 JSON
                     </Button>
                   </div>
-                  <pre className="max-h-72 overflow-auto rounded-xl bg-white p-3 text-[11px] leading-5 text-slate-600">{buildDeveloperJson(latestSnapshot) || "暂无 snapshot。"}</pre>
+                  <pre className="max-h-72 overflow-auto rounded-xl bg-white p-3 text-[11px] leading-5 text-slate-600">
+                    {buildDeveloperJson(latestSnapshot) || "暂无 snapshot。"}
+                  </pre>
                 </div>
               </details>
             </SectionCard>
@@ -287,7 +467,16 @@ export function CollectorsPage() {
       )}
 
       {(message || error || actionBusy) && (
-        <div className={cn("fixed bottom-4 right-4 z-40 rounded-2xl border px-4 py-3 text-sm shadow-[0_12px_30px_rgba(33,79,88,0.12)]", error ? "border-rose-200 bg-rose-50 text-rose-700" : actionBusy ? "border-cyan-200 bg-cyan-50 text-cyan-700" : "border-emerald-200 bg-emerald-50 text-emerald-700")}>
+        <div
+          className={cn(
+            "fixed bottom-4 right-4 z-40 rounded-2xl border px-4 py-3 text-sm shadow-[0_12px_30px_rgba(33,79,88,0.12)]",
+            error
+              ? "border-rose-200 bg-rose-50 text-rose-700"
+              : actionBusy
+                ? "border-cyan-200 bg-cyan-50 text-cyan-700"
+                : "border-emerald-200 bg-emerald-50 text-emerald-700",
+          )}
+        >
           {error ?? (actionBusy ? taskStatusLabel(taskStatus, summary) : message)}
         </div>
       )}
@@ -304,25 +493,6 @@ function CompactFact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ResultTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-cyan-100 bg-white/85 px-3 py-2.5">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="mt-1 truncate text-lg font-semibold text-slate-800">{value}</div>
-    </div>
-  );
-}
-
-function EndpointRow({ endpoint }: { endpoint: CollectorEndpointResult }) {
-  return (
-    <div className="grid min-h-12 grid-cols-[150px_92px_minmax(0,1fr)] items-center gap-3 border-b border-cyan-100 px-3 py-2 last:border-b-0">
-      <div className="truncate font-mono text-xs text-slate-700">{endpoint.path}</div>
-      <StatusBadge tone={toneForEndpoint(endpoint.result)}>{endpoint.result}</StatusBadge>
-      <div className="truncate text-xs text-muted-foreground">{endpoint.detail}</div>
-    </div>
-  );
-}
-
 function toCollectorSummary(value: Record<string, unknown> | undefined): CollectorSummary {
   if (!value) return {};
   return {
@@ -330,6 +500,10 @@ function toCollectorSummary(value: Record<string, unknown> | undefined): Collect
     detectedType: readString(value.detectedType),
     conclusion: readString(value.conclusion),
     message: readString(value.message),
+    loginStatus: readString(value.loginStatus),
+    loginRequired: typeof value.loginRequired === "boolean" ? value.loginRequired : undefined,
+    nextStep: readString(value.nextStep),
+    diagnosis: readString(value.diagnosis),
     endpointResults: Array.isArray(value.endpointResults)
       ? value.endpointResults.map(toEndpointResult).filter(isEndpointResult)
       : [],
@@ -400,19 +574,38 @@ function statusLabel(status: string | undefined) {
   if (status === "manual_required") return "需要登录";
   if (status === "partial") return "未识别";
   if (status === "failed") return "失败";
+  if (status === "missing_credentials") return "缺少账号";
   return "已检查";
 }
 
+function loginStateLabel(status: string | undefined) {
+  if (!status) return "未识别";
+  if (status === "success") return "已登录";
+  if (status === "manual_required") return "需要登录";
+  if (status === "missing_credentials") return "缺少账号密码";
+  return statusLabel(status) ?? "未识别";
+}
+
 function taskStatusLabel(status: TaskStatus, summary: CollectorSummary) {
-  if (status === "detecting") return "正在探测站点接口...";
-  if (status === "collecting") return "正在采集并保存快照...";
+  if (status === "testingLogin") return "正在测试登录...";
+  if (status === "detecting") return "正在执行高级探测...";
+  if (status === "collecting") return "正在采集登录态信息...";
+  if (status === "capturing") return "网页登录捕获窗口已打开";
+  if (status === "finishingCapture") return "正在保存网页登录捕获快照...";
   if (status === "success") return summary.message ?? "任务完成";
   if (status === "failed") return "任务失败";
   return "空闲";
 }
 
+function captureStatusLabel(status: CaptureSessionStatus | null) {
+  if (!status || status.status === "idle") return "未开始";
+  if (status.status === "capturing") return "捕获中";
+  if (status.status === "failed") return "失败";
+  return status.status;
+}
+
 function fallbackMessage(snapshot: CollectorSnapshot | null) {
-  if (!snapshot) return "尚未采集。请选择站点后点击探测或采集。";
+  if (!snapshot) return "尚未采集。请选择站点后点击采集信息。";
   if (snapshot.errorMessage) return shortError(snapshot.errorMessage);
   return "快照已保存，但暂未识别到可展示的业务字段。";
 }
@@ -438,7 +631,7 @@ function readNumber(value: unknown) {
 }
 
 function adapterForStation(station: Station) {
-  if (station.stationType === "sub2api") return "Sub2API Adapter";
+  if (station.stationType === "sub2api") return "Login State Adapter";
   if (station.stationType === "newapi") return "NewAPI Adapter（待接入）";
   if (station.stationType === "openai-compatible") return "OpenAI-compatible Adapter（基础探测）";
   return "Auto Detect";
@@ -447,20 +640,14 @@ function adapterForStation(station: Station) {
 function sourceLabel(source: string) {
   if (source.includes("detect")) return "接口探测";
   if (source.includes("collect")) return "信息采集";
+  if (source.includes("login-state")) return "登录态采集";
   return "采集快照";
 }
 
 function toneForConclusion(value: string) {
   if (value === "可用" || value === "已采集") return "healthy" as const;
-  if (value === "需要登录" || value === "未识别" || value === "已检查") return "warning" as const;
+  if (value === "需要登录" || value === "未识别" || value === "已检查" || value === "缺少账号") return "warning" as const;
   if (value === "失败") return "error" as const;
-  return "info" as const;
-}
-
-function toneForEndpoint(value: string) {
-  if (value === "成功") return "healthy" as const;
-  if (value === "需要登录" || value === "404" || value === "限流" || value === "已检查") return "warning" as const;
-  if (value === "超时" || value === "请求失败" || value === "站点异常") return "error" as const;
   return "info" as const;
 }
 
@@ -476,4 +663,5 @@ function readError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-const selectClassName = "h-8 rounded-xl border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
+const selectClassName =
+  "h-8 rounded-xl border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";

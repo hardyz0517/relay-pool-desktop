@@ -493,8 +493,8 @@ export function StationsPage() {
 
   return (
     <PageScaffold
-      title="中转池"
-      description="provider 管理、排序、启用/禁用、登录账号与多 key；详情与编辑均在 Dialog 内。"
+      title="中转站"
+      description="站点账号管理、登录信息与采集来源；Key 的全局排序由 Key 池负责。"
       actions={
         <Button onClick={openCreate}>
           <Plus className="h-4 w-4" />
@@ -505,7 +505,7 @@ export function StationsPage() {
       <div className="min-w-0 overflow-hidden rounded-2xl border border-white/70 bg-white/85 shadow-[0_12px_30px_rgba(33,79,88,0.07)]">
         <Toolbar>
           <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-slate-800">provider 列表</div>
+            <div className="text-[13px] font-semibold text-slate-800">中转站列表</div>
             <div className="text-xs text-muted-foreground">
               {stations.length} 个站点，{enabledCount} 个启用，{attentionCount} 个需关注。
             </div>

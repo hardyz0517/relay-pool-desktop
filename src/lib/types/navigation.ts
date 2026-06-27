@@ -3,6 +3,7 @@ import type { LucideIcon } from "lucide-react";
 export type AppRouteId =
   | "dashboard"
   | "stations"
+  | "keyPool"
   | "channels"
   | "collectors"
   | "pricing"

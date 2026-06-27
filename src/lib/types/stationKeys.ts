@@ -18,6 +18,12 @@ export type StationKey = {
   updatedAt: string;
 };
 
+export type KeyPoolItem = StationKey & {
+  stationName: string;
+  stationType: string;
+  stationBaseUrl: string;
+};
+
 export type StationCredentials = {
   stationId: string;
   loginUsername: string | null;

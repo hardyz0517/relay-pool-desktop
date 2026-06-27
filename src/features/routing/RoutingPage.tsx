@@ -15,7 +15,7 @@ export function RoutingPage() {
   const routing = mockRoutingSettings;
 
   return (
-    <PageScaffold title="路由规则" description="静态规则设置 UI；当前不保存真实路由配置。">
+      <PageScaffold title="路由规则" description="静态规则设置 UI；后续路由将基于 Key 池中的 station key，而不是中转站账号本身。">
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
         <SectionCard title="策略设置" description="规则形态先对齐，真实路由留到后续阶段。">
           <div className="space-y-4">

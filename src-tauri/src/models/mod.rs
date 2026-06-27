@@ -1,4 +1,5 @@
 pub mod collector;
+pub mod capture;
 pub mod credentials;
 pub mod settings;
 pub mod station_keys;

@@ -24,7 +24,7 @@ export function ChannelStatusPage() {
   return (
     <PageScaffold
       title="渠道状态"
-      description="延迟、PING、可用率和近 60 次请求状态；仅展示健康信息。"
+      description="延迟、PING、可用率和近 60 次请求状态；后续会逐步围绕 Key / Channel 展示，而不是只围绕中转站。"
       actions={
         <div className="flex items-center gap-2">
           <SegmentedControl

@@ -15,7 +15,18 @@ Phase 3 builds the first real collector loop without implementing proxy, routing
 
 P3.1 renames the page from `Sub2API 采集` to `信息采集`, because the page will later host Sub2API, NewAPI, OpenAI-compatible, and custom station collectors in one console.
 
-The user-facing page now shows采集结论、识别类型、最近采集时间、识别结果、接口探测结果和历史快照. Raw snapshot / internal JSON is no longer part of the main UI. It is available only in a default-collapsed developer details section, uses redacted data, and is truncated before display/copy.
+The user-facing page now shows采集结论、识别类型、最近采集时间、识别结果、登录状态、历史快照 and a default-collapsed developer details section. Raw snapshot / internal JSON is no longer part of the main UI. It is redacted and truncated before display/copy.
+
+## P3.1 Direction Fix
+
+The product mainline is now **login-state information collection**.
+
+- Main action: `采集信息`
+- Secondary action: `测试登录`
+- Advanced action: `重新探测接口`
+- Experimental fallback: `网页登录捕获`
+
+Users do not need to understand the difference between detect and collect. `采集信息` internally tries the station account / password path first and only falls back to broader probe behavior when needed. WebView capture remains available as an advanced fallback for problematic stations, but it is no longer the primary flow.
 
 ## Product Model
 
@@ -130,7 +141,7 @@ Collector commands:
 - `list_collector_snapshots`
 - `get_latest_collector_snapshot`
 
-The generic `detect_station_info` and `collect_station_info` commands are the preferred frontend entry points from P3.1 onward. The old Sub2API-specific commands remain as compatibility wrappers.
+The generic `detect_station_info` and `collect_station_info` commands remain available for advanced use. P3.1 adds `test_station_login` and shifts the user-facing main flow to login-state collection. The old Sub2API-specific commands remain as compatibility wrappers.
 
 ## Collector Capability
 
@@ -144,7 +155,7 @@ The P3 collector is a lightweight prototype. It tries short-timeout GET probes:
 
 It does not fail the whole run on 404. It records each probe, parses JSON when possible, and recognizes fields such as balance, quota, credit, amount, group, group_name, rate_multiplier, ratio, multiplier, api_key, key, token, usage, used, remain, and remaining.
 
-If credentials exist, the collector records `manual_required` for login status. P3 does not bypass CAPTCHA or 2FA and does not attempt full WebView session capture.
+If credentials exist, P3.1 now treats login-state collection as the mainline. The current prototype still does not implement true Sub2API authenticated requests yet, so the login-state path records the intended login flow, a readable diagnosis, and a snapshot skeleton while keeping WebView capture as the advanced fallback. P3 still does not bypass CAPTCHA or 2FA and does not attempt full WebView session capture.
 
 P3.1 changes the execution model:
 
@@ -154,6 +165,8 @@ P3.1 changes the execution model:
 - Endpoint probes run with controlled concurrency instead of slow serial probing.
 - 404 and login-required endpoints are recorded as endpoint results, not fatal task errors.
 - Commands return summary / normalized results for the UI, while redacted raw data stays in the snapshot.
+- `test_station_login` exists as a quick login sanity check.
+- The main button on `信息采集` is `采集信息`, followed by `测试登录` and `刷新`.
 
 ## Collector Adapter Direction
 
@@ -186,9 +199,9 @@ The UI warns about this limitation. Logs and snapshots must not include full pas
 
 ## P4 Suggestions
 
-- Add WebView login flow.
-- Capture authenticated XHR/fetch responses safely.
-- Store cookie/session data through encrypted local storage or system keychain.
+- Add WebView login flow as a true fallback, not the primary path.
+- Capture authenticated XHR/fetch responses safely for difficult stations.
+- Store cookie/session data through encrypted local storage or system keychain if persistent sessions are later needed.
 - Add manual correction for recognized fields.
 - Move session and password handling to encrypted local storage or OS keychain before using real authenticated capture.
 

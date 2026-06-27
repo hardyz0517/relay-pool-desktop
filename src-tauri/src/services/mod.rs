@@ -1,3 +1,4 @@
+pub mod capture;
 pub mod collectors;
 pub mod database;
 pub mod health;

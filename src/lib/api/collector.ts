@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CollectorRunResult, CollectorSnapshot } from "@/lib/types/collector";
+import type { CaptureSessionStatus, CollectorRunResult, CollectorSnapshot } from "@/lib/types/collector";
 
 const memorySnapshots = new Map<string, CollectorSnapshot>();
 
@@ -29,6 +29,15 @@ export function collectStationInfo(stationId: string) {
   });
 }
 
+export function testStationLogin(stationId: string) {
+  return invoke<CollectorRunResult>("test_station_login", { stationId }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return createMemoryRun(stationId, "login-state-test", "manual_required");
+    }
+    throw error;
+  });
+}
+
 export function listCollectorSnapshots(stationId: string) {
   return invoke<CollectorSnapshot[]>("list_collector_snapshots", { stationId }).catch((error) => {
     if (isInvokeUnavailable(error)) {
@@ -47,6 +56,79 @@ export function getLatestCollectorSnapshot(stationId: string) {
   });
 }
 
+export function startCaptureSession(stationId: string) {
+  return invoke<CaptureSessionStatus>("start_capture_session", { stationId }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return {
+        stationId,
+        status: "capturing",
+        captureCount: 0,
+        recognizedFieldCount: 0,
+        pendingConfirmationCount: 0,
+        lastError: null,
+      };
+    }
+    throw error;
+  });
+}
+
+export function getCaptureSessionStatus(stationId: string) {
+  return invoke<CaptureSessionStatus>("get_capture_session_status", { stationId }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return {
+        stationId,
+        status: "idle",
+        captureCount: 0,
+        recognizedFieldCount: 0,
+        pendingConfirmationCount: 0,
+        lastError: null,
+      };
+    }
+    throw error;
+  });
+}
+
+export function finishCaptureSession(stationId: string) {
+  return invoke<CollectorRunResult>("finish_capture_session", { stationId }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return createMemoryRun(stationId, "webview-capture", "manual_required");
+    }
+    throw error;
+  });
+}
+
+export function clearCaptureSession(stationId: string) {
+  return invoke<CaptureSessionStatus>("clear_capture_session", { stationId }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return {
+        stationId,
+        status: "idle",
+        captureCount: 0,
+        recognizedFieldCount: 0,
+        pendingConfirmationCount: 0,
+        lastError: null,
+      };
+    }
+    throw error;
+  });
+}
+
+export function closeCaptureSession(stationId: string) {
+  return invoke<CaptureSessionStatus>("close_capture_session", { stationId }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return {
+        stationId,
+        status: "idle",
+        captureCount: 0,
+        recognizedFieldCount: 0,
+        pendingConfirmationCount: 0,
+        lastError: null,
+      };
+    }
+    throw error;
+  });
+}
+
 function createMemoryRun(stationId: string, source: string, status: string): CollectorRunResult {
   const now = new Date().toISOString();
   const snapshot: CollectorSnapshot = {
@@ -56,11 +138,13 @@ function createMemoryRun(stationId: string, source: string, status: string): Col
     status,
     fetchedAt: now,
     summaryJson: {
-      mode: source.includes("detect") ? "detect" : "collect",
-      adapter: "Auto Detect",
-      detectedType: "Unknown",
-      conclusion: "未识别",
-      message: "普通浏览器环境没有 Tauri invoke；桌面窗口会使用真实 SQLite 快照。",
+      mode: source.includes("login-state") ? "login-state" : source.includes("detect") ? "detect" : "collect",
+      adapter: source.includes("login-state") ? "Login State Adapter" : "Auto Detect",
+      detectedType: source.includes("login-state") ? "Login State" : "Unknown",
+      conclusion: source.includes("login-state") ? "需要登录" : "未识别",
+      message: source.includes("login-state")
+        ? "登录态采集主流程已切换到账号密码测试。"
+        : "普通浏览器环境没有 Tauri invoke；桌面窗口会使用真实 SQLite 快照。",
       endpointResults: [],
       recognized: {
         balanceLabel: "未识别",
@@ -69,7 +153,8 @@ function createMemoryRun(stationId: string, source: string, status: string): Col
         keyCount: 0,
         matchedFieldCount: 0,
       },
-      webviewNote: "WebView 登录捕获将在 P4 接入。",
+      webviewRequired: source.includes("login-state"),
+      webviewNote: "WebView 登录捕获仍保留为高级兜底功能。",
     },
     normalizedJson: {
       balance: null,

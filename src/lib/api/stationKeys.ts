@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   CreateStationKeyInput,
+  KeyPoolItem,
   StationCredentials,
   StationKey,
   UpdateStationKeyInput,
@@ -8,6 +9,7 @@ import type {
 
 const memoryKeys = new Map<string, StationKey[]>();
 const memoryCredentials = new Map<string, StationCredentials>();
+let memoryKeyPool: KeyPoolItem[] = [];
 
 export function listStationKeys(stationId: string) {
   return invoke<StationKey[]>("list_station_keys", { stationId }).catch((error) => {
@@ -63,6 +65,29 @@ export function reorderStationKeys(stationId: string, keyIds: string[]) {
       });
       memoryKeys.set(stationId, nextKeys);
       return nextKeys;
+    }
+    throw error;
+  });
+}
+
+export function listKeyPoolItems() {
+  return invoke<KeyPoolItem[]>("list_key_pool_items").catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return memoryKeyPool;
+    }
+    throw error;
+  });
+}
+
+export function reorderKeyPool(keyIds: string[]) {
+  return invoke<KeyPoolItem[]>("reorder_key_pool", { keyIds }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      const byId = new Map(memoryKeyPool.map((item) => [item.id, item] as const));
+      memoryKeyPool = keyIds.flatMap((id, index) => {
+        const item = byId.get(id);
+        return item ? [{ ...item, priority: index }] : [];
+      });
+      return memoryKeyPool;
     }
     throw error;
   });

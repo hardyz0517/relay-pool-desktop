@@ -13,6 +13,7 @@ pub fn run() {
                 database.db_path().display()
             );
             app.manage(database);
+            app.manage(services::capture::session::CaptureSessionStore::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -29,15 +30,24 @@ pub fn run() {
             commands::update_station_key,
             commands::delete_station_key,
             commands::reorder_station_keys,
+            commands::list_key_pool_items,
+            commands::reorder_key_pool,
             commands::get_station_credentials,
             commands::update_station_credentials,
             commands::clear_station_credentials,
             commands::detect_station_info,
             commands::collect_station_info,
+            commands::test_station_login,
             commands::detect_sub2api_station,
             commands::collect_sub2api_station,
             commands::list_collector_snapshots,
             commands::get_latest_collector_snapshot,
+            commands::start_capture_session,
+            commands::get_capture_session_status,
+            commands::record_capture_event,
+            commands::finish_capture_session,
+            commands::clear_capture_session,
+            commands::close_capture_session,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Relay Pool Desktop");
