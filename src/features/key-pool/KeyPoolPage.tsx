@@ -266,7 +266,7 @@ export function KeyPoolPage() {
       }
     >
       {loading ? (
-        <div className="rounded-2xl border border-cyan-100 bg-white/85 px-4 py-5 text-sm text-muted-foreground">
+        <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/85 px-4 py-5 text-sm text-muted-foreground">
           正在读取 Key 池...
         </div>
       ) : filteredItems.length === 0 ? (
@@ -275,7 +275,7 @@ export function KeyPoolPage() {
           description="先在中转站页创建一个站点和它下面的 API Key。"
         />
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-[var(--shell-page-gap)]">
           <Toolbar>
             <div className="min-w-0">
               <div className="text-[13px] font-semibold text-slate-800">Key 池列表</div>
@@ -381,8 +381,8 @@ function KeyRowContent({
   onDelete?: (item: KeyPoolItem) => void;
 }) {
   return (
-    <div className={cn("grid min-h-[72px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-2xl border bg-white px-3 py-2 text-left shadow-[0_8px_18px_rgba(33,79,88,0.055)] transition-colors", overlay ? "border-teal-300 shadow-[0_14px_28px_rgba(13,148,136,0.18)]" : "border-cyan-100 hover:border-teal-200 hover:bg-teal-50/25")}>
-      <button type="button" className={cn("flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-100 bg-cyan-50 transition", dragDisabled ? "cursor-not-allowed text-slate-300" : "cursor-grab text-slate-400 active:cursor-grabbing hover:text-teal-700")} aria-label="拖拽排序" title={dragDisabled ? "清除筛选后可拖拽排序" : "拖拽排序"} {...dragAttributes} {...dragListeners}>
+    <div className={cn("grid min-h-[72px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-left shadow-[var(--surface-shadow)] transition-colors", overlay ? "border-teal-300 shadow-[0_14px_28px_rgba(13,148,136,0.18)]" : "border-cyan-100 hover:border-teal-200 hover:bg-teal-50/25")}>
+      <button type="button" className={cn("flex h-9 w-9 items-center justify-center rounded-[12px] border border-cyan-100 bg-cyan-50 transition", dragDisabled ? "cursor-not-allowed text-slate-300" : "cursor-grab text-slate-400 active:cursor-grabbing hover:text-teal-700")} aria-label="拖拽排序" title={dragDisabled ? "清除筛选后可拖拽排序" : "拖拽排序"} {...dragAttributes} {...dragListeners}>
         <GripVertical className="h-4 w-4" />
       </button>
       <div className="min-w-0">
@@ -540,7 +540,7 @@ function formatNullableTime(value: string | null) {
 }
 
 const selectClassName =
-  "h-8 rounded-xl border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
+  "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -552,4 +552,4 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const inputClassName =
-  "h-8 rounded-xl border border-cyan-100 bg-cyan-50/40 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
+  "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/40 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";

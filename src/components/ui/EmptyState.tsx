@@ -8,8 +8,8 @@ type EmptyStateProps = {
 
 export function EmptyState({ title, description, action }: EmptyStateProps) {
   return (
-    <div className="rounded-2xl border border-dashed border-cyan-200 bg-cyan-50/60 px-4 py-7 text-center">
-      <div className="text-sm font-medium text-slate-700">{title}</div>
+    <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-white px-4 py-7 text-center shadow-[var(--surface-shadow)]">
+      <div className="text-sm font-medium text-slate-800">{title}</div>
       {description && (
         <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
           {description}

@@ -99,7 +99,7 @@ export function DashboardPage() {
             }
           >
             <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px]">
-              <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-4">
+              <div className="rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)]">
                 <div className="text-xs text-muted-foreground">Base URL</div>
                 <div className="mt-1 flex min-w-0 items-center gap-2">
                   <code className="min-w-0 flex-1 truncate text-[15px] font-semibold text-slate-800">
@@ -111,7 +111,7 @@ export function DashboardPage() {
                   监听地址 {proxyStatus?.bindAddr ?? "127.0.0.1"} · 运行次数 {proxyRequestCount.toLocaleString("zh-CN")}
                 </div>
               </div>
-              <div className="rounded-2xl border border-cyan-100 bg-white/80 p-4">
+              <div className="rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)]">
                 <div className="text-xs text-muted-foreground">Local Key</div>
                 <div className="mt-1 flex items-center justify-between gap-2">
                   <MaskedSecret value={dashboard.maskedLocalKey} />
@@ -156,7 +156,7 @@ export function DashboardPage() {
         <SectionCard title="站点健康" description="状态聚合和待处理事项。">
           <div className="grid grid-cols-2 gap-3">
             {(Object.keys(dashboard.healthSummary) as Array<keyof typeof dashboard.healthSummary>).map((key) => (
-              <div key={key} className="rounded-2xl border border-cyan-100 bg-cyan-50/55 p-3">
+              <div key={key} className="rounded-[var(--surface-radius)] border border-border bg-white p-3 shadow-[var(--surface-shadow)]">
                 <div className="flex items-center justify-between gap-2">
                   <StatusBadge tone={healthTone[key]}>{stationStatusLabels[key]}</StatusBadge>
                   <span className="text-xl font-semibold text-slate-800">
@@ -167,7 +167,7 @@ export function DashboardPage() {
               </div>
             ))}
           </div>
-          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/80 p-3 text-xs leading-5 text-amber-800">
+          <div className="mt-4 rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs leading-5 text-slate-700 shadow-[var(--surface-shadow)]">
             {recentError}
           </div>
         </SectionCard>

@@ -26,7 +26,7 @@ export function DataTableLite<T>({
   className,
 }: DataTableLiteProps<T>) {
   return (
-    <div className={cn("overflow-auto rounded-2xl border border-white/70 bg-white/95 shadow-[0_12px_30px_rgba(33,79,88,0.06)]", className)}>
+    <div className={cn("overflow-auto rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]", className)}>
       <table className="w-full border-collapse bg-white text-left text-[13px]">
         <thead className="bg-teal-50/70 text-[11px] font-medium uppercase tracking-wide text-slate-500">
           <tr>

@@ -29,7 +29,7 @@ export function RoutingPage() {
                 }))}
               />
             </div>
-            <PropertyList className="overflow-hidden rounded-2xl border border-cyan-100 bg-white/75">
+            <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-cyan-100 bg-white/75">
               <PropertyRow
                 label="失败自动切换"
                 description="上游失败后选择下一把候选 Station Key"

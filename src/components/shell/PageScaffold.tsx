@@ -1,4 +1,5 @@
-﻿import type { ReactNode } from "react";
+import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 type PageScaffoldProps = {
   title: string;
@@ -17,13 +18,13 @@ export function PageScaffold({
 }: PageScaffoldProps) {
   return (
     <section
-      className={
+      className={cn(
         width === "settings"
-          ? "flex w-full max-w-[1180px] flex-col gap-3"
-          : "flex min-h-full w-full flex-col gap-3"
-      }
+          ? "flex w-full max-w-[1180px] flex-col gap-[var(--shell-page-gap)]"
+          : "flex min-h-full w-full flex-col gap-[var(--shell-page-gap)]",
+      )}
     >
-      <div className="flex min-h-10 items-center justify-between gap-4">
+      <div className="flex min-h-[44px] items-center justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-[17px] font-semibold leading-6 text-slate-800">
             {title}

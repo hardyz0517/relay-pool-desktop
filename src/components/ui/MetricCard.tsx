@@ -36,14 +36,14 @@ export function MetricCard({
   return (
     <div
       className={cn(
-        "flex min-h-[92px] items-center gap-3 rounded-2xl border border-white/70 bg-white/95 px-4 py-3 shadow-[0_12px_30px_rgba(33,79,88,0.07)]",
+        "flex min-h-[92px] items-center gap-3 rounded-[var(--surface-radius)] border border-border bg-white px-4 py-3 shadow-[var(--surface-shadow)]",
         className,
       )}
     >
       {Icon && (
         <div
           className={cn(
-            "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl",
+            "flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]",
             iconClassName[tone],
           )}
         >

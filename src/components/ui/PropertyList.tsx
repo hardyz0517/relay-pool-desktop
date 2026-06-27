@@ -14,7 +14,7 @@ type PropertyRowProps = {
 };
 
 export function PropertyList({ children, className }: PropertyListProps) {
-  return <dl className={cn("divide-y divide-border", className)}>{children}</dl>;
+  return <dl className={cn("overflow-hidden rounded-[var(--surface-radius)] border border-border divide-y divide-border", className)}>{children}</dl>;
 }
 
 export function PropertyRow({
@@ -26,7 +26,7 @@ export function PropertyRow({
   return (
     <div
       className={cn(
-        "grid min-h-9 grid-cols-[148px_minmax(0,1fr)] gap-3 px-3 py-2 text-[13px]",
+        "grid min-h-9 grid-cols-[148px_minmax(0,1fr)] gap-3 px-3 py-2 text-[13px] bg-white",
         className,
       )}
     >

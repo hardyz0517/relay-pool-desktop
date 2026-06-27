@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Radio, RefreshCw, Server, Timer } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, EmptyState, SegmentedControl, StatusBadge } from "@/components/ui";
+import { Button, EmptyState, MetricCard, SegmentedControl, StatusBadge } from "@/components/ui";
 import { listRequestLogs } from "@/lib/api/proxy";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import type { RequestLog } from "@/lib/types/proxy";
@@ -117,10 +117,10 @@ function ChannelHealthCard({ channel }: { channel: ChannelHealth }) {
   const typeLabel = stationTypeLabels[channel.stationType as keyof typeof stationTypeLabels] ?? channel.stationType;
 
   return (
-    <section className="min-h-[248px] rounded-[18px] border border-white/75 bg-white/95 p-4 shadow-[0_14px_34px_rgba(33,79,88,0.075)]">
+    <section className="min-h-[248px] rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)]">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl", iconTone(channel.status))}>
+          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]", iconTone(channel.status))}>
             <Server className="h-4 w-4" />
           </div>
           <div className="min-w-0">
@@ -134,19 +134,19 @@ function ChannelHealthCard({ channel }: { channel: ChannelHealth }) {
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2.5">
-        <HealthMetric
+        <MetricCard
           icon={Timer}
           label="平均耗时"
           value={channel.latencyMs === null ? "--" : `${channel.latencyMs}ms`}
         />
-        <HealthMetric
+        <MetricCard
           icon={Radio}
           label="最近使用"
           value={formatCompactTime(channel.lastUsedAt)}
         />
       </div>
 
-      <div className="mt-4 rounded-2xl border border-cyan-100 bg-cyan-50/45 p-3">
+      <div className="mt-4 rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/45 p-3">
         <div className="flex items-end justify-between gap-3">
           <div>
             <div className="text-[11px] text-muted-foreground">可用性 · 最近日志</div>
@@ -182,26 +182,6 @@ function ChannelHealthCard({ channel }: { channel: ChannelHealth }) {
         {channel.lastError ?? "暂无错误摘要"}
       </div>
     </section>
-  );
-}
-
-function HealthMetric({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof Timer;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-cyan-100 bg-white/85 px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-        <Icon className="h-3.5 w-3.5 text-teal-600" />
-        {label}
-      </div>
-      <div className="mt-1 text-lg font-semibold leading-6 text-slate-800">{value}</div>
-    </div>
   );
 }
 
