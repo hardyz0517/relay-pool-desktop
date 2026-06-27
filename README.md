@@ -2,7 +2,7 @@
 
 Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具。它不是网站，也不是 SaaS；目标是在本机提供固定 OpenAI-compatible 入口，并在本地管理多个 Sub2API / NewAPI / OpenAI-compatible 中转站账号与它们下面的可路由 API Key。
 
-当前状态：early development。Phase 2 已完成本地 SQLite 数据层和 stations/settings 持久化；Phase 2.5 已完成柔和桌面控制台 UI reset；Phase 3 已引入 station account、多 API key 数据模型和 collector prototype；P3.1 已将采集页调整为“信息采集”控制台，并开始抽象通用 Collector Adapter；P4 已把主线修正为登录态信息采集；P4.1 正在收口产品模型并补齐 Key 池 MVP。项目尚未实现真实代理、请求转发、真实路由或完整 WebView 登录捕获。
+当前状态：early development。Phase 2 已完成本地 SQLite 数据层和 stations/settings 持久化；Phase 2.5 已完成柔和桌面控制台 UI reset；Phase 3 已引入 station account、多 API key 数据模型和 collector prototype；P3.1 已将采集页调整为“信息采集”控制台，并开始抽象通用 Collector Adapter；P4 已把主线修正为登录态信息采集；P4.1 已收口产品模型并补齐 Key 池 MVP；P5.0 已落地本地 OpenAI-compatible 代理核心，支持本机监听、Key 池 fallback、请求日志和基础 `/v1/responses` 兼容。后续继续补流式、协议兼容和更细的路由策略。
 
 ## 第一版目标
 
@@ -42,4 +42,4 @@ pnpm tauri:dev
 
 - 不加入账号、支付、云同步或多用户系统。
 - 不提交 key、cookie、日志、用户本地数据库或本地配置。
-- 具体 proxy、路由、价格归一化和 WebView 登录捕获会在后续阶段按模块逐步实现。
+- 具体 proxy、路由、价格归一化和 WebView 登录捕获会在后续阶段按模块逐步补强；当前已具备本地代理核心和 request log 落库。

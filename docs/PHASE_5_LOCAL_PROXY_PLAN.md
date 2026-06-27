@@ -1,12 +1,12 @@
-# Phase 5 Local Proxy MVP Implementation Plan
+# Phase 5 Local Proxy MVP
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Status:** P5.0 has landed as the local gateway core. The app now exposes a localhost OpenAI-compatible proxy, routes through the enabled Key Pool, writes request logs, and surfaces proxy status in the UI. Next work moves toward Responses compatibility hardening, streaming, and richer runtime feedback.
 
-**Goal:** Build a local OpenAI-compatible proxy MVP that routes requests through the enabled Station Key pool and serves a stable localhost endpoint for external tools.
+**Goal:** Keep Relay Pool Desktop usable as a local OpenAI-compatible gateway that external tools can point at once, while the app chooses enabled Station Keys, forwards, falls back, and records what happened.
 
-**Architecture:** Keep the existing Station / Station Key / Key Pool / Collector split. P5 adds a local Rust HTTP server owned by Tauri state, a proxy runtime state model, request logging, and a narrow routing layer that selects Station Key first and Station second. The implementation should stay local-only, non-streaming at first, and fallback-aware without turning into a full policy engine.
+**Architecture:** Keep the existing Station / Station Key / Key Pool / Collector split. The proxy is a Rust HTTP server owned by Tauri state. Routing is key-first, station-second, local-only, and fallback-aware. The first shipped shape is intentionally narrow: non-streaming request forwarding, OpenAI-style errors, and real request logging. The deeper policy engine stays out of P5.0.
 
-**Tech Stack:** Tauri 2, Rust, SQLite, existing station/key/collector models, existing request log patterns, existing React/Ts front end, local HTTP server in Rust.
+**Tech Stack:** Tauri 2, Rust, SQLite, existing station/key/collector models, request log storage, existing React/TypeScript front end, local HTTP server in Rust.
 
 ---
 
@@ -37,7 +37,7 @@ P5 starts the first real local OpenAI-compatible proxy. The goal is not a full p
 9. The proxy returns an OpenAI-compatible response.
 10. The request is written to request logs.
 
-### MVP Results
+### P5.0 Results
 
 P5 should produce:
 
@@ -48,6 +48,16 @@ P5 should produce:
 - Retryable fallback across keys.
 - Request logs with real proxy metadata.
 - UI indicators for proxy running / stopped / error states.
+
+### Current Implementation Notes
+
+- `GET /v1/models` is wired.
+- `POST /v1/chat/completions` is wired for non-streaming requests.
+- `POST /v1/responses` is normalized through the chat path and wrapped back into a response-shaped payload.
+- Station Key priority is used as the base order.
+- Requests fall back on retryable upstream failures.
+- Request logs store only metadata and redacted errors.
+- Settings, dashboard, and request logs now read the runtime state.
 
 ## Non-Goals
 
@@ -102,7 +112,7 @@ Optional later:
 
 `/v1/chat/completions` starts as non-streaming only.
 
-- If `stream: true` is requested, P5 may return a clear unsupported error.
+- If `stream: true` is requested, P5 returns a clear unsupported error.
 - Do not pretend streaming is fully implemented.
 
 ## Local Server Route
@@ -295,9 +305,16 @@ Manual acceptance:
 P5 is complete when:
 
 - The app can run a local OpenAI-compatible endpoint.
-- `/v1/models` and non-streaming `/v1/chat/completions` work locally.
+- `/v1/models`, non-streaming `/v1/chat/completions`, and basic `/v1/responses` work locally.
 - Enabled keys are selected by priority.
 - Fallback works across keys.
 - Request logs show real proxy metadata.
 - The UI shows whether the proxy is running.
 - The implementation stays local-only and secret-safe.
+
+## Next P5 Steps
+
+- P5.1: make Responses a first-class route instead of a wrapped compatibility path.
+- P5.2: add stream forwarding.
+- P5.3: feed proxy runtime data back into key health and channel status.
+- P5.4: finish compatibility polish and upstream protocol selection rules.
