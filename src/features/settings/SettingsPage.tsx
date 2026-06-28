@@ -309,7 +309,7 @@ function SettingRow({
   control: ReactNode;
 }) {
   return (
-    <div className="grid min-h-14 grid-cols-[minmax(0,1fr)_260px] items-center gap-4 border-b border-cyan-100 py-3 last:border-b-0">
+    <div className="grid min-h-14 grid-cols-[minmax(0,1fr)_260px] items-center gap-4 border-b border-border py-3 last:border-b-0">
       <div className="min-w-0">
         <div className="text-sm font-medium text-slate-800">{label}</div>
         {description && (
@@ -346,4 +346,4 @@ function readError(error: unknown) {
 }
 
 const inputClassName =
-  "h-8 w-full rounded-xl border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
+  "h-8 w-full rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:bg-white focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";

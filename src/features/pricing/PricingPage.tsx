@@ -107,7 +107,7 @@ export function PricingPage() {
 
         <InspectorPanel title={`${selected.model} inspector`} description="站点价格、推荐原因和原始倍率。">
           <div className="space-y-3 p-4">
-            <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/60 p-3 text-sm text-slate-700">
+            <div className="rounded-[var(--surface-radius)] border border-border bg-slate-50 p-3 text-sm text-slate-700">
               推荐：{selected.recommendReasons.join(" / ")}
             </div>
             <DataTableLite
@@ -116,7 +116,7 @@ export function PricingPage() {
               getRowKey={(row) => row.stationName}
               className="shadow-none"
             />
-            <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80 p-3 text-xs text-muted-foreground">
+            <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs text-muted-foreground">
               原始倍率默认弱化显示；后续接入真实采集后再提供展开明细。
             </div>
           </div>

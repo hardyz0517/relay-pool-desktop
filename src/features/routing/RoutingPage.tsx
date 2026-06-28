@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Play, Plus, RefreshCcw, Trash2 } from "lucide-react";
+import { GitBranch, Play, Plus, RefreshCcw, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
   EmptyState,
   InspectorPanel,
+  IconButton,
+  ObjectRow,
   SectionCard,
   SegmentedControl,
   StatusBadge,
@@ -268,27 +270,25 @@ export function RoutingPage() {
               {aliases.length === 0 ? (
                 <EmptyState title="还没有模型映射" description="没有映射时，客户端模型名会原样传给上游。" />
               ) : (
-                <div className="divide-y divide-cyan-100 overflow-hidden rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80">
+                <div className="grid gap-2">
                   {aliases.map((alias) => (
-                    <div key={alias.id} className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-800">
-                          <span className="truncate">{alias.clientModel}</span>
-                          <span className="text-muted-foreground">{"->"}</span>
-                          <span className="truncate">{alias.upstreamModel}</span>
-                          <StatusBadge tone={alias.enabled ? "healthy" : "disabled"}>{alias.enabled ? "启用" : "禁用"}</StatusBadge>
-                        </div>
-                        {alias.note && <div className="mt-1 text-xs text-muted-foreground">{alias.note}</div>}
-                      </div>
-                      <div className="flex items-center gap-2 justify-self-end">
-                        <Button className="h-8" disabled={saving} variant="outline" onClick={() => void handleToggleAlias(alias)}>
-                          {alias.enabled ? "停用" : "启用"}
-                        </Button>
-                        <Button className="h-8 w-8 px-0" disabled={saving} title="删除" variant="danger" onClick={() => void handleDeleteAlias(alias)}>
+                    <ObjectRow
+                      key={alias.id}
+                      icon={<GitBranch className="h-4 w-4" />}
+                      title={alias.clientModel}
+                      subtitle={`${alias.upstreamModel}${alias.note ? ` · ${alias.note}` : ""}`}
+                      badges={<StatusBadge tone={alias.enabled ? "healthy" : "disabled"}>{alias.enabled ? "启用" : "禁用"}</StatusBadge>}
+                      actions={
+                        <>
+                          <Button className="h-8" disabled={saving} variant="outline" onClick={() => void handleToggleAlias(alias)}>
+                            {alias.enabled ? "停用" : "启用"}
+                          </Button>
+                          <IconButton label={`删除 ${alias.clientModel}`} disabled={saving} variant="danger" onClick={() => void handleDeleteAlias(alias)}>
                           <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
+                          </IconButton>
+                        </>
+                      }
+                    />
                   ))}
                 </div>
               )}
@@ -334,7 +334,7 @@ export function RoutingPage() {
               <div className="mt-1 text-xs text-muted-foreground">
                 策略：{routingStrategyLabels[result.policy]} · 映射模型：{result.mappedModel ?? "无"}
               </div>
-              <CandidateList title="可用候选" candidates={acceptedCandidates} accepted />
+              <CandidateList title="可用候选" candidates={acceptedCandidates} />
               <CandidateList title="拒绝候选" candidates={rejectedCandidates} />
             </div>
           )}
@@ -358,11 +358,9 @@ export function RoutingPage() {
 function CandidateList({
   title,
   candidates,
-  accepted = false,
 }: {
   title: string;
   candidates: RouteSimulationResult["candidates"];
-  accepted?: boolean;
 }) {
   if (candidates.length === 0) {
     return <div className="mt-3 text-xs text-muted-foreground">{title}：暂无</div>;
@@ -372,19 +370,18 @@ function CandidateList({
       <div className="mb-2 text-xs font-semibold text-slate-700">{title}</div>
       <div className="grid gap-2">
         {candidates.map((candidate, index) => (
-          <div key={candidate.stationKeyId} className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80 px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0 truncate text-sm font-semibold text-slate-800">
-                {accepted ? `${index + 1}. ` : ""}{candidate.keyName} · {candidate.stationName}
-              </div>
-              <StatusBadge tone={candidate.accepted ? "healthy" : "warning"}>
-                {candidate.accepted ? `score ${candidate.score}` : "rejected"}
-              </StatusBadge>
-            </div>
-            <div className="mt-1 text-xs leading-5 text-muted-foreground">
-              {(candidate.accepted ? candidate.reasons : candidate.rejectionReasons).join("；") || "暂无原因"}
-            </div>
-          </div>
+          <ObjectRow
+            key={candidate.stationKeyId}
+            icon={<GitBranch className="h-4 w-4" />}
+            title={candidate.stationName}
+            subtitle={`${index + 1}. ${candidate.keyName} · ${candidate.mappedModel ?? "未映射模型"} · ${(candidate.accepted ? candidate.reasons : candidate.rejectionReasons).join("；") || "暂无原因"}`}
+            badges={<StatusBadge tone={candidate.accepted ? "healthy" : "disabled"}>{candidate.accepted ? "可用" : "已过滤"}</StatusBadge>}
+            metrics={[
+              { label: "分数", value: candidate.score.toFixed(1), tone: candidate.accepted ? "good" : "neutral" },
+              { label: "原因", value: `${candidate.reasons.length}` },
+              { label: "过滤", value: `${candidate.rejectionReasons.length}`, tone: candidate.rejectionReasons.length > 0 ? "warning" : "neutral" },
+            ]}
+          />
         ))}
       </div>
     </div>

@@ -133,7 +133,7 @@ function ChannelHealthCard({ channel }: { channel: ChannelHealth }) {
     <section className="min-h-[248px] rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)]">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]", iconTone(channel.status))}>
+          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--surface-radius)] border border-border", iconTone(channel.status))}>
             <Server className="h-4 w-4" />
           </div>
           <div className="min-w-0">
@@ -163,21 +163,21 @@ function ChannelHealthCard({ channel }: { channel: ChannelHealth }) {
       </div>
 
       <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-        <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/70 px-3 py-2">
+        <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2">
           <div className="text-muted-foreground">成功</div>
           <div className="mt-1 font-semibold text-slate-800">{channel.successCount}</div>
         </div>
-        <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/70 px-3 py-2">
+        <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2">
           <div className="text-muted-foreground">失败</div>
           <div className="mt-1 font-semibold text-slate-800">{channel.failureCount}</div>
         </div>
-        <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/70 px-3 py-2">
+        <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2">
           <div className="text-muted-foreground">连续失败</div>
           <div className="mt-1 font-semibold text-slate-800">{channel.consecutiveFailures}</div>
         </div>
       </div>
 
-      <div className="mt-4 rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/45 p-3">
+      <div className="mt-4 rounded-[var(--surface-radius)] border border-border bg-slate-50 p-3">
         <div className="flex items-end justify-between gap-3">
           <div>
             <div className="text-[11px] text-muted-foreground">可用性 · 最近日志</div>

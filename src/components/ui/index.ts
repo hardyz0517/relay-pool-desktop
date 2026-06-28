@@ -13,6 +13,7 @@ export type { MetricItem, MetricTone } from "./MetricPanel";
 export { MetricPanel } from "./MetricPanel";
 export type { ObjectRowDragHandleProps, ObjectRowMetric } from "./ObjectRow";
 export { ObjectRow } from "./ObjectRow";
+export { PageForm } from "./PageForm";
 export { PropertyList, PropertyRow } from "./PropertyList";
 export { SegmentedControl } from "./SegmentedControl";
 export { SectionCard } from "./SectionCard";

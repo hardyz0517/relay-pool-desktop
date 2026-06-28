@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type HTMLAttributes, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   closestCenter,
+  type DraggableAttributes,
   DndContext,
   DragOverlay,
   PointerSensor,
@@ -11,9 +12,9 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ArrowRight, Edit3, GripVertical, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowRight, Edit3, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, Dialog, EmptyState, PropertyList, PropertyRow, StatusBadge, Toolbar } from "@/components/ui";
+import { Button, Dialog, EmptyState, IconButton, ObjectRow, PropertyList, PropertyRow, StatusBadge, Toolbar } from "@/components/ui";
 import { createStation, deleteStation, listStations, reorderStations, updateStation } from "@/lib/api/stations";
 import {
   clearStationCredentials,
@@ -98,7 +99,11 @@ const statusTone: Record<Station["status"], "healthy" | "warning" | "error" | "d
   unchecked: "info",
 };
 
-export function StationsPage() {
+type StationsPageProps = {
+  onAddProvider?: () => void;
+};
+
+export function StationsPage({ onAddProvider }: StationsPageProps) {
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -496,9 +501,9 @@ export function StationsPage() {
       title="中转站"
       description="站点账号管理、登录信息与采集来源；Key 的全局排序由 Key 池负责。"
       actions={
-        <Button onClick={openCreate}>
+        <Button onClick={onAddProvider ?? openCreate}>
           <Plus className="h-4 w-4" />
-          新增站点
+          添加 Provider
         </Button>
       }
     >
@@ -956,7 +961,7 @@ function StationRowContent({
   station: Station;
   active?: boolean;
   overlay?: boolean;
-  dragAttributes?: HTMLAttributes<HTMLButtonElement>;
+  dragAttributes?: DraggableAttributes;
   dragListeners?: ReturnType<typeof useSortable>["listeners"];
   onSelect?: (station: Station) => void;
   onEdit?: (station: Station) => void;
@@ -966,44 +971,43 @@ function StationRowContent({
 }) {
   const balanceText = station.balanceCny === null ? "未采集" : `¥${station.balanceCny.toFixed(2)}`;
   return (
-    <div className={cn("group grid min-h-[80px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-left shadow-[var(--surface-shadow)] transition-colors", active ? "ring-2 ring-teal-100" : "hover:ring-1 hover:ring-teal-100", overlay && "ring-2 ring-teal-100")}>
-      <button type="button" className="flex h-9 w-9 cursor-grab items-center justify-center rounded-[var(--surface-radius)] border border-border bg-white text-slate-400 transition active:cursor-grabbing group-hover:text-teal-700" aria-label="拖拽排序" {...dragAttributes} {...dragListeners}>
-        <GripVertical className="h-4 w-4" />
-      </button>
-      <button type="button" onClick={() => onSelect?.(station)} className="min-w-0 text-left">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--surface-radius)] border border-border bg-white text-[11px] font-semibold text-teal-700">{station.name.slice(0, 2).toUpperCase()}</div>
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <StationStatusDot status={station.status} />
-              <div className="truncate text-[13px] font-semibold text-slate-800">{station.name}</div>
-            </div>
-            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-              <span className="shrink-0">{stationTypeLabels[station.stationType]}</span>
-              <span className="truncate">{station.baseUrl}</span>
-              <span className="shrink-0 rounded-full border border-border bg-white px-2 py-0.5 text-[11px] text-slate-600">{station.keyCount} keys</span>
-            </div>
-          </div>
-        </div>
-      </button>
-      <div className="flex min-w-0 items-center gap-2 justify-self-end">
-        <div className="hidden min-w-[86px] text-right md:block">
-          <div className="text-[11px] text-muted-foreground">余额</div>
-          <div className="truncate text-sm font-semibold text-slate-800">{balanceText}</div>
-        </div>
-        <div className="hidden min-w-[92px] text-right lg:block">
-          <div className="text-[11px] text-muted-foreground">刷新</div>
-          <div className="truncate text-sm font-semibold text-slate-800">{station.lastCheckedAt ?? "未检测"}</div>
-        </div>
-        <StatusBadge tone={statusTone[station.status]}>{stationStatusLabels[station.status]}</StatusBadge>
-        <Button variant={station.enabled ? "secondary" : "outline"} className="h-8" onClick={() => onToggleEnabled?.(station)}>
-          {station.enabled ? "启用" : "停用"}
-        </Button>
-        <RowAction title="编辑" onClick={() => onEdit?.(station)}><Edit3 className="h-4 w-4" /></RowAction>
-        <RowAction title="详情" onClick={() => onPreview?.(station)}><ArrowRight className="h-4 w-4" /></RowAction>
-        <RowAction title="删除" danger onClick={() => onDelete?.(station)}><Trash2 className="h-4 w-4" /></RowAction>
-      </div>
-    </div>
+    <ObjectRow
+      className={overlay ? "border-[hsl(var(--accent)/0.45)] bg-slate-50" : undefined}
+      draggable
+      dragHandleProps={{ attributes: dragAttributes, listeners: dragListeners }}
+      icon={<StationStatusDot status={station.status} />}
+      selected={active}
+      title={station.name}
+      subtitle={`${stationTypeLabels[station.stationType]} · ${station.baseUrl}`}
+      badges={
+        <>
+          <StatusBadge tone={statusTone[station.status]}>{stationStatusLabels[station.status]}</StatusBadge>
+          <StatusBadge tone={station.enabled ? "healthy" : "disabled"}>{station.enabled ? "启用" : "停用"}</StatusBadge>
+        </>
+      }
+      metrics={[
+        { label: "Key", value: `${station.keyCount}` },
+        { label: "余额", value: balanceText, tone: station.status === "warning" ? "warning" : "neutral" },
+        { label: "延迟", value: station.latencyMs === null ? "-" : `${station.latencyMs}ms` },
+      ]}
+      actions={
+        <>
+          <IconButton label={station.enabled ? `停用 ${station.name}` : `启用 ${station.name}`} variant="secondary" onClick={() => onToggleEnabled?.(station)}>
+            <ShieldCheck className="h-4 w-4" />
+          </IconButton>
+          <IconButton label={`查看 ${station.name}`} onClick={() => onPreview?.(station)}>
+            <ArrowRight className="h-4 w-4" />
+          </IconButton>
+          <IconButton label={`编辑 ${station.name}`} onClick={() => onEdit?.(station)}>
+            <Edit3 className="h-4 w-4" />
+          </IconButton>
+          <IconButton label={`删除 ${station.name}`} variant="danger" onClick={() => onDelete?.(station)}>
+            <Trash2 className="h-4 w-4" />
+          </IconButton>
+        </>
+      }
+      onClick={() => onSelect?.(station)}
+    />
   );
 }
 
@@ -1081,14 +1085,6 @@ function KeyDialog({
         </Field>
       </form>
     </Dialog>
-  );
-}
-
-function RowAction({ title, onClick, children, danger = false }: { title: string; onClick: () => void; children: ReactNode; danger?: boolean; }) {
-  return (
-    <Button variant={danger ? "danger" : "outline"} className="h-8 w-8 px-0" title={title} onClick={(event) => { event.stopPropagation(); onClick(); }}>
-      {children}
-    </Button>
   );
 }
 

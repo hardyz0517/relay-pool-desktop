@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, type ComponentPropsWithoutRef, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   closestCenter,
+  type DraggableAttributes,
   DndContext,
   DragOverlay,
   PointerSensor,
@@ -11,9 +12,9 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { CheckCircle2, Edit3, GripVertical, RefreshCcw, Search, Trash2 } from "lucide-react";
+import { CheckCircle2, Copy, Edit3, KeyRound, RefreshCcw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, Dialog, EmptyState, StatusBadge, Toolbar } from "@/components/ui";
+import { Button, Dialog, EmptyState, IconButton, ObjectRow, StatusBadge, Toolbar } from "@/components/ui";
 import { getStationKeyCapabilities, updateStationKeyCapabilities } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
 import { deleteStationKey, listKeyPoolItems, reorderKeyPool, updateStationKey } from "@/lib/api/stationKeys";
@@ -394,7 +395,7 @@ function KeyRowContent({
   item: KeyPoolItem;
   overlay?: boolean;
   dragDisabled?: boolean;
-  dragAttributes?: ComponentPropsWithoutRef<"button">;
+  dragAttributes?: DraggableAttributes;
   dragListeners?: ReturnType<typeof useSortable>["listeners"];
   onEdit?: (item: KeyPoolItem) => void;
   onToggleEnabled?: (item: KeyPoolItem) => void;
@@ -407,59 +408,49 @@ function KeyRowContent({
     item.consecutiveFailures > 0 ? `连续失败 ${item.consecutiveFailures}` : "无连续失败",
   ].join(" · ");
   return (
-    <div className={cn("grid min-h-[72px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-left shadow-[var(--surface-shadow)] transition-colors", overlay ? "border-teal-300 shadow-[0_14px_28px_rgba(13,148,136,0.18)]" : "border-cyan-100 hover:border-teal-200 hover:bg-teal-50/25")}>
-      <button type="button" className={cn("flex h-9 w-9 items-center justify-center rounded-[12px] border border-cyan-100 bg-cyan-50 transition", dragDisabled ? "cursor-not-allowed text-slate-300" : "cursor-grab text-slate-400 active:cursor-grabbing hover:text-teal-700")} aria-label="拖拽排序" title={dragDisabled ? "清除筛选后可拖拽排序" : "拖拽排序"} {...dragAttributes} {...dragListeners}>
-        <GripVertical className="h-4 w-4" />
-      </button>
-      <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="truncate text-[13px] font-semibold text-slate-800">{item.name}</div>
+    <ObjectRow
+      className={overlay ? "border-[hsl(var(--accent)/0.45)] bg-slate-50" : undefined}
+      draggable
+      dragHandleProps={{ attributes: dragAttributes, listeners: dragListeners, disabled: dragDisabled }}
+      icon={<KeyRound className="h-4 w-4" />}
+      title={item.name}
+      subtitle={
+        <>
+          {item.stationName} · {item.apiKeyMasked} · {healthSummary}
+          {cooldownActive ? ` · 冷却至 ${formatNullableTime(item.cooldownUntil)}` : ""}
+        </>
+      }
+      badges={
+        <>
           <StatusBadge tone={statusTone[item.status]}>{item.status}</StatusBadge>
-          <span className="rounded-full border border-cyan-100 bg-cyan-50 px-2 py-0.5 text-[11px] text-slate-600">P{item.priority}</span>
+          <StatusBadge tone={item.enabled ? "healthy" : "disabled"}>{item.enabled ? "启用" : "禁用"}</StatusBadge>
           {item.onlyUseAsBackup && <StatusBadge tone="warning">备用</StatusBadge>}
           {cooldownActive && <StatusBadge tone="warning">冷却中</StatusBadge>}
-        </div>
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span>{item.apiKeyMasked}</span>
-          <span>{item.groupName ?? "未分组"}</span>
-          <span>{item.tierLabel ?? "无 tier"}</span>
-          <span>{item.enabled ? "启用" : "禁用"}</span>
-        </div>
-        <div className="mt-1 text-xs text-muted-foreground">
-          所属中转站：{item.stationName} · {stationTypeLabels[item.stationType as keyof typeof stationTypeLabels] ?? item.stationType}
-        </div>
-        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-          <span>协议：</span>
-          {(item.capabilitySummary.length ? item.capabilitySummary : ["未配置"]).map((capability) => (
-            <span key={capability} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-600">
-              {capability}
-            </span>
-          ))}
-        </div>
-        <div className="mt-1 text-xs text-muted-foreground">
-          模型：{item.modelScopeSummary || "全部模型"} · 健康：{healthSummary}
-          {cooldownActive ? ` · 冷却至 ${formatNullableTime(item.cooldownUntil)}` : ""}
-        </div>
-        {item.lastErrorSummary && (
-          <div className="mt-1 truncate text-xs text-rose-600">最近错误：{item.lastErrorSummary}</div>
-        )}
-        <div className="mt-1 text-xs text-muted-foreground">
-          最近使用：{formatNullableTime(item.lastUsedAt)} · 最近检查：{formatNullableTime(item.lastCheckedAt)}
-        </div>
-      </div>
-      <div className="flex items-center gap-2 justify-self-end">
-        <Button variant={item.enabled ? "secondary" : "outline"} className="h-8" onClick={() => onToggleEnabled?.(item)} disabled={overlay}>
-          <CheckCircle2 className="h-4 w-4" />
-          {item.enabled ? "停用" : "启用"}
-        </Button>
-        <Button variant="outline" className="h-8 w-8 px-0" title="编辑" onClick={() => onEdit?.(item)}>
-          <Edit3 className="h-4 w-4" />
-        </Button>
-        <Button variant="danger" className="h-8 w-8 px-0" title="删除" onClick={() => onDelete?.(item)}>
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </div>
-    </div>
+        </>
+      }
+      metrics={[
+        { label: "优先级", value: `P${item.priority}` },
+        { label: "分组", value: item.groupName ?? "未分组" },
+        { label: "Tier", value: item.tierLabel ?? "无" },
+        { label: "延迟", value: item.avgLatencyMs === null ? "-" : `${item.avgLatencyMs}ms` },
+      ]}
+      actions={
+        <>
+          <IconButton label="复制脱敏 Key" disabled>
+            <Copy className="h-4 w-4" />
+          </IconButton>
+          <IconButton label={item.enabled ? `停用 ${item.name}` : `启用 ${item.name}`} variant="secondary" disabled={overlay} onClick={() => onToggleEnabled?.(item)}>
+            <CheckCircle2 className="h-4 w-4" />
+          </IconButton>
+          <IconButton label={`编辑 ${item.name}`} onClick={() => onEdit?.(item)}>
+            <Edit3 className="h-4 w-4" />
+          </IconButton>
+          <IconButton label={`删除 ${item.name}`} variant="danger" onClick={() => onDelete?.(item)}>
+            <Trash2 className="h-4 w-4" />
+          </IconButton>
+        </>
+      }
+    />
   );
 }
 
