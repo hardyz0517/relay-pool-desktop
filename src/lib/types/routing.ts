@@ -50,3 +50,34 @@ export type StationKeyHealth = {
   cooldownUntil: string | null;
   updatedAt: string;
 };
+
+export type RouteSimulationInput = {
+  endpoint: RouteEndpointKind;
+  model: string | null;
+  stream: boolean;
+  usesTools: boolean;
+  usesVision: boolean;
+  usesReasoning: boolean;
+  policy: RoutingPolicy | null;
+};
+
+export type RouteCandidateExplanation = {
+  stationKeyId: string;
+  stationId: string;
+  stationName: string;
+  keyName: string;
+  accepted: boolean;
+  score: number;
+  reasons: string[];
+  rejectionReasons: string[];
+  mappedModel: string | null;
+};
+
+export type RouteSimulationResult = {
+  selectedStationKeyId: string | null;
+  selectedStationId: string | null;
+  mappedModel: string | null;
+  policy: RoutingPolicy;
+  candidates: RouteCandidateExplanation[];
+  message: string;
+};

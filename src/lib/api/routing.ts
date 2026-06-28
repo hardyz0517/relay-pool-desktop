@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ModelAlias,
+  RouteSimulationInput,
+  RouteSimulationResult,
   StationKeyCapabilities,
   StationKeyHealth,
   UpdateStationKeyCapabilitiesInput,
@@ -33,4 +35,8 @@ export function listStationKeyHealth() {
 
 export function getStationKeyHealth(stationKeyId: string) {
   return invoke<StationKeyHealth>("get_station_key_health", { stationKeyId });
+}
+
+export function simulateRoute(input: RouteSimulationInput) {
+  return invoke<RouteSimulationResult>("simulate_route", { input });
 }

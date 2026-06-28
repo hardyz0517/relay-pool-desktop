@@ -1,7 +1,10 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -14,14 +17,20 @@ use crate::models::{
     credentials::{StationCredentials, UpdateStationCredentialsInput},
     proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
     routing::{
-        ModelAlias, StationKeyCapabilities, StationKeyHealth, UpdateStationKeyCapabilitiesInput,
+        ModelAlias, RouteSimulationInput, RouteSimulationResult, RoutingPolicy,
+        StationKeyCapabilities, StationKeyHealth, UpdateStationKeyCapabilitiesInput,
         UpsertModelAliasInput,
     },
     settings::{AppSettings, UpdateSettingsInput},
     station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, UpdateStationInput},
 };
-use crate::services::proxy::{router::RichRouteCandidate, RouteCandidate};
+use crate::services::proxy::{
+    router::{select_route_candidates, RichRouteCandidate, RouteRequest},
+    RouteCandidate,
+};
+
+static NEXT_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 pub struct AppDatabase {
@@ -62,8 +71,8 @@ impl AppDatabase {
 
     #[cfg(test)]
     pub fn new_in_memory_for_tests() -> Result<Self, String> {
-        let connection =
-            Connection::open_in_memory().map_err(|error| format!("无法打开内存 SQLite 数据库: {error}"))?;
+        let connection = Connection::open_in_memory()
+            .map_err(|error| format!("无法打开内存 SQLite 数据库: {error}"))?;
         initialize_schema(&connection)
             .map_err(|error| format!("初始化 SQLite schema 失败: {error}"))?;
         seed_default_settings(&connection)
@@ -449,10 +458,7 @@ impl AppDatabase {
         station_credentials_from_connection(&connection, &station_id)
     }
 
-    pub fn get_station_login_password(
-        &self,
-        station_id: String,
-    ) -> Result<Option<String>, String> {
+    pub fn get_station_login_password(&self, station_id: String) -> Result<Option<String>, String> {
         let connection = self.connection()?;
         validate_station_exists(&connection, &station_id)?;
         station_login_password_from_connection(&connection, &station_id)
@@ -600,7 +606,10 @@ impl AppDatabase {
         list_station_key_health_from_connection(&connection)
     }
 
-    pub fn get_station_key_health(&self, station_key_id: String) -> Result<StationKeyHealth, String> {
+    pub fn get_station_key_health(
+        &self,
+        station_key_id: String,
+    ) -> Result<StationKeyHealth, String> {
         let connection = self.connection()?;
         station_key_health_by_id(&connection, &station_key_id)
     }
@@ -623,6 +632,14 @@ impl AppDatabase {
     ) -> Result<(), String> {
         let connection = self.connection()?;
         record_station_key_failure_in_connection(&connection, station_key_id, error_summary, now)
+    }
+
+    pub fn simulate_route(
+        &self,
+        input: RouteSimulationInput,
+    ) -> Result<RouteSimulationResult, String> {
+        let connection = self.connection()?;
+        simulate_route_in_connection(&connection, self.db_path.to_string_lossy().as_ref(), input)
     }
 }
 
@@ -920,7 +937,10 @@ fn migrate_station_proxy_columns(connection: &Connection) -> rusqlite::Result<()
     Ok(())
 }
 
-fn validate_station_key_exists(connection: &Connection, station_key_id: &str) -> Result<(), String> {
+fn validate_station_key_exists(
+    connection: &Connection,
+    station_key_id: &str,
+) -> Result<(), String> {
     let exists: Option<String> = connection
         .query_row(
             "SELECT id FROM station_keys WHERE id = ?1",
@@ -1048,7 +1068,9 @@ fn list_station_keys_from_connection(
     Ok(rows)
 }
 
-fn list_key_pool_items_from_connection(connection: &Connection) -> Result<Vec<KeyPoolItem>, String> {
+fn list_key_pool_items_from_connection(
+    connection: &Connection,
+) -> Result<Vec<KeyPoolItem>, String> {
     let mut statement = connection
         .prepare(
             "SELECT
@@ -1524,7 +1546,10 @@ fn record_station_key_failure_in_connection(
                 consecutive_failures,
                 current.success_count,
                 failure_count,
-                current.avg_latency_ms.map(|avg| avg * current.success_count).unwrap_or(0),
+                current
+                    .avg_latency_ms
+                    .map(|avg| avg * current.success_count)
+                    .unwrap_or(0),
                 current.avg_latency_ms,
                 trim_error_summary(error_summary),
                 cooldown_until,
@@ -1564,7 +1589,9 @@ fn trim_error_summary(value: &str) -> String {
     output
 }
 
-fn proxy_route_candidates_from_connection(connection: &Connection) -> Result<Vec<RouteCandidate>, String> {
+fn proxy_route_candidates_from_connection(
+    connection: &Connection,
+) -> Result<Vec<RouteCandidate>, String> {
     let mut statement = connection
         .prepare(
             "SELECT k.id, k.station_id, s.base_url, k.api_key, s.upstream_api_format, k.priority
@@ -1712,6 +1739,65 @@ fn enabled_model_alias_pairs_from_connection(
         .map_err(|error| format!("解析启用模型映射失败: {error}"))?;
 
     Ok(rows)
+}
+
+fn simulate_route_in_connection(
+    connection: &Connection,
+    data_dir: &str,
+    input: RouteSimulationInput,
+) -> Result<RouteSimulationResult, String> {
+    let policy = input.policy.unwrap_or_else(|| {
+        settings_from_connection(connection, data_dir)
+            .map(|settings| parse_routing_policy_value(&settings.default_routing_strategy))
+            .unwrap_or(RoutingPolicy::PriorityFallback)
+    });
+    let request = RouteRequest {
+        endpoint: input.endpoint,
+        model: input.model,
+        stream: input.stream,
+        uses_tools: input.uses_tools,
+        uses_vision: input.uses_vision,
+        uses_reasoning: input.uses_reasoning,
+        policy: policy.clone(),
+        now_ms: now_millis_for_services() as i64,
+    };
+    let candidates = proxy_rich_route_candidates_from_connection(connection)?;
+    let aliases = enabled_model_alias_pairs_from_connection(connection)?;
+    let selection = select_route_candidates(&request, candidates, &aliases)?;
+    let selected = selection.accepted.first();
+    let selected_station_key_id =
+        selected.map(|candidate| candidate.candidate.station_key_id.clone());
+    let selected_station_id = selected.map(|candidate| candidate.candidate.station_id.clone());
+    let message = if let Some(candidate) = selected {
+        format!(
+            "将选择 {}，因为该 Key 满足请求模型、协议和健康状态要求。",
+            candidate.key_name
+        )
+    } else {
+        format!(
+            "没有可用 Station Key 支持该请求：endpoint={:?} model={} stream={}",
+            request.endpoint,
+            request.model.as_deref().unwrap_or("<none>"),
+            request.stream
+        )
+    };
+
+    Ok(RouteSimulationResult {
+        selected_station_key_id,
+        selected_station_id,
+        mapped_model: selection.mapped_model,
+        policy,
+        candidates: selection.explanations,
+        message,
+    })
+}
+
+fn parse_routing_policy_value(value: &str) -> RoutingPolicy {
+    match value {
+        "stable_first" | "stable" => RoutingPolicy::StableFirst,
+        "backup_only" => RoutingPolicy::BackupOnly,
+        _ => RoutingPolicy::PriorityFallback,
+    }
 }
 
 fn insert_request_log_in_connection(
@@ -2502,7 +2588,8 @@ fn i64_to_bool(value: i64) -> bool {
 }
 
 fn generate_id(prefix: &str) -> String {
-    format!("{prefix}-{}", now_millis())
+    let sequence = NEXT_ID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}-{}-{sequence}", now_millis())
 }
 
 fn now_string() -> String {
@@ -2523,6 +2610,7 @@ fn now_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::routing::RouteEndpointKind;
 
     fn test_station(database: &AppDatabase, name: &str) -> Station {
         database
@@ -2587,9 +2675,7 @@ mod tests {
         let saved = database
             .update_station_key_capabilities(input)
             .expect("save");
-        let loaded = database
-            .get_station_key_capabilities(key.id)
-            .expect("load");
+        let loaded = database.get_station_key_capabilities(key.id).expect("load");
 
         assert_eq!(loaded.station_key_id, saved.station_key_id);
         assert_eq!(loaded.model_allowlist, vec!["gpt-4o-mini"]);
@@ -2665,5 +2751,84 @@ mod tests {
         assert_eq!(health.consecutive_failures, 3);
         assert_eq!(health.last_error_summary.as_deref(), Some("timeout"));
         assert_eq!(health.cooldown_until.as_deref(), Some("123000"));
+    }
+
+    #[test]
+    fn simulate_route_returns_selected_key_and_rejection_reasons() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let selected_station = test_station(&database, "selected-route-key");
+        let blocked_station = test_station(&database, "blocked-route-key");
+        let selected = database
+            .list_station_keys(selected_station.id)
+            .expect("selected keys")
+            .remove(0);
+        let blocked = database
+            .list_station_keys(blocked_station.id)
+            .expect("blocked keys")
+            .remove(0);
+
+        database
+            .update_station_key_capabilities(UpdateStationKeyCapabilitiesInput {
+                station_key_id: selected.id.clone(),
+                supports_chat_completions: true,
+                supports_responses: true,
+                supports_embeddings: false,
+                supports_stream: true,
+                supports_tools: false,
+                supports_vision: false,
+                supports_reasoning: false,
+                model_allowlist: vec!["gpt-5.4".to_string()],
+                model_blocklist: Vec::new(),
+                preferred_models: vec!["gpt-5.4".to_string()],
+                only_use_as_backup: false,
+                routing_tags: Vec::new(),
+            })
+            .expect("selected caps");
+        database
+            .update_station_key_capabilities(UpdateStationKeyCapabilitiesInput {
+                station_key_id: blocked.id.clone(),
+                supports_chat_completions: true,
+                supports_responses: true,
+                supports_embeddings: false,
+                supports_stream: true,
+                supports_tools: false,
+                supports_vision: false,
+                supports_reasoning: false,
+                model_allowlist: vec!["gpt-4o-mini".to_string()],
+                model_blocklist: Vec::new(),
+                preferred_models: Vec::new(),
+                only_use_as_backup: false,
+                routing_tags: Vec::new(),
+            })
+            .expect("blocked caps");
+
+        let result = database
+            .simulate_route(RouteSimulationInput {
+                endpoint: RouteEndpointKind::ChatCompletions,
+                model: Some("gpt-5.4".to_string()),
+                stream: false,
+                uses_tools: false,
+                uses_vision: false,
+                uses_reasoning: false,
+                policy: Some(RoutingPolicy::PriorityFallback),
+            })
+            .expect("simulate");
+
+        assert_eq!(
+            result.selected_station_key_id.as_deref(),
+            Some(selected.id.as_str())
+        );
+        assert_eq!(
+            result.selected_station_id.as_deref(),
+            Some(selected.station_id.as_str())
+        );
+        assert!(result.candidates.iter().any(|candidate| {
+            candidate.station_key_id == blocked.id
+                && !candidate.accepted
+                && candidate
+                    .rejection_reasons
+                    .iter()
+                    .any(|reason| reason.contains("allowlist"))
+        }));
     }
 }

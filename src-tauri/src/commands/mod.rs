@@ -2,17 +2,17 @@ use tauri::{Manager, State};
 
 use crate::{
     models::{
-        capture::{CapturedHttpEventInput, CaptureSessionStatus},
+        capture::{CaptureSessionStatus, CapturedHttpEventInput},
         collector::{CollectorRunResult, CollectorSnapshot},
         credentials::{StationCredentials, UpdateStationCredentialsInput},
         proxy::{ProxyStatus, RequestLog},
         routing::{
-            ModelAlias, StationKeyCapabilities, StationKeyHealth,
-            UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
+            ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyCapabilities,
+            StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
         },
         settings::{AppSettings, UpdateSettingsInput},
-        station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
         station_keys::KeyPoolItem,
+        station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
         stations::{CreateStationInput, Station, UpdateStationInput},
         AppStatus,
     },
@@ -203,7 +203,9 @@ pub fn delete_model_alias(database: State<'_, AppDatabase>, id: String) -> Resul
 }
 
 #[tauri::command]
-pub fn list_station_key_health(database: State<'_, AppDatabase>) -> Result<Vec<StationKeyHealth>, String> {
+pub fn list_station_key_health(
+    database: State<'_, AppDatabase>,
+) -> Result<Vec<StationKeyHealth>, String> {
     database.list_station_key_health()
 }
 
@@ -213,6 +215,14 @@ pub fn get_station_key_health(
     station_key_id: String,
 ) -> Result<StationKeyHealth, String> {
     database.get_station_key_health(station_key_id)
+}
+
+#[tauri::command]
+pub fn simulate_route(
+    database: State<'_, AppDatabase>,
+    input: RouteSimulationInput,
+) -> Result<RouteSimulationResult, String> {
+    database.simulate_route(input)
 }
 
 #[tauri::command]
@@ -287,9 +297,11 @@ pub async fn test_station_login(
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
     let database = database.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || collectors::test_station_login(&database, station_id))
-        .await
-        .map_err(|error| format!("登录测试执行失败: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        collectors::test_station_login(&database, station_id)
+    })
+    .await
+    .map_err(|error| format!("登录测试执行失败: {error}"))?
 }
 
 #[tauri::command]
@@ -375,7 +387,10 @@ pub fn record_capture_event(
     input: CapturedHttpEventInput,
 ) -> Result<CaptureSessionStatus, String> {
     let station = database.station_for_collector(&input.station_id)?;
-    if !input.request_url.starts_with(station.base_url.trim_end_matches('/')) {
+    if !input
+        .request_url
+        .starts_with(station.base_url.trim_end_matches('/'))
+    {
         return Err("捕获事件不属于当前站点 Base URL，已拒绝。".to_string());
     }
     let station_id = input.station_id.clone();
@@ -440,7 +455,10 @@ pub fn finish_capture_session(
 }
 
 fn capture_window_label(station_id: &str) -> String {
-    format!("capture-{}", station_id.replace(|character: char| !character.is_ascii_alphanumeric(), "-"))
+    format!(
+        "capture-{}",
+        station_id.replace(|character: char| !character.is_ascii_alphanumeric(), "-")
+    )
 }
 
 fn capture_script(station_id: &str, window_label: &str) -> String {

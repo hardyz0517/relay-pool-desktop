@@ -46,6 +46,7 @@ pub fn run() {
             commands::delete_model_alias,
             commands::list_station_key_health,
             commands::get_station_key_health,
+            commands::simulate_route,
             commands::get_station_credentials,
             commands::update_station_credentials,
             commands::clear_station_credentials,
