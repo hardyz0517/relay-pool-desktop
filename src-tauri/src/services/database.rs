@@ -47,6 +47,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
         migrate_station_proxy_columns(&connection)
             .map_err(|error| format!("迁移站点代理字段失败: {error}"))?;
+        migrate_request_log_route_columns(&connection)
+            .map_err(|error| format!("迁移请求日志路由字段失败: {error}"))?;
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -66,6 +68,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
         migrate_station_proxy_columns(&connection)
             .map_err(|error| format!("迁移站点代理字段失败: {error}"))?;
+        migrate_request_log_route_columns(&connection)
+            .map_err(|error| format!("迁移请求日志路由字段失败: {error}"))?;
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -653,11 +657,60 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             upstream_base_url TEXT,
             fallback_count INTEGER NOT NULL DEFAULT 0,
             error_message TEXT,
+            route_policy TEXT,
+            route_reason TEXT,
+            rejected_candidates_json TEXT,
             created_at TEXT NOT NULL
         );
 
         CREATE INDEX IF NOT EXISTS idx_request_logs_created
             ON request_logs(created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS station_key_capabilities (
+            station_key_id TEXT PRIMARY KEY,
+            supports_chat_completions INTEGER NOT NULL DEFAULT 1,
+            supports_responses INTEGER NOT NULL DEFAULT 1,
+            supports_embeddings INTEGER NOT NULL DEFAULT 0,
+            supports_stream INTEGER NOT NULL DEFAULT 1,
+            supports_tools INTEGER NOT NULL DEFAULT 0,
+            supports_vision INTEGER NOT NULL DEFAULT 0,
+            supports_reasoning INTEGER NOT NULL DEFAULT 0,
+            model_allowlist_json TEXT NOT NULL DEFAULT '[]',
+            model_blocklist_json TEXT NOT NULL DEFAULT '[]',
+            preferred_models_json TEXT NOT NULL DEFAULT '[]',
+            only_use_as_backup INTEGER NOT NULL DEFAULT 0,
+            routing_tags_json TEXT NOT NULL DEFAULT '[]',
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(station_key_id) REFERENCES station_keys(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS model_aliases (
+            id TEXT PRIMARY KEY,
+            client_model TEXT NOT NULL,
+            upstream_model TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            note TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_model_aliases_client_upstream
+            ON model_aliases(client_model, upstream_model);
+
+        CREATE TABLE IF NOT EXISTS station_key_health (
+            station_key_id TEXT PRIMARY KEY,
+            last_success_at TEXT,
+            last_failure_at TEXT,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            total_duration_ms INTEGER NOT NULL DEFAULT 0,
+            avg_latency_ms INTEGER,
+            last_error_summary TEXT,
+            cooldown_until TEXT,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(station_key_id) REFERENCES station_keys(id) ON DELETE CASCADE
+        );
         ",
     )
 }
@@ -792,6 +845,31 @@ fn migrate_station_proxy_columns(connection: &Connection) -> rusqlite::Result<()
     Ok(())
 }
 
+fn migrate_request_log_route_columns(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(request_logs)")?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if !rows.iter().any(|column| column == "route_policy") {
+        connection.execute("ALTER TABLE request_logs ADD COLUMN route_policy TEXT", [])?;
+    }
+    if !rows.iter().any(|column| column == "route_reason") {
+        connection.execute("ALTER TABLE request_logs ADD COLUMN route_reason TEXT", [])?;
+    }
+    if !rows
+        .iter()
+        .any(|column| column == "rejected_candidates_json")
+    {
+        connection.execute(
+            "ALTER TABLE request_logs ADD COLUMN rejected_candidates_json TEXT",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
 fn migrate_default_station_keys(connection: &Connection) -> rusqlite::Result<()> {
     let mut statement = connection.prepare(
         "SELECT id, api_key, enabled, created_at
@@ -898,9 +976,28 @@ fn list_key_pool_items_from_connection(connection: &Connection) -> Result<Vec<Ke
                 k.last_used_at,
                 k.note,
                 k.created_at,
-                k.updated_at
+                k.updated_at,
+                COALESCE(c.supports_chat_completions, 1),
+                COALESCE(c.supports_responses, 1),
+                COALESCE(c.supports_embeddings, 0),
+                COALESCE(c.supports_stream, 1),
+                COALESCE(c.supports_tools, 0),
+                COALESCE(c.supports_vision, 0),
+                COALESCE(c.supports_reasoning, 0),
+                COALESCE(c.model_allowlist_json, '[]'),
+                COALESCE(c.model_blocklist_json, '[]'),
+                COALESCE(c.preferred_models_json, '[]'),
+                COALESCE(c.only_use_as_backup, 0),
+                h.cooldown_until,
+                h.success_count,
+                h.failure_count,
+                h.avg_latency_ms,
+                COALESCE(h.consecutive_failures, 0),
+                h.last_error_summary
              FROM station_keys k
              INNER JOIN stations s ON s.id = k.station_id
+             LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
+             LEFT JOIN station_key_health h ON h.station_key_id = k.id
              ORDER BY k.priority ASC, k.created_at ASC",
         )
         .map_err(|error| format!("读取 Key 池失败: {error}"))?;
@@ -908,6 +1005,18 @@ fn list_key_pool_items_from_connection(connection: &Connection) -> Result<Vec<Ke
     let rows = statement
         .query_map([], |row| {
             let api_key: String = row.get(6)?;
+            let supports_chat = i64_to_bool(row.get(17)?);
+            let supports_responses = i64_to_bool(row.get(18)?);
+            let supports_embeddings = i64_to_bool(row.get(19)?);
+            let supports_stream = i64_to_bool(row.get(20)?);
+            let supports_tools = i64_to_bool(row.get(21)?);
+            let supports_vision = i64_to_bool(row.get(22)?);
+            let supports_reasoning = i64_to_bool(row.get(23)?);
+            let allowlist = parse_json_string_list(row.get::<_, String>(24)?.as_str());
+            let blocklist = parse_json_string_list(row.get::<_, String>(25)?.as_str());
+            let preferred_models = parse_json_string_list(row.get::<_, String>(26)?.as_str());
+            let success_count = row.get::<_, Option<i64>>(29)?.unwrap_or(0);
+            let failure_count = row.get::<_, Option<i64>>(30)?.unwrap_or(0);
             Ok(KeyPoolItem {
                 id: row.get(0)?,
                 station_id: row.get(1)?,
@@ -925,6 +1034,26 @@ fn list_key_pool_items_from_connection(connection: &Connection) -> Result<Vec<Ke
                 last_checked_at: row.get(12)?,
                 last_used_at: row.get(13)?,
                 note: row.get(14)?,
+                capability_summary: summarize_capabilities(
+                    supports_chat,
+                    supports_responses,
+                    supports_embeddings,
+                    supports_stream,
+                    supports_tools,
+                    supports_vision,
+                    supports_reasoning,
+                ),
+                model_scope_summary: summarize_model_scope(
+                    allowlist.len(),
+                    blocklist.len(),
+                    preferred_models.len(),
+                ),
+                only_use_as_backup: i64_to_bool(row.get(27)?),
+                cooldown_until: row.get(28)?,
+                success_rate: success_rate(success_count, failure_count),
+                avg_latency_ms: row.get(31)?,
+                consecutive_failures: row.get(32)?,
+                last_error_summary: row.get(33)?,
                 created_at: row.get(15)?,
                 updated_at: row.get(16)?,
             })
@@ -1527,6 +1656,61 @@ fn parse_json_value(value: &str) -> Value {
     serde_json::from_str(value).unwrap_or_else(|_| json!({ "parseError": true }))
 }
 
+fn parse_json_string_list(value: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(value).unwrap_or_default()
+}
+
+fn summarize_capabilities(
+    supports_chat: bool,
+    supports_responses: bool,
+    supports_embeddings: bool,
+    supports_stream: bool,
+    supports_tools: bool,
+    supports_vision: bool,
+    supports_reasoning: bool,
+) -> Vec<String> {
+    [
+        (supports_chat, "Chat"),
+        (supports_responses, "Responses"),
+        (supports_embeddings, "Embeddings"),
+        (supports_stream, "Stream"),
+        (supports_tools, "Tools"),
+        (supports_vision, "Vision"),
+        (supports_reasoning, "Reasoning"),
+    ]
+    .into_iter()
+    .filter_map(|(enabled, label)| enabled.then(|| label.to_string()))
+    .collect()
+}
+
+fn summarize_model_scope(
+    allowlist_count: usize,
+    blocklist_count: usize,
+    preferred_count: usize,
+) -> String {
+    let mut parts = Vec::new();
+    if allowlist_count == 0 {
+        parts.push("全部模型".to_string());
+    } else {
+        parts.push(format!("允许 {allowlist_count} 个模型"));
+    }
+    if blocklist_count > 0 {
+        parts.push(format!("屏蔽 {blocklist_count} 个"));
+    }
+    if preferred_count > 0 {
+        parts.push(format!("优先 {preferred_count} 个"));
+    }
+    parts.join("，")
+}
+
+fn success_rate(success_count: i64, failure_count: i64) -> Option<f64> {
+    let total = success_count + failure_count;
+    if total == 0 {
+        return None;
+    }
+    Some(success_count as f64 / total as f64)
+}
+
 fn parse_upstream_api_format(value: String) -> UpstreamApiFormat {
     match value.as_str() {
         "openai_chat_completions" => UpstreamApiFormat::OpenAiChatCompletions,
@@ -1705,4 +1889,29 @@ fn now_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn routing_tables_exist_in_new_database() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let connection = database.connection().expect("connection");
+
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN (
+                    'station_key_capabilities',
+                    'model_aliases',
+                    'station_key_health'
+                )",
+                [],
+                |row| row.get(0),
+            )
+            .expect("table count");
+
+        assert_eq!(count, 3);
+    }
 }
