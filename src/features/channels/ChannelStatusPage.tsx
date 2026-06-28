@@ -3,8 +3,10 @@ import { Radio, RefreshCw, Server, Timer } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, EmptyState, MetricCard, SegmentedControl, StatusBadge } from "@/components/ui";
 import { listRequestLogs } from "@/lib/api/proxy";
+import { listStationKeyHealth } from "@/lib/api/routing";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import type { RequestLog } from "@/lib/types/proxy";
+import type { StationKeyHealth } from "@/lib/types/routing";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { stationTypeLabels } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
@@ -23,6 +25,10 @@ type ChannelHealth = {
   lastCheckedAt: string | null;
   lastUsedAt: string | null;
   lastError: string | null;
+  successCount: number;
+  failureCount: number;
+  consecutiveFailures: number;
+  cooldownUntil: string | null;
   recentOutcomes: RecentOutcome[];
 };
 
@@ -52,6 +58,7 @@ const outcomeClassName: Record<RecentOutcome, string> = {
 export function ChannelStatusPage() {
   const [keys, setKeys] = useState<KeyPoolItem[]>([]);
   const [logs, setLogs] = useState<RequestLog[]>([]);
+  const [health, setHealth] = useState<StationKeyHealth[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,15 +66,20 @@ export function ChannelStatusPage() {
     void refresh();
   }, []);
 
-  const channels = useMemo(() => buildChannels(keys, logs), [keys, logs]);
+  const channels = useMemo(() => buildChannels(keys, logs, health), [health, keys, logs]);
 
   async function refresh() {
     setLoading(true);
     setError(null);
     try {
-      const [nextKeys, nextLogs] = await Promise.all([listKeyPoolItems(), listRequestLogs()]);
+      const [nextKeys, nextLogs, nextHealth] = await Promise.all([
+        listKeyPoolItems(),
+        listRequestLogs(),
+        listStationKeyHealth(),
+      ]);
       setKeys(nextKeys);
       setLogs(nextLogs);
+      setHealth(nextHealth);
     } catch (requestError) {
       setError(readError(requestError));
     } finally {
@@ -78,7 +90,7 @@ export function ChannelStatusPage() {
   return (
     <PageScaffold
       title="渠道状态"
-      description="监控 Key / Channel 的可用性、耗时和最近请求状态；当前统计来自本地代理请求日志。"
+      description="监控 Key / Channel 的可用性、延迟、成功率和最近请求状态；健康状态来自本地代理真实请求。"
       actions={
         <div className="flex items-center gap-2">
           <SegmentedControl
@@ -115,6 +127,7 @@ export function ChannelStatusPage() {
 
 function ChannelHealthCard({ channel }: { channel: ChannelHealth }) {
   const typeLabel = stationTypeLabels[channel.stationType as keyof typeof stationTypeLabels] ?? channel.stationType;
+  const cooldownActive = isFutureTime(channel.cooldownUntil);
 
   return (
     <section className="min-h-[248px] rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)]">
@@ -130,7 +143,10 @@ function ChannelHealthCard({ channel }: { channel: ChannelHealth }) {
             </div>
           </div>
         </div>
-        <StatusBadge tone={statusTone[channel.status]}>{statusLabel[channel.status]}</StatusBadge>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <StatusBadge tone={statusTone[channel.status]}>{statusLabel[channel.status]}</StatusBadge>
+          {cooldownActive && <StatusBadge tone="warning">冷却中</StatusBadge>}
+        </div>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2.5">
@@ -144,6 +160,21 @@ function ChannelHealthCard({ channel }: { channel: ChannelHealth }) {
           label="最近使用"
           value={formatCompactTime(channel.lastUsedAt)}
         />
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+        <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/70 px-3 py-2">
+          <div className="text-muted-foreground">成功</div>
+          <div className="mt-1 font-semibold text-slate-800">{channel.successCount}</div>
+        </div>
+        <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/70 px-3 py-2">
+          <div className="text-muted-foreground">失败</div>
+          <div className="mt-1 font-semibold text-slate-800">{channel.failureCount}</div>
+        </div>
+        <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/70 px-3 py-2">
+          <div className="text-muted-foreground">连续失败</div>
+          <div className="mt-1 font-semibold text-slate-800">{channel.consecutiveFailures}</div>
+        </div>
       </div>
 
       <div className="mt-4 rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/45 p-3">
@@ -179,44 +210,56 @@ function ChannelHealthCard({ channel }: { channel: ChannelHealth }) {
       </div>
 
       <div className="mt-3 truncate text-xs text-muted-foreground">
+        {cooldownActive ? `冷却至 ${formatCompactTime(channel.cooldownUntil)} · ` : ""}
         {channel.lastError ?? "暂无错误摘要"}
       </div>
     </section>
   );
 }
 
-function buildChannels(keys: KeyPoolItem[], logs: RequestLog[]): ChannelHealth[] {
+function buildChannels(keys: KeyPoolItem[], logs: RequestLog[], health: StationKeyHealth[]): ChannelHealth[] {
+  const healthByKey = new Map(health.map((item) => [item.stationKeyId, item] as const));
   return keys.map((key) => {
+    const keyHealth = healthByKey.get(key.id);
     const keyLogs = logs
       .filter((log) => log.stationKeyId === key.id)
       .sort((a, b) => toTime(a.startedAt) - toTime(b.startedAt));
-    const completedLogs = keyLogs.filter((log) => log.durationMs !== null);
-    const successLogs = keyLogs.filter((log) => log.status === "success");
-    const availabilityPercent = keyLogs.length === 0 ? null : (successLogs.length / keyLogs.length) * 100;
-    const latencyMs =
-      completedLogs.length === 0
-        ? null
-        : Math.round(completedLogs.reduce((sum, log) => sum + (log.durationMs ?? 0), 0) / completedLogs.length);
+    const totalHealthRequests = (keyHealth?.successCount ?? 0) + (keyHealth?.failureCount ?? 0);
+    const availabilityPercent =
+      totalHealthRequests === 0 ? key.successRate === null ? null : key.successRate * 100 : ((keyHealth?.successCount ?? 0) / totalHealthRequests) * 100;
+    const latencyMs = keyHealth?.avgLatencyMs ?? key.avgLatencyMs;
     const recentOutcomes = keyLogs.slice(-60).map(logToOutcome);
     const unknownOutcomes: RecentOutcome[] = Array.from({ length: 60 - recentOutcomes.length }, () => "unknown");
     const paddedOutcomes = unknownOutcomes.concat(recentOutcomes);
-    const lastError = [...keyLogs].reverse().find((log) => log.errorMessage)?.errorMessage ?? null;
+    const lastError =
+      keyHealth?.lastErrorSummary ?? key.lastErrorSummary ?? [...keyLogs].reverse().find((log) => log.errorMessage)?.errorMessage ?? null;
 
     return {
       id: key.id,
       keyName: key.name,
       stationName: key.stationName,
       stationType: key.stationType,
-      modelSummary: key.groupName ?? key.tierLabel ?? "全部模型",
-      status: key.enabled ? key.status : "disabled",
+      modelSummary: key.modelScopeSummary || key.groupName || key.tierLabel || "全部模型",
+      status: key.enabled ? cooldownStatus(key.status, keyHealth?.cooldownUntil ?? key.cooldownUntil) : "disabled",
       latencyMs,
       availabilityPercent,
-      lastCheckedAt: key.lastCheckedAt,
-      lastUsedAt: key.lastUsedAt,
+      lastCheckedAt: keyHealth?.updatedAt ?? key.lastCheckedAt,
+      lastUsedAt: keyHealth?.lastSuccessAt ?? key.lastUsedAt,
       lastError,
+      successCount: keyHealth?.successCount ?? 0,
+      failureCount: keyHealth?.failureCount ?? 0,
+      consecutiveFailures: keyHealth?.consecutiveFailures ?? key.consecutiveFailures,
+      cooldownUntil: keyHealth?.cooldownUntil ?? key.cooldownUntil,
       recentOutcomes: paddedOutcomes,
     };
   });
+}
+
+function cooldownStatus(status: StationKeyStatus, cooldownUntil: string | null): StationKeyStatus {
+  if (isFutureTime(cooldownUntil)) {
+    return "warning";
+  }
+  return status;
 }
 
 function logToOutcome(log: RequestLog): RecentOutcome {
@@ -260,6 +303,15 @@ function formatCompactTime(value: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function isFutureTime(value: string | null) {
+  if (!value) {
+    return false;
+  }
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  return !Number.isNaN(date.getTime()) && date.getTime() > Date.now();
 }
 
 function toTime(value: string) {
