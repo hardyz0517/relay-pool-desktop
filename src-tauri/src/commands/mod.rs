@@ -6,6 +6,10 @@ use crate::{
         collector::{CollectorRunResult, CollectorSnapshot},
         credentials::{StationCredentials, UpdateStationCredentialsInput},
         proxy::{ProxyStatus, RequestLog},
+        routing::{
+            ModelAlias, StationKeyCapabilities, StationKeyHealth,
+            UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
+        },
         settings::{AppSettings, UpdateSettingsInput},
         station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
         station_keys::KeyPoolItem,
@@ -162,6 +166,53 @@ pub fn reorder_key_pool(
     key_ids: Vec<String>,
 ) -> Result<Vec<KeyPoolItem>, String> {
     database.reorder_key_pool(key_ids)
+}
+
+#[tauri::command]
+pub fn get_station_key_capabilities(
+    database: State<'_, AppDatabase>,
+    station_key_id: String,
+) -> Result<StationKeyCapabilities, String> {
+    database.get_station_key_capabilities(station_key_id)
+}
+
+#[tauri::command]
+pub fn update_station_key_capabilities(
+    database: State<'_, AppDatabase>,
+    input: UpdateStationKeyCapabilitiesInput,
+) -> Result<StationKeyCapabilities, String> {
+    database.update_station_key_capabilities(input)
+}
+
+#[tauri::command]
+pub fn list_model_aliases(database: State<'_, AppDatabase>) -> Result<Vec<ModelAlias>, String> {
+    database.list_model_aliases()
+}
+
+#[tauri::command]
+pub fn upsert_model_alias(
+    database: State<'_, AppDatabase>,
+    input: UpsertModelAliasInput,
+) -> Result<ModelAlias, String> {
+    database.upsert_model_alias(input)
+}
+
+#[tauri::command]
+pub fn delete_model_alias(database: State<'_, AppDatabase>, id: String) -> Result<(), String> {
+    database.delete_model_alias(id)
+}
+
+#[tauri::command]
+pub fn list_station_key_health(database: State<'_, AppDatabase>) -> Result<Vec<StationKeyHealth>, String> {
+    database.list_station_key_health()
+}
+
+#[tauri::command]
+pub fn get_station_key_health(
+    database: State<'_, AppDatabase>,
+    station_key_id: String,
+) -> Result<StationKeyHealth, String> {
+    database.get_station_key_health(station_key_id)
 }
 
 #[tauri::command]

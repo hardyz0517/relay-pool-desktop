@@ -13,6 +13,10 @@ use crate::models::{
     collector::CollectorSnapshot,
     credentials::{StationCredentials, UpdateStationCredentialsInput},
     proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
+    routing::{
+        ModelAlias, StationKeyCapabilities, StationKeyHealth, UpdateStationKeyCapabilitiesInput,
+        UpsertModelAliasInput,
+    },
     settings::{AppSettings, UpdateSettingsInput},
     station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, UpdateStationInput},
@@ -549,6 +553,47 @@ impl AppDatabase {
         let connection = self.connection()?;
         station_by_id(&connection, station_id)
     }
+
+    pub fn get_station_key_capabilities(
+        &self,
+        station_key_id: String,
+    ) -> Result<StationKeyCapabilities, String> {
+        let connection = self.connection()?;
+        station_key_capabilities_by_id(&connection, &station_key_id)
+    }
+
+    pub fn update_station_key_capabilities(
+        &self,
+        input: UpdateStationKeyCapabilitiesInput,
+    ) -> Result<StationKeyCapabilities, String> {
+        let connection = self.connection()?;
+        update_station_key_capabilities_in_connection(&connection, input)
+    }
+
+    pub fn list_model_aliases(&self) -> Result<Vec<ModelAlias>, String> {
+        let connection = self.connection()?;
+        list_model_aliases_from_connection(&connection)
+    }
+
+    pub fn upsert_model_alias(&self, input: UpsertModelAliasInput) -> Result<ModelAlias, String> {
+        let connection = self.connection()?;
+        upsert_model_alias_in_connection(&connection, input)
+    }
+
+    pub fn delete_model_alias(&self, id: String) -> Result<(), String> {
+        let connection = self.connection()?;
+        delete_model_alias_in_connection(&connection, &id)
+    }
+
+    pub fn list_station_key_health(&self) -> Result<Vec<StationKeyHealth>, String> {
+        let connection = self.connection()?;
+        list_station_key_health_from_connection(&connection)
+    }
+
+    pub fn get_station_key_health(&self, station_key_id: String) -> Result<StationKeyHealth, String> {
+        let connection = self.connection()?;
+        station_key_health_by_id(&connection, &station_key_id)
+    }
 }
 
 fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
@@ -845,6 +890,23 @@ fn migrate_station_proxy_columns(connection: &Connection) -> rusqlite::Result<()
     Ok(())
 }
 
+fn validate_station_key_exists(connection: &Connection, station_key_id: &str) -> Result<(), String> {
+    let exists: Option<String> = connection
+        .query_row(
+            "SELECT id FROM station_keys WHERE id = ?1",
+            params![station_key_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取 Station Key 失败: {error}"))?;
+
+    if exists.is_none() {
+        return Err("Station Key 不存在".to_string());
+    }
+
+    Ok(())
+}
+
 fn migrate_request_log_route_columns(connection: &Connection) -> rusqlite::Result<()> {
     let mut statement = connection.prepare("PRAGMA table_info(request_logs)")?;
     let rows = statement
@@ -1063,6 +1125,285 @@ fn list_key_pool_items_from_connection(connection: &Connection) -> Result<Vec<Ke
         .map_err(|error| format!("解析 Key 池失败: {error}"))?;
 
     Ok(rows)
+}
+
+fn station_key_capabilities_by_id(
+    connection: &Connection,
+    station_key_id: &str,
+) -> Result<StationKeyCapabilities, String> {
+    validate_station_key_exists(connection, station_key_id)?;
+    let row = connection
+        .query_row(
+            "SELECT station_key_id, supports_chat_completions, supports_responses,
+                    supports_embeddings, supports_stream, supports_tools, supports_vision,
+                    supports_reasoning, model_allowlist_json, model_blocklist_json,
+                    preferred_models_json, only_use_as_backup, routing_tags_json, updated_at
+               FROM station_key_capabilities
+              WHERE station_key_id = ?1",
+            params![station_key_id],
+            row_to_station_key_capabilities,
+        )
+        .optional()
+        .map_err(|error| format!("读取 Key 能力配置失败: {error}"))?;
+
+    Ok(row.unwrap_or_else(|| default_station_key_capabilities(station_key_id)))
+}
+
+fn update_station_key_capabilities_in_connection(
+    connection: &Connection,
+    input: UpdateStationKeyCapabilitiesInput,
+) -> Result<StationKeyCapabilities, String> {
+    validate_station_key_exists(connection, &input.station_key_id)?;
+    let now = now_string();
+    connection
+        .execute(
+            "INSERT INTO station_key_capabilities (
+                station_key_id, supports_chat_completions, supports_responses,
+                supports_embeddings, supports_stream, supports_tools, supports_vision,
+                supports_reasoning, model_allowlist_json, model_blocklist_json,
+                preferred_models_json, only_use_as_backup, routing_tags_json, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             ON CONFLICT(station_key_id) DO UPDATE SET
+                supports_chat_completions = excluded.supports_chat_completions,
+                supports_responses = excluded.supports_responses,
+                supports_embeddings = excluded.supports_embeddings,
+                supports_stream = excluded.supports_stream,
+                supports_tools = excluded.supports_tools,
+                supports_vision = excluded.supports_vision,
+                supports_reasoning = excluded.supports_reasoning,
+                model_allowlist_json = excluded.model_allowlist_json,
+                model_blocklist_json = excluded.model_blocklist_json,
+                preferred_models_json = excluded.preferred_models_json,
+                only_use_as_backup = excluded.only_use_as_backup,
+                routing_tags_json = excluded.routing_tags_json,
+                updated_at = excluded.updated_at",
+            params![
+                input.station_key_id,
+                bool_to_i64(input.supports_chat_completions),
+                bool_to_i64(input.supports_responses),
+                bool_to_i64(input.supports_embeddings),
+                bool_to_i64(input.supports_stream),
+                bool_to_i64(input.supports_tools),
+                bool_to_i64(input.supports_vision),
+                bool_to_i64(input.supports_reasoning),
+                serialize_string_list(&input.model_allowlist)?,
+                serialize_string_list(&input.model_blocklist)?,
+                serialize_string_list(&input.preferred_models)?,
+                bool_to_i64(input.only_use_as_backup),
+                serialize_string_list(&input.routing_tags)?,
+                now,
+            ],
+        )
+        .map_err(|error| format!("保存 Key 能力配置失败: {error}"))?;
+
+    station_key_capabilities_by_id(connection, &input.station_key_id)
+}
+
+fn row_to_station_key_capabilities(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<StationKeyCapabilities> {
+    Ok(StationKeyCapabilities {
+        station_key_id: row.get(0)?,
+        supports_chat_completions: i64_to_bool(row.get(1)?),
+        supports_responses: i64_to_bool(row.get(2)?),
+        supports_embeddings: i64_to_bool(row.get(3)?),
+        supports_stream: i64_to_bool(row.get(4)?),
+        supports_tools: i64_to_bool(row.get(5)?),
+        supports_vision: i64_to_bool(row.get(6)?),
+        supports_reasoning: i64_to_bool(row.get(7)?),
+        model_allowlist: parse_json_string_list(row.get::<_, String>(8)?.as_str()),
+        model_blocklist: parse_json_string_list(row.get::<_, String>(9)?.as_str()),
+        preferred_models: parse_json_string_list(row.get::<_, String>(10)?.as_str()),
+        only_use_as_backup: i64_to_bool(row.get(11)?),
+        routing_tags: parse_json_string_list(row.get::<_, String>(12)?.as_str()),
+        updated_at: row.get(13)?,
+    })
+}
+
+fn default_station_key_capabilities(station_key_id: &str) -> StationKeyCapabilities {
+    StationKeyCapabilities {
+        station_key_id: station_key_id.to_string(),
+        supports_chat_completions: true,
+        supports_responses: true,
+        supports_embeddings: false,
+        supports_stream: true,
+        supports_tools: false,
+        supports_vision: false,
+        supports_reasoning: false,
+        model_allowlist: Vec::new(),
+        model_blocklist: Vec::new(),
+        preferred_models: Vec::new(),
+        only_use_as_backup: false,
+        routing_tags: Vec::new(),
+        updated_at: now_string(),
+    }
+}
+
+fn list_model_aliases_from_connection(connection: &Connection) -> Result<Vec<ModelAlias>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, client_model, upstream_model, enabled, note, created_at, updated_at
+               FROM model_aliases
+              ORDER BY client_model ASC, upstream_model ASC",
+        )
+        .map_err(|error| format!("读取模型映射列表失败: {error}"))?;
+
+    let rows = statement
+        .query_map([], row_to_model_alias)
+        .map_err(|error| format!("查询模型映射失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析模型映射失败: {error}"))?;
+
+    Ok(rows)
+}
+
+fn upsert_model_alias_in_connection(
+    connection: &Connection,
+    input: UpsertModelAliasInput,
+) -> Result<ModelAlias, String> {
+    let client_model = input.client_model.trim();
+    let upstream_model = input.upstream_model.trim();
+    if client_model.is_empty() {
+        return Err("客户端模型名不能为空".to_string());
+    }
+    if upstream_model.is_empty() {
+        return Err("上游模型名不能为空".to_string());
+    }
+
+    let id = input.id.unwrap_or_else(|| generate_id("alias"));
+    let now = now_string();
+    connection
+        .execute(
+            "INSERT INTO model_aliases (
+                id, client_model, upstream_model, enabled, note, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(client_model, upstream_model) DO UPDATE SET
+                enabled = excluded.enabled,
+                note = excluded.note,
+                updated_at = excluded.updated_at",
+            params![
+                id,
+                client_model,
+                upstream_model,
+                bool_to_i64(input.enabled),
+                normalize_optional_string(input.note),
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("保存模型映射失败: {error}"))?;
+
+    model_alias_by_pair(connection, client_model, upstream_model)
+}
+
+fn delete_model_alias_in_connection(connection: &Connection, id: &str) -> Result<(), String> {
+    connection
+        .execute("DELETE FROM model_aliases WHERE id = ?1", params![id])
+        .map_err(|error| format!("删除模型映射失败: {error}"))?;
+    Ok(())
+}
+
+fn model_alias_by_pair(
+    connection: &Connection,
+    client_model: &str,
+    upstream_model: &str,
+) -> Result<ModelAlias, String> {
+    connection
+        .query_row(
+            "SELECT id, client_model, upstream_model, enabled, note, created_at, updated_at
+               FROM model_aliases
+              WHERE client_model = ?1 AND upstream_model = ?2",
+            params![client_model, upstream_model],
+            row_to_model_alias,
+        )
+        .optional()
+        .map_err(|error| format!("读取模型映射失败: {error}"))?
+        .ok_or_else(|| "模型映射不存在".to_string())
+}
+
+fn row_to_model_alias(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModelAlias> {
+    Ok(ModelAlias {
+        id: row.get(0)?,
+        client_model: row.get(1)?,
+        upstream_model: row.get(2)?,
+        enabled: i64_to_bool(row.get(3)?),
+        note: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+    })
+}
+
+fn list_station_key_health_from_connection(
+    connection: &Connection,
+) -> Result<Vec<StationKeyHealth>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT station_key_id, last_success_at, last_failure_at, consecutive_failures,
+                    success_count, failure_count, avg_latency_ms, last_error_summary,
+                    cooldown_until, updated_at
+               FROM station_key_health
+              ORDER BY updated_at DESC",
+        )
+        .map_err(|error| format!("读取 Key 健康状态失败: {error}"))?;
+
+    let rows = statement
+        .query_map([], row_to_station_key_health)
+        .map_err(|error| format!("查询 Key 健康状态失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析 Key 健康状态失败: {error}"))?;
+
+    Ok(rows)
+}
+
+fn station_key_health_by_id(
+    connection: &Connection,
+    station_key_id: &str,
+) -> Result<StationKeyHealth, String> {
+    validate_station_key_exists(connection, station_key_id)?;
+    let row = connection
+        .query_row(
+            "SELECT station_key_id, last_success_at, last_failure_at, consecutive_failures,
+                    success_count, failure_count, avg_latency_ms, last_error_summary,
+                    cooldown_until, updated_at
+               FROM station_key_health
+              WHERE station_key_id = ?1",
+            params![station_key_id],
+            row_to_station_key_health,
+        )
+        .optional()
+        .map_err(|error| format!("读取 Key 健康状态失败: {error}"))?;
+
+    Ok(row.unwrap_or_else(|| default_station_key_health(station_key_id)))
+}
+
+fn row_to_station_key_health(row: &rusqlite::Row<'_>) -> rusqlite::Result<StationKeyHealth> {
+    Ok(StationKeyHealth {
+        station_key_id: row.get(0)?,
+        last_success_at: row.get(1)?,
+        last_failure_at: row.get(2)?,
+        consecutive_failures: row.get(3)?,
+        success_count: row.get(4)?,
+        failure_count: row.get(5)?,
+        avg_latency_ms: row.get(6)?,
+        last_error_summary: row.get(7)?,
+        cooldown_until: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
+}
+
+fn default_station_key_health(station_key_id: &str) -> StationKeyHealth {
+    StationKeyHealth {
+        station_key_id: station_key_id.to_string(),
+        last_success_at: None,
+        last_failure_at: None,
+        consecutive_failures: 0,
+        success_count: 0,
+        failure_count: 0,
+        avg_latency_ms: None,
+        last_error_summary: None,
+        cooldown_until: None,
+        updated_at: now_string(),
+    }
 }
 
 fn proxy_route_candidates_from_connection(connection: &Connection) -> Result<Vec<RouteCandidate>, String> {
@@ -1660,6 +2001,15 @@ fn parse_json_string_list(value: &str) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(value).unwrap_or_default()
 }
 
+fn serialize_string_list(values: &[String]) -> Result<String, String> {
+    let normalized = values
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    serde_json::to_string(&normalized).map_err(|error| format!("序列化字符串列表失败: {error}"))
+}
+
 fn summarize_capabilities(
     supports_chat: bool,
     supports_responses: bool,
@@ -1895,6 +2245,21 @@ fn now_millis() -> u128 {
 mod tests {
     use super::*;
 
+    fn test_station(database: &AppDatabase, name: &str) -> Station {
+        database
+            .create_station(CreateStationInput {
+                name: name.to_string(),
+                station_type: "openai-compatible".to_string(),
+                base_url: "https://example.test".to_string(),
+                api_key: "sk-test-routing".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                note: None,
+            })
+            .expect("station")
+    }
+
     #[test]
     fn routing_tables_exist_in_new_database() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
@@ -1913,5 +2278,65 @@ mod tests {
             .expect("table count");
 
         assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn station_key_capabilities_round_trip() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "routing-capabilities");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+
+        let input = UpdateStationKeyCapabilitiesInput {
+            station_key_id: key.id.clone(),
+            supports_chat_completions: true,
+            supports_responses: false,
+            supports_embeddings: true,
+            supports_stream: true,
+            supports_tools: true,
+            supports_vision: false,
+            supports_reasoning: true,
+            model_allowlist: vec!["gpt-4o-mini".to_string()],
+            model_blocklist: vec!["gpt-4o".to_string()],
+            preferred_models: vec!["gpt-4o-mini".to_string()],
+            only_use_as_backup: false,
+            routing_tags: vec!["cheap".to_string()],
+        };
+
+        let saved = database
+            .update_station_key_capabilities(input)
+            .expect("save");
+        let loaded = database
+            .get_station_key_capabilities(key.id)
+            .expect("load");
+
+        assert_eq!(loaded.station_key_id, saved.station_key_id);
+        assert_eq!(loaded.model_allowlist, vec!["gpt-4o-mini"]);
+        assert_eq!(loaded.model_blocklist, vec!["gpt-4o"]);
+        assert!(loaded.supports_tools);
+        assert!(loaded.supports_reasoning);
+    }
+
+    #[test]
+    fn model_alias_round_trip() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let saved = database
+            .upsert_model_alias(UpsertModelAliasInput {
+                id: None,
+                client_model: "gpt-4o-mini".to_string(),
+                upstream_model: "openai/gpt-4o-mini".to_string(),
+                enabled: true,
+                note: Some("test alias".to_string()),
+            })
+            .expect("save alias");
+
+        let aliases = database.list_model_aliases().expect("aliases");
+
+        assert_eq!(aliases.len(), 1);
+        assert_eq!(aliases[0].id, saved.id);
+        assert_eq!(aliases[0].client_model, "gpt-4o-mini");
+        assert_eq!(aliases[0].upstream_model, "openai/gpt-4o-mini");
     }
 }
