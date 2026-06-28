@@ -1,45 +1,37 @@
-import { useState, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Circle, Copy, Power, Square } from "lucide-react";
+import type { ReactNode } from "react";
+import { Circle, Copy, Power, Square } from "lucide-react";
 import { appRoutes } from "@/app/routes";
-import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui";
 import { shellLayout } from "@/components/ui/layout";
 import { cn } from "@/lib/utils";
-import type { AppRouteId } from "@/lib/types/navigation";
+import type { AppPageId } from "@/lib/types/navigation";
 
-type AppShellProps = {
-  activeRouteId: AppRouteId;
+type AppShellProps<TActiveRouteId extends AppPageId = AppPageId> = {
+  activeRouteId: TActiveRouteId;
   children: ReactNode;
-  onRouteChange: (routeId: AppRouteId) => void;
+  onRouteChange: (routeId: TActiveRouteId) => void;
 };
 
-export function AppShell({
+export function AppShell<TActiveRouteId extends AppPageId = AppPageId>({
   activeRouteId,
   children,
   onRouteChange,
-}: AppShellProps) {
-  const [collapsed, setCollapsed] = useState(false);
+}: AppShellProps<TActiveRouteId>) {
   const activeRoute = appRoutes.find((route) => route.id === activeRouteId);
 
   return (
     <div className="flex h-screen min-h-[640px] overflow-hidden bg-background text-foreground">
       <aside
-        className="flex shrink-0 flex-col border-r border-cyan-100 bg-white/90 backdrop-blur transition-[width] duration-200"
-        style={{
-          width: collapsed ? shellLayout.sidebarCollapsedWidth : shellLayout.sidebarExpandedWidth,
-        }}
+        className="flex shrink-0 flex-col border-r border-border bg-white"
+        style={{ width: shellLayout.sidebarWidth }}
       >
         <div className="grid h-[57px] grid-cols-[20px_minmax(0,1fr)] items-center gap-3 overflow-hidden border-b border-border px-4">
           <div className="flex items-center justify-center">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-cyan-100 bg-teal-50 text-teal-700">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-white text-slate-700">
               <Square className="h-4 w-4 fill-current" />
             </div>
           </div>
-          <div
-            className={cn(
-              "min-w-0 overflow-hidden whitespace-nowrap transition-opacity duration-200 ease-out",
-              collapsed ? "opacity-0" : "opacity-100",
-            )}
-          >
+          <div className="min-w-0 overflow-hidden whitespace-nowrap">
             <div className="min-w-0">
               <div className="truncate text-[13px] font-semibold tracking-wide text-slate-800">
                 Relay Pool Desktop
@@ -51,7 +43,7 @@ export function AppShell({
           </div>
         </div>
 
-        <nav className={cn("flex-1 space-y-0.5", collapsed ? "p-1" : "p-1.5")}>
+        <nav className="flex flex-1 flex-col items-center gap-1 px-2 py-2">
           {appRoutes.map((route) => {
             const Icon = route.icon;
             const active = route.id === activeRouteId;
@@ -60,84 +52,38 @@ export function AppShell({
               <button
                 key={route.id}
                 type="button"
-                onClick={() => onRouteChange(route.id)}
+                onClick={() => onRouteChange(route.id as TActiveRouteId)}
                 title={route.label}
                 aria-label={route.label}
                 className={cn(
-                  "grid h-9 w-full cursor-pointer grid-cols-[20px_minmax(0,1fr)] items-center gap-3 overflow-hidden rounded-md px-4 text-left text-[13px] transition-colors",
+                  "flex h-10 w-10 cursor-pointer items-center justify-center rounded-[var(--surface-radius)] transition-colors",
                   active
-                    ? "bg-teal-50 text-teal-700 shadow-[inset_3px_0_0_rgb(13,148,136)]"
-                    : "text-slate-600 hover:bg-cyan-50 hover:text-slate-800",
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-900",
                 )}
               >
-                <span className="flex items-center justify-center">
-                  <Icon className="h-4 w-4 shrink-0" />
-                </span>
-                <span
-                  className={cn(
-                    "min-w-0 overflow-hidden whitespace-nowrap transition-opacity duration-200 ease-out",
-                    collapsed ? "opacity-0" : "opacity-100",
-                  )}
-                >
-                  {route.label}
-                </span>
+                <Icon className="h-4.5 w-4.5" />
               </button>
             );
           })}
         </nav>
 
-        <div className="border-t border-cyan-100 px-0 py-2.5 text-xs text-muted-foreground">
-          <div className="grid min-h-5 grid-cols-[20px_minmax(0,1fr)] items-center gap-3 px-4">
-            <span className="flex items-center justify-center">
-              <Circle className="h-2 w-2 fill-current text-amber-600" />
-            </span>
-            <span
-              className={cn(
-                "min-w-0 overflow-hidden whitespace-nowrap transition-opacity duration-200 ease-out",
-                collapsed ? "opacity-0" : "opacity-100",
-              )}
-            >
-              <span className="flex items-center justify-between gap-2 whitespace-nowrap">
-                <span>Local Proxy</span>
-                <span className="text-amber-600">未启动</span>
-              </span>
-            </span>
-          </div>
-          <div className="mt-2">
-            <Button
-              variant="ghost"
-              className="grid h-8 w-full grid-cols-[20px_minmax(0,1fr)] items-center gap-3 overflow-hidden rounded-lg px-4 text-[13px]"
-              onClick={() => setCollapsed((value) => !value)}
-              title={collapsed ? "展开侧边栏" : "收起侧边栏"}
-              aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
-            >
-              <span className="flex items-center justify-center">
-                {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-              </span>
-              <span
-                className={cn(
-                  "min-w-0 overflow-hidden whitespace-nowrap transition-opacity duration-200 ease-out",
-                  collapsed ? "opacity-0" : "opacity-100",
-                )}
-              >
-                {collapsed ? "展开" : "收起"}
-              </span>
-            </Button>
-          </div>
+        <div className="flex flex-col items-center gap-2 border-t border-border px-2 py-3">
+          <span
+            className="flex h-10 w-10 items-center justify-center rounded-[var(--surface-radius)] border border-border bg-white"
+            title="本地代理未启动"
+            aria-label="本地代理未启动"
+          >
+            <Circle className="h-2.5 w-2.5 fill-current text-amber-500" />
+          </span>
+          <IconButton label="复制本地入口">
+            <Copy className="h-4 w-4" />
+          </IconButton>
         </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[var(--shell-header-height)] shrink-0 items-center justify-between border-b border-cyan-100 bg-white/88 px-4 backdrop-blur">
-          <div>
-            <div className="text-[13px] font-medium text-slate-800">
-              {activeRoute?.label}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {activeRoute?.description}
-            </div>
-          </div>
-
+        <header className="flex h-[var(--shell-header-height)] shrink-0 items-center justify-end border-b border-border bg-white px-4">
           <div className="flex items-center overflow-hidden rounded-xl border border-cyan-100 bg-cyan-50/70 text-xs text-slate-600">
             <div className="hidden items-center gap-1.5 border-r border-cyan-100 px-2.5 py-1.5 lg:flex">
               <Circle className="h-2 w-2 fill-current text-amber-500" />
@@ -150,9 +96,9 @@ export function AppShell({
               <Power className="h-3.5 w-3.5" />
               <span>127.0.0.1:8787/v1</span>
             </div>
-            <Button variant="ghost" className="h-7 rounded-none px-2" title="复制本地入口">
+            <IconButton label="复制本地入口" variant="ghost" className="h-7 rounded-none px-2">
               <Copy className="h-4 w-4" />
-            </Button>
+            </IconButton>
           </div>
         </header>
 

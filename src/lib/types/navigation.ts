@@ -11,6 +11,8 @@ export type AppRouteId =
   | "logs"
   | "settings";
 
+export type AppPageId = AppRouteId | "addProvider";
+
 export type AppRoute = {
   id: AppRouteId;
   label: string;

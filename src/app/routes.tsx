@@ -14,8 +14,8 @@ import type { AppRoute } from "@/lib/types/navigation";
 export const appRoutes: AppRoute[] = [
   {
     id: "dashboard",
-    label: "总览",
-    description: "本地入口、路由状态和最近活动",
+    label: "工作台",
+    description: "当前路由、今日指标和本地代理入口",
     icon: LayoutDashboard,
   },
   {
