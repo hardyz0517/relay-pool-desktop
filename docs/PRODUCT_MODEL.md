@@ -90,6 +90,11 @@ It owns:
 It owns:
 
 - model-aware key selection
+- protocol-aware key selection
+- key model allowlist / blocklist matching
+- model alias mapping
+- cooldown and health-aware filtering
+- route explanation
 - fallback
 - failure switching
 - usage stats
@@ -104,6 +109,8 @@ It owns:
 - latency
 - success rate
 - error rate
+- consecutive failures
+- cooldown state
 - recent status bars
 - recent error
 - parent station
@@ -113,5 +120,6 @@ It owns:
 
 - P4.1 closes the product model and Key Pool MVP.
 - P4 continues improving login-state information collection.
-- P5 builds the local OpenAI-compatible proxy.
-- P5 / P6 later connect pricing, health, and routing policy.
+- P5 builds the local OpenAI-compatible proxy and basic priority fallback.
+- P6 adds model-aware, protocol-aware, health-aware Station Key routing with aliases, key capability scope, cooldown, route simulation, and route explanations.
+- P7 / P8 can connect price normalization, balance avoidance, cost calculation, and richer routing policies.
