@@ -44,6 +44,7 @@ const fallbackProxyStatus: ProxyStatus = {
   startedAt: null,
   lastError: null,
   activeRequests: 0,
+  requestCount: 0,
 };
 
 export function SettingsPage() {
@@ -134,7 +135,7 @@ export function SettingsPage() {
         </Button>
       }
     >
-      <form id="settings-form" className="grid gap-3" onSubmit={handleSubmit}>
+      <form id="settings-form" className="grid gap-[var(--shell-page-gap)]" onSubmit={handleSubmit}>
         <SectionCard
           title="本地代理"
           description="P5 MVP 仅监听 127.0.0.1，外部工具可使用这个 OpenAI-compatible 入口。"
@@ -176,7 +177,7 @@ export function SettingsPage() {
                 </Button>
               </div>
             }
-            description={`活动请求 ${proxyStatus.activeRequests} 个；${proxyStatus.lastError ?? "最近没有运行时错误"}`}
+            description={`活动请求 ${proxyStatus.activeRequests} 个；累计请求 ${proxyStatus.requestCount} 次；${proxyStatus.lastError ?? "最近没有运行时错误"}`}
             label="运行状态"
           />
           <SettingRow
@@ -283,7 +284,7 @@ export function SettingsPage() {
             description="SQLite 文件不在仓库目录。"
             label="数据目录"
           />
-          <div className="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs leading-5 text-amber-800">
+          <div className="rounded-[var(--surface-radius)] border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs leading-5 text-amber-800">
             API Key 当前阶段暂存 SQLite 明文；P3/P4 前必须迁移到本地加密或系统密钥链。
           </div>
         </SectionCard>

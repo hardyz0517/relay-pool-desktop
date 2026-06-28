@@ -54,6 +54,25 @@ impl AppDatabase {
         })
     }
 
+    #[cfg(test)]
+    pub fn new_in_memory_for_tests() -> Result<Self, String> {
+        let connection =
+            Connection::open_in_memory().map_err(|error| format!("无法打开内存 SQLite 数据库: {error}"))?;
+        initialize_schema(&connection)
+            .map_err(|error| format!("初始化 SQLite schema 失败: {error}"))?;
+        seed_default_settings(&connection)
+            .map_err(|error| format!("初始化默认设置失败: {error}"))?;
+        migrate_default_station_keys(&connection)
+            .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
+        migrate_station_proxy_columns(&connection)
+            .map_err(|error| format!("迁移站点代理字段失败: {error}"))?;
+
+        Ok(Self {
+            connection: Arc::new(Mutex::new(connection)),
+            db_path: PathBuf::from(":memory:"),
+        })
+    }
+
     fn connection(&self) -> Result<MutexGuard<'_, Connection>, String> {
         self.connection
             .lock()

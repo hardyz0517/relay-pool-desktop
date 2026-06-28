@@ -15,7 +15,7 @@ export function Button({
     <button
       type={type}
       className={cn(
-        "inline-flex h-8 cursor-pointer items-center justify-center gap-2 rounded-xl px-3 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:pointer-events-none disabled:cursor-default disabled:opacity-50",
+        "inline-flex h-8 cursor-pointer items-center justify-center gap-2 rounded-[var(--surface-radius)] px-3 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:pointer-events-none disabled:cursor-default disabled:opacity-50",
         variant === "primary" &&
           "bg-teal-600 text-white shadow-[0_1px_2px_rgba(15,118,110,0.18)] hover:bg-teal-700",
         variant === "secondary" &&

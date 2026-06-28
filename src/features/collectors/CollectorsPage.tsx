@@ -8,7 +8,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, EmptyState, SectionCard, StatusBadge } from "@/components/ui";
+import { Button, EmptyState, InspectorPanel, SectionCard, StatusBadge } from "@/components/ui";
 import {
   collectStationInfo,
   clearCaptureSession,
@@ -273,7 +273,7 @@ export function CollectorsPage() {
       }
     >
       {loading ? (
-        <div className="rounded-2xl border border-cyan-100 bg-white/85 px-4 py-5 text-sm text-muted-foreground">
+        <div className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
           正在读取站点和采集快照...
         </div>
       ) : !selectedStation ? (
@@ -282,7 +282,7 @@ export function CollectorsPage() {
           description="先在中转站添加一个站点账号，再回到这里做登录态采集。"
         />
       ) : (
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-[var(--shell-page-gap)] xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-3">
             <SectionCard
               title="采集结论"
@@ -290,9 +290,9 @@ export function CollectorsPage() {
               action={<StatusBadge tone={toneForConclusion(conclusion)}>{conclusion}</StatusBadge>}
             >
               <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
-                <div className="rounded-2xl border border-cyan-100 bg-cyan-50/45 p-3">
+                <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 shadow-[var(--surface-shadow)]">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-teal-100 bg-white text-teal-700">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--surface-radius)] border border-border bg-white text-teal-700">
                       <ShieldCheck className="h-5 w-5" />
                     </div>
                     <div className="min-w-0">
@@ -322,7 +322,7 @@ export function CollectorsPage() {
                 <CompactFact label="模型" value={countValue(modelCount)} />
                 <CompactFact label="字段" value={countValue(recognized?.matchedFieldCount)} />
               </div>
-              <div className="mt-3 rounded-2xl border border-slate-200/70 bg-slate-50/70 px-3 py-2 text-xs leading-5 text-muted-foreground">
+              <div className="mt-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs leading-5 text-muted-foreground shadow-[var(--surface-shadow)]">
                 {summary.diagnosis ??
                   summary.nextStep ??
                   (summary.loginRequired
@@ -337,7 +337,7 @@ export function CollectorsPage() {
                 <CompactFact label="站点类型" value={stationTypeLabels[selectedStation.stationType]} />
                 <CompactFact label="API Keys" value={`${selectedStation.keyCount} keys`} />
               </div>
-              <div className="mt-3 rounded-2xl border border-cyan-100 bg-white/85 px-3 py-2 text-sm text-slate-700">
+              <div className="mt-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-sm text-slate-700 shadow-[var(--surface-shadow)]">
                 {summary.loginRequired
                   ? "这个站点当前更像需要登录后才能拿到完整信息。先测试登录，再做采集。"
                   : "已尽量使用登录态接口读取余额、分组、倍率、key 和模型信息。"}
@@ -346,8 +346,8 @@ export function CollectorsPage() {
           </div>
 
           <aside className="space-y-3">
-            <SectionCard title="高级选项" description="接口探测与网页登录捕获都放这里。">
-              <details className="group rounded-2xl border border-slate-200 bg-slate-50/70">
+            <InspectorPanel title="高级选项" description="接口探测与网页登录捕获都放这里。">
+              <details className="group rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-slate-700">
                   高级功能
                   <ChevronDown className="h-4 w-4 text-muted-foreground transition group-open:rotate-180" />
@@ -363,7 +363,7 @@ export function CollectorsPage() {
                       <Radar className="h-4 w-4" />
                       {taskStatus === "detecting" ? "高级探测中" : "重新探测接口"}
                     </Button>
-                    <div className="rounded-2xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs leading-5 text-amber-800">
+                    <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs leading-5 text-slate-700 shadow-[var(--surface-shadow)]">
                       实验功能：用于验证码、2FA 或魔改站兜底，当前需要技术验证，不保证能捕获所有请求。
                     </div>
                     {captureActive ? (
@@ -406,9 +406,9 @@ export function CollectorsPage() {
                   </div>
                 </div>
               </details>
-            </SectionCard>
+            </InspectorPanel>
 
-            <SectionCard title="历史快照" description="最近保存的采集记录。">
+            <InspectorPanel title="历史快照" description="最近保存的采集记录。">
               <div className="space-y-2">
                 {history.length > 0 ? (
                   history.map((snapshot) => {
@@ -417,7 +417,7 @@ export function CollectorsPage() {
                       <button
                         key={snapshot.id}
                         type="button"
-                        className="w-full rounded-2xl border border-cyan-100 bg-cyan-50/45 px-3 py-2 text-left transition hover:border-teal-200 hover:bg-white"
+                        className="w-full rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/45 px-3 py-2 text-left transition hover:border-teal-200 hover:bg-white"
                         onClick={() => setLatestSnapshot(snapshot)}
                       >
                         <div className="flex items-center justify-between gap-2">
@@ -435,15 +435,15 @@ export function CollectorsPage() {
                     );
                   })
                 ) : (
-                  <div className="rounded-2xl border border-dashed border-cyan-100 bg-cyan-50/45 px-3 py-4 text-sm text-muted-foreground">
+                  <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-white px-3 py-4 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
                     暂无历史快照。
                   </div>
                 )}
               </div>
-            </SectionCard>
+            </InspectorPanel>
 
-            <SectionCard title="开发者详情" description="默认收起，仅用于排查采集器。">
-              <details className="group rounded-2xl border border-slate-200 bg-slate-50/70">
+            <InspectorPanel title="开发者详情" description="默认收起，仅用于排查采集器。">
+              <details className="group rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-slate-700">
                   脱敏 snapshot JSON
                   <span className="text-xs text-muted-foreground group-open:hidden">展开</span>
@@ -461,7 +461,7 @@ export function CollectorsPage() {
                   </pre>
                 </div>
               </details>
-            </SectionCard>
+            </InspectorPanel>
           </aside>
         </div>
       )}
@@ -469,7 +469,7 @@ export function CollectorsPage() {
       {(message || error || actionBusy) && (
         <div
           className={cn(
-            "fixed bottom-4 right-4 z-40 rounded-2xl border px-4 py-3 text-sm shadow-[0_12px_30px_rgba(33,79,88,0.12)]",
+            "fixed bottom-4 right-4 z-40 rounded-[var(--surface-radius)] border px-4 py-3 text-sm shadow-[var(--surface-shadow)]",
             error
               ? "border-rose-200 bg-rose-50 text-rose-700"
               : actionBusy
@@ -486,7 +486,7 @@ export function CollectorsPage() {
 
 function CompactFact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-cyan-100 bg-white/85 px-3 py-2">
+    <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 shadow-[var(--surface-shadow)]">
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className="mt-0.5 truncate text-sm font-semibold text-slate-800">{value}</div>
     </div>

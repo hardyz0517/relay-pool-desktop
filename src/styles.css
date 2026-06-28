@@ -11,6 +11,13 @@
   --accent: 178 58% 36%;
   --accent-foreground: 0 0% 100%;
   --border: 194 22% 84%;
+  --surface-radius: 14px;
+  --surface-shadow: 0 12px 30px rgba(33, 79, 88, 0.07);
+  --shell-sidebar-expanded: 196px;
+  --shell-sidebar-collapsed: 72px;
+  --shell-header-height: 44px;
+  --shell-footer-height: 81px;
+  --shell-page-gap: 12px;
 }
 
 * {

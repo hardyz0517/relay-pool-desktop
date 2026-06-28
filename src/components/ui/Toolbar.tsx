@@ -10,7 +10,7 @@ export function Toolbar({ children, className }: ToolbarProps) {
   return (
     <div
       className={cn(
-        "flex min-h-10 items-center justify-between gap-2 border-b border-border bg-white px-3 py-2",
+        "flex min-h-[44px] items-center justify-between gap-2 border-b border-border bg-white px-3 py-2",
         className,
       )}
     >

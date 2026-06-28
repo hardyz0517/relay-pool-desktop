@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{Read, Write},
     net::{Shutdown, TcpListener, TcpStream},
     sync::{
@@ -74,6 +74,7 @@ struct ProxyResponse {
 
 enum ProxyResponseBody {
     Buffered(Vec<u8>),
+    Streamed(Box<dyn Read + Send>),
 }
 
 impl ProxyRuntimeState {
@@ -263,6 +264,10 @@ fn handle_connection(mut stream: TcpStream, context: &ProxyServerContext) {
 }
 
 fn handle_proxy_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
+    if request.method == "OPTIONS" {
+        return cors_preflight_response();
+    }
+
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/v1/models") => forward_models_request(context, request),
         ("POST", "/v1/chat/completions") => forward_chat_request(context, request),
@@ -283,7 +288,122 @@ fn forward_models_request(context: &ProxyServerContext, request: &ParsedRequest)
     if candidates.is_empty() {
         return ProxyResponse::json_error(503, "no_enabled_keys", "Key 池中没有可用的 enabled Station Key。");
     }
-    forward_with_fallback(context, request, &candidates, None)
+    aggregate_models_request(context, request, &candidates)
+}
+
+fn aggregate_models_request(
+    context: &ProxyServerContext,
+    request: &ParsedRequest,
+    candidates: &[RouteCandidate],
+) -> ProxyResponse {
+    let mut seen_ids = HashSet::new();
+    let mut models = Vec::new();
+    let mut success_count = 0_i64;
+    let mut failed_count = 0_i64;
+    let mut last_error = None;
+
+    for candidate in candidates {
+        let checked_at = now_string();
+        match forward_to_candidate(request, candidate, false) {
+            Ok(response) if response.status_code < 400 => match extract_models_from_response(&response) {
+                Ok(items) => {
+                    success_count += 1;
+                    for item in items {
+                        let Some(id) = item.get("id").and_then(Value::as_str) else {
+                            continue;
+                        };
+                        if seen_ids.insert(id.to_string()) {
+                            models.push(item);
+                        }
+                    }
+                    let used_at = checked_at.clone();
+                    let _ = context.database.touch_station_key_usage(
+                        &candidate.station_key_id,
+                        "success",
+                        Some(&used_at),
+                        Some(&checked_at),
+                    );
+                }
+                Err(error) => {
+                    failed_count += 1;
+                    last_error = Some(error);
+                    let _ = context.database.touch_station_key_usage(
+                        &candidate.station_key_id,
+                        "warning",
+                        None,
+                        Some(&checked_at),
+                    );
+                }
+            },
+            Ok(response) => {
+                failed_count += 1;
+                last_error = Some(format!("上游返回 HTTP {}", response.status_code));
+                let _ = context.database.touch_station_key_usage(
+                    &candidate.station_key_id,
+                    "warning",
+                    None,
+                    Some(&checked_at),
+                );
+            }
+            Err(error) => {
+                failed_count += 1;
+                last_error = Some(error);
+                let _ = context.database.touch_station_key_usage(
+                    &candidate.station_key_id,
+                    "error",
+                    None,
+                    Some(&checked_at),
+                );
+            }
+        }
+    }
+
+    if success_count == 0 {
+        return ProxyResponse::json_error(
+            502,
+            "all_upstreams_failed",
+            &format!(
+                "所有 enabled Station Key 都无法获取模型列表: {}",
+                last_error.unwrap_or_else(|| "未知错误".to_string())
+            ),
+        )
+        .with_fallback_count(candidates.len().saturating_sub(1) as i64);
+    }
+
+    ProxyResponse {
+        status_code: 200,
+        content_type: "application/json".to_string(),
+        body: ProxyResponseBody::Buffered(
+            serde_json::to_vec(&serde_json::json!({
+                "object": "list",
+                "data": models
+            }))
+            .unwrap_or_else(|_| b"{\"object\":\"list\",\"data\":[]}".to_vec()),
+        ),
+        model: None,
+        stream: false,
+        station_key_id: None,
+        station_id: None,
+        upstream_base_url: None,
+        fallback_count: failed_count,
+        status_label: "success".to_string(),
+        error_message: None,
+    }
+}
+
+fn extract_models_from_response(response: &ProxyResponse) -> Result<Vec<Value>, String> {
+    let body = response
+        .body_bytes()
+        .ok_or_else(|| "模型列表响应不是可读取的 JSON body".to_string())?;
+    let value: Value =
+        serde_json::from_slice(body).map_err(|error| format!("模型列表 JSON 无法解析: {error}"))?;
+    if let Some(data) = value.get("data").and_then(Value::as_array) {
+        return Ok(data.clone());
+    }
+    if let Some(data) = value.as_array() {
+        return Ok(data.clone());
+    }
+    Err("模型列表响应缺少 data 数组".to_string())
 }
 
 fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
@@ -295,14 +415,6 @@ fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -
     };
     let request_kind = extract_request_kind(&body_value);
     let (model, stream) = extract_chat_request_metadata(&body_value);
-    if stream {
-        return ProxyResponse::json_error(
-            400,
-            "stream_not_supported",
-            "P5 MVP 暂不支持 stream=true；请关闭流式或等待 P5.5 SSE 支持。",
-        )
-        .with_request_meta(model, true);
-    }
     let candidates = match context.database.proxy_route_candidates() {
         Ok(candidates) => enabled_candidates(candidates),
         Err(error) => return ProxyResponse::json_error(500, "database_error", &error),
@@ -312,7 +424,7 @@ fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -
             .with_request_meta(model, stream);
     }
     let candidates = preferred_candidates(candidates, request_kind);
-    forward_with_fallback(context, request, &candidates, model)
+    forward_with_fallback(context, request, &candidates, model, stream)
 }
 
 fn forward_responses_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
@@ -323,14 +435,6 @@ fn forward_responses_request(context: &ProxyServerContext, request: &ParsedReque
         }
     };
     let (model, stream) = extract_responses_metadata(&body_value);
-    if stream {
-        return ProxyResponse::json_error(
-            400,
-            "stream_not_supported",
-            "P5 MVP 暂不支持 stream=true；请关闭流式或等待 P5.2 SSE 支持。",
-        )
-        .with_request_meta(model, true);
-    }
     let candidates = match context.database.proxy_route_candidates() {
         Ok(candidates) => enabled_candidates(candidates),
         Err(error) => return ProxyResponse::json_error(500, "database_error", &error),
@@ -355,12 +459,12 @@ fn forward_responses_with_fallback(
     let mut last_error = None;
     for (index, candidate) in candidates.iter().enumerate() {
         let checked_at = now_string();
-        match forward_responses_to_candidate(request, candidate, body_value, model.as_deref()) {
+        match forward_responses_to_candidate(request, candidate, body_value, model.as_deref(), stream) {
             Ok(response) if response.status_code < 400 || !should_fallback(response.status_code) => {
                 let response = response
                     .with_candidate(candidate)
                     .with_fallback_count(index as i64)
-                    .with_request_meta(model.clone(), false);
+                    .with_request_meta(model.clone(), stream);
                 let status_label = response.status_label.clone();
                 let used_at = checked_at.clone();
                 let _ = context.database.touch_station_key_usage(
@@ -408,19 +512,25 @@ fn forward_responses_to_candidate(
     candidate: &RouteCandidate,
     body_value: &Value,
     fallback_model: Option<&str>,
+    stream: bool,
 ) -> Result<ProxyResponse, String> {
     let direct_response = forward_to_candidate_with_body(
         request,
         candidate,
         upstream_responses_path(&candidate.upstream_api_format),
         request.body.as_slice(),
+        stream,
     )?;
 
     if direct_response.status_code < 400 {
+        if stream {
+            return Ok(direct_response);
+        }
         return Ok(render_responses_proxy_response(direct_response, fallback_model));
     }
 
-    if matches!(direct_response.status_code, 404 | 405 | 501)
+    if !stream
+        && matches!(direct_response.status_code, 404 | 405 | 501)
         && should_try_chat_fallback(&candidate.upstream_api_format)
     {
         let normalized = normalize_responses_request(body_value);
@@ -430,7 +540,7 @@ fn forward_responses_to_candidate(
             headers: request.headers.clone(),
             body: serde_json::to_vec(&normalized).unwrap_or_default(),
         };
-        let chat_response = forward_to_candidate(&chat_request, candidate)?;
+        let chat_response = forward_to_candidate(&chat_request, candidate, false)?;
         if chat_response.status_code < 400 {
             return Ok(render_responses_proxy_response(chat_response, fallback_model));
         }
@@ -466,16 +576,17 @@ fn forward_with_fallback(
     request: &ParsedRequest,
     candidates: &[RouteCandidate],
     model: Option<String>,
+    stream: bool,
 ) -> ProxyResponse {
     let mut last_error = None;
     for (index, candidate) in candidates.iter().enumerate() {
         let checked_at = now_string();
-        match forward_to_candidate(request, candidate) {
+        match forward_to_candidate(request, candidate, stream) {
             Ok(response) if response.status_code < 400 || !should_fallback(response.status_code) => {
                 let response = response
                     .with_candidate(candidate)
                     .with_fallback_count(index as i64)
-                    .with_request_meta(model.clone(), false);
+                    .with_request_meta(model.clone(), stream);
                 let status_label = response.status_label.clone();
                 let used_at = checked_at.clone();
                 let _ = context.database.touch_station_key_usage(
@@ -484,7 +595,7 @@ fn forward_with_fallback(
                     Some(&used_at),
                     Some(&checked_at),
                 );
-                return response.with_request_meta(model.clone(), false);
+                return response;
             }
             Ok(response) => {
                 last_error = Some(format!("上游返回 HTTP {}", response.status_code));
@@ -515,14 +626,21 @@ fn forward_with_fallback(
         ),
     )
     .with_fallback_count(candidates.len().saturating_sub(1) as i64)
-    .with_request_meta(model, false)
+    .with_request_meta(model, stream)
 }
 
 fn forward_to_candidate(
     request: &ParsedRequest,
     candidate: &RouteCandidate,
+    stream: bool,
 ) -> Result<ProxyResponse, String> {
-    forward_to_candidate_with_body(request, candidate, &request.path, request.body.as_slice())
+    forward_to_candidate_with_body(
+        request,
+        candidate,
+        &request.path,
+        request.body.as_slice(),
+        stream,
+    )
 }
 
 fn forward_to_candidate_with_body(
@@ -530,6 +648,7 @@ fn forward_to_candidate_with_body(
     candidate: &RouteCandidate,
     upstream_path: &str,
     body: &[u8],
+    stream: bool,
 ) -> Result<ProxyResponse, String> {
     let url = build_upstream_url(&candidate.upstream_base_url, upstream_path);
     let agent = ureq::AgentBuilder::new()
@@ -539,11 +658,12 @@ fn forward_to_candidate_with_body(
         .request(&request.method, &url)
         .set("authorization", &format!("Bearer {}", candidate.api_key))
         .set("content-type", content_type(request));
-    if request.path == "/v1/responses" {
-        upstream = upstream.set("accept", "application/json");
-    }
     if let Some(accept) = request.headers.get("accept") {
         upstream = upstream.set("accept", accept);
+    } else if stream {
+        upstream = upstream.set("accept", "text/event-stream");
+    } else if request.path == "/v1/responses" {
+        upstream = upstream.set("accept", "application/json");
     }
 
     let result = if body.is_empty() {
@@ -553,18 +673,49 @@ fn forward_to_candidate_with_body(
     };
 
     match result {
-        Ok(response) => Ok(response_from_upstream(response)),
-        Err(ureq::Error::Status(_, response)) => Ok(response_from_upstream(response)),
+        Ok(response) => Ok(response_from_upstream(response, stream)),
+        Err(ureq::Error::Status(_, response)) => Ok(response_from_upstream(response, false)),
         Err(error) => Err(redact_error_message(&format!("{error}"))),
     }
 }
 
-fn response_from_upstream(response: ureq::Response) -> ProxyResponse {
+fn cors_preflight_response() -> ProxyResponse {
+    ProxyResponse {
+        status_code: 204,
+        content_type: "text/plain".to_string(),
+        body: ProxyResponseBody::Buffered(Vec::new()),
+        model: None,
+        stream: false,
+        station_key_id: None,
+        station_id: None,
+        upstream_base_url: None,
+        fallback_count: 0,
+        status_label: "success".to_string(),
+        error_message: None,
+    }
+}
+
+fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyResponse {
     let status_code = response.status();
     let content_type = response
         .header("content-type")
         .unwrap_or("application/json")
         .to_string();
+    if stream && status_code < 400 {
+        return ProxyResponse {
+            status_code,
+            content_type,
+            body: ProxyResponseBody::Streamed(Box::new(response.into_reader())),
+            model: None,
+            stream: true,
+            station_key_id: None,
+            station_id: None,
+            upstream_base_url: None,
+            fallback_count: 0,
+            status_label: "success".to_string(),
+            error_message: None,
+        };
+    }
     let body = response
         .into_reader()
         .take(2 * 1024 * 1024)
@@ -600,6 +751,7 @@ impl ProxyResponse {
     fn body_bytes(&self) -> Option<&[u8]> {
         match &self.body {
             ProxyResponseBody::Buffered(bytes) => Some(bytes.as_slice()),
+            ProxyResponseBody::Streamed(_) => None,
         }
     }
 
@@ -708,18 +860,34 @@ fn read_http_request(stream: &mut TcpStream) -> Result<ParsedRequest, String> {
 
 fn write_http_response(stream: &mut TcpStream, response: ProxyResponse) -> Result<(), String> {
     let reason = reason_phrase(response.status_code);
-    let body = response.body_bytes().map(|bytes| bytes.to_vec()).unwrap_or_default();
-    let header = format!(
-        "HTTP/1.1 {} {}\r\ncontent-type: {}\r\ncontent-length: {}\r\naccess-control-allow-origin: *\r\nconnection: close\r\n\r\n",
-        response.status_code,
-        reason,
-        response.content_type,
-        body.len()
-    );
-    stream
-        .write_all(header.as_bytes())
-        .and_then(|_| stream.write_all(&body))
-        .map_err(|error| format!("写入响应失败: {error}"))
+    match response.body {
+        ProxyResponseBody::Buffered(body) => {
+            let header = format!(
+                "HTTP/1.1 {} {}\r\ncontent-type: {}\r\ncontent-length: {}\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET, POST, OPTIONS\r\naccess-control-allow-headers: authorization, content-type, accept\r\nconnection: close\r\n\r\n",
+                response.status_code,
+                reason,
+                response.content_type,
+                body.len()
+            );
+            stream
+                .write_all(header.as_bytes())
+                .and_then(|_| stream.write_all(&body))
+                .map_err(|error| format!("写入响应失败: {error}"))
+        }
+        ProxyResponseBody::Streamed(mut body) => {
+            let header = format!(
+                "HTTP/1.1 {} {}\r\ncontent-type: {}\r\ncache-control: no-cache\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET, POST, OPTIONS\r\naccess-control-allow-headers: authorization, content-type, accept\r\nconnection: close\r\n\r\n",
+                response.status_code,
+                reason,
+                response.content_type,
+            );
+            stream
+                .write_all(header.as_bytes())
+                .and_then(|_| std::io::copy(&mut body, stream).map(|_| ()))
+                .and_then(|_| stream.flush())
+                .map_err(|error| format!("写入流式响应失败: {error}"))
+        }
+    }
 }
 
 fn find_header_end(buffer: &[u8]) -> Option<usize> {
@@ -737,6 +905,7 @@ fn content_type(request: &ParsedRequest) -> &str {
 fn reason_phrase(status: u16) -> &'static str {
     match status {
         200 => "OK",
+        204 => "No Content",
         400 => "Bad Request",
         404 => "Not Found",
         502 => "Bad Gateway",
@@ -747,4 +916,368 @@ fn reason_phrase(status: u16) -> &'static str {
 
 fn now_string() -> String {
     now_millis_for_services().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::stations::CreateStationInput;
+    use std::{
+        sync::atomic::{AtomicU32, AtomicU64},
+        io::Read,
+        net::TcpListener,
+        thread,
+        time::Duration,
+    };
+
+    #[test]
+    fn write_http_response_supports_streamed_bodies_without_content_length() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let handle = thread::spawn(move || {
+            let (mut server_stream, _) = listener.accept().expect("accept");
+            let response = ProxyResponse {
+                status_code: 200,
+                content_type: "text/event-stream".to_string(),
+                body: ProxyResponseBody::Streamed(Box::new(std::io::Cursor::new(
+                    b"data: {\"id\":\"evt-1\"}\n\n".to_vec(),
+                ))),
+                model: Some("gpt-5.4".to_string()),
+                stream: true,
+                station_key_id: Some("key-1".to_string()),
+                station_id: Some("station-1".to_string()),
+                upstream_base_url: Some("https://example.test/v1".to_string()),
+                fallback_count: 0,
+                status_label: "success".to_string(),
+                error_message: None,
+            };
+            write_http_response(&mut server_stream, response).expect("write response");
+        });
+
+        let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("timeout");
+
+        let mut buf = Vec::new();
+        client.read_to_end(&mut buf).expect("read all");
+        handle.join().expect("join");
+
+        let text = String::from_utf8(buf).expect("utf8");
+        assert!(text.contains("content-type: text/event-stream"));
+        assert!(!text.contains("content-length:"));
+        assert!(text.contains("data: {\"id\":\"evt-1\"}"));
+    }
+
+    #[test]
+    fn response_from_upstream_marks_success_as_streamed_when_requested() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let handle = thread::spawn(move || {
+            let (mut server_stream, _) = listener.accept().expect("accept");
+            let mut buf = [0_u8; 1024];
+            let _ = server_stream.read(&mut buf);
+            let body = b"data: hello\n\n";
+            let header = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            server_stream.write_all(header.as_bytes()).expect("header");
+            server_stream.write_all(body).expect("body");
+        });
+
+        let response = ureq::get(&format!("http://127.0.0.1:{port}/v1/chat/completions"))
+            .call()
+            .expect("request");
+
+        let proxy_response = response_from_upstream(response, true);
+        match proxy_response.body {
+            ProxyResponseBody::Streamed(_) => {}
+            ProxyResponseBody::Buffered(_) => panic!("expected streamed body"),
+        }
+
+        handle.join().expect("join");
+    }
+
+    #[test]
+    fn forward_chat_request_preserves_stream_metadata_for_sse_success() {
+        let upstream = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        let upstream_port = upstream.local_addr().expect("upstream addr").port();
+
+        let handle = thread::spawn(move || {
+            let (mut server_stream, _) = upstream.accept().expect("accept upstream");
+            let mut buf = [0_u8; 2048];
+            let _ = server_stream.read(&mut buf);
+            let body = b"data: {\"choices\":[]}\n\ndata: [DONE]\n\n";
+            let header = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            server_stream.write_all(header.as_bytes()).expect("header");
+            server_stream.write_all(body).expect("body");
+        });
+
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        database
+            .create_station(CreateStationInput {
+                name: "Streaming station".to_string(),
+                station_type: "openai-compatible".to_string(),
+                base_url: format!("http://127.0.0.1:{upstream_port}"),
+                api_key: "sk-test-streaming".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                note: None,
+            })
+            .expect("station");
+        let context = ProxyServerContext {
+            database,
+            active_requests: Arc::new(AtomicU32::new(0)),
+            request_count: Arc::new(AtomicU64::new(0)),
+        };
+        let request = ParsedRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
+            body: serde_json::to_vec(&serde_json::json!({
+                "model": "gpt-5.4",
+                "messages": [{"role": "user", "content": "ping"}],
+                "stream": true
+            }))
+            .expect("body"),
+        };
+
+        let response = forward_chat_request(&context, &request);
+
+        assert_eq!(response.status_code, 200);
+        assert!(response.stream, "request log metadata should record stream=true");
+        assert_eq!(response.model.as_deref(), Some("gpt-5.4"));
+        assert_eq!(response.content_type, "text/event-stream");
+        assert!(matches!(response.body, ProxyResponseBody::Streamed(_)));
+
+        context.active_requests.store(0, Ordering::Relaxed);
+        context.request_count.store(0, Ordering::Relaxed);
+        handle.join().expect("join upstream");
+    }
+
+    #[test]
+    fn forward_responses_request_streams_with_sse_accept_header() {
+        let upstream = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        let upstream_port = upstream.local_addr().expect("upstream addr").port();
+
+        let handle = thread::spawn(move || {
+            let (mut server_stream, _) = upstream.accept().expect("accept upstream");
+            let mut buf = [0_u8; 4096];
+            let read = server_stream.read(&mut buf).expect("read upstream request");
+            let request_text = String::from_utf8_lossy(&buf[..read]).to_lowercase();
+            if !request_text.contains("accept: text/event-stream") {
+                let body = b"{\"error\":{\"message\":\"expected sse accept\"}}";
+                let header = format!(
+                    "HTTP/1.1 406 Not Acceptable\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                server_stream.write_all(header.as_bytes()).expect("header");
+                server_stream.write_all(body).expect("body");
+                return;
+            }
+
+            let body = b"event: response.output_text.delta\ndata: {\"delta\":\"pong\"}\n\ndata: [DONE]\n\n";
+            let header = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            server_stream.write_all(header.as_bytes()).expect("header");
+            server_stream.write_all(body).expect("body");
+        });
+
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        database
+            .create_station(CreateStationInput {
+                name: "Responses streaming station".to_string(),
+                station_type: "openai-compatible".to_string(),
+                base_url: format!("http://127.0.0.1:{upstream_port}"),
+                api_key: "sk-test-responses-streaming".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                note: None,
+            })
+            .expect("station");
+        let context = ProxyServerContext {
+            database,
+            active_requests: Arc::new(AtomicU32::new(0)),
+            request_count: Arc::new(AtomicU64::new(0)),
+        };
+        let request = ParsedRequest {
+            method: "POST".to_string(),
+            path: "/v1/responses".to_string(),
+            headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
+            body: serde_json::to_vec(&serde_json::json!({
+                "model": "gpt-5.4",
+                "input": "ping",
+                "stream": true
+            }))
+            .expect("body"),
+        };
+
+        let response = forward_responses_request(&context, &request);
+
+        assert_eq!(response.status_code, 200);
+        assert!(response.stream);
+        assert_eq!(response.model.as_deref(), Some("gpt-5.4"));
+        assert_eq!(response.content_type, "text/event-stream");
+        assert!(matches!(response.body, ProxyResponseBody::Streamed(_)));
+
+        handle.join().expect("join upstream");
+    }
+
+    #[test]
+    fn forward_models_request_aggregates_and_deduplicates_enabled_keys_by_priority() {
+        let first_upstream = TcpListener::bind(("127.0.0.1", 0)).expect("bind first upstream");
+        let first_port = first_upstream.local_addr().expect("first addr").port();
+        let second_upstream = TcpListener::bind(("127.0.0.1", 0)).expect("bind second upstream");
+        let second_port = second_upstream.local_addr().expect("second addr").port();
+
+        let first_handle = thread::spawn(move || {
+            respond_once_with_models(first_upstream, &["gpt-5.4", "shared-model"]);
+        });
+        let second_handle = thread::spawn(move || {
+            respond_once_with_models(second_upstream, &["shared-model", "o3"]);
+        });
+
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        database
+            .create_station(CreateStationInput {
+                name: "First models station".to_string(),
+                station_type: "openai-compatible".to_string(),
+                base_url: format!("http://127.0.0.1:{first_port}"),
+                api_key: "sk-first-models".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                note: None,
+            })
+            .expect("first station");
+        thread::sleep(Duration::from_millis(2));
+        database
+            .create_station(CreateStationInput {
+                name: "Second models station".to_string(),
+                station_type: "openai-compatible".to_string(),
+                base_url: format!("http://127.0.0.1:{second_port}"),
+                api_key: "sk-second-models".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                note: None,
+            })
+            .expect("second station");
+        let context = ProxyServerContext {
+            database,
+            active_requests: Arc::new(AtomicU32::new(0)),
+            request_count: Arc::new(AtomicU64::new(0)),
+        };
+        let request = ParsedRequest {
+            method: "GET".to_string(),
+            path: "/v1/models".to_string(),
+            headers: HashMap::new(),
+            body: Vec::new(),
+        };
+
+        let response = forward_models_request(&context, &request);
+        let body = response.body_bytes().expect("buffered body");
+        let value: Value = serde_json::from_slice(body).expect("json body");
+        let ids: Vec<_> = value["data"]
+            .as_array()
+            .expect("data array")
+            .iter()
+            .filter_map(|item| item["id"].as_str())
+            .collect();
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(ids, vec!["gpt-5.4", "shared-model", "o3"]);
+
+        first_handle.join().expect("first join");
+        second_handle.join().expect("second join");
+    }
+
+    fn respond_once_with_models(listener: TcpListener, ids: &[&str]) {
+        let (mut server_stream, _) = listener.accept().expect("accept upstream");
+        let mut buf = [0_u8; 2048];
+        let _ = server_stream.read(&mut buf);
+        let data: Vec<_> = ids
+            .iter()
+            .map(|id| serde_json::json!({ "id": id, "object": "model" }))
+            .collect();
+        let body = serde_json::to_vec(&serde_json::json!({
+            "object": "list",
+            "data": data
+        }))
+        .expect("models body");
+        let header = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
+        );
+        server_stream.write_all(header.as_bytes()).expect("header");
+        server_stream.write_all(&body).expect("body");
+    }
+
+    #[test]
+    fn handle_proxy_request_returns_cors_preflight_response() {
+        let context = ProxyServerContext {
+            database: AppDatabase::new_in_memory_for_tests().expect("database"),
+            active_requests: Arc::new(AtomicU32::new(0)),
+            request_count: Arc::new(AtomicU64::new(0)),
+        };
+        let request = ParsedRequest {
+            method: "OPTIONS".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: HashMap::new(),
+            body: Vec::new(),
+        };
+
+        let response = handle_proxy_request(&context, &request);
+
+        assert_eq!(response.status_code, 204);
+        assert_eq!(response.status_label, "success");
+        assert_eq!(response.body_bytes(), Some(&[][..]));
+    }
+
+    #[test]
+    fn write_http_response_includes_cors_compatibility_headers() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let handle = thread::spawn(move || {
+            let (mut server_stream, _) = listener.accept().expect("accept");
+            let response = ProxyResponse {
+                status_code: 204,
+                content_type: "text/plain".to_string(),
+                body: ProxyResponseBody::Buffered(Vec::new()),
+                model: None,
+                stream: false,
+                station_key_id: None,
+                station_id: None,
+                upstream_base_url: None,
+                fallback_count: 0,
+                status_label: "success".to_string(),
+                error_message: None,
+            };
+            write_http_response(&mut server_stream, response).expect("write response");
+        });
+
+        let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("timeout");
+        let mut buf = Vec::new();
+        client.read_to_end(&mut buf).expect("read all");
+        handle.join().expect("join");
+
+        let text = String::from_utf8(buf).expect("utf8");
+        assert!(text.contains("access-control-allow-origin: *"));
+        assert!(text.contains("access-control-allow-methods: GET, POST, OPTIONS"));
+        assert!(text.contains("access-control-allow-headers: authorization, content-type, accept"));
+    }
 }

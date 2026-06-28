@@ -19,12 +19,12 @@ export function InspectorPanel({
   return (
     <aside
       className={cn(
-        "min-w-0 overflow-hidden rounded-md border border-border bg-white",
+        "min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]",
         className,
       )}
     >
       {(title || description || actions) && (
-        <div className="flex min-h-10 items-center justify-between gap-3 border-b border-border px-3 py-2">
+        <div className="flex min-h-[44px] items-center justify-between gap-3 border-b border-border px-3 py-2">
           <div className="min-w-0">
             {title && (
               <div className="truncate text-[13px] font-semibold text-slate-800">

@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, Circle, Copy, Power, Square } from "lucide-react";
 import { appRoutes } from "@/app/routes";
 import { Button } from "@/components/ui/button";
+import { shellLayout } from "@/components/ui/layout";
 import { cn } from "@/lib/utils";
 import type { AppRouteId } from "@/lib/types/navigation";
 
@@ -18,15 +19,14 @@ export function AppShell({
 }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false);
   const activeRoute = appRoutes.find((route) => route.id === activeRouteId);
-  const sidebarGridClass = "grid-cols-[20px_minmax(0,1fr)]";
 
   return (
     <div className="flex h-screen min-h-[640px] overflow-hidden bg-background text-foreground">
       <aside
-        className={cn(
-          "flex shrink-0 flex-col border-r border-cyan-100 bg-white/90 backdrop-blur transition-[width] duration-200",
-          collapsed ? "w-[64px]" : "w-[196px]",
-        )}
+        className="flex shrink-0 flex-col border-r border-cyan-100 bg-white/90 backdrop-blur transition-[width] duration-200"
+        style={{
+          width: collapsed ? shellLayout.sidebarCollapsedWidth : shellLayout.sidebarExpandedWidth,
+        }}
       >
         <div className="grid h-[57px] grid-cols-[20px_minmax(0,1fr)] items-center gap-3 overflow-hidden border-b border-border px-4">
           <div className="flex items-center justify-center">
@@ -36,7 +36,7 @@ export function AppShell({
           </div>
           <div
             className={cn(
-              "min-w-0 overflow-hidden transition-opacity duration-200 ease-out",
+              "min-w-0 overflow-hidden whitespace-nowrap transition-opacity duration-200 ease-out",
               collapsed ? "opacity-0" : "opacity-100",
             )}
           >
@@ -75,7 +75,7 @@ export function AppShell({
                 </span>
                 <span
                   className={cn(
-                    "min-w-0 overflow-hidden transition-opacity duration-200 ease-out",
+                    "min-w-0 overflow-hidden whitespace-nowrap transition-opacity duration-200 ease-out",
                     collapsed ? "opacity-0" : "opacity-100",
                   )}
                 >
@@ -87,17 +87,17 @@ export function AppShell({
         </nav>
 
         <div className="border-t border-cyan-100 px-0 py-2.5 text-xs text-muted-foreground">
-          <div className="grid grid-cols-[20px_minmax(0,1fr)] items-center gap-3 px-4">
+          <div className="grid min-h-5 grid-cols-[20px_minmax(0,1fr)] items-center gap-3 px-4">
             <span className="flex items-center justify-center">
               <Circle className="h-2 w-2 fill-current text-amber-600" />
             </span>
             <span
               className={cn(
-                "min-w-0 overflow-hidden transition-opacity duration-200 ease-out",
+                "min-w-0 overflow-hidden whitespace-nowrap transition-opacity duration-200 ease-out",
                 collapsed ? "opacity-0" : "opacity-100",
               )}
             >
-              <span className="flex items-center justify-between">
+              <span className="flex items-center justify-between gap-2 whitespace-nowrap">
                 <span>Local Proxy</span>
                 <span className="text-amber-600">未启动</span>
               </span>
@@ -116,7 +116,7 @@ export function AppShell({
               </span>
               <span
                 className={cn(
-                  "min-w-0 overflow-hidden transition-opacity duration-200 ease-out",
+                  "min-w-0 overflow-hidden whitespace-nowrap transition-opacity duration-200 ease-out",
                   collapsed ? "opacity-0" : "opacity-100",
                 )}
               >
@@ -128,7 +128,7 @@ export function AppShell({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-11 shrink-0 items-center justify-between border-b border-cyan-100 bg-white/88 px-4 backdrop-blur">
+        <header className="flex h-[var(--shell-header-height)] shrink-0 items-center justify-between border-b border-cyan-100 bg-white/88 px-4 backdrop-blur">
           <div>
             <div className="text-[13px] font-medium text-slate-800">
               {activeRoute?.label}
@@ -141,10 +141,10 @@ export function AppShell({
           <div className="flex items-center overflow-hidden rounded-xl border border-cyan-100 bg-cyan-50/70 text-xs text-slate-600">
             <div className="hidden items-center gap-1.5 border-r border-cyan-100 px-2.5 py-1.5 lg:flex">
               <Circle className="h-2 w-2 fill-current text-amber-500" />
-              <span>代理未启动</span>
+              <span>本地代理未启动</span>
             </div>
             <div className="hidden border-r border-cyan-100 px-2.5 py-1.5 md:block">
-              手动优先
+              Key 池优先
             </div>
             <div className="hidden items-center gap-1.5 border-r border-cyan-100 px-2.5 py-1.5 md:flex">
               <Power className="h-3.5 w-3.5" />
@@ -156,7 +156,7 @@ export function AppShell({
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-auto bg-background p-4">
+        <main className="min-h-0 flex-1 overflow-auto bg-background p-[var(--shell-page-gap)]">
           {children}
         </main>
       </div>

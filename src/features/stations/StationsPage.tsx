@@ -502,7 +502,7 @@ export function StationsPage() {
         </Button>
       }
     >
-      <div className="min-w-0 overflow-hidden rounded-2xl border border-white/70 bg-white/85 shadow-[0_12px_30px_rgba(33,79,88,0.07)]">
+      <div className="min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
         <Toolbar>
           <div className="min-w-0">
             <div className="text-[13px] font-semibold text-slate-800">中转站列表</div>
@@ -516,9 +516,9 @@ export function StationsPage() {
           </Button>
         </Toolbar>
 
-        <div className="p-3">
+        <div className="p-[var(--shell-page-gap)]">
           {loading ? (
-            <div className="rounded-2xl border border-cyan-100 bg-cyan-50/70 px-4 py-5 text-sm text-muted-foreground">
+            <div className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
               正在读取本地 SQLite...
             </div>
           ) : stations.length === 0 ? (
@@ -567,8 +567,8 @@ export function StationsPage() {
       {(message || error) && (
         <div
           className={cn(
-            "fixed bottom-4 right-4 z-40 rounded-2xl border px-4 py-3 text-sm shadow-[0_12px_30px_rgba(33,79,88,0.12)]",
-            error ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700",
+            "fixed bottom-4 right-4 z-40 rounded-[var(--surface-radius)] border px-4 py-3 text-sm shadow-[var(--surface-shadow)]",
+            error ? "border-border bg-white text-slate-700" : "border-border bg-white text-slate-700",
           )}
         >
           {error ?? message}
@@ -778,7 +778,7 @@ function StationDialogs({
               <span className="text-xs text-muted-foreground">P3 阶段密码暂存本地 SQLite，后续迁移到系统密钥链。</span>
             </div>
             {credentials && (
-              <div className="mt-3 rounded-2xl border border-cyan-100 bg-white/80 p-3 text-xs text-slate-700">
+              <div className="mt-3 rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs text-slate-700 shadow-[var(--surface-shadow)]">
                 当前登录状态: {credentials.loginStatus}
                 {credentials.loginError ? ` · ${credentials.loginError}` : ""}
               </div>
@@ -826,7 +826,7 @@ function DetailBody({
 }) {
   return (
     <div className="space-y-4 p-5">
-      <PropertyList className="overflow-hidden rounded-2xl border border-cyan-100 bg-white/80">
+      <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80">
         <PropertyRow label="站点名称" value={activeDialogStation.name} />
         <PropertyRow label="站点类型" value={stationTypeLabels[activeDialogStation.stationType]} />
         <PropertyRow label="Base URL" value={<code className="text-xs">{activeDialogStation.baseUrl}</code>} />
@@ -839,7 +839,7 @@ function DetailBody({
 
       <SectionBlock title="登录账号">
         {credentials ? (
-          <PropertyList className="overflow-hidden rounded-2xl border border-cyan-100 bg-white/80">
+          <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80">
             <PropertyRow label="登录用户名" value={credentials.loginUsername || "未设置"} />
             <PropertyRow label="密码" value={credentials.passwordPresent ? "已保存" : "未保存"} />
             <PropertyRow label="记住密码" value={credentials.rememberPassword ? "是" : "否"} />
@@ -848,17 +848,17 @@ function DetailBody({
             <PropertyRow label="登录错误" value={credentials.loginError ?? "无"} />
           </PropertyList>
         ) : (
-          <div className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-3 text-sm text-muted-foreground">未保存登录账号。</div>
+          <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">未保存登录账号。</div>
         )}
       </SectionBlock>
 
       <SectionBlock title="API Keys">
         <div className="space-y-2">
           {stationKeys.length === 0 ? (
-            <div className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-3 text-sm text-muted-foreground">暂无 Key。</div>
+            <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无 Key。</div>
           ) : (
             stationKeys.map((key) => (
-              <div key={key.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-2xl border border-cyan-100 bg-white/90 px-3 py-2.5">
+              <div key={key.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2.5 shadow-[var(--surface-shadow)]">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <div className="truncate text-sm font-medium text-slate-800">{key.name}</div>
@@ -884,22 +884,22 @@ function DetailBody({
 
       <SectionBlock title="最新采集快照">
         {snapshot ? (
-          <div className="space-y-2 rounded-2xl border border-cyan-100 bg-white/80 p-3 text-sm">
+          <div className="space-y-2 rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm shadow-[var(--surface-shadow)]">
             <PropertyList>
               <PropertyRow label="source" value={snapshot.source} />
               <PropertyRow label="status" value={snapshot.status} />
               <PropertyRow label="fetchedAt" value={snapshot.fetchedAt} />
               <PropertyRow label="error" value={snapshot.errorMessage ?? "无"} />
             </PropertyList>
-            <pre className="max-h-40 overflow-auto rounded-xl bg-slate-50 p-3 text-[11px] text-slate-600">{JSON.stringify(snapshot.summaryJson, null, 2)}</pre>
+            <pre className="max-h-40 overflow-auto rounded-[var(--surface-radius)] border border-border bg-white p-3 text-[11px] text-slate-600">{JSON.stringify(snapshot.summaryJson, null, 2)}</pre>
             <div className="text-xs text-muted-foreground">历史快照：{snapshots.length} 条</div>
           </div>
         ) : (
-          <div className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-3 text-sm text-muted-foreground">暂无快照。</div>
+          <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无快照。</div>
         )}
       </SectionBlock>
 
-      <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-3 text-xs leading-5 text-amber-800">
+      <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs leading-5 text-slate-700 shadow-[var(--surface-shadow)]">
         登录捕获将在 P4 接入 WebView。当前密码仅在本地 SQLite 临时保存，后续将迁移到系统密钥链或本地加密。
       </div>
     </div>
@@ -966,13 +966,13 @@ function StationRowContent({
 }) {
   const balanceText = station.balanceCny === null ? "未采集" : `¥${station.balanceCny.toFixed(2)}`;
   return (
-    <div className={cn("group grid min-h-[80px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-2xl border bg-white px-3 py-2 text-left shadow-[0_8px_18px_rgba(33,79,88,0.055)] transition-colors", active ? "border-teal-300 bg-teal-50/40 ring-2 ring-teal-100" : "border-cyan-100 hover:border-teal-200 hover:bg-teal-50/25", overlay && "border-teal-300 shadow-[0_14px_28px_rgba(13,148,136,0.18)]")}>
-      <button type="button" className="flex h-9 w-9 cursor-grab items-center justify-center rounded-xl border border-cyan-100 bg-cyan-50 text-slate-400 transition active:cursor-grabbing group-hover:text-teal-700" aria-label="拖拽排序" {...dragAttributes} {...dragListeners}>
+    <div className={cn("group grid min-h-[80px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-left shadow-[var(--surface-shadow)] transition-colors", active ? "ring-2 ring-teal-100" : "hover:ring-1 hover:ring-teal-100", overlay && "ring-2 ring-teal-100")}>
+      <button type="button" className="flex h-9 w-9 cursor-grab items-center justify-center rounded-[var(--surface-radius)] border border-border bg-white text-slate-400 transition active:cursor-grabbing group-hover:text-teal-700" aria-label="拖拽排序" {...dragAttributes} {...dragListeners}>
         <GripVertical className="h-4 w-4" />
       </button>
       <button type="button" onClick={() => onSelect?.(station)} className="min-w-0 text-left">
         <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-[11px] font-semibold text-teal-700">{station.name.slice(0, 2).toUpperCase()}</div>
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--surface-radius)] border border-border bg-white text-[11px] font-semibold text-teal-700">{station.name.slice(0, 2).toUpperCase()}</div>
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <StationStatusDot status={station.status} />
@@ -981,7 +981,7 @@ function StationRowContent({
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
               <span className="shrink-0">{stationTypeLabels[station.stationType]}</span>
               <span className="truncate">{station.baseUrl}</span>
-              <span className="shrink-0 rounded-full border border-cyan-100 bg-cyan-50 px-2 py-0.5 text-[11px] text-slate-600">{station.keyCount} keys</span>
+              <span className="shrink-0 rounded-full border border-border bg-white px-2 py-0.5 text-[11px] text-slate-600">{station.keyCount} keys</span>
             </div>
           </div>
         </div>
@@ -1009,7 +1009,7 @@ function StationRowContent({
 
 function SectionBlock({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-2xl border border-cyan-100 bg-cyan-50/35 p-3">
+    <section className="rounded-[var(--surface-radius)] border border-border bg-white p-3 shadow-[var(--surface-shadow)]">
       <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800">
         <ShieldCheck className="h-4 w-4 text-teal-600" />
         {title}
@@ -1160,4 +1160,4 @@ function readError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-const inputClassName = "h-8 rounded-xl border border-cyan-100 bg-cyan-50/40 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
+const inputClassName = "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/40 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";

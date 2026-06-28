@@ -3,6 +3,7 @@ import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   DataTableLite,
   InspectorPanel,
+  MetricCard,
   SectionCard,
   StatusBadge,
   type DataTableColumn,
@@ -87,13 +88,13 @@ export function PricingPage() {
 
   return (
     <PageScaffold title="价格表" description="模型价格归一化和推荐站点对比；当前为 mock 快照。">
-      <div className="grid gap-3 md:grid-cols-3">
-        <SoftMetric icon={BadgeDollarSign} label="最低输出价" value={`¥${cheapest.outputCnyPer1M.toFixed(2)}`} detail={cheapest.model} />
-        <SoftMetric icon={Layers3} label="覆盖模型" value={`${mockPricingRows.length}`} detail="mock rows" />
-        <SoftMetric icon={TrendingDown} label="价格变化" value="-6.4%" detail="gpt-4.1" />
+      <div className="grid gap-[var(--shell-page-gap)] md:grid-cols-3">
+        <MetricCard icon={BadgeDollarSign} label="最低输出价" value={`¥${cheapest.outputCnyPer1M.toFixed(2)}`} detail={cheapest.model} />
+        <MetricCard icon={Layers3} label="覆盖模型" value={`${mockPricingRows.length}`} detail="mock rows" />
+        <MetricCard icon={TrendingDown} label="价格变化" value="-6.4%" detail="gpt-4.1" />
       </div>
 
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_390px]">
+      <div className="grid gap-[var(--shell-page-gap)] xl:grid-cols-[minmax(0,1fr)_390px]">
         <SectionCard title="模型价格" description="主表保持紧凑，后续可接 pricing snapshots。" contentClassName="p-0">
           <DataTableLite
             columns={pricingColumns}
@@ -106,7 +107,7 @@ export function PricingPage() {
 
         <InspectorPanel title={`${selected.model} inspector`} description="站点价格、推荐原因和原始倍率。">
           <div className="space-y-3 p-4">
-            <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-3 text-sm text-slate-700">
+            <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/60 p-3 text-sm text-slate-700">
               推荐：{selected.recommendReasons.join(" / ")}
             </div>
             <DataTableLite
@@ -115,7 +116,7 @@ export function PricingPage() {
               getRowKey={(row) => row.stationName}
               className="shadow-none"
             />
-            <div className="rounded-2xl border border-cyan-100 bg-white/80 p-3 text-xs text-muted-foreground">
+            <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80 p-3 text-xs text-muted-foreground">
               原始倍率默认弱化显示；后续接入真实采集后再提供展开明细。
             </div>
           </div>
@@ -127,27 +128,4 @@ export function PricingPage() {
 
 function PriceValue({ value }: { value: number }) {
   return <span className="font-semibold tabular-nums text-slate-800">¥{value.toFixed(2)}</span>;
-}
-
-function SoftMetric({
-  icon: Icon,
-  label,
-  value,
-  detail,
-}: {
-  icon: typeof BadgeDollarSign;
-  label: string;
-  value: string;
-  detail: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/70 bg-white/95 p-4 shadow-[0_12px_30px_rgba(33,79,88,0.07)]">
-      <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-teal-100 text-teal-700">
-        <Icon className="h-4 w-4" />
-      </div>
-      <div className="mt-3 text-xs text-muted-foreground">{label}</div>
-      <div className="mt-0.5 text-2xl font-semibold text-slate-800">{value}</div>
-      <div className="text-xs text-muted-foreground">{detail}</div>
-    </div>
-  );
 }

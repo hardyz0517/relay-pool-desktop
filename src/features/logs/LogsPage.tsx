@@ -107,8 +107,8 @@ export function LogsPage() {
 
   return (
     <PageScaffold title="请求日志" description="真实本地代理请求日志；只记录路由元数据，不保存 prompt、response 或完整 key。">
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_390px]">
-        <div className="min-w-0 overflow-hidden rounded-2xl border border-white/70 bg-white/90 shadow-[0_12px_30px_rgba(33,79,88,0.07)]">
+      <div className="grid gap-[var(--shell-page-gap)] xl:grid-cols-[minmax(0,1fr)_390px]">
+        <div className="min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
           <Toolbar>
             <SegmentedControl
               value={filter}
@@ -154,7 +154,7 @@ export function LogsPage() {
         >
           {selected ? (
             <div className="space-y-4 p-4">
-              <PropertyList className="overflow-hidden rounded-2xl border border-cyan-100 bg-white/75">
+              <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-cyan-100 bg-white/75">
                 <PropertyRow label="请求时间" value={formatTime(selected.startedAt)} />
                 <PropertyRow label="接口" value={`${selected.method} ${selected.path}`} />
                 <PropertyRow label="模型" value={selected.model ?? "未识别"} />
@@ -166,8 +166,8 @@ export function LogsPage() {
                 <PropertyRow label="耗时" value={selected.durationMs == null ? "暂无" : `${selected.durationMs}ms`} />
                 <PropertyRow label="错误原因" value={selected.errorMessage ?? "无"} />
               </PropertyList>
-              <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-3 text-xs leading-5 text-slate-600">
-                日志只保存 method、path、model、状态、耗时、所选 key id 和脱敏错误摘要。
+              <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/60 p-3 text-xs leading-5 text-slate-600">
+                日志只保存 method、path、model、状态、耗时、所选 key id、fallback 次数和脱敏错误摘要。
               </div>
             </div>
           ) : (

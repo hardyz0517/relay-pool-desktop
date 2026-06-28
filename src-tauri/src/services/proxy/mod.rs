@@ -109,7 +109,13 @@ pub fn redact_error_message(message: &str) -> String {
         }
     }
     if output.len() > 160 {
-        output.truncate(160);
+        let boundary = output
+            .char_indices()
+            .map(|(index, _)| index)
+            .take_while(|index| *index <= 160)
+            .last()
+            .unwrap_or(0);
+        output.truncate(boundary);
         output.push_str("...");
     }
     output
@@ -178,6 +184,16 @@ mod tests {
 
         assert!(!redacted.contains("sk-real-secret-value"));
         assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn redact_error_message_truncates_utf8_without_panicking() {
+        let message = "上游返回了很长的中文错误信息。".repeat(20);
+
+        let redacted = redact_error_message(&message);
+
+        assert!(redacted.ends_with("..."));
+        assert!(redacted.len() <= 163);
     }
 
     #[test]

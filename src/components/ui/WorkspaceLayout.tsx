@@ -13,7 +13,7 @@ export function WorkspaceLayout({
   className,
 }: WorkspaceLayoutProps) {
   return (
-    <div className={cn("grid min-h-0 flex-1 gap-3", columns, className)}>
+    <div className={cn("grid min-h-0 flex-1 gap-[var(--shell-page-gap)]", columns, className)}>
       {children}
     </div>
   );

@@ -1,10 +1,10 @@
 # Phase 5 Local Proxy MVP
 
-**Status:** P5.0 has landed as the local gateway core. The app now exposes a localhost OpenAI-compatible proxy, routes through the enabled Key Pool, writes request logs, and surfaces proxy status in the UI. Next work moves toward Responses compatibility hardening, streaming, and richer runtime feedback.
+**Status:** P5.0-P5.4 core work has landed as the local gateway line. The app now exposes a localhost OpenAI-compatible proxy, routes through the enabled Key Pool, writes request logs, surfaces proxy status in the UI, supports `/v1/responses`, passes through SSE streams for chat completions and responses, handles CORS preflight, aggregates `/v1/models`, and shows request-log-derived Key / Channel status. Remaining work is deeper policy, model mapping, timeout tuning, and long-term health scoring.
 
 **Goal:** Keep Relay Pool Desktop usable as a local OpenAI-compatible gateway that external tools can point at once, while the app chooses enabled Station Keys, forwards, falls back, and records what happened.
 
-**Architecture:** Keep the existing Station / Station Key / Key Pool / Collector split. The proxy is a Rust HTTP server owned by Tauri state. Routing is key-first, station-second, local-only, and fallback-aware. The first shipped shape is intentionally narrow: non-streaming request forwarding, OpenAI-style errors, and real request logging. The deeper policy engine stays out of P5.0.
+**Architecture:** Keep the existing Station / Station Key / Key Pool / Collector split. The proxy is a Rust HTTP server owned by Tauri state. Routing is key-first, station-second, local-only, and fallback-aware. The shipped P5 line covers request forwarding, Responses compatibility, SSE passthrough, OpenAI-style errors, model-list aggregation, CORS, and real request logging. The deeper policy engine stays out of P5.
 
 **Tech Stack:** Tauri 2, Rust, SQLite, existing station/key/collector models, request log storage, existing React/TypeScript front end, local HTTP server in Rust.
 
@@ -51,13 +51,14 @@ P5 should produce:
 
 ### Current Implementation Notes
 
-- `GET /v1/models` is wired.
-- `POST /v1/chat/completions` is wired for non-streaming requests.
-- `POST /v1/responses` is normalized through the chat path and wrapped back into a response-shaped payload.
+- `GET /v1/models` aggregates enabled upstream model lists and deduplicates by model id in Key Pool priority order.
+- `POST /v1/chat/completions` is wired for non-streaming requests and SSE stream passthrough.
+- `POST /v1/responses` is a first-class route for direct upstream forwarding, with non-streaming fallback/wrapping for chat-only upstreams.
+- `POST /v1/responses` with `stream: true` is passed through directly when the selected upstream supports it.
 - Station Key priority is used as the base order.
 - Requests fall back on retryable upstream failures.
 - Request logs store only metadata and redacted errors.
-- Settings, dashboard, and request logs now read the runtime state.
+- Settings, dashboard, request logs, Key Pool, and Channel Status now read runtime/log-derived state.
 
 ## Non-Goals
 
@@ -66,7 +67,7 @@ P5 does not implement:
 - Complex price-optimal routing.
 - Full strategy groups.
 - Allowlist / blocklist model policy.
-- Full SSE streaming.
+- SSE event rewriting or mid-stream fallback after bytes have been sent.
 - Usage billing.
 - Complex health checks.
 - New collector work.
@@ -105,15 +106,18 @@ P5 MVP must support:
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 
-Optional later:
+Supported in the current P5 line:
 
 - `POST /v1/responses`
+- SSE passthrough for `stream: true` on `/v1/chat/completions`
+- SSE passthrough for `stream: true` on `/v1/responses`
+- CORS / `OPTIONS` preflight for browser-style clients
+
+Optional later:
+
 - `POST /v1/embeddings`
 
-`/v1/chat/completions` starts as non-streaming only.
-
-- If `stream: true` is requested, P5 returns a clear unsupported error.
-- Do not pretend streaming is fully implemented.
+Streaming is passthrough, not event rewriting. Fallback can happen before a successful stream response is selected; once bytes are flowing, the proxy does not silently switch keys mid-stream.
 
 ## Local Server Route
 
@@ -220,11 +224,11 @@ Show:
 
 Keep the existing layout.
 
-Add only small status fields if needed:
+Current P5 adds small status fields:
 
 - Last used time.
-- Last failure.
-- Basic health state.
+- Last checked time.
+- Basic health state from key status.
 
 ### Request Logs
 
@@ -251,6 +255,19 @@ P5 only shows the current default strategy:
 ```
 
 Do not build a complex strategy editor.
+
+### Channel Status
+
+P5 uses Key Pool rows plus real request logs to show:
+
+- Station Key / Channel name.
+- Owning station.
+- Recent request outcomes.
+- Average duration from request logs.
+- Last used / last checked metadata.
+- Latest redacted error summary.
+
+This is not yet a full health engine or circuit breaker.
 
 ## Fallback and Error Policy
 
@@ -291,30 +308,33 @@ Manual acceptance:
 1. Set the proxy port in Settings.
 2. Start the proxy.
 3. Run `curl http://127.0.0.1:<port>/v1/models`.
-4. Send a non-streaming `/v1/chat/completions` request.
-5. Disable the first key and confirm the next key is used.
-6. Make the first upstream fail and confirm fallback.
-7. Confirm the request appears in logs.
-8. Stop the proxy and confirm the port is closed.
-9. Restart the app and confirm proxy state follows settings.
-10. Confirm no enabled key returns a readable error.
-11. Confirm `stream=true` has explicit behavior.
+4. Confirm `/v1/models` returns a deduplicated OpenAI-style model list.
+5. Send a non-streaming `/v1/chat/completions` request.
+6. Disable the first key and confirm the next key is used.
+7. Make the first upstream fail and confirm fallback.
+8. Confirm the request appears in logs.
+9. Confirm Channel Status reflects request-log-derived outcomes.
+10. Stop the proxy and confirm the port is closed.
+11. Restart the app and confirm proxy state follows settings.
+12. Confirm no enabled key returns a readable error.
+13. Confirm `stream=true` returns SSE for chat completions and responses when the upstream supports it.
+14. Confirm browser-style `OPTIONS` preflight receives a local CORS response.
 
 ## P5 Completion Standard
 
 P5 is complete when:
 
 - The app can run a local OpenAI-compatible endpoint.
-- `/v1/models`, non-streaming `/v1/chat/completions`, and basic `/v1/responses` work locally.
+- `/v1/models`, `/v1/chat/completions`, and `/v1/responses` work locally for non-streaming requests.
+- `/v1/models` aggregates and deduplicates enabled upstream model lists.
+- `/v1/chat/completions` and `/v1/responses` can pass through upstream SSE streams.
 - Enabled keys are selected by priority.
 - Fallback works across keys.
 - Request logs show real proxy metadata.
 - The UI shows whether the proxy is running.
+- Request logs, Key Pool, and Channel Status reflect real proxy traffic metadata.
 - The implementation stays local-only and secret-safe.
 
 ## Next P5 Steps
 
-- P5.1: make Responses a first-class route instead of a wrapped compatibility path.
-- P5.2: add stream forwarding.
-- P5.3: feed proxy runtime data back into key health and channel status.
-- P5.4: finish compatibility polish and upstream protocol selection rules.
+- P5.5/P6: add deeper model mapping, timeout tuning, long-term health scoring, circuit breaker behavior, and policy editing.
