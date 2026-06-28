@@ -46,14 +46,6 @@ pub fn extract_chat_request_metadata(body: &Value) -> (Option<String>, bool) {
     (model, stream)
 }
 
-pub fn extract_request_kind(body: &Value) -> crate::models::proxy::ClientRequestKind {
-    if body.get("input").is_some() || body.get("instructions").is_some() {
-        crate::models::proxy::ClientRequestKind::Responses
-    } else {
-        crate::models::proxy::ClientRequestKind::ChatCompletions
-    }
-}
-
 pub fn build_upstream_url(base_url: &str, path: &str) -> String {
     let base = base_url.trim_end_matches('/');
     let path = path.trim_start_matches('/');

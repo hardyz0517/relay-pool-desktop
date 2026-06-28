@@ -21,7 +21,7 @@ use crate::models::{
     station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, UpdateStationInput},
 };
-use crate::services::proxy::RouteCandidate;
+use crate::services::proxy::{router::RichRouteCandidate, RouteCandidate};
 
 #[derive(Clone)]
 pub struct AppDatabase {
@@ -399,6 +399,16 @@ impl AppDatabase {
     pub fn proxy_route_candidates(&self) -> Result<Vec<RouteCandidate>, String> {
         let connection = self.connection()?;
         proxy_route_candidates_from_connection(&connection)
+    }
+
+    pub fn proxy_rich_route_candidates(&self) -> Result<Vec<RichRouteCandidate>, String> {
+        let connection = self.connection()?;
+        proxy_rich_route_candidates_from_connection(&connection)
+    }
+
+    pub fn enabled_model_alias_pairs(&self) -> Result<Vec<(String, String)>, String> {
+        let connection = self.connection()?;
+        enabled_model_alias_pairs_from_connection(&connection)
     }
 
     pub fn reorder_key_pool(&self, key_ids: Vec<String>) -> Result<Vec<KeyPoolItem>, String> {
@@ -1432,6 +1442,127 @@ fn proxy_route_candidates_from_connection(connection: &Connection) -> Result<Vec
         .map_err(|error| format!("查询 Key 池候选失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析 Key 池候选失败: {error}"))?;
+    Ok(rows)
+}
+
+fn proxy_rich_route_candidates_from_connection(
+    connection: &Connection,
+) -> Result<Vec<RichRouteCandidate>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT
+                k.id,
+                k.station_id,
+                s.base_url,
+                k.api_key,
+                s.upstream_api_format,
+                k.priority,
+                s.name,
+                k.name,
+                COALESCE(c.supports_chat_completions, 1),
+                COALESCE(c.supports_responses, 1),
+                COALESCE(c.supports_embeddings, 0),
+                COALESCE(c.supports_stream, 1),
+                COALESCE(c.supports_tools, 0),
+                COALESCE(c.supports_vision, 0),
+                COALESCE(c.supports_reasoning, 0),
+                COALESCE(c.model_allowlist_json, '[]'),
+                COALESCE(c.model_blocklist_json, '[]'),
+                COALESCE(c.preferred_models_json, '[]'),
+                COALESCE(c.only_use_as_backup, 0),
+                COALESCE(c.routing_tags_json, '[]'),
+                COALESCE(c.updated_at, '0'),
+                h.station_key_id,
+                h.last_success_at,
+                h.last_failure_at,
+                h.consecutive_failures,
+                h.success_count,
+                h.failure_count,
+                h.avg_latency_ms,
+                h.last_error_summary,
+                h.cooldown_until,
+                h.updated_at
+             FROM station_keys k
+             JOIN stations s ON s.id = k.station_id
+             LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
+             LEFT JOIN station_key_health h ON h.station_key_id = k.id
+             WHERE k.enabled = 1
+               AND s.enabled = 1
+               AND TRIM(k.api_key) != ''
+             ORDER BY k.priority ASC, k.created_at ASC",
+        )
+        .map_err(|error| format!("读取富路由候选失败: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            let station_key_id = row.get::<_, String>(0)?;
+            let health_station_key_id = row.get::<_, Option<String>>(21)?;
+            Ok(RichRouteCandidate {
+                candidate: RouteCandidate {
+                    station_key_id: station_key_id.clone(),
+                    station_id: row.get(1)?,
+                    upstream_base_url: row.get(2)?,
+                    api_key: row.get(3)?,
+                    upstream_api_format: parse_upstream_api_format(row.get::<_, String>(4)?),
+                    priority: row.get(5)?,
+                },
+                station_name: row.get(6)?,
+                key_name: row.get(7)?,
+                capabilities: StationKeyCapabilities {
+                    station_key_id,
+                    supports_chat_completions: i64_to_bool(row.get(8)?),
+                    supports_responses: i64_to_bool(row.get(9)?),
+                    supports_embeddings: i64_to_bool(row.get(10)?),
+                    supports_stream: i64_to_bool(row.get(11)?),
+                    supports_tools: i64_to_bool(row.get(12)?),
+                    supports_vision: i64_to_bool(row.get(13)?),
+                    supports_reasoning: i64_to_bool(row.get(14)?),
+                    model_allowlist: parse_json_string_list(row.get::<_, String>(15)?.as_str()),
+                    model_blocklist: parse_json_string_list(row.get::<_, String>(16)?.as_str()),
+                    preferred_models: parse_json_string_list(row.get::<_, String>(17)?.as_str()),
+                    only_use_as_backup: i64_to_bool(row.get(18)?),
+                    routing_tags: parse_json_string_list(row.get::<_, String>(19)?.as_str()),
+                    updated_at: row.get(20)?,
+                },
+                health: health_station_key_id.map(|station_key_id| StationKeyHealth {
+                    station_key_id,
+                    last_success_at: row.get(22).ok().flatten(),
+                    last_failure_at: row.get(23).ok().flatten(),
+                    consecutive_failures: row.get(24).unwrap_or(0),
+                    success_count: row.get(25).unwrap_or(0),
+                    failure_count: row.get(26).unwrap_or(0),
+                    avg_latency_ms: row.get(27).ok().flatten(),
+                    last_error_summary: row.get(28).ok().flatten(),
+                    cooldown_until: row.get(29).ok().flatten(),
+                    updated_at: row.get(30).unwrap_or_else(|_| "0".to_string()),
+                }),
+            })
+        })
+        .map_err(|error| format!("查询富路由候选失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析富路由候选失败: {error}"))?;
+
+    Ok(rows)
+}
+
+fn enabled_model_alias_pairs_from_connection(
+    connection: &Connection,
+) -> Result<Vec<(String, String)>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT client_model, upstream_model
+               FROM model_aliases
+              WHERE enabled = 1
+              ORDER BY created_at ASC",
+        )
+        .map_err(|error| format!("读取启用模型映射失败: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|error| format!("查询启用模型映射失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析启用模型映射失败: {error}"))?;
+
     Ok(rows)
 }
 

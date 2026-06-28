@@ -13,7 +13,10 @@ use std::{
 use serde_json::Value;
 
 use crate::{
-    models::proxy::{CreateRequestLogInput, ProxyStatus},
+    models::{
+        proxy::{CreateRequestLogInput, ProxyStatus},
+        routing::{RouteEndpointKind, RoutingPolicy},
+    },
     services::{
         database::{now_millis_for_services, AppDatabase},
         proxy::{
@@ -21,9 +24,10 @@ use crate::{
                 extract_responses_metadata, normalize_responses_request, render_responses_response,
                 should_try_chat_fallback, upstream_responses_path,
             },
-            build_upstream_url, enabled_candidates, extract_chat_request_metadata, extract_request_kind,
-            preferred_candidates,
-            openai_error, redact_error_message, should_fallback, RouteCandidate,
+            build_upstream_url, enabled_candidates, extract_chat_request_metadata,
+            openai_error, redact_error_message,
+            router::{select_route_candidates, RouteRequest},
+            should_fallback, RouteCandidate,
         },
     },
 };
@@ -51,6 +55,7 @@ struct ProxyServerContext {
     request_count: Arc<AtomicU64>,
 }
 
+#[derive(Clone)]
 struct ParsedRequest {
     method: String,
     path: String,
@@ -406,6 +411,151 @@ fn extract_models_from_response(response: &ProxyResponse) -> Result<Vec<Value>, 
     Err("模型列表响应缺少 data 数组".to_string())
 }
 
+fn select_proxy_route(
+    context: &ProxyServerContext,
+    route_request: &RouteRequest,
+) -> Result<crate::services::proxy::router::RouteSelection, ProxyResponse> {
+    let rich_candidates = context
+        .database
+        .proxy_rich_route_candidates()
+        .map_err(|error| ProxyResponse::json_error(500, "database_error", &error))?;
+    if rich_candidates.is_empty() {
+        return Err(ProxyResponse::json_error(
+            503,
+            "no_enabled_keys",
+            "Key 池中没有可用的 enabled Station Key。",
+        ));
+    }
+    let aliases = context
+        .database
+        .enabled_model_alias_pairs()
+        .map_err(|error| ProxyResponse::json_error(500, "database_error", &error))?;
+    let route = select_route_candidates(route_request, rich_candidates, &aliases)
+        .map_err(|error| ProxyResponse::json_error(500, "route_selector_error", &error))?;
+    if route.accepted.is_empty() {
+        return Err(ProxyResponse::json_error(
+            503,
+            "no_route_candidates",
+            &format!(
+                "没有可用 Station Key 支持该请求：model={} endpoint={:?} stream={}",
+                route_request.model.as_deref().unwrap_or("<none>"),
+                route_request.endpoint,
+                route_request.stream
+            ),
+        ));
+    }
+    Ok(route)
+}
+
+fn route_request_for_chat(
+    model: Option<String>,
+    stream: bool,
+    body: &Value,
+    policy: RoutingPolicy,
+) -> RouteRequest {
+    RouteRequest {
+        endpoint: RouteEndpointKind::ChatCompletions,
+        model: model.clone(),
+        stream,
+        uses_tools: uses_tools(body),
+        uses_vision: uses_vision(body),
+        uses_reasoning: uses_reasoning(body, model.as_deref()),
+        policy,
+        now_ms: now_millis_for_services() as i64,
+    }
+}
+
+fn route_request_for_responses(
+    model: Option<String>,
+    stream: bool,
+    body: &Value,
+    policy: RoutingPolicy,
+) -> RouteRequest {
+    RouteRequest {
+        endpoint: RouteEndpointKind::Responses,
+        model: model.clone(),
+        stream,
+        uses_tools: uses_tools(body),
+        uses_vision: uses_vision(body),
+        uses_reasoning: uses_reasoning(body, model.as_deref()),
+        policy,
+        now_ms: now_millis_for_services() as i64,
+    }
+}
+
+fn routing_policy(context: &ProxyServerContext) -> RoutingPolicy {
+    context
+        .database
+        .get_settings()
+        .ok()
+        .map(|settings| parse_routing_policy(&settings.default_routing_strategy))
+        .unwrap_or(RoutingPolicy::PriorityFallback)
+}
+
+fn parse_routing_policy(value: &str) -> RoutingPolicy {
+    match value {
+        "stable_first" | "stable" => RoutingPolicy::StableFirst,
+        "backup_only" => RoutingPolicy::BackupOnly,
+        _ => RoutingPolicy::PriorityFallback,
+    }
+}
+
+fn rewrite_request_model(
+    request: &ParsedRequest,
+    body: &Value,
+    client_model: Option<&str>,
+    mapped_model: Option<&str>,
+) -> ParsedRequest {
+    let Some(mapped_model) = mapped_model else {
+        return request.clone();
+    };
+    if client_model == Some(mapped_model) {
+        return request.clone();
+    }
+    let mut body = body.clone();
+    if let Some(object) = body.as_object_mut() {
+        object.insert("model".to_string(), Value::String(mapped_model.to_string()));
+    }
+    ParsedRequest {
+        method: request.method.clone(),
+        path: request.path.clone(),
+        headers: request.headers.clone(),
+        body: serde_json::to_vec(&body).unwrap_or_else(|_| request.body.clone()),
+    }
+}
+
+fn uses_tools(body: &Value) -> bool {
+    body.get("tool_choice").is_some()
+        || body
+            .get("tools")
+            .and_then(Value::as_array)
+            .map(|tools| !tools.is_empty())
+            .unwrap_or(false)
+}
+
+fn uses_vision(body: &Value) -> bool {
+    match body {
+        Value::Object(object) => {
+            object.contains_key("image_url")
+                || object.contains_key("input_image")
+                || object
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .map(|value| value == "image" || value == "input_image")
+                    .unwrap_or(false)
+                || object.values().any(uses_vision)
+        }
+        Value::Array(items) => items.iter().any(uses_vision),
+        _ => false,
+    }
+}
+
+fn uses_reasoning(body: &Value, model: Option<&str>) -> bool {
+    body.get("reasoning").is_some()
+        || body.get("reasoning_effort").is_some()
+        || model.map(|model| model.starts_with('o')).unwrap_or(false)
+}
+
 fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
     let body_value: Value = match serde_json::from_slice(&request.body) {
         Ok(value) => value,
@@ -413,18 +563,19 @@ fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -
             return ProxyResponse::json_error(400, "bad_json", &format!("请求 JSON 无法解析: {error}"));
         }
     };
-    let request_kind = extract_request_kind(&body_value);
     let (model, stream) = extract_chat_request_metadata(&body_value);
-    let candidates = match context.database.proxy_route_candidates() {
-        Ok(candidates) => enabled_candidates(candidates),
-        Err(error) => return ProxyResponse::json_error(500, "database_error", &error),
+    let route_request = route_request_for_chat(model.clone(), stream, &body_value, routing_policy(context));
+    let route = match select_proxy_route(context, &route_request) {
+        Ok(route) => route,
+        Err(response) => return response.with_request_meta(model, stream),
     };
-    if candidates.is_empty() {
-        return ProxyResponse::json_error(503, "no_enabled_keys", "Key 池中没有可用的 enabled Station Key。")
-            .with_request_meta(model, stream);
-    }
-    let candidates = preferred_candidates(candidates, request_kind);
-    forward_with_fallback(context, request, &candidates, model, stream)
+    let request = rewrite_request_model(request, &body_value, model.as_deref(), route.mapped_model.as_deref());
+    let candidates = route
+        .accepted
+        .into_iter()
+        .map(|item| item.candidate)
+        .collect::<Vec<_>>();
+    forward_with_fallback(context, &request, &candidates, model, stream)
 }
 
 fn forward_responses_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
@@ -435,17 +586,19 @@ fn forward_responses_request(context: &ProxyServerContext, request: &ParsedReque
         }
     };
     let (model, stream) = extract_responses_metadata(&body_value);
-    let candidates = match context.database.proxy_route_candidates() {
-        Ok(candidates) => enabled_candidates(candidates),
-        Err(error) => return ProxyResponse::json_error(500, "database_error", &error),
+    let route_request = route_request_for_responses(model.clone(), stream, &body_value, routing_policy(context));
+    let route = match select_proxy_route(context, &route_request) {
+        Ok(route) => route,
+        Err(response) => return response.with_request_meta(model, stream),
     };
-    if candidates.is_empty() {
-        return ProxyResponse::json_error(503, "no_enabled_keys", "Key 池中没有可用的 enabled Station Key。")
-            .with_request_meta(model, stream);
-    }
-    let request_kind = extract_request_kind(&body_value);
-    let candidates = preferred_candidates(candidates, request_kind);
-    forward_responses_with_fallback(context, request, &candidates, &body_value, model, stream)
+    let request = rewrite_request_model(request, &body_value, model.as_deref(), route.mapped_model.as_deref());
+    let body_value: Value = serde_json::from_slice(&request.body).unwrap_or(body_value);
+    let candidates = route
+        .accepted
+        .into_iter()
+        .map(|item| item.candidate)
+        .collect::<Vec<_>>();
+    forward_responses_with_fallback(context, &request, &candidates, &body_value, model, stream)
 }
 
 fn forward_responses_with_fallback(
@@ -921,11 +1074,15 @@ fn now_string() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::stations::CreateStationInput;
+    use crate::models::{
+        routing::{UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
+        station_keys::StationKey,
+        stations::CreateStationInput,
+    };
     use std::{
-        sync::atomic::{AtomicU32, AtomicU64},
         io::Read,
         net::TcpListener,
+        sync::atomic::{AtomicU32, AtomicU64},
         thread,
         time::Duration,
     };
@@ -1134,6 +1291,103 @@ mod tests {
     }
 
     #[test]
+    fn chat_request_skips_key_that_does_not_allow_model() {
+        let skipped = test_upstream_json_success("skipped", false);
+        let allowed = test_upstream_json_success("allowed", false);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key_a = create_test_station_key(&database, "blocked-model", &skipped.base_url);
+        let key_b = create_test_station_key(&database, "allowed-model", &allowed.base_url);
+        database
+            .reorder_key_pool(vec![key_a.id.clone(), key_b.id.clone()])
+            .expect("reorder");
+
+        database
+            .update_station_key_capabilities(UpdateStationKeyCapabilitiesInput {
+                station_key_id: key_a.id.clone(),
+                model_allowlist: vec!["other-model".to_string()],
+                ..default_capabilities_input(key_a.id.clone())
+            })
+            .expect("blocked capabilities");
+        database
+            .update_station_key_capabilities(UpdateStationKeyCapabilitiesInput {
+                station_key_id: key_b.id.clone(),
+                model_allowlist: vec!["gpt-5.4".to_string()],
+                ..default_capabilities_input(key_b.id.clone())
+            })
+            .expect("allowed capabilities");
+
+        let context = proxy_context(database);
+        let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
+
+        assert_eq!(response.station_key_id.as_deref(), Some(key_b.id.as_str()));
+        assert_eq!(response.status_code, 200);
+        assert!(!skipped.was_called(), "blocked key should be skipped before network");
+        allowed.join();
+        skipped.join();
+    }
+
+    #[test]
+    fn responses_request_skips_chat_only_key() {
+        let skipped = test_upstream_json_success("chat-only", false);
+        let allowed = test_upstream_json_success("responses", false);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key_a = create_test_station_key(&database, "chat-only", &skipped.base_url);
+        let key_b = create_test_station_key(&database, "responses", &allowed.base_url);
+        database
+            .reorder_key_pool(vec![key_a.id.clone(), key_b.id.clone()])
+            .expect("reorder");
+
+        database
+            .update_station_key_capabilities(UpdateStationKeyCapabilitiesInput {
+                station_key_id: key_a.id.clone(),
+                supports_responses: false,
+                supports_chat_completions: true,
+                ..default_capabilities_input(key_a.id.clone())
+            })
+            .expect("chat-only capabilities");
+        database
+            .update_station_key_capabilities(UpdateStationKeyCapabilitiesInput {
+                station_key_id: key_b.id.clone(),
+                supports_responses: true,
+                ..default_capabilities_input(key_b.id.clone())
+            })
+            .expect("responses capabilities");
+
+        let context = proxy_context(database);
+        let response = forward_responses_request(&context, &responses_request("gpt-5.4", false));
+
+        assert_eq!(response.station_key_id.as_deref(), Some(key_b.id.as_str()));
+        assert_eq!(response.status_code, 200);
+        assert!(!skipped.was_called(), "chat-only key should be skipped before network");
+        allowed.join();
+        skipped.join();
+    }
+
+    #[test]
+    fn alias_rewrites_upstream_model_but_logs_client_model() {
+        let upstream = test_upstream_json_success("alias", true);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key = create_test_station_key(&database, "alias", &upstream.base_url);
+        database
+            .upsert_model_alias(UpsertModelAliasInput {
+                id: None,
+                client_model: "gpt-4o-mini".to_string(),
+                upstream_model: "openai/gpt-4o-mini".to_string(),
+                enabled: true,
+                note: None,
+            })
+            .expect("alias");
+
+        let context = proxy_context(database);
+        let response = forward_chat_request(&context, &chat_request("gpt-4o-mini", false));
+
+        assert_eq!(response.station_key_id.as_deref(), Some(key.id.as_str()));
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.model.as_deref(), Some("gpt-4o-mini"));
+        upstream.join();
+    }
+
+    #[test]
     fn forward_models_request_aggregates_and_deduplicates_enabled_keys_by_priority() {
         let first_upstream = TcpListener::bind(("127.0.0.1", 0)).expect("bind first upstream");
         let first_port = first_upstream.local_addr().expect("first addr").port();
@@ -1221,6 +1475,156 @@ mod tests {
         );
         server_stream.write_all(header.as_bytes()).expect("header");
         server_stream.write_all(&body).expect("body");
+    }
+
+    struct TestUpstream {
+        base_url: String,
+        called: Arc<AtomicBool>,
+        handle: JoinHandle<()>,
+    }
+
+    impl TestUpstream {
+        fn was_called(&self) -> bool {
+            self.called.load(Ordering::Relaxed)
+        }
+
+        fn join(self) {
+            self.handle.join().expect("join upstream");
+        }
+    }
+
+    fn test_upstream_json_success(name: &str, expect_alias_model: bool) -> TestUpstream {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
+        let called = Arc::new(AtomicBool::new(false));
+        let called_for_thread = Arc::clone(&called);
+        let name = name.to_string();
+        let handle = thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_millis(500);
+            loop {
+                match listener.accept() {
+                    Ok((mut server_stream, _)) => {
+                        called_for_thread.store(true, Ordering::Relaxed);
+                        let mut buf = [0_u8; 4096];
+                        let read = server_stream.read(&mut buf).expect("read upstream request");
+                        let request_text = String::from_utf8_lossy(&buf[..read]);
+                        if expect_alias_model {
+                            assert!(
+                                request_text.contains(r#""model":"openai/gpt-4o-mini""#),
+                                "upstream should receive mapped model, got {request_text}"
+                            );
+                        }
+                        let body = serde_json::to_vec(&serde_json::json!({
+                            "id": format!("chatcmpl-{name}"),
+                            "object": "chat.completion",
+                            "choices": [{"message": {"role": "assistant", "content": "pong"}}]
+                        }))
+                        .expect("body");
+                        let header = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        server_stream.write_all(header.as_bytes()).expect("header");
+                        server_stream.write_all(&body).expect("body");
+                        return;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if std::time::Instant::now() >= deadline {
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept upstream: {error}"),
+                }
+            }
+        });
+
+        TestUpstream {
+            base_url: format!("http://127.0.0.1:{port}"),
+            called,
+            handle,
+        }
+    }
+
+    fn create_test_station_key(
+        database: &AppDatabase,
+        name: &str,
+        base_url: &str,
+    ) -> StationKey {
+        thread::sleep(Duration::from_millis(2));
+        let station = database
+            .create_station(CreateStationInput {
+                name: name.to_string(),
+                station_type: "openai-compatible".to_string(),
+                base_url: base_url.to_string(),
+                api_key: format!("sk-{name}"),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                note: None,
+            })
+            .expect("station");
+        database
+            .list_station_keys(station.id)
+            .expect("keys")
+            .remove(0)
+    }
+
+    fn default_capabilities_input(station_key_id: String) -> UpdateStationKeyCapabilitiesInput {
+        UpdateStationKeyCapabilitiesInput {
+            station_key_id,
+            supports_chat_completions: true,
+            supports_responses: true,
+            supports_embeddings: false,
+            supports_stream: true,
+            supports_tools: false,
+            supports_vision: false,
+            supports_reasoning: false,
+            model_allowlist: Vec::new(),
+            model_blocklist: Vec::new(),
+            preferred_models: Vec::new(),
+            only_use_as_backup: false,
+            routing_tags: Vec::new(),
+        }
+    }
+
+    fn proxy_context(database: AppDatabase) -> ProxyServerContext {
+        ProxyServerContext {
+            database,
+            active_requests: Arc::new(AtomicU32::new(0)),
+            request_count: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn chat_request(model: &str, stream: bool) -> ParsedRequest {
+        ParsedRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
+            body: serde_json::to_vec(&serde_json::json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "ping"}],
+                "stream": stream
+            }))
+            .expect("body"),
+        }
+    }
+
+    fn responses_request(model: &str, stream: bool) -> ParsedRequest {
+        ParsedRequest {
+            method: "POST".to_string(),
+            path: "/v1/responses".to_string(),
+            headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
+            body: serde_json::to_vec(&serde_json::json!({
+                "model": model,
+                "input": "ping",
+                "stream": stream
+            }))
+            .expect("body"),
+        }
     }
 
     #[test]
