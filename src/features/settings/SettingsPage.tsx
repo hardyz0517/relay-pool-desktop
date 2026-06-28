@@ -30,7 +30,7 @@ type SettingsFormState = {
 const fallbackSettings: AppSettings = {
   localProxyPort: 8787,
   localKeyMasked: "未读取",
-  defaultRoutingStrategy: "manual",
+  defaultRoutingStrategy: "priority_fallback",
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   trayBehavior: "minimize-to-tray",
@@ -206,7 +206,7 @@ export function SettingsPage() {
           />
         </SectionCard>
 
-        <SectionCard title="路由与采集" description="P5 默认按 Key 池全局 priority fallback。">
+        <SectionCard title="路由与采集" description="P6 根据 Key 池 priority、能力范围和健康状态选择 Station Key。">
           <SettingRow
             control={
               <select
@@ -223,7 +223,7 @@ export function SettingsPage() {
                 ))}
               </select>
             }
-            description="复杂策略仍是后续阶段；P5 使用 Key 池优先级。"
+            description="价格与余额策略后续阶段接入；P6 先使用优先级、稳定性和备用模式。"
             label="默认路由策略"
           />
           <SettingRow
