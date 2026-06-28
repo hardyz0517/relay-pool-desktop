@@ -1,5 +1,5 @@
 export { ActivityItem, ActivityList } from "./ActivityList";
-export { Button } from "./button";
+export { Button, type ButtonSize, type ButtonVariant } from "./button";
 export { Card } from "./Card";
 export { DataTableLite, type DataTableColumn } from "./DataTableLite";
 export { EmptyState } from "./EmptyState";
