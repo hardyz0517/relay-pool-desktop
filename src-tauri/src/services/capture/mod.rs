@@ -24,13 +24,20 @@ pub fn sanitize_event(input: CapturedHttpEventInput) -> CapturedHttpEvent {
         response_json_redacted
             .as_ref()
             .map(|value| value.to_string().len() as i64)
-            .or_else(|| response_text_preview_redacted.as_ref().map(|value| value.len() as i64))
+            .or_else(|| {
+                response_text_preview_redacted
+                    .as_ref()
+                    .map(|value| value.len() as i64)
+            })
             .unwrap_or(0)
     });
     let classification = classify_event(&request_path, input.status, &content_type);
 
     CapturedHttpEvent {
-        id: format!("capture-{}", crate::services::database::now_millis_for_services()),
+        id: format!(
+            "capture-{}",
+            crate::services::database::now_millis_for_services()
+        ),
         station_id: input.station_id,
         source_window_id: input.source_window_id,
         page_url: input.page_url,
@@ -210,22 +217,64 @@ fn collect_json_matches(
 
 fn category_for_key(key: &str) -> Option<&'static str> {
     let lower = key.to_lowercase();
-    if matches_any(&lower, &["balance", "quota", "credit", "amount", "remain", "remaining"]) {
+    if matches_any(
+        &lower,
+        &[
+            "balance",
+            "quota",
+            "credit",
+            "amount",
+            "remain",
+            "remaining",
+        ],
+    ) {
         return Some("balance");
     }
     if matches_any(&lower, &["group", "group_id", "group_name", "usable_group"]) {
         return Some("group");
     }
-    if matches_any(&lower, &["rate_multiplier", "ratio", "multiplier", "model_ratio", "completion_ratio"]) {
+    if matches_any(
+        &lower,
+        &[
+            "rate_multiplier",
+            "ratio",
+            "multiplier",
+            "model_ratio",
+            "completion_ratio",
+        ],
+    ) {
         return Some("rate");
     }
-    if matches_any(&lower, &["api_key", "apikey", "custom_key", "token", "access_token", "sk"]) {
+    if matches_any(
+        &lower,
+        &[
+            "api_key",
+            "apikey",
+            "custom_key",
+            "token",
+            "access_token",
+            "sk",
+        ],
+    ) {
         return Some("key_metadata");
     }
-    if matches_any(&lower, &["model", "model_name", "model_id", "models", "owned_by"]) {
+    if matches_any(
+        &lower,
+        &["model", "model_name", "model_id", "models", "owned_by"],
+    ) {
         return Some("model");
     }
-    if matches_any(&lower, &["usage", "used", "prompt_tokens", "completion_tokens", "total_tokens", "request_count"]) {
+    if matches_any(
+        &lower,
+        &[
+            "usage",
+            "used",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "request_count",
+        ],
+    ) {
         return Some("usage");
     }
     None
@@ -236,7 +285,13 @@ fn confidence_for_match(category: &str, path: &str) -> f64 {
     match category {
         "balance" if lower_path.contains("user") || lower_path.contains("profile") => 0.85,
         "key_metadata" if lower_path.contains("key") => 0.85,
-        "rate" if lower_path.contains("rate") || lower_path.contains("ratio") || lower_path.contains("pricing") => 0.8,
+        "rate"
+            if lower_path.contains("rate")
+                || lower_path.contains("ratio")
+                || lower_path.contains("pricing") =>
+        {
+            0.8
+        }
         "model" if lower_path.contains("model") || lower_path.contains("channel") => 0.8,
         _ => 0.65,
     }
@@ -337,10 +392,7 @@ fn infer_response_kind(content_type: &str, has_json: bool) -> String {
 }
 
 fn path_from_url(url: &str) -> String {
-    let without_scheme = url
-        .split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(url);
+    let without_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
     let path = without_scheme
         .find('/')
         .map(|index| &without_scheme[index..])

@@ -24,8 +24,8 @@ use crate::{
                 extract_responses_metadata, normalize_responses_request, render_responses_response,
                 should_try_chat_fallback, upstream_responses_path,
             },
-            build_upstream_url, enabled_candidates, extract_chat_request_metadata,
-            openai_error, redact_error_message,
+            build_upstream_url, enabled_candidates, extract_chat_request_metadata, openai_error,
+            redact_error_message,
             router::{select_route_candidates, RouteRequest},
             should_fallback, RouteCandidate,
         },
@@ -88,7 +88,11 @@ impl ProxyRuntimeState {
         ProxyStatus {
             running: inner.running,
             bind_addr: "127.0.0.1".to_string(),
-            port: if inner.port == 0 { default_port } else { inner.port },
+            port: if inner.port == 0 {
+                default_port
+            } else {
+                inner.port
+            },
             started_at: inner.started_at.clone(),
             last_error: inner.last_error.clone(),
             active_requests: inner
@@ -109,7 +113,10 @@ impl ProxyRuntimeState {
             return Err("本地代理端口必须大于 0".to_string());
         }
 
-        let mut inner = self.inner.lock().map_err(|_| "代理状态锁已损坏".to_string())?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| "代理状态锁已损坏".to_string())?;
         if inner.running {
             return Ok(self.status_from_inner(&inner, port));
         }
@@ -152,7 +159,11 @@ impl ProxyRuntimeState {
                 stop_signal.store(true, Ordering::Relaxed);
             }
             inner.running = false;
-            let wake_port = if inner.port == 0 { default_port } else { inner.port };
+            let wake_port = if inner.port == 0 {
+                default_port
+            } else {
+                inner.port
+            };
             inner.stop_signal = None;
             inner.active_requests = None;
             inner.request_count = None;
@@ -176,7 +187,11 @@ impl ProxyRuntimeState {
         ProxyStatus {
             running: inner.running,
             bind_addr: "127.0.0.1".to_string(),
-            port: if inner.port == 0 { default_port } else { inner.port },
+            port: if inner.port == 0 {
+                default_port
+            } else {
+                inner.port
+            },
             started_at: inner.started_at.clone(),
             last_error: inner.last_error.clone(),
             active_requests: inner
@@ -193,7 +208,11 @@ impl ProxyRuntimeState {
     }
 }
 
-fn run_server(listener: TcpListener, stop_signal: Arc<AtomicBool>, context: Arc<ProxyServerContext>) {
+fn run_server(
+    listener: TcpListener,
+    stop_signal: Arc<AtomicBool>,
+    context: Arc<ProxyServerContext>,
+) {
     while !stop_signal.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, _)) => {
@@ -291,7 +310,11 @@ fn forward_models_request(context: &ProxyServerContext, request: &ParsedRequest)
         Err(error) => return ProxyResponse::json_error(500, "database_error", &error),
     };
     if candidates.is_empty() {
-        return ProxyResponse::json_error(503, "no_enabled_keys", "Key 池中没有可用的 enabled Station Key。");
+        return ProxyResponse::json_error(
+            503,
+            "no_enabled_keys",
+            "Key 池中没有可用的 enabled Station Key。",
+        );
     }
     aggregate_models_request(context, request, &candidates)
 }
@@ -311,61 +334,51 @@ fn aggregate_models_request(
         let checked_at = now_string();
         let attempt_started = Instant::now();
         match forward_to_candidate(request, candidate, false) {
-            Ok(response) if response.status_code < 400 => match extract_models_from_response(&response) {
-                Ok(items) => {
-                    success_count += 1;
-                    for item in items {
-                        let Some(id) = item.get("id").and_then(Value::as_str) else {
-                            continue;
-                        };
-                        if seen_ids.insert(id.to_string()) {
-                            models.push(item);
+            Ok(response) if response.status_code < 400 => {
+                match extract_models_from_response(&response) {
+                    Ok(items) => {
+                        success_count += 1;
+                        for item in items {
+                            let Some(id) = item.get("id").and_then(Value::as_str) else {
+                                continue;
+                            };
+                            if seen_ids.insert(id.to_string()) {
+                                models.push(item);
+                            }
                         }
+                        let used_at = checked_at.clone();
+                        record_candidate_success(
+                            context,
+                            candidate,
+                            "success",
+                            &used_at,
+                            &checked_at,
+                            attempt_started.elapsed().as_millis() as i64,
+                        );
                     }
-                    let used_at = checked_at.clone();
-                    record_candidate_success(
-                        context,
-                        candidate,
-                        "success",
-                        &used_at,
-                        &checked_at,
-                        attempt_started.elapsed().as_millis() as i64,
-                    );
+                    Err(error) => {
+                        failed_count += 1;
+                        last_error = Some(error.clone());
+                        record_candidate_failure(
+                            context,
+                            candidate,
+                            "warning",
+                            &checked_at,
+                            &error,
+                        );
+                    }
                 }
-                Err(error) => {
-                    failed_count += 1;
-                    last_error = Some(error.clone());
-                    record_candidate_failure(
-                        context,
-                        candidate,
-                        "warning",
-                        &checked_at,
-                        &error,
-                    );
-                }
-            },
+            }
             Ok(response) => {
                 failed_count += 1;
                 let error = format!("上游返回 HTTP {}", response.status_code);
                 last_error = Some(error.clone());
-                record_candidate_failure(
-                    context,
-                    candidate,
-                    "warning",
-                    &checked_at,
-                    &error,
-                );
+                record_candidate_failure(context, candidate, "warning", &checked_at, &error);
             }
             Err(error) => {
                 failed_count += 1;
                 last_error = Some(error.clone());
-                record_candidate_failure(
-                    context,
-                    candidate,
-                    "error",
-                    &checked_at,
-                    &error,
-                );
+                record_candidate_failure(context, candidate, "error", &checked_at, &error);
             }
         }
     }
@@ -577,9 +590,11 @@ fn record_candidate_success(
         Some(used_at),
         Some(checked_at),
     );
-    let _ = context
-        .database
-        .record_station_key_success(&candidate.station_key_id, duration_ms, checked_at);
+    let _ = context.database.record_station_key_success(
+        &candidate.station_key_id,
+        duration_ms,
+        checked_at,
+    );
 }
 
 fn record_candidate_failure(
@@ -595,25 +610,37 @@ fn record_candidate_failure(
         None,
         Some(checked_at),
     );
-    let _ = context
-        .database
-        .record_station_key_failure(&candidate.station_key_id, error_summary, checked_at);
+    let _ = context.database.record_station_key_failure(
+        &candidate.station_key_id,
+        error_summary,
+        checked_at,
+    );
 }
 
 fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
     let body_value: Value = match serde_json::from_slice(&request.body) {
         Ok(value) => value,
         Err(error) => {
-            return ProxyResponse::json_error(400, "bad_json", &format!("请求 JSON 无法解析: {error}"));
+            return ProxyResponse::json_error(
+                400,
+                "bad_json",
+                &format!("请求 JSON 无法解析: {error}"),
+            );
         }
     };
     let (model, stream) = extract_chat_request_metadata(&body_value);
-    let route_request = route_request_for_chat(model.clone(), stream, &body_value, routing_policy(context));
+    let route_request =
+        route_request_for_chat(model.clone(), stream, &body_value, routing_policy(context));
     let route = match select_proxy_route(context, &route_request) {
         Ok(route) => route,
         Err(response) => return response.with_request_meta(model, stream),
     };
-    let request = rewrite_request_model(request, &body_value, model.as_deref(), route.mapped_model.as_deref());
+    let request = rewrite_request_model(
+        request,
+        &body_value,
+        model.as_deref(),
+        route.mapped_model.as_deref(),
+    );
     let candidates = route
         .accepted
         .into_iter()
@@ -622,20 +649,33 @@ fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -
     forward_with_fallback(context, &request, &candidates, model, stream)
 }
 
-fn forward_responses_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
+fn forward_responses_request(
+    context: &ProxyServerContext,
+    request: &ParsedRequest,
+) -> ProxyResponse {
     let body_value: Value = match serde_json::from_slice(&request.body) {
         Ok(value) => value,
         Err(error) => {
-            return ProxyResponse::json_error(400, "bad_json", &format!("请求 JSON 无法解析: {error}"));
+            return ProxyResponse::json_error(
+                400,
+                "bad_json",
+                &format!("请求 JSON 无法解析: {error}"),
+            );
         }
     };
     let (model, stream) = extract_responses_metadata(&body_value);
-    let route_request = route_request_for_responses(model.clone(), stream, &body_value, routing_policy(context));
+    let route_request =
+        route_request_for_responses(model.clone(), stream, &body_value, routing_policy(context));
     let route = match select_proxy_route(context, &route_request) {
         Ok(route) => route,
         Err(response) => return response.with_request_meta(model, stream),
     };
-    let request = rewrite_request_model(request, &body_value, model.as_deref(), route.mapped_model.as_deref());
+    let request = rewrite_request_model(
+        request,
+        &body_value,
+        model.as_deref(),
+        route.mapped_model.as_deref(),
+    );
     let body_value: Value = serde_json::from_slice(&request.body).unwrap_or(body_value);
     let candidates = route
         .accepted
@@ -657,8 +697,16 @@ fn forward_responses_with_fallback(
     for (index, candidate) in candidates.iter().enumerate() {
         let checked_at = now_string();
         let attempt_started = Instant::now();
-        match forward_responses_to_candidate(request, candidate, body_value, model.as_deref(), stream) {
-            Ok(response) if response.status_code < 400 || !should_fallback(response.status_code) => {
+        match forward_responses_to_candidate(
+            request,
+            candidate,
+            body_value,
+            model.as_deref(),
+            stream,
+        ) {
+            Ok(response)
+                if response.status_code < 400 || !should_fallback(response.status_code) =>
+            {
                 let response = response
                     .with_candidate(candidate)
                     .with_fallback_count(index as i64)
@@ -688,23 +736,11 @@ fn forward_responses_with_fallback(
             Ok(response) => {
                 let error = format!("上游返回 HTTP {}", response.status_code);
                 last_error = Some(error.clone());
-                record_candidate_failure(
-                    context,
-                    candidate,
-                    "warning",
-                    &checked_at,
-                    &error,
-                );
+                record_candidate_failure(context, candidate, "warning", &checked_at, &error);
             }
             Err(error) => {
                 last_error = Some(error.clone());
-                record_candidate_failure(
-                    context,
-                    candidate,
-                    "error",
-                    &checked_at,
-                    &error,
-                );
+                record_candidate_failure(context, candidate, "error", &checked_at, &error);
             }
         }
     }
@@ -739,7 +775,10 @@ fn forward_responses_to_candidate(
         if stream {
             return Ok(direct_response);
         }
-        return Ok(render_responses_proxy_response(direct_response, fallback_model));
+        return Ok(render_responses_proxy_response(
+            direct_response,
+            fallback_model,
+        ));
     }
 
     if !stream
@@ -755,7 +794,10 @@ fn forward_responses_to_candidate(
         };
         let chat_response = forward_to_candidate(&chat_request, candidate, false)?;
         if chat_response.status_code < 400 {
-            return Ok(render_responses_proxy_response(chat_response, fallback_model));
+            return Ok(render_responses_proxy_response(
+                chat_response,
+                fallback_model,
+            ));
         }
         return Ok(chat_response);
     }
@@ -763,7 +805,10 @@ fn forward_responses_to_candidate(
     Ok(direct_response)
 }
 
-fn render_responses_proxy_response(response: ProxyResponse, fallback_model: Option<&str>) -> ProxyResponse {
+fn render_responses_proxy_response(
+    response: ProxyResponse,
+    fallback_model: Option<&str>,
+) -> ProxyResponse {
     let body_value = response
         .body_bytes()
         .and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok())
@@ -796,7 +841,9 @@ fn forward_with_fallback(
         let checked_at = now_string();
         let attempt_started = Instant::now();
         match forward_to_candidate(request, candidate, stream) {
-            Ok(response) if response.status_code < 400 || !should_fallback(response.status_code) => {
+            Ok(response)
+                if response.status_code < 400 || !should_fallback(response.status_code) =>
+            {
                 let response = response
                     .with_candidate(candidate)
                     .with_fallback_count(index as i64)
@@ -826,23 +873,11 @@ fn forward_with_fallback(
             Ok(response) => {
                 let error = format!("上游返回 HTTP {}", response.status_code);
                 last_error = Some(error.clone());
-                record_candidate_failure(
-                    context,
-                    candidate,
-                    "warning",
-                    &checked_at,
-                    &error,
-                );
+                record_candidate_failure(context, candidate, "warning", &checked_at, &error);
             }
             Err(error) => {
                 last_error = Some(error.clone());
-                record_candidate_failure(
-                    context,
-                    candidate,
-                    "error",
-                    &checked_at,
-                    &error,
-                );
+                record_candidate_failure(context, candidate, "error", &checked_at, &error);
             }
         }
     }
@@ -985,7 +1020,8 @@ impl ProxyResponse {
     }
 
     fn json_error(status_code: u16, code: &str, message: &str) -> Self {
-        let body = serde_json::to_vec(&openai_error(message, code)).unwrap_or_else(|_| b"{}".to_vec());
+        let body =
+            serde_json::to_vec(&openai_error(message, code)).unwrap_or_else(|_| b"{}".to_vec());
         Self {
             status_code,
             content_type: "application/json".to_string(),
@@ -1285,7 +1321,10 @@ mod tests {
         let response = forward_chat_request(&context, &request);
 
         assert_eq!(response.status_code, 200);
-        assert!(response.stream, "request log metadata should record stream=true");
+        assert!(
+            response.stream,
+            "request log metadata should record stream=true"
+        );
         assert_eq!(response.model.as_deref(), Some("gpt-5.4"));
         assert_eq!(response.content_type, "text/event-stream");
         assert!(matches!(response.body, ProxyResponseBody::Streamed(_)));
@@ -1397,7 +1436,10 @@ mod tests {
 
         assert_eq!(response.station_key_id.as_deref(), Some(key_b.id.as_str()));
         assert_eq!(response.status_code, 200);
-        assert!(!skipped.was_called(), "blocked key should be skipped before network");
+        assert!(
+            !skipped.was_called(),
+            "blocked key should be skipped before network"
+        );
         allowed.join();
         skipped.join();
     }
@@ -1434,7 +1476,10 @@ mod tests {
 
         assert_eq!(response.station_key_id.as_deref(), Some(key_b.id.as_str()));
         assert_eq!(response.status_code, 200);
-        assert!(!skipped.was_called(), "chat-only key should be skipped before network");
+        assert!(
+            !skipped.was_called(),
+            "chat-only key should be skipped before network"
+        );
         allowed.join();
         skipped.join();
     }
@@ -1510,7 +1555,10 @@ mod tests {
 
         assert_eq!(response.station_key_id.as_deref(), Some(key_b.id.as_str()));
         assert_eq!(response.status_code, 200);
-        assert!(!skipped.was_called(), "cooldown key should be skipped before network");
+        assert!(
+            !skipped.was_called(),
+            "cooldown key should be skipped before network"
+        );
         ready.join();
         skipped.join();
     }
@@ -1677,11 +1725,7 @@ mod tests {
         }
     }
 
-    fn create_test_station_key(
-        database: &AppDatabase,
-        name: &str,
-        base_url: &str,
-    ) -> StationKey {
+    fn create_test_station_key(database: &AppDatabase, name: &str, base_url: &str) -> StationKey {
         thread::sleep(Duration::from_millis(2));
         let station = database
             .create_station(CreateStationInput {

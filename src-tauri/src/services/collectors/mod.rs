@@ -120,7 +120,10 @@ fn build_status_result(
     message: &str,
 ) -> CollectorRunResult {
     let snapshot = crate::models::collector::CollectorSnapshot {
-        id: format!("snapshot-{}", crate::services::database::now_millis_for_services()),
+        id: format!(
+            "snapshot-{}",
+            crate::services::database::now_millis_for_services()
+        ),
         station_id: station_id.clone(),
         source: "login-state-collect".to_string(),
         status: status.to_string(),
@@ -190,7 +193,10 @@ mod tests {
     #[test]
     fn login_requires_username_and_password() {
         assert!(!has_login_credentials(&None, false));
-        assert!(!has_login_credentials(&Some("user@example.com".to_string()), false));
+        assert!(!has_login_credentials(
+            &Some("user@example.com".to_string()),
+            false
+        ));
         assert!(!has_login_credentials(&None, true));
         assert!(has_login_credentials(
             &Some("user@example.com".to_string()),

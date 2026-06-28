@@ -31,9 +31,7 @@ pub fn redact_value(value: &Value) -> Value {
             Value::Object(next)
         }
         Value::Array(items) => Value::Array(items.iter().map(redact_value).collect()),
-        Value::String(text) if looks_like_secret(text) => {
-            Value::String("[REDACTED]".to_string())
-        }
+        Value::String(text) if looks_like_secret(text) => Value::String("[REDACTED]".to_string()),
         _ => value.clone(),
     }
 }

@@ -1,5 +1,5 @@
-pub mod collector;
 pub mod capture;
+pub mod collector;
 pub mod credentials;
 pub mod proxy;
 pub mod routing;

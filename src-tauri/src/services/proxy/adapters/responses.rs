@@ -9,10 +9,7 @@ pub fn extract_responses_metadata(body: &Value) -> (Option<String>, bool) {
         .get("model")
         .and_then(Value::as_str)
         .map(ToString::to_string);
-    let stream = body
-        .get("stream")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     (model, stream)
 }
 
@@ -51,9 +48,7 @@ pub fn render_responses_response(body: Value, fallback_model: Option<&str>) -> V
         }
     }
 
-    let content = extract_choice_text(&body).unwrap_or_else(|| {
-        body.to_string()
-    });
+    let content = extract_choice_text(&body).unwrap_or_else(|| body.to_string());
     let wrapped = wrap_chat_response_as_responses(body, fallback_model);
     if wrapped.get("output_text").and_then(Value::as_str).is_none() {
         return json!({
@@ -83,8 +78,14 @@ mod tests {
 
     #[test]
     fn upstream_responses_path_prefers_responses_for_compatible_formats() {
-        assert_eq!(upstream_responses_path(&UpstreamApiFormat::OpenAiResponses), "/v1/responses");
-        assert_eq!(upstream_responses_path(&UpstreamApiFormat::Auto), "/v1/responses");
+        assert_eq!(
+            upstream_responses_path(&UpstreamApiFormat::OpenAiResponses),
+            "/v1/responses"
+        );
+        assert_eq!(
+            upstream_responses_path(&UpstreamApiFormat::Auto),
+            "/v1/responses"
+        );
         assert_eq!(
             upstream_responses_path(&UpstreamApiFormat::CustomOpenAiCompatible),
             "/v1/responses"
@@ -98,9 +99,15 @@ mod tests {
     #[test]
     fn should_try_chat_fallback_only_for_ambiguous_formats() {
         assert!(should_try_chat_fallback(&UpstreamApiFormat::Auto));
-        assert!(should_try_chat_fallback(&UpstreamApiFormat::CustomOpenAiCompatible));
-        assert!(!should_try_chat_fallback(&UpstreamApiFormat::OpenAiResponses));
-        assert!(!should_try_chat_fallback(&UpstreamApiFormat::OpenAiChatCompletions));
+        assert!(should_try_chat_fallback(
+            &UpstreamApiFormat::CustomOpenAiCompatible
+        ));
+        assert!(!should_try_chat_fallback(
+            &UpstreamApiFormat::OpenAiResponses
+        ));
+        assert!(!should_try_chat_fallback(
+            &UpstreamApiFormat::OpenAiChatCompletions
+        ));
     }
 }
 

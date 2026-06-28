@@ -105,7 +105,11 @@ pub fn collect_login_state(
 
     let login_attempt = attempt_login(&agent, &station.base_url, &username)?;
     if let Some(result) = login_attempt.manual_required {
-        return Ok(login_state_manual_required(station_id, station.name, &result));
+        return Ok(login_state_manual_required(
+            station_id,
+            station.name,
+            &result,
+        ));
     }
 
     let Some(token) = login_attempt.token else {
@@ -359,7 +363,11 @@ fn run_endpoint_probes(base_url: &str, config: ProbeConfig) -> Vec<EndpointProbe
                 .build();
 
             loop {
-                let Some(path) = worker_queue.lock().ok().and_then(|mut paths| paths.pop_front()) else {
+                let Some(path) = worker_queue
+                    .lock()
+                    .ok()
+                    .and_then(|mut paths| paths.pop_front())
+                else {
                     break;
                 };
                 let url = join_url(&worker_base_url, path);
@@ -418,24 +426,27 @@ fn run_authenticated_probes(
         let worker_base_url = base_url.to_string();
         let worker_token = token.to_string();
         let worker_agent = agent.clone();
-        thread::spawn(move || {
-            loop {
-                let Some(path) = worker_queue.lock().ok().and_then(|mut paths| paths.pop_front()) else {
-                    break;
-                };
-                let url = join_url(&worker_base_url, path);
-                let probe = match probe_authenticated_endpoint(&worker_agent, path, &url, &worker_token) {
-                    Ok(result) => EndpointProbe::Response(result),
-                    Err(message) => EndpointProbe::Error(ProbeError {
-                        path,
-                        url,
-                        label: error_label(&message),
-                        message: shorten_error(&message),
-                    }),
-                };
-                if worker_sender.send(probe).is_err() {
-                    break;
-                }
+        thread::spawn(move || loop {
+            let Some(path) = worker_queue
+                .lock()
+                .ok()
+                .and_then(|mut paths| paths.pop_front())
+            else {
+                break;
+            };
+            let url = join_url(&worker_base_url, path);
+            let probe = match probe_authenticated_endpoint(&worker_agent, path, &url, &worker_token)
+            {
+                Ok(result) => EndpointProbe::Response(result),
+                Err(message) => EndpointProbe::Error(ProbeError {
+                    path,
+                    url,
+                    label: error_label(&message),
+                    message: shorten_error(&message),
+                }),
+            };
+            if worker_sender.send(probe).is_err() {
+                break;
             }
         });
     }
@@ -509,7 +520,11 @@ struct LoginAttempt {
 
 fn attempt_login(agent: &Agent, base_url: &str, username: &str) -> Result<LoginAttempt, String> {
     let password_placeholder = "[REDACTED]";
-    let username_variants = [("email", username), ("username", username), ("user", username)];
+    let username_variants = [
+        ("email", username),
+        ("username", username),
+        ("user", username),
+    ];
 
     for path in LOGIN_PATHS {
         for (field, value) in username_variants {
@@ -638,17 +653,20 @@ fn build_login_state_snapshot(
 
     if let Some(message) = login_message.clone() {
         if !message.trim().is_empty() {
-            responses.insert(0, json!({
-                "path": "/api/v1/auth/login",
-                "url": "login://attempt",
-                "status": 200,
-                "result": "已检查",
-                "detail": message,
-                "contentType": "application/json",
-                "json": {
-                    "message": message,
-                },
-            }));
+            responses.insert(
+                0,
+                json!({
+                    "path": "/api/v1/auth/login",
+                    "url": "login://attempt",
+                    "status": 200,
+                    "result": "已检查",
+                    "detail": message,
+                    "contentType": "application/json",
+                    "json": {
+                        "message": message,
+                    },
+                }),
+            );
         }
     }
 
@@ -731,7 +749,8 @@ fn build_login_state_snapshot(
         None
     } else {
         Some(
-            login_message.clone()
+            login_message
+                .clone()
                 .or(first_error)
                 .unwrap_or_else(|| "未识别到余额、分组或倍率字段。".to_string()),
         )
@@ -759,7 +778,10 @@ fn login_state_manual_required(
     message: &str,
 ) -> CollectorRunResult {
     let snapshot = crate::models::collector::CollectorSnapshot {
-        id: format!("snapshot-{}", crate::services::database::now_millis_for_services()),
+        id: format!(
+            "snapshot-{}",
+            crate::services::database::now_millis_for_services()
+        ),
         station_id: station_id.clone(),
         source: "login-state-collect".to_string(),
         status: "manual_required".to_string(),
@@ -965,7 +987,11 @@ fn adapter_label(station_type: &str) -> &'static str {
     }
 }
 
-fn detected_type_label(station_type: &str, normalized: &Value, endpoints: &[Value]) -> &'static str {
+fn detected_type_label(
+    station_type: &str,
+    normalized: &Value,
+    endpoints: &[Value],
+) -> &'static str {
     if station_type == "newapi" {
         return "NewAPI";
     }

@@ -1,7 +1,10 @@
 use serde_json::{json, Value};
 
 pub fn generate_response_id(prefix: &str) -> String {
-    format!("{prefix}-{}", crate::services::database::now_millis_for_services())
+    format!(
+        "{prefix}-{}",
+        crate::services::database::now_millis_for_services()
+    )
 }
 
 pub fn extract_choice_text(value: &Value) -> Option<String> {

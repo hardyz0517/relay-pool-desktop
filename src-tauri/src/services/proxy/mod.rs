@@ -3,8 +3,8 @@ use serde_json::Value;
 use crate::models::proxy::{ClientRequestKind, UpstreamApiFormat};
 
 pub mod adapters;
-pub mod runtime;
 pub mod router;
+pub mod runtime;
 
 #[derive(Debug, Clone)]
 pub struct RouteCandidate {
@@ -39,10 +39,7 @@ pub fn extract_chat_request_metadata(body: &Value) -> (Option<String>, bool) {
         .get("model")
         .and_then(Value::as_str)
         .map(ToString::to_string);
-    let stream = body
-        .get("stream")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     (model, stream)
 }
 
@@ -52,11 +49,7 @@ pub fn build_upstream_url(base_url: &str, path: &str) -> String {
     if base.ends_with("/v1") && path.starts_with("v1/") {
         return format!("{}/{}", base, path.trim_start_matches("v1/"));
     }
-    format!(
-        "{}/{}",
-        base,
-        path
-    )
+    format!("{}/{}", base, path)
 }
 
 pub fn should_fallback(status: u16) -> bool {
@@ -127,7 +120,10 @@ mod tests {
 
         let sorted = enabled_candidates(candidates);
 
-        let ids: Vec<_> = sorted.iter().map(|item| item.station_key_id.as_str()).collect();
+        let ids: Vec<_> = sorted
+            .iter()
+            .map(|item| item.station_key_id.as_str())
+            .collect();
         assert_eq!(ids, vec!["key-a", "key-c", "key-b"]);
     }
 
@@ -141,7 +137,10 @@ mod tests {
 
         let sorted = preferred_candidates(candidates, ClientRequestKind::Responses);
 
-        let ids: Vec<_> = sorted.iter().map(|item| item.station_key_id.as_str()).collect();
+        let ids: Vec<_> = sorted
+            .iter()
+            .map(|item| item.station_key_id.as_str())
+            .collect();
         assert_eq!(ids, vec!["responses", "auto", "chat"]);
     }
 

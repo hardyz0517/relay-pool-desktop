@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::models::capture::{CapturedHttpEvent, CaptureSessionStatus};
+use crate::models::capture::{CaptureSessionStatus, CapturedHttpEvent};
 
 #[derive(Clone, Default)]
 pub struct CaptureSessionStore {
@@ -11,7 +11,11 @@ pub struct CaptureSessionStore {
 }
 
 impl CaptureSessionStore {
-    pub fn start(&self, station_id: String, window_label: String) -> Result<CaptureSessionStatus, String> {
+    pub fn start(
+        &self,
+        station_id: String,
+        window_label: String,
+    ) -> Result<CaptureSessionStatus, String> {
         let mut sessions = self.sessions()?;
         let session = CaptureSession {
             station_id: station_id.clone(),
@@ -77,7 +81,9 @@ impl CaptureSessionStore {
         })
     }
 
-    fn sessions(&self) -> Result<std::sync::MutexGuard<'_, HashMap<String, CaptureSession>>, String> {
+    fn sessions(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, HashMap<String, CaptureSession>>, String> {
         self.sessions
             .lock()
             .map_err(|_| "捕获会话状态锁已损坏".to_string())

@@ -88,7 +88,10 @@ pub fn select_route_candidates(
     });
 
     Ok(RouteSelection {
-        accepted: accepted.into_iter().map(|(_, candidate)| candidate).collect(),
+        accepted: accepted
+            .into_iter()
+            .map(|(_, candidate)| candidate)
+            .collect(),
         explanations,
         mapped_model,
     })
@@ -112,7 +115,9 @@ fn collect_rejections(
     rejection_reasons: &mut Vec<String>,
 ) {
     match request.endpoint {
-        RouteEndpointKind::Models => reasons.push("models endpoint does not require model capability".to_string()),
+        RouteEndpointKind::Models => {
+            reasons.push("models endpoint does not require model capability".to_string())
+        }
         RouteEndpointKind::Responses if !candidate.capabilities.supports_responses => {
             rejection_reasons.push("does not support responses".to_string());
         }
@@ -190,14 +195,8 @@ fn candidate_score(
     if matches!(request.policy, RoutingPolicy::StableFirst) {
         let health = candidate.health.as_ref();
         score += health.map(|item| item.consecutive_failures).unwrap_or(0) * 500;
-        score += health
-            .and_then(|item| item.avg_latency_ms)
-            .unwrap_or(5_000)
-            / 10;
-        score -= health
-            .map(|item| item.success_count.min(100))
-            .unwrap_or(0)
-            * 5;
+        score += health.and_then(|item| item.avg_latency_ms).unwrap_or(5_000) / 10;
+        score -= health.map(|item| item.success_count.min(100)).unwrap_or(0) * 5;
     }
 
     if matches!(request.policy, RoutingPolicy::BackupOnly)
@@ -272,10 +271,7 @@ mod tests {
             false,
             RoutingPolicy::PriorityFallback,
         );
-        let aliases = vec![(
-            "gpt-4o-mini".to_string(),
-            "openai/gpt-4o-mini".to_string(),
-        )];
+        let aliases = vec![("gpt-4o-mini".to_string(), "openai/gpt-4o-mini".to_string())];
         let candidates = vec![
             rich_candidate(
                 "blocked",
@@ -433,9 +429,7 @@ mod tests {
         }
     }
 
-    fn capabilities(
-        configure: impl FnOnce(&mut StationKeyCapabilities),
-    ) -> StationKeyCapabilities {
+    fn capabilities(configure: impl FnOnce(&mut StationKeyCapabilities)) -> StationKeyCapabilities {
         let mut capabilities = StationKeyCapabilities {
             station_key_id: "key".to_string(),
             supports_chat_completions: true,
