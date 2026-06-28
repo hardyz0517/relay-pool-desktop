@@ -14,8 +14,10 @@ import { CSS } from "@dnd-kit/utilities";
 import { CheckCircle2, Edit3, GripVertical, RefreshCcw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, Dialog, EmptyState, StatusBadge, Toolbar } from "@/components/ui";
+import { getStationKeyCapabilities, updateStationKeyCapabilities } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
 import { deleteStationKey, listKeyPoolItems, reorderKeyPool, updateStationKey } from "@/lib/api/stationKeys";
+import type { StationKeyCapabilities } from "@/lib/types/routing";
 import { stationTypeLabels, type Station } from "@/lib/types/stations";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
@@ -188,21 +190,19 @@ export function KeyPoolPage() {
     }
   }
 
-  function handleEdit(item: KeyPoolItem) {
+  async function handleEdit(item: KeyPoolItem) {
     setEditingItem(item);
-    setEditForm({
-      id: item.id,
-      stationId: item.stationId,
-      stationName: item.stationName,
-      name: item.name,
-      apiKey: "",
-      enabled: item.enabled,
-      priority: String(item.priority),
-      groupName: item.groupName ?? "",
-      tierLabel: item.tierLabel ?? "",
-      status: item.status,
-      note: item.note ?? "",
-    });
+    setEditForm(formFromItem(item));
+    setSaving(true);
+    setError(null);
+    try {
+      const capabilities = await getStationKeyCapabilities(item.id);
+      setEditForm((current) => current.id === item.id ? mergeCapabilitiesIntoForm(current, capabilities) : current);
+    } catch (requestError) {
+      setError(`读取 Key 路由能力失败：${readError(requestError)}`);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleEditSave(event: FormEvent<HTMLFormElement>) {
@@ -225,6 +225,26 @@ export function KeyPoolPage() {
         status: editForm.status,
         note: editForm.note.trim() ? editForm.note.trim() : null,
       });
+      try {
+        await updateStationKeyCapabilities({
+          stationKeyId: editForm.id,
+          supportsChatCompletions: editForm.supportsChatCompletions,
+          supportsResponses: editForm.supportsResponses,
+          supportsEmbeddings: editForm.supportsEmbeddings,
+          supportsStream: editForm.supportsStream,
+          supportsTools: editForm.supportsTools,
+          supportsVision: editForm.supportsVision,
+          supportsReasoning: editForm.supportsReasoning,
+          modelAllowlist: linesToList(editForm.modelAllowlist),
+          modelBlocklist: linesToList(editForm.modelBlocklist),
+          preferredModels: linesToList(editForm.preferredModels),
+          onlyUseAsBackup: editForm.onlyUseAsBackup,
+          routingTags: commaListToList(editForm.routingTags),
+        });
+      } catch (capabilityError) {
+        await refresh();
+        throw new Error(`Key 基础信息已保存，但路由能力保存失败：${readError(capabilityError)}`);
+      }
       setEditingItem(null);
       await refresh();
       setMessage("Key 已更新。");
@@ -380,6 +400,12 @@ function KeyRowContent({
   onToggleEnabled?: (item: KeyPoolItem) => void;
   onDelete?: (item: KeyPoolItem) => void;
 }) {
+  const cooldownActive = isFutureTime(item.cooldownUntil);
+  const healthSummary = [
+    item.successRate === null ? "成功率暂无" : `成功率 ${Math.round(item.successRate * 100)}%`,
+    item.avgLatencyMs === null ? "延迟暂无" : `平均 ${item.avgLatencyMs}ms`,
+    item.consecutiveFailures > 0 ? `连续失败 ${item.consecutiveFailures}` : "无连续失败",
+  ].join(" · ");
   return (
     <div className={cn("grid min-h-[72px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-left shadow-[var(--surface-shadow)] transition-colors", overlay ? "border-teal-300 shadow-[0_14px_28px_rgba(13,148,136,0.18)]" : "border-cyan-100 hover:border-teal-200 hover:bg-teal-50/25")}>
       <button type="button" className={cn("flex h-9 w-9 items-center justify-center rounded-[12px] border border-cyan-100 bg-cyan-50 transition", dragDisabled ? "cursor-not-allowed text-slate-300" : "cursor-grab text-slate-400 active:cursor-grabbing hover:text-teal-700")} aria-label="拖拽排序" title={dragDisabled ? "清除筛选后可拖拽排序" : "拖拽排序"} {...dragAttributes} {...dragListeners}>
@@ -390,6 +416,8 @@ function KeyRowContent({
           <div className="truncate text-[13px] font-semibold text-slate-800">{item.name}</div>
           <StatusBadge tone={statusTone[item.status]}>{item.status}</StatusBadge>
           <span className="rounded-full border border-cyan-100 bg-cyan-50 px-2 py-0.5 text-[11px] text-slate-600">P{item.priority}</span>
+          {item.onlyUseAsBackup && <StatusBadge tone="warning">备用</StatusBadge>}
+          {cooldownActive && <StatusBadge tone="warning">冷却中</StatusBadge>}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span>{item.apiKeyMasked}</span>
@@ -400,6 +428,21 @@ function KeyRowContent({
         <div className="mt-1 text-xs text-muted-foreground">
           所属中转站：{item.stationName} · {stationTypeLabels[item.stationType as keyof typeof stationTypeLabels] ?? item.stationType}
         </div>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+          <span>协议：</span>
+          {(item.capabilitySummary.length ? item.capabilitySummary : ["未配置"]).map((capability) => (
+            <span key={capability} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-600">
+              {capability}
+            </span>
+          ))}
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          模型：{item.modelScopeSummary || "全部模型"} · 健康：{healthSummary}
+          {cooldownActive ? ` · 冷却至 ${formatNullableTime(item.cooldownUntil)}` : ""}
+        </div>
+        {item.lastErrorSummary && (
+          <div className="mt-1 truncate text-xs text-rose-600">最近错误：{item.lastErrorSummary}</div>
+        )}
         <div className="mt-1 text-xs text-muted-foreground">
           最近使用：{formatNullableTime(item.lastUsedAt)} · 最近检查：{formatNullableTime(item.lastCheckedAt)}
         </div>
@@ -432,6 +475,18 @@ type KeyPoolEditForm = {
   tierLabel: string;
   status: StationKeyStatus;
   note: string;
+  supportsChatCompletions: boolean;
+  supportsResponses: boolean;
+  supportsEmbeddings: boolean;
+  supportsStream: boolean;
+  supportsTools: boolean;
+  supportsVision: boolean;
+  supportsReasoning: boolean;
+  modelAllowlist: string;
+  modelBlocklist: string;
+  preferredModels: string;
+  onlyUseAsBackup: boolean;
+  routingTags: string;
 };
 
 const emptyEditForm: KeyPoolEditForm = {
@@ -446,6 +501,18 @@ const emptyEditForm: KeyPoolEditForm = {
   tierLabel: "",
   status: "unchecked",
   note: "",
+  supportsChatCompletions: true,
+  supportsResponses: true,
+  supportsEmbeddings: false,
+  supportsStream: true,
+  supportsTools: false,
+  supportsVision: false,
+  supportsReasoning: false,
+  modelAllowlist: "",
+  modelBlocklist: "",
+  preferredModels: "",
+  onlyUseAsBackup: false,
+  routingTags: "",
 };
 
 function KeyEditDialog({
@@ -510,6 +577,38 @@ function KeyEditDialog({
           <input checked={form.enabled} className="h-4 w-4 accent-teal-600" type="checkbox" onChange={(event) => onFormChange({ ...form, enabled: event.target.checked })} />
           启用
         </label>
+        <div className="grid gap-2 rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/25 p-3">
+          <div className="text-xs font-semibold text-slate-700">协议能力</div>
+          <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+            <CheckField label="Chat Completions" checked={form.supportsChatCompletions} onChange={(checked) => onFormChange({ ...form, supportsChatCompletions: checked })} />
+            <CheckField label="Responses" checked={form.supportsResponses} onChange={(checked) => onFormChange({ ...form, supportsResponses: checked })} />
+            <CheckField label="Embeddings" checked={form.supportsEmbeddings} onChange={(checked) => onFormChange({ ...form, supportsEmbeddings: checked })} />
+            <CheckField label="Stream" checked={form.supportsStream} onChange={(checked) => onFormChange({ ...form, supportsStream: checked })} />
+            <CheckField label="Tools" checked={form.supportsTools} onChange={(checked) => onFormChange({ ...form, supportsTools: checked })} />
+            <CheckField label="Vision" checked={form.supportsVision} onChange={(checked) => onFormChange({ ...form, supportsVision: checked })} />
+            <CheckField label="Reasoning" checked={form.supportsReasoning} onChange={(checked) => onFormChange({ ...form, supportsReasoning: checked })} />
+          </div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <Field label="允许模型">
+            <textarea className={`${inputClassName} min-h-24 resize-none py-2`} value={form.modelAllowlist} onChange={(event) => onFormChange({ ...form, modelAllowlist: event.target.value })} placeholder="每行一个模型；留空表示全部模型" />
+          </Field>
+          <Field label="禁止模型">
+            <textarea className={`${inputClassName} min-h-24 resize-none py-2`} value={form.modelBlocklist} onChange={(event) => onFormChange({ ...form, modelBlocklist: event.target.value })} placeholder="每行一个模型" />
+          </Field>
+          <Field label="优先模型">
+            <textarea className={`${inputClassName} min-h-24 resize-none py-2`} value={form.preferredModels} onChange={(event) => onFormChange({ ...form, preferredModels: event.target.value })} placeholder="每行一个模型" />
+          </Field>
+        </div>
+        <div className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)]">
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input checked={form.onlyUseAsBackup} className="h-4 w-4 accent-teal-600" type="checkbox" onChange={(event) => onFormChange({ ...form, onlyUseAsBackup: event.target.checked })} />
+            仅作为备用 Key
+          </label>
+          <Field label="路由标签">
+            <input className={inputClassName} value={form.routingTags} onChange={(event) => onFormChange({ ...form, routingTags: event.target.value })} placeholder="逗号分隔，例如 pro, low-latency" />
+          </Field>
+        </div>
         <Field label="备注">
           <textarea className={`${inputClassName} min-h-20 resize-none py-2`} value={form.note} onChange={(event) => onFormChange({ ...form, note: event.target.value })} />
         </Field>
@@ -549,6 +648,108 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </label>
   );
+}
+
+function CheckField({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-sm text-slate-700">
+      <input
+        checked={checked}
+        className="h-4 w-4 accent-teal-600"
+        type="checkbox"
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      {label}
+    </label>
+  );
+}
+
+function formFromItem(item: KeyPoolItem): KeyPoolEditForm {
+  return {
+    id: item.id,
+    stationId: item.stationId,
+    stationName: item.stationName,
+    name: item.name,
+    apiKey: "",
+    enabled: item.enabled,
+    priority: String(item.priority),
+    groupName: item.groupName ?? "",
+    tierLabel: item.tierLabel ?? "",
+    status: item.status,
+    note: item.note ?? "",
+    supportsChatCompletions: true,
+    supportsResponses: true,
+    supportsEmbeddings: false,
+    supportsStream: true,
+    supportsTools: false,
+    supportsVision: false,
+    supportsReasoning: false,
+    modelAllowlist: "",
+    modelBlocklist: "",
+    preferredModels: "",
+    onlyUseAsBackup: item.onlyUseAsBackup,
+    routingTags: "",
+  };
+}
+
+function mergeCapabilitiesIntoForm(
+  form: KeyPoolEditForm,
+  capabilities: StationKeyCapabilities,
+): KeyPoolEditForm {
+  return {
+    ...form,
+    supportsChatCompletions: capabilities.supportsChatCompletions,
+    supportsResponses: capabilities.supportsResponses,
+    supportsEmbeddings: capabilities.supportsEmbeddings,
+    supportsStream: capabilities.supportsStream,
+    supportsTools: capabilities.supportsTools,
+    supportsVision: capabilities.supportsVision,
+    supportsReasoning: capabilities.supportsReasoning,
+    modelAllowlist: capabilities.modelAllowlist.join("\n"),
+    modelBlocklist: capabilities.modelBlocklist.join("\n"),
+    preferredModels: capabilities.preferredModels.join("\n"),
+    onlyUseAsBackup: capabilities.onlyUseAsBackup,
+    routingTags: capabilities.routingTags.join(", "),
+  };
+}
+
+function linesToList(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function commaListToList(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function isFutureTime(value: string | null) {
+  if (!value) {
+    return false;
+  }
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  return !Number.isNaN(date.getTime()) && date.getTime() > Date.now();
 }
 
 const inputClassName =

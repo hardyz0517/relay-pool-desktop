@@ -22,6 +22,14 @@ export type KeyPoolItem = StationKey & {
   stationName: string;
   stationType: string;
   stationBaseUrl: string;
+  capabilitySummary: string[];
+  modelScopeSummary: string;
+  onlyUseAsBackup: boolean;
+  cooldownUntil: string | null;
+  successRate: number | null;
+  avgLatencyMs: number | null;
+  consecutiveFailures: number;
+  lastErrorSummary: string | null;
 };
 
 export type StationCredentials = {
