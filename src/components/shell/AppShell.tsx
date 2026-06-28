@@ -4,19 +4,19 @@ import { appRoutes } from "@/app/routes";
 import { IconButton } from "@/components/ui";
 import { shellLayout } from "@/components/ui/layout";
 import { cn } from "@/lib/utils";
-import type { AppPageId } from "@/lib/types/navigation";
+import type { AppRouteId } from "@/lib/types/navigation";
 
-type AppShellProps<TActiveRouteId extends AppPageId = AppPageId> = {
-  activeRouteId: TActiveRouteId;
+type AppShellProps = {
+  activeRouteId: AppRouteId;
   children: ReactNode;
-  onRouteChange: (routeId: TActiveRouteId) => void;
+  onRouteChange: (routeId: AppRouteId) => void;
 };
 
-export function AppShell<TActiveRouteId extends AppPageId = AppPageId>({
+export function AppShell({
   activeRouteId,
   children,
   onRouteChange,
-}: AppShellProps<TActiveRouteId>) {
+}: AppShellProps) {
   const activeRoute = appRoutes.find((route) => route.id === activeRouteId);
 
   return (
@@ -52,7 +52,7 @@ export function AppShell<TActiveRouteId extends AppPageId = AppPageId>({
               <button
                 key={route.id}
                 type="button"
-                onClick={() => onRouteChange(route.id as TActiveRouteId)}
+                onClick={() => onRouteChange(route.id)}
                 title={route.label}
                 aria-label={route.label}
                 className={cn(
