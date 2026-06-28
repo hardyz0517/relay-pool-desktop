@@ -9,10 +9,11 @@ import { KeyPoolPage } from "@/features/key-pool/KeyPoolPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { ChannelStatusPage } from "@/features/channels/ChannelStatusPage";
 import { StationsPage } from "@/features/stations/StationsPage";
-import type { AppRouteId } from "@/lib/types/navigation";
+import type { AppPageId, AppRouteId } from "@/lib/types/navigation";
 
 export function App() {
-  const [activeRouteId, setActiveRouteId] = useState<AppRouteId>("dashboard");
+  const [activeRouteId, setActiveRouteId] = useState<AppPageId>("dashboard");
+  const activeShellRouteId: AppRouteId = activeRouteId === "addProvider" ? "dashboard" : activeRouteId;
 
   const page = useMemo(() => {
     switch (activeRouteId) {
@@ -34,12 +35,12 @@ export function App() {
         return <SettingsPage />;
       case "dashboard":
       default:
-        return <DashboardPage />;
+        return <DashboardPage onNavigate={setActiveRouteId} />;
     }
   }, [activeRouteId]);
 
   return (
-    <AppShell activeRouteId={activeRouteId} onRouteChange={setActiveRouteId}>
+    <AppShell activeRouteId={activeShellRouteId} onRouteChange={setActiveRouteId}>
       {page}
     </AppShell>
   );
