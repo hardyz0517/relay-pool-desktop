@@ -190,78 +190,40 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       </SectionCard>
 
       <div className="grid min-h-0 gap-3 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <div className="grid gap-3">
-          <SectionCard
-            title="本地代理入口"
-            description="P5 本地 OpenAI-compatible 入口；仅监听 127.0.0.1。"
-            action={
-              <StatusBadge tone={proxyRunning ? "healthy" : "warning"}>
-                {proxyRunning ? "运行中" : "未启动"}
-              </StatusBadge>
-            }
-          >
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px]">
-              <div className="rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)]">
-                <div className="text-xs text-muted-foreground">Base URL</div>
-                <div className="mt-1 flex min-w-0 items-center gap-2">
-                  <code className="min-w-0 flex-1 truncate text-[15px] font-semibold text-slate-800">
-                    {proxyBaseUrl}
-                  </code>
-                  <Button variant="outline" onClick={() => copyText(proxyBaseUrl)}>
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                </div>
-                <div className="mt-2 text-xs text-muted-foreground">
-                  监听地址 {proxyStatus?.bindAddr ?? "127.0.0.1"} - 运行次数 {proxyRequestCount.toLocaleString("zh-CN")}
-                </div>
-              </div>
-              <div className="rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)]">
-                <div className="text-xs text-muted-foreground">Local Key</div>
-                <div className="mt-1 flex items-center justify-between gap-2">
-                  <MaskedSecret value={dashboard.maskedLocalKey} />
-                  <Button variant="outline" onClick={() => copyText(dashboard.maskedLocalKey)}>
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
+        <SectionCard title="最近活动" description="请求和价格变化合并为桌面工具活动流。">
+          <div className="grid gap-4 xl:grid-cols-2">
+            <div className="space-y-2">
+              {dashboard.recentRequests.slice(0, 5).map((request) => (
+                <ObjectRow
+                  key={request.id}
+                  icon={<Server className="h-4 w-4" />}
+                  title={request.model}
+                  subtitle={`${request.stationName} · ${request.latencyMs}ms · ¥${request.estimatedCostCny.toFixed(3)}`}
+                  badges={<StatusBadge tone={requestTone[request.status]}>{request.status}</StatusBadge>}
+                  metrics={[{ label: "时间", value: request.createdAt }]}
+                />
+              ))}
             </div>
-          </SectionCard>
-
-          <SectionCard title="最近活动" description="请求和价格变化合并为桌面工具活动流。">
-            <div className="grid gap-4 xl:grid-cols-2">
-              <div className="space-y-2">
-                {dashboard.recentRequests.slice(0, 5).map((request) => (
-                  <ObjectRow
-                    key={request.id}
-                    icon={<Server className="h-4 w-4" />}
-                    title={request.model}
-                    subtitle={`${request.stationName} · ${request.latencyMs}ms · ¥${request.estimatedCostCny.toFixed(3)}`}
-                    badges={<StatusBadge tone={requestTone[request.status]}>{request.status}</StatusBadge>}
-                    metrics={[{ label: "时间", value: request.createdAt }]}
-                  />
-                ))}
-              </div>
-              <div className="space-y-2">
-                {dashboard.priceChanges.slice(0, 5).map((change) => (
-                  <ObjectRow
-                    key={`${change.model}-${change.stationName}`}
-                    icon={<Route className="h-4 w-4" />}
-                    title={change.model}
-                    subtitle={change.stationName}
-                    metrics={[
-                      {
-                        label: "变动",
-                        value: `${change.deltaPercent > 0 ? "+" : ""}${change.deltaPercent.toFixed(1)}%`,
-                        tone: change.deltaPercent > 0 ? "warning" : "good",
-                      },
-                      { label: "更新", value: change.updatedAt },
-                    ]}
-                  />
-                ))}
-              </div>
+            <div className="space-y-2">
+              {dashboard.priceChanges.slice(0, 5).map((change) => (
+                <ObjectRow
+                  key={`${change.model}-${change.stationName}`}
+                  icon={<Route className="h-4 w-4" />}
+                  title={change.model}
+                  subtitle={change.stationName}
+                  metrics={[
+                    {
+                      label: "变动",
+                      value: `${change.deltaPercent > 0 ? "+" : ""}${change.deltaPercent.toFixed(1)}%`,
+                      tone: change.deltaPercent > 0 ? "warning" : "good",
+                    },
+                    { label: "更新", value: change.updatedAt },
+                  ]}
+                />
+              ))}
             </div>
-          </SectionCard>
-        </div>
+          </div>
+        </SectionCard>
 
         <SectionCard title="站点健康" description="状态聚合和待处理事项。">
           <div className="grid grid-cols-2 gap-3">
