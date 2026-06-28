@@ -604,6 +604,26 @@ impl AppDatabase {
         let connection = self.connection()?;
         station_key_health_by_id(&connection, &station_key_id)
     }
+
+    pub fn record_station_key_success(
+        &self,
+        station_key_id: &str,
+        duration_ms: i64,
+        now: &str,
+    ) -> Result<(), String> {
+        let connection = self.connection()?;
+        record_station_key_success_in_connection(&connection, station_key_id, duration_ms, now)
+    }
+
+    pub fn record_station_key_failure(
+        &self,
+        station_key_id: &str,
+        error_summary: &str,
+        now: &str,
+    ) -> Result<(), String> {
+        let connection = self.connection()?;
+        record_station_key_failure_in_connection(&connection, station_key_id, error_summary, now)
+    }
 }
 
 fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
@@ -1414,6 +1434,134 @@ fn default_station_key_health(station_key_id: &str) -> StationKeyHealth {
         cooldown_until: None,
         updated_at: now_string(),
     }
+}
+
+fn record_station_key_success_in_connection(
+    connection: &Connection,
+    station_key_id: &str,
+    duration_ms: i64,
+    now: &str,
+) -> Result<(), String> {
+    validate_station_key_exists(connection, station_key_id)?;
+    let current = station_key_health_by_id(connection, station_key_id)?;
+    let success_count = current.success_count + 1;
+    let total_duration_ms = current
+        .avg_latency_ms
+        .map(|avg| avg * current.success_count)
+        .unwrap_or(0)
+        + duration_ms.max(0);
+    let avg_latency_ms = if success_count > 0 {
+        Some(total_duration_ms / success_count)
+    } else {
+        None
+    };
+
+    connection
+        .execute(
+            "INSERT INTO station_key_health (
+                station_key_id, last_success_at, last_failure_at, consecutive_failures,
+                success_count, failure_count, total_duration_ms, avg_latency_ms,
+                last_error_summary, cooldown_until, updated_at
+             ) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7, NULL, NULL, ?8)
+             ON CONFLICT(station_key_id) DO UPDATE SET
+                last_success_at = excluded.last_success_at,
+                consecutive_failures = 0,
+                success_count = excluded.success_count,
+                total_duration_ms = excluded.total_duration_ms,
+                avg_latency_ms = excluded.avg_latency_ms,
+                last_error_summary = NULL,
+                cooldown_until = NULL,
+                updated_at = excluded.updated_at",
+            params![
+                station_key_id,
+                now,
+                current.last_failure_at,
+                success_count,
+                current.failure_count,
+                total_duration_ms,
+                avg_latency_ms,
+                now,
+            ],
+        )
+        .map_err(|error| format!("记录 Key 成功状态失败: {error}"))?;
+
+    Ok(())
+}
+
+fn record_station_key_failure_in_connection(
+    connection: &Connection,
+    station_key_id: &str,
+    error_summary: &str,
+    now: &str,
+) -> Result<(), String> {
+    validate_station_key_exists(connection, station_key_id)?;
+    let current = station_key_health_by_id(connection, station_key_id)?;
+    let consecutive_failures = current.consecutive_failures + 1;
+    let failure_count = current.failure_count + 1;
+    let cooldown_until = cooldown_until(consecutive_failures, now);
+
+    connection
+        .execute(
+            "INSERT INTO station_key_health (
+                station_key_id, last_success_at, last_failure_at, consecutive_failures,
+                success_count, failure_count, total_duration_ms, avg_latency_ms,
+                last_error_summary, cooldown_until, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(station_key_id) DO UPDATE SET
+                last_failure_at = excluded.last_failure_at,
+                consecutive_failures = excluded.consecutive_failures,
+                success_count = excluded.success_count,
+                failure_count = excluded.failure_count,
+                total_duration_ms = excluded.total_duration_ms,
+                avg_latency_ms = excluded.avg_latency_ms,
+                last_error_summary = excluded.last_error_summary,
+                cooldown_until = excluded.cooldown_until,
+                updated_at = excluded.updated_at",
+            params![
+                station_key_id,
+                current.last_success_at,
+                now,
+                consecutive_failures,
+                current.success_count,
+                failure_count,
+                current.avg_latency_ms.map(|avg| avg * current.success_count).unwrap_or(0),
+                current.avg_latency_ms,
+                trim_error_summary(error_summary),
+                cooldown_until,
+                now,
+            ],
+        )
+        .map_err(|error| format!("记录 Key 失败状态失败: {error}"))?;
+
+    Ok(())
+}
+
+fn cooldown_until(consecutive_failures: i64, now: &str) -> Option<String> {
+    let now = now.parse::<i64>().ok()?;
+    let duration_ms = match consecutive_failures {
+        failures if failures < 3 => return None,
+        3 => 2 * 60 * 1000,
+        4 => 5 * 60 * 1000,
+        _ => 15 * 60 * 1000,
+    };
+    Some((now + duration_ms).to_string())
+}
+
+fn trim_error_summary(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() <= 160 {
+        return trimmed.to_string();
+    }
+    let boundary = trimmed
+        .char_indices()
+        .map(|(index, _)| index)
+        .take_while(|index| *index <= 160)
+        .last()
+        .unwrap_or(0);
+    let mut output = trimmed.to_string();
+    output.truncate(boundary);
+    output.push_str("...");
+    output
 }
 
 fn proxy_route_candidates_from_connection(connection: &Connection) -> Result<Vec<RouteCandidate>, String> {
@@ -2469,5 +2617,53 @@ mod tests {
         assert_eq!(aliases[0].id, saved.id);
         assert_eq!(aliases[0].client_model, "gpt-4o-mini");
         assert_eq!(aliases[0].upstream_model, "openai/gpt-4o-mini");
+    }
+
+    #[test]
+    fn successful_request_updates_key_health_success() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "success-key");
+        let key = database
+            .list_station_keys(station.id)
+            .expect("keys")
+            .remove(0);
+
+        database
+            .record_station_key_success(&key.id, 123, "1000")
+            .expect("success");
+        let health = database.get_station_key_health(key.id).expect("health");
+
+        assert_eq!(health.success_count, 1);
+        assert_eq!(health.failure_count, 0);
+        assert_eq!(health.consecutive_failures, 0);
+        assert_eq!(health.avg_latency_ms, Some(123));
+        assert_eq!(health.last_success_at.as_deref(), Some("1000"));
+        assert_eq!(health.cooldown_until, None);
+    }
+
+    #[test]
+    fn repeated_failures_enter_cooldown() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "failure-key");
+        let key = database
+            .list_station_keys(station.id)
+            .expect("keys")
+            .remove(0);
+
+        database
+            .record_station_key_failure(&key.id, "timeout", "1000")
+            .expect("failure 1");
+        database
+            .record_station_key_failure(&key.id, "timeout", "2000")
+            .expect("failure 2");
+        database
+            .record_station_key_failure(&key.id, "timeout", "3000")
+            .expect("failure 3");
+        let health = database.get_station_key_health(key.id).expect("health");
+
+        assert_eq!(health.failure_count, 3);
+        assert_eq!(health.consecutive_failures, 3);
+        assert_eq!(health.last_error_summary.as_deref(), Some("timeout"));
+        assert_eq!(health.cooldown_until.as_deref(), Some("123000"));
     }
 }

@@ -309,6 +309,7 @@ fn aggregate_models_request(
 
     for candidate in candidates {
         let checked_at = now_string();
+        let attempt_started = Instant::now();
         match forward_to_candidate(request, candidate, false) {
             Ok(response) if response.status_code < 400 => match extract_models_from_response(&response) {
                 Ok(items) => {
@@ -322,42 +323,48 @@ fn aggregate_models_request(
                         }
                     }
                     let used_at = checked_at.clone();
-                    let _ = context.database.touch_station_key_usage(
-                        &candidate.station_key_id,
+                    record_candidate_success(
+                        context,
+                        candidate,
                         "success",
-                        Some(&used_at),
-                        Some(&checked_at),
+                        &used_at,
+                        &checked_at,
+                        attempt_started.elapsed().as_millis() as i64,
                     );
                 }
                 Err(error) => {
                     failed_count += 1;
-                    last_error = Some(error);
-                    let _ = context.database.touch_station_key_usage(
-                        &candidate.station_key_id,
+                    last_error = Some(error.clone());
+                    record_candidate_failure(
+                        context,
+                        candidate,
                         "warning",
-                        None,
-                        Some(&checked_at),
+                        &checked_at,
+                        &error,
                     );
                 }
             },
             Ok(response) => {
                 failed_count += 1;
-                last_error = Some(format!("上游返回 HTTP {}", response.status_code));
-                let _ = context.database.touch_station_key_usage(
-                    &candidate.station_key_id,
+                let error = format!("上游返回 HTTP {}", response.status_code);
+                last_error = Some(error.clone());
+                record_candidate_failure(
+                    context,
+                    candidate,
                     "warning",
-                    None,
-                    Some(&checked_at),
+                    &checked_at,
+                    &error,
                 );
             }
             Err(error) => {
                 failed_count += 1;
-                last_error = Some(error);
-                let _ = context.database.touch_station_key_usage(
-                    &candidate.station_key_id,
+                last_error = Some(error.clone());
+                record_candidate_failure(
+                    context,
+                    candidate,
                     "error",
-                    None,
-                    Some(&checked_at),
+                    &checked_at,
+                    &error,
                 );
             }
         }
@@ -556,6 +563,43 @@ fn uses_reasoning(body: &Value, model: Option<&str>) -> bool {
         || model.map(|model| model.starts_with('o')).unwrap_or(false)
 }
 
+fn record_candidate_success(
+    context: &ProxyServerContext,
+    candidate: &RouteCandidate,
+    status_label: &str,
+    used_at: &str,
+    checked_at: &str,
+    duration_ms: i64,
+) {
+    let _ = context.database.touch_station_key_usage(
+        &candidate.station_key_id,
+        status_label,
+        Some(used_at),
+        Some(checked_at),
+    );
+    let _ = context
+        .database
+        .record_station_key_success(&candidate.station_key_id, duration_ms, checked_at);
+}
+
+fn record_candidate_failure(
+    context: &ProxyServerContext,
+    candidate: &RouteCandidate,
+    status_label: &str,
+    checked_at: &str,
+    error_summary: &str,
+) {
+    let _ = context.database.touch_station_key_usage(
+        &candidate.station_key_id,
+        status_label,
+        None,
+        Some(checked_at),
+    );
+    let _ = context
+        .database
+        .record_station_key_failure(&candidate.station_key_id, error_summary, checked_at);
+}
+
 fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
     let body_value: Value = match serde_json::from_slice(&request.body) {
         Ok(value) => value,
@@ -612,6 +656,7 @@ fn forward_responses_with_fallback(
     let mut last_error = None;
     for (index, candidate) in candidates.iter().enumerate() {
         let checked_at = now_string();
+        let attempt_started = Instant::now();
         match forward_responses_to_candidate(request, candidate, body_value, model.as_deref(), stream) {
             Ok(response) if response.status_code < 400 || !should_fallback(response.status_code) => {
                 let response = response
@@ -620,30 +665,45 @@ fn forward_responses_with_fallback(
                     .with_request_meta(model.clone(), stream);
                 let status_label = response.status_label.clone();
                 let used_at = checked_at.clone();
-                let _ = context.database.touch_station_key_usage(
-                    &candidate.station_key_id,
-                    &status_label,
-                    Some(&used_at),
-                    Some(&checked_at),
-                );
+                if response.status_code < 400 {
+                    record_candidate_success(
+                        context,
+                        candidate,
+                        &status_label,
+                        &used_at,
+                        &checked_at,
+                        attempt_started.elapsed().as_millis() as i64,
+                    );
+                } else {
+                    record_candidate_failure(
+                        context,
+                        candidate,
+                        &status_label,
+                        &checked_at,
+                        &format!("上游返回 HTTP {}", response.status_code),
+                    );
+                }
                 return response;
             }
             Ok(response) => {
-                last_error = Some(format!("上游返回 HTTP {}", response.status_code));
-                let _ = context.database.touch_station_key_usage(
-                    &candidate.station_key_id,
+                let error = format!("上游返回 HTTP {}", response.status_code);
+                last_error = Some(error.clone());
+                record_candidate_failure(
+                    context,
+                    candidate,
                     "warning",
-                    None,
-                    Some(&checked_at),
+                    &checked_at,
+                    &error,
                 );
             }
             Err(error) => {
-                last_error = Some(error);
-                let _ = context.database.touch_station_key_usage(
-                    &candidate.station_key_id,
+                last_error = Some(error.clone());
+                record_candidate_failure(
+                    context,
+                    candidate,
                     "error",
-                    None,
-                    Some(&checked_at),
+                    &checked_at,
+                    &error,
                 );
             }
         }
@@ -734,6 +794,7 @@ fn forward_with_fallback(
     let mut last_error = None;
     for (index, candidate) in candidates.iter().enumerate() {
         let checked_at = now_string();
+        let attempt_started = Instant::now();
         match forward_to_candidate(request, candidate, stream) {
             Ok(response) if response.status_code < 400 || !should_fallback(response.status_code) => {
                 let response = response
@@ -742,30 +803,45 @@ fn forward_with_fallback(
                     .with_request_meta(model.clone(), stream);
                 let status_label = response.status_label.clone();
                 let used_at = checked_at.clone();
-                let _ = context.database.touch_station_key_usage(
-                    &candidate.station_key_id,
-                    &status_label,
-                    Some(&used_at),
-                    Some(&checked_at),
-                );
+                if response.status_code < 400 {
+                    record_candidate_success(
+                        context,
+                        candidate,
+                        &status_label,
+                        &used_at,
+                        &checked_at,
+                        attempt_started.elapsed().as_millis() as i64,
+                    );
+                } else {
+                    record_candidate_failure(
+                        context,
+                        candidate,
+                        &status_label,
+                        &checked_at,
+                        &format!("上游返回 HTTP {}", response.status_code),
+                    );
+                }
                 return response;
             }
             Ok(response) => {
-                last_error = Some(format!("上游返回 HTTP {}", response.status_code));
-                let _ = context.database.touch_station_key_usage(
-                    &candidate.station_key_id,
+                let error = format!("上游返回 HTTP {}", response.status_code);
+                last_error = Some(error.clone());
+                record_candidate_failure(
+                    context,
+                    candidate,
                     "warning",
-                    None,
-                    Some(&checked_at),
+                    &checked_at,
+                    &error,
                 );
             }
             Err(error) => {
-                last_error = Some(error);
-                let _ = context.database.touch_station_key_usage(
-                    &candidate.station_key_id,
+                last_error = Some(error.clone());
+                record_candidate_failure(
+                    context,
+                    candidate,
                     "error",
-                    None,
-                    Some(&checked_at),
+                    &checked_at,
+                    &error,
                 );
             }
         }
@@ -1385,6 +1461,58 @@ mod tests {
         assert_eq!(response.status_code, 200);
         assert_eq!(response.model.as_deref(), Some("gpt-4o-mini"));
         upstream.join();
+    }
+
+    #[test]
+    fn successful_proxy_request_updates_key_health() {
+        let upstream = test_upstream_json_success("health-success", false);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key = create_test_station_key(&database, "health-success", &upstream.base_url);
+
+        let context = proxy_context(database);
+        let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
+        let health = context
+            .database
+            .get_station_key_health(key.id)
+            .expect("health");
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(health.success_count, 1);
+        assert_eq!(health.failure_count, 0);
+        assert_eq!(health.consecutive_failures, 0);
+        assert!(health.last_success_at.is_some());
+        upstream.join();
+    }
+
+    #[test]
+    fn runtime_skips_key_in_cooldown_and_uses_next_candidate() {
+        let skipped = test_upstream_json_success("cooldown", false);
+        let ready = test_upstream_json_success("ready", false);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key_a = create_test_station_key(&database, "cooldown", &skipped.base_url);
+        let key_b = create_test_station_key(&database, "ready", &ready.base_url);
+        database
+            .reorder_key_pool(vec![key_a.id.clone(), key_b.id.clone()])
+            .expect("reorder");
+        let base_now = now_millis_for_services() as i64;
+        database
+            .record_station_key_failure(&key_a.id, "timeout", &base_now.to_string())
+            .expect("failure 1");
+        database
+            .record_station_key_failure(&key_a.id, "timeout", &(base_now + 1).to_string())
+            .expect("failure 2");
+        database
+            .record_station_key_failure(&key_a.id, "timeout", &(base_now + 2).to_string())
+            .expect("failure 3");
+
+        let context = proxy_context(database);
+        let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
+
+        assert_eq!(response.station_key_id.as_deref(), Some(key_b.id.as_str()));
+        assert_eq!(response.status_code, 200);
+        assert!(!skipped.was_called(), "cooldown key should be skipped before network");
+        ready.join();
+        skipped.join();
     }
 
     #[test]
