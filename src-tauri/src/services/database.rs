@@ -1811,8 +1811,8 @@ fn insert_request_log_in_connection(
             "INSERT INTO request_logs (
                 id, started_at, finished_at, duration_ms, method, path, model, stream,
                 status, station_key_id, station_id, upstream_base_url, fallback_count,
-                error_message, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                error_message, route_policy, route_reason, rejected_candidates_json, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 id,
                 input.started_at,
@@ -1828,6 +1828,9 @@ fn insert_request_log_in_connection(
                 normalize_optional_string(input.upstream_base_url),
                 input.fallback_count,
                 normalize_optional_string(input.error_message),
+                normalize_optional_string(input.route_policy),
+                normalize_optional_string(input.route_reason),
+                normalize_optional_string(input.rejected_candidates_json),
                 created_at,
             ],
         )
@@ -1852,7 +1855,10 @@ fn row_to_request_log(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLog> {
         upstream_base_url: row.get(11)?,
         fallback_count: row.get(12)?,
         error_message: row.get(13)?,
-        created_at: row.get(14)?,
+        route_policy: row.get(14)?,
+        route_reason: row.get(15)?,
+        rejected_candidates_json: row.get(16)?,
+        created_at: row.get(17)?,
     })
 }
 
@@ -1861,7 +1867,7 @@ fn request_log_by_id(connection: &Connection, id: &str) -> Result<RequestLog, St
         .query_row(
             "SELECT id, started_at, finished_at, duration_ms, method, path, model, stream,
                     status, station_key_id, station_id, upstream_base_url, fallback_count,
-                    error_message, created_at
+                    error_message, route_policy, route_reason, rejected_candidates_json, created_at
                FROM request_logs
               WHERE id = ?1",
             params![id],
@@ -1877,7 +1883,7 @@ fn list_request_logs_from_connection(connection: &Connection) -> Result<Vec<Requ
         .prepare(
             "SELECT id, started_at, finished_at, duration_ms, method, path, model, stream,
                     status, station_key_id, station_id, upstream_base_url, fallback_count,
-                    error_message, created_at
+                    error_message, route_policy, route_reason, rejected_candidates_json, created_at
                FROM request_logs
               ORDER BY created_at DESC
               LIMIT 500",
@@ -2830,5 +2836,38 @@ mod tests {
                     .iter()
                     .any(|reason| reason.contains("allowlist"))
         }));
+    }
+
+    #[test]
+    fn request_log_records_route_policy_and_reason_without_prompt() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let log = database
+            .insert_request_log(CreateRequestLogInput {
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                model: Some("gpt-5.4".to_string()),
+                stream: false,
+                status: "success".to_string(),
+                station_key_id: Some("key-1".to_string()),
+                station_id: Some("station-1".to_string()),
+                upstream_base_url: Some("https://example.test".to_string()),
+                fallback_count: 0,
+                error_message: None,
+                route_policy: Some("priority_fallback".to_string()),
+                route_reason: Some("selected key-1 because model allowed".to_string()),
+                rejected_candidates_json: Some("[]".to_string()),
+                started_at: "1000".to_string(),
+                finished_at: Some("1100".to_string()),
+                duration_ms: Some(100),
+            })
+            .expect("insert log");
+
+        assert_eq!(log.route_policy.as_deref(), Some("priority_fallback"));
+        assert_eq!(
+            log.route_reason.as_deref(),
+            Some("selected key-1 because model allowed")
+        );
+        assert_eq!(log.rejected_candidates_json.as_deref(), Some("[]"));
+        assert!(!serde_json::to_string(&log).unwrap().contains("prompt"));
     }
 }

@@ -10,12 +10,12 @@ use std::{
     time::Instant,
 };
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::{
     models::{
         proxy::{CreateRequestLogInput, ProxyStatus},
-        routing::{RouteEndpointKind, RoutingPolicy},
+        routing::{RouteCandidateExplanation, RouteEndpointKind, RoutingPolicy},
     },
     services::{
         database::{now_millis_for_services, AppDatabase},
@@ -75,11 +75,26 @@ struct ProxyResponse {
     fallback_count: i64,
     status_label: String,
     error_message: Option<String>,
+    route_policy: Option<String>,
+    route_reason: Option<String>,
+    rejected_candidates_json: Option<String>,
 }
 
 enum ProxyResponseBody {
     Buffered(Vec<u8>),
     Streamed(Box<dyn Read + Send>),
+}
+
+#[derive(Debug, Clone)]
+struct RouteLogContext {
+    policy: RoutingPolicy,
+    explanations: Vec<RouteCandidateExplanation>,
+}
+
+struct RouteLogMetadata {
+    policy: String,
+    reason: String,
+    rejected_candidates_json: String,
 }
 
 impl ProxyRuntimeState {
@@ -279,6 +294,9 @@ fn handle_connection(mut stream: TcpStream, context: &ProxyServerContext) {
         upstream_base_url: response.upstream_base_url.clone(),
         fallback_count: response.fallback_count,
         error_message: response.error_message.clone(),
+        route_policy: response.route_policy.clone(),
+        route_reason: response.route_reason.clone(),
+        rejected_candidates_json: response.rejected_candidates_json.clone(),
         started_at,
         finished_at: Some(finished_at),
         duration_ms: Some(started.elapsed().as_millis() as i64),
@@ -413,6 +431,9 @@ fn aggregate_models_request(
         fallback_count: failed_count,
         status_label: "success".to_string(),
         error_message: None,
+        route_policy: None,
+        route_reason: None,
+        rejected_candidates_json: None,
     }
 }
 
@@ -453,6 +474,7 @@ fn select_proxy_route(
     let route = select_route_candidates(route_request, rich_candidates, &aliases)
         .map_err(|error| ProxyResponse::json_error(500, "route_selector_error", &error))?;
     if route.accepted.is_empty() {
+        let log_context = route_log_context(&route_request.policy, &route.explanations);
         return Err(ProxyResponse::json_error(
             503,
             "no_route_candidates",
@@ -462,7 +484,8 @@ fn select_proxy_route(
                 route_request.endpoint,
                 route_request.stream
             ),
-        ));
+        )
+        .with_route_metadata(route_log_metadata(&log_context, None)));
     }
     Ok(route)
 }
@@ -517,6 +540,70 @@ fn parse_routing_policy(value: &str) -> RoutingPolicy {
         "stable_first" | "stable" => RoutingPolicy::StableFirst,
         "backup_only" => RoutingPolicy::BackupOnly,
         _ => RoutingPolicy::PriorityFallback,
+    }
+}
+
+fn route_log_context(
+    policy: &RoutingPolicy,
+    explanations: &[RouteCandidateExplanation],
+) -> RouteLogContext {
+    RouteLogContext {
+        policy: policy.clone(),
+        explanations: explanations.to_vec(),
+    }
+}
+
+fn route_log_metadata(
+    context: &RouteLogContext,
+    selected_station_key_id: Option<&str>,
+) -> RouteLogMetadata {
+    let reason = selected_station_key_id
+        .and_then(|id| {
+            context
+                .explanations
+                .iter()
+                .find(|candidate| candidate.station_key_id == id)
+        })
+        .map(|candidate| {
+            let reasons = if candidate.reasons.is_empty() {
+                "matched route selector".to_string()
+            } else {
+                candidate.reasons.join("; ")
+            };
+            format!(
+                "selected {} on {}: {}",
+                candidate.key_name, candidate.station_name, reasons
+            )
+        })
+        .unwrap_or_else(|| "no accepted route candidate".to_string());
+    let rejected = context
+        .explanations
+        .iter()
+        .filter(|candidate| !candidate.accepted)
+        .map(|candidate| {
+            json!({
+                "stationKeyId": candidate.station_key_id,
+                "stationId": candidate.station_id,
+                "stationName": candidate.station_name,
+                "keyName": candidate.key_name,
+                "rejectionReasons": candidate.rejection_reasons,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    RouteLogMetadata {
+        policy: routing_policy_label(&context.policy).to_string(),
+        reason,
+        rejected_candidates_json: serde_json::to_string(&rejected)
+            .unwrap_or_else(|_| "[]".to_string()),
+    }
+}
+
+fn routing_policy_label(policy: &RoutingPolicy) -> &'static str {
+    match policy {
+        RoutingPolicy::PriorityFallback => "priority_fallback",
+        RoutingPolicy::StableFirst => "stable_first",
+        RoutingPolicy::BackupOnly => "backup_only",
     }
 }
 
@@ -635,6 +722,7 @@ fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -
         Ok(route) => route,
         Err(response) => return response.with_request_meta(model, stream),
     };
+    let route_context = route_log_context(&route_request.policy, &route.explanations);
     let request = rewrite_request_model(
         request,
         &body_value,
@@ -646,7 +734,14 @@ fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -
         .into_iter()
         .map(|item| item.candidate)
         .collect::<Vec<_>>();
-    forward_with_fallback(context, &request, &candidates, model, stream)
+    forward_with_fallback(
+        context,
+        &request,
+        &candidates,
+        model,
+        stream,
+        &route_context,
+    )
 }
 
 fn forward_responses_request(
@@ -670,6 +765,7 @@ fn forward_responses_request(
         Ok(route) => route,
         Err(response) => return response.with_request_meta(model, stream),
     };
+    let route_context = route_log_context(&route_request.policy, &route.explanations);
     let request = rewrite_request_model(
         request,
         &body_value,
@@ -682,7 +778,15 @@ fn forward_responses_request(
         .into_iter()
         .map(|item| item.candidate)
         .collect::<Vec<_>>();
-    forward_responses_with_fallback(context, &request, &candidates, &body_value, model, stream)
+    forward_responses_with_fallback(
+        context,
+        &request,
+        &candidates,
+        &body_value,
+        model,
+        stream,
+        &route_context,
+    )
 }
 
 fn forward_responses_with_fallback(
@@ -692,6 +796,7 @@ fn forward_responses_with_fallback(
     body_value: &Value,
     model: Option<String>,
     stream: bool,
+    route_context: &RouteLogContext,
 ) -> ProxyResponse {
     let mut last_error = None;
     for (index, candidate) in candidates.iter().enumerate() {
@@ -710,7 +815,11 @@ fn forward_responses_with_fallback(
                 let response = response
                     .with_candidate(candidate)
                     .with_fallback_count(index as i64)
-                    .with_request_meta(model.clone(), stream);
+                    .with_request_meta(model.clone(), stream)
+                    .with_route_metadata(route_log_metadata(
+                        route_context,
+                        Some(candidate.station_key_id.as_str()),
+                    ));
                 let status_label = response.status_label.clone();
                 let used_at = checked_at.clone();
                 if response.status_code < 400 {
@@ -754,6 +863,7 @@ fn forward_responses_with_fallback(
     )
     .with_fallback_count(candidates.len().saturating_sub(1) as i64)
     .with_request_meta(model, stream)
+    .with_route_metadata(route_log_metadata(route_context, None))
 }
 
 fn forward_responses_to_candidate(
@@ -826,6 +936,9 @@ fn render_responses_proxy_response(
         fallback_count: response.fallback_count,
         status_label: response.status_label,
         error_message: response.error_message,
+        route_policy: response.route_policy,
+        route_reason: response.route_reason,
+        rejected_candidates_json: response.rejected_candidates_json,
     }
 }
 
@@ -835,6 +948,7 @@ fn forward_with_fallback(
     candidates: &[RouteCandidate],
     model: Option<String>,
     stream: bool,
+    route_context: &RouteLogContext,
 ) -> ProxyResponse {
     let mut last_error = None;
     for (index, candidate) in candidates.iter().enumerate() {
@@ -847,7 +961,11 @@ fn forward_with_fallback(
                 let response = response
                     .with_candidate(candidate)
                     .with_fallback_count(index as i64)
-                    .with_request_meta(model.clone(), stream);
+                    .with_request_meta(model.clone(), stream)
+                    .with_route_metadata(route_log_metadata(
+                        route_context,
+                        Some(candidate.station_key_id.as_str()),
+                    ));
                 let status_label = response.status_label.clone();
                 let used_at = checked_at.clone();
                 if response.status_code < 400 {
@@ -891,6 +1009,7 @@ fn forward_with_fallback(
     )
     .with_fallback_count(candidates.len().saturating_sub(1) as i64)
     .with_request_meta(model, stream)
+    .with_route_metadata(route_log_metadata(route_context, None))
 }
 
 fn forward_to_candidate(
@@ -956,6 +1075,9 @@ fn cors_preflight_response() -> ProxyResponse {
         fallback_count: 0,
         status_label: "success".to_string(),
         error_message: None,
+        route_policy: None,
+        route_reason: None,
+        rejected_candidates_json: None,
     }
 }
 
@@ -978,6 +1100,9 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
             fallback_count: 0,
             status_label: "success".to_string(),
             error_message: None,
+            route_policy: None,
+            route_reason: None,
+            rejected_candidates_json: None,
         };
     }
     let body = response
@@ -1008,6 +1133,9 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
         } else {
             None
         },
+        route_policy: None,
+        route_reason: None,
+        rejected_candidates_json: None,
     }
 }
 
@@ -1034,6 +1162,9 @@ impl ProxyResponse {
             fallback_count: 0,
             status_label: "failed".to_string(),
             error_message: Some(redact_error_message(message)),
+            route_policy: None,
+            route_reason: None,
+            rejected_candidates_json: None,
         }
     }
 
@@ -1052,6 +1183,13 @@ impl ProxyResponse {
     fn with_request_meta(mut self, model: Option<String>, stream: bool) -> Self {
         self.model = model;
         self.stream = stream;
+        self
+    }
+
+    fn with_route_metadata(mut self, metadata: RouteLogMetadata) -> Self {
+        self.route_policy = Some(metadata.policy);
+        self.route_reason = Some(metadata.reason);
+        self.rejected_candidates_json = Some(metadata.rejected_candidates_json);
         self
     }
 }
@@ -1220,6 +1358,9 @@ mod tests {
                 fallback_count: 0,
                 status_label: "success".to_string(),
                 error_message: None,
+                route_policy: None,
+                route_reason: None,
+                rejected_candidates_json: None,
             };
             write_http_response(&mut server_stream, response).expect("write response");
         });
@@ -1839,6 +1980,9 @@ mod tests {
                 fallback_count: 0,
                 status_label: "success".to_string(),
                 error_message: None,
+                route_policy: None,
+                route_reason: None,
+                rejected_candidates_json: None,
             };
             write_http_response(&mut server_stream, response).expect("write response");
         });

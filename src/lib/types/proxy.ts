@@ -23,5 +23,8 @@ export type RequestLog = {
   upstreamBaseUrl: string | null;
   fallbackCount: number;
   errorMessage: string | null;
+  routePolicy: string | null;
+  routeReason: string | null;
+  rejectedCandidatesJson: string | null;
   createdAt: string;
 };

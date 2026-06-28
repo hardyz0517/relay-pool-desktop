@@ -29,6 +29,9 @@ pub struct RequestLog {
     pub upstream_base_url: Option<String>,
     pub fallback_count: i64,
     pub error_message: Option<String>,
+    pub route_policy: Option<String>,
+    pub route_reason: Option<String>,
+    pub rejected_candidates_json: Option<String>,
     pub created_at: String,
 }
 
@@ -45,6 +48,9 @@ pub struct CreateRequestLogInput {
     pub upstream_base_url: Option<String>,
     pub fallback_count: i64,
     pub error_message: Option<String>,
+    pub route_policy: Option<String>,
+    pub route_reason: Option<String>,
+    pub rejected_candidates_json: Option<String>,
     pub started_at: String,
     pub finished_at: Option<String>,
     pub duration_ms: Option<i64>,

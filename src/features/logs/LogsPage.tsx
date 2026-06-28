@@ -165,9 +165,13 @@ export function LogsPage() {
                 <PropertyRow label="Fallback 次数" value={String(selected.fallbackCount)} />
                 <PropertyRow label="耗时" value={selected.durationMs == null ? "暂无" : `${selected.durationMs}ms`} />
                 <PropertyRow label="错误原因" value={selected.errorMessage ?? "无"} />
+                <PropertyRow label="路由策略" value={selected.routePolicy ?? "未记录"} />
+                <PropertyRow label="选择原因" value={selected.routeReason ?? "未记录"} />
+                <PropertyRow label="拒绝候选" value={`${parseRejectedCandidates(selected.rejectedCandidatesJson).length} 个`} />
               </PropertyList>
+              <RejectedCandidateList json={selected.rejectedCandidatesJson} />
               <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/60 p-3 text-xs leading-5 text-slate-600">
-                日志只保存 method、path、model、状态、耗时、所选 key id、fallback 次数和脱敏错误摘要。
+                日志只保存 method、path、model、状态、耗时、所选 key id、fallback 次数、路由解释和脱敏错误摘要。
               </div>
             </div>
           ) : (
@@ -177,6 +181,48 @@ export function LogsPage() {
       </div>
     </PageScaffold>
   );
+}
+
+type RejectedCandidateLog = {
+  stationKeyId?: string;
+  stationName?: string;
+  keyName?: string;
+  rejectionReasons?: string[];
+};
+
+function RejectedCandidateList({ json }: { json: string | null }) {
+  const candidates = parseRejectedCandidates(json);
+  if (candidates.length === 0) {
+    return null;
+  }
+  return (
+    <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80 p-3">
+      <div className="text-xs font-semibold text-slate-700">拒绝候选原因</div>
+      <div className="mt-2 grid gap-2">
+        {candidates.map((candidate, index) => (
+          <div key={`${candidate.stationKeyId ?? "candidate"}-${index}`} className="text-xs leading-5 text-muted-foreground">
+            <span className="font-medium text-slate-700">
+              {candidate.keyName ?? candidate.stationKeyId ?? "未知 Key"}
+              {candidate.stationName ? ` · ${candidate.stationName}` : ""}
+            </span>
+            ：{candidate.rejectionReasons?.join("；") || "未记录原因"}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function parseRejectedCandidates(json: string | null): RejectedCandidateLog[] {
+  if (!json) {
+    return [];
+  }
+  try {
+    const value = JSON.parse(json);
+    return Array.isArray(value) ? value as RejectedCandidateLog[] : [];
+  } catch {
+    return [];
+  }
 }
 
 function formatTime(value: string) {
