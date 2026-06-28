@@ -1,8 +1,10 @@
 export { ActivityItem, ActivityList } from "./ActivityList";
 export { Button } from "./button";
+export { Card } from "./Card";
 export { DataTableLite, type DataTableColumn } from "./DataTableLite";
 export { EmptyState } from "./EmptyState";
 export { Dialog } from "./Dialog";
+export { IconButton } from "./IconButton";
 export { InspectorPanel } from "./InspectorPanel";
 export { KeyValueRow } from "./KeyValueRow";
 export { MaskedSecret } from "./MaskedSecret";

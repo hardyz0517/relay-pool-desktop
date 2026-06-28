@@ -21,7 +21,7 @@ export function SegmentedControl<T extends string>({
   return (
     <div
       className={cn(
-        "inline-flex h-8 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-slate-50 p-0.5",
+        "inline-flex items-center rounded-[var(--surface-radius)] border border-border bg-slate-100 p-0.5",
         className,
       )}
     >
@@ -33,8 +33,8 @@ export function SegmentedControl<T extends string>({
           className={cn(
             "cursor-pointer rounded-[calc(var(--surface-radius)-3px)] px-2.5 text-xs font-medium transition-colors",
             option.value === value
-              ? "bg-white text-blue-700 shadow-[0_0_0_1px_rgba(148,163,184,0.45)]"
-              : "text-slate-600 hover:text-slate-800",
+              ? "bg-white text-slate-900 shadow-sm"
+              : "text-slate-600 hover:text-slate-900",
           )}
         >
           {option.label}

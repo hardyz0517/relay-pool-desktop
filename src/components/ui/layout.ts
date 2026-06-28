@@ -1,9 +1,9 @@
 export const shellLayout = {
-  sidebarExpandedWidth: 196,
-  sidebarCollapsedWidth: 72,
-  headerHeight: 44,
-  footerHeight: 81,
-  pageGap: 12,
-  cardRadius: 14,
-  cardShadow: "0 12px 30px rgba(33, 79, 88, 0.07)",
+  sidebarWidth: 64,
+  sidebarCollapsedWidth: 64,
+  sidebarExpandedWidth: 64,
+  headerHeight: 52,
+  pageGap: 16,
+  cardRadius: 8,
+  cardShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
 } as const;

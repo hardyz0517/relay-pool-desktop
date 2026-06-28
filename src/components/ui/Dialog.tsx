@@ -30,11 +30,11 @@ export function Dialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/20 p-4 backdrop-blur-[2px]">
       <div
         className={cn(
-          "max-h-[calc(100vh-32px)] w-full max-w-[780px] overflow-hidden rounded-[18px] border border-white/80 bg-white shadow-[0_24px_80px_rgba(15,72,80,0.24)]",
+          "max-h-[calc(100vh-32px)] w-full max-w-[780px] overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[0_24px_70px_rgba(15,23,42,0.16)]",
           className,
         )}
       >
-        <div className="flex items-center justify-between gap-4 border-b border-cyan-100 px-5 py-4">
+        <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
           <div className="min-w-0">
             <div className="truncate text-[15px] font-semibold text-slate-800">{title}</div>
             {description && (
@@ -46,7 +46,7 @@ export function Dialog({
           </Button>
         </div>
         <div className="max-h-[calc(100vh-180px)] overflow-auto">{children}</div>
-        {footer && <div className="border-t border-cyan-100 px-5 py-4">{footer}</div>}
+        {footer && <div className="border-t border-border px-5 py-4">{footer}</div>}
       </div>
     </div>
   );
