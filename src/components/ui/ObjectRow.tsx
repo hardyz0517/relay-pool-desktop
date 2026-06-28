@@ -112,7 +112,15 @@ function RowContent({
         </div>
       )}
       {actions && (
-        <div className="flex shrink-0 items-center gap-1 md:opacity-0 md:transition-opacity md:group-hover:opacity-100 md:group-focus-within:opacity-100 md:group-focus-visible:opacity-100">
+        <div
+          className="flex shrink-0 items-center gap-1 md:opacity-0 md:transition-opacity md:group-hover:opacity-100 md:group-focus-within:opacity-100 md:group-focus-visible:opacity-100"
+          onClick={(event) => {
+            event.stopPropagation();
+          }}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+          }}
+        >
           {actions}
         </div>
       )}
@@ -123,10 +131,10 @@ function RowContent({
 export function ObjectRow({
   selected = false,
   className,
-    onClick,
-    dragHandleProps,
-    ...props
-  }: ObjectRowProps) {
+  onClick,
+  dragHandleProps,
+  ...props
+}: ObjectRowProps) {
   const rowClassName = cn(
     "group flex min-h-[64px] w-full items-center gap-3 rounded-[var(--surface-radius)] border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.35)]",
     selected
@@ -142,17 +150,9 @@ export function ObjectRow({
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
       aria-pressed={onClick ? selected : undefined}
-      onClick={(event) => {
-        if (!onClick || event.target !== event.currentTarget) {
-          return;
-        }
-        onClick();
-      }}
+      onClick={onClick}
       onKeyDown={(event) => {
         if (!onClick) {
-          return;
-        }
-        if (event.currentTarget !== event.target) {
           return;
         }
         if (event.key === "Enter" || event.key === " ") {
@@ -161,7 +161,11 @@ export function ObjectRow({
         }
       }}
     >
-      <RowContent {...props} draggable={props.draggable} dragHandleProps={dragHandleProps} />
+      <RowContent
+        {...props}
+        draggable={props.draggable}
+        dragHandleProps={dragHandleProps}
+      />
     </div>
   );
 }
