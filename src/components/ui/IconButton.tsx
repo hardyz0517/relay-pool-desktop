@@ -1,10 +1,11 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonVariant } from "./button";
 import { Button } from "./button";
 
 type IconButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> & {
   label: string;
   children: ReactNode;
-  variant?: "primary" | "secondary" | "ghost" | "outline" | "danger";
+  variant?: ButtonVariant;
 };
 
 export function IconButton({

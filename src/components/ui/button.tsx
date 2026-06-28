@@ -1,8 +1,8 @@
 import type { ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
-type ButtonVariant = "primary" | "secondary" | "ghost" | "outline" | "danger";
-type ButtonSize = "sm" | "md" | "icon";
+export type ButtonVariant = "primary" | "secondary" | "ghost" | "outline" | "danger";
+export type ButtonSize = "sm" | "md" | "icon";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;
