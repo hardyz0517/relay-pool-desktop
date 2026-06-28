@@ -6,7 +6,6 @@ import {
   Copy,
   KeyRound,
   Plus,
-  Radio,
   Route,
   Server,
 } from "lucide-react";
@@ -22,12 +21,11 @@ import {
 import { getProxyStatus, listRequestLogs } from "@/lib/api/proxy";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import { mockDashboard } from "@/lib/mock";
-import type { AppPageId } from "@/lib/types/navigation";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 
 type DashboardPageProps = {
-  onNavigate: (pageId: AppPageId) => void;
+  onNavigate: (pageId: "addProvider") => void;
 };
 
 const requestTone = {
@@ -67,7 +65,13 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     }).length;
   }, [requestLogs]);
 
-  const todayFailedRequests = requestLogs.filter((log) => log.status === "failed").length;
+  const todayFailedRequests = requestLogs.filter((log) => {
+    const numeric = Number(log.startedAt);
+    const date = Number.isFinite(numeric) && numeric > 1000000000000
+      ? new Date(numeric)
+      : new Date(log.startedAt);
+    return !Number.isNaN(date.getTime()) && date.toDateString() === new Date().toDateString() && log.status === "failed";
+  }).length;
   const failureRate = todayRequests > 0 ? todayFailedRequests / todayRequests : 0;
   const failureRateText = `${(failureRate * 100).toFixed(1)}%`;
   const failureRateTone = failureRate > 0.1 ? "danger" : failureRate > 0.03 ? "warning" : "good";
@@ -166,7 +170,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               key={key.id}
               icon={<KeyRound className="h-4 w-4" />}
               title={key.name}
-              subtitle={key.stationName}
+              subtitle={`${key.stationName} · ${key.stationBaseUrl}`}
               badges={
                 <StatusBadge tone={key.enabled ? "healthy" : "disabled"}>
                   {key.enabled ? "可用" : "停用"}
@@ -174,7 +178,11 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               }
               metrics={[
                 { label: "优先级", value: `${key.priority}` },
-                { label: "状态", value: key.status },
+                {
+                  label: "成功率",
+                  value: key.successRate === null ? "-" : `${Math.round(key.successRate * 100)}%`,
+                  tone: key.successRate !== null && key.successRate < 0.9 ? "warning" : "good",
+                },
               ]}
             />
           ))}
