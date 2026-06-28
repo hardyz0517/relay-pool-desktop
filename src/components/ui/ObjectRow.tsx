@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 export type ObjectRowMetric = {
   label: string;
   value: ReactNode;
+  tone?: "neutral" | "good" | "warning" | "danger";
 };
 
 type ObjectRowProps = {
@@ -29,6 +30,13 @@ function RowContent({
   actions,
   draggable,
 }: ObjectRowProps) {
+  const metricToneClassName = {
+    neutral: "text-slate-700",
+    good: "text-emerald-700",
+    warning: "text-amber-700",
+    danger: "text-rose-700",
+  };
+
   return (
     <>
       {draggable && (
@@ -61,12 +69,17 @@ function RowContent({
       </div>
       {metrics && metrics.length > 0 && (
         <div className="hidden shrink-0 items-center gap-4 sm:flex">
-          {metrics.map(({ label, value }) => (
+          {metrics.map(({ label, value, tone = "neutral" }) => (
             <div key={label} className="min-w-[72px] text-right">
               <div className="truncate text-[11px] text-muted-foreground">
                 {label}
               </div>
-              <div className="truncate text-[13px] font-semibold text-slate-800">
+              <div
+                className={cn(
+                  "truncate text-[13px] font-semibold",
+                  metricToneClassName[tone],
+                )}
+              >
                 {value}
               </div>
             </div>

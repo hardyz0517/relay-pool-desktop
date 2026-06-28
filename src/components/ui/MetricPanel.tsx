@@ -15,7 +15,7 @@ export type MetricItem = {
 type MetricPanelProps = {
   title?: string;
   description?: string;
-  items: MetricItem[];
+  metrics: MetricItem[];
   className?: string;
 };
 
@@ -36,7 +36,7 @@ const iconClassName: Record<MetricTone, string> = {
 export function MetricPanel({
   title,
   description,
-  items,
+  metrics,
   className,
 }: MetricPanelProps) {
   return (
@@ -61,7 +61,7 @@ export function MetricPanel({
         </header>
       )}
       <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
-        {items.map(({ label, value, detail, icon: Icon, tone = "neutral" }) => (
+        {metrics.map(({ label, value, detail, icon: Icon, tone = "neutral" }) => (
           <div
             key={label}
             className="flex min-h-[78px] items-center gap-3 rounded-[8px] border border-border bg-slate-50/60 px-3 py-2.5"
