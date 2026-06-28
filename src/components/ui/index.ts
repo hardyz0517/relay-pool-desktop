@@ -9,6 +9,8 @@ export { InspectorPanel } from "./InspectorPanel";
 export { KeyValueRow } from "./KeyValueRow";
 export { MaskedSecret } from "./MaskedSecret";
 export { MetricCard } from "./MetricCard";
+export { MetricPanel } from "./MetricPanel";
+export { ObjectRow } from "./ObjectRow";
 export { PropertyList, PropertyRow } from "./PropertyList";
 export { SegmentedControl } from "./SegmentedControl";
 export { SectionCard } from "./SectionCard";
