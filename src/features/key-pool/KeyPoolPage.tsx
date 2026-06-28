@@ -400,6 +400,9 @@ function KeyRowContent({
         <div className="mt-1 text-xs text-muted-foreground">
           所属中转站：{item.stationName} · {stationTypeLabels[item.stationType as keyof typeof stationTypeLabels] ?? item.stationType}
         </div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          最近使用：{formatNullableTime(item.lastUsedAt)} · 最近检查：{formatNullableTime(item.lastCheckedAt)}
+        </div>
       </div>
       <div className="flex items-center gap-2 justify-self-end">
         <Button variant={item.enabled ? "secondary" : "outline"} className="h-8" onClick={() => onToggleEnabled?.(item)} disabled={overlay}>
@@ -517,6 +520,23 @@ function KeyEditDialog({
 
 function readError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatNullableTime(value: string | null) {
+  if (!value) {
+    return "暂无";
+  }
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 const selectClassName =

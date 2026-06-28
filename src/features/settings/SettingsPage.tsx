@@ -44,6 +44,7 @@ const fallbackProxyStatus: ProxyStatus = {
   startedAt: null,
   lastError: null,
   activeRequests: 0,
+  requestCount: 0,
 };
 
 export function SettingsPage() {
@@ -176,7 +177,7 @@ export function SettingsPage() {
                 </Button>
               </div>
             }
-            description={`活动请求 ${proxyStatus.activeRequests} 个；${proxyStatus.lastError ?? "最近没有运行时错误"}`}
+            description={`活动请求 ${proxyStatus.activeRequests} 个；累计请求 ${proxyStatus.requestCount} 次；${proxyStatus.lastError ?? "最近没有运行时错误"}`}
             label="运行状态"
           />
           <SettingRow

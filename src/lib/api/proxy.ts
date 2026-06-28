@@ -8,6 +8,7 @@ let memoryProxyStatus: ProxyStatus = {
   startedAt: null,
   lastError: null,
   activeRequests: 0,
+  requestCount: 0,
 };
 let memoryRequestLogs: RequestLog[] = [];
 

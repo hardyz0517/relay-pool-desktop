@@ -5,6 +5,7 @@ export type ProxyStatus = {
   startedAt: string | null;
   lastError: string | null;
   activeRequests: number;
+  requestCount: number;
 };
 
 export type RequestLog = {

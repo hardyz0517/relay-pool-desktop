@@ -167,7 +167,7 @@ export function LogsPage() {
                 <PropertyRow label="错误原因" value={selected.errorMessage ?? "无"} />
               </PropertyList>
               <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-3 text-xs leading-5 text-slate-600">
-                日志只保存 method、path、model、状态、耗时、所选 key id 和脱敏错误摘要。
+                日志只保存 method、path、model、状态、耗时、所选 key id、fallback 次数和脱敏错误摘要。
               </div>
             </div>
           ) : (

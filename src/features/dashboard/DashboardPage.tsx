@@ -68,6 +68,7 @@ export function DashboardPage() {
   const proxyRunning = proxyStatus?.running ?? dashboard.proxyRunning;
   const proxyBaseUrl = proxyStatus ? `http://${proxyStatus.bindAddr}:${proxyStatus.port}/v1` : dashboard.baseUrl;
   const enabledKeyCount = keyPoolItems.filter((key) => key.enabled).length;
+  const proxyRequestCount = proxyStatus?.requestCount ?? requestLogs.length;
 
   return (
     <PageScaffold
@@ -81,7 +82,7 @@ export function DashboardPage() {
         <MetricCard icon={Activity} label="今日请求" value={todayRequests.toLocaleString("zh-CN")} detail="真实代理日志" />
         <MetricCard icon={BadgeDollarSign} label="今日成本" value={`¥${dashboard.todayCostCny.toFixed(2)}`} detail="估算" />
         <MetricCard icon={KeyRound} label="今日 Token" value="42.8k" detail="输入/输出合计" />
-        <MetricCard icon={Clock3} label="平均延迟" value="1.8s" detail="最近请求" />
+        <MetricCard icon={Clock3} label="累计请求" value={proxyRequestCount.toLocaleString("zh-CN")} detail="代理运行统计" />
         <MetricCard icon={Radio} label="本地代理" value={proxyRunning ? "运行" : "未启"} detail="127.0.0.1" tone={proxyRunning ? "good" : "warning"} />
         <MetricCard icon={Route} label="路由策略" value="手动" detail="优先级" />
       </div>
@@ -105,6 +106,9 @@ export function DashboardPage() {
                     {proxyBaseUrl}
                   </code>
                   <Button variant="outline">复制</Button>
+                </div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  监听地址 {proxyStatus?.bindAddr ?? "127.0.0.1"} · 运行次数 {proxyRequestCount.toLocaleString("zh-CN")}
                 </div>
               </div>
               <div className="rounded-2xl border border-cyan-100 bg-white/80 p-4">
