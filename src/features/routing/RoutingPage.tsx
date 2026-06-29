@@ -27,7 +27,7 @@ import type {
 import { routingStrategyLabels, type AppSettings } from "@/lib/types/settings";
 import { cn } from "@/lib/utils";
 
-const policyOptions: RoutingPolicy[] = ["priority_fallback", "stable_first", "backup_only"];
+const policyOptions: RoutingPolicy[] = ["priority_fallback", "stable_first", "backup_only", "cheap_first"];
 
 const endpointLabels: Record<RouteEndpointKind, string> = {
   models: "Models",
@@ -114,7 +114,7 @@ export function RoutingPage() {
         trayBehavior: settings.trayBehavior,
       });
       setSettings(nextSettings);
-      setMessage("默认路由策略已保存。");
+      setMessage("默认策略已保存。");
     } catch (requestError) {
       setError(readError(requestError));
     } finally {
@@ -201,7 +201,7 @@ export function RoutingPage() {
   return (
     <PageScaffold
       title="路由规则"
-      description="路由规则最终选择的是 Key 池中的 Station Key；P6 先按模型、协议、健康状态和简单策略解释选择原因。"
+      description="路由最终选择的是 Key 池中的 Station Key；P7 只负责默认策略和解释，不引入复杂策略编辑。"
       actions={
         <Button disabled={loading || saving} variant="secondary" onClick={() => void refresh()}>
           <RefreshCcw className="h-4 w-4" />
@@ -211,7 +211,7 @@ export function RoutingPage() {
     >
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_420px]">
         <div className="grid gap-3">
-          <SectionCard title="默认策略" description="价格最优和余额避让不在 P6；当前策略只影响 Key 池候选排序。">
+          <SectionCard title="默认策略" description="当前策略只影响 Key 池候选排序。">
             <div className="flex flex-wrap items-center gap-3">
               <SegmentedControl
                 value={settings.defaultRoutingStrategy}
@@ -230,20 +230,20 @@ export function RoutingPage() {
 
           <SectionCard
             title="模型映射"
-            description="客户端模型名会在转发前映射为上游模型名；未匹配时保持原模型名。"
+            description="客户端模型名会在转发前映射为上游模型名；未命中时保持原模型名。"
           >
             <div className="grid gap-3">
               <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_120px_auto]">
                 <input
                   className={inputClassName}
                   value={aliasForm.clientModel}
-                  placeholder="客户端模型，如 gpt-5.4"
+                  placeholder="客户端模型，例如 gpt-5.4"
                   onChange={(event) => setAliasForm({ ...aliasForm, clientModel: event.target.value })}
                 />
                 <input
                   className={inputClassName}
                   value={aliasForm.upstreamModel}
-                  placeholder="上游模型，如 openai/gpt-5.4"
+                  placeholder="上游模型，例如 openai/gpt-5.4"
                   onChange={(event) => setAliasForm({ ...aliasForm, upstreamModel: event.target.value })}
                 />
                 <select
@@ -266,7 +266,7 @@ export function RoutingPage() {
                 onChange={(event) => setAliasForm({ ...aliasForm, note: event.target.value })}
               />
               {aliases.length === 0 ? (
-                <EmptyState title="还没有模型映射" description="没有映射时，客户端模型名会原样传给上游。" />
+                <EmptyState title="还没有模型映射" description="没有映射时，客户端模型会原样传给上游。" />
               ) : (
                 <div className="divide-y divide-cyan-100 overflow-hidden rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80">
                   {aliases.map((alias) => (
@@ -274,7 +274,7 @@ export function RoutingPage() {
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-800">
                           <span className="truncate">{alias.clientModel}</span>
-                          <span className="text-muted-foreground">{"->"}</span>
+                          <span className="text-muted-foreground">→</span>
                           <span className="truncate">{alias.upstreamModel}</span>
                           <StatusBadge tone={alias.enabled ? "healthy" : "disabled"}>{alias.enabled ? "启用" : "禁用"}</StatusBadge>
                         </div>
@@ -296,7 +296,7 @@ export function RoutingPage() {
           </SectionCard>
         </div>
 
-        <InspectorPanel title="路由模拟器" description="不访问上游，只复用真实 selector 解释候选 Key。">
+        <InspectorPanel title="路由模拟器" description="用真实 selector 解释候选排序。">
           <div className="grid gap-3 p-4">
             <Field label="Endpoint">
               <select className={inputClassName} value={simulation.endpoint} onChange={(event) => setSimulation({ ...simulation, endpoint: event.target.value as RouteEndpointKind })}>
@@ -383,6 +383,7 @@ function CandidateList({
             </div>
             <div className="mt-1 text-xs leading-5 text-muted-foreground">
               {(candidate.accepted ? candidate.reasons : candidate.rejectionReasons).join("；") || "暂无原因"}
+              {candidate.economicReasons.length > 0 ? ` · ${candidate.economicReasons.join("；")}` : ""}
             </div>
           </div>
         ))}

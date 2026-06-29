@@ -6,6 +6,7 @@ pub enum RoutingPolicy {
     PriorityFallback,
     StableFirst,
     BackupOnly,
+    CheapFirst,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -115,6 +116,13 @@ pub struct RouteCandidateExplanation {
     pub reasons: Vec<String>,
     pub rejection_reasons: Vec<String>,
     pub mapped_model: Option<String>,
+    pub pricing_rule_id: Option<String>,
+    pub estimated_input_price: Option<f64>,
+    pub estimated_output_price: Option<f64>,
+    pub price_currency: Option<String>,
+    pub balance_status: Option<String>,
+    pub balance_value: Option<f64>,
+    pub economic_reasons: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

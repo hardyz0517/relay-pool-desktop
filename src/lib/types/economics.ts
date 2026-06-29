@@ -1,0 +1,52 @@
+export type PricingRule = {
+  id: string;
+  stationId: string;
+  groupName: string | null;
+  tierLabel: string | null;
+  model: string;
+  inputPrice: number | null;
+  outputPrice: number | null;
+  fixedPrice: number | null;
+  currency: string;
+  unit: string;
+  priceType: string;
+  source: string;
+  confidence: number;
+  enabled: boolean;
+  note: string | null;
+  collectedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type BalanceSnapshot = {
+  id: string;
+  stationId: string;
+  stationKeyId: string | null;
+  scope: "station" | "station_key" | string;
+  value: number | null;
+  currency: string;
+  creditUnit: string | null;
+  usedValue: number | null;
+  totalValue: number | null;
+  lowBalanceThreshold: number | null;
+  status: "unknown" | "normal" | "low" | "depleted" | string;
+  source: string;
+  confidence: number;
+  collectedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RequestCost = {
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  estimatedInputCost: number | null;
+  estimatedOutputCost: number | null;
+  estimatedTotalCost: number | null;
+  costCurrency: string | null;
+  pricingRuleId: string | null;
+  pricingSource: string | null;
+  costStatus: string | null;
+};

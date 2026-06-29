@@ -1,6 +1,7 @@
 pub mod capture;
 pub mod collector;
 pub mod credentials;
+pub mod pricing;
 pub mod proxy;
 pub mod routing;
 pub mod settings;

@@ -1,16 +1,32 @@
-# Relay Pool Desktop
+﻿# Relay Pool Desktop
 
-Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具。它不是网站，也不是 SaaS；目标是在本机提供固定 OpenAI-compatible 入口，并在本地管理多个 Sub2API / NewAPI / OpenAI-compatible 中转站账号与它们下面的可路由 API Key。
+Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具。它不是网站，不是 SaaS，不是中转站后台，也不是 CCSwitch 的升级版或替代品。它和 CCSwitch 的关系是配合关系：
 
-当前状态：early development。Phase 2 已完成本地 SQLite 数据层和 stations/settings 持久化；Phase 2.5 已完成柔和桌面控制台 UI reset；Phase 3 已引入 station account、多 API key 数据模型和 collector prototype；P3.1 已将采集页调整为“信息采集”控制台，并开始抽象通用 Collector Adapter；P4 已把主线修正为登录态信息采集；P4.1 已收口产品模型并补齐 Key 池 MVP；P5 已落地本地 OpenAI-compatible 网关核心，支持本机监听、Key 池 fallback、请求日志、`/v1/models` 聚合去重、`/v1/responses` 兼容、CORS 预检以及 chat/responses SSE 流式透传；P6 已加入模型感知、协议感知、健康感知的 Station Key 路由，支持模型 alias、Key 能力范围、冷却、路由模拟器和日志解释。价格路由、余额避让和复杂策略仍在后续阶段。
+- CCSwitch 负责管理本机 AI 工具配置；
+- Relay Pool Desktop 负责管理多个真实中转站，并对外暴露一个固定的本地 API 入口；
+- Codex、Claude Code、Gemini CLI、CCSwitch 等工具只需要连接 Relay Pool Desktop 的本地入口；
+- 背后的中转站账号管理、余额监控、倍率采集、Key 池排序、低价路由、失败切换由 Relay Pool Desktop 完成。
+
+一句话定义：
+
+> Relay Pool Desktop 是一个本地 AI 中转站与 Key 池调度器：对外提供固定 OpenAI-compatible 入口，对内管理多个 Sub2API / NewAPI / OpenAI-compatible 中转站账号及其下的 API Key，自动采集余额和倍率，并根据 Key 池优先级、模型能力、协议能力、健康状态和价格 / 余额策略进行本地路由。
+
+当前状态：
+
+- Phase 2 / 2.5 已完成本地 SQLite 数据层和 UI reset；
+- Phase 3 / 3.1 已完成信息采集原型和站点账号 / 多 key 数据模型；
+- P4 / P4.1 已完成登录态信息采集主线和 Key 池 MVP；
+- P5 已完成本地 OpenAI-compatible 网关主干；
+- P6 已完成模型 / 协议 / 健康路由层；
+- P7 已完成价格归一化、余额快照、请求成本和 cheap_first 路由展示。
 
 ## 第一版目标
 
-- 本地 Tauri 桌面 App。
-- 对外提供固定 OpenAI-compatible 本地入口。
-- 支持添加多个中转站。
-- 优先支持 Sub2API / Sub2API 魔改站采集。
-- 支持余额监控、倍率采集、Key 池路由、健康检测、失败 fallback 和请求日志。
+- 本地 Tauri 桌面 App；
+- 对外提供固定 OpenAI-compatible 本地入口；
+- 支持添加多个中转站；
+- 优先支持 Sub2API / Sub2API 魔改站采集；
+- 支持余额监控、倍率采集、Key 池路由、健康检测、失败 fallback 和请求日志；
 - 支持一键复制 CCSwitch provider 配置。
 
 ## 开发命令
@@ -24,23 +40,23 @@ pnpm tauri:dev
 
 ## 当前骨架
 
-- React + TypeScript + Vite 前端。
-- Tailwind CSS 样式入口。
-- 预留 `src/components/ui` 作为 shadcn/ui 组件目录。
-- Tauri 2 Rust 端目录已建立。
-- AppShell 已包含左侧导航、顶部状态栏和七个页面入口。
-- Phase 1 已将页面升级为浅色真实感假数据 UI。
-- Phase 2 已接入本地 SQLite，持久化中转站账号和部分本地设置。
-- Phase 2.5 已完成 Sub2API 式柔和卡片控制台 + CCSwitch 式本地桌面导航。
-- Phase 3 引入“站点账号”模型、一个站点下多把 API Key、登录账号字段和 Sub2API 非登录态探测 / 采集快照原型。
-- P3.1 将“Sub2API 采集”改为“信息采集”，主界面展示采集结论、识别结果、接口探测结果和历史快照，脱敏 raw snapshot 默认收进开发者详情。
-- P4 / P4.1 将信息采集主线修正为登录态信息采集，并把站点账号、Station Key、Key 池和渠道状态职责拆开。
-- P5 已具备本地 OpenAI-compatible 网关骨架，按 Key 池优先级 fallback，聚合模型列表，并支持非流式与 SSE 流式透传。
-- P6 已具备模型/协议/健康感知路由，Key 池可配置能力范围，路由规则页可模拟选择结果，请求日志会记录路由解释；价格和余额策略后移。
-- 第一版 UI 方向为参考 CCSwitch 的浅色、简约、克制、紧凑桌面工具风格；深色主题仅作为后续可选项预留。
+- React + TypeScript + Vite 前端；
+- Tailwind CSS 样式入口；
+- `src/components/ui` 作为 shadcn/ui 组件目录；
+- Tauri 2 Rust 端目录已建立；
+- AppShell 已包含左侧导航、顶部状态栏和七个页面入口；
+- Phase 1 已将页面升级为浅色真实感假数据 UI；
+- Phase 2 已接入本地 SQLite，持久化中转站账号和部分本地设置；
+- Phase 2.5 已完成 Sub2API 式柔和卡片控制台 + CCSwitch 式本地桌面导航；
+- Phase 3 引入“站点账号”模型、一个站点下多把 API Key、登录账号字段和非登录态探测 / 采集快照原型；
+- P4 / P4.1 将信息采集主线修正为登录态信息采集，并把站点账号、Station Key、Key 池和渠道状态职责拆开；
+- P5 已具备本地 OpenAI-compatible 网关骨架，按 Key 池优先级 fallback，聚合模型列表，并支持非流式与 SSE 流式透传；
+- P6 已具备模型 / 协议 / 健康感知路由，Key 池可配置能力范围，路由规则页可模拟选择结果，请求日志会记录路由解释；
+- P7 已完成价格 / 余额 / 成本层。
 
 ## 项目边界
 
-- 不加入账号、支付、云同步或多用户系统。
-- 不提交 key、cookie、日志、用户本地数据库或本地配置。
-- 具体价格归一化、复杂策略和 WebView 登录捕获会在后续阶段按模块逐步补强；当前已具备本地网关核心、request log 落库、渠道状态健康统计、基础流式透传和可解释 Key 路由。
+- 不加入账号、支付、云同步或多用户系统；
+- 不提交 key、cookie、日志、用户本地数据库或本地配置；
+- 不在日志里打印完整 API key；
+- 不把项目做成网站或 SaaS。

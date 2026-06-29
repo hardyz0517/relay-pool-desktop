@@ -72,6 +72,8 @@ export function LogsPage() {
         </StatusBadge>
       ),
     },
+    { key: "tokens", header: "Token", className: "w-28 text-right", render: (row) => formatTokens(row) },
+    { key: "cost", header: "成本", className: "w-28 text-right", render: (row) => formatCost(row) },
     { key: "fallback", header: "Fallback", className: "w-24 text-right", render: (row) => row.fallbackCount },
     { key: "latency", header: "耗时", className: "w-24 text-right", render: (row) => row.durationMs == null ? "暂无" : `${row.durationMs}ms` },
   ], [keyById]);
@@ -106,7 +108,7 @@ export function LogsPage() {
   }
 
   return (
-    <PageScaffold title="请求日志" description="真实本地代理请求日志；只记录路由元数据，不保存 prompt、response 或完整 key。">
+    <PageScaffold title="请求日志" description="真实本地代理请求日志；只记录路由元数据，不保留 prompt、response 或完整 key。">
       <div className="grid gap-[var(--shell-page-gap)] xl:grid-cols-[minmax(0,1fr)_390px]">
         <div className="min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
           <Toolbar>
@@ -164,18 +166,20 @@ export function LogsPage() {
                 <PropertyRow label="上游 Base URL" value={selected.upstreamBaseUrl ?? "未转发"} />
                 <PropertyRow label="Fallback 次数" value={String(selected.fallbackCount)} />
                 <PropertyRow label="耗时" value={selected.durationMs == null ? "暂无" : `${selected.durationMs}ms`} />
-                <PropertyRow label="错误原因" value={selected.errorMessage ?? "无"} />
                 <PropertyRow label="路由策略" value={selected.routePolicy ?? "未记录"} />
                 <PropertyRow label="选择原因" value={selected.routeReason ?? "未记录"} />
+                <PropertyRow label="Token" value={formatTokens(selected)} />
+                <PropertyRow label="成本" value={formatCost(selected)} />
+                <PropertyRow label="成本状态" value={selected.costStatus ?? "unknown"} />
                 <PropertyRow label="拒绝候选" value={`${parseRejectedCandidates(selected.rejectedCandidatesJson).length} 个`} />
               </PropertyList>
               <RejectedCandidateList json={selected.rejectedCandidatesJson} />
               <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/60 p-3 text-xs leading-5 text-slate-600">
-                日志只保存 method、path、model、状态、耗时、所选 key id、fallback 次数、路由解释和脱敏错误摘要。
+                日志只保留 method、path、model、状态、耗时、路由解释、Token / 成本元数据和脱敏错误摘要，不保存完整 prompt、response 或完整 API key。
               </div>
             </div>
           ) : (
-            <EmptyState title="暂无详情" description="选择一条请求日志查看路由和 fallback 元数据。" />
+            <EmptyState title="暂无详情" description="选择一条请求日志查看路由解释和成本元数据。" />
           )}
         </InspectorPanel>
       </div>
@@ -219,7 +223,7 @@ function parseRejectedCandidates(json: string | null): RejectedCandidateLog[] {
   }
   try {
     const value = JSON.parse(json);
-    return Array.isArray(value) ? value as RejectedCandidateLog[] : [];
+    return Array.isArray(value) ? (value as RejectedCandidateLog[]) : [];
   } catch {
     return [];
   }
@@ -250,6 +254,21 @@ function formatStationName(log: RequestLog, keyById: Map<string, KeyPoolItem>) {
     }
   }
   return log.stationId ?? "未选择";
+}
+
+function formatTokens(log: RequestLog) {
+  if (log.totalTokens == null) {
+    return log.costStatus === "unknown_usage" ? "usage 未知" : "暂无";
+  }
+  return `${log.totalTokens.toLocaleString("zh-CN")} t`;
+}
+
+function formatCost(log: RequestLog) {
+  if (log.estimatedTotalCost == null) {
+    return log.costStatus === "unknown_usage" ? "未知" : "暂无";
+  }
+  const currency = log.costCurrency ?? "USD";
+  return `${currency} ${log.estimatedTotalCost.toFixed(6)}`;
 }
 
 function readError(error: unknown) {

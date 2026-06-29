@@ -26,5 +26,15 @@ export type RequestLog = {
   routePolicy: string | null;
   routeReason: string | null;
   rejectedCandidatesJson: string | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  estimatedInputCost: number | null;
+  estimatedOutputCost: number | null;
+  estimatedTotalCost: number | null;
+  costCurrency: string | null;
+  pricingRuleId: string | null;
+  pricingSource: string | null;
+  costStatus: string | null;
   createdAt: string;
 };
