@@ -155,7 +155,7 @@ export function PricingPage() {
           <div className="space-y-3 p-4">
             {selected ? (
               <>
-                <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/60 p-3 text-sm text-slate-700">
+                <div className="rounded-[var(--surface-radius)] border border-border bg-slate-50 p-3 text-sm text-slate-700">
                   推荐：{stationName(selected.stationId, stationById)} · {selected.source} · {selected.enabled ? "启用" : "禁用"}
                 </div>
                 <DataTableLite
@@ -170,7 +170,7 @@ export function PricingPage() {
                   getRowKey={(row) => row.id}
                   className="shadow-none"
                 />
-                <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80 p-3 text-xs leading-5 text-muted-foreground">
+                <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs leading-5 text-muted-foreground">
                   价格表只展示归一化后的结果，不直接推导真实计费。余额和单位仍保留原始语义。
                 </div>
               </>

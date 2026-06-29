@@ -4,20 +4,19 @@
 
 :root {
   color-scheme: light;
-  --background: 190 34% 96%;
-  --foreground: 205 28% 20%;
-  --muted: 188 28% 93%;
-  --muted-foreground: 203 15% 42%;
-  --accent: 178 58% 36%;
+  --background: 0 0% 100%;
+  --foreground: 222 22% 12%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 220 9% 42%;
+  --accent: 211 100% 52%;
   --accent-foreground: 0 0% 100%;
-  --border: 194 22% 84%;
-  --surface-radius: 14px;
-  --surface-shadow: 0 12px 30px rgba(33, 79, 88, 0.07);
-  --shell-sidebar-expanded: 196px;
-  --shell-sidebar-collapsed: 72px;
-  --shell-header-height: 44px;
-  --shell-footer-height: 81px;
-  --shell-page-gap: 12px;
+  --border: 220 13% 89%;
+  --surface-radius: 8px;
+  --surface-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+  --surface-shadow-hover: 0 12px 30px rgba(15, 23, 42, 0.08);
+  --shell-sidebar-width: 64px;
+  --shell-header-height: 52px;
+  --shell-page-gap: 16px;
 }
 
 * {

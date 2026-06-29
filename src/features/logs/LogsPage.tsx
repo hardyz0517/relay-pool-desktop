@@ -156,7 +156,7 @@ export function LogsPage() {
         >
           {selected ? (
             <div className="space-y-4 p-4">
-              <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-cyan-100 bg-white/75">
+              <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white">
                 <PropertyRow label="请求时间" value={formatTime(selected.startedAt)} />
                 <PropertyRow label="接口" value={`${selected.method} ${selected.path}`} />
                 <PropertyRow label="模型" value={selected.model ?? "未识别"} />
@@ -174,7 +174,7 @@ export function LogsPage() {
                 <PropertyRow label="拒绝候选" value={`${parseRejectedCandidates(selected.rejectedCandidatesJson).length} 个`} />
               </PropertyList>
               <RejectedCandidateList json={selected.rejectedCandidatesJson} />
-              <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/60 p-3 text-xs leading-5 text-slate-600">
+              <div className="rounded-[var(--surface-radius)] border border-border bg-slate-50 p-3 text-xs leading-5 text-slate-600">
                 日志只保留 method、path、model、状态、耗时、路由解释、Token / 成本元数据和脱敏错误摘要，不保存完整 prompt、response 或完整 API key。
               </div>
             </div>
@@ -200,7 +200,7 @@ function RejectedCandidateList({ json }: { json: string | null }) {
     return null;
   }
   return (
-    <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80 p-3">
+    <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3">
       <div className="text-xs font-semibold text-slate-700">拒绝候选原因</div>
       <div className="mt-2 grid gap-2">
         {candidates.map((candidate, index) => (

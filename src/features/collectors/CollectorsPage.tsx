@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
+  Activity,
   Copy,
   Database,
   Radar,
@@ -8,7 +9,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, EmptyState, InspectorPanel, SectionCard, StatusBadge } from "@/components/ui";
+import { Button, EmptyState, InspectorPanel, ObjectRow, SectionCard, StatusBadge } from "@/components/ui";
 import {
   collectStationInfo,
   clearCaptureSession,
@@ -414,24 +415,24 @@ export function CollectorsPage() {
                   history.map((snapshot) => {
                     const itemSummary = toCollectorSummary(snapshot.summaryJson);
                     return (
-                      <button
+                      <ObjectRow
                         key={snapshot.id}
-                        type="button"
-                        className="w-full rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/45 px-3 py-2 text-left transition hover:border-teal-200 hover:bg-white"
-                        onClick={() => setLatestSnapshot(snapshot)}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="truncate text-sm font-medium text-slate-800">
-                            {itemSummary.adapter ?? sourceLabel(snapshot.source)}
-                          </span>
+                        icon={<Activity className="h-4 w-4" />}
+                        title={itemSummary.adapter ?? sourceLabel(snapshot.source)}
+                        subtitle={`${formatDateTime(snapshot.fetchedAt)} · ${itemSummary.message ?? "暂无摘要"}`}
+                        badges={
                           <StatusBadge tone={toneForConclusion(conclusionLabel(itemSummary, snapshot))}>
                             {conclusionLabel(itemSummary, snapshot)}
                           </StatusBadge>
-                        </div>
-                        <div className="mt-1 truncate text-xs text-muted-foreground">
-                          {formatDateTime(snapshot.fetchedAt)} · {itemSummary.message ?? "暂无摘要"}
-                        </div>
-                      </button>
+                        }
+                        metrics={[
+                          { label: "来源", value: sourceLabel(snapshot.source) },
+                          { label: "状态", value: snapshot.status },
+                          { label: "字段", value: countValue(toCollectorSummary(snapshot.summaryJson).recognized?.matchedFieldCount) },
+                        ]}
+                        selected={snapshot.id === latestSnapshot?.id}
+                        onClick={() => setLatestSnapshot(snapshot)}
+                      />
                     );
                   })
                 ) : (

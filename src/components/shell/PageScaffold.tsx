@@ -5,6 +5,8 @@ type PageScaffoldProps = {
   title: string;
   description: string;
   actions?: ReactNode;
+  status?: ReactNode;
+  backAction?: ReactNode;
   width?: "full" | "settings";
   children?: ReactNode;
 };
@@ -13,6 +15,8 @@ export function PageScaffold({
   title,
   description,
   actions,
+  status,
+  backAction,
   width = "full",
   children,
 }: PageScaffoldProps) {
@@ -25,13 +29,19 @@ export function PageScaffold({
       )}
     >
       <div className="flex min-h-[44px] items-center justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-[17px] font-semibold leading-6 text-slate-800">
-            {title}
-          </h1>
-          <p className="mt-0.5 max-w-3xl truncate text-xs text-muted-foreground">
-            {description}
-          </p>
+        <div className="flex min-w-0 items-center gap-3">
+          {backAction}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="truncate text-[18px] font-semibold leading-6 text-slate-900">
+                {title}
+              </h1>
+              {status}
+            </div>
+            <p className="mt-0.5 max-w-3xl truncate text-xs text-muted-foreground">
+              {description}
+            </p>
+          </div>
         </div>
         {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
       </div>

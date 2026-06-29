@@ -44,6 +44,9 @@ function normalizeRoutingStrategy(value: AppSettings["defaultRoutingStrategy"] |
   if (value === "backup_only") {
     return "backup_only";
   }
+  if (value === "cheap_first") {
+    return "cheap_first";
+  }
   return "priority_fallback";
 }
 
