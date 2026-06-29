@@ -25,6 +25,23 @@ pub struct RichRouteCandidate {
     pub key_name: String,
     pub capabilities: StationKeyCapabilities,
     pub health: Option<StationKeyHealth>,
+    pub economics: Option<RouteCandidateEconomics>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct RouteCandidateEconomics {
+    pub pricing_rule_id: Option<String>,
+    pub pricing_model: Option<String>,
+    pub estimated_input_price: Option<f64>,
+    pub estimated_output_price: Option<f64>,
+    pub fixed_price: Option<f64>,
+    pub price_currency: Option<String>,
+    pub pricing_source: Option<String>,
+    pub balance_status: Option<String>,
+    pub balance_value: Option<f64>,
+    pub low_balance_threshold: Option<f64>,
+    pub balance_currency: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +88,31 @@ pub fn select_route_candidates(
             reasons,
             rejection_reasons,
             mapped_model: mapped_model.clone(),
+            pricing_rule_id: candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.pricing_rule_id.clone()),
+            estimated_input_price: candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.estimated_input_price),
+            estimated_output_price: candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.estimated_output_price),
+            price_currency: candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.price_currency.clone()),
+            balance_status: candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.balance_status.clone()),
+            balance_value: candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.balance_value),
+            economic_reasons: candidate_economic_reasons(&candidate, request),
         };
 
         if explanation.accepted {
@@ -205,6 +247,14 @@ fn candidate_score(
         score += 100_000;
     }
 
+    if let Some(economics) = candidate.economics.as_ref() {
+        if matches!(request.policy, RoutingPolicy::CheapFirst) {
+            score += cheap_first_score(economics);
+        } else {
+            score += balance_penalty(economics);
+        }
+    }
+
     if let Some(model) = request.model.as_deref() {
         let mapped = mapped_model.unwrap_or(model);
         if candidate
@@ -218,6 +268,81 @@ fn candidate_score(
     }
 
     score
+}
+
+fn cheap_first_score(economics: &RouteCandidateEconomics) -> i64 {
+    let estimated_cost = estimated_cost(economics);
+    let mut score = (estimated_cost * 1_000_000.0).round() as i64;
+    score += balance_penalty(economics);
+    score
+}
+
+fn balance_penalty(economics: &RouteCandidateEconomics) -> i64 {
+    let mut penalty = 0_i64;
+    match economics.balance_status.as_deref() {
+        Some("depleted") => penalty += 200_000,
+        Some("low") => penalty += 40_000,
+        _ => {}
+    }
+    if let (Some(value), Some(threshold)) =
+        (economics.balance_value, economics.low_balance_threshold)
+    {
+        if value <= threshold {
+            penalty += 20_000;
+        }
+    }
+    penalty
+}
+
+fn estimated_cost(economics: &RouteCandidateEconomics) -> f64 {
+    if let Some(fixed_price) = economics.fixed_price {
+        return fixed_price;
+    }
+    let input = economics.estimated_input_price.unwrap_or(0.0);
+    let output = economics.estimated_output_price.unwrap_or(0.0);
+    if input > 0.0 || output > 0.0 {
+        input + output
+    } else {
+        1.0
+    }
+}
+
+fn candidate_economic_reasons(
+    candidate: &RichRouteCandidate,
+    request: &RouteRequest,
+) -> Vec<String> {
+    let Some(economics) = candidate.economics.as_ref() else {
+        return Vec::new();
+    };
+
+    let mut reasons = Vec::new();
+    if let Some(rule_id) = economics.pricing_rule_id.as_deref() {
+        reasons.push(format!("pricing rule {rule_id}"));
+    }
+    if let Some(currency) = economics.price_currency.as_deref() {
+        reasons.push(format!("price currency {currency}"));
+    }
+
+    let estimated_cost = estimated_cost(economics);
+    if matches!(request.policy, RoutingPolicy::CheapFirst) {
+        reasons.push(format!("lower estimated cost {:.4}", estimated_cost));
+    }
+
+    match economics.balance_status.as_deref() {
+        Some("depleted") => reasons.push("balance depleted".to_string()),
+        Some("low") => reasons.push("balance low".to_string()),
+        Some("normal") => reasons.push("balance normal".to_string()),
+        Some(other) => reasons.push(format!("balance {other}")),
+        None => {}
+    }
+    if let Some(value) = economics.balance_value {
+        reasons.push(format!("balance value {:.2}", value));
+    }
+    if let Some(threshold) = economics.low_balance_threshold {
+        reasons.push(format!("low balance threshold {:.2}", threshold));
+    }
+
+    reasons
 }
 
 #[cfg(test)]
@@ -381,6 +506,42 @@ mod tests {
         assert_eq!(selected.accepted[1].candidate.station_key_id, "backup");
     }
 
+    #[test]
+    fn selector_cheap_first_prefers_lower_estimated_cost_when_priority_matches() {
+        let request = route_request(
+            RouteEndpointKind::ChatCompletions,
+            Some("gpt-5.4"),
+            false,
+            RoutingPolicy::CheapFirst,
+        );
+        let candidates = vec![
+            rich_candidate_with_economics(
+                "expensive",
+                0,
+                capabilities(|_| {}),
+                economics(Some(0.45), Some(1.80), Some(6.0), Some(2.0), "normal"),
+            ),
+            rich_candidate_with_economics(
+                "cheap",
+                0,
+                capabilities(|_| {}),
+                economics(Some(0.08), Some(0.22), Some(28.0), Some(1.0), "normal"),
+            ),
+        ];
+
+        let selected = select_route_candidates(&request, candidates, &[]).expect("selection");
+
+        assert_eq!(selected.accepted[0].candidate.station_key_id, "cheap");
+        assert!(selected
+            .explanations
+            .iter()
+            .any(|item| item.station_key_id == "cheap"
+                && item
+                    .economic_reasons
+                    .iter()
+                    .any(|reason| reason.contains("lower estimated cost"))));
+    }
+
     fn route_request(
         endpoint: RouteEndpointKind,
         model: Option<&str>,
@@ -426,7 +587,19 @@ mod tests {
             key_name: format!("Key {id}"),
             capabilities,
             health,
+            economics: None,
         }
+    }
+
+    fn rich_candidate_with_economics(
+        id: &str,
+        priority: i64,
+        capabilities: StationKeyCapabilities,
+        economics: RouteCandidateEconomics,
+    ) -> RichRouteCandidate {
+        let mut candidate = rich_candidate_with_health(id, priority, capabilities, None);
+        candidate.economics = Some(economics);
+        candidate
     }
 
     fn capabilities(configure: impl FnOnce(&mut StationKeyCapabilities)) -> StationKeyCapabilities {
@@ -448,6 +621,28 @@ mod tests {
         };
         configure(&mut capabilities);
         capabilities
+    }
+
+    fn economics(
+        estimated_input_price: Option<f64>,
+        estimated_output_price: Option<f64>,
+        balance_value: Option<f64>,
+        low_balance_threshold: Option<f64>,
+        balance_status: &'static str,
+    ) -> RouteCandidateEconomics {
+        RouteCandidateEconomics {
+            pricing_rule_id: Some("price-test".to_string()),
+            pricing_model: Some("gpt-5.4".to_string()),
+            estimated_input_price,
+            estimated_output_price,
+            fixed_price: None,
+            price_currency: Some("USD".to_string()),
+            pricing_source: Some("manual".to_string()),
+            balance_status: Some(balance_status.to_string()),
+            balance_value,
+            low_balance_threshold,
+            balance_currency: Some("USD".to_string()),
+        }
     }
 
     fn health(configure: impl FnOnce(&mut StationKeyHealth)) -> Option<StationKeyHealth> {

@@ -1,4 +1,4 @@
-export type RoutingStrategy = "priority_fallback" | "stable_first" | "backup_only";
+export type RoutingStrategy = "priority_fallback" | "stable_first" | "backup_only" | "cheap_first";
 
 export type TrayBehavior = "minimize-to-tray" | "close-to-tray" | "disabled";
 
@@ -24,6 +24,7 @@ export const routingStrategyLabels: Record<RoutingStrategy, string> = {
   priority_fallback: "优先级 fallback",
   stable_first: "稳定优先",
   backup_only: "备用模式",
+  cheap_first: "便宜优先",
 };
 
 export const trayBehaviorLabels: Record<TrayBehavior, string> = {

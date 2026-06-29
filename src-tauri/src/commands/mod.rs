@@ -5,6 +5,7 @@ use crate::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
         collector::{CollectorRunResult, CollectorSnapshot},
         credentials::{StationCredentials, UpdateStationCredentialsInput},
+        pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
         proxy::{ProxyStatus, RequestLog},
         routing::{
             ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyCapabilities,
@@ -223,6 +224,39 @@ pub fn simulate_route(
     input: RouteSimulationInput,
 ) -> Result<RouteSimulationResult, String> {
     database.simulate_route(input)
+}
+
+#[tauri::command]
+pub fn list_pricing_rules(database: State<'_, AppDatabase>) -> Result<Vec<PricingRule>, String> {
+    database.list_pricing_rules()
+}
+
+#[tauri::command]
+pub fn upsert_pricing_rule(
+    database: State<'_, AppDatabase>,
+    input: UpsertPricingRuleInput,
+) -> Result<PricingRule, String> {
+    database.upsert_pricing_rule(input)
+}
+
+#[tauri::command]
+pub fn delete_pricing_rule(database: State<'_, AppDatabase>, id: String) -> Result<(), String> {
+    database.delete_pricing_rule(id)
+}
+
+#[tauri::command]
+pub fn list_balance_snapshots(
+    database: State<'_, AppDatabase>,
+) -> Result<Vec<BalanceSnapshot>, String> {
+    database.list_balance_snapshots()
+}
+
+#[tauri::command]
+pub fn upsert_balance_snapshot(
+    database: State<'_, AppDatabase>,
+    input: UpsertBalanceSnapshotInput,
+) -> Result<BalanceSnapshot, String> {
+    database.upsert_balance_snapshot(input)
 }
 
 #[tauri::command]

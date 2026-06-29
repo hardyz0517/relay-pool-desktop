@@ -1,6 +1,6 @@
-# Product Model
+﻿# Product Model
 
-Relay Pool Desktop uses a deliberately split product model so collection, routing, and health surfaces do not blur into one another.
+Relay Pool Desktop uses a deliberately split product model so collection, routing, pricing, and health surfaces do not blur into one another.
 
 ## Core Concepts
 
@@ -10,6 +10,9 @@ Relay Pool Desktop uses a deliberately split product model so collection, routin
 - `Collector / 信息采集` = works around `Station`.
 - `Router / 路由` = works around `Station Key`.
 - `Channel Status / 渠道状态` = works around `Key / Channel`.
+- `Pricing Rule / 价格规则` = normalized pricing data for station / group / model.
+- `Balance Snapshot / 余额快照` = normalized balance or quota state with explicit units.
+- `Request Cost / 请求成本` = per-request usage and estimated cost metadata.
 
 ## Station
 
@@ -69,6 +72,55 @@ It owns:
 - health status
 - future router integration
 
+## Pricing Rule
+
+`Pricing Rule` is normalized price data derived from a station snapshot, manual entry, or collector source.
+
+It owns:
+
+- station
+- group / tier
+- model
+- input price
+- output price
+- currency
+- unit
+- source
+- confidence
+- enabled state
+- collected time
+
+## Balance Snapshot
+
+`Balance Snapshot` is normalized balance or quota state with explicit units.
+
+It owns:
+
+- station
+- optional station key
+- scope
+- value
+- currency or credit unit
+- low balance threshold
+- state
+- source
+- confidence
+- collected time
+
+## Request Cost
+
+`Request Cost` is per-request usage and estimated cost metadata.
+
+It owns:
+
+- token counts
+- estimated input cost
+- estimated output cost
+- estimated total cost
+- cost currency
+- pricing rule source
+- cost status
+
 ## Collector
 
 `Collector` works around `Station`.
@@ -99,6 +151,7 @@ It owns:
 - failure switching
 - usage stats
 - request log writing
+- cheap-first cost-aware sorting
 
 ## Channel Status
 
@@ -122,4 +175,5 @@ It owns:
 - P4 continues improving login-state information collection.
 - P5 builds the local OpenAI-compatible proxy and basic priority fallback.
 - P6 adds model-aware, protocol-aware, health-aware Station Key routing with aliases, key capability scope, cooldown, route simulation, and route explanations.
-- P7 / P8 can connect price normalization, balance avoidance, cost calculation, and richer routing policies.
+- P7 adds price normalization, balance avoidance, request cost tracking, and cheap-first routing.
+- P8 can extend NewAPI adapters and richer economic snapshots.

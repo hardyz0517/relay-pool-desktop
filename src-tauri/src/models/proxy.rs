@@ -32,6 +32,16 @@ pub struct RequestLog {
     pub route_policy: Option<String>,
     pub route_reason: Option<String>,
     pub rejected_candidates_json: Option<String>,
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
+    pub estimated_input_cost: Option<f64>,
+    pub estimated_output_cost: Option<f64>,
+    pub estimated_total_cost: Option<f64>,
+    pub cost_currency: Option<String>,
+    pub pricing_rule_id: Option<String>,
+    pub pricing_source: Option<String>,
+    pub cost_status: Option<String>,
     pub created_at: String,
 }
 
@@ -51,16 +61,19 @@ pub struct CreateRequestLogInput {
     pub route_policy: Option<String>,
     pub route_reason: Option<String>,
     pub rejected_candidates_json: Option<String>,
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
+    pub estimated_input_cost: Option<f64>,
+    pub estimated_output_cost: Option<f64>,
+    pub estimated_total_cost: Option<f64>,
+    pub cost_currency: Option<String>,
+    pub pricing_rule_id: Option<String>,
+    pub pricing_source: Option<String>,
+    pub cost_status: Option<String>,
     pub started_at: String,
     pub finished_at: Option<String>,
     pub duration_ms: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ClientRequestKind {
-    ChatCompletions,
-    Responses,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -15,6 +15,7 @@ use tauri::{AppHandle, Manager};
 use crate::models::{
     collector::CollectorSnapshot,
     credentials::{StationCredentials, UpdateStationCredentialsInput},
+    pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
     proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
     routing::{
         ModelAlias, RouteSimulationInput, RouteSimulationResult, RoutingPolicy,
@@ -26,7 +27,7 @@ use crate::models::{
     stations::{CreateStationInput, Station, UpdateStationInput},
 };
 use crate::services::proxy::{
-    router::{select_route_candidates, RichRouteCandidate, RouteRequest},
+    router::{select_route_candidates, RouteCandidateEconomics, RichRouteCandidate, RouteRequest},
     RouteCandidate,
 };
 
@@ -60,8 +61,12 @@ impl AppDatabase {
             .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
         migrate_station_proxy_columns(&connection)
             .map_err(|error| format!("迁移站点代理字段失败: {error}"))?;
+        migrate_pricing_tables(&connection)
+            .map_err(|error| format!("迁移价格和余额表失败: {error}"))?;
         migrate_request_log_route_columns(&connection)
             .map_err(|error| format!("迁移请求日志路由字段失败: {error}"))?;
+        migrate_request_log_cost_columns(&connection)
+            .map_err(|error| format!("迁移请求日志成本字段失败: {error}"))?;
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -81,8 +86,12 @@ impl AppDatabase {
             .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
         migrate_station_proxy_columns(&connection)
             .map_err(|error| format!("迁移站点代理字段失败: {error}"))?;
+        migrate_pricing_tables(&connection)
+            .map_err(|error| format!("迁移价格和余额表失败: {error}"))?;
         migrate_request_log_route_columns(&connection)
             .map_err(|error| format!("迁移请求日志路由字段失败: {error}"))?;
+        migrate_request_log_cost_columns(&connection)
+            .map_err(|error| format!("迁移请求日志成本字段失败: {error}"))?;
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -415,6 +424,14 @@ impl AppDatabase {
         proxy_rich_route_candidates_from_connection(&connection)
     }
 
+    pub fn route_candidate_economics(
+        &self,
+        station_key_id: String,
+    ) -> Result<Option<RouteCandidateEconomics>, String> {
+        let connection = self.connection()?;
+        route_candidate_economics_by_station_key(&connection, &station_key_id)
+    }
+
     pub fn enabled_model_alias_pairs(&self) -> Result<Vec<(String, String)>, String> {
         let connection = self.connection()?;
         enabled_model_alias_pairs_from_connection(&connection)
@@ -548,6 +565,34 @@ impl AppDatabase {
             .execute("DELETE FROM request_logs", [])
             .map_err(|error| format!("清空请求日志失败: {error}"))?;
         Ok(())
+    }
+
+    pub fn list_pricing_rules(&self) -> Result<Vec<PricingRule>, String> {
+        let connection = self.connection()?;
+        list_pricing_rules_from_connection(&connection)
+    }
+
+    pub fn upsert_pricing_rule(&self, input: UpsertPricingRuleInput) -> Result<PricingRule, String> {
+        let connection = self.connection()?;
+        upsert_pricing_rule_in_connection(&connection, input)
+    }
+
+    pub fn delete_pricing_rule(&self, id: String) -> Result<(), String> {
+        let connection = self.connection()?;
+        delete_pricing_rule_from_connection(&connection, &id)
+    }
+
+    pub fn list_balance_snapshots(&self) -> Result<Vec<BalanceSnapshot>, String> {
+        let connection = self.connection()?;
+        list_balance_snapshots_from_connection(&connection)
+    }
+
+    pub fn upsert_balance_snapshot(
+        &self,
+        input: UpsertBalanceSnapshotInput,
+    ) -> Result<BalanceSnapshot, String> {
+        let connection = self.connection()?;
+        upsert_balance_snapshot_in_connection(&connection, input)
     }
 
     pub fn update_station_login_status(
@@ -734,6 +779,55 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_collector_snapshots_station_created
             ON collector_snapshots(station_id, created_at DESC);
 
+        CREATE TABLE IF NOT EXISTS pricing_rules (
+            id TEXT PRIMARY KEY,
+            station_id TEXT NOT NULL,
+            group_name TEXT,
+            tier_label TEXT,
+            model TEXT NOT NULL,
+            input_price REAL,
+            output_price REAL,
+            fixed_price REAL,
+            currency TEXT NOT NULL,
+            unit TEXT NOT NULL,
+            price_type TEXT NOT NULL,
+            source TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            note TEXT,
+            collected_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pricing_rules_station_model
+            ON pricing_rules(station_id, model, enabled, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS balance_snapshots (
+            id TEXT PRIMARY KEY,
+            station_id TEXT NOT NULL,
+            station_key_id TEXT,
+            scope TEXT NOT NULL,
+            value REAL,
+            currency TEXT NOT NULL,
+            credit_unit TEXT,
+            used_value REAL,
+            total_value REAL,
+            low_balance_threshold REAL,
+            status TEXT NOT NULL,
+            source TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            collected_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE,
+            FOREIGN KEY(station_key_id) REFERENCES station_keys(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_balance_snapshots_station_scope_updated
+            ON balance_snapshots(station_id, scope, updated_at DESC);
+
         CREATE TABLE IF NOT EXISTS request_logs (
             id TEXT PRIMARY KEY,
             started_at TEXT NOT NULL,
@@ -752,6 +846,16 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             route_policy TEXT,
             route_reason TEXT,
             rejected_candidates_json TEXT,
+            prompt_tokens INTEGER,
+            completion_tokens INTEGER,
+            total_tokens INTEGER,
+            estimated_input_cost REAL,
+            estimated_output_cost REAL,
+            estimated_total_cost REAL,
+            cost_currency TEXT,
+            pricing_rule_id TEXT,
+            pricing_source TEXT,
+            cost_status TEXT,
             created_at TEXT NOT NULL
         );
 
@@ -980,6 +1084,86 @@ fn migrate_request_log_route_columns(connection: &Connection) -> rusqlite::Resul
     }
 
     Ok(())
+}
+
+fn migrate_request_log_cost_columns(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(request_logs)")?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for column in [
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "estimated_input_cost",
+        "estimated_output_cost",
+        "estimated_total_cost",
+        "cost_currency",
+        "pricing_rule_id",
+        "pricing_source",
+        "cost_status",
+    ] {
+        if !rows.iter().any(|existing| existing == column) {
+            let sql = format!("ALTER TABLE request_logs ADD COLUMN {column} {}", if column.ends_with("_tokens") { "INTEGER" } else if column.ends_with("_cost") { "REAL" } else { "TEXT" });
+            connection.execute(&sql, [])?;
+        }
+    }
+
+    Ok(())
+}
+
+fn migrate_pricing_tables(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS pricing_rules (
+            id TEXT PRIMARY KEY,
+            station_id TEXT NOT NULL,
+            group_name TEXT,
+            tier_label TEXT,
+            model TEXT NOT NULL,
+            input_price REAL,
+            output_price REAL,
+            fixed_price REAL,
+            currency TEXT NOT NULL,
+            unit TEXT NOT NULL,
+            price_type TEXT NOT NULL,
+            source TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            note TEXT,
+            collected_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_pricing_rules_station_model
+            ON pricing_rules(station_id, model, enabled, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS balance_snapshots (
+            id TEXT PRIMARY KEY,
+            station_id TEXT NOT NULL,
+            station_key_id TEXT,
+            scope TEXT NOT NULL,
+            value REAL,
+            currency TEXT NOT NULL,
+            credit_unit TEXT,
+            used_value REAL,
+            total_value REAL,
+            low_balance_threshold REAL,
+            status TEXT NOT NULL,
+            source TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            collected_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE,
+            FOREIGN KEY(station_key_id) REFERENCES station_keys(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_balance_snapshots_station_scope_updated
+            ON balance_snapshots(station_id, scope, updated_at DESC);
+        ",
+    )
 }
 
 fn migrate_default_station_keys(connection: &Connection) -> rusqlite::Result<()> {
@@ -1711,13 +1895,24 @@ fn proxy_rich_route_candidates_from_connection(
                     cooldown_until: row.get(29).ok().flatten(),
                     updated_at: row.get(30).unwrap_or_else(|_| "0".to_string()),
                 }),
+                economics: None,
             })
         })
         .map_err(|error| format!("查询富路由候选失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析富路由候选失败: {error}"))?;
 
-    Ok(rows)
+    let mut enriched_rows = Vec::with_capacity(rows.len());
+    for mut row in rows {
+        row.economics = route_candidate_economics_from_connection(
+            connection,
+            &row.candidate.station_key_id,
+            &row.candidate.station_id,
+        )?;
+        enriched_rows.push(row);
+    }
+
+    Ok(enriched_rows)
 }
 
 fn enabled_model_alias_pairs_from_connection(
@@ -1739,6 +1934,400 @@ fn enabled_model_alias_pairs_from_connection(
         .map_err(|error| format!("解析启用模型映射失败: {error}"))?;
 
     Ok(rows)
+}
+
+fn route_candidate_economics_from_connection(
+    connection: &Connection,
+    station_key_id: &str,
+    station_id: &str,
+) -> Result<Option<RouteCandidateEconomics>, String> {
+    let pricing_rule = connection
+        .query_row(
+            "SELECT id, model, input_price, output_price, fixed_price, currency, source
+               FROM pricing_rules
+              WHERE station_id = ?1
+                AND enabled = 1
+              ORDER BY updated_at DESC, created_at DESC
+              LIMIT 1",
+            params![station_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<f64>>(2)?,
+                    row.get::<_, Option<f64>>(3)?,
+                    row.get::<_, Option<f64>>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("读取价格规则失败: {error}"))?;
+
+    let balance_snapshot = connection
+        .query_row(
+            "SELECT value, currency, low_balance_threshold, status
+               FROM balance_snapshots
+              WHERE station_id = ?1
+                AND (station_key_id = ?2 OR (station_key_id IS NULL AND scope = 'station'))
+              ORDER BY updated_at DESC, created_at DESC
+              LIMIT 1",
+            params![station_id, station_key_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<f64>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<f64>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("读取余额快照失败: {error}"))?;
+
+    let economics = pricing_rule
+        .map(|(id, model, input_price, output_price, fixed_price, currency, source)| {
+            let (balance_value, balance_currency, low_balance_threshold, balance_status) =
+                balance_snapshot
+                    .clone()
+                    .unwrap_or((None, "unknown".to_string(), None, "unknown".to_string()));
+            RouteCandidateEconomics {
+                pricing_rule_id: Some(id),
+                pricing_model: Some(model),
+                estimated_input_price: input_price,
+                estimated_output_price: output_price,
+                fixed_price,
+                price_currency: Some(currency),
+                pricing_source: Some(source),
+                balance_status: Some(balance_status),
+                balance_value,
+                low_balance_threshold,
+                balance_currency: Some(balance_currency),
+            }
+        })
+        .or_else(|| {
+            balance_snapshot.map(
+                |(balance_value, balance_currency, low_balance_threshold, balance_status)| {
+                    RouteCandidateEconomics {
+                        pricing_rule_id: None,
+                        pricing_model: None,
+                        estimated_input_price: None,
+                        estimated_output_price: None,
+                        fixed_price: None,
+                        price_currency: None,
+                        pricing_source: None,
+                        balance_status: Some(balance_status),
+                        balance_value,
+                        low_balance_threshold,
+                        balance_currency: Some(balance_currency),
+                    }
+                },
+            )
+        });
+
+    Ok(economics)
+}
+
+fn route_candidate_economics_by_station_key(
+    connection: &Connection,
+    station_key_id: &str,
+) -> Result<Option<RouteCandidateEconomics>, String> {
+    let station_id: Option<String> = connection
+        .query_row(
+            "SELECT station_id FROM station_keys WHERE id = ?1",
+            params![station_key_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取 Station Key 失败: {error}"))?;
+    let Some(station_id) = station_id else {
+        return Ok(None);
+    };
+    route_candidate_economics_from_connection(connection, station_key_id, &station_id)
+}
+
+fn list_pricing_rules_from_connection(connection: &Connection) -> Result<Vec<PricingRule>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, station_id, group_name, tier_label, model, input_price, output_price,
+                    fixed_price, currency, unit, price_type, source, confidence, enabled, note,
+                    collected_at, created_at, updated_at
+               FROM pricing_rules
+              ORDER BY updated_at DESC, created_at DESC",
+        )
+        .map_err(|error| format!("读取价格规则失败: {error}"))?;
+    let rows = statement
+        .query_map([], row_to_pricing_rule)
+        .map_err(|error| format!("查询价格规则失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析价格规则失败: {error}"))?;
+    Ok(rows)
+}
+
+fn upsert_pricing_rule_in_connection(
+    connection: &Connection,
+    input: UpsertPricingRuleInput,
+) -> Result<PricingRule, String> {
+    validate_station_exists(connection, &input.station_id)?;
+    if input.model.trim().is_empty() {
+        return Err("模型不能为空".to_string());
+    }
+    let confidence = clamp_confidence(input.confidence);
+    let id = input.id.unwrap_or_else(|| generate_id("pricing"));
+    let now = now_string();
+    connection
+        .execute(
+            "INSERT INTO pricing_rules (
+                id, station_id, group_name, tier_label, model, input_price, output_price,
+                fixed_price, currency, unit, price_type, source, confidence, enabled, note,
+                collected_at, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+             ON CONFLICT(id) DO UPDATE SET
+                station_id = excluded.station_id,
+                group_name = excluded.group_name,
+                tier_label = excluded.tier_label,
+                model = excluded.model,
+                input_price = excluded.input_price,
+                output_price = excluded.output_price,
+                fixed_price = excluded.fixed_price,
+                currency = excluded.currency,
+                unit = excluded.unit,
+                price_type = excluded.price_type,
+                source = excluded.source,
+                confidence = excluded.confidence,
+                enabled = excluded.enabled,
+                note = excluded.note,
+                collected_at = excluded.collected_at,
+                updated_at = excluded.updated_at",
+            params![
+                id,
+                input.station_id,
+                normalize_optional_string(input.group_name),
+                normalize_optional_string(input.tier_label),
+                input.model.trim(),
+                input.input_price,
+                input.output_price,
+                input.fixed_price,
+                normalize_currency(input.currency),
+                normalize_unit(input.unit),
+                input.price_type.trim(),
+                input.source.trim(),
+                confidence,
+                bool_to_i64(input.enabled),
+                normalize_optional_string(input.note),
+                normalize_optional_string(input.collected_at),
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("保存价格规则失败: {error}"))?;
+    pricing_rule_by_id(connection, &id)
+}
+
+fn delete_pricing_rule_from_connection(connection: &Connection, id: &str) -> Result<(), String> {
+    let deleted = connection
+        .execute("DELETE FROM pricing_rules WHERE id = ?1", params![id])
+        .map_err(|error| format!("删除价格规则失败: {error}"))?;
+    if deleted == 0 {
+        return Err("价格规则不存在，无法删除".to_string());
+    }
+    Ok(())
+}
+
+fn list_balance_snapshots_from_connection(
+    connection: &Connection,
+) -> Result<Vec<BalanceSnapshot>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, station_id, station_key_id, scope, value, currency, credit_unit,
+                    used_value, total_value, low_balance_threshold, status, source, confidence,
+                    collected_at, created_at, updated_at
+               FROM balance_snapshots
+              ORDER BY updated_at DESC, created_at DESC",
+        )
+        .map_err(|error| format!("读取余额快照失败: {error}"))?;
+    let rows = statement
+        .query_map([], row_to_balance_snapshot)
+        .map_err(|error| format!("查询余额快照失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析余额快照失败: {error}"))?;
+    Ok(rows)
+}
+
+fn upsert_balance_snapshot_in_connection(
+    connection: &Connection,
+    input: UpsertBalanceSnapshotInput,
+) -> Result<BalanceSnapshot, String> {
+    validate_station_exists(connection, &input.station_id)?;
+    if let Some(station_key_id) = input.station_key_id.as_deref() {
+        validate_station_key_exists(connection, station_key_id)?;
+    }
+    if input.scope.trim().is_empty() {
+        return Err("余额作用域不能为空".to_string());
+    }
+    if input.status.trim().is_empty() {
+        return Err("余额状态不能为空".to_string());
+    }
+    let confidence = clamp_confidence(input.confidence);
+    let id = input.id.unwrap_or_else(|| generate_id("balance"));
+    let now = now_string();
+    connection
+        .execute(
+            "INSERT INTO balance_snapshots (
+                id, station_id, station_key_id, scope, value, currency, credit_unit,
+                used_value, total_value, low_balance_threshold, status, source, confidence,
+                collected_at, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             ON CONFLICT(id) DO UPDATE SET
+                station_id = excluded.station_id,
+                station_key_id = excluded.station_key_id,
+                scope = excluded.scope,
+                value = excluded.value,
+                currency = excluded.currency,
+                credit_unit = excluded.credit_unit,
+                used_value = excluded.used_value,
+                total_value = excluded.total_value,
+                low_balance_threshold = excluded.low_balance_threshold,
+                status = excluded.status,
+                source = excluded.source,
+                confidence = excluded.confidence,
+                collected_at = excluded.collected_at,
+                updated_at = excluded.updated_at",
+            params![
+                id,
+                input.station_id,
+                normalize_optional_string(input.station_key_id),
+                normalize_scope(input.scope)?,
+                input.value,
+                normalize_currency(input.currency),
+                normalize_optional_string(input.credit_unit),
+                input.used_value,
+                input.total_value,
+                input.low_balance_threshold,
+                normalize_balance_status(input.status)?,
+                input.source.trim(),
+                confidence,
+                normalize_optional_string(input.collected_at),
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("保存余额快照失败: {error}"))?;
+    balance_snapshot_by_id(connection, &id)
+}
+
+fn row_to_pricing_rule(row: &rusqlite::Row<'_>) -> rusqlite::Result<PricingRule> {
+    Ok(PricingRule {
+        id: row.get(0)?,
+        station_id: row.get(1)?,
+        group_name: row.get(2)?,
+        tier_label: row.get(3)?,
+        model: row.get(4)?,
+        input_price: row.get(5)?,
+        output_price: row.get(6)?,
+        fixed_price: row.get(7)?,
+        currency: row.get(8)?,
+        unit: row.get(9)?,
+        price_type: row.get(10)?,
+        source: row.get(11)?,
+        confidence: row.get(12)?,
+        enabled: i64_to_bool(row.get(13)?),
+        note: row.get(14)?,
+        collected_at: row.get(15)?,
+        created_at: row.get(16)?,
+        updated_at: row.get(17)?,
+    })
+}
+
+fn row_to_balance_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<BalanceSnapshot> {
+    Ok(BalanceSnapshot {
+        id: row.get(0)?,
+        station_id: row.get(1)?,
+        station_key_id: row.get(2)?,
+        scope: row.get(3)?,
+        value: row.get(4)?,
+        currency: row.get(5)?,
+        credit_unit: row.get(6)?,
+        used_value: row.get(7)?,
+        total_value: row.get(8)?,
+        low_balance_threshold: row.get(9)?,
+        status: row.get(10)?,
+        source: row.get(11)?,
+        confidence: row.get(12)?,
+        collected_at: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
+    })
+}
+
+fn pricing_rule_by_id(connection: &Connection, id: &str) -> Result<PricingRule, String> {
+    connection
+        .query_row(
+            "SELECT id, station_id, group_name, tier_label, model, input_price, output_price,
+                    fixed_price, currency, unit, price_type, source, confidence, enabled, note,
+                    collected_at, created_at, updated_at
+               FROM pricing_rules
+              WHERE id = ?1",
+            params![id],
+            row_to_pricing_rule,
+        )
+        .optional()
+        .map_err(|error| format!("读取价格规则失败: {error}"))?
+        .ok_or_else(|| "价格规则不存在".to_string())
+}
+
+fn balance_snapshot_by_id(connection: &Connection, id: &str) -> Result<BalanceSnapshot, String> {
+    connection
+        .query_row(
+            "SELECT id, station_id, station_key_id, scope, value, currency, credit_unit,
+                    used_value, total_value, low_balance_threshold, status, source, confidence,
+                    collected_at, created_at, updated_at
+               FROM balance_snapshots
+              WHERE id = ?1",
+            params![id],
+            row_to_balance_snapshot,
+        )
+        .optional()
+        .map_err(|error| format!("读取余额快照失败: {error}"))?
+        .ok_or_else(|| "余额快照不存在".to_string())
+}
+
+fn clamp_confidence(value: f64) -> f64 {
+    value.clamp(0.0, 1.0)
+}
+
+fn normalize_currency(value: String) -> String {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        "unknown".to_string()
+    } else {
+        normalized.to_string()
+    }
+}
+
+fn normalize_unit(value: String) -> String {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        "unknown".to_string()
+    } else {
+        normalized.to_string()
+    }
+}
+
+fn normalize_scope(value: String) -> Result<String, String> {
+    match value.trim() {
+        "station" => Ok("station".to_string()),
+        "station_key" => Ok("station_key".to_string()),
+        _ => Err("余额作用域无效".to_string()),
+    }
+}
+
+fn normalize_balance_status(value: String) -> Result<String, String> {
+    match value.trim() {
+        "unknown" | "normal" | "low" | "depleted" => Ok(value.trim().to_string()),
+        _ => Err("余额状态无效".to_string()),
+    }
 }
 
 fn simulate_route_in_connection(
@@ -1782,11 +2371,11 @@ fn simulate_route_in_connection(
         )
     };
 
-    Ok(RouteSimulationResult {
-        selected_station_key_id,
-        selected_station_id,
-        mapped_model: selection.mapped_model,
-        policy,
+        Ok(RouteSimulationResult {
+            selected_station_key_id,
+            selected_station_id,
+            mapped_model: selection.mapped_model,
+            policy,
         candidates: selection.explanations,
         message,
     })
@@ -1796,6 +2385,7 @@ fn parse_routing_policy_value(value: &str) -> RoutingPolicy {
     match value {
         "stable_first" | "stable" => RoutingPolicy::StableFirst,
         "backup_only" => RoutingPolicy::BackupOnly,
+        "cheap_first" => RoutingPolicy::CheapFirst,
         _ => RoutingPolicy::PriorityFallback,
     }
 }
@@ -1811,8 +2401,11 @@ fn insert_request_log_in_connection(
             "INSERT INTO request_logs (
                 id, started_at, finished_at, duration_ms, method, path, model, stream,
                 status, station_key_id, station_id, upstream_base_url, fallback_count,
-                error_message, route_policy, route_reason, rejected_candidates_json, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                error_message, route_policy, route_reason, rejected_candidates_json,
+                prompt_tokens, completion_tokens, total_tokens, estimated_input_cost,
+                estimated_output_cost, estimated_total_cost, cost_currency, pricing_rule_id,
+                pricing_source, cost_status, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
             params![
                 id,
                 input.started_at,
@@ -1831,6 +2424,16 @@ fn insert_request_log_in_connection(
                 normalize_optional_string(input.route_policy),
                 normalize_optional_string(input.route_reason),
                 normalize_optional_string(input.rejected_candidates_json),
+                input.prompt_tokens,
+                input.completion_tokens,
+                input.total_tokens,
+                input.estimated_input_cost,
+                input.estimated_output_cost,
+                input.estimated_total_cost,
+                normalize_optional_string(input.cost_currency),
+                normalize_optional_string(input.pricing_rule_id),
+                normalize_optional_string(input.pricing_source),
+                normalize_optional_string(input.cost_status),
                 created_at,
             ],
         )
@@ -1858,7 +2461,17 @@ fn row_to_request_log(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLog> {
         route_policy: row.get(14)?,
         route_reason: row.get(15)?,
         rejected_candidates_json: row.get(16)?,
-        created_at: row.get(17)?,
+        prompt_tokens: row.get(17)?,
+        completion_tokens: row.get(18)?,
+        total_tokens: row.get(19)?,
+        estimated_input_cost: row.get(20)?,
+        estimated_output_cost: row.get(21)?,
+        estimated_total_cost: row.get(22)?,
+        cost_currency: row.get(23)?,
+        pricing_rule_id: row.get(24)?,
+        pricing_source: row.get(25)?,
+        cost_status: row.get(26)?,
+        created_at: row.get(27)?,
     })
 }
 
@@ -1867,7 +2480,10 @@ fn request_log_by_id(connection: &Connection, id: &str) -> Result<RequestLog, St
         .query_row(
             "SELECT id, started_at, finished_at, duration_ms, method, path, model, stream,
                     status, station_key_id, station_id, upstream_base_url, fallback_count,
-                    error_message, route_policy, route_reason, rejected_candidates_json, created_at
+                    error_message, route_policy, route_reason, rejected_candidates_json,
+                    prompt_tokens, completion_tokens, total_tokens, estimated_input_cost,
+                    estimated_output_cost, estimated_total_cost, cost_currency, pricing_rule_id,
+                    pricing_source, cost_status, created_at
                FROM request_logs
               WHERE id = ?1",
             params![id],
@@ -1883,7 +2499,10 @@ fn list_request_logs_from_connection(connection: &Connection) -> Result<Vec<Requ
         .prepare(
             "SELECT id, started_at, finished_at, duration_ms, method, path, model, stream,
                     status, station_key_id, station_id, upstream_base_url, fallback_count,
-                    error_message, route_policy, route_reason, rejected_candidates_json, created_at
+                    error_message, route_policy, route_reason, rejected_candidates_json,
+                    prompt_tokens, completion_tokens, total_tokens, estimated_input_cost,
+                    estimated_output_cost, estimated_total_cost, cost_currency, pricing_rule_id,
+                    pricing_source, cost_status, created_at
                FROM request_logs
               ORDER BY created_at DESC
               LIMIT 500",
@@ -2617,6 +3236,7 @@ fn now_millis() -> u128 {
 mod tests {
     use super::*;
     use crate::models::routing::RouteEndpointKind;
+    use crate::models::pricing::{UpsertBalanceSnapshotInput, UpsertPricingRuleInput};
 
     fn test_station(database: &AppDatabase, name: &str) -> Station {
         database
@@ -2829,12 +3449,7 @@ mod tests {
             Some(selected.station_id.as_str())
         );
         assert!(result.candidates.iter().any(|candidate| {
-            candidate.station_key_id == blocked.id
-                && !candidate.accepted
-                && candidate
-                    .rejection_reasons
-                    .iter()
-                    .any(|reason| reason.contains("allowlist"))
+                candidate.station_key_id == blocked.id && !candidate.accepted && candidate.rejection_reasons.iter().any(|reason| reason.contains("allowlist"))
         }));
     }
 
@@ -2856,6 +3471,16 @@ mod tests {
                 route_policy: Some("priority_fallback".to_string()),
                 route_reason: Some("selected key-1 because model allowed".to_string()),
                 rejected_candidates_json: Some("[]".to_string()),
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+                estimated_input_cost: None,
+                estimated_output_cost: None,
+                estimated_total_cost: None,
+                cost_currency: None,
+                pricing_rule_id: None,
+                pricing_source: None,
+                cost_status: None,
                 started_at: "1000".to_string(),
                 finished_at: Some("1100".to_string()),
                 duration_ms: Some(100),
@@ -2868,6 +3493,77 @@ mod tests {
             Some("selected key-1 because model allowed")
         );
         assert_eq!(log.rejected_candidates_json.as_deref(), Some("[]"));
-        assert!(!serde_json::to_string(&log).unwrap().contains("prompt"));
+        let serialized = serde_json::to_string(&log).unwrap();
+        assert!(!serialized.contains("\"prompt\":"));
+    }
+
+    #[test]
+    fn pricing_rule_round_trip() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "pricing-rule");
+
+        let saved = database
+            .upsert_pricing_rule(UpsertPricingRuleInput {
+                id: None,
+                station_id: station.id.clone(),
+                group_name: Some("pro".to_string()),
+                tier_label: Some("tier-a".to_string()),
+                model: "gpt-4o-mini".to_string(),
+                input_price: Some(0.15),
+                output_price: Some(0.6),
+                fixed_price: None,
+                currency: "USD".to_string(),
+                unit: "per_1m_tokens".to_string(),
+                price_type: "token".to_string(),
+                source: "manual".to_string(),
+                confidence: 0.9,
+                enabled: true,
+                note: Some("manual override".to_string()),
+                collected_at: Some("1000".to_string()),
+            })
+            .expect("save");
+
+        let rows = database.list_pricing_rules().expect("pricing rules");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, saved.id);
+        assert_eq!(rows[0].station_id, station.id);
+        assert_eq!(rows[0].model, "gpt-4o-mini");
+        assert_eq!(rows[0].input_price, Some(0.15));
+
+        database
+            .delete_pricing_rule(saved.id)
+            .expect("delete pricing rule");
+        assert!(database.list_pricing_rules().expect("pricing rules").is_empty());
+    }
+
+    #[test]
+    fn balance_snapshot_round_trip() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "balance-snapshot");
+
+        let saved = database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: None,
+                station_id: station.id.clone(),
+                station_key_id: None,
+                scope: "station".to_string(),
+                value: Some(12.5),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                low_balance_threshold: Some(5.0),
+                status: "normal".to_string(),
+                source: "collector".to_string(),
+                confidence: 0.8,
+                collected_at: Some("1000".to_string()),
+            })
+            .expect("save");
+
+        let rows = database.list_balance_snapshots().expect("balances");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, saved.id);
+        assert_eq!(rows[0].value, Some(12.5));
+        assert_eq!(rows[0].status, "normal");
     }
 }

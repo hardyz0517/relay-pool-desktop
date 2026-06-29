@@ -1,4 +1,4 @@
-export type RoutingPolicy = "priority_fallback" | "stable_first" | "backup_only";
+export type RoutingPolicy = "priority_fallback" | "stable_first" | "backup_only" | "cheap_first";
 export type RouteEndpointKind = "models" | "chat_completions" | "responses" | "embeddings";
 
 export type StationKeyCapabilities = {
@@ -71,6 +71,13 @@ export type RouteCandidateExplanation = {
   reasons: string[];
   rejectionReasons: string[];
   mappedModel: string | null;
+  pricingRuleId: string | null;
+  estimatedInputPrice: number | null;
+  estimatedOutputPrice: number | null;
+  priceCurrency: string | null;
+  balanceStatus: string | null;
+  balanceValue: number | null;
+  economicReasons: string[];
 };
 
 export type RouteSimulationResult = {

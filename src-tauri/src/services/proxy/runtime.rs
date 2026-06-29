@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 use crate::{
     models::{
         proxy::{CreateRequestLogInput, ProxyStatus},
+        pricing::RequestCostEstimate,
         routing::{RouteCandidateExplanation, RouteEndpointKind, RoutingPolicy},
     },
     services::{
@@ -78,6 +79,7 @@ struct ProxyResponse {
     route_policy: Option<String>,
     route_reason: Option<String>,
     rejected_candidates_json: Option<String>,
+    request_cost: RequestCostEstimate,
 }
 
 enum ProxyResponseBody {
@@ -283,7 +285,7 @@ fn handle_connection(mut stream: TcpStream, context: &ProxyServerContext) {
         ),
     };
     let finished_at = now_string();
-    let _ = context.database.insert_request_log(CreateRequestLogInput {
+        let _ = context.database.insert_request_log(CreateRequestLogInput {
         method,
         path,
         model: response.model.clone(),
@@ -297,6 +299,16 @@ fn handle_connection(mut stream: TcpStream, context: &ProxyServerContext) {
         route_policy: response.route_policy.clone(),
         route_reason: response.route_reason.clone(),
         rejected_candidates_json: response.rejected_candidates_json.clone(),
+        prompt_tokens: response.request_cost.prompt_tokens,
+        completion_tokens: response.request_cost.completion_tokens,
+        total_tokens: response.request_cost.total_tokens,
+        estimated_input_cost: response.request_cost.estimated_input_cost,
+        estimated_output_cost: response.request_cost.estimated_output_cost,
+        estimated_total_cost: response.request_cost.estimated_total_cost,
+        cost_currency: response.request_cost.cost_currency.clone(),
+        pricing_rule_id: response.request_cost.pricing_rule_id.clone(),
+        pricing_source: response.request_cost.pricing_source.clone(),
+        cost_status: Some(response.request_cost.cost_status.clone()),
         started_at,
         finished_at: Some(finished_at),
         duration_ms: Some(started.elapsed().as_millis() as i64),
@@ -434,6 +446,7 @@ fn aggregate_models_request(
         route_policy: None,
         route_reason: None,
         rejected_candidates_json: None,
+        request_cost: crate::services::pricing::request_cost_unknown(),
     }
 }
 
@@ -604,6 +617,7 @@ fn routing_policy_label(policy: &RoutingPolicy) -> &'static str {
         RoutingPolicy::PriorityFallback => "priority_fallback",
         RoutingPolicy::StableFirst => "stable_first",
         RoutingPolicy::BackupOnly => "backup_only",
+        RoutingPolicy::CheapFirst => "cheap_first",
     }
 }
 
@@ -812,7 +826,7 @@ fn forward_responses_with_fallback(
             Ok(response)
                 if response.status_code < 400 || !should_fallback(response.status_code) =>
             {
-                let response = response
+                let routed_response = response
                     .with_candidate(candidate)
                     .with_fallback_count(index as i64)
                     .with_request_meta(model.clone(), stream)
@@ -820,9 +834,9 @@ fn forward_responses_with_fallback(
                         route_context,
                         Some(candidate.station_key_id.as_str()),
                     ));
-                let status_label = response.status_label.clone();
+                let status_label = routed_response.status_label.clone();
                 let used_at = checked_at.clone();
-                if response.status_code < 400 {
+                if routed_response.status_code < 400 {
                     record_candidate_success(
                         context,
                         candidate,
@@ -837,10 +851,16 @@ fn forward_responses_with_fallback(
                         candidate,
                         &status_label,
                         &checked_at,
-                        &format!("上游返回 HTTP {}", response.status_code),
+                        &format!("上游返回 HTTP {}", routed_response.status_code),
                     );
                 }
-                return response;
+                let request_cost = extract_request_cost(
+                    context,
+                    candidate,
+                    &routed_response,
+                    false,
+                );
+                return routed_response.with_request_cost(request_cost);
             }
             Ok(response) => {
                 let error = format!("上游返回 HTTP {}", response.status_code);
@@ -939,6 +959,7 @@ fn render_responses_proxy_response(
         route_policy: response.route_policy,
         route_reason: response.route_reason,
         rejected_candidates_json: response.rejected_candidates_json,
+        request_cost: response.request_cost,
     }
 }
 
@@ -958,7 +979,7 @@ fn forward_with_fallback(
             Ok(response)
                 if response.status_code < 400 || !should_fallback(response.status_code) =>
             {
-                let response = response
+                let routed_response = response
                     .with_candidate(candidate)
                     .with_fallback_count(index as i64)
                     .with_request_meta(model.clone(), stream)
@@ -966,9 +987,9 @@ fn forward_with_fallback(
                         route_context,
                         Some(candidate.station_key_id.as_str()),
                     ));
-                let status_label = response.status_label.clone();
+                let status_label = routed_response.status_label.clone();
                 let used_at = checked_at.clone();
-                if response.status_code < 400 {
+                if routed_response.status_code < 400 {
                     record_candidate_success(
                         context,
                         candidate,
@@ -983,10 +1004,16 @@ fn forward_with_fallback(
                         candidate,
                         &status_label,
                         &checked_at,
-                        &format!("上游返回 HTTP {}", response.status_code),
+                        &format!("上游返回 HTTP {}", routed_response.status_code),
                     );
                 }
-                return response;
+                let request_cost = extract_request_cost(
+                    context,
+                    candidate,
+                    &routed_response,
+                    true,
+                );
+                return routed_response.with_request_cost(request_cost);
             }
             Ok(response) => {
                 let error = format!("上游返回 HTTP {}", response.status_code);
@@ -1078,6 +1105,7 @@ fn cors_preflight_response() -> ProxyResponse {
         route_policy: None,
         route_reason: None,
         rejected_candidates_json: None,
+        request_cost: crate::services::pricing::request_cost_unknown(),
     }
 }
 
@@ -1103,6 +1131,7 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
             route_policy: None,
             route_reason: None,
             rejected_candidates_json: None,
+            request_cost: crate::services::pricing::request_cost_unknown(),
         };
     }
     let body = response
@@ -1136,6 +1165,75 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
         route_policy: None,
         route_reason: None,
         rejected_candidates_json: None,
+        request_cost: crate::services::pricing::request_cost_unknown(),
+    }
+}
+
+fn extract_request_cost(
+    context: &ProxyServerContext,
+    candidate: &RouteCandidate,
+    response: &ProxyResponse,
+    stream: bool,
+) -> RequestCostEstimate {
+    if stream {
+        return crate::services::pricing::request_cost_unknown();
+    }
+    let Some(body) = response.body_bytes() else {
+        return crate::services::pricing::request_cost_unknown();
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        return crate::services::pricing::request_cost_unknown();
+    };
+    let usage = value.get("usage").cloned().unwrap_or(Value::Null);
+    let prompt_tokens = usage.get("prompt_tokens").and_then(Value::as_i64);
+    let completion_tokens = usage.get("completion_tokens").and_then(Value::as_i64);
+    let total_tokens = usage.get("total_tokens").and_then(Value::as_i64);
+    let Some(total_tokens) = total_tokens.or_else(|| {
+        prompt_tokens.zip(completion_tokens).map(|(prompt, completion)| prompt + completion)
+    }) else {
+        return crate::services::pricing::request_cost_unknown();
+    };
+    let economics = context
+        .database
+        .route_candidate_economics(candidate.station_key_id.clone())
+        .ok()
+        .flatten();
+    let pricing_rule_id = economics
+        .as_ref()
+        .and_then(|economics| economics.pricing_rule_id.clone());
+    let cost_currency = economics
+        .as_ref()
+        .and_then(|economics| economics.price_currency.clone());
+    let estimated_input_cost = economics
+        .as_ref()
+        .and_then(|economics| economics.estimated_input_price)
+        .map(|price| price * prompt_tokens.unwrap_or(0) as f64 / 1_000_000.0);
+    let estimated_output_cost = economics
+        .as_ref()
+        .and_then(|economics| economics.estimated_output_price)
+        .map(|price| price * completion_tokens.unwrap_or(0) as f64 / 1_000_000.0);
+    let estimated_total_cost = match (estimated_input_cost, estimated_output_cost) {
+        (Some(input), Some(output)) => Some(input + output),
+        (Some(input), None) => Some(input),
+        (None, Some(output)) => Some(output),
+        _ => None,
+    };
+
+    RequestCostEstimate {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens: Some(total_tokens),
+        estimated_input_cost,
+        estimated_output_cost,
+        estimated_total_cost,
+        cost_currency,
+        pricing_rule_id,
+        pricing_source: economics.as_ref().and_then(|economics| economics.pricing_source.clone()),
+        cost_status: if estimated_total_cost.is_some() {
+            "estimated".to_string()
+        } else {
+            "usage_only".to_string()
+        },
     }
 }
 
@@ -1165,6 +1263,7 @@ impl ProxyResponse {
             route_policy: None,
             route_reason: None,
             rejected_candidates_json: None,
+            request_cost: crate::services::pricing::request_cost_unknown(),
         }
     }
 
@@ -1190,6 +1289,11 @@ impl ProxyResponse {
         self.route_policy = Some(metadata.policy);
         self.route_reason = Some(metadata.reason);
         self.rejected_candidates_json = Some(metadata.rejected_candidates_json);
+        self
+    }
+
+    fn with_request_cost(mut self, request_cost: RequestCostEstimate) -> Self {
+        self.request_cost = request_cost;
         self
     }
 }
@@ -1361,6 +1465,7 @@ mod tests {
                 route_policy: None,
                 route_reason: None,
                 rejected_candidates_json: None,
+                request_cost: crate::services::pricing::request_cost_unknown(),
             };
             write_http_response(&mut server_stream, response).expect("write response");
         });
@@ -1418,8 +1523,31 @@ mod tests {
 
         let handle = thread::spawn(move || {
             let (mut server_stream, _) = upstream.accept().expect("accept upstream");
+            let _ = server_stream.set_read_timeout(Some(Duration::from_millis(200)));
             let mut buf = [0_u8; 2048];
-            let _ = server_stream.read(&mut buf);
+            let mut read = 0;
+            let deadline = std::time::Instant::now() + Duration::from_millis(200);
+            loop {
+                match server_stream.read(&mut buf[read..]) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        read += count;
+                        if read >= buf.len() {
+                            break;
+                        }
+                    }
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            || error.kind() == std::io::ErrorKind::TimedOut =>
+                    {
+                        if read > 0 || std::time::Instant::now() >= deadline {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("read upstream request: {error}"),
+                }
+            }
             let body = b"data: {\"choices\":[]}\n\ndata: [DONE]\n\n";
             let header = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
@@ -1482,8 +1610,37 @@ mod tests {
 
         let handle = thread::spawn(move || {
             let (mut server_stream, _) = upstream.accept().expect("accept upstream");
+            let _ = server_stream.set_read_timeout(Some(Duration::from_millis(1000)));
             let mut buf = [0_u8; 4096];
-            let read = server_stream.read(&mut buf).expect("read upstream request");
+            let mut read = 0;
+            let deadline = std::time::Instant::now() + Duration::from_millis(1000);
+            loop {
+                match server_stream.read(&mut buf[read..]) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        read += count;
+                        if read >= buf.len() {
+                            break;
+                        }
+                        if String::from_utf8_lossy(&buf[..read])
+                            .to_lowercase()
+                            .contains("\r\n\r\n")
+                        {
+                            break;
+                        }
+                    }
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            || error.kind() == std::io::ErrorKind::TimedOut =>
+                    {
+                        if read > 0 || std::time::Instant::now() >= deadline {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("read upstream request: {error}"),
+                }
+            }
             let request_text = String::from_utf8_lossy(&buf[..read]).to_lowercase();
             if !request_text.contains("accept: text/event-stream") {
                 let body = b"{\"error\":{\"message\":\"expected sse accept\"}}";
@@ -1825,8 +1982,31 @@ mod tests {
                 match listener.accept() {
                     Ok((mut server_stream, _)) => {
                         called_for_thread.store(true, Ordering::Relaxed);
+                        let _ = server_stream.set_read_timeout(Some(Duration::from_millis(200)));
                         let mut buf = [0_u8; 4096];
-                        let read = server_stream.read(&mut buf).expect("read upstream request");
+                        let mut read = 0;
+                        let deadline = std::time::Instant::now() + Duration::from_millis(200);
+                        loop {
+                            match server_stream.read(&mut buf[read..]) {
+                                Ok(0) => break,
+                                Ok(count) => {
+                                    read += count;
+                                    if read >= buf.len() {
+                                        break;
+                                    }
+                                }
+                                Err(error)
+                                    if error.kind() == std::io::ErrorKind::WouldBlock
+                                        || error.kind() == std::io::ErrorKind::TimedOut =>
+                                {
+                                    if read > 0 || std::time::Instant::now() >= deadline {
+                                        break;
+                                    }
+                                    thread::sleep(Duration::from_millis(5));
+                                }
+                                Err(error) => panic!("read upstream request: {error}"),
+                            }
+                        }
                         let request_text = String::from_utf8_lossy(&buf[..read]);
                         if expect_alias_model {
                             assert!(
@@ -1983,6 +2163,7 @@ mod tests {
                 route_policy: None,
                 route_reason: None,
                 rejected_candidates_json: None,
+                request_cost: crate::services::pricing::request_cost_unknown(),
             };
             write_http_response(&mut server_stream, response).expect("write response");
         });
