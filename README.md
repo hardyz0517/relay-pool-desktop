@@ -56,6 +56,8 @@ pnpm tauri:dev
 - P7 已完成价格 / 余额 / 成本层。
 - P8 聚焦安全与凭据治理，避免真实 API key、站点密码、token / cookie、prompt / response 和本地日志在数据库、UI 或导入导出路径中泄露。
 
+Security note: default exports and logs are metadata-only. Real keys, passwords, tokens, cookies, prompts, and responses are excluded from default export paths.
+
 ## 项目边界
 
 - 不加入账号、支付、云同步或多用户系统；

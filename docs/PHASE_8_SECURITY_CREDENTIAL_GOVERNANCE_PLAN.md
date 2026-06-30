@@ -8,6 +8,8 @@ P8 makes Relay Pool Desktop safe enough for long-term use with real Station Keys
 
 P8 introduces one SecretManager and one redaction boundary. Business modules keep owning their product behavior, but they no longer store, display, log, import, or export raw secrets directly.
 
+Import/export follows `docs/SECURITY_EXPORT_IMPORT.md`. P8 default exports never include raw secrets or encrypted secret payloads.
+
 ## Sensitive Data
 
 - Station Key API keys
