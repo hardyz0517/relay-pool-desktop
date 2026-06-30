@@ -7,11 +7,13 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            let secret_manager = services::secrets::SecretManager::initialize()?;
             let database = services::database::AppDatabase::initialize(app.handle())?;
             println!(
                 "Relay Pool Desktop database initialized at {}",
                 database.db_path().display()
             );
+            app.manage(secret_manager);
             app.manage(database);
             app.manage(services::capture::session::CaptureSessionStore::default());
             app.manage(services::proxy::runtime::ProxyRuntimeState::default());
