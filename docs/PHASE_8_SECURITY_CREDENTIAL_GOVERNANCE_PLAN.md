@@ -25,6 +25,10 @@ Import/export follows `docs/SECURITY_EXPORT_IMPORT.md`. P8 default exports never
 
 Secrets are encrypted before SQLite persistence. The app data encryption key is stored in the host OS keychain. SQLite stores ciphertext, nonce, masked value, hash, and metadata.
 
+## Local Proxy Exposure
+
+The local OpenAI-compatible proxy remains bound to `127.0.0.1`. CORS support is limited to local OpenAI-compatible clients and does not expose Tauri management commands or internal control headers.
+
 ## Non-Goals
 
 - no new route strategy

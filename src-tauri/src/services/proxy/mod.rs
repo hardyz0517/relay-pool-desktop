@@ -114,6 +114,18 @@ mod tests {
     }
 
     #[test]
+    fn openai_error_redacts_secret_like_message() {
+        let value = openai_error(
+            "upstream said Bearer sk-p8-secret-plaintext-canary",
+            "upstream_error",
+        );
+        let text = serde_json::to_string(&value).expect("json");
+
+        assert!(!text.contains("sk-p8-secret-plaintext-canary"));
+        assert!(text.contains("[REDACTED]"));
+    }
+
+    #[test]
     fn redact_error_message_masks_key_like_content() {
         let message = "upstream rejected sk-real-secret-value";
 

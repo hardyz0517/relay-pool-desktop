@@ -1457,6 +1457,15 @@ mod tests {
     };
 
     #[test]
+    fn proxy_status_reports_localhost_bind_only() {
+        let proxy = ProxyRuntimeState::default();
+        let status = proxy.status(8787);
+
+        assert_eq!(status.bind_addr, "127.0.0.1");
+        assert_ne!(status.bind_addr, "0.0.0.0");
+    }
+
+    #[test]
     fn write_http_response_supports_streamed_bodies_without_content_length() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
         let port = listener.local_addr().expect("local addr").port();
@@ -2200,5 +2209,6 @@ mod tests {
         assert!(text.contains("access-control-allow-origin: *"));
         assert!(text.contains("access-control-allow-methods: GET, POST, OPTIONS"));
         assert!(text.contains("access-control-allow-headers: authorization, content-type, accept"));
+        assert!(!text.to_lowercase().contains("x-tauri"));
     }
 }
