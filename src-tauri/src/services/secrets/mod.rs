@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod crypto;
 pub mod keychain;
 pub mod mask;

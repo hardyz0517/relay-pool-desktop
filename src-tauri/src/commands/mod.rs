@@ -11,6 +11,7 @@ use crate::{
             ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyCapabilities,
             StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
         },
+        secrets::{SecretMigrationReport, SecretScanFinding},
         settings::{AppSettings, UpdateSettingsInput},
         station_keys::KeyPoolItem,
         station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
@@ -133,6 +134,20 @@ pub fn list_request_logs(database: State<'_, AppDatabase>) -> Result<Vec<Request
 #[tauri::command]
 pub fn clear_request_logs(database: State<'_, AppDatabase>) -> Result<(), String> {
     database.clear_request_logs()
+}
+
+#[tauri::command]
+pub fn get_secret_migration_status(
+    database: State<'_, AppDatabase>,
+) -> Result<SecretMigrationReport, String> {
+    database.secret_migration_status()
+}
+
+#[tauri::command]
+pub fn run_secret_safety_scan(
+    database: State<'_, AppDatabase>,
+) -> Result<Vec<SecretScanFinding>, String> {
+    database.run_secret_safety_scan()
 }
 
 #[tauri::command]

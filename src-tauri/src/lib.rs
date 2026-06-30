@@ -34,6 +34,8 @@ pub fn run() {
             commands::restart_local_proxy,
             commands::list_request_logs,
             commands::clear_request_logs,
+            commands::get_secret_migration_status,
+            commands::run_secret_safety_scan,
             commands::list_station_keys,
             commands::create_station_key,
             commands::update_station_key,

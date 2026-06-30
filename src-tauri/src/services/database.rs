@@ -22,7 +22,7 @@ use crate::models::{
         StationKeyCapabilities, StationKeyHealth, UpdateStationKeyCapabilitiesInput,
         UpsertModelAliasInput,
     },
-    secrets::SecretMigrationReport,
+    secrets::{SecretMigrationReport, SecretScanFinding},
     settings::{AppSettings, UpdateSettingsInput},
     station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, UpdateStationInput},
@@ -132,6 +132,11 @@ impl AppDatabase {
     pub fn secret_migration_status(&self) -> Result<SecretMigrationReport, String> {
         let connection = self.connection()?;
         secret_migration_status_from_connection(&connection)
+    }
+
+    pub fn run_secret_safety_scan(&self) -> Result<Vec<SecretScanFinding>, String> {
+        let connection = self.connection()?;
+        run_secret_safety_scan_in_connection(&connection)
     }
 
     #[cfg(test)]
@@ -1224,6 +1229,50 @@ fn secret_migration_count(connection: &Connection, status: &str) -> Result<i64, 
             |row| row.get(0),
         )
         .map_err(|error| format!("统计凭据迁移状态失败: {error}"))
+}
+
+fn run_secret_safety_scan_in_connection(
+    connection: &Connection,
+) -> Result<Vec<SecretScanFinding>, String> {
+    let patterns = crate::services::secrets::audit::canary_patterns();
+    let targets = [
+        ("stations", "api_key"),
+        ("station_keys", "api_key"),
+        ("station_credentials", "login_password"),
+        ("collector_snapshots", "summary_json"),
+        ("collector_snapshots", "normalized_json"),
+        ("collector_snapshots", "raw_json_redacted"),
+        ("collector_snapshots", "error_message"),
+        ("request_logs", "error_message"),
+        ("request_logs", "route_reason"),
+        ("request_logs", "rejected_candidates_json"),
+    ];
+    let mut findings = Vec::new();
+
+    for (table_name, column_name) in targets {
+        let sql = format!("SELECT {column_name} FROM {table_name} WHERE {column_name} IS NOT NULL");
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| format!("准备安全扫描失败: {error}"))?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, Option<String>>(0))
+            .map_err(|error| format!("执行安全扫描失败: {error}"))?;
+
+        for row in rows {
+            let value = row
+                .map_err(|error| format!("读取安全扫描结果失败: {error}"))?
+                .unwrap_or_default();
+            if patterns.iter().any(|pattern| value.contains(pattern)) {
+                findings.push(crate::services::secrets::audit::finding(
+                    table_name,
+                    column_name,
+                    &value,
+                ));
+            }
+        }
+    }
+
+    Ok(findings)
 }
 
 fn migrate_plaintext_secrets_in_connection(
@@ -4475,6 +4524,42 @@ mod tests {
         assert!(!serialized.contains("p8-password-canary"));
         assert!(!serialized.contains("rpd_session=p8-cookie-canary"));
         assert!(!serialized.contains("p8-token-canary"));
+    }
+
+    #[test]
+    fn secret_safety_scan_finds_plaintext_canary() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scan-canary");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "scan canary".to_string(),
+                api_key: "sk-not-the-canary".to_string(),
+                enabled: true,
+                priority: Some(0),
+                group_name: None,
+                tier_label: None,
+                note: None,
+            })
+            .expect("key");
+        {
+            let connection = database.connection().expect("connection");
+            connection
+                .execute(
+                    "UPDATE station_keys SET api_key = ?1 WHERE id = ?2",
+                    params!["sk-p8-secret-plaintext-canary", key.id],
+                )
+                .expect("write canary");
+        }
+
+        let findings = database.run_secret_safety_scan().expect("scan");
+
+        assert!(findings.iter().any(|finding| {
+            finding.table_name == "station_keys" && finding.column_name == "api_key"
+        }));
+        assert!(findings
+            .iter()
+            .all(|finding| !finding.evidence.contains("canary")));
     }
 
     #[test]
