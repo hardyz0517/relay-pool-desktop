@@ -22,9 +22,14 @@ use crate::models::{
         StationKeyCapabilities, StationKeyHealth, UpdateStationKeyCapabilitiesInput,
         UpsertModelAliasInput,
     },
+    secrets::SecretMigrationReport,
     settings::{AppSettings, UpdateSettingsInput},
     station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, UpdateStationInput},
+};
+use crate::services::secrets::{
+    crypto::{decrypt_secret, encrypt_secret, EncryptedPayload},
+    mask::mask_secret as mask_sensitive_value,
 };
 use crate::services::proxy::{
     router::{select_route_candidates, RouteCandidateEconomics, RichRouteCandidate, RouteRequest},
@@ -55,6 +60,8 @@ impl AppDatabase {
 
         initialize_schema(&connection)
             .map_err(|error| format!("初始化 SQLite schema 失败: {error}"))?;
+        migrate_secret_schema(&connection)
+            .map_err(|error| format!("迁移凭据安全字段失败: {error}"))?;
         seed_default_settings(&connection)
             .map_err(|error| format!("初始化默认设置失败: {error}"))?;
         migrate_default_station_keys(&connection)
@@ -80,6 +87,8 @@ impl AppDatabase {
             .map_err(|error| format!("无法打开内存 SQLite 数据库: {error}"))?;
         initialize_schema(&connection)
             .map_err(|error| format!("初始化 SQLite schema 失败: {error}"))?;
+        migrate_secret_schema(&connection)
+            .map_err(|error| format!("迁移凭据安全字段失败: {error}"))?;
         seed_default_settings(&connection)
             .map_err(|error| format!("初始化默认设置失败: {error}"))?;
         migrate_default_station_keys(&connection)
@@ -107,6 +116,41 @@ impl AppDatabase {
 
     pub fn db_path(&self) -> &PathBuf {
         &self.db_path
+    }
+
+    pub fn migrate_plaintext_secrets(
+        &self,
+        data_key: &[u8; 32],
+    ) -> Result<SecretMigrationReport, String> {
+        let connection = self.connection()?;
+        migrate_plaintext_secrets_in_connection(&connection, data_key)
+    }
+
+    #[cfg(test)]
+    pub fn migrate_plaintext_secrets_for_tests(
+        &self,
+        data_key: &[u8; 32],
+    ) -> Result<SecretMigrationReport, String> {
+        self.migrate_plaintext_secrets(data_key)
+    }
+
+    #[cfg(test)]
+    pub fn proxy_route_candidates_with_data_key_for_tests(
+        &self,
+        data_key: &[u8; 32],
+    ) -> Result<Vec<RouteCandidate>, String> {
+        let connection = self.connection()?;
+        proxy_route_candidates_from_connection_with_data_key(&connection, Some(data_key))
+    }
+
+    #[cfg(test)]
+    pub fn resolve_station_key_secret_for_tests(
+        &self,
+        data_key: &[u8; 32],
+        station_key_id: &str,
+    ) -> Result<String, String> {
+        let connection = self.connection()?;
+        resolve_station_key_api_key(&connection, data_key, station_key_id)
     }
 
     pub fn list_stations(&self) -> Result<Vec<Station>, String> {
@@ -907,8 +951,467 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             updated_at TEXT NOT NULL,
             FOREIGN KEY(station_key_id) REFERENCES station_keys(id) ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS secrets (
+            id TEXT PRIMARY KEY,
+            scope TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            ciphertext TEXT NOT NULL,
+            nonce TEXT NOT NULL,
+            aad TEXT NOT NULL,
+            masked_value TEXT NOT NULL,
+            value_hash TEXT NOT NULL,
+            encryption_version INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_secrets_owner_kind
+            ON secrets(owner_id, kind);
+
+        CREATE TABLE IF NOT EXISTS secret_migration_events (
+            id TEXT PRIMARY KEY,
+            owner_table TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
+            secret_kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error_message TEXT,
+            created_at TEXT NOT NULL
+        );
         ",
     )
+}
+
+fn migrate_secret_schema(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS secrets (
+            id TEXT PRIMARY KEY,
+            scope TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            ciphertext TEXT NOT NULL,
+            nonce TEXT NOT NULL,
+            aad TEXT NOT NULL,
+            masked_value TEXT NOT NULL,
+            value_hash TEXT NOT NULL,
+            encryption_version INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_secrets_owner_kind
+            ON secrets(owner_id, kind);
+
+        CREATE TABLE IF NOT EXISTS secret_migration_events (
+            id TEXT PRIMARY KEY,
+            owner_table TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
+            secret_kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error_message TEXT,
+            created_at TEXT NOT NULL
+        );
+        ",
+    )?;
+    add_column_if_missing(connection, "station_keys", "api_key_secret_id", "TEXT")?;
+    add_column_if_missing(connection, "stations", "api_key_secret_id", "TEXT")?;
+    add_column_if_missing(
+        connection,
+        "station_credentials",
+        "login_password_secret_id",
+        "TEXT",
+    )?;
+    Ok(())
+}
+
+fn add_column_if_missing(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    column_type: &str,
+) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if !rows.iter().any(|existing| existing == column) {
+        connection.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {column_type}"),
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn secret_aad(scope: &str, owner_id: &str, kind: &str) -> String {
+    format!("{scope}:{owner_id}:{kind}")
+}
+
+fn upsert_secret_in_connection(
+    connection: &Connection,
+    data_key: &[u8; 32],
+    scope: &str,
+    owner_id: &str,
+    kind: &str,
+    plaintext: &str,
+) -> Result<String, String> {
+    let existing_id: Option<String> = connection
+        .query_row(
+            "SELECT id FROM secrets WHERE owner_id = ?1 AND kind = ?2 ORDER BY updated_at DESC LIMIT 1",
+            params![owner_id, kind],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取已有加密凭据失败: {error}"))?;
+    let id = existing_id.unwrap_or_else(|| generate_id("secret"));
+    let now = now_string();
+    let aad = secret_aad(scope, owner_id, kind);
+    let encrypted = encrypt_secret(data_key, plaintext, &aad)?;
+    let masked = mask_sensitive_value(plaintext);
+
+    connection
+        .execute(
+            "INSERT INTO secrets (
+                id, scope, owner_id, kind, ciphertext, nonce, aad, masked_value,
+                value_hash, encryption_version, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11)
+             ON CONFLICT(id) DO UPDATE SET
+                ciphertext = excluded.ciphertext,
+                nonce = excluded.nonce,
+                aad = excluded.aad,
+                masked_value = excluded.masked_value,
+                value_hash = excluded.value_hash,
+                encryption_version = excluded.encryption_version,
+                updated_at = excluded.updated_at",
+            params![
+                id,
+                scope,
+                owner_id,
+                kind,
+                encrypted.ciphertext,
+                encrypted.nonce,
+                encrypted.aad,
+                masked,
+                encrypted.value_hash,
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("保存加密凭据失败: {error}"))?;
+
+    Ok(id)
+}
+
+fn secret_payload_by_id(
+    connection: &Connection,
+    secret_id: &str,
+) -> Result<EncryptedPayload, String> {
+    connection
+        .query_row(
+            "SELECT ciphertext, nonce, aad, value_hash FROM secrets WHERE id = ?1",
+            params![secret_id],
+            |row| {
+                Ok(EncryptedPayload {
+                    ciphertext: row.get(0)?,
+                    nonce: row.get(1)?,
+                    aad: row.get(2)?,
+                    value_hash: row.get(3)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| format!("读取加密凭据失败: {error}"))?
+        .ok_or_else(|| "加密凭据不存在".to_string())
+}
+
+fn decrypt_secret_by_id(
+    connection: &Connection,
+    data_key: &[u8; 32],
+    secret_id: &str,
+) -> Result<String, String> {
+    let payload = secret_payload_by_id(connection, secret_id)?;
+    decrypt_secret(data_key, &payload)
+}
+
+fn resolve_station_key_api_key(
+    connection: &Connection,
+    data_key: &[u8; 32],
+    station_key_id: &str,
+) -> Result<String, String> {
+    let (api_key, secret_id): (String, Option<String>) = connection
+        .query_row(
+            "SELECT api_key, api_key_secret_id FROM station_keys WHERE id = ?1",
+            params![station_key_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("读取 Station Key 凭据失败: {error}"))?
+        .ok_or_else(|| "Station Key 不存在，无法读取凭据".to_string())?;
+
+    if let Some(secret_id) = secret_id {
+        return decrypt_secret_by_id(connection, data_key, &secret_id);
+    }
+
+    let api_key = api_key.trim().to_string();
+    if api_key.is_empty() {
+        Err("Station Key 没有可用 API Key".to_string())
+    } else {
+        Ok(api_key)
+    }
+}
+
+fn record_secret_migration_event(
+    connection: &Connection,
+    owner_table: &str,
+    owner_id: &str,
+    secret_kind: &str,
+    status: &str,
+    error_message: Option<String>,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT INTO secret_migration_events (
+                id, owner_table, owner_id, secret_kind, status, error_message, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                generate_id("secret_migration"),
+                owner_table,
+                owner_id,
+                secret_kind,
+                status,
+                normalize_optional_string(error_message),
+                now_string(),
+            ],
+        )
+        .map_err(|error| format!("记录凭据迁移事件失败: {error}"))?;
+    Ok(())
+}
+
+fn migrate_plaintext_secrets_in_connection(
+    connection: &Connection,
+    data_key: &[u8; 32],
+) -> Result<SecretMigrationReport, String> {
+    let mut migrated_count = 0_i64;
+    let mut skipped_count = 0_i64;
+    let mut failed_count = 0_i64;
+    let mut failures = Vec::new();
+
+    migrate_plaintext_api_key_rows(
+        connection,
+        data_key,
+        "station_keys",
+        "station_key",
+        "api_key",
+        "api_key_secret_id",
+        &mut migrated_count,
+        &mut skipped_count,
+        &mut failed_count,
+        &mut failures,
+    )?;
+    migrate_plaintext_api_key_rows(
+        connection,
+        data_key,
+        "stations",
+        "station",
+        "api_key",
+        "api_key_secret_id",
+        &mut migrated_count,
+        &mut skipped_count,
+        &mut failed_count,
+        &mut failures,
+    )?;
+    migrate_plaintext_password_rows(
+        connection,
+        data_key,
+        &mut migrated_count,
+        &mut skipped_count,
+        &mut failed_count,
+        &mut failures,
+    )?;
+
+    Ok(SecretMigrationReport {
+        migrated_count,
+        skipped_count,
+        failed_count,
+        failures,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn migrate_plaintext_api_key_rows(
+    connection: &Connection,
+    data_key: &[u8; 32],
+    table: &str,
+    scope: &str,
+    plaintext_column: &str,
+    secret_column: &str,
+    migrated_count: &mut i64,
+    skipped_count: &mut i64,
+    failed_count: &mut i64,
+    failures: &mut Vec<String>,
+) -> Result<(), String> {
+    let sql = format!("SELECT id, {plaintext_column}, {secret_column} FROM {table}");
+    let rows = {
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| format!("准备凭据迁移失败: {error}"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .map_err(|error| format!("查询凭据迁移数据失败: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("解析凭据迁移数据失败: {error}"))?;
+        rows
+    };
+
+    for (owner_id, plaintext, existing_secret_id) in rows {
+        if plaintext.trim().is_empty() {
+            *skipped_count += 1;
+            continue;
+        }
+        if existing_secret_id.is_some() {
+            *skipped_count += 1;
+            continue;
+        }
+
+        match upsert_secret_in_connection(
+            connection,
+            data_key,
+            scope,
+            &owner_id,
+            "api_key",
+            plaintext.trim(),
+        ) {
+            Ok(secret_id) => {
+                let update_sql = format!(
+                    "UPDATE {table} SET {secret_column} = ?1, {plaintext_column} = '', updated_at = ?2 WHERE id = ?3"
+                );
+                connection
+                    .execute(&update_sql, params![secret_id, now_string(), owner_id])
+                    .map_err(|error| format!("清理明文凭据失败: {error}"))?;
+                record_secret_migration_event(
+                    connection,
+                    table,
+                    &owner_id,
+                    "api_key",
+                    "migrated",
+                    None,
+                )?;
+                *migrated_count += 1;
+            }
+            Err(error) => {
+                let message = format!("{table}/{owner_id}: {error}");
+                record_secret_migration_event(
+                    connection,
+                    table,
+                    &owner_id,
+                    "api_key",
+                    "failed",
+                    Some(error),
+                )?;
+                failures.push(message);
+                *failed_count += 1;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn migrate_plaintext_password_rows(
+    connection: &Connection,
+    data_key: &[u8; 32],
+    migrated_count: &mut i64,
+    skipped_count: &mut i64,
+    failed_count: &mut i64,
+    failures: &mut Vec<String>,
+) -> Result<(), String> {
+    let rows = {
+        let mut statement = connection
+            .prepare(
+                "SELECT station_id, login_password, login_password_secret_id FROM station_credentials",
+            )
+            .map_err(|error| format!("准备登录密码迁移失败: {error}"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .map_err(|error| format!("查询登录密码迁移数据失败: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("解析登录密码迁移数据失败: {error}"))?;
+        rows
+    };
+
+    for (station_id, plaintext, existing_secret_id) in rows {
+        let plaintext = plaintext.unwrap_or_default();
+        if plaintext.trim().is_empty() {
+            *skipped_count += 1;
+            continue;
+        }
+        if existing_secret_id.is_some() {
+            *skipped_count += 1;
+            continue;
+        }
+
+        match upsert_secret_in_connection(
+            connection,
+            data_key,
+            "station",
+            &station_id,
+            "login_password",
+            plaintext.trim(),
+        ) {
+            Ok(secret_id) => {
+                connection
+                    .execute(
+                        "UPDATE station_credentials
+                            SET login_password_secret_id = ?1,
+                                login_password = NULL,
+                                updated_at = ?2
+                          WHERE station_id = ?3",
+                        params![secret_id, now_string(), station_id],
+                    )
+                    .map_err(|error| format!("清理明文登录密码失败: {error}"))?;
+                record_secret_migration_event(
+                    connection,
+                    "station_credentials",
+                    &station_id,
+                    "login_password",
+                    "migrated",
+                    None,
+                )?;
+                *migrated_count += 1;
+            }
+            Err(error) => {
+                let message = format!("station_credentials/{station_id}: {error}");
+                record_secret_migration_event(
+                    connection,
+                    "station_credentials",
+                    &station_id,
+                    "login_password",
+                    "failed",
+                    Some(error),
+                )?;
+                failures.push(message);
+                *failed_count += 1;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn seed_default_settings(connection: &Connection) -> rusqlite::Result<()> {
@@ -933,14 +1436,18 @@ fn seed_default_settings(connection: &Connection) -> rusqlite::Result<()> {
 
 fn row_to_station(row: &rusqlite::Row<'_>) -> rusqlite::Result<Station> {
     let api_key: String = row.get(4)?;
+    let secret_masked: Option<String> = row.get(21)?;
+    let api_key_secret_id: Option<String> = row.get(22)?;
+    let api_key_masked = secret_masked.unwrap_or_else(|| mask_secret(&api_key));
+    let api_key_present = api_key_secret_id.is_some() || !api_key.trim().is_empty();
 
     Ok(Station {
         id: row.get(0)?,
         name: row.get(1)?,
         station_type: row.get(2)?,
         base_url: row.get(3)?,
-        api_key_masked: mask_secret(&api_key),
-        api_key_present: !api_key.is_empty(),
+        api_key_masked,
+        api_key_present,
         key_count: row.get(7)?,
         enabled: i64_to_bool(row.get(8)?),
         priority: row.get(9)?,
@@ -967,7 +1474,9 @@ fn list_stations_from_connection(connection: &Connection) -> Result<Vec<Station>
                     enabled, priority,
                     credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
                     status, latency_ms, last_checked_at, last_pricing_fetched_at,
-                    note, created_at, updated_at
+                    note, created_at, updated_at,
+                    (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id),
+                    api_key_secret_id
                FROM stations
               ORDER BY priority ASC, created_at ASC",
         )
@@ -991,7 +1500,9 @@ fn station_by_id(connection: &Connection, id: &str) -> Result<Station, String> {
                     enabled, priority,
                     credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
                     status, latency_ms, last_checked_at, last_pricing_fetched_at,
-                    note, created_at, updated_at
+                    note, created_at, updated_at,
+                    (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id),
+                    api_key_secret_id
                FROM stations
               WHERE id = ?1",
             params![id],
@@ -1210,13 +1721,17 @@ fn migrate_default_station_keys(connection: &Connection) -> rusqlite::Result<()>
 
 fn row_to_station_key(row: &rusqlite::Row<'_>) -> rusqlite::Result<StationKey> {
     let api_key: String = row.get(3)?;
+    let secret_masked: Option<String> = row.get(14)?;
+    let api_key_secret_id: Option<String> = row.get(15)?;
+    let api_key_masked = secret_masked.unwrap_or_else(|| mask_secret(&api_key));
+    let api_key_present = api_key_secret_id.is_some() || !api_key.trim().is_empty();
 
     Ok(StationKey {
         id: row.get(0)?,
         station_id: row.get(1)?,
         name: row.get(2)?,
-        api_key_masked: mask_secret(&api_key),
-        api_key_present: !api_key.trim().is_empty(),
+        api_key_masked,
+        api_key_present,
         enabled: i64_to_bool(row.get(4)?),
         priority: row.get(5)?,
         group_name: row.get(6)?,
@@ -1237,7 +1752,9 @@ fn list_station_keys_from_connection(
     let mut statement = connection
         .prepare(
             "SELECT id, station_id, name, api_key, enabled, priority, group_name, tier_label,
-                    status, last_checked_at, last_used_at, note, created_at, updated_at
+                    status, last_checked_at, last_used_at, note, created_at, updated_at,
+                    (SELECT masked_value FROM secrets WHERE secrets.id = station_keys.api_key_secret_id),
+                    api_key_secret_id
                FROM station_keys
               WHERE station_id = ?1
               ORDER BY priority ASC, created_at ASC",
@@ -1265,6 +1782,8 @@ fn list_key_pool_items_from_connection(
                 s.base_url,
                 k.name,
                 k.api_key,
+                (SELECT masked_value FROM secrets WHERE secrets.id = k.api_key_secret_id),
+                k.api_key_secret_id,
                 k.enabled,
                 k.priority,
                 k.group_name,
@@ -1303,18 +1822,22 @@ fn list_key_pool_items_from_connection(
     let rows = statement
         .query_map([], |row| {
             let api_key: String = row.get(6)?;
-            let supports_chat = i64_to_bool(row.get(17)?);
-            let supports_responses = i64_to_bool(row.get(18)?);
-            let supports_embeddings = i64_to_bool(row.get(19)?);
-            let supports_stream = i64_to_bool(row.get(20)?);
-            let supports_tools = i64_to_bool(row.get(21)?);
-            let supports_vision = i64_to_bool(row.get(22)?);
-            let supports_reasoning = i64_to_bool(row.get(23)?);
-            let allowlist = parse_json_string_list(row.get::<_, String>(24)?.as_str());
-            let blocklist = parse_json_string_list(row.get::<_, String>(25)?.as_str());
-            let preferred_models = parse_json_string_list(row.get::<_, String>(26)?.as_str());
-            let success_count = row.get::<_, Option<i64>>(29)?.unwrap_or(0);
-            let failure_count = row.get::<_, Option<i64>>(30)?.unwrap_or(0);
+            let secret_masked: Option<String> = row.get(7)?;
+            let api_key_secret_id: Option<String> = row.get(8)?;
+            let api_key_masked = secret_masked.unwrap_or_else(|| mask_secret(&api_key));
+            let api_key_present = api_key_secret_id.is_some() || !api_key.trim().is_empty();
+            let supports_chat = i64_to_bool(row.get(19)?);
+            let supports_responses = i64_to_bool(row.get(20)?);
+            let supports_embeddings = i64_to_bool(row.get(21)?);
+            let supports_stream = i64_to_bool(row.get(22)?);
+            let supports_tools = i64_to_bool(row.get(23)?);
+            let supports_vision = i64_to_bool(row.get(24)?);
+            let supports_reasoning = i64_to_bool(row.get(25)?);
+            let allowlist = parse_json_string_list(row.get::<_, String>(26)?.as_str());
+            let blocklist = parse_json_string_list(row.get::<_, String>(27)?.as_str());
+            let preferred_models = parse_json_string_list(row.get::<_, String>(28)?.as_str());
+            let success_count = row.get::<_, Option<i64>>(31)?.unwrap_or(0);
+            let failure_count = row.get::<_, Option<i64>>(32)?.unwrap_or(0);
             Ok(KeyPoolItem {
                 id: row.get(0)?,
                 station_id: row.get(1)?,
@@ -1322,16 +1845,16 @@ fn list_key_pool_items_from_connection(
                 station_type: row.get(3)?,
                 station_base_url: row.get(4)?,
                 name: row.get(5)?,
-                api_key_masked: mask_secret(&api_key),
-                api_key_present: !api_key.trim().is_empty(),
-                enabled: i64_to_bool(row.get(7)?),
-                priority: row.get(8)?,
-                group_name: row.get(9)?,
-                tier_label: row.get(10)?,
-                status: row.get(11)?,
-                last_checked_at: row.get(12)?,
-                last_used_at: row.get(13)?,
-                note: row.get(14)?,
+                api_key_masked,
+                api_key_present,
+                enabled: i64_to_bool(row.get(9)?),
+                priority: row.get(10)?,
+                group_name: row.get(11)?,
+                tier_label: row.get(12)?,
+                status: row.get(13)?,
+                last_checked_at: row.get(14)?,
+                last_used_at: row.get(15)?,
+                note: row.get(16)?,
                 capability_summary: summarize_capabilities(
                     supports_chat,
                     supports_responses,
@@ -1346,14 +1869,14 @@ fn list_key_pool_items_from_connection(
                     blocklist.len(),
                     preferred_models.len(),
                 ),
-                only_use_as_backup: i64_to_bool(row.get(27)?),
-                cooldown_until: row.get(28)?,
+                only_use_as_backup: i64_to_bool(row.get(29)?),
+                cooldown_until: row.get(30)?,
                 success_rate: success_rate(success_count, failure_count),
-                avg_latency_ms: row.get(31)?,
-                consecutive_failures: row.get(32)?,
-                last_error_summary: row.get(33)?,
-                created_at: row.get(15)?,
-                updated_at: row.get(16)?,
+                avg_latency_ms: row.get(33)?,
+                consecutive_failures: row.get(34)?,
+                last_error_summary: row.get(35)?,
+                created_at: row.get(17)?,
+                updated_at: row.get(18)?,
             })
         })
         .map_err(|error| format!("查询 Key 池失败: {error}"))?
@@ -1776,32 +2299,61 @@ fn trim_error_summary(value: &str) -> String {
 fn proxy_route_candidates_from_connection(
     connection: &Connection,
 ) -> Result<Vec<RouteCandidate>, String> {
+    proxy_route_candidates_from_connection_with_data_key(connection, None)
+}
+
+fn proxy_route_candidates_from_connection_with_data_key(
+    connection: &Connection,
+    data_key: Option<&[u8; 32]>,
+) -> Result<Vec<RouteCandidate>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT k.id, k.station_id, s.base_url, k.api_key, s.upstream_api_format, k.priority
+            "SELECT k.id, k.station_id, s.base_url, k.api_key, k.api_key_secret_id,
+                    s.upstream_api_format, k.priority
                FROM station_keys k
                JOIN stations s ON s.id = k.station_id
               WHERE k.enabled = 1
                 AND s.enabled = 1
-                AND TRIM(k.api_key) != ''
+                AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
               ORDER BY k.priority ASC, k.created_at ASC",
         )
         .map_err(|error| format!("读取 Key 池候选失败: {error}"))?;
     let rows = statement
         .query_map([], |row| {
+            let station_key_id: String = row.get(0)?;
+            let api_key: String = row.get(3)?;
             Ok(RouteCandidate {
-                station_key_id: row.get(0)?,
+                station_key_id,
                 station_id: row.get(1)?,
                 upstream_base_url: row.get(2)?,
-                api_key: row.get(3)?,
-                upstream_api_format: parse_upstream_api_format(row.get::<_, String>(4)?),
-                priority: row.get(5)?,
+                api_key,
+                upstream_api_format: parse_upstream_api_format(row.get::<_, String>(5)?),
+                priority: row.get(6)?,
             })
         })
         .map_err(|error| format!("查询 Key 池候选失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析 Key 池候选失败: {error}"))?;
-    Ok(rows)
+
+    rows.into_iter()
+        .map(|candidate| {
+            if candidate.api_key.trim().is_empty() {
+                let Some(data_key) = data_key else {
+                    return Err("Station Key 已迁移为加密凭据，当前调用缺少解密密钥".to_string());
+                };
+                Ok(RouteCandidate {
+                    api_key: resolve_station_key_api_key(
+                        connection,
+                        data_key,
+                        &candidate.station_key_id,
+                    )?,
+                    ..candidate
+                })
+            } else {
+                Ok(candidate)
+            }
+        })
+        .collect()
 }
 
 fn proxy_rich_route_candidates_from_connection(
@@ -2653,7 +3205,9 @@ fn station_key_by_id(connection: &Connection, id: &str) -> Result<StationKey, St
     connection
         .query_row(
             "SELECT id, station_id, name, api_key, enabled, priority, group_name, tier_label,
-                    status, last_checked_at, last_used_at, note, created_at, updated_at
+                    status, last_checked_at, last_used_at, note, created_at, updated_at,
+                    (SELECT masked_value FROM secrets WHERE secrets.id = station_keys.api_key_secret_id),
+                    api_key_secret_id
                FROM station_keys
               WHERE id = ?1",
             params![id],
@@ -3495,6 +4049,88 @@ mod tests {
         assert_eq!(log.rejected_candidates_json.as_deref(), Some("[]"));
         let serialized = serde_json::to_string(&log).unwrap();
         assert!(!serialized.contains("\"prompt\":"));
+    }
+
+    #[test]
+    fn migrating_plain_station_key_moves_secret_out_of_plain_column() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "secret-migration");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "canary key".to_string(),
+                api_key: "sk-p8-secret-plaintext-canary".to_string(),
+                enabled: true,
+                priority: Some(0),
+                group_name: None,
+                tier_label: None,
+                note: None,
+            })
+            .expect("key");
+        let data_key = crate::services::secrets::crypto::generate_data_key();
+
+        let report = database
+            .migrate_plaintext_secrets_for_tests(&data_key)
+            .expect("migrate");
+
+        assert!(report.migrated_count >= 1);
+        assert_eq!(report.failed_count, 0);
+        let connection = database.connection().expect("connection");
+        let (plain, secret_id): (String, Option<String>) = connection
+            .query_row(
+                "SELECT api_key, api_key_secret_id FROM station_keys WHERE id = ?1",
+                params![key.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("row");
+        assert_eq!(plain, "");
+        assert!(secret_id.is_some());
+
+        let secret_id = secret_id.expect("secret id");
+        let (ciphertext, masked): (String, String) = connection
+            .query_row(
+                "SELECT ciphertext, masked_value FROM secrets WHERE id = ?1",
+                params![secret_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("secret");
+        assert!(!ciphertext.contains("sk-p8-secret-plaintext-canary"));
+        assert_eq!(masked, "sk-...nary");
+    }
+
+    #[test]
+    fn migrated_secret_can_be_decrypted_for_routing() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "secret-route");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "route key".to_string(),
+                api_key: "sk-p8-secret-plaintext-canary".to_string(),
+                enabled: true,
+                priority: Some(0),
+                group_name: None,
+                tier_label: None,
+                note: None,
+            })
+            .expect("key");
+        let data_key = crate::services::secrets::crypto::generate_data_key();
+        database
+            .migrate_plaintext_secrets_for_tests(&data_key)
+            .expect("migrate");
+
+        let decrypted = database
+            .resolve_station_key_secret_for_tests(&data_key, &key.id)
+            .expect("decrypt");
+        let candidates = database
+            .proxy_route_candidates_with_data_key_for_tests(&data_key)
+            .expect("candidates");
+
+        assert_eq!(decrypted, "sk-p8-secret-plaintext-canary");
+        assert!(candidates.iter().any(|candidate| {
+            candidate.station_key_id == key.id
+                && candidate.api_key == "sk-p8-secret-plaintext-canary"
+        }));
     }
 
     #[test]
