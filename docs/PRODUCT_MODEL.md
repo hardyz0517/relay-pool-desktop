@@ -13,6 +13,7 @@ Relay Pool Desktop uses a deliberately split product model so collection, routin
 - `Pricing Rule / 价格规则` = normalized pricing data for station / group / model.
 - `Balance Snapshot / 余额快照` = normalized balance or quota state with explicit units.
 - `Request Cost / 请求成本` = per-request usage and estimated cost metadata.
+- `Secret / 凭据密文` = encrypted sensitive data referenced by business objects.
 
 ## Station
 
@@ -121,6 +122,21 @@ It owns:
 - pricing rule source
 - cost status
 
+## Secret
+
+`Secret` is encrypted sensitive data owned by a Station, Station Key, collector, proxy runtime, or settings surface.
+
+It owns:
+
+- encrypted value
+- masked value
+- owner id
+- kind
+- encryption version
+- migration status
+
+Business objects reference secrets through `SecretRef` and never expose full values in list APIs.
+
 ## Collector
 
 `Collector` works around `Station`.
@@ -176,4 +192,4 @@ It owns:
 - P5 builds the local OpenAI-compatible proxy and basic priority fallback.
 - P6 adds model-aware, protocol-aware, health-aware Station Key routing with aliases, key capability scope, cooldown, route simulation, and route explanations.
 - P7 adds price normalization, balance avoidance, request cost tracking, and cheap-first routing.
-- P8 can extend NewAPI adapters and richer economic snapshots.
+- P8 adds security and credential governance: encrypted local secrets, plaintext migration, UI masking, log/snapshot redaction, import/export boundaries, and local proxy exposure review.
