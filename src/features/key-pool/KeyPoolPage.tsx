@@ -14,7 +14,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { CheckCircle2, Copy, Edit3, KeyRound, RefreshCcw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, Dialog, EmptyState, IconButton, ObjectRow, StatusBadge, Toolbar } from "@/components/ui";
+import { Button, Dialog, EmptyState, IconButton, MaskedSecret, ObjectRow, StatusBadge, Toolbar } from "@/components/ui";
 import { getStationKeyCapabilities, updateStationKeyCapabilities } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
 import { deleteStationKey, listKeyPoolItems, reorderKeyPool, updateStationKey } from "@/lib/api/stationKeys";
@@ -415,10 +415,14 @@ function KeyRowContent({
       icon={<KeyRound className="h-4 w-4" />}
       title={item.name}
       subtitle={
-        <>
-          {item.stationName} · {item.apiKeyMasked} · {healthSummary}
-          {cooldownActive ? ` · 冷却至 ${formatNullableTime(item.cooldownUntil)}` : ""}
-        </>
+        <span className="inline-flex min-w-0 flex-wrap items-center gap-1.5">
+          <span>{item.stationName}</span>
+          <span>·</span>
+          <MaskedSecret value={item.apiKeyMasked} present={item.apiKeyPresent} />
+          <span>·</span>
+          <span>{healthSummary}</span>
+          {cooldownActive ? <span>· 冷却至 {formatNullableTime(item.cooldownUntil)}</span> : null}
+        </span>
       }
       badges={
         <>

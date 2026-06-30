@@ -1,6 +1,6 @@
 import { Activity, Edit3, Power, RefreshCcw, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { KeyValueRow, SectionCard, StatusBadge } from "@/components/ui";
+import { KeyValueRow, MaskedSecret, SectionCard, StatusBadge } from "@/components/ui";
 import {
   stationStatusLabels,
   stationTypeLabels,
@@ -42,7 +42,10 @@ export function StationDetailPanel({
         <dl>
           <KeyValueRow label="站点类型" value={stationTypeLabels[station.stationType]} />
           <KeyValueRow label="Base URL" value={station.baseUrl} />
-          <KeyValueRow label="API Key" value={station.apiKeyMasked} />
+          <KeyValueRow
+            label="API Key"
+            value={<MaskedSecret value={station.apiKeyMasked} present={station.apiKeyPresent} />}
+          />
           <KeyValueRow
             label="启用状态"
             value={station.enabled ? "已启用" : "已禁用"}

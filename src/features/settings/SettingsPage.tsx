@@ -8,8 +8,10 @@ import {
   startLocalProxy,
   stopLocalProxy,
 } from "@/lib/api/proxy";
+import { getSecretMigrationStatus, runSecretSafetyScan } from "@/lib/api/secrets";
 import { getSettings, updateSettings } from "@/lib/api/settings";
 import type { ProxyStatus } from "@/lib/types/proxy";
+import type { SecretMigrationReport, SecretScanFinding } from "@/lib/types/secrets";
 import {
   routingStrategyLabels,
   trayBehaviorLabels,
@@ -56,6 +58,9 @@ export function SettingsPage() {
   const [proxyBusy, setProxyBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [secretMigration, setSecretMigration] = useState<SecretMigrationReport | null>(null);
+  const [scanFindings, setScanFindings] = useState<SecretScanFinding[]>([]);
+  const [securityError, setSecurityError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshSettings();
@@ -67,6 +72,7 @@ export function SettingsPage() {
     try {
       const nextSettings = await getSettings();
       const nextProxyStatus = await getProxyStatus();
+      await refreshSecurityStatus();
       setSettings(nextSettings);
       setProxyStatus(nextProxyStatus);
       setForm(settingsToForm(nextSettings));
@@ -74,6 +80,20 @@ export function SettingsPage() {
       setError(readError(requestError));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function refreshSecurityStatus() {
+    setSecurityError(null);
+    try {
+      const [migration, findings] = await Promise.all([
+        getSecretMigrationStatus(),
+        runSecretSafetyScan(),
+      ]);
+      setSecretMigration(migration);
+      setScanFindings(findings);
+    } catch (requestError) {
+      setSecurityError(readError(requestError));
     }
   }
 
@@ -284,8 +304,46 @@ export function SettingsPage() {
             description="SQLite 文件不在仓库目录。"
             label="数据目录"
           />
-          <div className="rounded-[var(--surface-radius)] border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs leading-5 text-amber-800">
-            API Key 当前阶段暂存 SQLite 明文；P3/P4 前必须迁移到本地加密或系统密钥链。
+          <SettingRow
+            control={<StatusBadge tone="healthy">已启用</StatusBadge>}
+            description="Station Key、站点 API Key 和登录密码通过 SecretManager 写入本地加密存储。"
+            label="加密存储"
+          />
+          <SettingRow
+            control={
+              <div className="text-right text-xs text-slate-700">
+                {secretMigration
+                  ? `已迁移 ${secretMigration.migratedCount} 项 · 失败 ${secretMigration.failedCount} 项`
+                  : "等待检查"}
+              </div>
+            }
+            description={
+              secretMigration?.failures.length
+                ? secretMigration.failures.slice(0, 2).join("；")
+                : "旧明文凭据会在启动代理或写入凭据时迁移到 secrets 表。"
+            }
+            label="凭据迁移"
+          />
+          <SettingRow
+            control={
+              <StatusBadge tone={scanFindings.length > 0 ? "warning" : "healthy"}>
+                {scanFindings.length > 0 ? `${scanFindings.length} 项` : "未发现"}
+              </StatusBadge>
+            }
+            description={
+              securityError
+                ? `安全扫描暂不可用：${securityError}`
+                : scanFindings.length > 0
+                  ? scanFindings
+                      .slice(0, 2)
+                      .map((finding) => `${finding.tableName}.${finding.columnName}`)
+                      .join("；")
+                  : "未发现 P8 canary 明文残留。"
+            }
+            label="安全扫描"
+          />
+          <div className="rounded-[var(--surface-radius)] border border-cyan-200 bg-cyan-50/80 px-4 py-3 text-xs leading-5 text-cyan-900">
+            默认列表 API 只返回脱敏值和 present 状态；request logs、route details 和 collector snapshots 在入库前统一脱敏。
           </div>
         </SectionCard>
 

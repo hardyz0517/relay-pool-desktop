@@ -14,7 +14,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowRight, Edit3, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, Dialog, EmptyState, IconButton, ObjectRow, PropertyList, PropertyRow, StatusBadge, Toolbar } from "@/components/ui";
+import { Button, Dialog, EmptyState, IconButton, MaskedSecret, ObjectRow, PropertyList, PropertyRow, StatusBadge, Toolbar } from "@/components/ui";
 import { createStation, deleteStation, listStations, reorderStations, updateStation } from "@/lib/api/stations";
 import {
   clearStationCredentials,
@@ -871,7 +871,7 @@ function DetailBody({
                     <span className="text-[11px] text-muted-foreground">P{key.priority}</span>
                   </div>
                   <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                    <span>{key.apiKeyMasked}</span>
+                    <MaskedSecret value={key.apiKeyMasked} present={key.apiKeyPresent} />
                     <span>{key.groupName ?? "未分组"}</span>
                     <span>{key.tierLabel ?? "无 tier"}</span>
                     <span>{key.enabled ? "启用" : "停用"}</span>
