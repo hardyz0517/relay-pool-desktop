@@ -42,15 +42,22 @@ yarn-error.log*
 *.cer
 id_rsa*
 id_ed25519*
-secrets/
-credentials/
-.local-secrets/
-*cookie*
-*cookies*
-*session*
-*token*
-*secret*
-*credentials*
+/secrets/
+/credentials/
+/.local-secrets/
+/cookie*
+/cookies*
+/session*
+/token*
+/secret*
+/credentials*
+*.cookie
+*.cookies
+*.session
+*.token
+*.secret
+*.secrets
+*.credentials
 
 # Editor / OS
 .DS_Store

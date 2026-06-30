@@ -4,6 +4,7 @@ pub mod credentials;
 pub mod pricing;
 pub mod proxy;
 pub mod routing;
+pub mod secrets;
 pub mod settings;
 pub mod station_keys;
 pub mod stations;

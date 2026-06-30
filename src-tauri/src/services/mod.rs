@@ -6,4 +6,5 @@ pub mod logs;
 pub mod pricing;
 pub mod proxy;
 pub mod routing;
+pub mod secrets;
 pub mod stations;
