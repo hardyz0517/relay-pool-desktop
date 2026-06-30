@@ -27,13 +27,16 @@ use crate::models::{
     station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, UpdateStationInput},
 };
+use crate::services::proxy::{
+    router::{select_route_candidates, RichRouteCandidate, RouteCandidateEconomics, RouteRequest},
+    RouteCandidate,
+};
 use crate::services::secrets::{
     crypto::{decrypt_secret, encrypt_secret, EncryptedPayload},
-    mask::mask_secret as mask_sensitive_value,
-};
-use crate::services::proxy::{
-    router::{select_route_candidates, RouteCandidateEconomics, RichRouteCandidate, RouteRequest},
-    RouteCandidate,
+    mask::{
+        mask_secret as mask_sensitive_value, redact_text as redact_sensitive_text,
+        redact_value as redact_sensitive_value,
+    },
 };
 
 static NEXT_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -597,7 +600,10 @@ impl AppDatabase {
         list_pricing_rules_from_connection(&connection)
     }
 
-    pub fn upsert_pricing_rule(&self, input: UpsertPricingRuleInput) -> Result<PricingRule, String> {
+    pub fn upsert_pricing_rule(
+        &self,
+        input: UpsertPricingRuleInput,
+    ) -> Result<PricingRule, String> {
         let connection = self.connection()?;
         upsert_pricing_rule_in_connection(&connection, input)
     }
@@ -1328,12 +1334,7 @@ fn migrate_plaintext_api_key_rows(
                     .execute(&update_sql, params![secret_id, now_string(), owner_id])
                     .map_err(|error| format!("清理明文凭据失败: {error}"))?;
                 record_secret_migration_event(
-                    connection,
-                    table,
-                    &owner_id,
-                    "api_key",
-                    "migrated",
-                    None,
+                    connection, table, &owner_id, "api_key", "migrated", None,
                 )?;
                 *migrated_count += 1;
             }
@@ -1649,12 +1650,7 @@ fn update_station_in_connection(
     let (next_api_key, next_secret_id) = if let Some(data_key) = data_key {
         let secret_id = match new_api_key {
             Some(api_key) => Some(upsert_secret_in_connection(
-                connection,
-                data_key,
-                "station",
-                &input.id,
-                "api_key",
-                api_key,
+                connection, data_key, "station", &input.id, "api_key", api_key,
             )?),
             None => existing_secret_id,
         };
@@ -1808,7 +1804,16 @@ fn migrate_request_log_cost_columns(connection: &Connection) -> rusqlite::Result
         "cost_status",
     ] {
         if !rows.iter().any(|existing| existing == column) {
-            let sql = format!("ALTER TABLE request_logs ADD COLUMN {column} {}", if column.ends_with("_tokens") { "INTEGER" } else if column.ends_with("_cost") { "REAL" } else { "TEXT" });
+            let sql = format!(
+                "ALTER TABLE request_logs ADD COLUMN {column} {}",
+                if column.ends_with("_tokens") {
+                    "INTEGER"
+                } else if column.ends_with("_cost") {
+                    "REAL"
+                } else {
+                    "TEXT"
+                }
+            );
             connection.execute(&sql, [])?;
         }
     }
@@ -2661,11 +2666,8 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
             let Some(data_key) = data_key else {
                 return Err("Station Key 已迁移为加密凭据，当前调用缺少解密密钥".to_string());
             };
-            row.candidate.api_key = resolve_station_key_api_key(
-                connection,
-                data_key,
-                &row.candidate.station_key_id,
-            )?;
+            row.candidate.api_key =
+                resolve_station_key_api_key(connection, data_key, &row.candidate.station_key_id)?;
         }
         row.economics = route_candidate_economics_from_connection(
             connection,
@@ -2750,25 +2752,30 @@ fn route_candidate_economics_from_connection(
         .map_err(|error| format!("读取余额快照失败: {error}"))?;
 
     let economics = pricing_rule
-        .map(|(id, model, input_price, output_price, fixed_price, currency, source)| {
-            let (balance_value, balance_currency, low_balance_threshold, balance_status) =
-                balance_snapshot
-                    .clone()
-                    .unwrap_or((None, "unknown".to_string(), None, "unknown".to_string()));
-            RouteCandidateEconomics {
-                pricing_rule_id: Some(id),
-                pricing_model: Some(model),
-                estimated_input_price: input_price,
-                estimated_output_price: output_price,
-                fixed_price,
-                price_currency: Some(currency),
-                pricing_source: Some(source),
-                balance_status: Some(balance_status),
-                balance_value,
-                low_balance_threshold,
-                balance_currency: Some(balance_currency),
-            }
-        })
+        .map(
+            |(id, model, input_price, output_price, fixed_price, currency, source)| {
+                let (balance_value, balance_currency, low_balance_threshold, balance_status) =
+                    balance_snapshot.clone().unwrap_or((
+                        None,
+                        "unknown".to_string(),
+                        None,
+                        "unknown".to_string(),
+                    ));
+                RouteCandidateEconomics {
+                    pricing_rule_id: Some(id),
+                    pricing_model: Some(model),
+                    estimated_input_price: input_price,
+                    estimated_output_price: output_price,
+                    fixed_price,
+                    price_currency: Some(currency),
+                    pricing_source: Some(source),
+                    balance_status: Some(balance_status),
+                    balance_value,
+                    low_balance_threshold,
+                    balance_currency: Some(balance_currency),
+                }
+            },
+        )
         .or_else(|| {
             balance_snapshot.map(
                 |(balance_value, balance_currency, low_balance_threshold, balance_status)| {
@@ -3134,11 +3141,11 @@ fn simulate_route_in_connection(
         )
     };
 
-        Ok(RouteSimulationResult {
-            selected_station_key_id,
-            selected_station_id,
-            mapped_model: selection.mapped_model,
-            policy,
+    Ok(RouteSimulationResult {
+        selected_station_key_id,
+        selected_station_id,
+        mapped_model: selection.mapped_model,
+        policy,
         candidates: selection.explanations,
         message,
     })
@@ -3159,6 +3166,9 @@ fn insert_request_log_in_connection(
 ) -> Result<RequestLog, String> {
     let id = generate_id("request");
     let created_at = now_string();
+    let error_message = redact_optional_text(input.error_message);
+    let route_reason = redact_optional_text(input.route_reason);
+    let rejected_candidates_json = redact_optional_text(input.rejected_candidates_json);
     connection
         .execute(
             "INSERT INTO request_logs (
@@ -3183,10 +3193,10 @@ fn insert_request_log_in_connection(
                 normalize_optional_string(input.station_id),
                 normalize_optional_string(input.upstream_base_url),
                 input.fallback_count,
-                normalize_optional_string(input.error_message),
+                error_message,
                 normalize_optional_string(input.route_policy),
-                normalize_optional_string(input.route_reason),
-                normalize_optional_string(input.rejected_candidates_json),
+                route_reason,
+                rejected_candidates_json,
                 input.prompt_tokens,
                 input.completion_tokens,
                 input.total_tokens,
@@ -3589,7 +3599,12 @@ fn station_login_password_from_connection_with_data_key(
                FROM station_credentials
               WHERE station_id = ?1",
             params![station_id],
-            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            },
         )
         .optional()
         .map_err(|error| format!("读取登录密码失败: {error}"))?
@@ -3601,13 +3616,13 @@ fn station_login_password_from_connection_with_data_key(
                 return decrypt_secret_by_id(connection, data_key, &secret_id).map(Some);
             }
             Ok(password.and_then(|value| {
-                    let trimmed = value.trim().to_string();
-                    if trimmed.is_empty() {
-                        None
-                    } else {
-                        Some(trimmed)
-                    }
-                }))
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            }))
         })
         .ok_or_else(|| "未找到登录信息".to_string())
         .and_then(|result| result)
@@ -3739,6 +3754,10 @@ fn insert_collector_snapshot_in_connection(
 ) -> Result<CollectorSnapshot, String> {
     let id = generate_id("snapshot");
     let now = now_string();
+    let summary_json = redact_sensitive_value(&summary_json);
+    let normalized_json = redact_sensitive_value(&normalized_json);
+    let raw_json_redacted = raw_json_redacted.map(|value| redact_sensitive_value(&value));
+    let error_message = redact_optional_text(error_message);
     let raw_json_string = raw_json_redacted
         .as_ref()
         .map(|value| serde_json::to_string(value))
@@ -3761,7 +3780,7 @@ fn insert_collector_snapshot_in_connection(
                 serde_json::to_string(&normalized_json)
                     .map_err(|error| format!("序列化 normalized 失败: {error}"))?,
                 raw_json_string,
-                normalize_optional_string(error_message),
+                error_message,
                 now,
             ],
         )
@@ -4064,6 +4083,10 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
         .filter(|item| !item.is_empty())
 }
 
+fn redact_optional_text(value: Option<String>) -> Option<String> {
+    normalize_optional_string(value).map(|item| redact_sensitive_text(&item))
+}
+
 fn bool_to_i64(value: bool) -> i64 {
     if value {
         1
@@ -4099,8 +4122,8 @@ fn now_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::routing::RouteEndpointKind;
     use crate::models::pricing::{UpsertBalanceSnapshotInput, UpsertPricingRuleInput};
+    use crate::models::routing::RouteEndpointKind;
 
     fn test_station(database: &AppDatabase, name: &str) -> Station {
         database
@@ -4313,7 +4336,12 @@ mod tests {
             Some(selected.station_id.as_str())
         );
         assert!(result.candidates.iter().any(|candidate| {
-                candidate.station_key_id == blocked.id && !candidate.accepted && candidate.rejection_reasons.iter().any(|reason| reason.contains("allowlist"))
+            candidate.station_key_id == blocked.id
+                && !candidate.accepted
+                && candidate
+                    .rejection_reasons
+                    .iter()
+                    .any(|reason| reason.contains("allowlist"))
         }));
     }
 
@@ -4359,6 +4387,94 @@ mod tests {
         assert_eq!(log.rejected_candidates_json.as_deref(), Some("[]"));
         let serialized = serde_json::to_string(&log).unwrap();
         assert!(!serialized.contains("\"prompt\":"));
+    }
+
+    #[test]
+    fn request_log_redacts_error() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let log = database
+            .insert_request_log(CreateRequestLogInput {
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                model: Some("gpt-5.4".to_string()),
+                stream: false,
+                status: "failed".to_string(),
+                station_key_id: Some("key-1".to_string()),
+                station_id: Some("station-1".to_string()),
+                upstream_base_url: Some("https://example.test".to_string()),
+                fallback_count: 1,
+                error_message: Some(
+                    "upstream rejected Authorization: Bearer sk-p8-secret-plaintext-canary"
+                        .to_string(),
+                ),
+                route_policy: Some("priority_fallback".to_string()),
+                route_reason: Some(
+                    "selected key after token=p8-token-canary was rejected".to_string(),
+                ),
+                rejected_candidates_json: Some(
+                    serde_json::json!({
+                        "api_key": "sk-p8-secret-plaintext-canary",
+                        "reason": "cookie rpd_session=p8-cookie-canary failed"
+                    })
+                    .to_string(),
+                ),
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+                estimated_input_cost: None,
+                estimated_output_cost: None,
+                estimated_total_cost: None,
+                cost_currency: None,
+                pricing_rule_id: None,
+                pricing_source: None,
+                cost_status: None,
+                started_at: "1000".to_string(),
+                finished_at: Some("1100".to_string()),
+                duration_ms: Some(100),
+            })
+            .expect("insert log");
+
+        let serialized = serde_json::to_string(&log).expect("json");
+        assert!(serialized.contains("[REDACTED]"));
+        assert!(!serialized.contains("sk-p8-secret-plaintext-canary"));
+        assert!(!serialized.contains("p8-token-canary"));
+        assert!(!serialized.contains("rpd_session=p8-cookie-canary"));
+    }
+
+    #[test]
+    fn collector_snapshot_redacts_raw_secret_fields() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "snapshot-redaction");
+        let snapshot = database
+            .insert_collector_snapshot(
+                &station.id,
+                "collector-test",
+                "failed",
+                serde_json::json!({
+                    "password": "p8-password-canary",
+                    "balance": 1
+                }),
+                serde_json::json!({
+                    "headers": {
+                        "authorization": "Bearer sk-p8-secret-plaintext-canary"
+                    }
+                }),
+                Some(serde_json::json!({
+                    "cookie": "rpd_session=p8-cookie-canary",
+                    "items": [
+                        { "api_key": "sk-p8-secret-plaintext-canary" }
+                    ]
+                })),
+                Some("failed with token=p8-token-canary".to_string()),
+            )
+            .expect("snapshot");
+
+        let serialized = serde_json::to_string(&snapshot).expect("json");
+        assert!(serialized.contains("[REDACTED]"));
+        assert!(!serialized.contains("sk-p8-secret-plaintext-canary"));
+        assert!(!serialized.contains("p8-password-canary"));
+        assert!(!serialized.contains("rpd_session=p8-cookie-canary"));
+        assert!(!serialized.contains("p8-token-canary"));
     }
 
     #[test]
@@ -4608,7 +4724,10 @@ mod tests {
         database
             .delete_pricing_rule(saved.id)
             .expect("delete pricing rule");
-        assert!(database.list_pricing_rules().expect("pricing rules").is_empty());
+        assert!(database
+            .list_pricing_rules()
+            .expect("pricing rules")
+            .is_empty());
     }
 
     #[test]

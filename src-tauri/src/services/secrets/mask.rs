@@ -36,6 +36,12 @@ pub fn mask_secret(value: &str) -> String {
 }
 
 pub fn redact_text(text: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<Value>(text) {
+        if let Ok(serialized) = serde_json::to_string(&redact_value(&value)) {
+            return serialized;
+        }
+    }
+
     text.split_whitespace()
         .map(|segment| {
             if looks_like_secret(segment) || segment_has_secret_assignment(segment) {
@@ -46,6 +52,16 @@ pub fn redact_text(text: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+pub fn redact_text_preview(text: &str, limit: usize) -> String {
+    let limited: String = text.chars().take(limit).collect();
+    let redacted = redact_text(&limited);
+    if text.chars().count() > limit {
+        format!("{redacted}\n... truncated")
+    } else {
+        redacted
+    }
 }
 
 pub fn redact_value(value: &Value) -> Value {
@@ -124,5 +140,16 @@ mod tests {
 
         assert_eq!(redacted["headers"]["cookie"], "[REDACTED]");
         assert_eq!(redacted["model"], "gpt-4o-mini");
+    }
+
+    #[test]
+    fn redact_text_parses_json_payloads() {
+        let redacted = redact_text(
+            r#"{"authorization":"Bearer sk-p8-secret-plaintext-canary","model":"gpt-4o-mini"}"#,
+        );
+
+        assert!(redacted.contains("[REDACTED]"));
+        assert!(redacted.contains("gpt-4o-mini"));
+        assert!(!redacted.contains("sk-p8-secret-plaintext-canary"));
     }
 }
