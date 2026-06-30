@@ -20,6 +20,7 @@ pub fn collect_station_info(
 
 pub fn test_station_login(
     database: &AppDatabase,
+    data_key: &[u8; 32],
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
     let station = database.station_for_collector(&station_id)?;
@@ -35,7 +36,7 @@ pub fn test_station_login(
         ));
     }
 
-    let password = database.get_station_login_password(station_id.clone())?;
+    let password = database.get_station_login_password_with_data_key(station_id.clone(), data_key)?;
     let Some(login_password) = password else {
         return Ok(build_status_result(
             station_id,

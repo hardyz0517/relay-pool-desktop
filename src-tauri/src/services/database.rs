@@ -126,6 +126,11 @@ impl AppDatabase {
         migrate_plaintext_secrets_in_connection(&connection, data_key)
     }
 
+    pub fn secret_migration_status(&self) -> Result<SecretMigrationReport, String> {
+        let connection = self.connection()?;
+        secret_migration_status_from_connection(&connection)
+    }
+
     #[cfg(test)]
     pub fn migrate_plaintext_secrets_for_tests(
         &self,
@@ -159,6 +164,14 @@ impl AppDatabase {
     }
 
     pub fn create_station(&self, input: CreateStationInput) -> Result<Station, String> {
+        self.create_station_with_data_key(input, None)
+    }
+
+    pub fn create_station_with_data_key(
+        &self,
+        input: CreateStationInput,
+        data_key: Option<&[u8; 32]>,
+    ) -> Result<Station, String> {
         validate_station_fields(
             &input.name,
             &input.station_type,
@@ -171,59 +184,18 @@ impl AppDatabase {
         }
 
         let connection = self.connection()?;
-        let id = generate_id("station");
-        let now = now_string();
-        let next_priority = next_station_priority(&connection)?;
-
-        connection
-            .execute(
-                "INSERT INTO stations (
-                    id, name, station_type, base_url, api_key, enabled, priority,
-                    credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
-                    status, latency_ms, last_checked_at, last_pricing_fetched_at,
-                    note, created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, ?9,
-                    ?10, NULL, NULL, NULL, ?11, ?12, ?13)",
-                params![
-                    id,
-                    input.name.trim(),
-                    input.station_type,
-                    input.base_url.trim(),
-                    input.api_key.trim(),
-                    bool_to_i64(input.enabled),
-                    next_priority,
-                    input.credit_per_cny,
-                    input.low_balance_threshold_cny,
-                    if input.enabled {
-                        "unchecked"
-                    } else {
-                        "disabled"
-                    },
-                    normalize_optional_string(input.note),
-                    now,
-                    now,
-                ],
-            )
-            .map_err(|error| format!("创建站点失败: {error}"))?;
-
-        create_station_key_in_connection(
-            &connection,
-            CreateStationKeyInput {
-                station_id: id.clone(),
-                name: "Default Key".to_string(),
-                api_key: input.api_key,
-                enabled: input.enabled,
-                priority: Some(0),
-                group_name: None,
-                tier_label: None,
-                note: Some("由站点默认 API Key 创建。".to_string()),
-            },
-        )?;
-
-        station_by_id(&connection, &id)
+        create_station_in_connection(&connection, input, data_key)
     }
 
     pub fn update_station(&self, input: UpdateStationInput) -> Result<Station, String> {
+        self.update_station_with_data_key(input, None)
+    }
+
+    pub fn update_station_with_data_key(
+        &self,
+        input: UpdateStationInput,
+        data_key: Option<&[u8; 32]>,
+    ) -> Result<Station, String> {
         validate_station_fields(
             &input.name,
             &input.station_type,
@@ -232,59 +204,7 @@ impl AppDatabase {
         )?;
 
         let connection = self.connection()?;
-        let existing_api_key: Option<String> = connection
-            .query_row(
-                "SELECT api_key FROM stations WHERE id = ?1",
-                params![input.id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|error| format!("读取站点 API Key 失败: {error}"))?;
-
-        let Some(existing_api_key) = existing_api_key else {
-            return Err("站点不存在，无法更新".to_string());
-        };
-
-        let next_api_key = input
-            .api_key
-            .as_ref()
-            .map(|api_key| api_key.trim().to_string())
-            .filter(|api_key| !api_key.is_empty())
-            .unwrap_or(existing_api_key);
-        let now = now_string();
-
-        connection
-            .execute(
-                "UPDATE stations
-                    SET name = ?1,
-                        station_type = ?2,
-                        base_url = ?3,
-                        api_key = ?4,
-                        enabled = ?5,
-                        credit_per_cny = ?6,
-                        low_balance_threshold_cny = ?7,
-                        status = CASE WHEN ?5 = 0 THEN 'disabled'
-                                      WHEN status = 'disabled' THEN 'unchecked'
-                                      ELSE status END,
-                        note = ?8,
-                        updated_at = ?9
-                  WHERE id = ?10",
-                params![
-                    input.name.trim(),
-                    input.station_type,
-                    input.base_url.trim(),
-                    next_api_key,
-                    bool_to_i64(input.enabled),
-                    input.credit_per_cny,
-                    input.low_balance_threshold_cny,
-                    normalize_optional_string(input.note),
-                    now,
-                    input.id,
-                ],
-            )
-            .map_err(|error| format!("更新站点失败: {error}"))?;
-
-        station_by_id(&connection, &input.id)
+        update_station_in_connection(&connection, input, data_key)
     }
 
     pub fn delete_station(&self, id: String) -> Result<(), String> {
@@ -378,10 +298,29 @@ impl AppDatabase {
         create_station_key_in_connection(&connection, input)
     }
 
+    pub fn create_station_key_with_data_key(
+        &self,
+        input: CreateStationKeyInput,
+        data_key: &[u8; 32],
+    ) -> Result<StationKey, String> {
+        let connection = self.connection()?;
+        create_station_key_in_connection_with_data_key(&connection, input, Some(data_key))
+    }
+
     pub fn update_station_key(&self, input: UpdateStationKeyInput) -> Result<StationKey, String> {
         let connection = self.connection()?;
         validate_station_exists(&connection, &input.station_id)?;
         update_station_key_in_connection(&connection, input)
+    }
+
+    pub fn update_station_key_with_data_key(
+        &self,
+        input: UpdateStationKeyInput,
+        data_key: &[u8; 32],
+    ) -> Result<StationKey, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, &input.station_id)?;
+        update_station_key_in_connection_with_data_key(&connection, input, Some(data_key))
     }
 
     pub fn touch_station_key_usage(
@@ -463,9 +402,25 @@ impl AppDatabase {
         proxy_route_candidates_from_connection(&connection)
     }
 
+    pub fn proxy_route_candidates_with_data_key(
+        &self,
+        data_key: &[u8; 32],
+    ) -> Result<Vec<RouteCandidate>, String> {
+        let connection = self.connection()?;
+        proxy_route_candidates_from_connection_with_data_key(&connection, Some(data_key))
+    }
+
     pub fn proxy_rich_route_candidates(&self) -> Result<Vec<RichRouteCandidate>, String> {
         let connection = self.connection()?;
         proxy_rich_route_candidates_from_connection(&connection)
+    }
+
+    pub fn proxy_rich_route_candidates_with_data_key(
+        &self,
+        data_key: &[u8; 32],
+    ) -> Result<Vec<RichRouteCandidate>, String> {
+        let connection = self.connection()?;
+        proxy_rich_route_candidates_from_connection_with_data_key(&connection, Some(data_key))
     }
 
     pub fn route_candidate_economics(
@@ -525,6 +480,20 @@ impl AppDatabase {
         station_login_password_from_connection(&connection, &station_id)
     }
 
+    pub fn get_station_login_password_with_data_key(
+        &self,
+        station_id: String,
+        data_key: &[u8; 32],
+    ) -> Result<Option<String>, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, &station_id)?;
+        station_login_password_from_connection_with_data_key(
+            &connection,
+            &station_id,
+            Some(data_key),
+        )
+    }
+
     pub fn update_station_credentials(
         &self,
         input: UpdateStationCredentialsInput,
@@ -533,6 +502,18 @@ impl AppDatabase {
         validate_station_exists(&connection, &input.station_id)?;
         let station_id = input.station_id.clone();
         upsert_station_credentials(&connection, input)?;
+        station_credentials_from_connection(&connection, &station_id)
+    }
+
+    pub fn update_station_credentials_with_data_key(
+        &self,
+        input: UpdateStationCredentialsInput,
+        data_key: &[u8; 32],
+    ) -> Result<StationCredentials, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, &input.station_id)?;
+        let station_id = input.station_id.clone();
+        upsert_station_credentials_with_data_key(&connection, input, Some(data_key))?;
         station_credentials_from_connection(&connection, &station_id)
     }
 
@@ -1191,6 +1172,54 @@ fn record_secret_migration_event(
     Ok(())
 }
 
+fn secret_migration_status_from_connection(
+    connection: &Connection,
+) -> Result<SecretMigrationReport, String> {
+    let migrated_count = secret_migration_count(connection, "migrated")?;
+    let failed_count = secret_migration_count(connection, "failed")?;
+    let skipped_count = 0;
+    let mut statement = connection
+        .prepare(
+            "SELECT owner_table, owner_id, secret_kind, error_message
+               FROM secret_migration_events
+              WHERE status = 'failed'
+              ORDER BY created_at DESC
+              LIMIT 20",
+        )
+        .map_err(|error| format!("读取凭据迁移状态失败: {error}"))?;
+    let failures = statement
+        .query_map([], |row| {
+            let owner_table: String = row.get(0)?;
+            let owner_id: String = row.get(1)?;
+            let secret_kind: String = row.get(2)?;
+            let error_message: Option<String> = row.get(3)?;
+            Ok(format!(
+                "{owner_table}/{owner_id}/{secret_kind}: {}",
+                error_message.unwrap_or_else(|| "未知错误".to_string())
+            ))
+        })
+        .map_err(|error| format!("查询凭据迁移失败列表失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析凭据迁移失败列表失败: {error}"))?;
+
+    Ok(SecretMigrationReport {
+        migrated_count,
+        skipped_count,
+        failed_count,
+        failures,
+    })
+}
+
+fn secret_migration_count(connection: &Connection, status: &str) -> Result<i64, String> {
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM secret_migration_events WHERE status = ?1",
+            params![status],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("统计凭据迁移状态失败: {error}"))
+}
+
 fn migrate_plaintext_secrets_in_connection(
     connection: &Connection,
     data_key: &[u8; 32],
@@ -1511,6 +1540,169 @@ fn station_by_id(connection: &Connection, id: &str) -> Result<Station, String> {
         .optional()
         .map_err(|error| format!("读取站点失败: {error}"))?
         .ok_or_else(|| "站点不存在".to_string())
+}
+
+fn create_station_in_connection(
+    connection: &Connection,
+    input: CreateStationInput,
+    data_key: Option<&[u8; 32]>,
+) -> Result<Station, String> {
+    let id = generate_id("station");
+    let now = now_string();
+    let next_priority = next_station_priority(connection)?;
+    let plaintext_api_key = input.api_key.trim().to_string();
+    let stored_api_key = if data_key.is_some() {
+        "".to_string()
+    } else {
+        plaintext_api_key.clone()
+    };
+
+    connection
+        .execute(
+            "INSERT INTO stations (
+                id, name, station_type, base_url, api_key, api_key_secret_id, enabled, priority,
+                credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
+                status, latency_ms, last_checked_at, last_pricing_fetched_at,
+                note, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, NULL, NULL, ?9,
+                ?10, NULL, NULL, NULL, ?11, ?12, ?13)",
+            params![
+                id,
+                input.name.trim(),
+                input.station_type,
+                input.base_url.trim(),
+                stored_api_key,
+                bool_to_i64(input.enabled),
+                next_priority,
+                input.credit_per_cny,
+                input.low_balance_threshold_cny,
+                if input.enabled {
+                    "unchecked"
+                } else {
+                    "disabled"
+                },
+                normalize_optional_string(input.note),
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("创建站点失败: {error}"))?;
+
+    if let Some(data_key) = data_key {
+        let secret_id = upsert_secret_in_connection(
+            connection,
+            data_key,
+            "station",
+            &id,
+            "api_key",
+            &plaintext_api_key,
+        )?;
+        connection
+            .execute(
+                "UPDATE stations SET api_key_secret_id = ?1, updated_at = ?2 WHERE id = ?3",
+                params![secret_id, now_string(), id],
+            )
+            .map_err(|error| format!("保存站点加密 API Key 失败: {error}"))?;
+    }
+
+    create_station_key_in_connection_with_data_key(
+        connection,
+        CreateStationKeyInput {
+            station_id: id.clone(),
+            name: "Default Key".to_string(),
+            api_key: input.api_key,
+            enabled: input.enabled,
+            priority: Some(0),
+            group_name: None,
+            tier_label: None,
+            note: Some("由站点默认 API Key 创建。".to_string()),
+        },
+        data_key,
+    )?;
+
+    station_by_id(connection, &id)
+}
+
+fn update_station_in_connection(
+    connection: &Connection,
+    input: UpdateStationInput,
+    data_key: Option<&[u8; 32]>,
+) -> Result<Station, String> {
+    let existing: Option<(String, Option<String>)> = connection
+        .query_row(
+            "SELECT api_key, api_key_secret_id FROM stations WHERE id = ?1",
+            params![input.id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("读取站点 API Key 失败: {error}"))?;
+
+    let Some((existing_api_key, existing_secret_id)) = existing else {
+        return Err("站点不存在，无法更新".to_string());
+    };
+
+    let new_api_key = input
+        .api_key
+        .as_ref()
+        .map(|api_key| api_key.trim())
+        .filter(|api_key| !api_key.is_empty());
+    let (next_api_key, next_secret_id) = if let Some(data_key) = data_key {
+        let secret_id = match new_api_key {
+            Some(api_key) => Some(upsert_secret_in_connection(
+                connection,
+                data_key,
+                "station",
+                &input.id,
+                "api_key",
+                api_key,
+            )?),
+            None => existing_secret_id,
+        };
+        ("".to_string(), secret_id)
+    } else {
+        (
+            new_api_key
+                .map(ToString::to_string)
+                .unwrap_or(existing_api_key),
+            existing_secret_id,
+        )
+    };
+    let now = now_string();
+
+    connection
+        .execute(
+            "UPDATE stations
+                SET name = ?1,
+                    station_type = ?2,
+                    base_url = ?3,
+                    api_key = ?4,
+                    api_key_secret_id = ?5,
+                    enabled = ?6,
+                    credit_per_cny = ?7,
+                    low_balance_threshold_cny = ?8,
+                    status = CASE WHEN ?6 = 0 THEN 'disabled'
+                                  WHEN status = 'disabled' THEN 'unchecked'
+                                  ELSE status END,
+                    note = ?9,
+                    updated_at = ?10
+              WHERE id = ?11",
+            params![
+                input.name.trim(),
+                input.station_type,
+                input.base_url.trim(),
+                next_api_key,
+                next_secret_id,
+                bool_to_i64(input.enabled),
+                input.credit_per_cny,
+                input.low_balance_threshold_cny,
+                normalize_optional_string(input.note),
+                now,
+                input.id,
+            ],
+        )
+        .map_err(|error| format!("更新站点失败: {error}"))?;
+
+    station_by_id(connection, &input.id)
 }
 
 fn validate_station_exists(connection: &Connection, station_id: &str) -> Result<(), String> {
@@ -2359,6 +2551,13 @@ fn proxy_route_candidates_from_connection_with_data_key(
 fn proxy_rich_route_candidates_from_connection(
     connection: &Connection,
 ) -> Result<Vec<RichRouteCandidate>, String> {
+    proxy_rich_route_candidates_from_connection_with_data_key(connection, None)
+}
+
+fn proxy_rich_route_candidates_from_connection_with_data_key(
+    connection: &Connection,
+    data_key: Option<&[u8; 32]>,
+) -> Result<Vec<RichRouteCandidate>, String> {
     let mut statement = connection
         .prepare(
             "SELECT
@@ -2366,6 +2565,7 @@ fn proxy_rich_route_candidates_from_connection(
                 k.station_id,
                 s.base_url,
                 k.api_key,
+                k.api_key_secret_id,
                 s.upstream_api_format,
                 k.priority,
                 s.name,
@@ -2399,7 +2599,7 @@ fn proxy_rich_route_candidates_from_connection(
              LEFT JOIN station_key_health h ON h.station_key_id = k.id
              WHERE k.enabled = 1
                AND s.enabled = 1
-               AND TRIM(k.api_key) != ''
+               AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
              ORDER BY k.priority ASC, k.created_at ASC",
         )
         .map_err(|error| format!("读取富路由候选失败: {error}"))?;
@@ -2407,45 +2607,46 @@ fn proxy_rich_route_candidates_from_connection(
     let rows = statement
         .query_map([], |row| {
             let station_key_id = row.get::<_, String>(0)?;
-            let health_station_key_id = row.get::<_, Option<String>>(21)?;
+            let api_key: String = row.get(3)?;
+            let health_station_key_id = row.get::<_, Option<String>>(22)?;
             Ok(RichRouteCandidate {
                 candidate: RouteCandidate {
                     station_key_id: station_key_id.clone(),
                     station_id: row.get(1)?,
                     upstream_base_url: row.get(2)?,
-                    api_key: row.get(3)?,
-                    upstream_api_format: parse_upstream_api_format(row.get::<_, String>(4)?),
-                    priority: row.get(5)?,
+                    api_key,
+                    upstream_api_format: parse_upstream_api_format(row.get::<_, String>(5)?),
+                    priority: row.get(6)?,
                 },
-                station_name: row.get(6)?,
-                key_name: row.get(7)?,
+                station_name: row.get(7)?,
+                key_name: row.get(8)?,
                 capabilities: StationKeyCapabilities {
                     station_key_id,
-                    supports_chat_completions: i64_to_bool(row.get(8)?),
-                    supports_responses: i64_to_bool(row.get(9)?),
-                    supports_embeddings: i64_to_bool(row.get(10)?),
-                    supports_stream: i64_to_bool(row.get(11)?),
-                    supports_tools: i64_to_bool(row.get(12)?),
-                    supports_vision: i64_to_bool(row.get(13)?),
-                    supports_reasoning: i64_to_bool(row.get(14)?),
-                    model_allowlist: parse_json_string_list(row.get::<_, String>(15)?.as_str()),
-                    model_blocklist: parse_json_string_list(row.get::<_, String>(16)?.as_str()),
-                    preferred_models: parse_json_string_list(row.get::<_, String>(17)?.as_str()),
-                    only_use_as_backup: i64_to_bool(row.get(18)?),
-                    routing_tags: parse_json_string_list(row.get::<_, String>(19)?.as_str()),
-                    updated_at: row.get(20)?,
+                    supports_chat_completions: i64_to_bool(row.get(9)?),
+                    supports_responses: i64_to_bool(row.get(10)?),
+                    supports_embeddings: i64_to_bool(row.get(11)?),
+                    supports_stream: i64_to_bool(row.get(12)?),
+                    supports_tools: i64_to_bool(row.get(13)?),
+                    supports_vision: i64_to_bool(row.get(14)?),
+                    supports_reasoning: i64_to_bool(row.get(15)?),
+                    model_allowlist: parse_json_string_list(row.get::<_, String>(16)?.as_str()),
+                    model_blocklist: parse_json_string_list(row.get::<_, String>(17)?.as_str()),
+                    preferred_models: parse_json_string_list(row.get::<_, String>(18)?.as_str()),
+                    only_use_as_backup: i64_to_bool(row.get(19)?),
+                    routing_tags: parse_json_string_list(row.get::<_, String>(20)?.as_str()),
+                    updated_at: row.get(21)?,
                 },
                 health: health_station_key_id.map(|station_key_id| StationKeyHealth {
                     station_key_id,
-                    last_success_at: row.get(22).ok().flatten(),
-                    last_failure_at: row.get(23).ok().flatten(),
-                    consecutive_failures: row.get(24).unwrap_or(0),
-                    success_count: row.get(25).unwrap_or(0),
-                    failure_count: row.get(26).unwrap_or(0),
-                    avg_latency_ms: row.get(27).ok().flatten(),
-                    last_error_summary: row.get(28).ok().flatten(),
-                    cooldown_until: row.get(29).ok().flatten(),
-                    updated_at: row.get(30).unwrap_or_else(|_| "0".to_string()),
+                    last_success_at: row.get(23).ok().flatten(),
+                    last_failure_at: row.get(24).ok().flatten(),
+                    consecutive_failures: row.get(25).unwrap_or(0),
+                    success_count: row.get(26).unwrap_or(0),
+                    failure_count: row.get(27).unwrap_or(0),
+                    avg_latency_ms: row.get(28).ok().flatten(),
+                    last_error_summary: row.get(29).ok().flatten(),
+                    cooldown_until: row.get(30).ok().flatten(),
+                    updated_at: row.get(31).unwrap_or_else(|_| "0".to_string()),
                 }),
                 economics: None,
             })
@@ -2456,6 +2657,16 @@ fn proxy_rich_route_candidates_from_connection(
 
     let mut enriched_rows = Vec::with_capacity(rows.len());
     for mut row in rows {
+        if row.candidate.api_key.trim().is_empty() {
+            let Some(data_key) = data_key else {
+                return Err("Station Key 已迁移为加密凭据，当前调用缺少解密密钥".to_string());
+            };
+            row.candidate.api_key = resolve_station_key_api_key(
+                connection,
+                data_key,
+                &row.candidate.station_key_id,
+            )?;
+        }
         row.economics = route_candidate_economics_from_connection(
             connection,
             &row.candidate.station_key_id,
@@ -3073,6 +3284,14 @@ fn create_station_key_in_connection(
     connection: &Connection,
     input: CreateStationKeyInput,
 ) -> Result<StationKey, String> {
+    create_station_key_in_connection_with_data_key(connection, input, None)
+}
+
+fn create_station_key_in_connection_with_data_key(
+    connection: &Connection,
+    input: CreateStationKeyInput,
+    data_key: Option<&[u8; 32]>,
+) -> Result<StationKey, String> {
     validate_station_exists(connection, &input.station_id)?;
     if input.name.trim().is_empty() {
         return Err("Key 名称不能为空".to_string());
@@ -3083,6 +3302,24 @@ fn create_station_key_in_connection(
 
     let id = generate_id("key");
     let now = now_string();
+    let plaintext_api_key = input.api_key.trim().to_string();
+    let stored_api_key = if data_key.is_some() {
+        "".to_string()
+    } else {
+        plaintext_api_key.clone()
+    };
+    let secret_id = if let Some(data_key) = data_key {
+        Some(upsert_secret_in_connection(
+            connection,
+            data_key,
+            "station_key",
+            &id,
+            "api_key",
+            &plaintext_api_key,
+        )?)
+    } else {
+        None
+    };
     let priority = match input.priority {
         Some(priority) => priority,
         None => next_station_key_priority(connection, &input.station_id)?,
@@ -3091,14 +3328,15 @@ fn create_station_key_in_connection(
     connection
         .execute(
             "INSERT INTO station_keys (
-                id, station_id, name, api_key, enabled, priority, group_name, tier_label,
+                id, station_id, name, api_key, api_key_secret_id, enabled, priority, group_name, tier_label,
                 status, last_checked_at, last_used_at, note, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'unchecked', NULL, NULL, ?9, ?10, ?11)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'unchecked', NULL, NULL, ?10, ?11, ?12)",
             params![
                 id,
                 input.station_id,
                 input.name.trim(),
-                input.api_key.trim(),
+                stored_api_key,
+                secret_id,
                 bool_to_i64(input.enabled),
                 priority,
                 normalize_optional_string(input.group_name),
@@ -3117,29 +3355,53 @@ fn update_station_key_in_connection(
     connection: &Connection,
     input: UpdateStationKeyInput,
 ) -> Result<StationKey, String> {
+    update_station_key_in_connection_with_data_key(connection, input, None)
+}
+
+fn update_station_key_in_connection_with_data_key(
+    connection: &Connection,
+    input: UpdateStationKeyInput,
+    data_key: Option<&[u8; 32]>,
+) -> Result<StationKey, String> {
     if input.name.trim().is_empty() {
         return Err("Key 名称不能为空".to_string());
     }
 
-    let existing_api_key: Option<String> = connection
+    let existing: Option<(String, Option<String>)> = connection
         .query_row(
-            "SELECT api_key FROM station_keys WHERE id = ?1 AND station_id = ?2",
+            "SELECT api_key, api_key_secret_id FROM station_keys WHERE id = ?1 AND station_id = ?2",
             params![input.id, input.station_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(|error| format!("读取 Station Key 失败: {error}"))?;
 
-    let Some(existing_api_key) = existing_api_key else {
+    let Some((existing_api_key, existing_secret_id)) = existing else {
         return Err("Station Key 不存在，无法更新".to_string());
     };
 
-    let next_api_key = input
+    let new_api_key = input
         .api_key
         .as_ref()
-        .map(|api_key| api_key.trim().to_string())
+        .map(|api_key| api_key.trim())
         .filter(|api_key| !api_key.is_empty())
-        .unwrap_or(existing_api_key);
+        .map(ToString::to_string);
+    let (next_api_key, next_secret_id) = if let Some(data_key) = data_key {
+        let secret_id = match new_api_key {
+            Some(api_key) => Some(upsert_secret_in_connection(
+                connection,
+                data_key,
+                "station_key",
+                &input.id,
+                "api_key",
+                &api_key,
+            )?),
+            None => existing_secret_id,
+        };
+        ("".to_string(), secret_id)
+    } else {
+        (new_api_key.unwrap_or(existing_api_key), existing_secret_id)
+    };
     let now = now_string();
 
     connection
@@ -3147,17 +3409,19 @@ fn update_station_key_in_connection(
             "UPDATE station_keys
                 SET name = ?1,
                     api_key = ?2,
-                    enabled = ?3,
-                    priority = ?4,
-                    group_name = ?5,
-                    tier_label = ?6,
-                    status = ?7,
-                    note = ?8,
-                    updated_at = ?9
-              WHERE id = ?10 AND station_id = ?11",
+                    api_key_secret_id = ?3,
+                    enabled = ?4,
+                    priority = ?5,
+                    group_name = ?6,
+                    tier_label = ?7,
+                    status = ?8,
+                    note = ?9,
+                    updated_at = ?10
+              WHERE id = ?11 AND station_id = ?12",
             params![
                 input.name.trim(),
                 next_api_key,
+                next_secret_id,
                 bool_to_i64(input.enabled),
                 input.priority,
                 normalize_optional_string(input.group_name),
@@ -3264,7 +3528,7 @@ fn station_credentials_from_connection(
 ) -> Result<StationCredentials, String> {
     let credentials = connection
         .query_row(
-            "SELECT station_id, login_username, login_password, remember_password,
+            "SELECT station_id, login_username, login_password, login_password_secret_id, remember_password,
                     login_status, login_error, last_login_at, session_status,
                     session_expires_at, updated_at
                FROM station_credentials
@@ -3272,19 +3536,21 @@ fn station_credentials_from_connection(
             params![station_id],
             |row| {
                 let password: Option<String> = row.get(2)?;
+                let password_secret_id: Option<String> = row.get(3)?;
                 Ok(StationCredentials {
                     station_id: row.get(0)?,
                     login_username: row.get(1)?,
-                    password_present: password
+                    password_present: password_secret_id.is_some()
+                        || password
                         .map(|value| !value.trim().is_empty())
                         .unwrap_or(false),
-                    remember_password: i64_to_bool(row.get(3)?),
-                    login_status: row.get(4)?,
-                    login_error: row.get(5)?,
-                    last_login_at: row.get(6)?,
-                    session_status: row.get(7)?,
-                    session_expires_at: row.get(8)?,
-                    updated_at: row.get(9)?,
+                    remember_password: i64_to_bool(row.get(4)?),
+                    login_status: row.get(5)?,
+                    login_error: row.get(6)?,
+                    last_login_at: row.get(7)?,
+                    session_status: row.get(8)?,
+                    session_expires_at: row.get(9)?,
+                    updated_at: row.get(10)?,
                 })
             },
         )
@@ -3309,65 +3575,108 @@ fn station_login_password_from_connection(
     connection: &Connection,
     station_id: &str,
 ) -> Result<Option<String>, String> {
+    station_login_password_from_connection_with_data_key(connection, station_id, None)
+}
+
+fn station_login_password_from_connection_with_data_key(
+    connection: &Connection,
+    station_id: &str,
+    data_key: Option<&[u8; 32]>,
+) -> Result<Option<String>, String> {
     connection
         .query_row(
-            "SELECT login_password
+            "SELECT login_password, login_password_secret_id
                FROM station_credentials
               WHERE station_id = ?1",
             params![station_id],
-            |row| row.get::<_, Option<String>>(0),
+            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
         )
         .optional()
         .map_err(|error| format!("读取登录密码失败: {error}"))?
-        .map(|password| {
-            password.and_then(|value| {
-                let trimmed = value.trim().to_string();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed)
-                }
-            })
+        .map(|(password, secret_id)| {
+            if let Some(secret_id) = secret_id {
+                let Some(data_key) = data_key else {
+                    return Err("登录密码已迁移为加密凭据，当前调用缺少解密密钥".to_string());
+                };
+                return decrypt_secret_by_id(connection, data_key, &secret_id).map(Some);
+            }
+            Ok(password.and_then(|value| {
+                    let trimmed = value.trim().to_string();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed)
+                    }
+                }))
         })
         .ok_or_else(|| "未找到登录信息".to_string())
+        .and_then(|result| result)
 }
 
 fn upsert_station_credentials(
     connection: &Connection,
     input: UpdateStationCredentialsInput,
 ) -> Result<(), String> {
-    let existing_password: Option<String> = connection
+    upsert_station_credentials_with_data_key(connection, input, None)
+}
+
+fn upsert_station_credentials_with_data_key(
+    connection: &Connection,
+    input: UpdateStationCredentialsInput,
+    data_key: Option<&[u8; 32]>,
+) -> Result<(), String> {
+    let existing: (Option<String>, Option<String>) = connection
         .query_row(
-            "SELECT login_password FROM station_credentials WHERE station_id = ?1",
+            "SELECT login_password, login_password_secret_id FROM station_credentials WHERE station_id = ?1",
             params![input.station_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(|error| format!("读取旧密码失败: {error}"))?
-        .flatten();
+        .unwrap_or((None, None));
 
-    let password = if input.remember_password {
+    let new_password = if input.remember_password {
         input
             .login_password
             .as_ref()
             .map(|password| password.trim().to_string())
             .filter(|password| !password.is_empty())
-            .or(existing_password)
     } else {
         None
+    };
+    let (password, password_secret_id) = if input.remember_password {
+        if let Some(data_key) = data_key {
+            let secret_id = match new_password {
+                Some(password) => Some(upsert_secret_in_connection(
+                    connection,
+                    data_key,
+                    "station",
+                    &input.station_id,
+                    "login_password",
+                    &password,
+                )?),
+                None => existing.1,
+            };
+            (None, secret_id)
+        } else {
+            (new_password.or(existing.0), existing.1)
+        }
+    } else {
+        (None, None)
     };
     let now = now_string();
 
     connection
         .execute(
             "INSERT INTO station_credentials (
-                id, station_id, login_username, login_password, remember_password,
+                id, station_id, login_username, login_password, login_password_secret_id, remember_password,
                 login_status, login_error, last_login_at, session_status,
                 session_expires_at, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, 'saved', NULL, NULL, 'none', NULL, ?6, ?7)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'saved', NULL, NULL, 'none', NULL, ?7, ?8)
              ON CONFLICT(station_id) DO UPDATE SET
                 login_username = excluded.login_username,
                 login_password = excluded.login_password,
+                login_password_secret_id = excluded.login_password_secret_id,
                 remember_password = excluded.remember_password,
                 login_status = 'saved',
                 login_error = NULL,
@@ -3377,6 +3686,7 @@ fn upsert_station_credentials(
                 input.station_id,
                 normalize_optional_string(input.login_username),
                 password,
+                password_secret_id,
                 bool_to_i64(input.remember_password),
                 now,
                 now,
@@ -4075,25 +4385,30 @@ mod tests {
 
         assert!(report.migrated_count >= 1);
         assert_eq!(report.failed_count, 0);
-        let connection = database.connection().expect("connection");
-        let (plain, secret_id): (String, Option<String>) = connection
-            .query_row(
-                "SELECT api_key, api_key_secret_id FROM station_keys WHERE id = ?1",
-                params![key.id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("row");
+        let (plain, secret_id): (String, Option<String>) = {
+            let connection = database.connection().expect("connection");
+            connection
+                .query_row(
+                    "SELECT api_key, api_key_secret_id FROM station_keys WHERE id = ?1",
+                    params![key.id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("row")
+        };
         assert_eq!(plain, "");
         assert!(secret_id.is_some());
 
         let secret_id = secret_id.expect("secret id");
-        let (ciphertext, masked): (String, String) = connection
-            .query_row(
-                "SELECT ciphertext, masked_value FROM secrets WHERE id = ?1",
-                params![secret_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("secret");
+        let (ciphertext, masked): (String, String) = {
+            let connection = database.connection().expect("connection");
+            connection
+                .query_row(
+                    "SELECT ciphertext, masked_value FROM secrets WHERE id = ?1",
+                    params![secret_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("secret")
+        };
         assert!(!ciphertext.contains("sk-p8-secret-plaintext-canary"));
         assert_eq!(masked, "sk-...nary");
     }
@@ -4131,6 +4446,130 @@ mod tests {
             candidate.station_key_id == key.id
                 && candidate.api_key == "sk-p8-secret-plaintext-canary"
         }));
+    }
+
+    #[test]
+    fn encrypted_station_key_write_keeps_plain_column_empty() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "encrypted-key-write");
+        let data_key = crate::services::secrets::crypto::generate_data_key();
+        let key = database
+            .create_station_key_with_data_key(
+                CreateStationKeyInput {
+                    station_id: station.id,
+                    name: "encrypted key".to_string(),
+                    api_key: "sk-p8-secret-plaintext-canary".to_string(),
+                    enabled: true,
+                    priority: Some(0),
+                    group_name: None,
+                    tier_label: None,
+                    note: None,
+                },
+                &data_key,
+            )
+            .expect("key");
+
+        let (plain, secret_id): (String, Option<String>) = {
+            let connection = database.connection().expect("connection");
+            connection
+                .query_row(
+                    "SELECT api_key, api_key_secret_id FROM station_keys WHERE id = ?1",
+                    params![key.id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("row")
+        };
+        let decrypted = database
+            .resolve_station_key_secret_for_tests(&data_key, &key.id)
+            .expect("decrypt");
+
+        assert_eq!(plain, "");
+        assert!(secret_id.is_some());
+        assert_eq!(key.api_key_masked, "sk-...nary");
+        assert_eq!(decrypted, "sk-p8-secret-plaintext-canary");
+    }
+
+    #[test]
+    fn encrypted_station_key_blank_update_preserves_secret() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "encrypted-key-update");
+        let data_key = crate::services::secrets::crypto::generate_data_key();
+        let key = database
+            .create_station_key_with_data_key(
+                CreateStationKeyInput {
+                    station_id: station.id.clone(),
+                    name: "encrypted key".to_string(),
+                    api_key: "sk-p8-secret-plaintext-canary".to_string(),
+                    enabled: true,
+                    priority: Some(0),
+                    group_name: None,
+                    tier_label: None,
+                    note: None,
+                },
+                &data_key,
+            )
+            .expect("key");
+
+        let updated = database
+            .update_station_key_with_data_key(
+                UpdateStationKeyInput {
+                    id: key.id.clone(),
+                    station_id: station.id,
+                    name: "renamed encrypted key".to_string(),
+                    api_key: Some("   ".to_string()),
+                    enabled: true,
+                    priority: key.priority,
+                    group_name: None,
+                    tier_label: None,
+                    status: key.status,
+                    note: None,
+                },
+                &data_key,
+            )
+            .expect("update");
+        let decrypted = database
+            .resolve_station_key_secret_for_tests(&data_key, &updated.id)
+            .expect("decrypt");
+
+        assert_eq!(updated.name, "renamed encrypted key");
+        assert_eq!(decrypted, "sk-p8-secret-plaintext-canary");
+    }
+
+    #[test]
+    fn encrypted_station_credentials_write_keeps_plain_password_empty() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "encrypted-credentials");
+        let data_key = crate::services::secrets::crypto::generate_data_key();
+        let credentials = database
+            .update_station_credentials_with_data_key(
+                UpdateStationCredentialsInput {
+                    station_id: station.id.clone(),
+                    login_username: Some("user@example.test".to_string()),
+                    login_password: Some("p8-password-canary".to_string()),
+                    remember_password: true,
+                },
+                &data_key,
+            )
+            .expect("credentials");
+
+        let (plain, secret_id): (Option<String>, Option<String>) = {
+            let connection = database.connection().expect("connection");
+            connection
+                .query_row(
+                    "SELECT login_password, login_password_secret_id FROM station_credentials WHERE station_id = ?1",
+                    params![station.id.clone()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("row")
+        };
+        let decrypted = database
+            .get_station_login_password_with_data_key(station.id, &data_key)
+            .expect("password");
+
+        assert!(credentials.password_present);
+        assert!(plain.is_none());
+        assert!(secret_id.is_some());
+        assert_eq!(decrypted.as_deref(), Some("p8-password-canary"));
     }
 
     #[test]
