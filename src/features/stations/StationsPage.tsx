@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+﻿import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   closestCenter,
   type DraggableAttributes,
@@ -14,7 +14,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowRight, Edit3, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, Dialog, EmptyState, IconButton, MaskedSecret, ObjectRow, PropertyList, PropertyRow, StatusBadge, Toolbar } from "@/components/ui";
+import { Button, Dialog, EmptyState, IconButton, MaskedSecret, ObjectRow, PropertyList, PropertyRow, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import { createStation, deleteStation, listStations, reorderStations, updateStation } from "@/lib/api/stations";
 import {
   clearStationCredentials,
@@ -104,6 +104,7 @@ type StationsPageProps = {
 };
 
 export function StationsPage({ onAddProvider }: StationsPageProps) {
+  const toast = useToast();
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -120,7 +121,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actionSaving, setActionSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
@@ -173,7 +173,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
         return nextStations[0]?.id ?? null;
       });
     } catch (requestError) {
-      setError(readError(requestError));
+      const message = readError(requestError);
+      setError(message);
+      toast.error("读取中转站失败", message);
     } finally {
       setLoading(false);
     }
@@ -199,7 +201,7 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
         }));
       }
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("读取中转站详情失败", readError(requestError));
     }
   }, [dialogMode]);
 
@@ -212,7 +214,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     setStationKeys([]);
     setSnapshots([]);
     setSnapshot(null);
-    setMessage(null);
     setError(null);
   }, []);
 
@@ -233,7 +234,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     setStationKeys([]);
     setSnapshots([]);
     setSnapshot(null);
-    setMessage(null);
     setError(null);
   }, []);
 
@@ -254,7 +254,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       loginPassword: "",
       rememberPassword: false,
     });
-    setMessage(null);
     setError(null);
   }, []);
 
@@ -263,7 +262,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     setDetailStationId(station.id);
     setEditingStationId(null);
     setSelectedStationId(station.id);
-    setMessage(null);
     setError(null);
   }, []);
 
@@ -286,7 +284,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
 
   const handleToggleEnabled = useCallback(async (station: Station) => {
     setError(null);
-    setMessage(null);
     try {
       await updateStation({
         id: station.id,
@@ -300,9 +297,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
         note: station.note,
       });
       await refreshStations();
-      setMessage(station.enabled ? "站点已禁用。" : "站点已启用。");
+      toast.success(station.enabled ? "站点已禁用" : "站点已启用");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("更新站点状态失败", readError(requestError));
     }
   }, []);
 
@@ -311,13 +308,12 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       return;
     }
     setError(null);
-    setMessage(null);
     try {
       await deleteStation(station.id);
       await refreshStations();
-      setMessage("站点已删除。");
+      toast.success("站点已删除");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("删除站点失败", readError(requestError));
     }
   }, []);
 
@@ -348,10 +344,10 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     try {
       const savedStations = await reorderStations(nextStations.map((station) => station.id));
       setStations(savedStations);
-      setMessage("站点排序已保存。");
+      toast.success("站点排序已保存");
     } catch (requestError) {
       setStations(previousStations);
-      setError(readError(requestError));
+      toast.error("保存站点排序失败", readError(requestError));
     }
   }
 
@@ -359,7 +355,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     event.preventDefault();
     setSaving(true);
     setError(null);
-    setMessage(null);
     try {
       const input = formToInput(form);
       if (dialogMode === "edit" && editingStationId) {
@@ -376,7 +371,7 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
             rememberPassword: form.rememberPassword,
           });
         }
-        setMessage("站点已更新。");
+        toast.success("站点已更新");
       } else {
         const nextStation = await createStation(input);
         if (form.loginUsername.trim() || form.loginPassword.trim() || form.rememberPassword) {
@@ -387,12 +382,12 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
             rememberPassword: form.rememberPassword,
           });
         }
-        setMessage("站点已创建。");
+        toast.success("站点已创建");
       }
       await refreshStations();
       closeDialog();
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("保存站点失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -407,9 +402,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     try {
       await clearStationCredentials(stationId);
       await refreshExtras(stationId);
-      setMessage("登录信息已清除。");
+      toast.success("登录信息已清除");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("清除登录信息失败", readError(requestError));
     } finally {
       setActionSaving(false);
     }
@@ -425,9 +420,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       await detectSub2apiStation(selectedStation.id);
       await refreshStations();
       await refreshExtras(selectedStation.id);
-      setMessage("已执行站点探测。");
+      toast.success("已执行站点探测");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("站点探测失败", readError(requestError));
     } finally {
       setActionSaving(false);
     }
@@ -443,9 +438,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       await collectSub2apiStation(selectedStation.id);
       await refreshStations();
       await refreshExtras(selectedStation.id);
-      setMessage("已保存采集快照。");
+      toast.success("已保存采集快照");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("保存采集快照失败", readError(requestError));
     } finally {
       setActionSaving(false);
     }
@@ -467,9 +462,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       setKeyDialogOpen(false);
       setKeyForm(emptyKeyForm);
       await refreshExtras(activeDialogStation.id);
-      setMessage("API Key 已保存。");
+      toast.success("API Key 已保存");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("保存 API Key 失败", readError(requestError));
     } finally {
       setActionSaving(false);
     }
@@ -486,9 +481,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     try {
       await deleteStationKey(key.id);
       await refreshExtras(activeDialogStation.id);
-      setMessage("API Key 已删除。");
+      toast.success("API Key 已删除");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("删除 API Key 失败", readError(requestError));
     } finally {
       setActionSaving(false);
     }
@@ -507,8 +502,8 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
         </Button>
       }
     >
-      <div className="min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
-        <Toolbar>
+      <div className="grid min-w-0 gap-3">
+        <div className="flex min-h-8 flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[13px] font-semibold text-slate-800">中转站列表</div>
             <div className="text-xs text-muted-foreground">
@@ -519,9 +514,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
             <RefreshCw className="h-4 w-4" />
             示例站点
           </Button>
-        </Toolbar>
+        </div>
 
-        <div className="p-[var(--shell-page-gap)]">
+        <div>
           {loading ? (
             <div className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
               正在读取本地 SQLite...
@@ -568,17 +563,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
           )}
         </div>
       </div>
-
-      {(message || error) && (
-        <div
-          className={cn(
-            "fixed bottom-4 right-4 z-40 rounded-[var(--surface-radius)] border px-4 py-3 text-sm shadow-[var(--surface-shadow)]",
-            error ? "border-border bg-white text-slate-700" : "border-border bg-white text-slate-700",
-          )}
-        >
-          {error ?? message}
-        </div>
-      )}
 
       {(dialogMode || keyDialogOpen) && (
         <StationDialogs
@@ -738,11 +722,16 @@ function StationDialogs({
               <input className={inputClassName} value={form.name} onChange={(event) => onChange({ ...form, name: event.target.value })} required />
             </Field>
             <Field label="站点类型">
-              <select className={inputClassName} value={form.stationType} onChange={(event) => onChange({ ...form, stationType: event.target.value as StationType })}>
-                {Object.entries(stationTypeLabels).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
+              <SelectControl
+                ariaLabel="站点类型"
+                className={inputClassName}
+                value={form.stationType}
+                options={Object.entries(stationTypeLabels).map(([value, label]) => ({
+                  value: value as StationType,
+                  label,
+                }))}
+                onChange={(stationType) => onChange({ ...form, stationType })}
+              />
             </Field>
           </div>
           <Field label="Base URL">
@@ -1069,11 +1058,16 @@ function KeyDialog({
             <input className={inputClassName} value={keyForm.tierLabel} onChange={(event) => onKeyFormChange({ ...keyForm, tierLabel: event.target.value })} />
           </Field>
           <Field label="状态">
-            <select className={inputClassName} value={keyForm.status} onChange={(event) => onKeyFormChange({ ...keyForm, status: event.target.value as StationKeyStatus })}>
-              {Object.entries(stationKeyStatusLabels).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
+            <SelectControl
+              ariaLabel="Key 状态"
+              className={inputClassName}
+              value={keyForm.status}
+              options={Object.entries(stationKeyStatusLabels).map(([value, label]) => ({
+                value: value as StationKeyStatus,
+                label,
+              }))}
+              onChange={(status) => onKeyFormChange({ ...keyForm, status })}
+            />
           </Field>
         </div>
         <label className="flex items-center gap-2 text-sm text-slate-700">

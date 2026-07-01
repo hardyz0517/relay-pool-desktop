@@ -17,6 +17,7 @@ import {
   ObjectRow,
   SectionCard,
   StatusBadge,
+  useToast,
 } from "@/components/ui";
 import { listBalanceSnapshots } from "@/lib/api/economics";
 import { getProxyStatus, listRequestLogs } from "@/lib/api/proxy";
@@ -46,11 +47,8 @@ const requestTone = {
   failed: "error",
 } as const;
 
-function copyText(value: string) {
-  void navigator.clipboard.writeText(value);
-}
-
 export function DashboardPage({ onNavigate }: DashboardPageProps) {
+  const toast = useToast();
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
   const [keyPoolItems, setKeyPoolItems] = useState<KeyPoolItem[]>([]);
@@ -72,8 +70,19 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         setBalanceSnapshots(balances);
         setSettings(nextSettings);
       })
-      .catch(() => undefined);
+      .catch((requestError) => {
+        toast.error("工作台刷新失败", readError(requestError));
+      });
   }, []);
+
+  async function copyText(value: string, label = "内容") {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(`${label}已复制`);
+    } catch (copyError) {
+      toast.error("复制失败", readError(copyError));
+    }
+  }
 
   const todayLogs = useMemo(() => {
     const today = new Date().toDateString();
@@ -111,7 +120,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       description="本地 OpenAI-compatible 入口、站点状态、近期请求和成本变化都聚在一个面板里。"
       actions={
         <>
-          <Button variant="secondary" onClick={() => copyText(proxyBaseUrl)}>
+          <Button variant="secondary" onClick={() => void copyText(proxyBaseUrl, "本地入口")}>
             <Copy className="h-4 w-4" />
             复制本地入口
           </Button>
@@ -122,7 +131,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         </>
       }
     >
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
+      <div className="grid gap-4">
         <SectionCard
           title="当前路由"
           description="外部工具会优先使用这条本地 OpenAI-compatible 入口。"
@@ -132,14 +141,14 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             </StatusBadge>
           }
         >
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px]">
+          <div className="grid gap-3">
             <div className="rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)]">
               <div className="text-xs text-muted-foreground">Base URL</div>
               <div className="mt-1 flex min-w-0 items-center gap-2">
                 <code className="min-w-0 flex-1 truncate text-[15px] font-semibold text-slate-800">
                   {proxyBaseUrl}
                 </code>
-                <Button size="icon" variant="outline" aria-label="复制 Base URL" onClick={() => copyText(proxyBaseUrl)}>
+                <Button size="icon" variant="outline" aria-label="复制 Base URL" onClick={() => void copyText(proxyBaseUrl, "Base URL")}>
                   <Copy className="h-4 w-4" />
                 </Button>
               </div>
@@ -151,7 +160,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               <div className="text-xs text-muted-foreground">Local Key</div>
               <div className="mt-1 flex items-center justify-between gap-2">
                 <MaskedSecret value={localKeyMasked} />
-                <Button size="icon" variant="outline" aria-label="复制 Local Key" onClick={() => copyText(localKeyMasked)}>
+                <Button size="icon" variant="outline" aria-label="复制 Local Key" onClick={() => void copyText(localKeyMasked, "Local Key")}>
                   <Copy className="h-4 w-4" />
                 </Button>
               </div>
@@ -212,10 +221,11 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         </div>
       </SectionCard>
 
-      <div className="grid min-h-0 gap-3 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid min-h-0 gap-3">
         <SectionCard title="最近活动" description="请求、成本和余额变化合并为桌面工具活动流。">
-          <div className="grid gap-4 xl:grid-cols-2">
+          <div className="grid gap-4">
             <div className="space-y-2">
+              <div className="text-sm font-semibold text-slate-900">请求日志</div>
               {requestLogs.slice(0, 5).map((request) => (
                 <ObjectRow
                   key={request.id}
@@ -232,6 +242,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               ))}
             </div>
             <div className="space-y-2">
+              <div className="text-sm font-semibold text-slate-900">余额变化</div>
               {balanceSnapshots.slice(0, 5).map((snapshot) => (
                 <ObjectRow
                   key={snapshot.id}
@@ -307,4 +318,8 @@ function balanceStatusTone(status: string) {
     return "error";
   }
   return "info";
+}
+
+function readError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -73,7 +73,7 @@ export function StationDetailPanel({
         </dl>
       </SectionCard>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4">
         <SectionCard title="采集状态" contentClassName="space-y-2">
           <KeyValueRow label="来源" value="等待 Phase 3 采集器接入" />
           <KeyValueRow label="快照" value={station.lastPricingFetchedAt ?? "未采集"} />

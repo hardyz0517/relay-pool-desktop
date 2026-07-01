@@ -11,6 +11,7 @@ import {
   SegmentedControl,
   StatusBadge,
   Toolbar,
+  useToast,
   type DataTableColumn,
 } from "@/components/ui";
 import { clearRequestLogs, listRequestLogs } from "@/lib/api/proxy";
@@ -33,6 +34,7 @@ const statusLabel = {
 type LogFilter = "all" | "failed" | "fallback";
 
 export function LogsPage() {
+  const toast = useToast();
   const [logs, setLogs] = useState<RequestLog[]>([]);
   const [keys, setKeys] = useState<KeyPoolItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -78,7 +80,7 @@ export function LogsPage() {
     { key: "latency", header: "耗时", className: "w-24 text-right", render: (row) => row.durationMs == null ? "暂无" : `${row.durationMs}ms` },
   ], [keyById]);
 
-  async function refreshLogs() {
+  async function refreshLogs(showSuccess = false) {
     setLoading(true);
     setError(null);
     try {
@@ -86,8 +88,13 @@ export function LogsPage() {
       setLogs(nextLogs);
       setKeys(nextKeys);
       setSelectedId((current) => current ?? nextLogs[0]?.id ?? null);
+      if (showSuccess) {
+        toast.success("请求日志已刷新");
+      }
     } catch (requestError) {
-      setError(readError(requestError));
+      const message = readError(requestError);
+      setError(message);
+      toast.error("刷新请求日志失败", message);
     } finally {
       setLoading(false);
     }
@@ -102,14 +109,17 @@ export function LogsPage() {
       await clearRequestLogs();
       setLogs([]);
       setSelectedId(null);
+      toast.success("请求日志已清空");
     } catch (requestError) {
-      setError(readError(requestError));
+      const message = readError(requestError);
+      setError(message);
+      toast.error("清空请求日志失败", message);
     }
   }
 
   return (
     <PageScaffold title="请求日志" description="真实本地代理请求日志；只记录路由元数据，不保留 prompt、response 或完整 key。">
-      <div className="grid gap-[var(--shell-page-gap)] xl:grid-cols-[minmax(0,1fr)_390px]">
+      <div className="grid gap-[var(--shell-page-gap)]">
         <div className="min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
           <Toolbar>
             <SegmentedControl
@@ -122,7 +132,7 @@ export function LogsPage() {
               ]}
             />
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => void refreshLogs()}>
+              <Button variant="outline" onClick={() => void refreshLogs(true)}>
                 <RefreshCw className="h-4 w-4" />
                 刷新
               </Button>

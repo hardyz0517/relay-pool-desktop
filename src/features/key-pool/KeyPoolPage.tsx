@@ -14,7 +14,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { CheckCircle2, Copy, Edit3, KeyRound, RefreshCcw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, Dialog, EmptyState, IconButton, MaskedSecret, ObjectRow, StatusBadge, Toolbar } from "@/components/ui";
+import { Button, Dialog, EmptyState, IconButton, MaskedSecret, ObjectRow, SelectControl, StatusBadge, Toolbar, useToast } from "@/components/ui";
 import { getStationKeyCapabilities, updateStationKeyCapabilities } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
 import { deleteStationKey, listKeyPoolItems, reorderKeyPool, updateStationKey } from "@/lib/api/stationKeys";
@@ -34,6 +34,7 @@ const statusTone: Record<StationKeyStatus, "healthy" | "warning" | "error" | "di
 };
 
 export function KeyPoolPage() {
+  const toast = useToast();
   const [stations, setStations] = useState<Station[]>([]);
   const [items, setItems] = useState<KeyPoolItem[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<string>("all");
@@ -44,7 +45,6 @@ export function KeyPoolPage() {
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<KeyPoolItem | null>(null);
   const [editForm, setEditForm] = useState<KeyPoolEditForm>(emptyEditForm);
-  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
@@ -92,7 +92,9 @@ export function KeyPoolPage() {
       setStations(nextStations);
       setItems(nextItems);
     } catch (requestError) {
-      setError(readError(requestError));
+      const message = readError(requestError);
+      setError(message);
+      toast.error("读取 Key 池失败", message);
     } finally {
       setLoading(false);
     }
@@ -113,7 +115,7 @@ export function KeyPoolPage() {
       return;
     }
     if (!dragEnabled) {
-      setError("清除筛选后可调整全局顺序。");
+      toast.info("清除筛选后可调整全局顺序");
       return;
     }
     const oldIndex = filteredItems.findIndex((item) => item.id === active.id);
@@ -140,10 +142,10 @@ export function KeyPoolPage() {
     try {
       const saved = await reorderKeyPool(nextOrder.map((item) => item.id));
       setItems(saved);
-      setMessage("Key 池排序已保存。");
+      toast.success("Key 池排序已保存");
     } catch (requestError) {
       setItems(previousItems);
-      setError(readError(requestError));
+      toast.error("保存排序失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -166,9 +168,9 @@ export function KeyPoolPage() {
         note: item.note,
       });
       await refresh();
-      setMessage(item.enabled ? "Key 已禁用。" : "Key 已启用。");
+      toast.success(item.enabled ? "Key 已禁用" : "Key 已启用");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("更新 Key 状态失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -183,9 +185,9 @@ export function KeyPoolPage() {
     try {
       await deleteStationKey(item.id);
       await refresh();
-      setMessage("Key 已删除。");
+      toast.success("Key 已删除");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("删除 Key 失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -200,7 +202,7 @@ export function KeyPoolPage() {
       const capabilities = await getStationKeyCapabilities(item.id);
       setEditForm((current) => current.id === item.id ? mergeCapabilitiesIntoForm(current, capabilities) : current);
     } catch (requestError) {
-      setError(`读取 Key 路由能力失败：${readError(requestError)}`);
+      toast.error("读取 Key 路由能力失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -248,9 +250,9 @@ export function KeyPoolPage() {
       }
       setEditingItem(null);
       await refresh();
-      setMessage("Key 已更新。");
+      toast.success("Key 已更新");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("保存 Key 失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -262,19 +264,27 @@ export function KeyPoolPage() {
       description="统一管理所有中转站账号下的 API Key。这里的排序、启用状态和健康信息会决定后续本地路由如何选择出口。"
       actions={
         <div className="flex items-center gap-2">
-          <select className={selectClassName} value={selectedStationId} onChange={(event) => setSelectedStationId(event.target.value)}>
-            <option value="all">全部中转站</option>
-            {stationOptions.map((station) => (
-              <option key={station.id} value={station.id}>
-                {station.label}
-              </option>
-            ))}
-          </select>
-          <select className={selectClassName} value={filterMode} onChange={(event) => setFilterMode(event.target.value as FilterMode)}>
-            <option value="all">全部状态</option>
-            <option value="enabled">只看启用</option>
-            <option value="disabled">只看禁用</option>
-          </select>
+          <SelectControl
+            ariaLabel="筛选中转站"
+            className={selectClassName}
+            value={selectedStationId}
+            options={[
+              { value: "all", label: "全部中转站" },
+              ...stationOptions.map((station) => ({ value: station.id, label: station.label })),
+            ]}
+            onChange={setSelectedStationId}
+          />
+          <SelectControl
+            ariaLabel="筛选启用状态"
+            className={selectClassName}
+            value={filterMode}
+            options={[
+              { value: "all", label: "全部状态" },
+              { value: "enabled", label: "只看启用" },
+              { value: "disabled", label: "只看禁用" },
+            ]}
+            onChange={setFilterMode}
+          />
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
             <input className={`${selectClassName} pl-8`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 key / 站点" />
@@ -334,17 +344,6 @@ export function KeyPoolPage() {
               {activeDragItem ? <KeyRowContent overlay item={activeDragItem} /> : null}
             </DragOverlay>
           </DndContext>
-        </div>
-      )}
-
-      {(message || error) && (
-        <div
-          className={cn(
-            "fixed bottom-4 right-4 z-40 rounded-2xl border px-4 py-3 text-sm shadow-[0_12px_30px_rgba(33,79,88,0.12)]",
-            error ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700",
-          )}
-        >
-          {error ?? message}
         </div>
       )}
 
@@ -559,13 +558,19 @@ function KeyEditDialog({
             <input className={inputClassName} value={form.tierLabel} onChange={(event) => onFormChange({ ...form, tierLabel: event.target.value })} />
           </Field>
           <Field label="状态">
-            <select className={inputClassName} value={form.status} onChange={(event) => onFormChange({ ...form, status: event.target.value as StationKeyStatus })}>
-              <option value="unchecked">未检测</option>
-              <option value="healthy">正常</option>
-              <option value="warning">警告</option>
-              <option value="error">错误</option>
-              <option value="disabled">禁用</option>
-            </select>
+            <SelectControl
+              ariaLabel="Key 状态"
+              className={inputClassName}
+              value={form.status}
+              options={[
+                { value: "unchecked", label: "未检测" },
+                { value: "healthy", label: "正常" },
+                { value: "warning", label: "警告" },
+                { value: "error", label: "错误" },
+                { value: "disabled", label: "禁用" },
+              ]}
+              onChange={(status) => onFormChange({ ...form, status })}
+            />
           </Field>
         </div>
         <label className="flex items-center gap-2 text-sm text-slate-700">

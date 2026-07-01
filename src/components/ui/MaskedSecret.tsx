@@ -1,6 +1,7 @@
 import { Copy, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/ToastProvider";
 
 type MaskedSecretProps = {
   value: string;
@@ -17,6 +18,7 @@ export function MaskedSecret({
   onReveal,
   onCopy,
 }: MaskedSecretProps) {
+  const toast = useToast();
   const [revealed, setRevealed] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const displayValue = revealed ?? (present ? value : "未设置");
@@ -39,10 +41,15 @@ export function MaskedSecret({
 
   async function handleCopy() {
     const copyValue = revealed ?? value;
-    if (onCopy) {
-      await onCopy(copyValue);
-    } else {
-      await navigator.clipboard.writeText(copyValue);
+    try {
+      if (onCopy) {
+        await onCopy(copyValue);
+      } else {
+        await navigator.clipboard.writeText(copyValue);
+      }
+      toast.success("已复制");
+    } catch (copyError) {
+      toast.error("复制失败", copyError instanceof Error ? copyError.message : "请手动复制。");
     }
   }
 

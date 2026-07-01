@@ -9,7 +9,9 @@ import {
   ObjectRow,
   SectionCard,
   SegmentedControl,
+  SelectControl,
   StatusBadge,
+  useToast,
 } from "@/components/ui";
 import {
   deleteModelAlias,
@@ -67,6 +69,7 @@ const defaultSimulation: RouteSimulationInput = {
 };
 
 export function RoutingPage() {
+  const toast = useToast();
   const [settings, setSettings] = useState<AppSettings>(fallbackSettings);
   const [aliases, setAliases] = useState<ModelAlias[]>([]);
   const [aliasForm, setAliasForm] = useState<UpsertModelAliasInput>(emptyAliasForm);
@@ -74,7 +77,6 @@ export function RoutingPage() {
   const [result, setResult] = useState<RouteSimulationResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -98,7 +100,9 @@ export function RoutingPage() {
       setSettings(nextSettings);
       setAliases(nextAliases);
     } catch (requestError) {
-      setError(readError(requestError));
+      const message = readError(requestError);
+      setError(message);
+      toast.error("刷新路由规则失败", message);
     } finally {
       setLoading(false);
     }
@@ -116,9 +120,9 @@ export function RoutingPage() {
         trayBehavior: settings.trayBehavior,
       });
       setSettings(nextSettings);
-      setMessage("默认策略已保存。");
+      toast.success("默认策略已保存");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("保存默认策略失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -126,7 +130,7 @@ export function RoutingPage() {
 
   async function handleSaveAlias() {
     if (!aliasForm.clientModel.trim() || !aliasForm.upstreamModel.trim()) {
-      setError("请填写客户端模型和上游模型。");
+      toast.info("请填写客户端模型和上游模型");
       return;
     }
     setSaving(true);
@@ -140,9 +144,9 @@ export function RoutingPage() {
       });
       setAliasForm(emptyAliasForm);
       setAliases(await listModelAliases());
-      setMessage("模型映射已保存。");
+      toast.success("模型映射已保存");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("保存模型映射失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -160,8 +164,9 @@ export function RoutingPage() {
         note: alias.note,
       });
       setAliases(await listModelAliases());
+      toast.success(alias.enabled ? "模型映射已停用" : "模型映射已启用");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("更新模型映射失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -176,9 +181,9 @@ export function RoutingPage() {
     try {
       await deleteModelAlias(alias.id);
       setAliases(await listModelAliases());
-      setMessage("模型映射已删除。");
+      toast.success("模型映射已删除");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("删除模型映射失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -193,8 +198,9 @@ export function RoutingPage() {
         model: simulation.model?.trim() ? simulation.model.trim() : null,
       });
       setResult(nextResult);
+      toast.success("路由模拟完成");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("路由模拟失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -211,7 +217,7 @@ export function RoutingPage() {
         </Button>
       }
     >
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div className="grid gap-3">
         <div className="grid gap-3">
           <SectionCard title="默认策略" description="当前策略只影响 Key 池候选排序。">
             <div className="flex flex-wrap items-center gap-3">
@@ -235,7 +241,7 @@ export function RoutingPage() {
             description="客户端模型名会在转发前映射为上游模型名；未命中时保持原模型名。"
           >
             <div className="grid gap-3">
-              <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_120px_auto]">
+              <div className="grid gap-2">
                 <input
                   className={inputClassName}
                   value={aliasForm.clientModel}
@@ -248,14 +254,16 @@ export function RoutingPage() {
                   placeholder="上游模型，例如 openai/gpt-5.4"
                   onChange={(event) => setAliasForm({ ...aliasForm, upstreamModel: event.target.value })}
                 />
-                <select
+                <SelectControl
+                  ariaLabel="模型映射状态"
                   className={inputClassName}
                   value={aliasForm.enabled ? "enabled" : "disabled"}
-                  onChange={(event) => setAliasForm({ ...aliasForm, enabled: event.target.value === "enabled" })}
-                >
-                  <option value="enabled">启用</option>
-                  <option value="disabled">禁用</option>
-                </select>
+                  options={[
+                    { value: "enabled", label: "启用" },
+                    { value: "disabled", label: "禁用" },
+                  ]}
+                  onChange={(enabledState) => setAliasForm({ ...aliasForm, enabled: enabledState === "enabled" })}
+                />
                 <Button disabled={saving} type="button" onClick={() => void handleSaveAlias()}>
                   <Plus className="h-4 w-4" />
                   添加
@@ -299,22 +307,34 @@ export function RoutingPage() {
         <InspectorPanel title="路由模拟器" description="用真实 selector 解释候选排序。">
           <div className="grid gap-3 p-4">
             <Field label="Endpoint">
-              <select className={inputClassName} value={simulation.endpoint} onChange={(event) => setSimulation({ ...simulation, endpoint: event.target.value as RouteEndpointKind })}>
-                {(["responses", "chat_completions", "models", "embeddings"] as RouteEndpointKind[]).map((endpoint) => (
-                  <option key={endpoint} value={endpoint}>{endpointLabels[endpoint]}</option>
-                ))}
-              </select>
+              <SelectControl
+                ariaLabel="模拟 endpoint"
+                className={inputClassName}
+                value={simulation.endpoint}
+                options={(["responses", "chat_completions", "models", "embeddings"] as RouteEndpointKind[]).map((endpoint) => ({
+                  value: endpoint,
+                  label: endpointLabels[endpoint],
+                }))}
+                onChange={(endpoint) => setSimulation({ ...simulation, endpoint })}
+              />
             </Field>
             <Field label="模型">
               <input className={inputClassName} value={simulation.model ?? ""} onChange={(event) => setSimulation({ ...simulation, model: event.target.value })} placeholder="gpt-5.4" />
             </Field>
             <Field label="策略">
-              <select className={inputClassName} value={simulation.policy ?? "default"} onChange={(event) => setSimulation({ ...simulation, policy: event.target.value === "default" ? null : event.target.value as RoutingPolicy })}>
-                <option value="default">使用默认策略</option>
-                {policyOptions.map((policy) => (
-                  <option key={policy} value={policy}>{routingStrategyLabels[policy]}</option>
-                ))}
-              </select>
+              <SelectControl
+                ariaLabel="模拟路由策略"
+                className={inputClassName}
+                value={simulation.policy ?? "default"}
+                options={[
+                  { value: "default", label: "使用默认策略" },
+                  ...policyOptions.map((policy) => ({
+                    value: policy,
+                    label: routingStrategyLabels[policy],
+                  })),
+                ]}
+                onChange={(policy) => setSimulation({ ...simulation, policy: policy === "default" ? null : policy })}
+              />
             </Field>
             <div className="grid gap-2 sm:grid-cols-2">
               <CheckField label="Stream" checked={simulation.stream} onChange={(checked) => setSimulation({ ...simulation, stream: checked })} />
@@ -341,16 +361,6 @@ export function RoutingPage() {
         </InspectorPanel>
       </div>
 
-      {(message || error) && (
-        <div
-          className={cn(
-            "fixed bottom-4 right-4 z-40 rounded-2xl border px-4 py-3 text-sm shadow-[0_12px_30px_rgba(33,79,88,0.12)]",
-            error ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700",
-          )}
-        >
-          {error ?? message}
-        </div>
-      )}
     </PageScaffold>
   );
 }

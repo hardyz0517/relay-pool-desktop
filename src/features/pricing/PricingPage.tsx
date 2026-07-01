@@ -8,8 +8,10 @@ import {
   InspectorPanel,
   MetricCard,
   SectionCard,
+  SelectControl,
   StatusBadge,
   Toolbar,
+  useToast,
   type DataTableColumn,
 } from "@/components/ui";
 import { listPricingRules } from "@/lib/api/economics";
@@ -25,6 +27,7 @@ const sourceTone = {
 } as const;
 
 export function PricingPage() {
+  const toast = useToast();
   const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,7 +41,7 @@ export function PricingPage() {
     void refresh();
   }, []);
 
-  async function refresh() {
+  async function refresh(showSuccess = false) {
     setLoading(true);
     setError(null);
     try {
@@ -46,8 +49,13 @@ export function PricingPage() {
       setPricingRules(nextPricing);
       setStations(nextStations);
       setSelectedModel((current) => current ?? nextPricing[0]?.model ?? null);
+      if (showSuccess) {
+        toast.success("价格表已刷新");
+      }
     } catch (requestError) {
-      setError(readError(requestError));
+      const message = readError(requestError);
+      setError(message);
+      toast.error("刷新价格表失败", message);
     } finally {
       setLoading(false);
     }
@@ -108,7 +116,7 @@ export function PricingPage() {
     <PageScaffold
       title="价格表"
       description="统一查看已归一化的模型价格与来源；当前展示的是数据库里的真实 pricing_rules。"
-      actions={<Button variant="secondary" onClick={() => void refresh()}><RefreshCw className="h-4 w-4" />刷新</Button>}
+      actions={<Button variant="secondary" onClick={() => void refresh(true)}><RefreshCw className="h-4 w-4" />刷新</Button>}
     >
       <div className="grid gap-[var(--shell-page-gap)] md:grid-cols-3">
         <MetricCard icon={BadgeDollarSign} label="最低输出价" value={cheapest ? formatMoney(cheapest.outputPrice, cheapest.currency) : "暂无"} detail={cheapest?.model ?? "暂无数据"} />
@@ -116,22 +124,34 @@ export function PricingPage() {
         <MetricCard icon={TrendingDown} label="价格记录" value={`${pricingRules.length}`} detail="按站点 / 分组归一化" />
       </div>
 
-      <div className="grid gap-[var(--shell-page-gap)] xl:grid-cols-[minmax(0,1fr)_390px]">
+      <div className="grid gap-[var(--shell-page-gap)]">
         <SectionCard title="模型价格" description="支持搜索、按站点筛选和按来源筛选。" contentClassName="p-0">
           <Toolbar>
             <div className="flex flex-wrap items-center gap-2">
               <input className={inputClassName} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模型 / 站点 / 分组" />
-              <select className={inputClassName} value={selectedStationId} onChange={(event) => setSelectedStationId(event.target.value)}>
-                <option value="all">全部中转站</option>
-                {stations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
-              </select>
-              <select className={inputClassName} value={selectedSource} onChange={(event) => setSelectedSource(event.target.value)}>
-                <option value="all">全部来源</option>
-                <option value="manual">manual</option>
-                <option value="collector">collector</option>
-                <option value="snapshot">snapshot</option>
-                <option value="unknown">unknown</option>
-              </select>
+              <SelectControl
+                ariaLabel="按中转站筛选价格"
+                className={inputClassName}
+                value={selectedStationId}
+                options={[
+                  { value: "all", label: "全部中转站" },
+                  ...stations.map((station) => ({ value: station.id, label: station.name })),
+                ]}
+                onChange={setSelectedStationId}
+              />
+              <SelectControl
+                ariaLabel="按来源筛选价格"
+                className={inputClassName}
+                value={selectedSource}
+                options={[
+                  { value: "all", label: "全部来源" },
+                  { value: "manual", label: "manual" },
+                  { value: "collector", label: "collector" },
+                  { value: "snapshot", label: "snapshot" },
+                  { value: "unknown", label: "unknown" },
+                ]}
+                onChange={setSelectedSource}
+              />
             </div>
           </Toolbar>
           {error && <div className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}

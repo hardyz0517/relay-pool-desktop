@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Radio, RefreshCw, Server, Timer } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, EmptyState, MetricCard, SegmentedControl, StatusBadge } from "@/components/ui";
+import { Button, EmptyState, MetricCard, SegmentedControl, StatusBadge, useToast } from "@/components/ui";
 import { listRequestLogs } from "@/lib/api/proxy";
 import { listStationKeyHealth } from "@/lib/api/routing";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
@@ -56,6 +56,7 @@ const outcomeClassName: Record<RecentOutcome, string> = {
 };
 
 export function ChannelStatusPage() {
+  const toast = useToast();
   const [keys, setKeys] = useState<KeyPoolItem[]>([]);
   const [logs, setLogs] = useState<RequestLog[]>([]);
   const [health, setHealth] = useState<StationKeyHealth[]>([]);
@@ -68,7 +69,7 @@ export function ChannelStatusPage() {
 
   const channels = useMemo(() => buildChannels(keys, logs, health), [health, keys, logs]);
 
-  async function refresh() {
+  async function refresh(showSuccess = false) {
     setLoading(true);
     setError(null);
     try {
@@ -80,8 +81,13 @@ export function ChannelStatusPage() {
       setKeys(nextKeys);
       setLogs(nextLogs);
       setHealth(nextHealth);
+      if (showSuccess) {
+        toast.success("渠道状态已刷新");
+      }
     } catch (requestError) {
-      setError(readError(requestError));
+      const message = readError(requestError);
+      setError(message);
+      toast.error("刷新渠道状态失败", message);
     } finally {
       setLoading(false);
     }
@@ -101,7 +107,7 @@ export function ChannelStatusPage() {
               { value: "7d", label: "7 天" },
             ]}
           />
-          <Button variant="secondary" onClick={() => void refresh()}>
+          <Button variant="secondary" onClick={() => void refresh(true)}>
             <RefreshCw className="h-4 w-4" />
             刷新
           </Button>

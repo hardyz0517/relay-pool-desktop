@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Play, RotateCcw, Save, Square } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, MaskedSecret, SectionCard, StatusBadge } from "@/components/ui";
+import { Button, MaskedSecret, SectionCard, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import {
   getProxyStatus,
   restartLocalProxy,
@@ -50,13 +50,13 @@ const fallbackProxyStatus: ProxyStatus = {
 };
 
 export function SettingsPage() {
+  const toast = useToast();
   const [settings, setSettings] = useState<AppSettings>(fallbackSettings);
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus>(fallbackProxyStatus);
   const [form, setForm] = useState<SettingsFormState>(settingsToForm(fallbackSettings));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [proxyBusy, setProxyBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [secretMigration, setSecretMigration] = useState<SecretMigrationReport | null>(null);
   const [scanFindings, setScanFindings] = useState<SecretScanFinding[]>([]);
@@ -77,7 +77,9 @@ export function SettingsPage() {
       setProxyStatus(nextProxyStatus);
       setForm(settingsToForm(nextSettings));
     } catch (requestError) {
-      setError(readError(requestError));
+      const message = readError(requestError);
+      setError(message);
+      toast.error("刷新设置失败", message);
     } finally {
       setLoading(false);
     }
@@ -99,7 +101,6 @@ export function SettingsPage() {
 
   async function handleProxyAction(action: "start" | "stop" | "restart") {
     setProxyBusy(true);
-    setMessage(null);
     setError(null);
     try {
       const nextStatus =
@@ -109,13 +110,15 @@ export function SettingsPage() {
             ? await stopLocalProxy()
             : await restartLocalProxy();
       setProxyStatus(nextStatus);
-      setMessage(
+      toast.success(
         action === "stop"
-          ? "本地代理已停止。"
+          ? "本地代理已停止"
           : `本地代理运行于 http://${nextStatus.bindAddr}:${nextStatus.port}/v1。`,
       );
     } catch (requestError) {
-      setError(readError(requestError));
+      const message = readError(requestError);
+      setError(message);
+      toast.error("代理操作失败", message);
       try {
         setProxyStatus(await getProxyStatus());
       } catch {
@@ -129,15 +132,16 @@ export function SettingsPage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
-    setMessage(null);
     setError(null);
     try {
       const nextSettings = await updateSettings(formToInput(form));
       setSettings(nextSettings);
       setForm(settingsToForm(nextSettings));
-      setMessage("设置已保存。");
+      toast.success("设置已保存");
     } catch (requestError) {
-      setError(readError(requestError));
+      const message = readError(requestError);
+      setError(message);
+      toast.error("保存设置失败", message);
     } finally {
       setSaving(false);
     }
@@ -229,19 +233,16 @@ export function SettingsPage() {
         <SectionCard title="路由与采集" description="P6 根据 Key 池 priority、能力范围和健康状态选择 Station Key。">
           <SettingRow
             control={
-              <select
+              <SelectControl
+                ariaLabel="默认路由策略"
                 className={inputClassName}
                 value={form.defaultRoutingStrategy}
-                onChange={(event) =>
-                  setForm({ ...form, defaultRoutingStrategy: event.target.value as RoutingStrategy })
-                }
-              >
-                {Object.entries(routingStrategyLabels).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+                options={Object.entries(routingStrategyLabels).map(([value, label]) => ({
+                  value: value as RoutingStrategy,
+                  label,
+                }))}
+                onChange={(defaultRoutingStrategy) => setForm({ ...form, defaultRoutingStrategy })}
+              />
             }
             description="价格与余额策略后续阶段接入；P6 先使用优先级、稳定性和备用模式。"
             label="默认路由策略"
@@ -279,19 +280,16 @@ export function SettingsPage() {
           />
           <SettingRow
             control={
-              <select
+              <SelectControl
+                ariaLabel="托盘行为"
                 className={inputClassName}
                 value={form.trayBehavior}
-                onChange={(event) =>
-                  setForm({ ...form, trayBehavior: event.target.value as TrayBehavior })
-                }
-              >
-                {Object.entries(trayBehaviorLabels).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+                options={Object.entries(trayBehaviorLabels).map(([value, label]) => ({
+                  value: value as TrayBehavior,
+                  label,
+                }))}
+                onChange={(trayBehavior) => setForm({ ...form, trayBehavior })}
+              />
             }
             description="系统托盘行为占位。"
             label="托盘行为"
@@ -347,11 +345,7 @@ export function SettingsPage() {
           </div>
         </SectionCard>
 
-        {(message || error) && (
-          <div className={error ? "text-sm text-rose-700" : "text-sm text-emerald-700"}>
-            {error ?? message}
-          </div>
-        )}
+        {error && <div className="text-sm text-rose-700">{error}</div>}
       </form>
     </PageScaffold>
   );

@@ -21,24 +21,31 @@ export function SectionCard({
   return (
     <section
       className={cn(
-        "overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]",
+        "grid gap-2",
         className,
       )}
     >
       {(title || description || action) && (
-        <header className="flex min-h-[44px] items-center justify-between gap-3 border-b border-border px-4 py-2.5">
+        <header className="flex min-h-[38px] items-start justify-between gap-3">
           <div className="min-w-0">
             {title && (
-              <h2 className="truncate text-[13px] font-semibold text-slate-800">{title}</h2>
+              <h2 className="truncate text-sm font-semibold text-slate-950">{title}</h2>
             )}
             {description && (
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">{description}</p>
+              <p className="mt-0.5 truncate text-sm text-slate-600">{description}</p>
             )}
           </div>
           {action}
         </header>
       )}
-      <div className={cn("p-4", contentClassName)}>{children}</div>
+      <div
+        className={cn(
+          "overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)]",
+          contentClassName,
+        )}
+      >
+        {children}
+      </div>
     </section>
   );
 }

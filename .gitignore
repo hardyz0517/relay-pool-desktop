@@ -67,5 +67,7 @@ Thumbs.db
 !.vscode/extensions.json
 
 .codegraph/
+.codex/
+.superpowers/
 .worktrees/
 worktrees/
