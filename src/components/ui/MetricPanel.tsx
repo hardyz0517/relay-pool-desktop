@@ -40,14 +40,9 @@ export function MetricPanel({
   className,
 }: MetricPanelProps) {
   return (
-    <section
-      className={cn(
-        "overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]",
-        className,
-      )}
-    >
+    <section className={cn("grid gap-3", className)}>
       {(title || description) && (
-        <header className="border-b border-border px-4 py-3">
+        <header>
           {title && (
             <h2 className="truncate text-[13px] font-semibold text-slate-800">
               {title}
@@ -60,7 +55,7 @@ export function MetricPanel({
           )}
         </header>
       )}
-      <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)] sm:grid-cols-2 xl:grid-cols-4">
         {metrics.map(({ label, value, detail, icon: Icon, tone = "neutral" }) => (
           <div
             key={label}

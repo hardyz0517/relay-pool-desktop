@@ -261,7 +261,7 @@ export function KeyPoolPage() {
   return (
     <PageScaffold
       title="Key 池"
-      description="统一管理所有中转站账号下的 API Key。这里的排序、启用状态和健康信息会决定后续本地路由如何选择出口。"
+      description="统一管理所有中转站账号下的 API Key。这里的排序、启用状态和健康信息会直接参与本地代理路由。"
       actions={
         <div className="flex items-center gap-2">
           <SelectControl
@@ -311,7 +311,7 @@ export function KeyPoolPage() {
             <div className="min-w-0">
               <div className="text-[13px] font-semibold text-slate-800">Key 池列表</div>
               <div className="text-xs text-muted-foreground">
-                {filteredItems.length} 个 Key，{filteredItems.filter((item) => item.enabled).length} 个启用，{saving ? "保存中" : "等待操作"}。
+                {filteredItems.length} 个 Key，{filteredItems.filter((item) => item.enabled).length} 个启用，{saving ? "保存中" : dragEnabled ? "可拖拽调整全局顺序" : "清除筛选后可排序"}。
               </div>
               {!dragEnabled && (
                 <div className="mt-1 text-xs text-amber-700">当前有筛选条件，拖拽排序已禁用。</div>

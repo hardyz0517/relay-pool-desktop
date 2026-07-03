@@ -62,6 +62,10 @@ export function CollectorsPage() {
   const endpointResults = summary.endpointResults ?? [];
   const normalized = latestSnapshot?.normalizedJson ?? {};
   const modelCount = Array.isArray(normalized.models) ? normalized.models.length : 0;
+  const groupDetails = Array.isArray(normalized.groups) ? normalized.groups : [];
+  const rateMultiplierDetails = Array.isArray(normalized.rateMultipliers)
+    ? normalized.rateMultipliers
+    : [];
 
   useEffect(() => {
     void refreshStations();
@@ -322,6 +326,20 @@ export function CollectorsPage() {
                 <CompactFact label="模型" value={countValue(modelCount)} />
                 <CompactFact label="字段" value={countValue(recognized?.matchedFieldCount)} />
               </div>
+              {(groupDetails.length > 0 || rateMultiplierDetails.length > 0) && (
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  <DetailList
+                    title="分组明细"
+                    items={groupDetails.map(formatGroupDetail)}
+                    emptyText="未识别到分组名称"
+                  />
+                  <DetailList
+                    title="倍率明细"
+                    items={rateMultiplierDetails.map(formatRateMultiplierDetail)}
+                    emptyText="未识别到分组倍率"
+                  />
+                </div>
+              )}
               <div className="mt-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs leading-5 text-muted-foreground shadow-[var(--surface-shadow)]">
                 {summary.diagnosis ??
                   summary.nextStep ??
@@ -489,6 +507,36 @@ function CompactFact({ label, value }: { label: string; value: string }) {
   );
 }
 
+function DetailList({
+  title,
+  items,
+  emptyText,
+}: {
+  title: string;
+  items: string[];
+  emptyText: string;
+}) {
+  return (
+    <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 shadow-[var(--surface-shadow)]">
+      <div className="text-[11px] text-muted-foreground">{title}</div>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {items.length > 0 ? (
+          items.map((item, index) => (
+            <span
+              key={`${item}-${index}`}
+              className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700"
+            >
+              {item}
+            </span>
+          ))
+        ) : (
+          <span className="text-xs text-muted-foreground">{emptyText}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function toCollectorSummary(value: Record<string, unknown> | undefined): CollectorSummary {
   if (!value) return {};
   return {
@@ -507,6 +555,28 @@ function toCollectorSummary(value: Record<string, unknown> | undefined): Collect
     webviewRequired: typeof value.webviewRequired === "boolean" ? value.webviewRequired : undefined,
     webviewNote: readString(value.webviewNote),
   };
+}
+
+function formatGroupDetail(value: unknown) {
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return readString(record.name) ?? readString(record.group) ?? readString(record.groupName) ?? displayValue(value);
+  }
+  return displayValue(value);
+}
+
+function formatRateMultiplierDetail(value: unknown) {
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const group = readString(record.group) ?? readString(record.groupName) ?? readString(record.name);
+    const multiplier = record.multiplier ?? record.rateMultiplier ?? record.ratio;
+    if (group && multiplier !== undefined && multiplier !== null) {
+      return `${group} = ${displayValue(multiplier)}`;
+    }
+  }
+  return displayValue(value);
 }
 
 function toEndpointResult(value: unknown): CollectorEndpointResult | null {

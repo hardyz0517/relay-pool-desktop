@@ -47,7 +47,8 @@ const fallbackSettings: AppSettings = {
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   trayBehavior: "minimize-to-tray",
-  dataDir: "等待 Tauri 数据目录",
+  developerModeEnabled: false,
+  dataDir: "仅桌面端可读取",
 };
 
 const emptyAliasForm: UpsertModelAliasInput = {
@@ -118,6 +119,7 @@ export function RoutingPage() {
         lowBalanceThresholdCny: settings.lowBalanceThresholdCny,
         collectorIntervalMinutes: settings.collectorIntervalMinutes,
         trayBehavior: settings.trayBehavior,
+        developerModeEnabled: settings.developerModeEnabled,
       });
       setSettings(nextSettings);
       toast.success("默认策略已保存");
@@ -207,9 +209,9 @@ export function RoutingPage() {
   }
 
   return (
-    <PageScaffold
-      title="路由规则"
-      description="路由最终选择的是 Key 池中的 Station Key；P7 只负责默认策略和解释，不引入复杂策略编辑。"
+      <PageScaffold
+        title="路由规则"
+      description="管理默认策略、模型映射和候选解释，说明请求为什么会走到某把 Key。"
       actions={
         <Button disabled={loading || saving} variant="secondary" onClick={() => void refresh()}>
           <RefreshCcw className="h-4 w-4" />
