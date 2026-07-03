@@ -4,6 +4,7 @@ import type { StatusTone } from "@/components/ui";
 export type ChangeFilter = {
   severity: "all" | ChangeSeverity;
   status: "active" | "all" | ChangeEventStatus;
+  objectType: "all" | string;
   query: string;
 };
 
@@ -49,10 +50,13 @@ export const eventTypeLabels: Record<string, string> = {
 export const objectTypeLabels: Record<string, string> = {
   station: "中转站",
   station_key: "Key",
-  group_binding: "分组绑定",
-  pricing_rule: "价格规则",
-  collector_run: "采集任务",
-  request_log: "请求日志",
+  group_binding: "分组",
+  pricing_rule: "价格",
+  routing_rule: "路由规则",
+  request_log: "请求",
+  channel: "渠道状态",
+  collector: "采集",
+  collector_run: "采集",
   route: "路由",
 };
 
@@ -67,6 +71,9 @@ export function filterChangeEvents(events: ChangeEvent[], filter: ChangeFilter) 
         return false;
       }
     } else if (filter.status !== "all" && event.status !== filter.status) {
+      return false;
+    }
+    if (filter.objectType !== "all" && event.objectType !== filter.objectType) {
       return false;
     }
     if (!query) {

@@ -131,6 +131,12 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   );
   const unreadRisks = unreadRiskCount(changeEvents);
   const criticalRisks = activeRiskEvents.filter((event) => event.severity === "critical").length;
+  const p9RiskBreakdown = useMemo(() => ({
+    unresolvedCritical: activeRiskEvents.filter((event) => event.severity === "critical").length,
+    groupBindingIssues: activeRiskEvents.filter((event) => event.eventType === "group_missing" || event.eventType === "key_group_unresolved").length,
+    collectorFailures: activeRiskEvents.filter((event) => event.eventType === "collector_failed").length,
+    priceRateIssues: activeRiskEvents.filter((event) => event.eventType === "price_expired" || event.eventType === "price_changed" || event.eventType === "rate_changed").length,
+  }), [activeRiskEvents]);
 
   return (
     <PageScaffold
@@ -221,6 +227,12 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         description="来自变更中心的未解决严重 / 警告事件。"
         action={<StatusBadge tone={unreadRisks > 0 ? "warning" : "healthy"}>{unreadRisks > 0 ? `${unreadRisks} 未读` : "无未读风险"}</StatusBadge>}
       >
+        <div className="mb-3 grid gap-2 md:grid-cols-4">
+          <RiskMiniTile label="严重未解决" value={p9RiskBreakdown.unresolvedCritical} />
+          <RiskMiniTile label="分组 / Key" value={p9RiskBreakdown.groupBindingIssues} />
+          <RiskMiniTile label="采集失败" value={p9RiskBreakdown.collectorFailures} />
+          <RiskMiniTile label="价格 / 倍率" value={p9RiskBreakdown.priceRateIssues} />
+        </div>
         {activeRiskEvents.length === 0 ? (
           <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
             当前没有未解决的严重或警告变更。
@@ -333,6 +345,19 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       </div>
     </PageScaffold>
   );
+}
+
+function RiskMiniTile({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 shadow-[var(--surface-shadow)]">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={cnRiskTileValue(value)}>{value}</div>
+    </div>
+  );
+}
+
+function cnRiskTileValue(value: number) {
+  return `mt-1 text-xl font-semibold ${value > 0 ? "text-amber-700" : "text-emerald-700"}`;
 }
 
 function parseLogDate(value: string) {

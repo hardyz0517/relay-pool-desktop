@@ -24,6 +24,7 @@ import {
   eventTypeLabels,
   filterChangeEvents,
   formatChangeTime,
+  objectTypeLabels,
   parseJsonObject,
   severityLabels,
   severityTone,
@@ -36,7 +37,7 @@ export function ChangeCenterPage() {
   const toast = useToast();
   const [events, setEvents] = useState<ChangeEvent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<ChangeFilter>({ severity: "all", status: "active", query: "" });
+  const [filter, setFilter] = useState<ChangeFilter>({ severity: "all", status: "active", objectType: "all", query: "" });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +81,10 @@ export function ChangeCenterPage() {
   const filteredEvents = useMemo(() => filterChangeEvents(events, filter), [events, filter]);
   const selected = filteredEvents.find((event) => event.id === selectedId) ?? filteredEvents[0] ?? null;
   const riskCount = unreadRiskCount(events);
+  const objectOptions = useMemo(() => {
+    const values = Array.from(new Set(events.map((event) => event.objectType))).sort((a, b) => a.localeCompare(b));
+    return values.map((value) => ({ value, label: objectTypeLabels[value] ?? value }));
+  }, [events]);
 
   const columns: DataTableColumn<ChangeEvent>[] = [
     {
@@ -103,6 +108,12 @@ export function ChangeCenterPage() {
       header: "类型",
       className: "w-28",
       render: (event) => eventTypeLabels[event.eventType] ?? event.eventType,
+    },
+    {
+      key: "object",
+      header: "对象",
+      className: "w-24",
+      render: (event) => objectTypeLabels[event.objectType] ?? event.objectType,
     },
     {
       key: "status",
@@ -163,6 +174,16 @@ export function ChangeCenterPage() {
                   ]}
                   onChange={(severity) => setFilter((current) => ({ ...current, severity }))}
                 />
+                <SelectControl
+                  ariaLabel="对象类型"
+                  className={inputClassName}
+                  value={filter.objectType}
+                  options={[
+                    { value: "all", label: "全部对象" },
+                    ...objectOptions,
+                  ]}
+                  onChange={(objectType) => setFilter((current) => ({ ...current, objectType }))}
+                />
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
                   <input
@@ -203,11 +224,11 @@ export function ChangeCenterPage() {
                 <div className="rounded-[var(--surface-radius)] border border-border bg-slate-50 p-3 text-sm leading-6 text-slate-700">
                   {selected.message}
                 </div>
-                <JsonBlock title="变化前" value={parseJsonObject(selected.oldValueJson)} />
-                <JsonBlock title="变化后" value={parseJsonObject(selected.newValueJson)} />
+                <JsonBlock title="旧值" value={parseJsonObject(selected.oldValueJson)} />
+                <JsonBlock title="新值" value={parseJsonObject(selected.newValueJson)} />
                 <JsonBlock title="影响" value={parseJsonObject(selected.impactJson)} />
                 <div className="grid gap-2 text-xs text-muted-foreground">
-                  <div>对象：{selected.objectType} / {selected.objectId ?? "-"}</div>
+                  <div>对象：{objectTypeLabels[selected.objectType] ?? selected.objectType} / {selected.objectId ?? "-"}</div>
                   <div>来源：{selected.source}</div>
                   <div>Dedupe：{selected.dedupeKey}</div>
                 </div>
