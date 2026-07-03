@@ -17,7 +17,10 @@ use crate::models::{
     collector::CollectorSnapshot,
     collector_runs::{CollectorRun, CreateCollectorRunInput, FinishCollectorRunInput},
     credentials::{StationCredentials, UpdateStationCredentialsInput, UpdateStationSessionInput},
-    group_facts::{GroupRateRecord, StationGroupBinding, UpsertStationGroupBindingInput},
+    group_facts::{
+        GroupRateRecord, InsertGroupRateRecordInput, StationGroupBinding,
+        UpsertStationGroupBindingInput,
+    },
     pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
     proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
     routing::{
@@ -741,6 +744,14 @@ impl AppDatabase {
     ) -> Result<Vec<GroupRateRecord>, String> {
         let connection = self.connection()?;
         list_group_rate_records_from_connection(&connection, &station_id)
+    }
+
+    pub fn upsert_group_rate_record_if_changed(
+        &self,
+        input: InsertGroupRateRecordInput,
+    ) -> Result<Option<GroupRateRecord>, String> {
+        let connection = self.connection()?;
+        insert_group_rate_record_if_changed_in_connection(&connection, input)
     }
 
     pub fn list_collector_runs(&self, station_id: String) -> Result<Vec<CollectorRun>, String> {
@@ -5096,6 +5107,156 @@ fn list_group_rate_records_from_connection(
     Ok(rows)
 }
 
+fn insert_group_rate_record_if_changed_in_connection(
+    connection: &Connection,
+    input: InsertGroupRateRecordInput,
+) -> Result<Option<GroupRateRecord>, String> {
+    validate_station_exists(connection, &input.station_id)?;
+    if let Some(station_key_id) = input.station_key_id.as_deref() {
+        validate_station_key_exists(connection, station_key_id)?;
+    }
+    if let Some(group_binding_id) = input.group_binding_id.as_deref() {
+        station_group_binding_by_id(connection, group_binding_id)?;
+    }
+    if input.group_name.trim().is_empty() {
+        return Err("分组名称不能为空".to_string());
+    }
+
+    let binding_kind = validate_binding_kind(&input.binding_kind)?;
+    let group_key_hash = validate_non_empty_hash(&input.group_key_hash)?;
+    let previous = newest_group_rate_record(
+        connection,
+        &input.station_id,
+        &binding_kind,
+        &group_key_hash,
+    )?;
+
+    if previous
+        .as_ref()
+        .map(|record| group_rate_record_matches(record, &input))
+        .unwrap_or(false)
+    {
+        return Ok(None);
+    }
+
+    let checked_at = normalize_optional_string(Some(input.checked_at)).unwrap_or_else(now_string);
+    let id = generate_id("group_rate");
+    let raw_json = input
+        .raw_json_redacted
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| format!("序列化倍率 raw 失败: {error}"))?;
+
+    connection
+        .execute(
+            "INSERT INTO group_rate_records (
+                id, station_id, station_key_id, group_binding_id, binding_kind,
+                group_key_hash, group_name, default_rate_multiplier,
+                user_rate_multiplier, effective_rate_multiplier, source, confidence,
+                raw_json_redacted, checked_at, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                id,
+                input.station_id,
+                normalize_optional_string(input.station_key_id),
+                normalize_optional_string(input.group_binding_id.clone()),
+                binding_kind,
+                group_key_hash,
+                input.group_name.trim(),
+                input.default_rate_multiplier,
+                input.user_rate_multiplier,
+                input.effective_rate_multiplier,
+                input.source.trim(),
+                clamp_confidence(input.confidence),
+                raw_json,
+                checked_at.clone(),
+                now_string(),
+            ],
+        )
+        .map_err(|error| format!("保存分组倍率历史失败: {error}"))?;
+
+    if let Some(group_binding_id) = input.group_binding_id.as_deref() {
+        connection
+            .execute(
+                "UPDATE station_group_bindings
+                    SET last_rate_changed_at = ?2, updated_at = ?2
+                  WHERE id = ?1",
+                params![group_binding_id, checked_at],
+            )
+            .map_err(|error| format!("更新分组倍率变更时间失败: {error}"))?;
+    }
+
+    if let (Some(previous), Some(new_multiplier)) =
+        (previous.as_ref(), input.effective_rate_multiplier)
+    {
+        if let Some(old_multiplier) = previous.effective_rate_multiplier {
+            if let Some(event) = crate::services::change_events::rate_changed_event(
+                &input.station_id,
+                input.group_name.trim(),
+                old_multiplier,
+                new_multiplier,
+            ) {
+                let _ = upsert_change_event_in_connection(connection, event);
+            }
+        }
+    }
+
+    group_rate_record_by_id(connection, &id).map(Some)
+}
+
+fn newest_group_rate_record(
+    connection: &Connection,
+    station_id: &str,
+    binding_kind: &str,
+    group_key_hash: &str,
+) -> Result<Option<GroupRateRecord>, String> {
+    connection
+        .query_row(
+            "SELECT * FROM group_rate_records
+              WHERE station_id = ?1 AND binding_kind = ?2 AND group_key_hash = ?3
+              ORDER BY checked_at DESC, created_at DESC
+              LIMIT 1",
+            params![station_id, binding_kind, group_key_hash],
+            row_to_group_rate_record,
+        )
+        .optional()
+        .map_err(|error| format!("读取最新分组倍率历史失败: {error}"))
+}
+
+fn group_rate_record_by_id(connection: &Connection, id: &str) -> Result<GroupRateRecord, String> {
+    connection
+        .query_row(
+            "SELECT * FROM group_rate_records WHERE id = ?1",
+            params![id],
+            row_to_group_rate_record,
+        )
+        .optional()
+        .map_err(|error| format!("读取分组倍率历史失败: {error}"))?
+        .ok_or_else(|| "分组倍率历史不存在".to_string())
+}
+
+fn group_rate_record_matches(record: &GroupRateRecord, input: &InsertGroupRateRecordInput) -> bool {
+    record.group_name == input.group_name.trim()
+        && optional_f64_eq(
+            record.default_rate_multiplier,
+            input.default_rate_multiplier,
+        )
+        && optional_f64_eq(record.user_rate_multiplier, input.user_rate_multiplier)
+        && optional_f64_eq(
+            record.effective_rate_multiplier,
+            input.effective_rate_multiplier,
+        )
+}
+
+fn optional_f64_eq(left: Option<f64>, right: Option<f64>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => (left - right).abs() < f64::EPSILON,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 fn list_collector_runs_from_connection(
     connection: &Connection,
     station_id: &str,
@@ -5887,6 +6048,96 @@ mod tests {
 
         assert_eq!(first.id, second.id);
         assert_eq!(second.effective_rate_multiplier, Some(1.2));
+    }
+
+    #[test]
+    fn group_rate_history_rate_changed_inserts_only_when_changed() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "group-rate-history");
+        let binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:default".to_string(),
+                group_id_hash: Some("default".to_string()),
+                group_name: "default".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(1.0),
+                effective_rate_multiplier: Some(1.0),
+                rate_source: Some("test".to_string()),
+                confidence: 0.9,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("binding");
+
+        let first = database
+            .upsert_group_rate_record_if_changed(InsertGroupRateRecordInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                group_binding_id: Some(binding.id.clone()),
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                group_key_hash: "station:default".to_string(),
+                group_name: "default".to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(1.0),
+                effective_rate_multiplier: Some(1.0),
+                source: "test".to_string(),
+                confidence: 0.9,
+                raw_json_redacted: None,
+                checked_at: "1000".to_string(),
+            })
+            .expect("first");
+        let duplicate = database
+            .upsert_group_rate_record_if_changed(InsertGroupRateRecordInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                group_binding_id: Some(binding.id.clone()),
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                group_key_hash: "station:default".to_string(),
+                group_name: "default".to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(1.0),
+                effective_rate_multiplier: Some(1.0),
+                source: "test".to_string(),
+                confidence: 0.9,
+                raw_json_redacted: None,
+                checked_at: "2000".to_string(),
+            })
+            .expect("duplicate");
+        let changed = database
+            .upsert_group_rate_record_if_changed(InsertGroupRateRecordInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                group_binding_id: Some(binding.id),
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                group_key_hash: "station:default".to_string(),
+                group_name: "default".to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(1.4),
+                effective_rate_multiplier: Some(1.4),
+                source: "test".to_string(),
+                confidence: 0.9,
+                raw_json_redacted: None,
+                checked_at: "3000".to_string(),
+            })
+            .expect("changed");
+
+        let records = database
+            .list_group_rate_records(station.id.clone())
+            .expect("records");
+        let events = database.list_change_events().expect("events");
+
+        assert!(first.is_some());
+        assert!(duplicate.is_none());
+        assert!(changed.is_some());
+        assert_eq!(records.len(), 2);
+        assert!(events
+            .iter()
+            .any(|event| event.event_type == "rate_changed" && event.severity == "warning"));
     }
 
     #[test]
