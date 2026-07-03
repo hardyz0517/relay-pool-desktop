@@ -1,4 +1,5 @@
 pub mod capture;
+pub mod change_events;
 pub mod collectors;
 pub mod database;
 pub mod health;

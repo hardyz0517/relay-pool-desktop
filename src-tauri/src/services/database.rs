@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
 use crate::models::{
+    change_events::{ChangeEvent, UpsertChangeEventInput},
     collector::CollectorSnapshot,
     credentials::{StationCredentials, UpdateStationCredentialsInput},
     pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
@@ -26,6 +27,9 @@ use crate::models::{
     settings::{AppSettings, UpdateSettingsInput},
     station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, UpdateStationInput},
+};
+use crate::services::change_events::{
+    STATUS_DISMISSED, STATUS_READ, STATUS_RESOLVED, STATUS_UNREAD,
 };
 use crate::services::proxy::{
     router::{select_route_candidates, RichRouteCandidate, RouteCandidateEconomics, RouteRequest},
@@ -287,6 +291,10 @@ impl AppDatabase {
                 input.collector_interval_minutes.to_string(),
             ),
             ("tray_behavior", input.tray_behavior),
+            (
+                "developer_mode_enabled",
+                input.developer_mode_enabled.to_string(),
+            ),
         ];
 
         for (key, value) in values {
@@ -631,6 +639,34 @@ impl AppDatabase {
         upsert_balance_snapshot_in_connection(&connection, input)
     }
 
+    pub fn list_change_events(&self) -> Result<Vec<ChangeEvent>, String> {
+        let connection = self.connection()?;
+        list_change_events_from_connection(&connection)
+    }
+
+    pub fn upsert_change_event(
+        &self,
+        input: UpsertChangeEventInput,
+    ) -> Result<ChangeEvent, String> {
+        let connection = self.connection()?;
+        upsert_change_event_in_connection(&connection, input)
+    }
+
+    pub fn mark_change_event_read(&self, id: String) -> Result<ChangeEvent, String> {
+        let connection = self.connection()?;
+        update_change_event_status_in_connection(&connection, &id, STATUS_READ)
+    }
+
+    pub fn dismiss_change_event(&self, id: String) -> Result<ChangeEvent, String> {
+        let connection = self.connection()?;
+        update_change_event_status_in_connection(&connection, &id, STATUS_DISMISSED)
+    }
+
+    pub fn resolve_change_event(&self, id: String) -> Result<ChangeEvent, String> {
+        let connection = self.connection()?;
+        resolve_change_event_in_connection(&connection, &id)
+    }
+
     pub fn update_station_login_status(
         &self,
         station_id: &str,
@@ -943,6 +979,39 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             updated_at TEXT NOT NULL,
             FOREIGN KEY(station_key_id) REFERENCES station_keys(id) ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS change_events (
+            id TEXT PRIMARY KEY,
+            severity TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            object_type TEXT NOT NULL,
+            object_id TEXT,
+            station_id TEXT,
+            station_key_id TEXT,
+            pricing_rule_id TEXT,
+            request_log_id TEXT,
+            old_value_json TEXT,
+            new_value_json TEXT,
+            impact_json TEXT,
+            dedupe_key TEXT NOT NULL UNIQUE,
+            source TEXT NOT NULL,
+            detected_at TEXT NOT NULL,
+            resolved_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_change_events_status_severity_updated
+            ON change_events(status, severity, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_change_events_station_updated
+            ON change_events(station_id, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_change_events_station_key_updated
+            ON change_events(station_key_id, updated_at DESC);
 
         CREATE TABLE IF NOT EXISTS secrets (
             id TEXT PRIMARY KEY,
@@ -1501,6 +1570,7 @@ fn seed_default_settings(connection: &Connection) -> rusqlite::Result<()> {
         ("low_balance_threshold_cny", "15"),
         ("collector_interval_minutes", "30"),
         ("tray_behavior", "minimize-to-tray"),
+        ("developer_mode_enabled", "false"),
     ];
 
     for (key, value) in defaults {
@@ -2411,6 +2481,20 @@ fn default_station_key_health(station_key_id: &str) -> StationKeyHealth {
     }
 }
 
+fn station_id_for_key(
+    connection: &Connection,
+    station_key_id: &str,
+) -> Result<Option<String>, String> {
+    connection
+        .query_row(
+            "SELECT station_id FROM station_keys WHERE id = ?1",
+            params![station_key_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取 Key 所属站点失败: {error}"))
+}
+
 fn record_station_key_success_in_connection(
     connection: &Connection,
     station_key_id: &str,
@@ -2505,11 +2589,23 @@ fn record_station_key_failure_in_connection(
                     .unwrap_or(0),
                 current.avg_latency_ms,
                 trim_error_summary(error_summary),
-                cooldown_until,
+                cooldown_until.clone(),
                 now,
             ],
         )
         .map_err(|error| format!("记录 Key 失败状态失败: {error}"))?;
+
+    if let Some(station_id) = station_id_for_key(connection, station_key_id)? {
+        if let Some(event) = crate::services::change_events::key_health_event(
+            station_key_id,
+            &station_id,
+            consecutive_failures,
+            Some(&trim_error_summary(error_summary)),
+            cooldown_until.as_deref(),
+        ) {
+            let _ = upsert_change_event_in_connection(connection, event);
+        }
+    }
 
     Ok(())
 }
@@ -2892,6 +2988,24 @@ fn upsert_pricing_rule_in_connection(
     if input.model.trim().is_empty() {
         return Err("模型不能为空".to_string());
     }
+    let previous_rule = connection
+        .query_row(
+            "SELECT id, station_id, group_name, tier_label, model, input_price, output_price,
+                    fixed_price, currency, unit, price_type, source, confidence, enabled, note,
+                    collected_at, created_at, updated_at
+               FROM pricing_rules
+              WHERE station_id = ?1 AND COALESCE(group_name, '') = COALESCE(?2, '') AND model = ?3
+              ORDER BY updated_at DESC
+              LIMIT 1",
+            params![
+                &input.station_id,
+                normalize_optional_string(input.group_name.clone()),
+                input.model.trim(),
+            ],
+            row_to_pricing_rule,
+        )
+        .optional()
+        .map_err(|error| format!("读取旧价格失败: {error}"))?;
     let confidence = clamp_confidence(input.confidence);
     let id = input.id.unwrap_or_else(|| generate_id("pricing"));
     let now = now_string();
@@ -2941,7 +3055,21 @@ fn upsert_pricing_rule_in_connection(
             ],
         )
         .map_err(|error| format!("保存价格规则失败: {error}"))?;
-    pricing_rule_by_id(connection, &id)
+    let saved = pricing_rule_by_id(connection, &id)?;
+    if let Some(previous) = previous_rule {
+        if let Some(event) = crate::services::change_events::price_changed_event(
+            &saved.station_id,
+            &saved.id,
+            &saved.model,
+            saved.group_name.as_deref(),
+            previous.output_price,
+            saved.output_price,
+            &saved.currency,
+        ) {
+            let _ = upsert_change_event_in_connection(connection, event);
+        }
+    }
+    Ok(saved)
 }
 
 fn delete_pricing_rule_from_connection(connection: &Connection, id: &str) -> Result<(), String> {
@@ -3033,7 +3161,18 @@ fn upsert_balance_snapshot_in_connection(
             ],
         )
         .map_err(|error| format!("保存余额快照失败: {error}"))?;
-    balance_snapshot_by_id(connection, &id)
+    let saved = balance_snapshot_by_id(connection, &id)?;
+    if saved.scope == "station" {
+        if let Some(event) = crate::services::change_events::station_balance_event(
+            &saved.station_id,
+            &saved.status,
+            saved.value,
+            saved.low_balance_threshold,
+        ) {
+            let _ = upsert_change_event_in_connection(connection, event);
+        }
+    }
+    Ok(saved)
 }
 
 fn row_to_pricing_rule(row: &rusqlite::Row<'_>) -> rusqlite::Result<PricingRule> {
@@ -3110,6 +3249,198 @@ fn balance_snapshot_by_id(connection: &Connection, id: &str) -> Result<BalanceSn
         .optional()
         .map_err(|error| format!("读取余额快照失败: {error}"))?
         .ok_or_else(|| "余额快照不存在".to_string())
+}
+
+fn list_change_events_from_connection(connection: &Connection) -> Result<Vec<ChangeEvent>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, severity, event_type, status, title, message, object_type, object_id,
+                    station_id, station_key_id, pricing_rule_id, request_log_id,
+                    old_value_json, new_value_json, impact_json, dedupe_key, source,
+                    detected_at, resolved_at, created_at, updated_at
+               FROM change_events
+              ORDER BY updated_at DESC, detected_at DESC",
+        )
+        .map_err(|error| format!("读取变更事件失败: {error}"))?;
+    let rows = statement
+        .query_map([], row_to_change_event)
+        .map_err(|error| format!("查询变更事件失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析变更事件失败: {error}"))?;
+    Ok(rows)
+}
+
+fn upsert_change_event_in_connection(
+    connection: &Connection,
+    input: UpsertChangeEventInput,
+) -> Result<ChangeEvent, String> {
+    if input.severity.trim().is_empty() {
+        return Err("变更级别不能为空".to_string());
+    }
+    if input.event_type.trim().is_empty() {
+        return Err("变更类型不能为空".to_string());
+    }
+    if input.title.trim().is_empty() {
+        return Err("变更标题不能为空".to_string());
+    }
+    if input.dedupe_key.trim().is_empty() {
+        return Err("变更去重键不能为空".to_string());
+    }
+    let id = generate_id("change");
+    let now = now_string();
+    let dedupe_key = input.dedupe_key.trim().to_string();
+    connection
+        .execute(
+            "INSERT INTO change_events (
+                id, severity, event_type, status, title, message, object_type, object_id,
+                station_id, station_key_id, pricing_rule_id, request_log_id,
+                old_value_json, new_value_json, impact_json, dedupe_key, source,
+                detected_at, resolved_at, created_at, updated_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, NULL, ?19, ?20)
+             ON CONFLICT(dedupe_key) DO UPDATE SET
+                severity = excluded.severity,
+                event_type = excluded.event_type,
+                status = CASE
+                    WHEN change_events.status = 'dismissed' THEN change_events.status
+                    ELSE 'unread'
+                END,
+                title = excluded.title,
+                message = excluded.message,
+                object_type = excluded.object_type,
+                object_id = excluded.object_id,
+                station_id = excluded.station_id,
+                station_key_id = excluded.station_key_id,
+                pricing_rule_id = excluded.pricing_rule_id,
+                request_log_id = excluded.request_log_id,
+                old_value_json = excluded.old_value_json,
+                new_value_json = excluded.new_value_json,
+                impact_json = excluded.impact_json,
+                source = excluded.source,
+                detected_at = excluded.detected_at,
+                resolved_at = NULL,
+                updated_at = excluded.updated_at",
+            params![
+                id,
+                input.severity.trim(),
+                input.event_type.trim(),
+                STATUS_UNREAD,
+                input.title.trim(),
+                input.message.trim(),
+                input.object_type.trim(),
+                normalize_optional_string(input.object_id),
+                normalize_optional_string(input.station_id),
+                normalize_optional_string(input.station_key_id),
+                normalize_optional_string(input.pricing_rule_id),
+                normalize_optional_string(input.request_log_id),
+                normalize_optional_string(input.old_value_json),
+                normalize_optional_string(input.new_value_json),
+                normalize_optional_string(input.impact_json),
+                dedupe_key,
+                input.source.trim(),
+                now,
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("写入变更事件失败: {error}"))?;
+    change_event_by_dedupe_key(connection, &dedupe_key)
+}
+
+fn change_event_by_dedupe_key(
+    connection: &Connection,
+    dedupe_key: &str,
+) -> Result<ChangeEvent, String> {
+    connection
+        .query_row(
+            "SELECT id, severity, event_type, status, title, message, object_type, object_id,
+                    station_id, station_key_id, pricing_rule_id, request_log_id,
+                    old_value_json, new_value_json, impact_json, dedupe_key, source,
+                    detected_at, resolved_at, created_at, updated_at
+               FROM change_events
+              WHERE dedupe_key = ?1",
+            params![dedupe_key],
+            row_to_change_event,
+        )
+        .map_err(|error| format!("读取变更事件失败: {error}"))
+}
+
+fn change_event_by_id(connection: &Connection, id: &str) -> Result<ChangeEvent, String> {
+    connection
+        .query_row(
+            "SELECT id, severity, event_type, status, title, message, object_type, object_id,
+                    station_id, station_key_id, pricing_rule_id, request_log_id,
+                    old_value_json, new_value_json, impact_json, dedupe_key, source,
+                    detected_at, resolved_at, created_at, updated_at
+               FROM change_events
+              WHERE id = ?1",
+            params![id],
+            row_to_change_event,
+        )
+        .optional()
+        .map_err(|error| format!("读取变更事件失败: {error}"))?
+        .ok_or_else(|| "变更事件不存在".to_string())
+}
+
+fn update_change_event_status_in_connection(
+    connection: &Connection,
+    id: &str,
+    status: &str,
+) -> Result<ChangeEvent, String> {
+    let now = now_string();
+    let updated = connection
+        .execute(
+            "UPDATE change_events SET status = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, status, now],
+        )
+        .map_err(|error| format!("更新变更事件状态失败: {error}"))?;
+    if updated == 0 {
+        return Err("变更事件不存在".to_string());
+    }
+    change_event_by_id(connection, id)
+}
+
+fn resolve_change_event_in_connection(
+    connection: &Connection,
+    id: &str,
+) -> Result<ChangeEvent, String> {
+    let now = now_string();
+    let updated = connection
+        .execute(
+            "UPDATE change_events SET status = ?2, resolved_at = ?3, updated_at = ?3 WHERE id = ?1",
+            params![id, STATUS_RESOLVED, now],
+        )
+        .map_err(|error| format!("解决变更事件失败: {error}"))?;
+    if updated == 0 {
+        return Err("变更事件不存在".to_string());
+    }
+    change_event_by_id(connection, id)
+}
+
+fn row_to_change_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChangeEvent> {
+    Ok(ChangeEvent {
+        id: row.get(0)?,
+        severity: row.get(1)?,
+        event_type: row.get(2)?,
+        status: row.get(3)?,
+        title: row.get(4)?,
+        message: row.get(5)?,
+        object_type: row.get(6)?,
+        object_id: row.get(7)?,
+        station_id: row.get(8)?,
+        station_key_id: row.get(9)?,
+        pricing_rule_id: row.get(10)?,
+        request_log_id: row.get(11)?,
+        old_value_json: row.get(12)?,
+        new_value_json: row.get(13)?,
+        impact_json: row.get(14)?,
+        dedupe_key: row.get(15)?,
+        source: row.get(16)?,
+        detected_at: row.get(17)?,
+        resolved_at: row.get(18)?,
+        created_at: row.get(19)?,
+        updated_at: row.get(20)?,
+    })
 }
 
 fn clamp_confidence(value: f64) -> f64 {
@@ -3807,6 +4138,7 @@ fn insert_collector_snapshot_in_connection(
     let normalized_json = redact_sensitive_value(&normalized_json);
     let raw_json_redacted = raw_json_redacted.map(|value| redact_sensitive_value(&value));
     let error_message = redact_optional_text(error_message);
+    let previous_snapshot = latest_collector_snapshot_from_connection(connection, station_id)?;
     let raw_json_string = raw_json_redacted
         .as_ref()
         .map(|value| serde_json::to_string(value))
@@ -3835,7 +4167,85 @@ fn insert_collector_snapshot_in_connection(
         )
         .map_err(|error| format!("保存采集快照失败: {error}"))?;
 
-    collector_snapshot_by_id(connection, &id)
+    let saved = collector_snapshot_by_id(connection, &id)?;
+    if saved.status == "failed" {
+        let event = crate::services::change_events::collector_failed_event(
+            &saved.station_id,
+            saved.error_message.as_deref(),
+        );
+        let _ = upsert_change_event_in_connection(connection, event);
+    }
+    if let Some(previous_snapshot) = previous_snapshot.as_ref() {
+        let previous_models = models_from_snapshot_value(&previous_snapshot.normalized_json);
+        let next_models = models_from_snapshot_value(&saved.normalized_json);
+        for model in next_models.iter().filter(|model| !previous_models.contains(model)) {
+            let event = UpsertChangeEventInput {
+                severity: crate::services::change_events::SEVERITY_INFO.to_string(),
+                event_type: "model_added".to_string(),
+                title: "模型新增".to_string(),
+                message: format!("站点新增模型 {model}"),
+                object_type: "station".to_string(),
+                object_id: Some(saved.station_id.clone()),
+                station_id: Some(saved.station_id.clone()),
+                station_key_id: None,
+                pricing_rule_id: None,
+                request_log_id: None,
+                old_value_json: None,
+                new_value_json: Some(json!({ "model": model }).to_string()),
+                impact_json: None,
+                dedupe_key: crate::services::change_events::model_dedupe_key(
+                    &saved.station_id,
+                    "model_added",
+                    model,
+                ),
+                source: "collector".to_string(),
+            };
+            let _ = upsert_change_event_in_connection(connection, event);
+        }
+        for model in previous_models.iter().filter(|model| !next_models.contains(model)) {
+            let event = UpsertChangeEventInput {
+                severity: crate::services::change_events::SEVERITY_WARNING.to_string(),
+                event_type: "model_removed".to_string(),
+                title: "模型下架".to_string(),
+                message: format!("站点下架模型 {model}"),
+                object_type: "station".to_string(),
+                object_id: Some(saved.station_id.clone()),
+                station_id: Some(saved.station_id.clone()),
+                station_key_id: None,
+                pricing_rule_id: None,
+                request_log_id: None,
+                old_value_json: Some(json!({ "model": model }).to_string()),
+                new_value_json: None,
+                impact_json: Some(json!({ "routingRisk": "model_candidates_may_change" }).to_string()),
+                dedupe_key: crate::services::change_events::model_dedupe_key(
+                    &saved.station_id,
+                    "model_removed",
+                    model,
+                ),
+                source: "collector".to_string(),
+            };
+            let _ = upsert_change_event_in_connection(connection, event);
+        }
+
+        let previous_rates = rate_multipliers_from_snapshot_value(&previous_snapshot.normalized_json);
+        let next_rates = rate_multipliers_from_snapshot_value(&saved.normalized_json);
+        for (group_name, next_multiplier) in next_rates {
+            if let Some((_, old_multiplier)) = previous_rates
+                .iter()
+                .find(|(previous_group, _)| previous_group == &group_name)
+            {
+                if let Some(event) = crate::services::change_events::rate_changed_event(
+                    &saved.station_id,
+                    &group_name,
+                    *old_multiplier,
+                    next_multiplier,
+                ) {
+                    let _ = upsert_change_event_in_connection(connection, event);
+                }
+            }
+        }
+    }
+    Ok(saved)
 }
 
 fn row_to_collector_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<CollectorSnapshot> {
@@ -3917,6 +4327,51 @@ fn latest_collector_snapshot_from_connection(
 
 fn parse_json_value(value: &str) -> Value {
     serde_json::from_str(value).unwrap_or_else(|_| json!({ "parseError": true }))
+}
+
+fn models_from_snapshot_value(value: &Value) -> Vec<String> {
+    value
+        .get("models")
+        .and_then(Value::as_array)
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|model| {
+                    model
+                        .as_str()
+                        .map(ToString::to_string)
+                        .or_else(|| model.get("id").and_then(Value::as_str).map(ToString::to_string))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn rate_multipliers_from_snapshot_value(value: &Value) -> Vec<(String, f64)> {
+    value
+        .get("rateMultipliers")
+        .and_then(Value::as_array)
+        .map(|rates| {
+            rates
+                .iter()
+                .filter_map(|rate| {
+                    let group_name = rate
+                        .get("groupName")
+                        .or_else(|| rate.get("group"))
+                        .or_else(|| rate.get("name"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("default")
+                        .to_string();
+                    let multiplier = rate
+                        .get("multiplier")
+                        .or_else(|| rate.get("rate"))
+                        .or_else(|| rate.get("value"))
+                        .and_then(Value::as_f64)?;
+                    Some((group_name, multiplier))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_json_string_list(value: &str) -> Vec<String> {
@@ -4005,6 +4460,13 @@ fn settings_from_connection(
         low_balance_threshold_cny: parse_setting(connection, "low_balance_threshold_cny")?,
         collector_interval_minutes: parse_setting(connection, "collector_interval_minutes")?,
         tray_behavior: read_setting(connection, "tray_behavior")?,
+        developer_mode_enabled: read_setting_or_default(
+            connection,
+            "developer_mode_enabled",
+            "false",
+        )?
+        .parse()
+        .map_err(|_| "设置项 developer_mode_enabled 格式无效".to_string())?,
         data_dir: data_dir.to_string(),
     })
 }
@@ -4019,6 +4481,22 @@ fn read_setting(connection: &Connection, key: &str) -> Result<String, String> {
         .optional()
         .map_err(|error| format!("读取设置 {key} 失败: {error}"))?
         .ok_or_else(|| format!("缺少设置项: {key}"))
+}
+
+fn read_setting_or_default(
+    connection: &Connection,
+    key: &str,
+    default_value: &str,
+) -> Result<String, String> {
+    connection
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取设置 {key} 失败: {error}"))
+        .map(|value| value.unwrap_or_else(|| default_value.to_string()))
 }
 
 fn parse_setting<T>(connection: &Connection, key: &str) -> Result<T, String>
@@ -4207,6 +4685,193 @@ mod tests {
             .expect("table count");
 
         assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn change_events_table_is_initialized() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let connection = database.connection().expect("connection");
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'change_events'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("table count");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn change_event_upsert_dedupes_and_can_be_resolved() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let first = database
+            .upsert_change_event(UpsertChangeEventInput {
+                severity: "warning".to_string(),
+                event_type: "balance_low".to_string(),
+                title: "余额偏低".to_string(),
+                message: "测试站点余额低于阈值".to_string(),
+                object_type: "station".to_string(),
+                object_id: Some("station-1".to_string()),
+                station_id: Some("station-1".to_string()),
+                station_key_id: None,
+                pricing_rule_id: None,
+                request_log_id: None,
+                old_value_json: None,
+                new_value_json: Some("{\"value\":4.2}".to_string()),
+                impact_json: None,
+                dedupe_key: "balance:low:station:station-1".to_string(),
+                source: "balance".to_string(),
+            })
+            .expect("first event");
+        let second = database
+            .upsert_change_event(UpsertChangeEventInput {
+                severity: "warning".to_string(),
+                event_type: "balance_low".to_string(),
+                title: "余额偏低".to_string(),
+                message: "测试站点余额仍低于阈值".to_string(),
+                object_type: "station".to_string(),
+                object_id: Some("station-1".to_string()),
+                station_id: Some("station-1".to_string()),
+                station_key_id: None,
+                pricing_rule_id: None,
+                request_log_id: None,
+                old_value_json: None,
+                new_value_json: Some("{\"value\":3.1}".to_string()),
+                impact_json: None,
+                dedupe_key: "balance:low:station:station-1".to_string(),
+                source: "balance".to_string(),
+            })
+            .expect("second event");
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(second.status, "unread");
+        assert!(second.message.contains("仍低于"));
+
+        let resolved = database
+            .resolve_change_event(second.id.clone())
+            .expect("resolved event");
+        assert_eq!(resolved.status, "resolved");
+        assert!(resolved.resolved_at.is_some());
+
+        let events = database.list_change_events().expect("events");
+        assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn low_balance_snapshot_creates_change_event() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "low-balance-relay");
+
+        database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: None,
+                station_id: station.id.clone(),
+                station_key_id: None,
+                scope: "station".to_string(),
+                value: Some(4.0),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                low_balance_threshold: Some(10.0),
+                status: "low".to_string(),
+                source: "test".to_string(),
+                confidence: 1.0,
+                collected_at: None,
+            })
+            .expect("balance");
+
+        let events = database.list_change_events().expect("events");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "balance_low");
+        assert_eq!(events[0].severity, "warning");
+        assert_eq!(events[0].station_id.as_deref(), Some(station.id.as_str()));
+    }
+
+    #[test]
+    fn pricing_change_creates_warning_when_price_increases() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "price-relay");
+
+        database
+            .upsert_pricing_rule(UpsertPricingRuleInput {
+                id: None,
+                station_id: station.id.clone(),
+                group_name: Some("default".to_string()),
+                tier_label: None,
+                model: "gpt-test".to_string(),
+                input_price: Some(1.0),
+                output_price: Some(2.0),
+                fixed_price: None,
+                currency: "USD".to_string(),
+                unit: "1M tokens".to_string(),
+                price_type: "token".to_string(),
+                source: "test".to_string(),
+                confidence: 1.0,
+                enabled: true,
+                note: None,
+                collected_at: None,
+            })
+            .expect("old price");
+        database
+            .upsert_pricing_rule(UpsertPricingRuleInput {
+                id: None,
+                station_id: station.id.clone(),
+                group_name: Some("default".to_string()),
+                tier_label: None,
+                model: "gpt-test".to_string(),
+                input_price: Some(1.0),
+                output_price: Some(3.0),
+                fixed_price: None,
+                currency: "USD".to_string(),
+                unit: "1M tokens".to_string(),
+                price_type: "token".to_string(),
+                source: "test".to_string(),
+                confidence: 1.0,
+                enabled: true,
+                note: None,
+                collected_at: None,
+            })
+            .expect("new price");
+
+        let events = database.list_change_events().expect("events");
+        assert!(events
+            .iter()
+            .any(|event| event.event_type == "price_changed" && event.severity == "warning"));
+    }
+
+    #[test]
+    fn collector_snapshot_rate_increase_creates_warning_event() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "rate-relay");
+
+        database
+            .insert_collector_snapshot(
+                &station.id,
+                "collector-test",
+                "success",
+                json!({ "ok": true }),
+                json!({ "rateMultipliers": [{ "groupName": "default", "multiplier": 1.0 }] }),
+                None,
+                None,
+            )
+            .expect("first snapshot");
+        database
+            .insert_collector_snapshot(
+                &station.id,
+                "collector-test",
+                "success",
+                json!({ "ok": true }),
+                json!({ "rateMultipliers": [{ "groupName": "default", "multiplier": 1.4 }] }),
+                None,
+                None,
+            )
+            .expect("second snapshot");
+
+        let events = database.list_change_events().expect("events");
+        assert!(events
+            .iter()
+            .any(|event| event.event_type == "rate_changed" && event.severity == "warning"));
     }
 
     #[test]

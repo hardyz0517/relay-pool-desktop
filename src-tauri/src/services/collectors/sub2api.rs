@@ -23,9 +23,10 @@ const PROBE_PATHS: [&str; 5] = [
 
 const LOGIN_PATHS: [&str; 3] = ["/api/v1/auth/login", "/auth/login", "/api/login"];
 
-const AUTH_PROBE_PATHS: [&str; 6] = [
+const AUTH_PROBE_PATHS: [&str; 7] = [
     "/api/v1/auth/me",
     "/api/v1/user/profile",
+    "/api/v1/groups/available",
     "/api/v1/groups/rates",
     "/api/v1/keys",
     "/api/v1/channels/available",
@@ -77,6 +78,7 @@ pub fn detect_station(
 
 pub fn collect_login_state(
     database: &AppDatabase,
+    data_key: &[u8; 32],
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
     let station = database.station_for_collector(&station_id)?;
@@ -95,6 +97,15 @@ pub fn collect_login_state(
             "缺少登录密码，无法执行登录态采集。",
         ));
     }
+    let Some(login_password) =
+        database.get_station_login_password_with_data_key(station_id.clone(), data_key)?
+    else {
+        return Ok(login_state_manual_required(
+            station_id,
+            station.name,
+            "登录密码不可解密，无法执行登录态采集。",
+        ));
+    };
 
     let config = ProbeMode::Collect.config();
     let agent = ureq::AgentBuilder::new()
@@ -103,7 +114,7 @@ pub fn collect_login_state(
         .timeout_write(config.connect_timeout)
         .build();
 
-    let login_attempt = attempt_login(&agent, &station.base_url, &username)?;
+    let login_attempt = attempt_login(&agent, &station.base_url, &username, &login_password)?;
     if let Some(result) = login_attempt.manual_required {
         return Ok(login_state_manual_required(
             station_id,
@@ -144,7 +155,7 @@ fn run_probe(
         database.update_station_login_status(
             &station_id,
             "manual_required",
-            Some("P3 暂不自动登录；P4 将接入 WebView 登录和 XHR 捕获。".to_string()),
+            Some("已保存登录信息；采集信息会尝试登录态接口，验证码或 2FA 场景可使用网页登录捕获。".to_string()),
         )?;
     }
 
@@ -248,7 +259,7 @@ fn run_probe(
         "keys": normalized.get("keys").cloned().unwrap_or_else(|| json!([])),
         "webviewRequired": needs_login || matched_count == 0,
         "rawPreviewAvailable": true,
-        "webviewNote": "WebView 登录捕获将在 P4 接入。",
+        "webviewNote": "验证码、2FA 或魔改登录场景可使用网页登录捕获。",
     });
 
     let status = if matched_count > 0 {
@@ -518,8 +529,37 @@ struct LoginAttempt {
     manual_required: Option<String>,
 }
 
-fn attempt_login(agent: &Agent, base_url: &str, username: &str) -> Result<LoginAttempt, String> {
-    let password_placeholder = "[REDACTED]";
+pub(crate) struct LoginProbeOutcome {
+    pub token_present: bool,
+    pub login_message: Option<String>,
+    pub manual_required: Option<String>,
+}
+
+pub(crate) fn test_login_credentials(
+    base_url: &str,
+    username: &str,
+    password: &str,
+) -> Result<LoginProbeOutcome, String> {
+    let config = ProbeMode::Collect.config();
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(config.connect_timeout)
+        .timeout_read(config.read_timeout)
+        .timeout_write(config.connect_timeout)
+        .build();
+    let attempt = attempt_login(&agent, base_url, username, password)?;
+    Ok(LoginProbeOutcome {
+        token_present: attempt.token.is_some(),
+        login_message: attempt.login_message,
+        manual_required: attempt.manual_required,
+    })
+}
+
+fn attempt_login(
+    agent: &Agent,
+    base_url: &str,
+    username: &str,
+    password: &str,
+) -> Result<LoginAttempt, String> {
     let username_variants = [
         ("email", username),
         ("username", username),
@@ -530,7 +570,7 @@ fn attempt_login(agent: &Agent, base_url: &str, username: &str) -> Result<LoginA
         for (field, value) in username_variants {
             let payload = json!({
                 field: value,
-                "password": password_placeholder,
+                "password": password,
             });
             let url = join_url(base_url, path);
             let response = match agent.post(&url).send_json(payload) {
@@ -894,7 +934,7 @@ fn endpoint_detail(status: u16, content_type: &str, has_json: bool) -> &'static 
         200..=299 if has_json => "识别到 JSON 响应",
         200..=299 if content_type.contains("html") => "识别到页面",
         200..=299 => "接口可访问",
-        401 | 403 => "接口需要登录，等待 P4 WebView 捕获",
+        401 | 403 => "接口需要登录；保存账号密码后可重试采集，验证码或 2FA 场景可使用网页登录捕获",
         404 => "该站点未开放此接口",
         429 => "接口限流，可稍后重试",
         500..=599 => "站点返回服务端异常",
@@ -1025,7 +1065,7 @@ fn detected_type_label(
 fn conclusion_message(conclusion: &str, matched_count: u64, needs_login: bool) -> String {
     match conclusion {
         "可用" | "已采集" => format!("识别到 {matched_count} 个候选字段。"),
-        "需要登录" if needs_login => "接口需要登录，WebView 登录捕获将在 P4 接入。".to_string(),
+        "需要登录" if needs_login => "接口需要登录；请先保存站点登录账号和密码，验证码或 2FA 场景可使用网页登录捕获。".to_string(),
         "失败" => "站点请求失败或超时。".to_string(),
         _ => "未识别到余额、分组或倍率字段。".to_string(),
     }
@@ -1040,9 +1080,18 @@ fn normalize_probe(raw: &Value) -> Value {
     let mut keys = Vec::new();
     let mut balance = Value::Null;
 
+    collect_group_endpoint_records(raw, &mut groups, &mut rate_multipliers);
+    collect_structured_groups(raw, &mut groups);
+    collect_structured_rate_multipliers(raw, &mut rate_multipliers);
+
     for item in &matches {
         let field = item
             .get("field")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_lowercase();
+        let path = item
+            .get("path")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_lowercase();
@@ -1062,14 +1111,14 @@ fn normalize_probe(raw: &Value) -> Value {
         {
             balance = value.clone();
         }
-        if matches_any(&field, &["group", "group_id", "group_name"]) {
-            groups.push(value.clone());
+        if let Some(group) = normalize_group_value(&field, &value) {
+            push_unique_value(&mut groups, group);
         }
-        if matches_any(&field, &["rate_multiplier", "ratio", "multiplier"]) {
-            rate_multipliers.push(value.clone());
+        if let Some(rate_multiplier) = normalize_rate_multiplier_value(&field, &path, &value) {
+            push_unique_rate_multiplier(&mut rate_multipliers, rate_multiplier);
         }
         if matches_any(&field, &["api_key", "key", "token"]) {
-            keys.push(redact_value(&value));
+            push_unique_value(&mut keys, redact_value(&value));
         }
     }
 
@@ -1080,6 +1129,436 @@ fn normalize_probe(raw: &Value) -> Value {
         "rateMultipliers": rate_multipliers,
         "keys": keys,
     })
+}
+
+fn collect_group_endpoint_records(
+    raw: &Value,
+    groups: &mut Vec<Value>,
+    rate_multipliers: &mut Vec<Value>,
+) {
+    let Some(responses) = raw.get("responses").and_then(Value::as_array) else {
+        return;
+    };
+
+    let mut group_names_by_id = Map::new();
+
+    for response in responses {
+        let path = response
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if path != "/api/v1/groups/available" {
+            continue;
+        }
+        if let Some(payload) = response.get("json") {
+            collect_available_group_payload(
+                payload,
+                groups,
+                rate_multipliers,
+                &mut group_names_by_id,
+            );
+        }
+    }
+
+    for response in responses {
+        let path = response
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if path != "/api/v1/groups/rates" {
+            continue;
+        }
+        if let Some(payload) = response.get("json") {
+            collect_user_group_rate_payload(payload, rate_multipliers, &group_names_by_id);
+        }
+    }
+}
+
+fn collect_available_group_payload(
+    value: &Value,
+    groups: &mut Vec<Value>,
+    rate_multipliers: &mut Vec<Value>,
+    group_names_by_id: &mut Map<String, Value>,
+) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_available_group_payload(item, groups, rate_multipliers, group_names_by_id);
+            }
+        }
+        Value::Object(map) => {
+            if let Some(group) = group_identifier_from_available_group_record(map) {
+                push_unique_value(groups, group.clone());
+                if let Some(id) = map.get("id").and_then(scalar_value) {
+                    group_names_by_id.insert(stable_value_key(&id), group.clone());
+                }
+                if let Some(multiplier) = map.get("rate_multiplier").and_then(scalar_value) {
+                    upsert_rate_multiplier_by_group(rate_multipliers, group, multiplier);
+                }
+                return;
+            }
+
+            for field in ["data", "items", "groups", "records"] {
+                if let Some(child) = map.get(field) {
+                    collect_available_group_payload(
+                        child,
+                        groups,
+                        rate_multipliers,
+                        group_names_by_id,
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_user_group_rate_payload(
+    value: &Value,
+    rate_multipliers: &mut Vec<Value>,
+    group_names_by_id: &Map<String, Value>,
+) {
+    match value {
+        Value::Object(map) => {
+            if is_numeric_rate_map(map) {
+                for (group_id, multiplier) in map {
+                    let Some(multiplier) = scalar_value(multiplier) else {
+                        continue;
+                    };
+                    let group = group_names_by_id
+                        .get(group_id)
+                        .cloned()
+                        .unwrap_or_else(|| Value::String(group_id.clone()));
+                    upsert_rate_multiplier_by_group(rate_multipliers, group, multiplier);
+                }
+                return;
+            }
+
+            for field in ["data", "rates", "items", "groups", "records"] {
+                if let Some(child) = map.get(field) {
+                    collect_user_group_rate_payload(child, rate_multipliers, group_names_by_id);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_user_group_rate_payload(item, rate_multipliers, group_names_by_id);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_numeric_rate_map(map: &Map<String, Value>) -> bool {
+    !map.is_empty()
+        && map
+            .iter()
+            .all(|(key, value)| key.parse::<i64>().is_ok() && scalar_value(value).is_some())
+}
+
+fn group_identifier_from_available_group_record(map: &Map<String, Value>) -> Option<Value> {
+    if !map.contains_key("rate_multiplier") {
+        return None;
+    }
+
+    find_record_scalar(map, &["name", "group_name", "group", "tier"])
+}
+
+fn collect_structured_groups(value: &Value, groups: &mut Vec<Value>) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                let field = key.to_lowercase();
+                if is_group_collection_field(&field) {
+                    collect_group_collection(child, groups);
+                } else if is_group_rate_map_field(&field) {
+                    collect_group_keys(child, groups);
+                } else if field == "group" {
+                    if let Value::Object(group) = child {
+                        if let Some(group) = group_identifier_from_record(group) {
+                            push_unique_value(groups, group);
+                        }
+                    }
+                }
+                collect_structured_groups(child, groups);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_structured_groups(item, groups);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_group_collection(value: &Value, groups: &mut Vec<Value>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                match item {
+                    Value::Object(map) => {
+                        if let Some(group) = group_identifier_from_record(map) {
+                            push_unique_value(groups, group);
+                        }
+                    }
+                    _ => {
+                        if let Some(group) = scalar_value(item) {
+                            push_unique_value(groups, group);
+                        }
+                    }
+                }
+            }
+        }
+        Value::Object(map) => {
+            if let Some(group) = group_identifier_from_record(map) {
+                push_unique_value(groups, group);
+            } else {
+                for (name, child) in map {
+                    if !is_metadata_key(name) && !child.is_null() {
+                        push_unique_value(groups, Value::String(name.clone()));
+                    }
+                }
+            }
+        }
+        _ => {
+            if let Some(group) = scalar_value(value) {
+                push_unique_value(groups, group);
+            }
+        }
+    }
+}
+
+fn collect_group_keys(value: &Value, groups: &mut Vec<Value>) {
+    if let Value::Object(map) = value {
+        for (name, child) in map {
+            if !is_metadata_key(name) && scalar_value(child).is_some() {
+                push_unique_value(groups, Value::String(name.clone()));
+            }
+        }
+    }
+}
+
+fn collect_structured_rate_multipliers(value: &Value, rate_multipliers: &mut Vec<Value>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(rate) = rate_multiplier_from_record(map) {
+                push_unique_rate_multiplier(rate_multipliers, rate);
+            }
+            for (key, child) in map {
+                let field = key.to_lowercase();
+                if is_group_rate_map_field(&field) {
+                    collect_rate_multiplier_map(child, rate_multipliers);
+                } else if field == "group" {
+                    if let Value::Object(group) = child {
+                        if let Some(rate) = rate_multiplier_from_embedded_group_record(group) {
+                            push_unique_rate_multiplier(rate_multipliers, rate);
+                        }
+                    }
+                }
+                collect_structured_rate_multipliers(child, rate_multipliers);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_structured_rate_multipliers(item, rate_multipliers);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_rate_multiplier_map(value: &Value, rate_multipliers: &mut Vec<Value>) {
+    if let Value::Object(map) = value {
+        for (group, multiplier) in map {
+            if is_metadata_key(group) {
+                continue;
+            }
+            if let Some(multiplier) = scalar_value(multiplier) {
+                push_unique_rate_multiplier(
+                    rate_multipliers,
+                    json!({
+                        "group": group,
+                        "multiplier": multiplier,
+                    }),
+                );
+            }
+        }
+    }
+}
+
+fn rate_multiplier_from_record(map: &Map<String, Value>) -> Option<Value> {
+    let multiplier = find_record_scalar(
+        map,
+        &[
+            "rate_multiplier",
+            "group_rate",
+            "group_ratio",
+            "ratio",
+            "multiplier",
+        ],
+    )?;
+    let group = group_identifier_for_rate_record(map);
+
+    group.map(|group| {
+        json!({
+            "group": group,
+            "multiplier": multiplier,
+        })
+    })
+}
+
+fn rate_multiplier_from_embedded_group_record(map: &Map<String, Value>) -> Option<Value> {
+    let multiplier = find_record_scalar(map, &["rate_multiplier", "group_rate", "group_ratio"])?;
+    let group = group_identifier_from_record(map)?;
+
+    Some(json!({
+        "group": group,
+        "multiplier": multiplier,
+    }))
+}
+
+fn group_identifier_from_record(map: &Map<String, Value>) -> Option<Value> {
+    find_record_scalar(
+        map,
+        &[
+            "group_name",
+            "group",
+            "group_id",
+            "tier",
+            "name",
+        ],
+    )
+}
+
+fn group_identifier_for_rate_record(map: &Map<String, Value>) -> Option<Value> {
+    find_record_scalar(map, &["group_name", "group", "group_id", "tier"])
+}
+
+fn find_record_scalar(map: &Map<String, Value>, fields: &[&str]) -> Option<Value> {
+    for field in fields {
+        if let Some(value) = map.get(*field).and_then(scalar_value) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn is_group_collection_field(field: &str) -> bool {
+    matches!(field, "groups" | "group_list" | "group_infos" | "group_info")
+}
+
+fn is_group_rate_map_field(field: &str) -> bool {
+    matches!(
+        field,
+        "group_ratio"
+            | "group_ratios"
+            | "group_rate"
+            | "group_rates"
+            | "group_multiplier"
+            | "group_multipliers"
+            | "rate_multipliers"
+    )
+}
+
+fn is_model_rate_field(field: &str) -> bool {
+    field.contains("model") && matches_any(field, &["ratio", "multiplier", "rate"])
+}
+
+fn is_metadata_key(field: &str) -> bool {
+    matches!(
+        field.to_lowercase().as_str(),
+        "id" | "name" | "data" | "message" | "code" | "status" | "success" | "total" | "count"
+    )
+}
+
+fn normalize_group_value(field: &str, value: &Value) -> Option<Value> {
+    if field.contains("group_name") || field == "group" || field.ends_with("_group") {
+        return scalar_value(value);
+    }
+
+    None
+}
+
+fn normalize_rate_multiplier_value(field: &str, path: &str, value: &Value) -> Option<Value> {
+    if is_model_rate_field(field)
+        || field.contains("image")
+        || field.contains("peak")
+        || path.contains("model")
+        || path.contains("image")
+        || path.contains("peak")
+        || field == "groups"
+    {
+        return None;
+    }
+    if !matches_any(field, &["rate_multiplier", "ratio", "multiplier"]) {
+        return None;
+    }
+
+    scalar_value(value)
+}
+
+fn scalar_value(value: &Value) -> Option<Value> {
+    match value {
+        Value::String(_) | Value::Number(_) | Value::Bool(_) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn push_unique_value(items: &mut Vec<Value>, value: Value) {
+    let key = stable_value_key(&value);
+    if items.iter().any(|item| stable_value_key(item) == key) {
+        return;
+    }
+    items.push(value);
+}
+
+fn push_unique_rate_multiplier(items: &mut Vec<Value>, value: Value) {
+    let value_key = stable_value_key(&value);
+    if items.iter().any(|item| stable_value_key(item) == value_key) {
+        return;
+    }
+
+    if scalar_value(&value).is_some() {
+        if items.iter().any(|item| {
+            item.get("group").is_some() && item.get("multiplier").is_some()
+        }) {
+            return;
+        }
+        if items.iter().any(|item| {
+            item.get("multiplier")
+                .map(stable_value_key)
+                .map(|key| key == value_key)
+                .unwrap_or(false)
+        }) {
+            return;
+        }
+    }
+
+    items.push(value);
+}
+
+fn upsert_rate_multiplier_by_group(items: &mut Vec<Value>, group: Value, multiplier: Value) {
+    let group_key = stable_value_key(&group);
+    let value = json!({
+        "group": group,
+        "multiplier": multiplier,
+    });
+
+    if let Some(existing) = items.iter_mut().find(|item| {
+        item.get("group")
+            .map(stable_value_key)
+            .map(|key| key == group_key)
+            .unwrap_or(false)
+    }) {
+        *existing = value;
+    } else {
+        items.push(value);
+    }
+}
+
+fn stable_value_key(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
 }
 
 fn collect_matches(value: &Value, path: &str, matches: &mut Vec<Value>) {
@@ -1153,5 +1632,441 @@ fn join_url(base_url: &str, path: &str) -> String {
         trimmed.to_string()
     } else {
         format!("{trimmed}{path}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        models::{
+            credentials::UpdateStationCredentialsInput,
+            stations::CreateStationInput,
+        },
+        services::{database::AppDatabase, secrets::crypto::generate_data_key},
+    };
+    use serde_json::Value;
+    use std::{
+        io::{Read, Write},
+        net::{TcpListener, TcpStream},
+        sync::{Arc, Mutex},
+        thread,
+    };
+
+    #[test]
+    fn collect_login_state_uses_saved_password_and_normalizes_account_data() {
+        let server = TestCollectorServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = database
+            .create_station(CreateStationInput {
+                name: "collector test".to_string(),
+                station_type: "sub2api".to_string(),
+                base_url: server.base_url.clone(),
+                api_key: "sk-test-routing".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                note: None,
+            })
+            .expect("station");
+        let data_key = generate_data_key();
+        database
+            .update_station_credentials_with_data_key(
+                UpdateStationCredentialsInput {
+                    station_id: station.id.clone(),
+                    login_username: Some("user@example.test".to_string()),
+                    login_password: Some("correct-password".to_string()),
+                    remember_password: true,
+                },
+                &data_key,
+            )
+            .expect("credentials");
+
+        let result = collect_login_state(&database, &data_key, station.id).expect("collect");
+        let normalized = result.snapshot.normalized_json;
+        let raw_text = serde_json::to_string(&result.snapshot.raw_json_redacted).expect("raw");
+
+        assert_eq!(result.snapshot.status, "success");
+        assert_eq!(server.last_login_password(), Some("correct-password".to_string()));
+        assert_eq!(normalized.get("balance").and_then(Value::as_f64), Some(42.5));
+        assert_eq!(
+            normalized
+                .get("groups")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2),
+        );
+        assert_eq!(
+            normalized
+                .get("rateMultipliers")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2),
+        );
+        assert!(!raw_text.contains("correct-password"));
+        assert!(!raw_text.contains("collector-token-secret"));
+    }
+
+    #[test]
+    fn normalize_probe_counts_group_lists_and_group_ratio_maps() {
+        let raw = json!({
+            "responses": [
+                {
+                    "path": "/api/v1/auth/me",
+                    "json": {
+                        "data": {
+                            "balance": 12.0,
+                            "groups": ["default", "vip"]
+                        }
+                    }
+                },
+                {
+                    "path": "/api/v1/groups/rates",
+                    "json": {
+                        "data": {
+                            "group_ratio": {
+                                "default": 1.0,
+                                "vip": 1.5
+                            },
+                            "model_ratio": {
+                                "gpt-4o-mini": 0.7
+                            }
+                        }
+                    }
+                }
+            ]
+        });
+
+        let normalized = normalize_probe(&raw);
+
+        assert_eq!(
+            normalized
+                .get("groups")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2),
+        );
+        assert_eq!(
+            normalized
+                .get("rateMultipliers")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2),
+        );
+    }
+
+    #[test]
+    fn normalize_probe_prefers_embedded_group_name_and_excludes_image_multiplier() {
+        let raw = json!({
+            "responses": [
+                {
+                    "path": "/api/v1/keys",
+                    "json": {
+                        "data": {
+                            "items": [
+                                {
+                                    "group_id": 8,
+                                    "group": {
+                                        "id": 8,
+                                        "name": "plus",
+                                        "image_rate_multiplier": 1,
+                                        "rate_multiplier": 1,
+                                        "status": "active"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        });
+
+        let normalized = normalize_probe(&raw);
+
+        assert_eq!(
+            normalized.get("groups").and_then(Value::as_array).cloned(),
+            Some(vec![Value::String("plus".to_string())]),
+        );
+        assert_eq!(
+            normalized
+                .get("rateMultipliers")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1),
+        );
+    }
+
+    #[test]
+    fn normalize_probe_collects_all_available_groups_without_image_rates() {
+        let raw = json!({
+            "responses": [
+                {
+                    "path": "/api/v1/groups/available",
+                    "json": {
+                        "data": [
+                            {
+                                "id": 8,
+                                "name": "plus",
+                                "rate_multiplier": 1,
+                                "peak_rate_multiplier": 1.2,
+                                "image_rate_multiplier": 3,
+                                "status": "active"
+                            },
+                            {
+                                "id": 9,
+                                "name": "pro",
+                                "rate_multiplier": 1.5,
+                                "peak_rate_multiplier": 2,
+                                "image_rate_multiplier": 4,
+                                "status": "active"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "path": "/api/v1/keys",
+                    "json": {
+                        "data": {
+                            "items": [
+                                {
+                                    "group": {
+                                        "id": 8,
+                                        "name": "plus",
+                                        "rate_multiplier": 1
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        });
+
+        let normalized = normalize_probe(&raw);
+
+        assert_eq!(
+            normalized.get("groups").and_then(Value::as_array).cloned(),
+            Some(vec![
+                Value::String("plus".to_string()),
+                Value::String("pro".to_string()),
+            ]),
+        );
+        assert_eq!(
+            normalized
+                .get("rateMultipliers")
+                .and_then(Value::as_array)
+                .cloned(),
+            Some(vec![
+                json!({ "group": "plus", "multiplier": 1 }),
+                json!({ "group": "pro", "multiplier": 1.5 }),
+            ]),
+        );
+    }
+
+    #[test]
+    fn normalize_probe_joins_user_group_rates_to_available_group_names() {
+        let raw = json!({
+            "responses": [
+                {
+                    "path": "/api/v1/groups/available",
+                    "json": {
+                        "data": [
+                            {
+                                "id": 8,
+                                "name": "plus",
+                                "rate_multiplier": 1,
+                                "image_rate_multiplier": 3
+                            },
+                            {
+                                "id": 9,
+                                "name": "pro",
+                                "rate_multiplier": 1.5,
+                                "image_rate_multiplier": 4
+                            },
+                            {
+                                "id": 10,
+                                "name": "backup",
+                                "rate_multiplier": 2
+                            }
+                        ]
+                    }
+                },
+                {
+                    "path": "/api/v1/groups/rates",
+                    "json": {
+                        "data": {
+                            "8": 0.8,
+                            "9": 1.2
+                        }
+                    }
+                }
+            ]
+        });
+
+        let normalized = normalize_probe(&raw);
+
+        assert_eq!(
+            normalized
+                .get("rateMultipliers")
+                .and_then(Value::as_array)
+                .cloned(),
+            Some(vec![
+                json!({ "group": "plus", "multiplier": 0.8 }),
+                json!({ "group": "pro", "multiplier": 1.2 }),
+                json!({ "group": "backup", "multiplier": 2 }),
+            ]),
+        );
+    }
+
+    struct TestCollectorServer {
+        base_url: String,
+        last_login_password: Arc<Mutex<Option<String>>>,
+    }
+
+    impl TestCollectorServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            let last_login_password = Arc::new(Mutex::new(None));
+            let captured_password = Arc::clone(&last_login_password);
+
+            thread::spawn(move || {
+                for stream in listener.incoming().take(8).flatten() {
+                    handle_test_request(stream, Arc::clone(&captured_password));
+                }
+            });
+
+            Self {
+                base_url,
+                last_login_password,
+            }
+        }
+
+        fn last_login_password(&self) -> Option<String> {
+            self.last_login_password.lock().ok().and_then(|value| value.clone())
+        }
+    }
+
+    fn handle_test_request(mut stream: TcpStream, last_login_password: Arc<Mutex<Option<String>>>) {
+        let request = read_http_request(&mut stream);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
+
+        let (status, response) = match path {
+            "/api/v1/auth/login" => {
+                let parsed = serde_json::from_str::<Value>(body).expect("login json");
+                let password = parsed
+                    .get("password")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if let Ok(mut captured) = last_login_password.lock() {
+                    *captured = Some(password.clone());
+                }
+                if password == "correct-password" {
+                    (
+                        "200 OK",
+                        json!({ "data": { "access_token": "collector-token-secret" } }),
+                    )
+                } else {
+                    (
+                        "401 Unauthorized",
+                        json!({ "message": "invalid credentials" }),
+                    )
+                }
+            }
+            "/api/v1/auth/me" => (
+                "200 OK",
+                json!({
+                    "data": {
+                        "balance": 42.5,
+                        "group_name": "pro",
+                    }
+                }),
+            ),
+            "/api/v1/groups/available" => (
+                "200 OK",
+                json!({
+                    "data": [
+                        {
+                            "id": 8,
+                            "name": "plus",
+                            "rate_multiplier": 1,
+                            "peak_rate_multiplier": 1.2,
+                            "image_rate_multiplier": 3,
+                            "status": "active"
+                        },
+                        {
+                            "id": 9,
+                            "name": "pro",
+                            "rate_multiplier": 1.25,
+                            "peak_rate_multiplier": 2,
+                            "image_rate_multiplier": 4,
+                            "status": "active"
+                        }
+                    ]
+                }),
+            ),
+            "/api/v1/groups/rates" => (
+                "200 OK",
+                json!({
+                    "data": {
+                        "groups": [
+                            { "group_name": "pro", "rate_multiplier": 1.25 }
+                        ]
+                    }
+                }),
+            ),
+            _ => ("404 Not Found", json!({ "message": "not found" })),
+        };
+        let text = response.to_string();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        stream.write_all(response.as_bytes()).expect("write response");
+    }
+
+    fn read_http_request(stream: &mut TcpStream) -> String {
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        let mut header_end = None;
+        let mut content_length = 0_usize;
+
+        loop {
+            let read = stream.read(&mut buffer).expect("read request");
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&buffer[..read]);
+            if header_end.is_none() {
+                if let Some(position) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                    header_end = Some(position + 4);
+                    let headers = String::from_utf8_lossy(&bytes[..position]);
+                    content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            if name.eq_ignore_ascii_case("content-length") {
+                                value.trim().parse::<usize>().ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(0);
+                }
+            }
+            if let Some(end) = header_end {
+                if bytes.len().saturating_sub(end) >= content_length {
+                    break;
+                }
+            }
+        }
+
+        String::from_utf8_lossy(&bytes).to_string()
     }
 }

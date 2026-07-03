@@ -3,6 +3,7 @@ use tauri::{Manager, State};
 use crate::{
     models::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
+        change_events::{ChangeEvent, UpsertChangeEventInput},
         collector::{CollectorRunResult, CollectorSnapshot},
         credentials::{StationCredentials, UpdateStationCredentialsInput},
         pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
@@ -294,6 +295,43 @@ pub fn upsert_balance_snapshot(
 }
 
 #[tauri::command]
+pub fn list_change_events(database: State<'_, AppDatabase>) -> Result<Vec<ChangeEvent>, String> {
+    database.list_change_events()
+}
+
+#[tauri::command]
+pub fn upsert_change_event(
+    database: State<'_, AppDatabase>,
+    input: UpsertChangeEventInput,
+) -> Result<ChangeEvent, String> {
+    database.upsert_change_event(input)
+}
+
+#[tauri::command]
+pub fn mark_change_event_read(
+    database: State<'_, AppDatabase>,
+    id: String,
+) -> Result<ChangeEvent, String> {
+    database.mark_change_event_read(id)
+}
+
+#[tauri::command]
+pub fn dismiss_change_event(
+    database: State<'_, AppDatabase>,
+    id: String,
+) -> Result<ChangeEvent, String> {
+    database.dismiss_change_event(id)
+}
+
+#[tauri::command]
+pub fn resolve_change_event(
+    database: State<'_, AppDatabase>,
+    id: String,
+) -> Result<ChangeEvent, String> {
+    database.resolve_change_event(id)
+}
+
+#[tauri::command]
 pub fn get_station_credentials(
     database: State<'_, AppDatabase>,
     station_id: String,
@@ -329,9 +367,10 @@ pub async fn detect_sub2api_station(
 #[tauri::command]
 pub async fn collect_sub2api_station(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
-    collect_station_info(database, station_id).await
+    collect_station_info(database, secrets, station_id).await
 }
 
 #[tauri::command]
@@ -350,11 +389,13 @@ pub async fn detect_station_info(
 #[tauri::command]
 pub async fn collect_station_info(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
     let database = database.inner().clone();
+    let data_key = *secrets.data_key();
     tauri::async_runtime::spawn_blocking(move || {
-        collectors::collect_station_info(&database, station_id)
+        collectors::collect_station_info(&database, &data_key, station_id)
     })
     .await
     .map_err(|error| format!("采集任务执行失败: {error}"))?

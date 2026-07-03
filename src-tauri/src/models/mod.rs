@@ -1,4 +1,5 @@
 pub mod capture;
+pub mod change_events;
 pub mod collector;
 pub mod credentials;
 pub mod pricing;

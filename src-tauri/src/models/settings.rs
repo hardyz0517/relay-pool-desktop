@@ -9,6 +9,7 @@ pub struct AppSettings {
     pub low_balance_threshold_cny: f64,
     pub collector_interval_minutes: u16,
     pub tray_behavior: String,
+    pub developer_mode_enabled: bool,
     pub data_dir: String,
 }
 
@@ -20,4 +21,5 @@ pub struct UpdateSettingsInput {
     pub low_balance_threshold_cny: f64,
     pub collector_interval_minutes: u16,
     pub tray_behavior: String,
+    pub developer_mode_enabled: bool,
 }
