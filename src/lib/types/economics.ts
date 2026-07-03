@@ -1,20 +1,27 @@
 export type PricingRule = {
   id: string;
   stationId: string;
+  stationKeyId: string | null;
+  groupBindingId: string | null;
   groupName: string | null;
   tierLabel: string | null;
   model: string;
   inputPrice: number | null;
   outputPrice: number | null;
   fixedPrice: number | null;
+  rateMultiplier: number | null;
   currency: string;
   unit: string;
   priceType: string;
+  basePriceSource: string | null;
+  normalizationStatus: string;
   source: string;
   confidence: number;
   enabled: boolean;
   note: string | null;
   collectedAt: string | null;
+  validFrom: string | null;
+  validUntil: string | null;
   createdAt: string;
   updatedAt: string;
 };

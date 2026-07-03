@@ -9,6 +9,13 @@ let memorySettings: AppSettings = {
   defaultRoutingStrategy: "priority_fallback",
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
+  balanceIntervalMinutes: 5,
+  groupRateIntervalMinutes: 20,
+  modelListIntervalMinutes: 60,
+  pricingRefreshIntervalMinutes: 60,
+  collectorTimeoutSeconds: 15,
+  collectorMaxConcurrency: 3,
+  allowDepletedFallback: false,
   trayBehavior: "minimize-to-tray",
   developerModeEnabled: false,
   dataDir: "仅桌面端可读取",
@@ -34,11 +41,21 @@ export function updateSettings(input: UpdateSettingsInput) {
 }
 
 function normalizeSettings(settings: AppSettings): AppSettings {
+  const maybeSettings = settings as AppSettings & Partial<Record<keyof AppSettings, unknown>>;
   return {
     ...settings,
     defaultRoutingStrategy: normalizeRoutingStrategy(settings.defaultRoutingStrategy),
+    balanceIntervalMinutes: normalizeNumber(maybeSettings.balanceIntervalMinutes, 5),
+    groupRateIntervalMinutes: normalizeNumber(maybeSettings.groupRateIntervalMinutes, 20),
+    modelListIntervalMinutes: normalizeNumber(maybeSettings.modelListIntervalMinutes, 60),
+    pricingRefreshIntervalMinutes: normalizeNumber(maybeSettings.pricingRefreshIntervalMinutes, 60),
+    collectorTimeoutSeconds: normalizeNumber(maybeSettings.collectorTimeoutSeconds, 15),
+    collectorMaxConcurrency: normalizeNumber(maybeSettings.collectorMaxConcurrency, 3),
     developerModeEnabled: normalizeBoolean(
-      (settings as AppSettings & { developerModeEnabled?: unknown }).developerModeEnabled,
+      maybeSettings.developerModeEnabled,
+    ),
+    allowDepletedFallback: normalizeBoolean(
+      maybeSettings.allowDepletedFallback,
     ),
   };
 }
@@ -62,4 +79,9 @@ function isInvokeUnavailable(error: unknown) {
 
 function normalizeBoolean(value: unknown) {
   return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function normalizeNumber(value: unknown, fallback: number) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
 }

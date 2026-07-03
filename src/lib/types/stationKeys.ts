@@ -8,8 +8,14 @@ export type StationKey = {
   apiKeyPresent: boolean;
   enabled: boolean;
   priority: number;
+  groupBindingId: string | null;
+  groupIdHash: string | null;
   groupName: string | null;
   tierLabel: string | null;
+  rateMultiplier: number | null;
+  rateSource: string | null;
+  rateCollectedAt: string | null;
+  balanceScope: string | null;
   status: StationKeyStatus;
   lastCheckedAt: string | null;
   lastUsedAt: string | null;
@@ -30,6 +36,8 @@ export type KeyPoolItem = StationKey & {
   avgLatencyMs: number | null;
   consecutiveFailures: number;
   lastErrorSummary: string | null;
+  bindingStatus?: string | null;
+  priceState?: string | null;
 };
 
 export type StationCredentials = {
@@ -51,8 +59,13 @@ export type CreateStationKeyInput = {
   apiKey: string;
   enabled: boolean;
   priority?: number | null;
+  groupBindingId?: string | null;
+  groupIdHash?: string | null;
   groupName: string | null;
   tierLabel: string | null;
+  rateMultiplier?: number | null;
+  rateSource?: string | null;
+  balanceScope?: string | null;
   note: string | null;
 };
 
@@ -63,8 +76,13 @@ export type UpdateStationKeyInput = {
   apiKey: string | null;
   enabled: boolean;
   priority: number;
+  groupBindingId?: string | null;
+  groupIdHash?: string | null;
   groupName: string | null;
   tierLabel: string | null;
+  rateMultiplier?: number | null;
+  rateSource?: string | null;
+  balanceScope?: string | null;
   status: StationKeyStatus;
   note: string | null;
 };

@@ -8,6 +8,13 @@ export type AppSettings = {
   defaultRoutingStrategy: RoutingStrategy;
   lowBalanceThresholdCny: number;
   collectorIntervalMinutes: number;
+  balanceIntervalMinutes: number;
+  groupRateIntervalMinutes: number;
+  modelListIntervalMinutes: number;
+  pricingRefreshIntervalMinutes: number;
+  collectorTimeoutSeconds: number;
+  collectorMaxConcurrency: number;
+  allowDepletedFallback: boolean;
   trayBehavior: TrayBehavior;
   developerModeEnabled: boolean;
   dataDir: string;
@@ -18,6 +25,13 @@ export type UpdateSettingsInput = {
   defaultRoutingStrategy: RoutingStrategy;
   lowBalanceThresholdCny: number;
   collectorIntervalMinutes: number;
+  balanceIntervalMinutes: number;
+  groupRateIntervalMinutes: number;
+  modelListIntervalMinutes: number;
+  pricingRefreshIntervalMinutes: number;
+  collectorTimeoutSeconds: number;
+  collectorMaxConcurrency: number;
+  allowDepletedFallback: boolean;
   trayBehavior: TrayBehavior;
   developerModeEnabled: boolean;
 };

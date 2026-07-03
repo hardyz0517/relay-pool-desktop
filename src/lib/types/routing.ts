@@ -72,11 +72,18 @@ export type RouteCandidateExplanation = {
   rejectionReasons: string[];
   mappedModel: string | null;
   pricingRuleId: string | null;
+  groupBindingId: string | null;
+  rateMultiplier: number | null;
+  normalizationStatus: string | null;
+  priceConfidence: number | null;
   estimatedInputPrice: number | null;
   estimatedOutputPrice: number | null;
   priceCurrency: string | null;
   balanceStatus: string | null;
   balanceValue: number | null;
+  balanceScope: string | null;
+  balanceCollectedAt: string | null;
+  economicFreshness: string | null;
   economicReasons: string[];
 };
 

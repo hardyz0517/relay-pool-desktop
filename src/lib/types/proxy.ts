@@ -36,5 +36,9 @@ export type RequestLog = {
   pricingRuleId: string | null;
   pricingSource: string | null;
   costStatus: string | null;
+  groupBindingId: string | null;
+  normalizationStatus: string | null;
+  balanceScope: string | null;
+  economicContextJson: string | null;
   createdAt: string;
 };

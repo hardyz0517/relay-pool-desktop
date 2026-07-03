@@ -25,6 +25,13 @@ type SettingsFormState = {
   defaultRoutingStrategy: RoutingStrategy;
   lowBalanceThresholdCny: string;
   collectorIntervalMinutes: string;
+  balanceIntervalMinutes: string;
+  groupRateIntervalMinutes: string;
+  modelListIntervalMinutes: string;
+  pricingRefreshIntervalMinutes: string;
+  collectorTimeoutSeconds: string;
+  collectorMaxConcurrency: string;
+  allowDepletedFallback: boolean;
   trayBehavior: TrayBehavior;
   developerModeEnabled: boolean;
 };
@@ -35,6 +42,13 @@ const fallbackSettings: AppSettings = {
   defaultRoutingStrategy: "priority_fallback",
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
+  balanceIntervalMinutes: 5,
+  groupRateIntervalMinutes: 20,
+  modelListIntervalMinutes: 60,
+  pricingRefreshIntervalMinutes: 60,
+  collectorTimeoutSeconds: 15,
+  collectorMaxConcurrency: 3,
+  allowDepletedFallback: false,
   trayBehavior: "minimize-to-tray",
   developerModeEnabled: false,
   dataDir: "仅桌面端可读取",
@@ -385,6 +399,13 @@ function settingsToForm(settings: AppSettings): SettingsFormState {
     defaultRoutingStrategy: settings.defaultRoutingStrategy,
     lowBalanceThresholdCny: String(settings.lowBalanceThresholdCny),
     collectorIntervalMinutes: String(settings.collectorIntervalMinutes),
+    balanceIntervalMinutes: String(settings.balanceIntervalMinutes),
+    groupRateIntervalMinutes: String(settings.groupRateIntervalMinutes),
+    modelListIntervalMinutes: String(settings.modelListIntervalMinutes),
+    pricingRefreshIntervalMinutes: String(settings.pricingRefreshIntervalMinutes),
+    collectorTimeoutSeconds: String(settings.collectorTimeoutSeconds),
+    collectorMaxConcurrency: String(settings.collectorMaxConcurrency),
+    allowDepletedFallback: settings.allowDepletedFallback,
     trayBehavior: settings.trayBehavior,
     developerModeEnabled: settings.developerModeEnabled,
   };
@@ -396,6 +417,13 @@ function formToInput(form: SettingsFormState): UpdateSettingsInput {
     defaultRoutingStrategy: form.defaultRoutingStrategy,
     lowBalanceThresholdCny: Number(form.lowBalanceThresholdCny),
     collectorIntervalMinutes: Number(form.collectorIntervalMinutes),
+    balanceIntervalMinutes: Number(form.balanceIntervalMinutes),
+    groupRateIntervalMinutes: Number(form.groupRateIntervalMinutes),
+    modelListIntervalMinutes: Number(form.modelListIntervalMinutes),
+    pricingRefreshIntervalMinutes: Number(form.pricingRefreshIntervalMinutes),
+    collectorTimeoutSeconds: Number(form.collectorTimeoutSeconds),
+    collectorMaxConcurrency: Number(form.collectorMaxConcurrency),
+    allowDepletedFallback: form.allowDepletedFallback,
     trayBehavior: form.trayBehavior,
     developerModeEnabled: form.developerModeEnabled,
   };
