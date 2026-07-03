@@ -13,6 +13,8 @@ Relay Pool Desktop uses a deliberately split product model so collection, routin
 - `Pricing Rule / 价格规则` = normalized pricing data for station / group / model.
 - `Balance Snapshot / 余额快照` = normalized balance or quota state with explicit units.
 - `Request Cost / 请求成本` = per-request usage and estimated cost metadata.
+- `Group Binding / 分组绑定` = durable relationship between a station, its groups, and routeable station keys.
+- `Collector Run / 采集任务` = task-level record for detect, balance, groups, models, and full collection.
 - `Secret / 凭据密文` = encrypted sensitive data referenced by business objects.
 
 ## Station
@@ -122,6 +124,57 @@ It owns:
 - pricing rule source
 - cost status
 
+## Group Binding
+
+`Group Binding` is the durable relationship between a Station, its available groups, and the Station Keys that route through those groups.
+
+It owns:
+
+- station-level group identity
+- key-level binding identity
+- group key hash
+- optional external group id hash
+- binding status
+- rate source
+- effective multiplier
+- confidence
+- latest visibility state
+
+Station-level bindings describe what a station currently exposes. Key-level bindings describe which group a routeable key is expected to use. UI pages and routing should consume these facts instead of parsing `collector_snapshots.normalized_json` for group state.
+
+## Group Rate Record
+
+`Group Rate Record` is the historical multiplier fact for a station group or key binding.
+
+It owns:
+
+- station
+- optional station key
+- optional group binding
+- group key hash
+- group name
+- default / user / effective multiplier
+- source
+- confidence
+- checked time
+
+## Collector Run
+
+`Collector Run` is a task-level record for detect, balance, groups, models, and full collection.
+
+It owns:
+
+- adapter
+- task type
+- parent run
+- status
+- endpoint counts
+- duration
+- manual action requirement
+- linked collector snapshot
+
+`collector_snapshots` remains useful for redacted debugging and audit, but product pages should prefer `collector_runs`, `station_group_bindings`, `group_rate_records`, `balance_snapshots`, and `pricing_rules`.
+
 ## Secret
 
 `Secret` is encrypted sensitive data owned by a Station, Station Key, collector, proxy runtime, or settings surface.
@@ -168,6 +221,7 @@ It owns:
 - usage stats
 - request log writing
 - cheap-first cost-aware sorting
+- route economics: group binding, rate multiplier, pricing status, balance status, freshness, and rejected candidates
 
 ## Channel Status
 
@@ -193,3 +247,4 @@ It owns:
 - P6 adds model-aware, protocol-aware, health-aware Station Key routing with aliases, key capability scope, cooldown, route simulation, and route explanations.
 - P7 adds price normalization, balance avoidance, request cost tracking, and cheap-first routing.
 - P8 adds security and credential governance: encrypted local secrets, plaintext migration, UI masking, log/snapshot redaction, import/export boundaries, and local proxy exposure review.
+- P9 adds durable collection facts and route economics: Sub2API / NewAPI / OpenAI-compatible adapters, group binding, multiplier history, collector runs, `group_rate_only` pricing semantics, depleted-balance fallback control, and UI pages backed by stable facts instead of raw snapshots.
