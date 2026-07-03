@@ -15,11 +15,13 @@ import { CSS } from "@dnd-kit/utilities";
 import { CheckCircle2, Copy, Edit3, KeyRound, RefreshCcw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, Dialog, EmptyState, IconButton, MaskedSecret, ObjectRow, SelectControl, StatusBadge, Toolbar, useToast } from "@/components/ui";
+import { listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getStationKeyCapabilities, updateStationKeyCapabilities } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
-import { deleteStationKey, listKeyPoolItems, reorderKeyPool, updateStationKey } from "@/lib/api/stationKeys";
+import { deleteStationKey, listKeyPoolItems, reorderKeyPool, updateStationKey, updateStationKeyGroupBinding } from "@/lib/api/stationKeys";
+import type { StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
-import { stationTypeLabels, type Station } from "@/lib/types/stations";
+import type { Station } from "@/lib/types/stations";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +47,7 @@ export function KeyPoolPage() {
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<KeyPoolItem | null>(null);
   const [editForm, setEditForm] = useState<KeyPoolEditForm>(emptyEditForm);
+  const [bindingsForEdit, setBindingsForEdit] = useState<StationGroupBinding[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
@@ -164,6 +167,11 @@ export function KeyPoolPage() {
         priority: item.priority,
         groupName: item.groupName,
         tierLabel: item.tierLabel,
+        groupBindingId: item.groupBindingId,
+        groupIdHash: item.groupIdHash,
+        rateMultiplier: item.rateMultiplier,
+        rateSource: item.rateSource,
+        balanceScope: item.balanceScope,
         status: item.status,
         note: item.note,
       });
@@ -196,13 +204,18 @@ export function KeyPoolPage() {
   async function handleEdit(item: KeyPoolItem) {
     setEditingItem(item);
     setEditForm(formFromItem(item));
+    setBindingsForEdit([]);
     setSaving(true);
     setError(null);
     try {
-      const capabilities = await getStationKeyCapabilities(item.id);
+      const [capabilities, bindings] = await Promise.all([
+        getStationKeyCapabilities(item.id),
+        listStationGroupBindings(item.stationId),
+      ]);
+      setBindingsForEdit(bindings);
       setEditForm((current) => current.id === item.id ? mergeCapabilitiesIntoForm(current, capabilities) : current);
     } catch (requestError) {
-      toast.error("读取 Key 路由能力失败", readError(requestError));
+      toast.error("读取 Key 详情失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -225,9 +238,17 @@ export function KeyPoolPage() {
         priority: Number(editForm.priority),
         groupName: editForm.groupName.trim() ? editForm.groupName.trim() : null,
         tierLabel: editForm.tierLabel.trim() ? editForm.tierLabel.trim() : null,
+        groupBindingId: editingItem.groupBindingId,
+        groupIdHash: editingItem.groupIdHash,
+        rateMultiplier: editingItem.rateMultiplier,
+        rateSource: editingItem.rateSource,
+        balanceScope: editingItem.balanceScope,
         status: editForm.status,
         note: editForm.note.trim() ? editForm.note.trim() : null,
       });
+      if (editForm.groupBindingId && editForm.groupBindingId !== editingItem.groupBindingId) {
+        await updateStationKeyGroupBinding(editForm.id, editForm.groupBindingId);
+      }
       try {
         await updateStationKeyCapabilities({
           stationKeyId: editForm.id,
@@ -350,6 +371,7 @@ export function KeyPoolPage() {
       {editingItem && (
         <KeyEditDialog
           actionSaving={saving}
+          bindings={bindingsForEdit}
           form={editForm}
           onClose={() => setEditingItem(null)}
           onFormChange={setEditForm}
@@ -401,6 +423,7 @@ function KeyRowContent({
   onDelete?: (item: KeyPoolItem) => void;
 }) {
   const cooldownActive = isFutureTime(item.cooldownUntil);
+  const routeability = routeabilitySummary(item, cooldownActive);
   const healthSummary = [
     item.successRate === null ? "成功率暂无" : `成功率 ${Math.round(item.successRate * 100)}%`,
     item.avgLatencyMs === null ? "延迟暂无" : `平均 ${item.avgLatencyMs}ms`,
@@ -429,12 +452,15 @@ function KeyRowContent({
           <StatusBadge tone={item.enabled ? "healthy" : "disabled"}>{item.enabled ? "启用" : "禁用"}</StatusBadge>
           {item.onlyUseAsBackup && <StatusBadge tone="warning">备用</StatusBadge>}
           {cooldownActive && <StatusBadge tone="warning">冷却中</StatusBadge>}
+          <StatusBadge tone={routeability.tone}>{routeability.label}</StatusBadge>
         </>
       }
       metrics={[
         { label: "优先级", value: `P${item.priority}` },
-        { label: "分组", value: item.groupName ?? "未分组" },
-        { label: "Tier", value: item.tierLabel ?? "无" },
+        { label: "分组绑定", value: groupBindingSummary(item) },
+        { label: "倍率", value: formatRate(item.rateMultiplier) },
+        { label: "余额作用域", value: item.balanceScope ?? "未知" },
+        { label: "价格状态", value: item.priceState ?? (item.rateMultiplier === null ? "未知" : "倍率已记录") },
         { label: "延迟", value: item.avgLatencyMs === null ? "-" : `${item.avgLatencyMs}ms` },
       ]}
       actions={
@@ -465,6 +491,7 @@ type KeyPoolEditForm = {
   apiKey: string;
   enabled: boolean;
   priority: string;
+  groupBindingId: string;
   groupName: string;
   tierLabel: string;
   status: StationKeyStatus;
@@ -491,6 +518,7 @@ const emptyEditForm: KeyPoolEditForm = {
   apiKey: "",
   enabled: true,
   priority: "0",
+  groupBindingId: "",
   groupName: "",
   tierLabel: "",
   status: "unchecked",
@@ -511,17 +539,25 @@ const emptyEditForm: KeyPoolEditForm = {
 
 function KeyEditDialog({
   actionSaving,
+  bindings,
   form,
   onClose,
   onFormChange,
   onSave,
 }: {
   actionSaving: boolean;
+  bindings: StationGroupBinding[];
   form: KeyPoolEditForm;
   onClose: () => void;
   onFormChange: (next: KeyPoolEditForm) => void;
   onSave: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const bindingOptions = bindings
+    .filter((binding) => binding.bindingKind === "station_group" || binding.stationKeyId === form.id)
+    .map((binding) => ({
+      value: binding.id,
+      label: bindingOptionLabel(binding),
+    }));
   return (
     <Dialog
       open
@@ -551,6 +587,25 @@ function KeyEditDialog({
           <input className={inputClassName} value={form.apiKey} onChange={(event) => onFormChange({ ...form, apiKey: event.target.value })} placeholder="留空保留旧 key" />
         </Field>
         <div className="grid gap-3 md:grid-cols-3">
+          <Field label="分组绑定">
+            <SelectControl
+              ariaLabel="分组绑定"
+              className={inputClassName}
+              value={form.groupBindingId}
+              options={[
+                { value: "", label: bindingOptions.length ? "不调整绑定" : "暂无可用分组" },
+                ...bindingOptions,
+              ]}
+              onChange={(groupBindingId) => {
+                const binding = bindings.find((item) => item.id === groupBindingId);
+                onFormChange({
+                  ...form,
+                  groupBindingId,
+                  groupName: binding?.groupName ?? form.groupName,
+                });
+              }}
+            />
+          </Field>
           <Field label="分组">
             <input className={inputClassName} value={form.groupName} onChange={(event) => onFormChange({ ...form, groupName: event.target.value })} />
           </Field>
@@ -638,6 +693,45 @@ function formatNullableTime(value: string | null) {
   });
 }
 
+function formatRate(value: number | null) {
+  if (value === null || !Number.isFinite(value)) {
+    return "未知";
+  }
+  return `${value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}x`;
+}
+
+function groupBindingSummary(item: KeyPoolItem) {
+  if (item.groupBindingId) {
+    return item.groupName ? `${item.groupName} · 已绑定` : "已绑定";
+  }
+  if (item.groupName) {
+    return `${item.groupName} · 未绑定`;
+  }
+  return "未绑定";
+}
+
+function routeabilitySummary(item: KeyPoolItem, cooldownActive: boolean): { label: string; tone: "healthy" | "warning" | "error" | "disabled" | "info" } {
+  if (!item.enabled || item.status === "disabled") {
+    return { label: "不参与路由", tone: "disabled" };
+  }
+  if (!item.apiKeyPresent) {
+    return { label: "缺少 Key", tone: "error" };
+  }
+  if (cooldownActive || item.status === "error") {
+    return { label: "暂不可路由", tone: "warning" };
+  }
+  if (!item.groupBindingId) {
+    return { label: "可路由 · 未绑定分组", tone: "warning" };
+  }
+  return { label: "可路由", tone: "healthy" };
+}
+
+function bindingOptionLabel(binding: StationGroupBinding) {
+  const rate = formatRate(binding.effectiveRateMultiplier);
+  const status = binding.bindingStatus === "available" ? "可用" : binding.bindingStatus;
+  return `${binding.groupName} · ${rate} · ${status}`;
+}
+
 const selectClassName =
   "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
 
@@ -681,6 +775,7 @@ function formFromItem(item: KeyPoolItem): KeyPoolEditForm {
     apiKey: "",
     enabled: item.enabled,
     priority: String(item.priority),
+    groupBindingId: item.groupBindingId ?? "",
     groupName: item.groupName ?? "",
     tierLabel: item.tierLabel ?? "",
     status: item.status,

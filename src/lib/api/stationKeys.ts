@@ -44,6 +44,39 @@ export function updateStationKey(input: UpdateStationKeyInput) {
   });
 }
 
+export function updateStationKeyGroupBinding(stationKeyId: string, groupBindingId: string) {
+  return invoke<StationKey>("update_station_key_group_binding", {
+    input: { stationKeyId, groupBindingId },
+  }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      for (const [stationId, keys] of memoryKeys) {
+        const nextKeys = keys.map((key) =>
+          key.id === stationKeyId
+            ? {
+                ...key,
+                groupBindingId,
+                rateSource: "manual",
+                rateCollectedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              }
+            : key,
+        );
+        memoryKeys.set(stationId, nextKeys);
+      }
+      const item = memoryKeyPool.find((key) => key.id === stationKeyId);
+      if (item) {
+        item.groupBindingId = groupBindingId;
+        item.rateSource = "manual";
+        item.rateCollectedAt = new Date().toISOString();
+        item.updatedAt = new Date().toISOString();
+        return item;
+      }
+      return memoryKeyPool[0];
+    }
+    throw error;
+  });
+}
+
 export function deleteStationKey(id: string) {
   return invoke<void>("delete_station_key", { id }).catch((error) => {
     if (isInvokeUnavailable(error)) {

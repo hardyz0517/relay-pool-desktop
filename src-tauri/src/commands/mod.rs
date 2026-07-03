@@ -7,7 +7,10 @@ use crate::{
         collector::{CollectorRunResult, CollectorSnapshot},
         collector_runs::CollectorRun,
         credentials::{StationCredentials, UpdateStationCredentialsInput, UpdateStationSessionInput},
-        group_facts::{GroupRateRecord, StationGroupBinding, UpsertStationGroupBindingInput},
+        group_facts::{
+            GroupRateRecord, StationGroupBinding, UpdateStationKeyGroupBindingInput,
+            UpsertStationGroupBindingInput,
+        },
         pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
         proxy::{ProxyStatus, RequestLog},
         routing::{
@@ -177,6 +180,14 @@ pub fn update_station_key(
     input: UpdateStationKeyInput,
 ) -> Result<StationKey, String> {
     database.update_station_key_with_data_key(input, secrets.data_key())
+}
+
+#[tauri::command]
+pub fn update_station_key_group_binding(
+    database: State<'_, AppDatabase>,
+    input: UpdateStationKeyGroupBindingInput,
+) -> Result<StationKey, String> {
+    database.update_station_key_group_binding(input)
 }
 
 #[tauri::command]

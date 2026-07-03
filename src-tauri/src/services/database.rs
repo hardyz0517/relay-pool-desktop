@@ -19,6 +19,7 @@ use crate::models::{
     credentials::{StationCredentials, UpdateStationCredentialsInput, UpdateStationSessionInput},
     group_facts::{
         GroupRateRecord, InsertGroupRateRecordInput, StationGroupBinding,
+        UpdateStationKeyGroupBindingInput,
         UpsertStationGroupBindingInput,
     },
     pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
@@ -402,6 +403,14 @@ impl AppDatabase {
         let connection = self.connection()?;
         validate_station_exists(&connection, &input.station_id)?;
         update_station_key_in_connection_with_data_key(&connection, input, Some(data_key))
+    }
+
+    pub fn update_station_key_group_binding(
+        &self,
+        input: UpdateStationKeyGroupBindingInput,
+    ) -> Result<StationKey, String> {
+        let connection = self.connection()?;
+        update_station_key_group_binding_in_connection(&connection, input)
     }
 
     pub fn touch_station_key_usage(
@@ -2371,8 +2380,8 @@ fn migrate_default_station_keys(connection: &Connection) -> rusqlite::Result<()>
 
 fn row_to_station_key(row: &rusqlite::Row<'_>) -> rusqlite::Result<StationKey> {
     let api_key: String = row.get(3)?;
-    let secret_masked: Option<String> = row.get(14)?;
-    let api_key_secret_id: Option<String> = row.get(15)?;
+    let secret_masked: Option<String> = row.get(20)?;
+    let api_key_secret_id: Option<String> = row.get(21)?;
     let api_key_masked = secret_masked.unwrap_or_else(|| mask_secret(&api_key));
     let api_key_present = api_key_secret_id.is_some() || !api_key.trim().is_empty();
 
@@ -2386,18 +2395,18 @@ fn row_to_station_key(row: &rusqlite::Row<'_>) -> rusqlite::Result<StationKey> {
         priority: row.get(5)?,
         group_name: row.get(6)?,
         tier_label: row.get(7)?,
-        group_binding_id: None,
-        group_id_hash: None,
-        rate_multiplier: None,
-        rate_source: None,
-        rate_collected_at: None,
-        balance_scope: None,
-        status: row.get(8)?,
-        last_checked_at: row.get(9)?,
-        last_used_at: row.get(10)?,
-        note: row.get(11)?,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        group_binding_id: row.get(8)?,
+        group_id_hash: row.get(9)?,
+        rate_multiplier: row.get(10)?,
+        rate_source: row.get(11)?,
+        rate_collected_at: row.get(12)?,
+        balance_scope: row.get(13)?,
+        status: row.get(14)?,
+        last_checked_at: row.get(15)?,
+        last_used_at: row.get(16)?,
+        note: row.get(17)?,
+        created_at: row.get(18)?,
+        updated_at: row.get(19)?,
     })
 }
 
@@ -2408,6 +2417,8 @@ fn list_station_keys_from_connection(
     let mut statement = connection
         .prepare(
             "SELECT id, station_id, name, api_key, enabled, priority, group_name, tier_label,
+                    group_binding_id, group_id_hash, rate_multiplier, rate_source,
+                    rate_collected_at, balance_scope,
                     status, last_checked_at, last_used_at, note, created_at, updated_at,
                     (SELECT masked_value FROM secrets WHERE secrets.id = station_keys.api_key_secret_id),
                     api_key_secret_id
@@ -2444,6 +2455,12 @@ fn list_key_pool_items_from_connection(
                 k.priority,
                 k.group_name,
                 k.tier_label,
+                k.group_binding_id,
+                k.group_id_hash,
+                k.rate_multiplier,
+                k.rate_source,
+                k.rate_collected_at,
+                k.balance_scope,
                 k.status,
                 k.last_checked_at,
                 k.last_used_at,
@@ -2482,18 +2499,18 @@ fn list_key_pool_items_from_connection(
             let api_key_secret_id: Option<String> = row.get(8)?;
             let api_key_masked = secret_masked.unwrap_or_else(|| mask_secret(&api_key));
             let api_key_present = api_key_secret_id.is_some() || !api_key.trim().is_empty();
-            let supports_chat = i64_to_bool(row.get(19)?);
-            let supports_responses = i64_to_bool(row.get(20)?);
-            let supports_embeddings = i64_to_bool(row.get(21)?);
-            let supports_stream = i64_to_bool(row.get(22)?);
-            let supports_tools = i64_to_bool(row.get(23)?);
-            let supports_vision = i64_to_bool(row.get(24)?);
-            let supports_reasoning = i64_to_bool(row.get(25)?);
-            let allowlist = parse_json_string_list(row.get::<_, String>(26)?.as_str());
-            let blocklist = parse_json_string_list(row.get::<_, String>(27)?.as_str());
-            let preferred_models = parse_json_string_list(row.get::<_, String>(28)?.as_str());
-            let success_count = row.get::<_, Option<i64>>(31)?.unwrap_or(0);
-            let failure_count = row.get::<_, Option<i64>>(32)?.unwrap_or(0);
+            let supports_chat = i64_to_bool(row.get(25)?);
+            let supports_responses = i64_to_bool(row.get(26)?);
+            let supports_embeddings = i64_to_bool(row.get(27)?);
+            let supports_stream = i64_to_bool(row.get(28)?);
+            let supports_tools = i64_to_bool(row.get(29)?);
+            let supports_vision = i64_to_bool(row.get(30)?);
+            let supports_reasoning = i64_to_bool(row.get(31)?);
+            let allowlist = parse_json_string_list(row.get::<_, String>(32)?.as_str());
+            let blocklist = parse_json_string_list(row.get::<_, String>(33)?.as_str());
+            let preferred_models = parse_json_string_list(row.get::<_, String>(34)?.as_str());
+            let success_count = row.get::<_, Option<i64>>(37)?.unwrap_or(0);
+            let failure_count = row.get::<_, Option<i64>>(38)?.unwrap_or(0);
             Ok(KeyPoolItem {
                 id: row.get(0)?,
                 station_id: row.get(1)?,
@@ -2507,16 +2524,16 @@ fn list_key_pool_items_from_connection(
                 priority: row.get(10)?,
                 group_name: row.get(11)?,
                 tier_label: row.get(12)?,
-                group_binding_id: None,
-                group_id_hash: None,
-                rate_multiplier: None,
-                rate_source: None,
-                rate_collected_at: None,
-                balance_scope: None,
-                status: row.get(13)?,
-                last_checked_at: row.get(14)?,
-                last_used_at: row.get(15)?,
-                note: row.get(16)?,
+                group_binding_id: row.get(13)?,
+                group_id_hash: row.get(14)?,
+                rate_multiplier: row.get(15)?,
+                rate_source: row.get(16)?,
+                rate_collected_at: row.get(17)?,
+                balance_scope: row.get(18)?,
+                status: row.get(19)?,
+                last_checked_at: row.get(20)?,
+                last_used_at: row.get(21)?,
+                note: row.get(22)?,
                 capability_summary: summarize_capabilities(
                     supports_chat,
                     supports_responses,
@@ -2531,14 +2548,14 @@ fn list_key_pool_items_from_connection(
                     blocklist.len(),
                     preferred_models.len(),
                 ),
-                only_use_as_backup: i64_to_bool(row.get(29)?),
-                cooldown_until: row.get(30)?,
+                only_use_as_backup: i64_to_bool(row.get(35)?),
+                cooldown_until: row.get(36)?,
                 success_rate: success_rate(success_count, failure_count),
-                avg_latency_ms: row.get(33)?,
-                consecutive_failures: row.get(34)?,
-                last_error_summary: row.get(35)?,
-                created_at: row.get(17)?,
-                updated_at: row.get(18)?,
+                avg_latency_ms: row.get(39)?,
+                consecutive_failures: row.get(40)?,
+                last_error_summary: row.get(41)?,
+                created_at: row.get(23)?,
+                updated_at: row.get(24)?,
             })
         })
         .map_err(|error| format!("查询 Key 池失败: {error}"))?
@@ -4211,9 +4228,11 @@ fn create_station_key_in_connection_with_data_key(
     connection
         .execute(
             "INSERT INTO station_keys (
-                id, station_id, name, api_key, api_key_secret_id, enabled, priority, group_name, tier_label,
+                id, station_id, name, api_key, api_key_secret_id, enabled, priority,
+                group_name, tier_label, group_binding_id, group_id_hash, rate_multiplier,
+                rate_source, rate_collected_at, balance_scope,
                 status, last_checked_at, last_used_at, note, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'unchecked', NULL, NULL, ?10, ?11, ?12)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 'unchecked', NULL, NULL, ?16, ?17, ?18)",
             params![
                 id,
                 input.station_id,
@@ -4224,6 +4243,12 @@ fn create_station_key_in_connection_with_data_key(
                 priority,
                 normalize_optional_string(input.group_name),
                 normalize_optional_string(input.tier_label),
+                normalize_optional_string(input.group_binding_id),
+                normalize_optional_string(input.group_id_hash),
+                input.rate_multiplier,
+                normalize_optional_string(input.rate_source),
+                input.rate_multiplier.map(|_| now.clone()),
+                normalize_optional_string(input.balance_scope),
                 normalize_optional_string(input.note),
                 now,
                 now,
@@ -4297,10 +4322,19 @@ fn update_station_key_in_connection_with_data_key(
                     priority = ?5,
                     group_name = ?6,
                     tier_label = ?7,
-                    status = ?8,
-                    note = ?9,
-                    updated_at = ?10
-              WHERE id = ?11 AND station_id = ?12",
+                    group_binding_id = COALESCE(?8, group_binding_id),
+                    group_id_hash = COALESCE(?9, group_id_hash),
+                    rate_multiplier = COALESCE(?10, rate_multiplier),
+                    rate_source = COALESCE(?11, rate_source),
+                    rate_collected_at = CASE
+                        WHEN ?10 IS NOT NULL THEN ?12
+                        ELSE rate_collected_at
+                    END,
+                    balance_scope = COALESCE(?13, balance_scope),
+                    status = ?14,
+                    note = ?15,
+                    updated_at = ?16
+              WHERE id = ?17 AND station_id = ?18",
             params![
                 input.name.trim(),
                 next_api_key,
@@ -4309,6 +4343,12 @@ fn update_station_key_in_connection_with_data_key(
                 input.priority,
                 normalize_optional_string(input.group_name),
                 normalize_optional_string(input.tier_label),
+                normalize_optional_string(input.group_binding_id),
+                normalize_optional_string(input.group_id_hash),
+                input.rate_multiplier,
+                normalize_optional_string(input.rate_source),
+                now.clone(),
+                normalize_optional_string(input.balance_scope),
                 input.status,
                 normalize_optional_string(input.note),
                 now,
@@ -4319,6 +4359,57 @@ fn update_station_key_in_connection_with_data_key(
         .map_err(|error| format!("更新 Station Key 失败: {error}"))?;
 
     station_key_by_id(connection, &input.id)
+}
+
+fn update_station_key_group_binding_in_connection(
+    connection: &Connection,
+    input: UpdateStationKeyGroupBindingInput,
+) -> Result<StationKey, String> {
+    validate_station_key_exists(connection, &input.station_key_id)?;
+    let key = station_key_by_id(connection, &input.station_key_id)?;
+    let binding = station_group_binding_by_id(connection, &input.group_binding_id)?;
+    if binding.station_id != key.station_id {
+        return Err("分组绑定不属于该 Key 的中转站".to_string());
+    }
+    if let Some(bound_key_id) = binding.station_key_id.as_deref() {
+        if bound_key_id != input.station_key_id {
+            return Err("分组绑定已属于其他 Key".to_string());
+        }
+    }
+
+    let now = now_string();
+    connection
+        .execute(
+            "UPDATE station_keys
+                SET group_binding_id = ?1,
+                    group_id_hash = ?2,
+                    group_name = ?3,
+                    rate_multiplier = ?4,
+                    rate_source = 'manual',
+                    rate_collected_at = ?5,
+                    balance_scope = COALESCE(balance_scope, 'station'),
+                    updated_at = ?5
+              WHERE id = ?6",
+            params![
+                &binding.id,
+                &binding.group_key_hash,
+                &binding.group_name,
+                binding.effective_rate_multiplier,
+                &now,
+                &input.station_key_id,
+            ],
+        )
+        .map_err(|error| format!("更新 Key 分组绑定失败: {error}"))?;
+
+    let event = crate::services::change_events::key_group_bound_event(
+        &binding.station_id,
+        &input.station_key_id,
+        &binding.id,
+        &binding.group_name,
+    );
+    let _ = upsert_change_event_in_connection(connection, event);
+
+    station_key_by_id(connection, &input.station_key_id)
 }
 
 fn touch_station_key_usage_in_connection(
@@ -4352,6 +4443,8 @@ fn station_key_by_id(connection: &Connection, id: &str) -> Result<StationKey, St
     connection
         .query_row(
             "SELECT id, station_id, name, api_key, enabled, priority, group_name, tier_label,
+                    group_binding_id, group_id_hash, rate_multiplier, rate_source,
+                    rate_collected_at, balance_scope,
                     status, last_checked_at, last_used_at, note, created_at, updated_at,
                     (SELECT masked_value FROM secrets WHERE secrets.id = station_keys.api_key_secret_id),
                     api_key_secret_id
@@ -6170,7 +6263,7 @@ mod tests {
     use super::*;
     use crate::models::group_facts::{
         BINDING_KIND_KEY_BINDING, BINDING_KIND_STATION_GROUP, BINDING_STATUS_AVAILABLE,
-        BINDING_STATUS_MISSING,
+        BINDING_STATUS_MISSING, UpdateStationKeyGroupBindingInput,
     };
     use crate::models::pricing::{UpsertBalanceSnapshotInput, UpsertPricingRuleInput};
     use crate::models::routing::RouteEndpointKind;
@@ -6229,6 +6322,61 @@ mod tests {
                 .expect("table count");
             assert_eq!(count, 1, "{table} should exist");
         }
+    }
+
+    #[test]
+    fn key_pool_reads_manual_group_binding_facts() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "Binding Facts");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .into_iter()
+            .next()
+            .expect("default key");
+        let binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "group-hash-pro".to_string(),
+                group_id_hash: Some("external-group-hash".to_string()),
+                group_name: "pro".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(0.72),
+                effective_rate_multiplier: Some(0.72),
+                rate_source: Some("groups_api".to_string()),
+                confidence: 0.9,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("binding");
+
+        let saved = database
+            .update_station_key_group_binding(UpdateStationKeyGroupBindingInput {
+                station_key_id: key.id.clone(),
+                group_binding_id: binding.id.clone(),
+            })
+            .expect("bind key");
+
+        assert_eq!(saved.group_binding_id.as_deref(), Some(binding.id.as_str()));
+        assert_eq!(saved.group_name.as_deref(), Some("pro"));
+        assert_eq!(saved.group_id_hash.as_deref(), Some("group-hash-pro"));
+        assert_eq!(saved.rate_multiplier, Some(0.72));
+        assert_eq!(saved.rate_source.as_deref(), Some("manual"));
+        assert_eq!(saved.balance_scope.as_deref(), Some("station"));
+
+        let item = database
+            .list_key_pool_items()
+            .expect("key pool")
+            .into_iter()
+            .find(|item| item.id == key.id)
+            .expect("key pool item");
+        assert_eq!(item.group_binding_id.as_deref(), Some(binding.id.as_str()));
+        assert_eq!(item.rate_multiplier, Some(0.72));
+        assert_eq!(item.balance_scope.as_deref(), Some("station"));
     }
 
     #[test]

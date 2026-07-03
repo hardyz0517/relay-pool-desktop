@@ -39,6 +39,7 @@ pub fn run() {
             commands::list_station_keys,
             commands::create_station_key,
             commands::update_station_key,
+            commands::update_station_key_group_binding,
             commands::delete_station_key,
             commands::reorder_station_keys,
             commands::list_key_pool_items,
