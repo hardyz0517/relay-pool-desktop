@@ -5,20 +5,27 @@ use serde::{Deserialize, Serialize};
 pub struct PricingRule {
     pub id: String,
     pub station_id: String,
+    pub station_key_id: Option<String>,
+    pub group_binding_id: Option<String>,
     pub group_name: Option<String>,
     pub tier_label: Option<String>,
     pub model: String,
     pub input_price: Option<f64>,
     pub output_price: Option<f64>,
     pub fixed_price: Option<f64>,
+    pub rate_multiplier: Option<f64>,
     pub currency: String,
     pub unit: String,
     pub price_type: String,
+    pub base_price_source: Option<String>,
+    pub normalization_status: String,
     pub source: String,
     pub confidence: f64,
     pub enabled: bool,
     pub note: Option<String>,
     pub collected_at: Option<String>,
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -49,20 +56,27 @@ pub struct BalanceSnapshot {
 pub struct UpsertPricingRuleInput {
     pub id: Option<String>,
     pub station_id: String,
+    pub station_key_id: Option<String>,
+    pub group_binding_id: Option<String>,
     pub group_name: Option<String>,
     pub tier_label: Option<String>,
     pub model: String,
     pub input_price: Option<f64>,
     pub output_price: Option<f64>,
     pub fixed_price: Option<f64>,
+    pub rate_multiplier: Option<f64>,
     pub currency: String,
     pub unit: String,
     pub price_type: String,
+    pub base_price_source: Option<String>,
+    pub normalization_status: Option<String>,
     pub source: String,
     pub confidence: f64,
     pub enabled: bool,
     pub note: Option<String>,
     pub collected_at: Option<String>,
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -108,28 +122,37 @@ mod tests {
         let rule = PricingRule {
             id: "price-1".to_string(),
             station_id: "station-1".to_string(),
+            station_key_id: Some("key-1".to_string()),
+            group_binding_id: Some("binding-1".to_string()),
             group_name: Some("pro".to_string()),
             tier_label: None,
             model: "gpt-4o-mini".to_string(),
             input_price: Some(0.15),
             output_price: Some(0.6),
             fixed_price: None,
+            rate_multiplier: Some(0.8),
             currency: "USD".to_string(),
             unit: "per_1m_tokens".to_string(),
             price_type: "token".to_string(),
+            base_price_source: Some("model_api".to_string()),
+            normalization_status: "complete".to_string(),
             source: "manual".to_string(),
             confidence: 0.9,
             enabled: true,
             note: None,
             collected_at: Some("1000".to_string()),
+            valid_from: Some("1000".to_string()),
+            valid_until: None,
             created_at: "1000".to_string(),
             updated_at: "1000".to_string(),
         };
 
         let json = serde_json::to_value(rule).expect("json");
         assert_eq!(json["stationId"], "station-1");
+        assert_eq!(json["groupBindingId"], "binding-1");
         assert_eq!(json["inputPrice"], 0.15);
         assert_eq!(json["priceType"], "token");
+        assert_eq!(json["normalizationStatus"], "complete");
     }
 
     #[test]

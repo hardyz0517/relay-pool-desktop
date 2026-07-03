@@ -277,6 +277,19 @@ impl AppDatabase {
         if input.collector_interval_minutes == 0 {
             return Err("采集频率必须大于 0 分钟".to_string());
         }
+        if input.balance_interval_minutes == 0
+            || input.group_rate_interval_minutes == 0
+            || input.model_list_interval_minutes == 0
+            || input.pricing_refresh_interval_minutes == 0
+        {
+            return Err("采集周期必须大于 0".to_string());
+        }
+        if input.collector_timeout_seconds < 3 {
+            return Err("采集超时时间不能小于 3 秒".to_string());
+        }
+        if input.collector_max_concurrency == 0 || input.collector_max_concurrency > 8 {
+            return Err("采集并发数必须在 1 到 8 之间".to_string());
+        }
 
         let connection = self.connection()?;
         let values = [
@@ -289,6 +302,34 @@ impl AppDatabase {
             (
                 "collector_interval_minutes",
                 input.collector_interval_minutes.to_string(),
+            ),
+            (
+                "balance_interval_minutes",
+                input.balance_interval_minutes.to_string(),
+            ),
+            (
+                "group_rate_interval_minutes",
+                input.group_rate_interval_minutes.to_string(),
+            ),
+            (
+                "model_list_interval_minutes",
+                input.model_list_interval_minutes.to_string(),
+            ),
+            (
+                "pricing_refresh_interval_minutes",
+                input.pricing_refresh_interval_minutes.to_string(),
+            ),
+            (
+                "collector_timeout_seconds",
+                input.collector_timeout_seconds.to_string(),
+            ),
+            (
+                "collector_max_concurrency",
+                input.collector_max_concurrency.to_string(),
+            ),
+            (
+                "allow_depleted_fallback",
+                input.allow_depleted_fallback.to_string(),
             ),
             ("tray_behavior", input.tray_behavior),
             (
@@ -1569,6 +1610,13 @@ fn seed_default_settings(connection: &Connection) -> rusqlite::Result<()> {
         ("default_routing_strategy", "manual"),
         ("low_balance_threshold_cny", "15"),
         ("collector_interval_minutes", "30"),
+        ("balance_interval_minutes", "5"),
+        ("group_rate_interval_minutes", "20"),
+        ("model_list_interval_minutes", "60"),
+        ("pricing_refresh_interval_minutes", "60"),
+        ("collector_timeout_seconds", "15"),
+        ("collector_max_concurrency", "3"),
+        ("allow_depleted_fallback", "false"),
         ("tray_behavior", "minimize-to-tray"),
         ("developer_mode_enabled", "false"),
     ];
@@ -1735,6 +1783,11 @@ fn create_station_in_connection(
             priority: Some(0),
             group_name: None,
             tier_label: None,
+            group_binding_id: None,
+            group_id_hash: None,
+            rate_multiplier: None,
+            rate_source: None,
+            balance_scope: None,
             note: Some("由站点默认 API Key 创建。".to_string()),
         },
         data_key,
@@ -2052,6 +2105,12 @@ fn row_to_station_key(row: &rusqlite::Row<'_>) -> rusqlite::Result<StationKey> {
         priority: row.get(5)?,
         group_name: row.get(6)?,
         tier_label: row.get(7)?,
+        group_binding_id: None,
+        group_id_hash: None,
+        rate_multiplier: None,
+        rate_source: None,
+        rate_collected_at: None,
+        balance_scope: None,
         status: row.get(8)?,
         last_checked_at: row.get(9)?,
         last_used_at: row.get(10)?,
@@ -2167,6 +2226,12 @@ fn list_key_pool_items_from_connection(
                 priority: row.get(10)?,
                 group_name: row.get(11)?,
                 tier_label: row.get(12)?,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                rate_source: None,
+                rate_collected_at: None,
+                balance_scope: None,
                 status: row.get(13)?,
                 last_checked_at: row.get(14)?,
                 last_used_at: row.get(15)?,
@@ -3179,20 +3244,27 @@ fn row_to_pricing_rule(row: &rusqlite::Row<'_>) -> rusqlite::Result<PricingRule>
     Ok(PricingRule {
         id: row.get(0)?,
         station_id: row.get(1)?,
+        station_key_id: None,
+        group_binding_id: None,
         group_name: row.get(2)?,
         tier_label: row.get(3)?,
         model: row.get(4)?,
         input_price: row.get(5)?,
         output_price: row.get(6)?,
         fixed_price: row.get(7)?,
+        rate_multiplier: None,
         currency: row.get(8)?,
         unit: row.get(9)?,
         price_type: row.get(10)?,
+        base_price_source: None,
+        normalization_status: "manual".to_string(),
         source: row.get(11)?,
         confidence: row.get(12)?,
         enabled: i64_to_bool(row.get(13)?),
         note: row.get(14)?,
         collected_at: row.get(15)?,
+        valid_from: None,
+        valid_until: None,
         created_at: row.get(16)?,
         updated_at: row.get(17)?,
     })
@@ -4459,6 +4531,41 @@ fn settings_from_connection(
         default_routing_strategy: read_setting(connection, "default_routing_strategy")?,
         low_balance_threshold_cny: parse_setting(connection, "low_balance_threshold_cny")?,
         collector_interval_minutes: parse_setting(connection, "collector_interval_minutes")?,
+        balance_interval_minutes: parse_setting_or_default(
+            connection,
+            "balance_interval_minutes",
+            "5",
+        )?,
+        group_rate_interval_minutes: parse_setting_or_default(
+            connection,
+            "group_rate_interval_minutes",
+            "20",
+        )?,
+        model_list_interval_minutes: parse_setting_or_default(
+            connection,
+            "model_list_interval_minutes",
+            "60",
+        )?,
+        pricing_refresh_interval_minutes: parse_setting_or_default(
+            connection,
+            "pricing_refresh_interval_minutes",
+            "60",
+        )?,
+        collector_timeout_seconds: parse_setting_or_default(
+            connection,
+            "collector_timeout_seconds",
+            "15",
+        )?,
+        collector_max_concurrency: parse_setting_or_default(
+            connection,
+            "collector_max_concurrency",
+            "3",
+        )?,
+        allow_depleted_fallback: parse_setting_or_default(
+            connection,
+            "allow_depleted_fallback",
+            "false",
+        )?,
         tray_behavior: read_setting(connection, "tray_behavior")?,
         developer_mode_enabled: read_setting_or_default(
             connection,
@@ -4504,6 +4611,19 @@ where
     T: std::str::FromStr,
 {
     read_setting(connection, key)?
+        .parse()
+        .map_err(|_| format!("设置项 {key} 格式无效"))
+}
+
+fn parse_setting_or_default<T>(
+    connection: &Connection,
+    key: &str,
+    default_value: &str,
+) -> Result<T, String>
+where
+    T: std::str::FromStr,
+{
+    read_setting_or_default(connection, key, default_value)?
         .parse()
         .map_err(|_| format!("设置项 {key} 格式无效"))
 }
@@ -4797,40 +4917,54 @@ mod tests {
             .upsert_pricing_rule(UpsertPricingRuleInput {
                 id: None,
                 station_id: station.id.clone(),
+                station_key_id: None,
+                group_binding_id: None,
                 group_name: Some("default".to_string()),
                 tier_label: None,
                 model: "gpt-test".to_string(),
                 input_price: Some(1.0),
                 output_price: Some(2.0),
                 fixed_price: None,
+                rate_multiplier: None,
                 currency: "USD".to_string(),
                 unit: "1M tokens".to_string(),
                 price_type: "token".to_string(),
+                base_price_source: None,
+                normalization_status: None,
                 source: "test".to_string(),
                 confidence: 1.0,
                 enabled: true,
                 note: None,
                 collected_at: None,
+                valid_from: None,
+                valid_until: None,
             })
             .expect("old price");
         database
             .upsert_pricing_rule(UpsertPricingRuleInput {
                 id: None,
                 station_id: station.id.clone(),
+                station_key_id: None,
+                group_binding_id: None,
                 group_name: Some("default".to_string()),
                 tier_label: None,
                 model: "gpt-test".to_string(),
                 input_price: Some(1.0),
                 output_price: Some(3.0),
                 fixed_price: None,
+                rate_multiplier: None,
                 currency: "USD".to_string(),
                 unit: "1M tokens".to_string(),
                 price_type: "token".to_string(),
+                base_price_source: None,
+                normalization_status: None,
                 source: "test".to_string(),
                 confidence: 1.0,
                 enabled: true,
                 note: None,
                 collected_at: None,
+                valid_from: None,
+                valid_until: None,
             })
             .expect("new price");
 
@@ -5204,6 +5338,11 @@ mod tests {
                 priority: Some(0),
                 group_name: None,
                 tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
                 note: None,
             })
             .expect("key");
@@ -5240,6 +5379,11 @@ mod tests {
                 priority: Some(0),
                 group_name: None,
                 tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
                 note: None,
             })
             .expect("key");
@@ -5292,6 +5436,11 @@ mod tests {
                 priority: Some(0),
                 group_name: None,
                 tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
                 note: None,
             })
             .expect("key");
@@ -5329,6 +5478,11 @@ mod tests {
                     priority: Some(0),
                     group_name: None,
                     tier_label: None,
+                    group_binding_id: None,
+                    group_id_hash: None,
+                    rate_multiplier: None,
+                    rate_source: None,
+                    balance_scope: None,
                     note: None,
                 },
                 &data_key,
@@ -5370,6 +5524,11 @@ mod tests {
                     priority: Some(0),
                     group_name: None,
                     tier_label: None,
+                    group_binding_id: None,
+                    group_id_hash: None,
+                    rate_multiplier: None,
+                    rate_source: None,
+                    balance_scope: None,
                     note: None,
                 },
                 &data_key,
@@ -5387,6 +5546,11 @@ mod tests {
                     priority: key.priority,
                     group_name: None,
                     tier_label: None,
+                    group_binding_id: None,
+                    group_id_hash: None,
+                    rate_multiplier: None,
+                    rate_source: None,
+                    balance_scope: None,
                     status: key.status,
                     note: None,
                 },
@@ -5447,20 +5611,27 @@ mod tests {
             .upsert_pricing_rule(UpsertPricingRuleInput {
                 id: None,
                 station_id: station.id.clone(),
+                station_key_id: None,
+                group_binding_id: None,
                 group_name: Some("pro".to_string()),
                 tier_label: Some("tier-a".to_string()),
                 model: "gpt-4o-mini".to_string(),
                 input_price: Some(0.15),
                 output_price: Some(0.6),
                 fixed_price: None,
+                rate_multiplier: None,
                 currency: "USD".to_string(),
                 unit: "per_1m_tokens".to_string(),
                 price_type: "token".to_string(),
+                base_price_source: None,
+                normalization_status: None,
                 source: "manual".to_string(),
                 confidence: 0.9,
                 enabled: true,
                 note: Some("manual override".to_string()),
                 collected_at: Some("1000".to_string()),
+                valid_from: None,
+                valid_until: None,
             })
             .expect("save");
 

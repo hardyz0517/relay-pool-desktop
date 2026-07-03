@@ -1,7 +1,9 @@
 pub mod capture;
 pub mod change_events;
 pub mod collector;
+pub mod collector_runs;
 pub mod credentials;
+pub mod group_facts;
 pub mod pricing;
 pub mod proxy;
 pub mod routing;
