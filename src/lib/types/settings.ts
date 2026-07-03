@@ -9,6 +9,7 @@ export type AppSettings = {
   lowBalanceThresholdCny: number;
   collectorIntervalMinutes: number;
   trayBehavior: TrayBehavior;
+  developerModeEnabled: boolean;
   dataDir: string;
 };
 
@@ -18,6 +19,7 @@ export type UpdateSettingsInput = {
   lowBalanceThresholdCny: number;
   collectorIntervalMinutes: number;
   trayBehavior: TrayBehavior;
+  developerModeEnabled: boolean;
 };
 
 export const routingStrategyLabels: Record<RoutingStrategy, string> = {

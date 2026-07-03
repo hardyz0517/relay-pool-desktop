@@ -26,13 +26,13 @@ export function SectionCard({
       )}
     >
       {(title || description || action) && (
-        <header className="flex min-h-[38px] items-start justify-between gap-3">
+        <header className="flex min-h-[38px] flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             {title && (
-              <h2 className="truncate text-sm font-semibold text-slate-950">{title}</h2>
+              <h2 className="text-sm font-semibold text-slate-950">{title}</h2>
             )}
             {description && (
-              <p className="mt-0.5 truncate text-sm text-slate-600">{description}</p>
+              <p className="mt-0.5 break-words text-sm text-slate-600">{description}</p>
             )}
           </div>
           {action}

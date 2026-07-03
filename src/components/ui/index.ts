@@ -19,6 +19,7 @@ export { SegmentedControl } from "./SegmentedControl";
 export { SelectControl, type SelectOption } from "./SelectControl";
 export { SectionCard } from "./SectionCard";
 export { StatusBadge, type StatusTone } from "./StatusBadge";
+export { SwitchControl } from "./SwitchControl";
 export { Toolbar } from "./Toolbar";
 export { ToastProvider, useToast } from "./ToastProvider";
 export { WorkspaceLayout } from "./WorkspaceLayout";

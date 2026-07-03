@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Play, RotateCcw, Save, Square } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, MaskedSecret, SectionCard, SelectControl, StatusBadge, useToast } from "@/components/ui";
+import { Button, MaskedSecret, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import {
   getProxyStatus,
   restartLocalProxy,
@@ -9,12 +9,11 @@ import {
   stopLocalProxy,
 } from "@/lib/api/proxy";
 import { getSecretMigrationStatus, runSecretSafetyScan } from "@/lib/api/secrets";
-import { getSettings, updateSettings } from "@/lib/api/settings";
+import { getSettings, SETTINGS_UPDATED_EVENT, updateSettings } from "@/lib/api/settings";
 import type { ProxyStatus } from "@/lib/types/proxy";
 import type { SecretMigrationReport, SecretScanFinding } from "@/lib/types/secrets";
 import {
   routingStrategyLabels,
-  trayBehaviorLabels,
   type AppSettings,
   type RoutingStrategy,
   type TrayBehavior,
@@ -27,6 +26,7 @@ type SettingsFormState = {
   lowBalanceThresholdCny: string;
   collectorIntervalMinutes: string;
   trayBehavior: TrayBehavior;
+  developerModeEnabled: boolean;
 };
 
 const fallbackSettings: AppSettings = {
@@ -36,7 +36,8 @@ const fallbackSettings: AppSettings = {
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   trayBehavior: "minimize-to-tray",
-  dataDir: "等待 Tauri 数据目录",
+  developerModeEnabled: false,
+  dataDir: "仅桌面端可读取",
 };
 
 const fallbackProxyStatus: ProxyStatus = {
@@ -131,16 +132,38 @@ export function SettingsPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await persistSettings(form, "设置已保存", false);
+  }
+
+  async function handleDeveloperModeToggle() {
+    const nextForm = { ...form, developerModeEnabled: !form.developerModeEnabled };
+    setForm(nextForm);
+    await persistSettings(
+      nextForm,
+      nextForm.developerModeEnabled ? "开发者模式已开启" : "开发者模式已关闭",
+      true,
+    );
+  }
+
+  async function persistSettings(
+    nextForm: SettingsFormState,
+    successMessage: string,
+    revertOnFailure: boolean,
+  ) {
     setSaving(true);
     setError(null);
     try {
-      const nextSettings = await updateSettings(formToInput(form));
+      const nextSettings = await updateSettings(formToInput(nextForm));
       setSettings(nextSettings);
       setForm(settingsToForm(nextSettings));
-      toast.success("设置已保存");
+      window.dispatchEvent(new CustomEvent<AppSettings>(SETTINGS_UPDATED_EVENT, { detail: nextSettings }));
+      toast.success(successMessage);
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
+      if (revertOnFailure) {
+        setForm(settingsToForm(settings));
+      }
       toast.error("保存设置失败", message);
     } finally {
       setSaving(false);
@@ -159,10 +182,10 @@ export function SettingsPage() {
         </Button>
       }
     >
-      <form id="settings-form" className="grid gap-[var(--shell-page-gap)]" onSubmit={handleSubmit}>
+      <form id="settings-form" className="grid min-w-0 gap-[var(--shell-page-gap)]" onSubmit={handleSubmit}>
         <SectionCard
           title="本地代理"
-          description="P5 MVP 仅监听 127.0.0.1，外部工具可使用这个 OpenAI-compatible 入口。"
+          description="本地代理仅监听 127.0.0.1，外部工具可使用这个 OpenAI-compatible 入口。"
           action={
             <StatusBadge tone={proxyStatus.running ? "healthy" : "disabled"}>
               {proxyStatus.running ? "运行中" : "已停止"}
@@ -171,7 +194,7 @@ export function SettingsPage() {
         >
           <SettingRow
             control={
-              <div className="flex flex-wrap justify-end gap-2">
+              <div className="flex w-full flex-wrap justify-start gap-2 sm:justify-end">
                 <Button
                   disabled={proxyBusy || proxyStatus.running}
                   type="button"
@@ -219,18 +242,18 @@ export function SettingsPage() {
             label="代理端口"
           />
           <SettingRow
-            control={<code className="text-xs text-slate-700">http://127.0.0.1:{settings.localProxyPort}/v1</code>}
+            control={<code className="break-all text-xs text-slate-700">http://127.0.0.1:{settings.localProxyPort}/v1</code>}
             description="复制到 CCSwitch 或其他 OpenAI-compatible 客户端。"
             label="Base URL"
           />
           <SettingRow
             control={<MaskedSecret value={settings.localKeyMasked} />}
-            description="P2.5 只脱敏展示；后续需要迁移到加密存储。"
+            description="只展示脱敏值；真实本地访问密钥由 SecretManager 管理。"
             label="Local Key"
           />
         </SectionCard>
 
-        <SectionCard title="路由与采集" description="P6 根据 Key 池 priority、能力范围和健康状态选择 Station Key。">
+        <SectionCard title="路由与采集" description="根据 Key 池优先级、能力范围和健康状态选择 Station Key。">
           <SettingRow
             control={
               <SelectControl
@@ -244,7 +267,7 @@ export function SettingsPage() {
                 onChange={(defaultRoutingStrategy) => setForm({ ...form, defaultRoutingStrategy })}
               />
             }
-            description="价格与余额策略后续阶段接入；P6 先使用优先级、稳定性和备用模式。"
+            description="当前本地代理会按所选策略对 Key 池候选排序。"
             label="默认路由策略"
           />
           <SettingRow
@@ -260,45 +283,28 @@ export function SettingsPage() {
                 }
               />
             }
-            description="低于该值时后续路由可过滤站点。"
+            description="低于该值时，成本策略会降低或跳过低余额候选。"
             label="低余额阈值"
           />
           <SettingRow
             control={
-              <input
-                className={inputClassName}
-                min="1"
-                type="number"
-                value={form.collectorIntervalMinutes}
-                onChange={(event) =>
-                  setForm({ ...form, collectorIntervalMinutes: event.target.value })
-                }
+              <SwitchControl
+                ariaLabel="开发者模式"
+                checked={form.developerModeEnabled}
+                disabled={saving || loading}
+                offLabel="关闭"
+                onLabel="开启"
+                onCheckedChange={() => void handleDeveloperModeToggle()}
               />
             }
-            description="采集器接入后使用。"
-            label="采集频率"
-          />
-          <SettingRow
-            control={
-              <SelectControl
-                ariaLabel="托盘行为"
-                className={inputClassName}
-                value={form.trayBehavior}
-                options={Object.entries(trayBehaviorLabels).map(([value, label]) => ({
-                  value: value as TrayBehavior,
-                  label,
-                }))}
-                onChange={(trayBehavior) => setForm({ ...form, trayBehavior })}
-              />
-            }
-            description="系统托盘行为占位。"
-            label="托盘行为"
+            description="打开后侧边栏显示采集中心，用于调试登录态、采集快照和字段识别；关闭后采集能力仍可被内部流程使用。"
+            label="开发者模式"
           />
         </SectionCard>
 
         <SectionCard title="数据与安全">
           <SettingRow
-            control={<code className="truncate text-xs text-slate-700">{settings.dataDir}</code>}
+            control={<code className="break-all text-xs text-slate-700">{settings.dataDir}</code>}
             description="SQLite 文件不在仓库目录。"
             label="数据目录"
           />
@@ -309,10 +315,10 @@ export function SettingsPage() {
           />
           <SettingRow
             control={
-              <div className="text-right text-xs text-slate-700">
+              <div className="text-left text-xs text-slate-700 sm:text-right">
                 {secretMigration
                   ? `已迁移 ${secretMigration.migratedCount} 项 · 失败 ${secretMigration.failedCount} 项`
-                  : "等待检查"}
+                  : "检查中"}
               </div>
             }
             description={
@@ -336,7 +342,7 @@ export function SettingsPage() {
                       .slice(0, 2)
                       .map((finding) => `${finding.tableName}.${finding.columnName}`)
                       .join("；")
-                  : "未发现 P8 canary 明文残留。"
+                  : "未发现明文凭据残留。"
             }
             label="安全扫描"
           />
@@ -361,14 +367,14 @@ function SettingRow({
   control: ReactNode;
 }) {
   return (
-    <div className="grid min-h-14 grid-cols-[minmax(0,1fr)_260px] items-center gap-4 border-b border-border py-3 last:border-b-0">
+    <div className="grid min-h-14 grid-cols-1 items-start gap-2 border-b border-border py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_minmax(180px,260px)] sm:items-center sm:gap-4">
       <div className="min-w-0">
         <div className="text-sm font-medium text-slate-800">{label}</div>
         {description && (
-          <div className="mt-0.5 text-xs text-muted-foreground">{description}</div>
+          <div className="mt-0.5 break-words text-xs text-muted-foreground">{description}</div>
         )}
       </div>
-      <div className="min-w-0 justify-self-end">{control}</div>
+      <div className="min-w-0 w-full justify-self-stretch sm:w-auto sm:justify-self-end">{control}</div>
     </div>
   );
 }
@@ -380,6 +386,7 @@ function settingsToForm(settings: AppSettings): SettingsFormState {
     lowBalanceThresholdCny: String(settings.lowBalanceThresholdCny),
     collectorIntervalMinutes: String(settings.collectorIntervalMinutes),
     trayBehavior: settings.trayBehavior,
+    developerModeEnabled: settings.developerModeEnabled,
   };
 }
 
@@ -390,6 +397,7 @@ function formToInput(form: SettingsFormState): UpdateSettingsInput {
     lowBalanceThresholdCny: Number(form.lowBalanceThresholdCny),
     collectorIntervalMinutes: Number(form.collectorIntervalMinutes),
     trayBehavior: form.trayBehavior,
+    developerModeEnabled: form.developerModeEnabled,
   };
 }
 
@@ -398,4 +406,4 @@ function readError(error: unknown) {
 }
 
 const inputClassName =
-  "h-8 w-full rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:bg-white focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";
+  "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:bg-white focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";
