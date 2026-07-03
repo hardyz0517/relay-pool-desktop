@@ -139,6 +139,15 @@ impl AppDatabase {
         migrate_plaintext_secrets_in_connection(&connection, data_key)
     }
 
+    pub fn resolve_station_key_secret_with_data_key(
+        &self,
+        data_key: &[u8; 32],
+        station_key_id: &str,
+    ) -> Result<String, String> {
+        let connection = self.connection()?;
+        resolve_station_key_api_key(&connection, data_key, station_key_id)
+    }
+
     pub fn secret_migration_status(&self) -> Result<SecretMigrationReport, String> {
         let connection = self.connection()?;
         secret_migration_status_from_connection(&connection)

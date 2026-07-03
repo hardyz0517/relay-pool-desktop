@@ -1,3 +1,5 @@
+pub mod sub2api;
+
 use crate::services::collectors::facts::CollectorFacts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
