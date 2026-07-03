@@ -1,10 +1,105 @@
 use crate::{
     models::{
+        collector::{CollectorEvent, CollectorRunResult},
+        collector_runs::{CreateCollectorRunInput, FinishCollectorRunInput},
         group_facts::{InsertGroupRateRecordInput, UpsertStationGroupBindingInput},
         pricing::UpsertBalanceSnapshotInput,
     },
-    services::{collectors::facts::CollectorFacts, database::AppDatabase},
+    services::{
+        collectors::{
+            adapters::AdapterOutput,
+            facts::{CollectedModelFact, CollectorFacts},
+        },
+        database::AppDatabase,
+    },
 };
+
+#[derive(Debug, Clone)]
+pub struct AppliedAdapterOutput {
+    pub result: CollectorRunResult,
+    pub run: crate::models::collector_runs::CollectorRun,
+}
+
+pub fn apply_adapter_output(
+    database: &AppDatabase,
+    station_id: &str,
+    parent_run_id: Option<String>,
+    output: AdapterOutput,
+) -> Result<AppliedAdapterOutput, String> {
+    let adapter = output.adapter.clone();
+    let task = output.task;
+    let status = output.status.clone();
+    let summary_json = output.summary_json.clone();
+    let normalized_json = output.normalized_json.clone();
+    let raw_json_redacted = output.raw_json_redacted.clone();
+    let error_code = output.error_code.clone();
+    let error_message = output.error_message.clone();
+    let endpoint_counts = endpoint_counts_from_summary(&summary_json, &status);
+    let manual_action_required = status == "manual_required";
+
+    let run = database.create_collector_run(CreateCollectorRunInput {
+        station_id: station_id.to_string(),
+        parent_run_id,
+        adapter: adapter.clone(),
+        task_type: task.as_str().to_string(),
+    })?;
+    let snapshot = match database.insert_collector_snapshot(
+        station_id,
+        &format!("{adapter}-{}", task.as_str()),
+        &status,
+        summary_json,
+        normalized_json,
+        raw_json_redacted,
+        error_message.clone(),
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            let _ = database.finish_collector_run(FinishCollectorRunInput {
+                id: run.id,
+                status: "failed".to_string(),
+                endpoint_count: endpoint_counts.0,
+                success_count: endpoint_counts.1,
+                failure_count: endpoint_counts.2,
+                manual_action_required,
+                error_code: Some("snapshot_write_failed".to_string()),
+                error_message: Some(error.clone()),
+                snapshot_id: None,
+            });
+            return Err(error);
+        }
+    };
+
+    let apply_result = apply_collector_facts(database, output.facts);
+    let finish_status = if apply_result.is_ok() {
+        status.clone()
+    } else {
+        "failed".to_string()
+    };
+    let finish_error_message = apply_result.err().or(error_message);
+    let finished_run = database.finish_collector_run(FinishCollectorRunInput {
+        id: run.id,
+        status: finish_status.clone(),
+        endpoint_count: endpoint_counts.0,
+        success_count: endpoint_counts.1,
+        failure_count: endpoint_counts.2,
+        manual_action_required,
+        error_code,
+        error_message: finish_error_message.clone(),
+        snapshot_id: Some(snapshot.id.clone()),
+    })?;
+
+    Ok(AppliedAdapterOutput {
+        result: CollectorRunResult {
+            snapshot,
+            events: vec![CollectorEvent {
+                event_type: task.as_str().to_string(),
+                message: finish_error_message.unwrap_or_else(|| format!("{adapter} {}", task.as_str())),
+                status: finish_status,
+            }],
+        },
+        run: finished_run,
+    })
+}
 
 pub fn apply_collector_facts(database: &AppDatabase, facts: CollectorFacts) -> Result<(), String> {
     for balance in facts.balances {
@@ -92,5 +187,46 @@ pub fn apply_collector_facts(database: &AppDatabase, facts: CollectorFacts) -> R
         })?;
     }
 
+    apply_model_facts(facts.models);
+
     Ok(())
+}
+
+fn apply_model_facts(models: Vec<CollectedModelFact>) {
+    // Models are persisted through adapter snapshots so existing model diff
+    // events keep using collector_snapshots.normalized_json.models.
+    for model in models {
+        let _ = (
+            model.station_id,
+            model.model,
+            model.available,
+            model.source,
+            model.confidence,
+        );
+    }
+}
+
+fn endpoint_counts_from_summary(summary: &serde_json::Value, status: &str) -> (i64, i64, i64) {
+    let endpoints = summary
+        .get("endpointResults")
+        .and_then(serde_json::Value::as_array);
+    let Some(endpoints) = endpoints else {
+        return match status {
+            "success" => (0, 0, 0),
+            "partial" | "failed" => (0, 0, 0),
+            _ => (0, 0, 0),
+        };
+    };
+    let endpoint_count = endpoints.len() as i64;
+    let success_count = endpoints
+        .iter()
+        .filter(|endpoint| {
+            endpoint
+                .get("ok")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+        })
+        .count() as i64;
+    let failure_count = endpoint_count.saturating_sub(success_count);
+    (endpoint_count, success_count, failure_count)
 }

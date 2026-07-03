@@ -71,6 +71,7 @@ pub fn run() {
             commands::clear_station_credentials,
             commands::detect_station_info,
             commands::collect_station_info,
+            commands::collect_station_task,
             commands::test_station_login,
             commands::detect_sub2api_station,
             commands::collect_sub2api_station,

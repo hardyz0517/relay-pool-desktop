@@ -11,6 +11,8 @@ export type CollectorSnapshot = {
   createdAt: string;
 };
 
+export type CollectorTaskType = "detect" | "balance" | "groups" | "models" | "full";
+
 export type CollectorEndpointResult = {
   path: string;
   result: string;

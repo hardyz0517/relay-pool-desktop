@@ -445,6 +445,30 @@ pub async fn collect_station_info(
 }
 
 #[tauri::command]
+pub async fn collect_station_task(
+    database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
+    station_id: String,
+    task_type: String,
+) -> Result<CollectorRunResult, String> {
+    let database = database.inner().clone();
+    let data_key = *secrets.data_key();
+    tauri::async_runtime::spawn_blocking(move || {
+        let task = match task_type.as_str() {
+            "detect" => collectors::adapters::CollectorTask::Detect,
+            "balance" => collectors::adapters::CollectorTask::Balance,
+            "groups" => collectors::adapters::CollectorTask::Groups,
+            "models" => collectors::adapters::CollectorTask::Models,
+            "full" => collectors::adapters::CollectorTask::Full,
+            _ => return Err("未知采集任务类型".to_string()),
+        };
+        collectors::collect_station_task(&database, &data_key, station_id, task)
+    })
+    .await
+    .map_err(|error| format!("采集任务执行失败: {error}"))?
+}
+
+#[tauri::command]
 pub async fn test_station_login(
     database: State<'_, AppDatabase>,
     secrets: State<'_, SecretManager>,

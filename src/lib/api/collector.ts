@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CaptureSessionStatus, CollectorRunResult, CollectorSnapshot } from "@/lib/types/collector";
+import type {
+  CaptureSessionStatus,
+  CollectorRunResult,
+  CollectorSnapshot,
+  CollectorTaskType,
+} from "@/lib/types/collector";
 
 const memorySnapshots = new Map<string, CollectorSnapshot>();
 
@@ -24,6 +29,15 @@ export function collectStationInfo(stationId: string) {
   return invoke<CollectorRunResult>("collect_station_info", { stationId }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       return createMemoryRun(stationId, "station-info-collect", "checked");
+    }
+    throw error;
+  });
+}
+
+export function collectStationTask(stationId: string, taskType: CollectorTaskType) {
+  return invoke<CollectorRunResult>("collect_station_task", { stationId, taskType }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return createMemoryRun(stationId, `station-${taskType}`, "checked");
     }
     throw error;
   });

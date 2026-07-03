@@ -266,6 +266,70 @@ fn routeable_keys_for_station(
         })
 }
 
+pub fn collect(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station_id: &str,
+    task: CollectorTask,
+) -> Result<AdapterOutput, String> {
+    match task {
+        CollectorTask::Detect => Ok(AdapterOutput {
+            adapter: "sub2api".to_string(),
+            task,
+            status: "success".to_string(),
+            summary_json: json!({
+                "adapter": "sub2api",
+                "task": "detect",
+                "message": "Sub2API adapter 已确认。",
+                "endpointResults": [],
+            }),
+            normalized_json: json!({
+                "adapter": "sub2api",
+                "models": [],
+            }),
+            raw_json_redacted: None,
+            error_code: None,
+            error_message: None,
+            facts: CollectorFacts::default(),
+        }),
+        CollectorTask::Balance => collect_balance(database, data_key, station_id),
+        CollectorTask::Groups => collect_groups(database, data_key, station_id),
+        CollectorTask::Models => unsupported_output(
+            task,
+            "unsupported_task",
+            "Sub2API adapter 暂不支持模型列表采集。",
+        ),
+        CollectorTask::Full => unsupported_output(
+            task,
+            "internal_task",
+            "Full 采集由父任务拆分为子任务执行。",
+        ),
+    }
+}
+
+fn unsupported_output(
+    task: CollectorTask,
+    code: &str,
+    message: &str,
+) -> Result<AdapterOutput, String> {
+    Ok(AdapterOutput {
+        adapter: "sub2api".to_string(),
+        task,
+        status: "manual_required".to_string(),
+        summary_json: json!({
+            "adapter": "sub2api",
+            "task": task.as_str(),
+            "message": message,
+            "endpointResults": [],
+        }),
+        normalized_json: json!({ "models": [] }),
+        raw_json_redacted: None,
+        error_code: Some(code.to_string()),
+        error_message: Some(message.to_string()),
+        facts: CollectorFacts::default(),
+    })
+}
+
 pub fn collect_groups(
     database: &AppDatabase,
     data_key: &[u8; 32],
