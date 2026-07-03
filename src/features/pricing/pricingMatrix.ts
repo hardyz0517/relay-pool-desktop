@@ -10,6 +10,11 @@ export type PriceMatrixCell = {
   outputPrice: number | null;
   fixedPrice: number | null;
   currency: string;
+  normalizationStatus: string;
+  rateMultiplier: number | null;
+  groupBindingId: string | null;
+  source: string;
+  confidence: number;
   updatedAt: string;
   isCheapestOutput: boolean;
   available: boolean;
@@ -26,6 +31,9 @@ export type RateMatrixRow = {
     stationId: string;
     multiplier: number | null;
     updatedAt: string;
+    source: string;
+    status: string;
+    confidence: number;
   }>;
 };
 
@@ -47,6 +55,11 @@ export function buildPriceMatrix(rules: PricingRule[], stations: Station[]): Pri
           outputPrice: rule?.outputPrice ?? null,
           fixedPrice: rule?.fixedPrice ?? null,
           currency: rule?.currency ?? "-",
+          normalizationStatus: rule?.normalizationStatus ?? "unknown",
+          rateMultiplier: rule?.rateMultiplier ?? null,
+          groupBindingId: rule?.groupBindingId ?? null,
+          source: rule?.source ?? "",
+          confidence: rule?.confidence ?? 0,
           updatedAt: rule?.updatedAt ?? "",
           isCheapestOutput: Boolean(rule && cheapest && rule.id === cheapest.id),
           available: Boolean(rule),
@@ -66,13 +79,16 @@ export function buildRateMatrix(rates: RateMultiplierRow[], stations: Station[])
         stationId: station.id,
         multiplier: newest?.multiplier ?? null,
         updatedAt: newest?.updatedAt ?? "",
+        source: newest?.source ?? "",
+        status: newest?.status ?? "unavailable",
+        confidence: newest?.confidence ?? 0,
       };
     }),
   }));
 }
 
 function cheapestOutput(rules: PricingRule[]) {
-  return rules.reduce<PricingRule | null>((best, rule) => {
+  return rules.filter((rule) => rule.normalizationStatus === "complete").reduce<PricingRule | null>((best, rule) => {
     const value = comparablePrice(rule);
     if (!Number.isFinite(value)) {
       return best;

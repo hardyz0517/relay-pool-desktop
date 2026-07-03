@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BadgeDollarSign, Layers3, TrendingDown, RefreshCw } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
@@ -10,16 +10,18 @@ import {
   SegmentedControl,
   SectionCard,
   SelectControl,
+  StatusBadge,
+  type StatusTone,
   Toolbar,
   useToast,
 } from "@/components/ui";
-import { getLatestCollectorSnapshot } from "@/lib/api/collector";
 import { listPricingRules } from "@/lib/api/economics";
+import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { listStations } from "@/lib/api/stations";
 import type { PricingRule } from "@/lib/types/economics";
 import type { Station } from "@/lib/types/stations";
-import { buildPriceMatrix, buildRateMatrix } from "./pricingMatrix";
-import { parseRateMultipliers, type RateMultiplierRow } from "./rateSnapshotParser";
+import { buildPriceMatrix, buildRateMatrix, type PriceMatrixCell } from "./pricingMatrix";
+import { rateRowsFromGroupFacts, type RateMultiplierRow } from "./rateSnapshotParser";
 
 type MatrixTone = "good" | "warning" | "neutral" | "muted";
 
@@ -45,10 +47,13 @@ export function PricingPage() {
     setError(null);
     try {
       const [nextPricing, nextStations] = await Promise.all([listPricingRules(), listStations()]);
-      const snapshots = await Promise.all(nextStations.map((station) => getLatestCollectorSnapshot(station.id)));
+      const [bindingLists, rateRecordLists] = await Promise.all([
+        Promise.all(nextStations.map((station) => listStationGroupBindings(station.id))),
+        Promise.all(nextStations.map((station) => listGroupRateRecords(station.id))),
+      ]);
       setPricingRules(nextPricing);
       setStations(nextStations);
-      setRateRows(snapshots.flatMap(parseRateMultipliers));
+      setRateRows(rateRowsFromGroupFacts(bindingLists.flat(), rateRecordLists.flat()));
       setSelectedModel((current) => current ?? nextPricing[0]?.model ?? null);
       if (showSuccess) {
         toast.success("价格表已刷新");
@@ -63,6 +68,10 @@ export function PricingPage() {
   }
 
   const stationById = useMemo(() => new Map(stations.map((station) => [station.id, station] as const)), [stations]);
+  const visibleStations = useMemo(
+    () => selectedStationId === "all" ? stations : stations.filter((station) => station.id === selectedStationId),
+    [selectedStationId, stations],
+  );
 
   const filteredRows = useMemo(() => {
     return pricingRules.filter((row) => {
@@ -81,9 +90,33 @@ export function PricingPage() {
       return true;
     });
   }, [pricingRules, query, selectedSource, selectedStationId, stationById]);
+  const filteredRateRows = useMemo(() => {
+    return rateRows.filter((row) => {
+      if (selectedStationId !== "all" && row.stationId !== selectedStationId) {
+        return false;
+      }
+      if (selectedSource !== "all" && row.source !== selectedSource) {
+        return false;
+      }
+      if (query.trim()) {
+        const text = `${row.groupName} ${stationName(row.stationId, stationById)} ${row.source} ${row.status}`.toLowerCase();
+        if (!text.includes(query.trim().toLowerCase())) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [query, rateRows, selectedSource, selectedStationId, stationById]);
+
+  const sourceOptions = useMemo(() => {
+    const values = new Set<string>();
+    pricingRules.forEach((rule) => values.add(rule.source));
+    rateRows.forEach((row) => values.add(row.source));
+    return Array.from(values).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  }, [pricingRules, rateRows]);
 
   const selected = filteredRows.find((row) => row.model === selectedModel) ?? filteredRows[0] ?? null;
-  const cheapest = filteredRows.reduce<PricingRule | null>((min, row) => {
+  const cheapest = filteredRows.filter((row) => row.normalizationStatus === "complete").reduce<PricingRule | null>((min, row) => {
     if (!min) {
       return row;
     }
@@ -101,8 +134,9 @@ export function PricingPage() {
     }
     return Array.from(map.entries()).map(([model, rows]) => ({ model, rows }));
   }, [filteredRows]);
-  const priceMatrix = useMemo(() => buildPriceMatrix(filteredRows, stations), [filteredRows, stations]);
-  const rateMatrix = useMemo(() => buildRateMatrix(rateRows, stations), [rateRows, stations]);
+  const priceMatrix = useMemo(() => buildPriceMatrix(filteredRows, visibleStations), [filteredRows, visibleStations]);
+  const rateMatrix = useMemo(() => buildRateMatrix(filteredRateRows, visibleStations), [filteredRateRows, visibleStations]);
+  const hasCurrentData = viewMode === "rates" ? rateMatrix.length > 0 : filteredRows.length > 0;
 
   return (
     <PageScaffold
@@ -113,7 +147,7 @@ export function PricingPage() {
       <div className="grid gap-[var(--shell-page-gap)] md:grid-cols-3">
         <MetricCard icon={BadgeDollarSign} label="最低输出价" value={cheapest ? formatMoney(cheapest.outputPrice, cheapest.currency) : "暂无"} detail={cheapest?.model ?? "暂无数据"} />
         <MetricCard icon={Layers3} label="覆盖模型" value={`${modelGroups.length}`} detail="真实 pricing_rules" />
-        <MetricCard icon={TrendingDown} label="价格记录" value={`${pricingRules.length}`} detail="按站点 / 分组归一化" />
+        <MetricCard icon={TrendingDown} label="倍率事实" value={`${rateRows.length}`} detail="group bindings / rate records" />
       </div>
 
       <div className="grid gap-[var(--shell-page-gap)]">
@@ -146,10 +180,7 @@ export function PricingPage() {
                 value={selectedSource}
                 options={[
                   { value: "all", label: "全部来源" },
-                  { value: "manual", label: "manual" },
-                  { value: "collector", label: "collector" },
-                  { value: "snapshot", label: "snapshot" },
-                  { value: "unknown", label: "unknown" },
+                  ...sourceOptions.map((source) => ({ value: source, label: source })),
                 ]}
                 onChange={setSelectedSource}
               />
@@ -158,18 +189,18 @@ export function PricingPage() {
           {error && <div className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
           {loading ? (
             <div className="px-4 py-5 text-sm text-muted-foreground">正在读取价格表...</div>
-          ) : filteredRows.length === 0 ? (
-            <EmptyState title="暂无价格数据" description="先在中转站采集价格快照，或手动写入 pricing_rules。" />
+          ) : !hasCurrentData ? (
+            <EmptyState title="暂无对比数据" description="先运行价格、分组或模型采集；倍率页现在读取 durable facts，不再解析 raw snapshot。" />
           ) : viewMode === "prices" ? (
             <MatrixTable
               rowHeader="模型"
-              stations={stations}
+              stations={visibleStations}
               rows={priceMatrix.map((row) => ({
                 key: row.model,
                 label: row.model,
                 cells: row.cells.map((cell) => ({
                   stationId: cell.stationId,
-                  content: cell.available ? formatPriceCell(cell) : "不可用",
+                  content: cell.available ? <PriceCellView cell={cell} /> : "未知",
                   tone: cell.isCheapestOutput ? "good" : cell.available ? "neutral" : "muted",
                 })),
               }))}
@@ -177,13 +208,13 @@ export function PricingPage() {
           ) : viewMode === "rates" ? (
             <MatrixTable
               rowHeader="分组"
-              stations={stations}
+              stations={visibleStations}
               rows={rateMatrix.map((row) => ({
                 key: row.groupName,
                 label: row.groupName,
                 cells: row.cells.map((cell) => ({
                   stationId: cell.stationId,
-                  content: cell.multiplier == null ? "未采集" : `${cell.multiplier.toFixed(2)}x`,
+                  content: cell.multiplier == null ? "未采集" : <RateCellView multiplier={cell.multiplier} source={cell.source} status={cell.status} />,
                   tone: cell.multiplier == null ? "muted" : cell.multiplier > 1 ? "warning" : cell.multiplier < 1 ? "good" : "neutral",
                 })),
               }))}
@@ -191,13 +222,13 @@ export function PricingPage() {
           ) : (
             <MatrixTable
               rowHeader="模型"
-              stations={stations}
+              stations={visibleStations}
               rows={priceMatrix.map((row) => ({
                 key: row.model,
                 label: row.model,
                 cells: row.cells.map((cell) => ({
                   stationId: cell.stationId,
-                  content: cell.available ? "可用" : "不可用",
+                  content: cell.available ? <AvailabilityCellView cell={cell} /> : "未知",
                   tone: cell.available ? "good" : "muted",
                 })),
               }))}
@@ -225,7 +256,7 @@ export function PricingPage() {
                   className="shadow-none"
                 />
                 <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs leading-5 text-muted-foreground">
-                  价格表只展示归一化后的结果，不直接推导真实计费。余额和单位仍保留原始语义。
+                  complete 才参与最低价判断；group_rate_only 只说明倍率，不作为精确模型价格。
                 </div>
               </>
             ) : (
@@ -235,6 +266,41 @@ export function PricingPage() {
         </InspectorPanel>
       </div>
     </PageScaffold>
+  );
+}
+
+function PriceCellView({ cell }: { cell: PriceMatrixCell }) {
+  return (
+    <div className="grid gap-1">
+      <div className="font-medium">{priceValueLabel(cell)}</div>
+      <div className="flex flex-wrap items-center gap-1">
+        <StatusBadge className="h-5 px-1.5" tone={normalizationTone(cell.normalizationStatus)}>
+          {normalizationLabel(cell.normalizationStatus)}
+        </StatusBadge>
+        {cell.rateMultiplier !== null && <span className="text-xs text-muted-foreground">{formatRate(cell.rateMultiplier)}</span>}
+      </div>
+      <div className="truncate text-xs text-muted-foreground">{cell.source || "unknown"} · {Math.round(cell.confidence * 100)}%</div>
+    </div>
+  );
+}
+
+function RateCellView({ multiplier, source, status }: { multiplier: number; source: string; status: string }) {
+  return (
+    <div className="grid gap-1">
+      <div className="font-medium">{formatRate(multiplier)}</div>
+      <div className="truncate text-xs text-muted-foreground">{status} · {source || "unknown"}</div>
+    </div>
+  );
+}
+
+function AvailabilityCellView({ cell }: { cell: PriceMatrixCell }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <span>可用</span>
+      <StatusBadge className="h-5 px-1.5" tone={normalizationTone(cell.normalizationStatus)}>
+        {normalizationLabel(cell.normalizationStatus)}
+      </StatusBadge>
+    </div>
   );
 }
 
@@ -248,7 +314,7 @@ function MatrixTable({
   rows: Array<{
     key: string;
     label: string;
-    cells: Array<{ stationId: string; content: string; tone: MatrixTone }>;
+    cells: Array<{ stationId: string; content: ReactNode; tone: MatrixTone }>;
   }>;
 }) {
   if (rows.length === 0) {
@@ -301,7 +367,7 @@ function matrixToneClassName(tone: MatrixTone) {
   return "text-slate-700";
 }
 
-function formatPriceCell(cell: {
+function priceValueLabel(cell: {
   inputPrice: number | null;
   outputPrice: number | null;
   fixedPrice: number | null;
@@ -309,6 +375,30 @@ function formatPriceCell(cell: {
 }) {
   const output = cell.outputPrice ?? cell.inputPrice ?? cell.fixedPrice;
   return output == null ? "暂无价格" : `${cell.currency} ${output.toFixed(4)}`;
+}
+
+function formatRate(value: number) {
+  return `${value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}x`;
+}
+
+function normalizationTone(status: string): StatusTone {
+  if (status === "complete") {
+    return "healthy";
+  }
+  if (status === "group_rate_only" || status === "expired") {
+    return "warning";
+  }
+  return "info";
+}
+
+function normalizationLabel(status: string) {
+  if (status === "complete") {
+    return "complete";
+  }
+  if (status === "group_rate_only") {
+    return "仅倍率";
+  }
+  return status || "unknown";
 }
 
 function stationName(stationId: string, stationById: Map<string, Station>) {
