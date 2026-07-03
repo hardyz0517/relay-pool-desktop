@@ -1,4 +1,7 @@
+pub mod adapters;
+pub mod facts;
 pub mod sub2api;
+pub mod url;
 
 use serde_json::{json, Value};
 
