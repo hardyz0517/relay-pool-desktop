@@ -1,3 +1,4 @@
+pub mod newapi;
 pub mod sub2api;
 
 use crate::services::collectors::facts::CollectorFacts;
