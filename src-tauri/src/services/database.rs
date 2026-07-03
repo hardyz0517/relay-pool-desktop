@@ -75,6 +75,8 @@ impl AppDatabase {
             .map_err(|error| format!("初始化默认设置失败: {error}"))?;
         migrate_default_station_keys(&connection)
             .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
+        migrate_legacy_group_facts(&connection)
+            .map_err(|error| format!("迁移旧分组事实失败: {error}"))?;
         migrate_station_proxy_columns(&connection)
             .map_err(|error| format!("迁移站点代理字段失败: {error}"))?;
         migrate_pricing_tables(&connection)
@@ -102,6 +104,8 @@ impl AppDatabase {
             .map_err(|error| format!("初始化默认设置失败: {error}"))?;
         migrate_default_station_keys(&connection)
             .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
+        migrate_legacy_group_facts(&connection)
+            .map_err(|error| format!("迁移旧分组事实失败: {error}"))?;
         migrate_station_proxy_columns(&connection)
             .map_err(|error| format!("迁移站点代理字段失败: {error}"))?;
         migrate_pricing_tables(&connection)
@@ -1535,6 +1539,9 @@ fn run_secret_safety_scan_in_connection(
         ("collector_snapshots", "normalized_json"),
         ("collector_snapshots", "raw_json_redacted"),
         ("collector_snapshots", "error_message"),
+        ("station_group_bindings", "raw_json_redacted"),
+        ("group_rate_records", "raw_json_redacted"),
+        ("collector_runs", "error_message"),
         ("request_logs", "error_message"),
         ("request_logs", "route_reason"),
         ("request_logs", "rejected_candidates_json"),
@@ -4617,6 +4624,31 @@ fn validate_non_empty_hash(value: &str) -> Result<String, String> {
     }
 }
 
+fn stable_group_key_hash(
+    station_id: &str,
+    adapter: &str,
+    group_id: Option<&str>,
+    group_name: &str,
+) -> String {
+    let adapter = adapter.trim().to_lowercase();
+    let source = if let Some(group_id) = group_id.filter(|value| !value.trim().is_empty()) {
+        format!("id:{adapter}:{}", group_id.trim())
+    } else {
+        format!(
+            "name:{}:{}:{}",
+            station_id,
+            adapter,
+            group_name.trim().to_lowercase()
+        )
+    };
+    sha256_hex(source.as_bytes())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
+}
+
 fn existing_group_binding_id(
     connection: &Connection,
     station_id: &str,
@@ -4813,6 +4845,87 @@ fn list_collector_runs_from_connection(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析采集运行记录失败: {error}"))?;
     Ok(rows)
+}
+
+fn migrate_legacy_group_facts(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, station_id, group_name FROM station_keys
+             WHERE group_name IS NOT NULL AND TRIM(group_name) != ''",
+        )
+        .map_err(|error| format!("读取旧 key 分组失败: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|error| format!("查询旧 key 分组失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析旧 key 分组失败: {error}"))?;
+
+    for (station_key_id, station_id, group_name) in rows {
+        let group_key_hash = stable_group_key_hash(&station_id, "legacy", None, &group_name);
+        let station_binding = upsert_station_group_binding_in_connection(
+            connection,
+            UpsertStationGroupBindingInput {
+                station_id: station_id.clone(),
+                station_key_id: None,
+                binding_kind: "station_group".to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: group_key_hash.clone(),
+                group_id_hash: None,
+                group_name: group_name.clone(),
+                binding_status: "manual_legacy".to_string(),
+                default_rate_multiplier: None,
+                user_rate_multiplier: None,
+                effective_rate_multiplier: None,
+                rate_source: Some("legacy_key_group".to_string()),
+                confidence: 0.4,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            },
+        )?;
+        let key_binding = upsert_station_group_binding_in_connection(
+            connection,
+            UpsertStationGroupBindingInput {
+                station_id,
+                station_key_id: Some(station_key_id.clone()),
+                binding_kind: "key_binding".to_string(),
+                parent_group_binding_id: Some(station_binding.id),
+                group_key_hash,
+                group_id_hash: None,
+                group_name,
+                binding_status: "manual_legacy".to_string(),
+                default_rate_multiplier: None,
+                user_rate_multiplier: None,
+                effective_rate_multiplier: None,
+                rate_source: Some("legacy_key_group".to_string()),
+                confidence: 0.4,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            },
+        )?;
+        connection
+            .execute(
+                "UPDATE station_keys
+                 SET group_binding_id = ?1,
+                     group_id_hash = ?2,
+                     updated_at = ?3
+                 WHERE id = ?4",
+                params![
+                    key_binding.id,
+                    key_binding.group_key_hash,
+                    now_string(),
+                    station_key_id
+                ],
+            )
+            .map_err(|error| format!("回填 key 分组绑定失败: {error}"))?;
+    }
+
+    Ok(())
 }
 
 fn collector_snapshot_by_id(
@@ -5389,6 +5502,46 @@ mod tests {
 
         assert_eq!(first.id, second.id);
         assert_eq!(second.effective_rate_multiplier, Some(1.2));
+    }
+
+    #[test]
+    fn legacy_key_group_name_migrates_to_group_binding_once() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "legacy-relay");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id.clone(),
+                name: "legacy key".to_string(),
+                api_key: "sk-legacy".to_string(),
+                enabled: true,
+                priority: Some(0),
+                group_name: Some("legacy-group".to_string()),
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect("key");
+
+        {
+            let connection = database.connection().expect("connection");
+            migrate_legacy_group_facts(&connection).expect("migrate once");
+            migrate_legacy_group_facts(&connection).expect("migrate twice");
+        }
+
+        let bindings = database
+            .list_station_group_bindings(station.id.clone())
+            .expect("bindings");
+        let key_bindings = bindings
+            .iter()
+            .filter(|binding| binding.station_key_id.as_deref() == Some(key.id.as_str()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(key_bindings.len(), 1);
+        assert_eq!(key_bindings[0].binding_status, "manual_legacy");
     }
 
     #[test]
