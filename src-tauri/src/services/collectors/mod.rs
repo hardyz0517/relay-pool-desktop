@@ -1,6 +1,7 @@
 pub mod apply;
 pub mod adapters;
 pub mod facts;
+pub mod session;
 pub mod sub2api;
 pub mod url;
 

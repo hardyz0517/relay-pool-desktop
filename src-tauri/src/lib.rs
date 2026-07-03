@@ -67,6 +67,7 @@ pub fn run() {
             commands::resolve_change_event,
             commands::get_station_credentials,
             commands::update_station_credentials,
+            commands::update_station_session,
             commands::clear_station_credentials,
             commands::detect_station_info,
             commands::collect_station_info,

@@ -16,7 +16,7 @@ use crate::models::{
     change_events::{ChangeEvent, UpsertChangeEventInput},
     collector::CollectorSnapshot,
     collector_runs::{CollectorRun, CreateCollectorRunInput, FinishCollectorRunInput},
-    credentials::{StationCredentials, UpdateStationCredentialsInput},
+    credentials::{StationCredentials, UpdateStationCredentialsInput, UpdateStationSessionInput},
     group_facts::{GroupRateRecord, StationGroupBinding, UpsertStationGroupBindingInput},
     pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
     proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
@@ -33,6 +33,7 @@ use crate::models::{
 use crate::services::change_events::{
     STATUS_DISMISSED, STATUS_READ, STATUS_RESOLVED, STATUS_UNREAD,
 };
+use crate::services::collectors::session::{token_is_fresh, ResolvedSession, SessionResolveStatus};
 use crate::services::proxy::{
     router::{select_route_candidates, RichRouteCandidate, RouteCandidateEconomics, RouteRequest},
     RouteCandidate,
@@ -587,6 +588,29 @@ impl AppDatabase {
         let station_id = input.station_id.clone();
         upsert_station_credentials_with_data_key(&connection, input, Some(data_key))?;
         station_credentials_from_connection(&connection, &station_id)
+    }
+
+    pub fn update_station_session_with_data_key(
+        &self,
+        input: UpdateStationSessionInput,
+        data_key: &[u8; 32],
+    ) -> Result<StationCredentials, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, &input.station_id)?;
+        let station_id = input.station_id.clone();
+        upsert_station_session_with_data_key(&connection, input, data_key)?;
+        station_credentials_from_connection(&connection, &station_id)
+    }
+
+    pub fn resolve_station_session_with_data_key(
+        &self,
+        station_id: String,
+        data_key: &[u8; 32],
+        now_ms: i64,
+    ) -> Result<ResolvedSession, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, &station_id)?;
+        resolve_station_session_from_connection(&connection, &station_id, data_key, now_ms)
     }
 
     pub fn clear_station_credentials(
@@ -4204,29 +4228,42 @@ fn station_credentials_from_connection(
 ) -> Result<StationCredentials, String> {
     let credentials = connection
         .query_row(
-            "SELECT station_id, login_username, login_password, login_password_secret_id, remember_password,
+            "SELECT station_id, login_username, login_password, login_password_secret_id,
+                    access_token_secret_id, refresh_token_secret_id, cookie_secret_id,
+                    remember_password,
                     login_status, login_error, last_login_at, session_status,
-                    session_expires_at, updated_at
+                    session_expires_at, newapi_user_id, token_expires_at,
+                    token_refreshed_at, session_source, updated_at
                FROM station_credentials
               WHERE station_id = ?1",
             params![station_id],
             |row| {
                 let password: Option<String> = row.get(2)?;
                 let password_secret_id: Option<String> = row.get(3)?;
+                let access_token_secret_id: Option<String> = row.get(4)?;
+                let refresh_token_secret_id: Option<String> = row.get(5)?;
+                let cookie_secret_id: Option<String> = row.get(6)?;
                 Ok(StationCredentials {
                     station_id: row.get(0)?,
                     login_username: row.get(1)?,
                     password_present: password_secret_id.is_some()
                         || password
-                        .map(|value| !value.trim().is_empty())
-                        .unwrap_or(false),
-                    remember_password: i64_to_bool(row.get(4)?),
-                    login_status: row.get(5)?,
-                    login_error: row.get(6)?,
-                    last_login_at: row.get(7)?,
-                    session_status: row.get(8)?,
-                    session_expires_at: row.get(9)?,
-                    updated_at: row.get(10)?,
+                            .map(|value| !value.trim().is_empty())
+                            .unwrap_or(false),
+                    access_token_present: access_token_secret_id.is_some(),
+                    refresh_token_present: refresh_token_secret_id.is_some(),
+                    cookie_present: cookie_secret_id.is_some(),
+                    remember_password: i64_to_bool(row.get(7)?),
+                    login_status: row.get(8)?,
+                    login_error: row.get(9)?,
+                    last_login_at: row.get(10)?,
+                    session_status: row.get(11)?,
+                    session_expires_at: row.get(12)?,
+                    newapi_user_id: row.get(13)?,
+                    token_expires_at: row.get(14)?,
+                    token_refreshed_at: row.get(15)?,
+                    session_source: row.get(16)?,
+                    updated_at: row.get(17)?,
                 })
             },
         )
@@ -4237,12 +4274,19 @@ fn station_credentials_from_connection(
         station_id: station_id.to_string(),
         login_username: None,
         password_present: false,
+        access_token_present: false,
+        refresh_token_present: false,
+        cookie_present: false,
         remember_password: false,
         login_status: "unknown".to_string(),
         login_error: None,
         last_login_at: None,
         session_status: "none".to_string(),
         session_expires_at: None,
+        newapi_user_id: None,
+        token_expires_at: None,
+        token_refreshed_at: None,
+        session_source: "none".to_string(),
         updated_at: None,
     }))
 }
@@ -4292,6 +4336,106 @@ fn station_login_password_from_connection_with_data_key(
         })
         .ok_or_else(|| "未找到登录信息".to_string())
         .and_then(|result| result)
+}
+
+fn resolve_station_session_from_connection(
+    connection: &Connection,
+    station_id: &str,
+    data_key: &[u8; 32],
+    now_ms: i64,
+) -> Result<ResolvedSession, String> {
+    let row = connection
+        .query_row(
+            "SELECT access_token_secret_id, refresh_token_secret_id, cookie_secret_id,
+                    newapi_user_id, token_expires_at, session_source,
+                    login_username, login_password, login_password_secret_id
+               FROM station_credentials
+              WHERE station_id = ?1",
+            params![station_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("读取 session 凭据失败: {error}"))?;
+
+    let Some((
+        access_token_secret_id,
+        refresh_token_secret_id,
+        cookie_secret_id,
+        newapi_user_id,
+        token_expires_at,
+        session_source,
+        login_username,
+        login_password,
+        login_password_secret_id,
+    )) = row
+    else {
+        return Ok(ResolvedSession::manual_required("缺少 session 凭据。"));
+    };
+
+    let access_token = decrypt_optional_secret(connection, data_key, access_token_secret_id)?;
+    let refresh_token = decrypt_optional_secret(connection, data_key, refresh_token_secret_id)?;
+    let cookie = decrypt_optional_secret(connection, data_key, cookie_secret_id)?;
+    let password_present = login_password_secret_id.is_some()
+        || login_password
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+    let password_login_available = login_username
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+        && password_present;
+
+    if access_token.is_some()
+        && (token_is_fresh(token_expires_at.as_deref(), now_ms)
+            || (token_expires_at.is_none()
+                && (session_source == "manual_token" || session_source == "webview_capture")))
+    {
+        return Ok(ResolvedSession {
+            status: SessionResolveStatus::Ready,
+            access_token,
+            refresh_token,
+            cookie,
+            newapi_user_id,
+            message: None,
+        });
+    }
+
+    if refresh_token.is_some() || password_login_available {
+        return Ok(ResolvedSession {
+            status: SessionResolveStatus::Ready,
+            access_token,
+            refresh_token,
+            cookie,
+            newapi_user_id,
+            message: Some("需要刷新 token 或重新登录。".to_string()),
+        });
+    }
+
+    Ok(ResolvedSession::manual_required(
+        "缺少可用 access token、refresh token 或登录凭据。",
+    ))
+}
+
+fn decrypt_optional_secret(
+    connection: &Connection,
+    data_key: &[u8; 32],
+    secret_id: Option<String>,
+) -> Result<Option<String>, String> {
+    match secret_id {
+        Some(secret_id) => decrypt_secret_by_id(connection, data_key, &secret_id).map(Some),
+        None => Ok(None),
+    }
 }
 
 fn upsert_station_credentials(
@@ -4374,6 +4518,106 @@ fn upsert_station_credentials_with_data_key(
             ],
         )
         .map_err(|error| format!("保存登录信息失败: {error}"))?;
+
+    Ok(())
+}
+
+fn upsert_station_session_with_data_key(
+    connection: &Connection,
+    input: UpdateStationSessionInput,
+    data_key: &[u8; 32],
+) -> Result<(), String> {
+    let access_token = normalize_optional_string(input.access_token);
+    let refresh_token = normalize_optional_string(input.refresh_token);
+    let cookie = normalize_optional_string(input.cookie);
+    let newapi_user_id = normalize_optional_string(input.newapi_user_id);
+    let token_expires_at = normalize_optional_string(input.token_expires_at);
+
+    let existing: (Option<String>, Option<String>, Option<String>) = connection
+        .query_row(
+            "SELECT access_token_secret_id, refresh_token_secret_id, cookie_secret_id
+               FROM station_credentials
+              WHERE station_id = ?1",
+            params![input.station_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|error| format!("读取旧 session 凭据失败: {error}"))?
+        .unwrap_or((None, None, None));
+
+    let access_token_secret_id = match access_token {
+        Some(value) => Some(upsert_secret_in_connection(
+            connection,
+            data_key,
+            "station",
+            &input.station_id,
+            "access_token",
+            &value,
+        )?),
+        None => existing.0,
+    };
+    let refresh_token_secret_id = match refresh_token {
+        Some(value) => Some(upsert_secret_in_connection(
+            connection,
+            data_key,
+            "station",
+            &input.station_id,
+            "refresh_token",
+            &value,
+        )?),
+        None => existing.1,
+    };
+    let cookie_secret_id = match cookie {
+        Some(value) => Some(upsert_secret_in_connection(
+            connection,
+            data_key,
+            "station",
+            &input.station_id,
+            "cookie",
+            &value,
+        )?),
+        None => existing.2,
+    };
+    let has_session = access_token_secret_id.is_some()
+        || refresh_token_secret_id.is_some()
+        || cookie_secret_id.is_some();
+    let now = now_string();
+
+    connection
+        .execute(
+            "INSERT INTO station_credentials (
+                id, station_id, remember_password, login_status, session_status,
+                session_expires_at, access_token_secret_id, refresh_token_secret_id,
+                cookie_secret_id, newapi_user_id, token_expires_at, token_refreshed_at,
+                session_source, created_at, updated_at
+             ) VALUES (?1, ?2, 0, 'saved', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'manual_token', ?11, ?12)
+             ON CONFLICT(station_id) DO UPDATE SET
+                session_status = excluded.session_status,
+                session_expires_at = excluded.session_expires_at,
+                access_token_secret_id = excluded.access_token_secret_id,
+                refresh_token_secret_id = excluded.refresh_token_secret_id,
+                cookie_secret_id = excluded.cookie_secret_id,
+                newapi_user_id = excluded.newapi_user_id,
+                token_expires_at = excluded.token_expires_at,
+                token_refreshed_at = excluded.token_refreshed_at,
+                session_source = excluded.session_source,
+                updated_at = excluded.updated_at",
+            params![
+                generate_id("credentials"),
+                input.station_id,
+                if has_session { "valid" } else { "manual_required" },
+                token_expires_at.clone(),
+                access_token_secret_id,
+                refresh_token_secret_id,
+                cookie_secret_id,
+                newapi_user_id,
+                token_expires_at,
+                now,
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("保存 session 凭据失败: {error}"))?;
 
     Ok(())
 }
@@ -6519,6 +6763,61 @@ mod tests {
         assert!(plain.is_none());
         assert!(secret_id.is_some());
         assert_eq!(decrypted.as_deref(), Some("p8-password-canary"));
+    }
+
+    #[test]
+    fn manual_station_session_write_keeps_plain_tokens_out_of_credentials() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "manual-session");
+        let data_key = crate::services::secrets::crypto::generate_data_key();
+
+        let credentials = database
+            .update_station_session_with_data_key(
+                UpdateStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: Some("p9-access-token-canary".to_string()),
+                    refresh_token: Some("p9-refresh-token-canary".to_string()),
+                    cookie: Some("rpd_session=p9-cookie-canary".to_string()),
+                    newapi_user_id: Some("user-123".to_string()),
+                    token_expires_at: Some("200000".to_string()),
+                },
+                &data_key,
+            )
+            .expect("session");
+
+        let (access_secret_id, refresh_secret_id, cookie_secret_id): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = {
+            let connection = database.connection().expect("connection");
+            connection
+                .query_row(
+                    "SELECT access_token_secret_id, refresh_token_secret_id, cookie_secret_id
+                       FROM station_credentials
+                      WHERE station_id = ?1",
+                    params![station.id.clone()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("row")
+        };
+        let resolved = database
+            .resolve_station_session_with_data_key(station.id, &data_key, 100000)
+            .expect("resolved session");
+
+        assert!(credentials.access_token_present);
+        assert!(credentials.refresh_token_present);
+        assert!(credentials.cookie_present);
+        assert_eq!(credentials.newapi_user_id.as_deref(), Some("user-123"));
+        assert_eq!(credentials.session_source, "manual_token");
+        assert!(access_secret_id.is_some());
+        assert!(refresh_secret_id.is_some());
+        assert!(cookie_secret_id.is_some());
+        assert_eq!(resolved.status, SessionResolveStatus::Ready);
+        assert_eq!(
+            resolved.access_token.as_deref(),
+            Some("p9-access-token-canary")
+        );
     }
 
     #[test]

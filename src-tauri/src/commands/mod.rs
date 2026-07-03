@@ -6,7 +6,7 @@ use crate::{
         change_events::{ChangeEvent, UpsertChangeEventInput},
         collector::{CollectorRunResult, CollectorSnapshot},
         collector_runs::CollectorRun,
-        credentials::{StationCredentials, UpdateStationCredentialsInput},
+        credentials::{StationCredentials, UpdateStationCredentialsInput, UpdateStationSessionInput},
         group_facts::{GroupRateRecord, StationGroupBinding, UpsertStationGroupBindingInput},
         pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
         proxy::{ProxyStatus, RequestLog},
@@ -380,6 +380,15 @@ pub fn update_station_credentials(
     input: UpdateStationCredentialsInput,
 ) -> Result<StationCredentials, String> {
     database.update_station_credentials_with_data_key(input, secrets.data_key())
+}
+
+#[tauri::command]
+pub fn update_station_session(
+    database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
+    input: UpdateStationSessionInput,
+) -> Result<StationCredentials, String> {
+    database.update_station_session_with_data_key(input, secrets.data_key())
 }
 
 #[tauri::command]
