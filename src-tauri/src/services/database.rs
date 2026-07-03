@@ -15,7 +15,7 @@ use tauri::{AppHandle, Manager};
 use crate::models::{
     change_events::{ChangeEvent, UpsertChangeEventInput},
     collector::CollectorSnapshot,
-    collector_runs::CollectorRun,
+    collector_runs::{CollectorRun, CreateCollectorRunInput, FinishCollectorRunInput},
     credentials::{StationCredentials, UpdateStationCredentialsInput},
     group_facts::{GroupRateRecord, StationGroupBinding, UpsertStationGroupBindingInput},
     pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
@@ -713,6 +713,22 @@ impl AppDatabase {
     pub fn list_collector_runs(&self, station_id: String) -> Result<Vec<CollectorRun>, String> {
         let connection = self.connection()?;
         list_collector_runs_from_connection(&connection, &station_id)
+    }
+
+    pub fn create_collector_run(
+        &self,
+        input: CreateCollectorRunInput,
+    ) -> Result<CollectorRun, String> {
+        let connection = self.connection()?;
+        create_collector_run_in_connection(&connection, input)
+    }
+
+    pub fn finish_collector_run(
+        &self,
+        input: FinishCollectorRunInput,
+    ) -> Result<CollectorRun, String> {
+        let connection = self.connection()?;
+        finish_collector_run_in_connection(&connection, input)
     }
 
     pub fn list_change_events(&self) -> Result<Vec<ChangeEvent>, String> {
@@ -4847,6 +4863,122 @@ fn list_collector_runs_from_connection(
     Ok(rows)
 }
 
+fn validate_collector_task_type(value: &str) -> Result<String, String> {
+    match value.trim() {
+        "detect" | "balance" | "groups" | "models" | "full" => Ok(value.trim().to_string()),
+        _ => Err("采集任务类型无效".to_string()),
+    }
+}
+
+fn validate_collector_run_status(value: &str) -> Result<String, String> {
+    match value.trim() {
+        "running" | "success" | "partial" | "failed" | "manual_required" => {
+            Ok(value.trim().to_string())
+        }
+        _ => Err("采集运行状态无效".to_string()),
+    }
+}
+
+fn collector_run_by_id(connection: &Connection, id: &str) -> Result<CollectorRun, String> {
+    connection
+        .query_row(
+            "SELECT * FROM collector_runs WHERE id = ?1",
+            params![id],
+            row_to_collector_run,
+        )
+        .optional()
+        .map_err(|error| format!("读取采集运行记录失败: {error}"))?
+        .ok_or_else(|| "采集运行记录不存在".to_string())
+}
+
+fn create_collector_run_in_connection(
+    connection: &Connection,
+    input: CreateCollectorRunInput,
+) -> Result<CollectorRun, String> {
+    validate_station_exists(connection, &input.station_id)?;
+    if let Some(parent_run_id) = input.parent_run_id.as_deref() {
+        collector_run_by_id(connection, parent_run_id)?;
+    }
+    if input.adapter.trim().is_empty() {
+        return Err("采集 adapter 不能为空".to_string());
+    }
+    let task_type = validate_collector_task_type(&input.task_type)?;
+    let now = now_string();
+    let id = generate_id("collector_run");
+    connection
+        .execute(
+            "INSERT INTO collector_runs (
+                id, station_id, parent_run_id, adapter, task_type, status,
+                started_at, finished_at, duration_ms, endpoint_count, success_count,
+                failure_count, manual_action_required, error_code, error_message,
+                snapshot_id, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 'running', ?6, NULL, NULL, 0, 0, 0, 0, NULL, NULL, NULL, ?7)",
+            params![
+                id,
+                input.station_id,
+                normalize_optional_string(input.parent_run_id),
+                input.adapter.trim(),
+                task_type,
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("创建采集运行记录失败: {error}"))?;
+    collector_run_by_id(connection, &id)
+}
+
+fn finish_collector_run_in_connection(
+    connection: &Connection,
+    input: FinishCollectorRunInput,
+) -> Result<CollectorRun, String> {
+    let existing = collector_run_by_id(connection, &input.id)?;
+    let status = validate_collector_run_status(&input.status)?;
+    if status == "running" {
+        return Err("完成采集运行记录时状态不能为 running".to_string());
+    }
+    if input.endpoint_count < 0 || input.success_count < 0 || input.failure_count < 0 {
+        return Err("采集运行计数不能为负数".to_string());
+    }
+    let finished_at = now_string();
+    let duration_ms = finished_at
+        .parse::<i64>()
+        .ok()
+        .zip(existing.started_at.parse::<i64>().ok())
+        .map(|(finished, started)| (finished - started).max(0));
+    let error_message = redact_optional_text(input.error_message);
+
+    connection
+        .execute(
+            "UPDATE collector_runs
+             SET status = ?1,
+                 finished_at = ?2,
+                 duration_ms = ?3,
+                 endpoint_count = ?4,
+                 success_count = ?5,
+                 failure_count = ?6,
+                 manual_action_required = ?7,
+                 error_code = ?8,
+                 error_message = ?9,
+                 snapshot_id = ?10
+             WHERE id = ?11",
+            params![
+                status,
+                finished_at,
+                duration_ms,
+                input.endpoint_count,
+                input.success_count,
+                input.failure_count,
+                bool_to_i64(input.manual_action_required),
+                normalize_optional_string(input.error_code),
+                error_message,
+                normalize_optional_string(input.snapshot_id),
+                input.id,
+            ],
+        )
+        .map_err(|error| format!("完成采集运行记录失败: {error}"))?;
+    collector_run_by_id(connection, &input.id)
+}
+
 fn migrate_legacy_group_facts(connection: &Connection) -> Result<(), String> {
     let mut statement = connection
         .prepare(
@@ -5542,6 +5674,47 @@ mod tests {
 
         assert_eq!(key_bindings.len(), 1);
         assert_eq!(key_bindings[0].binding_status, "manual_legacy");
+    }
+
+    #[test]
+    fn full_collector_run_can_track_child_runs() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "run-relay");
+
+        let parent = database
+            .create_collector_run(CreateCollectorRunInput {
+                station_id: station.id.clone(),
+                parent_run_id: None,
+                adapter: "sub2api".to_string(),
+                task_type: "full".to_string(),
+            })
+            .expect("parent");
+        let child = database
+            .create_collector_run(CreateCollectorRunInput {
+                station_id: station.id.clone(),
+                parent_run_id: Some(parent.id.clone()),
+                adapter: "sub2api".to_string(),
+                task_type: "balance".to_string(),
+            })
+            .expect("child");
+        database
+            .finish_collector_run(FinishCollectorRunInput {
+                id: child.id.clone(),
+                status: "success".to_string(),
+                endpoint_count: 1,
+                success_count: 1,
+                failure_count: 0,
+                manual_action_required: false,
+                error_code: None,
+                error_message: None,
+                snapshot_id: None,
+            })
+            .expect("finish child");
+
+        let runs = database.list_collector_runs(station.id).expect("runs");
+        assert!(runs
+            .iter()
+            .any(|run| run.parent_run_id.as_deref() == Some(parent.id.as_str())));
     }
 
     #[test]

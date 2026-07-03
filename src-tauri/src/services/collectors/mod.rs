@@ -1,3 +1,4 @@
+pub mod apply;
 pub mod adapters;
 pub mod facts;
 pub mod sub2api;
