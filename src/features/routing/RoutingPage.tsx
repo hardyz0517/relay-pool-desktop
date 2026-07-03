@@ -396,21 +396,44 @@ function CandidateList({
       <div className="mb-2 text-xs font-semibold text-slate-700">{title}</div>
       <div className="grid gap-2">
         {candidates.map((candidate, index) => (
-          <ObjectRow
-            key={candidate.stationKeyId}
-            icon={<GitBranch className="h-4 w-4" />}
-            title={candidate.stationName}
-            subtitle={`${index + 1}. ${candidate.keyName} · ${candidate.mappedModel ?? "未映射模型"} · ${candidateSummary(candidate)}`}
-            badges={<StatusBadge tone={candidate.accepted ? "healthy" : "disabled"}>{candidate.accepted ? "可用" : "已过滤"}</StatusBadge>}
-            metrics={[
-              { label: "分数", value: candidate.score.toFixed(1), tone: candidate.accepted ? "good" : "neutral" },
-              { label: "成本", value: formatCandidateCost(candidate), tone: candidate.estimatedOutputPrice == null ? "neutral" : "good" },
-              { label: "余额", value: formatCandidateBalance(candidate), tone: candidate.balanceStatus === "low" || candidate.balanceStatus === "depleted" ? "warning" : "neutral" },
-              { label: "过滤", value: `${candidate.rejectionReasons.length}`, tone: candidate.rejectionReasons.length > 0 ? "warning" : "neutral" },
-            ]}
-          />
+          <div key={candidate.stationKeyId} className="rounded-[var(--surface-radius)] border border-border bg-white">
+            <ObjectRow
+              className="rounded-b-none border-0 border-b border-border"
+              icon={<GitBranch className="h-4 w-4" />}
+              title={candidate.stationName}
+              subtitle={`${index + 1}. ${candidate.keyName} · ${candidate.mappedModel ?? "未映射模型"} · ${candidateSummary(candidate)}`}
+              badges={<StatusBadge tone={candidate.accepted ? "healthy" : "disabled"}>{candidate.accepted ? "可用" : "已过滤"}</StatusBadge>}
+              metrics={[
+                { label: "分数", value: candidate.score.toFixed(1), tone: candidate.accepted ? "good" : "neutral" },
+                { label: "成本", value: formatCandidateCost(candidate), tone: candidate.estimatedOutputPrice == null ? "neutral" : "good" },
+                { label: "余额", value: formatCandidateBalance(candidate), tone: candidate.balanceStatus === "low" || candidate.balanceStatus === "depleted" ? "warning" : "neutral" },
+                { label: "过滤", value: `${candidate.rejectionReasons.length}`, tone: candidate.rejectionReasons.length > 0 ? "warning" : "neutral" },
+              ]}
+            />
+            <CandidateEconomicsDetails candidate={candidate} />
+          </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function CandidateEconomicsDetails({ candidate }: { candidate: RouteSimulationResult["candidates"][number] }) {
+  return (
+    <div className="grid gap-2 px-3 py-2 text-xs text-muted-foreground md:grid-cols-2">
+      <div>Group: {candidate.groupBindingId ?? "未绑定"}</div>
+      <div>Rate: {candidate.rateMultiplier == null ? "未知" : formatRate(candidate.rateMultiplier)}</div>
+      <div>Pricing: {candidate.normalizationStatus ?? "unknown"}</div>
+      <div>Balance: {candidate.balanceStatus ?? "unknown"} · {candidate.balanceScope ?? "unknown"}</div>
+      <div>Freshness: {candidate.economicFreshness ?? "unknown"}</div>
+      <div>Rule: {candidate.pricingRuleId ?? "未命中"}</div>
+      {candidate.rejectionReasons.length > 0 && (
+        <div className="flex flex-wrap gap-1 md:col-span-2">
+          {candidate.rejectionReasons.map((reason) => (
+            <StatusBadge key={reason} className="h-5 px-1.5" tone="warning">{reason}</StatusBadge>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -470,4 +493,8 @@ function formatCandidateBalance(candidate: RouteSimulationResult["candidates"][n
     return candidate.balanceStatus ?? "-";
   }
   return `${candidate.balanceValue.toFixed(2)}${candidate.balanceStatus ? ` / ${candidate.balanceStatus}` : ""}`;
+}
+
+function formatRate(value: number) {
+  return `${value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}x`;
 }

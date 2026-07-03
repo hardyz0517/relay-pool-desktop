@@ -181,9 +181,15 @@ export function LogsPage() {
                 <PropertyRow label="Token" value={formatTokens(selected)} />
                 <PropertyRow label="成本" value={formatCost(selected)} />
                 <PropertyRow label="成本状态" value={selected.costStatus ?? "unknown"} />
+                <PropertyRow label="价格规则" value={selected.pricingRuleId ?? "未命中"} />
+                <PropertyRow label="价格来源" value={selected.pricingSource ?? "unknown"} />
+                <PropertyRow label="价格状态" value={selected.normalizationStatus ?? selected.costStatus ?? "unknown"} />
+                <PropertyRow label="Group Binding" value={selected.groupBindingId ?? "未记录"} />
+                <PropertyRow label="余额作用域" value={selected.balanceScope ?? "unknown"} />
                 <PropertyRow label="拒绝候选" value={`${parseRejectedCandidates(selected.rejectedCandidatesJson).length} 个`} />
               </PropertyList>
               <RejectedCandidateList json={selected.rejectedCandidatesJson} />
+              <EconomicContextPreview json={selected.economicContextJson} />
               <div className="rounded-[var(--surface-radius)] border border-border bg-slate-50 p-3 text-xs leading-5 text-slate-600">
                 日志只保留 method、path、model、状态、耗时、路由解释、Token / 成本元数据和脱敏错误摘要，不保存完整 prompt、response 或完整 API key。
               </div>
@@ -202,6 +208,12 @@ type RejectedCandidateLog = {
   stationName?: string;
   keyName?: string;
   rejectionReasons?: string[];
+  groupBindingId?: string | null;
+  rateMultiplier?: number | null;
+  normalizationStatus?: string | null;
+  balanceStatus?: string | null;
+  balanceScope?: string | null;
+  economicFreshness?: string | null;
 };
 
 function RejectedCandidateList({ json }: { json: string | null }) {
@@ -214,15 +226,40 @@ function RejectedCandidateList({ json }: { json: string | null }) {
       <div className="text-xs font-semibold text-slate-700">拒绝候选原因</div>
       <div className="mt-2 grid gap-2">
         {candidates.map((candidate, index) => (
-          <div key={`${candidate.stationKeyId ?? "candidate"}-${index}`} className="text-xs leading-5 text-muted-foreground">
-            <span className="font-medium text-slate-700">
+          <div key={`${candidate.stationKeyId ?? "candidate"}-${index}`} className="rounded-lg border border-slate-100 bg-slate-50/70 p-2 text-xs leading-5 text-muted-foreground">
+            <div className="font-medium text-slate-700">
               {candidate.keyName ?? candidate.stationKeyId ?? "未知 Key"}
               {candidate.stationName ? ` · ${candidate.stationName}` : ""}
-            </span>
-            ：{candidate.rejectionReasons?.join("；") || "未记录原因"}
+            </div>
+            <div className="mt-1 grid gap-1 sm:grid-cols-2">
+              <div>Group: {candidate.groupBindingId ?? "未绑定"}</div>
+              <div>Rate: {candidate.rateMultiplier == null ? "未知" : formatRate(candidate.rateMultiplier)}</div>
+              <div>Pricing: {candidate.normalizationStatus ?? "unknown"}</div>
+              <div>Balance: {candidate.balanceStatus ?? "unknown"} · {candidate.balanceScope ?? "unknown"}</div>
+              <div>Freshness: {candidate.economicFreshness ?? "unknown"}</div>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1">
+              {(candidate.rejectionReasons?.length ? candidate.rejectionReasons : ["未记录原因"]).map((reason) => (
+                <StatusBadge key={reason} className="h-5 px-1.5" tone="warning">{reason}</StatusBadge>
+              ))}
+            </div>
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function EconomicContextPreview({ json }: { json: string | null }) {
+  if (!json) {
+    return null;
+  }
+  return (
+    <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3">
+      <div className="text-xs font-semibold text-slate-700">经济上下文</div>
+      <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-slate-50 p-2 text-xs leading-5 text-slate-600">
+        {formatJson(json)}
+      </pre>
     </div>
   );
 }
@@ -279,6 +316,18 @@ function formatCost(log: RequestLog) {
   }
   const currency = log.costCurrency ?? "USD";
   return `${currency} ${log.estimatedTotalCost.toFixed(6)}`;
+}
+
+function formatRate(value: number) {
+  return `${value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}x`;
+}
+
+function formatJson(value: string) {
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
 }
 
 function readError(error: unknown) {
