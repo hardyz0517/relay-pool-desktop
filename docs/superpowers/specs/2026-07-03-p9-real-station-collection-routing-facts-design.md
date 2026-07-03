@@ -95,6 +95,7 @@ P9 后端数据流：
 - `station_key_id`
 - `binding_kind`: `station_group | key_binding`
 - `parent_group_binding_id`
+- `group_key_hash`
 - `group_id_hash`
 - `group_id_enc`
 - `group_name`
@@ -116,8 +117,10 @@ P9 后端数据流：
 - `binding_kind = station_group` 且 `station_key_id IS NULL` 表示站点可用 group 的当前事实。
 - `binding_kind = key_binding` 且 `station_key_id IS NOT NULL` 表示某把 key 绑定到哪个 group。
 - `parent_group_binding_id` 指向同站点的 station-level group 行；如果外部接口只识别到 key 的 group 名称但还没有 station-level row，apply layer 应先创建低置信度 station-level row，再创建 key binding。
-- 同一站点下 station-level group 用 `(station_id, group_id_hash)` 去重。
-- 同一 key 的绑定用 `(station_key_id, group_id_hash)` 去重。
+- `group_key_hash` 是稳定去重键，优先由原始 group id 生成；没有 group id 时由 adapter、规范化 group name 和 station id 生成，避免 SQLite `NULL` 唯一键无法去重。
+- `group_id_hash` 只表示外部真实 group id 的 hash；如果外部没有 id，可以为空。
+- 同一站点下 station-level group 用 `(station_id, binding_kind, group_key_hash)` 去重。
+- 同一 key 的绑定用 `(station_key_id, binding_kind, group_key_hash)` 去重。
 - 手动 key binding 优先级高于自动识别，采集刷新不能覆盖手动绑定；如果 group 在最新采集中不可见，只把状态改为 `missing`。
 
 用途：
@@ -138,6 +141,7 @@ P9 后端数据流：
 - `station_key_id`
 - `group_binding_id`
 - `binding_kind`
+- `group_key_hash`
 - `group_name`
 - `default_rate_multiplier`
 - `user_rate_multiplier`
@@ -163,6 +167,7 @@ P9 后端数据流：
 
 - `id`
 - `station_id`
+- `parent_run_id`
 - `adapter`
 - `task_type`: `detect | balance | groups | models | full`
 - `status`: `success | partial | failed | manual_required`
@@ -179,6 +184,13 @@ P9 后端数据流：
 - `created_at`
 
 `collector_snapshots` 继续保留，负责脱敏快照和调试 raw。`collector_runs` 负责任务观测。
+
+Run 与 snapshot 关系：
+
+- `detect`、`balance`、`groups`、`models` 各自生成一条 `collector_runs`，并可关联一条对应 `collector_snapshots`。
+- `full` 生成一条父级 `collector_runs`，内部按顺序执行 balance、groups、models；每个子任务仍生成自己的 run 和 snapshot，父 run 用 `parent_run_id` 关联子任务。
+- 因此 `collector_runs` 还需要 `parent_run_id` 字段；单任务 run 的 `parent_run_id` 为空。
+- 父 run 的 status 根据子任务聚合：全部成功为 `success`，部分失败为 `partial`，全部失败为 `failed`，需要人工操作为 `manual_required`。
 
 ### 5.4 `station_credentials` 扩展
 
