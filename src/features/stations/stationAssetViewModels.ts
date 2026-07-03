@@ -1,6 +1,7 @@
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { BalanceSnapshot } from "@/lib/types/economics";
+import type { StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationKey } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
 import type { StatusTone } from "@/components/ui";
@@ -27,12 +28,14 @@ export function buildStationAssetRows({
   keysByStation,
   balances,
   snapshotsByStation,
+  groupBindingsByStation,
   changes,
 }: {
   stations: Station[];
   keysByStation: Map<string, StationKey[]>;
   balances: BalanceSnapshot[];
   snapshotsByStation: Map<string, CollectorSnapshot | null>;
+  groupBindingsByStation: Map<string, StationGroupBinding[]>;
   changes: ChangeEvent[];
 }): StationAssetRow[] {
   const latestBalanceByStation = latestBalanceMap(balances);
@@ -53,10 +56,35 @@ export function buildStationAssetRows({
       latestBalance: latestBalanceByStation.get(station.id) ?? null,
       latestSnapshot: snapshotsByStation.get(station.id) ?? null,
       riskEvents,
-      rateChips: extractRateChips(snapshotsByStation.get(station.id) ?? null),
+      rateChips: rateChipsForStation(
+        groupBindingsByStation.get(station.id) ?? [],
+        snapshotsByStation.get(station.id) ?? null,
+      ),
       participatesInRouting: station.enabled && enabledKeyCount > 0,
     };
   });
+}
+
+function rateChipsForStation(
+  bindings: StationGroupBinding[],
+  snapshot: CollectorSnapshot | null,
+): RateChip[] {
+  const durableChips = rateChipsFromBindings(bindings);
+  return durableChips.length > 0 ? durableChips : extractRateChips(snapshot);
+}
+
+export function rateChipsFromBindings(bindings: StationGroupBinding[]): RateChip[] {
+  return bindings
+    .filter((binding) => binding.bindingKind === "station_group")
+    .slice(0, 3)
+    .map((binding) => {
+      const multiplier = binding.effectiveRateMultiplier ?? binding.defaultRateMultiplier;
+      return {
+        label: binding.groupName,
+        value: typeof multiplier === "number" ? `${multiplier.toFixed(2)}x` : "-",
+        tone: binding.bindingStatus === "missing" ? "warning" : "neutral",
+      };
+    });
 }
 
 export function extractRateChips(snapshot: CollectorSnapshot | null): RateChip[] {

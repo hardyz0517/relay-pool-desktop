@@ -31,12 +31,16 @@ import {
   getLatestCollectorSnapshot,
   listCollectorSnapshots,
 } from "@/lib/api/collector";
+import { listCollectorRuns } from "@/lib/api/collectorRuns";
 import { listChangeEvents } from "@/lib/api/changeEvents";
 import { listBalanceSnapshots } from "@/lib/api/economics";
+import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import { stationKeyStatusLabels, type CreateStationKeyInput, type StationCredentials, type StationKey, type StationKeyStatus, type UpdateStationKeyInput } from "@/lib/types/stationKeys";
 import type { CollectorSnapshot } from "@/lib/types/collector";
+import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { BalanceSnapshot } from "@/lib/types/economics";
+import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
 import { stationStatusLabels, stationTypeLabels, type Station, type StationInput, type StationType } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import { StationStatusDot } from "./components/StationStatusDot";
@@ -131,6 +135,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
   const [assetSnapshotsByStation, setAssetSnapshotsByStation] = useState<
     Map<string, CollectorSnapshot | null>
   >(new Map());
+  const [groupBindingsByStation, setGroupBindingsByStation] = useState(new Map<string, StationGroupBinding[]>());
+  const [rateRecordsByStation, setRateRecordsByStation] = useState(new Map<string, GroupRateRecord[]>());
+  const [collectorRunsByStation, setCollectorRunsByStation] = useState(new Map<string, CollectorRun[]>());
   const [balanceSnapshots, setBalanceSnapshots] = useState<BalanceSnapshot[]>([]);
   const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
   const [drawerStationId, setDrawerStationId] = useState<string | null>(null);
@@ -191,9 +198,10 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
         keysByStation,
         balances: balanceSnapshots,
         snapshotsByStation,
+        groupBindingsByStation,
         changes: changeEvents,
       }),
-    [balanceSnapshots, changeEvents, keysByStation, snapshotsByStation, stations],
+    [balanceSnapshots, changeEvents, groupBindingsByStation, keysByStation, snapshotsByStation, stations],
   );
 
   useEffect(() => {
@@ -264,10 +272,22 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
           rememberPassword: nextCredentials.rememberPassword,
         }));
       }
+      await refreshStationFacts(stationId);
     } catch (requestError) {
       toast.error("读取中转站详情失败", readError(requestError));
     }
   }, [dialogMode]);
+
+  async function refreshStationFacts(stationId: string) {
+    const [bindings, rates, runs] = await Promise.all([
+      listStationGroupBindings(stationId),
+      listGroupRateRecords(stationId),
+      listCollectorRuns(stationId),
+    ]);
+    setGroupBindingsByStation((current) => new Map(current).set(stationId, bindings));
+    setRateRecordsByStation((current) => new Map(current).set(stationId, rates));
+    setCollectorRunsByStation((current) => new Map(current).set(stationId, runs));
+  }
 
   const openCreate = useCallback(() => {
     setDialogMode("create");
@@ -487,6 +507,7 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       if (station.id === selectedStationId || station.id === drawerStationId) {
         await refreshExtras(station.id);
       }
+      await refreshStationFacts(station.id);
       toast.success("已保存采集快照");
     } catch (requestError) {
       toast.error("保存采集快照失败", readError(requestError));
@@ -702,6 +723,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
                 snapshot={snapshot}
                 snapshots={snapshots}
                 stationKeys={stationKeys}
+                groupBindings={groupBindingsByStation.get(detailStation.id) ?? []}
+                rateRecords={rateRecordsByStation.get(detailStation.id) ?? []}
+                collectorRuns={collectorRunsByStation.get(detailStation.id) ?? []}
                 onDeleteKey={handleDeleteKey}
                 onEditKey={(key) => {
                   setKeyForm(keyToForm(key));
@@ -911,6 +935,9 @@ function DetailBody({
   snapshot,
   snapshots,
   stationKeys,
+  groupBindings,
+  rateRecords,
+  collectorRuns,
   onDeleteKey,
   onEditKey,
 }: {
@@ -921,6 +948,9 @@ function DetailBody({
   snapshot: CollectorSnapshot | null;
   snapshots: CollectorSnapshot[];
   stationKeys: StationKey[];
+  groupBindings: StationGroupBinding[];
+  rateRecords: GroupRateRecord[];
+  collectorRuns: CollectorRun[];
   onDeleteKey: (key: StationKey) => Promise<void>;
   onEditKey: (key: StationKey) => void;
 }) {
@@ -976,6 +1006,69 @@ function DetailBody({
                   <Button variant="outline" onClick={() => onEditKey(key)}>编辑</Button>
                   <Button variant="danger" onClick={() => void onDeleteKey(key)}>删除</Button>
                 </div>
+              </div>
+            ))
+          )}
+        </div>
+      </SectionBlock>
+
+      <SectionBlock title="Group bindings">
+        <div className="space-y-2">
+          {groupBindings.length === 0 ? (
+            <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无分组绑定事实。</div>
+          ) : (
+            groupBindings.map((binding) => (
+              <div
+                key={binding.id}
+                className="grid grid-cols-[minmax(0,1fr)_5rem_6rem_7rem] items-center gap-2 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs shadow-[var(--surface-shadow)]"
+              >
+                <span className="truncate font-medium text-slate-700">{binding.groupName}</span>
+                <span>{formatMultiplier(binding.effectiveRateMultiplier ?? binding.defaultRateMultiplier)}</span>
+                <StatusBadge tone={binding.bindingStatus === "missing" ? "warning" : "info"}>
+                  {binding.bindingStatus}
+                </StatusBadge>
+                <span className="truncate text-muted-foreground">{binding.rateSource ?? "unknown"}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </SectionBlock>
+
+      <SectionBlock title="Rate history">
+        <div className="space-y-2">
+          {rateRecords.length === 0 ? (
+            <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无倍率历史。</div>
+          ) : (
+            rateRecords.slice(0, 8).map((record) => (
+              <div
+                key={record.id}
+                className="grid grid-cols-[minmax(0,1fr)_5rem_7rem] items-center gap-2 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs shadow-[var(--surface-shadow)]"
+              >
+                <span className="truncate font-medium text-slate-700">{record.groupName}</span>
+                <span>{formatMultiplier(record.effectiveRateMultiplier)}</span>
+                <span className="truncate text-muted-foreground">{formatNullableTime(record.checkedAt)}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </SectionBlock>
+
+      <SectionBlock title="Collector runs">
+        <div className="space-y-2">
+          {collectorRuns.length === 0 ? (
+            <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无采集任务。</div>
+          ) : (
+            collectorRuns.slice(0, 8).map((run) => (
+              <div
+                key={run.id}
+                className="grid grid-cols-[5rem_6rem_minmax(0,1fr)_5rem] items-center gap-2 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs shadow-[var(--surface-shadow)]"
+              >
+                <span className="font-medium text-slate-700">{run.taskType}</span>
+                <StatusBadge tone={run.status === "success" ? "healthy" : run.status === "failed" ? "error" : run.status === "manual_required" ? "warning" : "info"}>
+                  {run.status}
+                </StatusBadge>
+                <span className="truncate text-muted-foreground">{run.errorMessage ?? `${run.successCount}/${run.endpointCount} endpoint`}</span>
+                <span className="text-right text-muted-foreground">{run.durationMs == null ? "-" : `${run.durationMs}ms`}</span>
               </div>
             ))
           )}
@@ -1291,6 +1384,10 @@ function formatNullableTime(value: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatMultiplier(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)}x` : "-";
 }
 
 const inputClassName = "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/40 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
