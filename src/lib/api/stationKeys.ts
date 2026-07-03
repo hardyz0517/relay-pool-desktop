@@ -4,6 +4,7 @@ import type {
   KeyPoolItem,
   StationCredentials,
   StationKey,
+  UpdateStationSessionInput,
   UpdateStationKeyInput,
 } from "@/lib/types/stationKeys";
 
@@ -136,6 +137,27 @@ export function clearStationCredentials(stationId: string) {
   });
 }
 
+export function updateStationSession(input: UpdateStationSessionInput) {
+  return invoke<StationCredentials>("update_station_session", { input }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      const next = {
+        ...emptyCredentials(input.stationId),
+        accessTokenPresent: Boolean(input.accessToken),
+        refreshTokenPresent: Boolean(input.refreshToken),
+        cookiePresent: Boolean(input.cookie),
+        newapiUserId: input.newapiUserId?.trim() || null,
+        tokenExpiresAt: input.tokenExpiresAt?.trim() || null,
+        sessionStatus: input.accessToken || input.refreshToken || input.cookie ? "valid" : "none",
+        sessionSource: input.accessToken || input.refreshToken || input.cookie ? "manual" : null,
+        updatedAt: new Date().toISOString(),
+      };
+      memoryCredentials.set(input.stationId, next);
+      return next;
+    }
+    throw error;
+  });
+}
+
 function emptyCredentials(stationId: string): StationCredentials {
   return {
     stationId,
@@ -147,6 +169,13 @@ function emptyCredentials(stationId: string): StationCredentials {
     lastLoginAt: null,
     sessionStatus: "none",
     sessionExpiresAt: null,
+    accessTokenPresent: false,
+    refreshTokenPresent: false,
+    cookiePresent: false,
+    sessionSource: null,
+    newapiUserId: null,
+    tokenExpiresAt: null,
+    tokenRefreshedAt: null,
     updatedAt: null,
   };
 }

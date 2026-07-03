@@ -50,7 +50,23 @@ export type StationCredentials = {
   lastLoginAt: string | null;
   sessionStatus: string;
   sessionExpiresAt: string | null;
+  accessTokenPresent: boolean;
+  refreshTokenPresent: boolean;
+  cookiePresent: boolean;
+  sessionSource: string | null;
+  newapiUserId: string | null;
+  tokenExpiresAt: string | null;
+  tokenRefreshedAt: string | null;
   updatedAt: string | null;
+};
+
+export type UpdateStationSessionInput = {
+  stationId: string;
+  accessToken: string | null;
+  refreshToken: string | null;
+  cookie: string | null;
+  newapiUserId: string | null;
+  tokenExpiresAt: string | null;
 };
 
 export type CreateStationKeyInput = {

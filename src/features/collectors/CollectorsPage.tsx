@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ChevronDown,
   Activity,
@@ -11,7 +11,7 @@ import {
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, EmptyState, InspectorPanel, ObjectRow, SectionCard, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import {
-  collectStationInfo,
+  collectStationTask,
   clearCaptureSession,
   detectStationInfo,
   closeCaptureSession,
@@ -22,6 +22,8 @@ import {
   startCaptureSession,
   testStationLogin,
 } from "@/lib/api/collector";
+import { listCollectorRuns } from "@/lib/api/collectorRuns";
+import { updateStationSession } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
 import type {
   CaptureSessionStatus,
@@ -29,6 +31,7 @@ import type {
   CollectorSnapshot,
   CollectorSummary,
 } from "@/lib/types/collector";
+import type { CollectorRun, CollectorTaskType } from "@/lib/types/collectorRuns";
 import { stationTypeLabels, type Station } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +54,15 @@ export function CollectorsPage() {
   const [loading, setLoading] = useState(true);
   const [taskStatus, setTaskStatus] = useState<TaskStatus>("idle");
   const [captureStatus, setCaptureStatus] = useState<CaptureSessionStatus | null>(null);
+  const [taskType, setTaskType] = useState<CollectorTaskType>("full");
+  const [runs, setRuns] = useState<CollectorRun[]>([]);
+  const [manualSession, setManualSession] = useState({
+    accessToken: "",
+    refreshToken: "",
+    cookie: "",
+    newapiUserId: "",
+    tokenExpiresAt: "",
+  });
   const [error, setError] = useState<string | null>(null);
 
   const selectedStation = useMemo(
@@ -75,10 +87,12 @@ export function CollectorsPage() {
     if (!selectedStation) {
       setLatestSnapshot(null);
       setHistory([]);
+      setRuns([]);
       return;
     }
     void refreshSnapshot(selectedStation.id);
     void refreshCaptureStatus(selectedStation.id);
+    void refreshRuns(selectedStation.id);
   }, [selectedStation?.id]);
 
   async function refreshStations() {
@@ -123,19 +137,56 @@ export function CollectorsPage() {
     }
   }
 
+  async function refreshRuns(stationId: string) {
+    try {
+      setRuns(await listCollectorRuns(stationId));
+    } catch (requestError) {
+      toast.error("刷新采集任务失败", readError(requestError));
+    }
+  }
+
   async function handleCollect() {
     if (!selectedStation) return;
     setTaskStatus("collecting");
     setError(null);
     try {
-      const result = await collectStationInfo(selectedStation.id);
+      const result = await collectStationTask(selectedStation.id, taskType);
       setLatestSnapshot(result.snapshot);
-      await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id)]);
+      await Promise.all([
+        refreshStations(),
+        refreshSnapshot(selectedStation.id),
+        refreshRuns(selectedStation.id),
+      ]);
       setTaskStatus("success");
-      toast.success("采集信息已完成");
+      toast.success("采集任务已完成");
     } catch (requestError) {
       setTaskStatus("failed");
-      toast.error("采集信息失败", shortError(readError(requestError)));
+      toast.error("采集任务失败", shortError(readError(requestError)));
+    }
+  }
+
+  async function handleSaveManualSession() {
+    if (!selectedStation) return;
+    setError(null);
+    try {
+      await updateStationSession({
+        stationId: selectedStation.id,
+        accessToken: manualSession.accessToken || null,
+        refreshToken: manualSession.refreshToken || null,
+        cookie: manualSession.cookie || null,
+        newapiUserId: manualSession.newapiUserId || null,
+        tokenExpiresAt: manualSession.tokenExpiresAt || null,
+      });
+      setManualSession({
+        accessToken: "",
+        refreshToken: "",
+        cookie: "",
+        newapiUserId: "",
+        tokenExpiresAt: "",
+      });
+      toast.success("手动登录态已保存");
+    } catch (requestError) {
+      toast.error("保存手动登录态失败", shortError(readError(requestError)));
     }
   }
 
@@ -257,9 +308,23 @@ export function CollectorsPage() {
             options={stations.map((station) => ({ value: station.id, label: station.name }))}
             onChange={setSelectedStationId}
           />
+          <SelectControl
+            ariaLabel="采集任务"
+            className={selectClassName}
+            disabled={!selectedStation || actionBusy}
+            value={taskType}
+            options={[
+              { value: "detect", label: "Detect" },
+              { value: "balance", label: "余额" },
+              { value: "groups", label: "分组 / 倍率" },
+              { value: "models", label: "模型" },
+              { value: "full", label: "Full" },
+            ]}
+            onChange={(value) => setTaskType(value as CollectorTaskType)}
+          />
           <Button variant="secondary" onClick={handleCollect} disabled={actionBusy || !selectedStation}>
             <Database className="h-4 w-4" />
-            {taskStatus === "collecting" ? "采集中" : "采集信息"}
+            {taskStatus === "collecting" ? "采集中" : "运行任务"}
           </Button>
           <Button variant="secondary" onClick={handleTestLogin} disabled={actionBusy || !selectedStation}>
             <ShieldCheck className="h-4 w-4" />
@@ -361,6 +426,68 @@ export function CollectorsPage() {
                   : "已尽量使用登录态接口读取余额、分组、倍率、key 和模型信息。"}
               </div>
             </SectionCard>
+
+            <SectionCard
+              title="手动登录态"
+              description="保存 access token、refresh token、NewAPI User ID 或 cookie；保存后不会回显原文。"
+              action={
+                <Button variant="secondary" onClick={handleSaveManualSession} disabled={!selectedStation || actionBusy}>
+                  保存登录态
+                </Button>
+              }
+            >
+              <div className="grid gap-3 md:grid-cols-2">
+                <Field label="Access Token">
+                  <input
+                    type="password"
+                    className={inputClassName}
+                    value={manualSession.accessToken}
+                    onChange={(event) =>
+                      setManualSession({ ...manualSession, accessToken: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Refresh Token">
+                  <input
+                    type="password"
+                    className={inputClassName}
+                    value={manualSession.refreshToken}
+                    onChange={(event) =>
+                      setManualSession({ ...manualSession, refreshToken: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="NewAPI User ID">
+                  <input
+                    className={inputClassName}
+                    value={manualSession.newapiUserId}
+                    onChange={(event) =>
+                      setManualSession({ ...manualSession, newapiUserId: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Cookie">
+                  <input
+                    type="password"
+                    className={inputClassName}
+                    value={manualSession.cookie}
+                    onChange={(event) =>
+                      setManualSession({ ...manualSession, cookie: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Token Expires At">
+                  <input
+                    className={inputClassName}
+                    placeholder="Unix ms 或 ISO 时间"
+                    value={manualSession.tokenExpiresAt}
+                    onChange={(event) =>
+                      setManualSession({ ...manualSession, tokenExpiresAt: event.target.value })
+                    }
+                  />
+                </Field>
+              </div>
+            </SectionCard>
           </div>
 
           <div className="space-y-3">
@@ -425,6 +552,32 @@ export function CollectorsPage() {
                 </div>
               </details>
             </InspectorPanel>
+
+            <SectionCard title="最近采集任务" description="Full 父任务会展开为 balance / groups / models 子任务。">
+              <div className="grid gap-2">
+                {runs.length === 0 ? (
+                  <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-white px-3 py-4 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
+                    暂无采集任务。
+                  </div>
+                ) : (
+                  runs.slice(0, 10).map((run) => (
+                    <div
+                      key={run.id}
+                      className="grid grid-cols-[5rem_7rem_minmax(0,1fr)_5rem] items-center gap-2 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs shadow-[var(--surface-shadow)]"
+                    >
+                      <span className="font-medium text-slate-700">{run.taskType}</span>
+                      <StatusBadge tone={toneForRunStatus(run.status)}>{run.status}</StatusBadge>
+                      <span className="truncate text-muted-foreground">
+                        {run.errorMessage ?? `${run.successCount}/${run.endpointCount} endpoint`}
+                      </span>
+                      <span className="text-right text-muted-foreground">
+                        {run.durationMs == null ? "-" : `${run.durationMs}ms`}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </SectionCard>
 
             <InspectorPanel title="历史快照" description="最近保存的采集记录。">
               <div className="space-y-2">
@@ -504,6 +657,15 @@ function CompactFact({ label, value }: { label: string; value: string }) {
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className="mt-0.5 truncate text-sm font-semibold text-slate-800">{value}</div>
     </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="grid gap-1.5">
+      <span className="text-xs font-medium text-slate-700">{label}</span>
+      {children}
+    </label>
   );
 }
 
@@ -717,6 +879,14 @@ function toneForConclusion(value: string) {
   return "info" as const;
 }
 
+function toneForRunStatus(status: string) {
+  if (status === "success") return "healthy" as const;
+  if (status === "failed") return "error" as const;
+  if (status === "manual_required") return "warning" as const;
+  if (status === "running" || status === "partial") return "info" as const;
+  return "info" as const;
+}
+
 function shortError(error: string) {
   if (/timeout|timed out/i.test(error)) return "站点请求超时";
   if (/resolve|dns/i.test(error)) return "域名解析失败";
@@ -731,3 +901,6 @@ function readError(error: unknown) {
 
 const selectClassName =
   "h-8 rounded-xl border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
+
+const inputClassName =
+  "h-9 w-full rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-teal-300 focus:ring-2 focus:ring-teal-100";
