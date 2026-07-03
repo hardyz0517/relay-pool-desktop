@@ -267,7 +267,7 @@ export function SettingsPage() {
           />
         </SectionCard>
 
-        <SectionCard title="路由与采集" description="根据 Key 池优先级、能力范围和健康状态选择 Station Key。">
+        <SectionCard title="采集与路由" description="控制后台采集频率、超时、并发和余额耗尽兜底策略。">
           <SettingRow
             control={
               <SelectControl
@@ -299,6 +299,49 @@ export function SettingsPage() {
             }
             description="低于该值时，成本策略会降低或跳过低余额候选。"
             label="低余额阈值"
+          />
+          <SettingRow
+            control={<SettingsNumberInput min="1" value={form.balanceIntervalMinutes} onChange={(balanceIntervalMinutes) => setForm({ ...form, balanceIntervalMinutes })} />}
+            description="余额快照采集周期。"
+            label="余额采集周期（分钟）"
+          />
+          <SettingRow
+            control={<SettingsNumberInput min="1" value={form.groupRateIntervalMinutes} onChange={(groupRateIntervalMinutes) => setForm({ ...form, groupRateIntervalMinutes })} />}
+            description="分组可见性和倍率事实采集周期。"
+            label="分组 / 倍率采集周期（分钟）"
+          />
+          <SettingRow
+            control={<SettingsNumberInput min="1" value={form.modelListIntervalMinutes} onChange={(modelListIntervalMinutes) => setForm({ ...form, modelListIntervalMinutes })} />}
+            description="OpenAI-compatible 模型列表刷新周期。"
+            label="模型采集周期（分钟）"
+          />
+          <SettingRow
+            control={<SettingsNumberInput min="1" value={form.pricingRefreshIntervalMinutes} onChange={(pricingRefreshIntervalMinutes) => setForm({ ...form, pricingRefreshIntervalMinutes })} />}
+            description="价格规则和倍率归一化刷新周期。"
+            label="价格刷新周期（分钟）"
+          />
+          <SettingRow
+            control={<SettingsNumberInput min="3" value={form.collectorTimeoutSeconds} onChange={(collectorTimeoutSeconds) => setForm({ ...form, collectorTimeoutSeconds })} />}
+            description="单次采集请求超时；后端要求至少 3 秒。"
+            label="采集超时（秒）"
+          />
+          <SettingRow
+            control={<SettingsNumberInput max="8" min="1" value={form.collectorMaxConcurrency} onChange={(collectorMaxConcurrency) => setForm({ ...form, collectorMaxConcurrency })} />}
+            description="采集任务最大并发数；后端限制 1 到 8。"
+            label="采集并发数"
+          />
+          <SettingRow
+            control={
+              <SwitchControl
+                ariaLabel="允许余额耗尽兜底"
+                checked={form.allowDepletedFallback}
+                offLabel="关闭"
+                onLabel="开启"
+                onCheckedChange={() => setForm({ ...form, allowDepletedFallback: !form.allowDepletedFallback })}
+              />
+            }
+            description="关闭时，余额耗尽的候选默认不参与路由；开启后只作为兜底候选。"
+            label="允许余额耗尽兜底"
           />
           <SettingRow
             control={
@@ -368,6 +411,29 @@ export function SettingsPage() {
         {error && <div className="text-sm text-rose-700">{error}</div>}
       </form>
     </PageScaffold>
+  );
+}
+
+function SettingsNumberInput({
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  value: string;
+  min?: string;
+  max?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <input
+      className={inputClassName}
+      max={max}
+      min={min}
+      type="number"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
   );
 }
 
