@@ -19,15 +19,18 @@ import {
   StatusBadge,
   useToast,
 } from "@/components/ui";
+import { listChangeEvents } from "@/lib/api/changeEvents";
 import { listBalanceSnapshots } from "@/lib/api/economics";
 import { getProxyStatus, listRequestLogs } from "@/lib/api/proxy";
 import { getSettings } from "@/lib/api/settings";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
+import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 import type { AppSettings } from "@/lib/types/settings";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import { stationStatusLabels } from "@/lib/types/stations";
+import { formatChangeTime, severityLabels, severityTone, unreadRiskCount } from "@/features/changes/changeEventViewModels";
 
 type DashboardPageProps = {
   onNavigate: (pageId: "addProvider") => void;
@@ -54,6 +57,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [keyPoolItems, setKeyPoolItems] = useState<KeyPoolItem[]>([]);
   const [balanceSnapshots, setBalanceSnapshots] = useState<BalanceSnapshot[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
 
   useEffect(() => {
     void Promise.all([
@@ -62,13 +66,15 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       listKeyPoolItems(),
       listBalanceSnapshots(),
       getSettings(),
+      listChangeEvents(),
     ])
-      .then(([status, logs, keys, balances, nextSettings]) => {
+      .then(([status, logs, keys, balances, nextSettings, changes]) => {
         setProxyStatus(status);
         setRequestLogs(logs);
         setKeyPoolItems(keys);
         setBalanceSnapshots(balances);
         setSettings(nextSettings);
+        setChangeEvents(changes);
       })
       .catch((requestError) => {
         toast.error("工作台刷新失败", readError(requestError));
@@ -113,11 +119,23 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       .map((snapshot) => snapshot.stationId),
   ).size;
   const totalBalance = balanceSnapshots.reduce((sum, snapshot) => sum + (snapshot.value ?? 0), 0);
+  const activeRiskEvents = useMemo(
+    () =>
+      changeEvents.filter(
+        (event) =>
+          (event.severity === "critical" || event.severity === "warning") &&
+          event.status !== "dismissed" &&
+          event.status !== "resolved",
+      ),
+    [changeEvents],
+  );
+  const unreadRisks = unreadRiskCount(changeEvents);
+  const criticalRisks = activeRiskEvents.filter((event) => event.severity === "critical").length;
 
   return (
     <PageScaffold
-      title="代理工作台"
-      description="本地 OpenAI-compatible 入口、站点状态、近期请求和成本变化都聚在一个面板里。"
+      title="总览"
+      description="优先展示当前风险、本地代理状态、今日请求、失败率和成本摘要。"
       actions={
         <>
           <Button variant="secondary" onClick={() => void copyText(proxyBaseUrl, "本地入口")}>
@@ -170,9 +188,15 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
         <MetricPanel
           title="今日指标"
-          description="突出运行状态、Key 可用性、失败率和成本。"
+          description="突出风险、Key 可用性、失败率和成本。"
           metrics={[
-            { label: "今日请求", value: todayRequests.toLocaleString("zh-CN"), detail: "代理日志", icon: Activity },
+            {
+              label: "当前风险",
+              value: `${activeRiskEvents.length}`,
+              detail: `${criticalRisks} 严重`,
+              icon: AlertTriangle,
+              tone: activeRiskEvents.length > 0 ? "warning" : "good",
+            },
             {
               label: "可用 Key",
               value: `${enabledKeyCount}`,
@@ -191,6 +215,31 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           ]}
         />
       </div>
+
+      <SectionCard
+        title="当前风险"
+        description="来自变更中心的未解决严重 / 警告事件。"
+        action={<StatusBadge tone={unreadRisks > 0 ? "warning" : "healthy"}>{unreadRisks > 0 ? `${unreadRisks} 未读` : "无未读风险"}</StatusBadge>}
+      >
+        {activeRiskEvents.length === 0 ? (
+          <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
+            当前没有未解决的严重或警告变更。
+          </div>
+        ) : (
+          <div className="grid gap-2">
+            {activeRiskEvents.slice(0, 5).map((event) => (
+              <ObjectRow
+                key={event.id}
+                icon={<AlertTriangle className="h-4 w-4" />}
+                title={event.title}
+                subtitle={`${event.message} · ${formatChangeTime(event.detectedAt)}`}
+                badges={<StatusBadge tone={severityTone[event.severity]}>{severityLabels[event.severity]}</StatusBadge>}
+                metrics={[{ label: "来源", value: event.source }]}
+              />
+            ))}
+          </div>
+        )}
+      </SectionCard>
 
       <SectionCard
         title="路由队列"

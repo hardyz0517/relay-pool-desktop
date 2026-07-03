@@ -3,6 +3,7 @@ import {
   BarChart3,
   ClipboardList,
   DatabaseZap,
+  FlaskConical,
   GitBranch,
   LayoutDashboard,
   KeyRound,
@@ -14,45 +15,51 @@ import type { AppRoute } from "@/lib/types/navigation";
 export const appRoutes: AppRoute[] = [
   {
     id: "dashboard",
-    label: "工作台",
-    description: "当前路由、今日指标和本地代理入口",
+    label: "总览",
+    description: "当前风险、本地代理和关键运行摘要",
     icon: LayoutDashboard,
   },
   {
     id: "stations",
-    label: "中转站",
-    description: "站点账号、登录信息和采集来源",
+    label: "中转站资产",
+    description: "站点资产、余额、倍率、采集和路由参与状态",
     icon: DatabaseZap,
   },
   {
     id: "keyPool",
     label: "Key 池",
-    description: "所有站点 Key 的统一管理视图",
+    description: "所有 Station Key 的路由可用性和优先级",
     icon: KeyRound,
-  },
-  {
-    id: "channels",
-    label: "渠道状态",
-    description: "延迟、可用率和请求状态条",
-    icon: Radar,
-  },
-  {
-    id: "collectors",
-    label: "信息采集",
-    description: "账号、余额、分组、倍率和接口能力",
-    icon: Activity,
-  },
-  {
-    id: "pricing",
-    label: "价格表",
-    description: "模型价格归一化与站点对比",
-    icon: BarChart3,
   },
   {
     id: "routing",
     label: "路由规则",
-    description: "手动优先、最低价和失败切换",
+    description: "默认策略、模型映射和候选解释",
     icon: GitBranch,
+  },
+  {
+    id: "pricing",
+    label: "价格 / 倍率",
+    description: "跨站点模型价格、分组倍率和可用性对比",
+    icon: BarChart3,
+  },
+  {
+    id: "channels",
+    label: "渠道状态",
+    description: "Key / Channel 的延迟、成功率和最近状态",
+    icon: Radar,
+  },
+  {
+    id: "collectors",
+    label: "采集中心",
+    description: "开发者模式下调试采集、登录态和快照识别",
+    icon: FlaskConical,
+  },
+  {
+    id: "changes",
+    label: "变更中心",
+    description: "余额、Key、采集、价格、倍率、模型和路由变化",
+    icon: Activity,
   },
   {
     id: "logs",
@@ -63,7 +70,7 @@ export const appRoutes: AppRoute[] = [
   {
     id: "settings",
     label: "设置",
-    description: "本地代理、数据目录和外观",
+    description: "本地代理、安全和数据目录",
     icon: Settings,
   },
 ];
