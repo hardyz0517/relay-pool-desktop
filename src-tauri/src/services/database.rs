@@ -17,7 +17,7 @@ use crate::models::{
     collector::CollectorSnapshot,
     collector_runs::CollectorRun,
     credentials::{StationCredentials, UpdateStationCredentialsInput},
-    group_facts::{GroupRateRecord, StationGroupBinding},
+    group_facts::{GroupRateRecord, StationGroupBinding, UpsertStationGroupBindingInput},
     pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
     proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
     routing::{
@@ -680,6 +680,35 @@ impl AppDatabase {
     ) -> Result<BalanceSnapshot, String> {
         let connection = self.connection()?;
         upsert_balance_snapshot_in_connection(&connection, input)
+    }
+
+    pub fn list_station_group_bindings(
+        &self,
+        station_id: String,
+    ) -> Result<Vec<StationGroupBinding>, String> {
+        let connection = self.connection()?;
+        list_station_group_bindings_from_connection(&connection, &station_id)
+    }
+
+    pub fn upsert_station_group_binding(
+        &self,
+        input: UpsertStationGroupBindingInput,
+    ) -> Result<StationGroupBinding, String> {
+        let connection = self.connection()?;
+        upsert_station_group_binding_in_connection(&connection, input)
+    }
+
+    pub fn list_group_rate_records(
+        &self,
+        station_id: String,
+    ) -> Result<Vec<GroupRateRecord>, String> {
+        let connection = self.connection()?;
+        list_group_rate_records_from_connection(&connection, &station_id)
+    }
+
+    pub fn list_collector_runs(&self, station_id: String) -> Result<Vec<CollectorRun>, String> {
+        let connection = self.connection()?;
+        list_collector_runs_from_connection(&connection, &station_id)
     }
 
     pub fn list_change_events(&self) -> Result<Vec<ChangeEvent>, String> {
@@ -4563,6 +4592,229 @@ fn row_to_collector_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<CollectorRu
     })
 }
 
+fn validate_binding_kind(value: &str) -> Result<String, String> {
+    match value.trim() {
+        "station_group" | "key_binding" => Ok(value.trim().to_string()),
+        _ => Err("分组绑定类型无效".to_string()),
+    }
+}
+
+fn validate_binding_status(value: &str) -> Result<String, String> {
+    match value.trim() {
+        "available" | "bound" | "missing" | "disabled" | "manual_legacy" => {
+            Ok(value.trim().to_string())
+        }
+        _ => Err("分组绑定状态无效".to_string()),
+    }
+}
+
+fn validate_non_empty_hash(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Err("group_key_hash 不能为空".to_string())
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+fn existing_group_binding_id(
+    connection: &Connection,
+    station_id: &str,
+    station_key_id: Option<&str>,
+    binding_kind: &str,
+    group_key_hash: &str,
+) -> Result<Option<String>, String> {
+    if binding_kind == "key_binding" {
+        let Some(station_key_id) = station_key_id else {
+            return Err("Key 分组绑定必须关联 Station Key".to_string());
+        };
+        return connection
+            .query_row(
+                "SELECT id FROM station_group_bindings
+                 WHERE station_key_id = ?1 AND binding_kind = ?2 AND group_key_hash = ?3
+                 LIMIT 1",
+                params![station_key_id, binding_kind, group_key_hash],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("读取已有 Key 分组绑定失败: {error}"));
+    }
+
+    connection
+        .query_row(
+            "SELECT id FROM station_group_bindings
+             WHERE station_id = ?1 AND binding_kind = ?2 AND group_key_hash = ?3
+             LIMIT 1",
+            params![station_id, binding_kind, group_key_hash],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取已有站点分组绑定失败: {error}"))
+}
+
+fn station_group_binding_by_id(
+    connection: &Connection,
+    id: &str,
+) -> Result<StationGroupBinding, String> {
+    connection
+        .query_row(
+            "SELECT * FROM station_group_bindings WHERE id = ?1",
+            params![id],
+            row_to_station_group_binding,
+        )
+        .optional()
+        .map_err(|error| format!("读取分组绑定失败: {error}"))?
+        .ok_or_else(|| "分组绑定不存在".to_string())
+}
+
+fn upsert_station_group_binding_in_connection(
+    connection: &Connection,
+    input: UpsertStationGroupBindingInput,
+) -> Result<StationGroupBinding, String> {
+    validate_station_exists(connection, &input.station_id)?;
+    if let Some(station_key_id) = input.station_key_id.as_deref() {
+        validate_station_key_exists(connection, station_key_id)?;
+    }
+    if input.group_name.trim().is_empty() {
+        return Err("分组名称不能为空".to_string());
+    }
+
+    let binding_kind = validate_binding_kind(&input.binding_kind)?;
+    let binding_status = validate_binding_status(&input.binding_status)?;
+    let group_key_hash = validate_non_empty_hash(&input.group_key_hash)?;
+    let now = now_string();
+    let raw_json = input
+        .raw_json_redacted
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| format!("序列化 group raw 失败: {error}"))?;
+    let existing_id = existing_group_binding_id(
+        connection,
+        &input.station_id,
+        input.station_key_id.as_deref(),
+        &binding_kind,
+        &group_key_hash,
+    )?;
+    let id = existing_id.unwrap_or_else(|| generate_id("group_binding"));
+
+    connection
+        .execute(
+            "INSERT INTO station_group_bindings (
+                id, station_id, station_key_id, binding_kind, parent_group_binding_id,
+                group_key_hash, group_id_hash, group_name, binding_status,
+                default_rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
+                rate_source, confidence, last_seen_at, last_checked_at, last_rate_changed_at,
+                raw_json_redacted, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+             ON CONFLICT(id) DO UPDATE SET
+                station_key_id = excluded.station_key_id,
+                parent_group_binding_id = excluded.parent_group_binding_id,
+                group_id_hash = excluded.group_id_hash,
+                group_name = excluded.group_name,
+                binding_status = CASE
+                    WHEN station_group_bindings.binding_status = 'bound' AND excluded.binding_status != 'missing'
+                    THEN station_group_bindings.binding_status
+                    ELSE excluded.binding_status
+                END,
+                default_rate_multiplier = excluded.default_rate_multiplier,
+                user_rate_multiplier = excluded.user_rate_multiplier,
+                effective_rate_multiplier = excluded.effective_rate_multiplier,
+                rate_source = excluded.rate_source,
+                confidence = excluded.confidence,
+                last_seen_at = excluded.last_seen_at,
+                last_checked_at = excluded.last_checked_at,
+                last_rate_changed_at = excluded.last_rate_changed_at,
+                raw_json_redacted = excluded.raw_json_redacted,
+                updated_at = excluded.updated_at",
+            params![
+                id,
+                input.station_id,
+                normalize_optional_string(input.station_key_id),
+                binding_kind,
+                normalize_optional_string(input.parent_group_binding_id),
+                group_key_hash,
+                normalize_optional_string(input.group_id_hash),
+                input.group_name.trim(),
+                binding_status,
+                input.default_rate_multiplier,
+                input.user_rate_multiplier,
+                input.effective_rate_multiplier,
+                normalize_optional_string(input.rate_source),
+                clamp_confidence(input.confidence),
+                normalize_optional_string(input.last_seen_at),
+                now,
+                None::<String>,
+                raw_json,
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("保存分组绑定失败: {error}"))?;
+
+    station_group_binding_by_id(connection, &id)
+}
+
+fn list_station_group_bindings_from_connection(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<Vec<StationGroupBinding>, String> {
+    validate_station_exists(connection, station_id)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT * FROM station_group_bindings
+             WHERE station_id = ?1
+             ORDER BY binding_kind ASC, binding_status ASC, group_name ASC",
+        )
+        .map_err(|error| format!("读取分组绑定失败: {error}"))?;
+    let rows = statement
+        .query_map(params![station_id], row_to_station_group_binding)
+        .map_err(|error| format!("查询分组绑定失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析分组绑定失败: {error}"))?;
+    Ok(rows)
+}
+
+fn list_group_rate_records_from_connection(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<Vec<GroupRateRecord>, String> {
+    validate_station_exists(connection, station_id)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT * FROM group_rate_records
+             WHERE station_id = ?1
+             ORDER BY checked_at DESC, created_at DESC",
+        )
+        .map_err(|error| format!("读取分组倍率历史失败: {error}"))?;
+    let rows = statement
+        .query_map(params![station_id], row_to_group_rate_record)
+        .map_err(|error| format!("查询分组倍率历史失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析分组倍率历史失败: {error}"))?;
+    Ok(rows)
+}
+
+fn list_collector_runs_from_connection(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<Vec<CollectorRun>, String> {
+    validate_station_exists(connection, station_id)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT * FROM collector_runs
+             WHERE station_id = ?1
+             ORDER BY created_at DESC",
+        )
+        .map_err(|error| format!("读取采集运行记录失败: {error}"))?;
+    let rows = statement
+        .query_map(params![station_id], row_to_collector_run)
+        .map_err(|error| format!("查询采集运行记录失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析采集运行记录失败: {error}"))?;
+    Ok(rows)
+}
+
 fn collector_snapshot_by_id(
     connection: &Connection,
     id: &str,
@@ -4993,6 +5245,9 @@ fn now_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::group_facts::{
+        BINDING_KIND_STATION_GROUP, BINDING_STATUS_AVAILABLE,
+    };
     use crate::models::pricing::{UpsertBalanceSnapshotInput, UpsertPricingRuleInput};
     use crate::models::routing::RouteEndpointKind;
 
@@ -5085,6 +5340,55 @@ mod tests {
                 .expect("column count");
             assert_eq!(count, 1, "{table}.{column} should exist");
         }
+    }
+
+    #[test]
+    fn group_binding_upsert_dedupes_without_external_group_id() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "group-relay");
+
+        let first = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:default".to_string(),
+                group_id_hash: None,
+                group_name: "default".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: None,
+                effective_rate_multiplier: Some(1.0),
+                rate_source: Some("groups_api".to_string()),
+                confidence: 0.8,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("first");
+
+        let second = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:default".to_string(),
+                group_id_hash: None,
+                group_name: "default".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.2),
+                user_rate_multiplier: None,
+                effective_rate_multiplier: Some(1.2),
+                rate_source: Some("groups_api".to_string()),
+                confidence: 0.9,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("second");
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(second.effective_rate_multiplier, Some(1.2));
     }
 
     #[test]

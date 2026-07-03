@@ -5,7 +5,9 @@ use crate::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
         change_events::{ChangeEvent, UpsertChangeEventInput},
         collector::{CollectorRunResult, CollectorSnapshot},
+        collector_runs::CollectorRun,
         credentials::{StationCredentials, UpdateStationCredentialsInput},
+        group_facts::{GroupRateRecord, StationGroupBinding, UpsertStationGroupBindingInput},
         pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
         proxy::{ProxyStatus, RequestLog},
         routing::{
@@ -292,6 +294,38 @@ pub fn upsert_balance_snapshot(
     input: UpsertBalanceSnapshotInput,
 ) -> Result<BalanceSnapshot, String> {
     database.upsert_balance_snapshot(input)
+}
+
+#[tauri::command]
+pub fn list_station_group_bindings(
+    database: State<'_, AppDatabase>,
+    station_id: String,
+) -> Result<Vec<StationGroupBinding>, String> {
+    database.list_station_group_bindings(station_id)
+}
+
+#[tauri::command]
+pub fn upsert_station_group_binding(
+    database: State<'_, AppDatabase>,
+    input: UpsertStationGroupBindingInput,
+) -> Result<StationGroupBinding, String> {
+    database.upsert_station_group_binding(input)
+}
+
+#[tauri::command]
+pub fn list_group_rate_records(
+    database: State<'_, AppDatabase>,
+    station_id: String,
+) -> Result<Vec<GroupRateRecord>, String> {
+    database.list_group_rate_records(station_id)
+}
+
+#[tauri::command]
+pub fn list_collector_runs(
+    database: State<'_, AppDatabase>,
+    station_id: String,
+) -> Result<Vec<CollectorRun>, String> {
+    database.list_collector_runs(station_id)
 }
 
 #[tauri::command]
