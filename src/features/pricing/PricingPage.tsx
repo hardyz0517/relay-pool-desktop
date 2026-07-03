@@ -7,24 +7,24 @@ import {
   EmptyState,
   InspectorPanel,
   MetricCard,
+  SegmentedControl,
   SectionCard,
-  StatusBadge,
+  SelectControl,
   Toolbar,
-  type DataTableColumn,
+  useToast,
 } from "@/components/ui";
+import { getLatestCollectorSnapshot } from "@/lib/api/collector";
 import { listPricingRules } from "@/lib/api/economics";
 import { listStations } from "@/lib/api/stations";
 import type { PricingRule } from "@/lib/types/economics";
 import type { Station } from "@/lib/types/stations";
+import { buildPriceMatrix, buildRateMatrix } from "./pricingMatrix";
+import { parseRateMultipliers, type RateMultiplierRow } from "./rateSnapshotParser";
 
-const sourceTone = {
-  manual: "healthy",
-  collector: "warning",
-  snapshot: "info",
-  unknown: "disabled",
-} as const;
+type MatrixTone = "good" | "warning" | "neutral" | "muted";
 
 export function PricingPage() {
+  const toast = useToast();
   const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,21 +33,30 @@ export function PricingPage() {
   const [selectedStationId, setSelectedStationId] = useState<string>("all");
   const [selectedSource, setSelectedSource] = useState<string>("all");
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"prices" | "rates" | "availability">("prices");
+  const [rateRows, setRateRows] = useState<RateMultiplierRow[]>([]);
 
   useEffect(() => {
     void refresh();
   }, []);
 
-  async function refresh() {
+  async function refresh(showSuccess = false) {
     setLoading(true);
     setError(null);
     try {
       const [nextPricing, nextStations] = await Promise.all([listPricingRules(), listStations()]);
+      const snapshots = await Promise.all(nextStations.map((station) => getLatestCollectorSnapshot(station.id)));
       setPricingRules(nextPricing);
       setStations(nextStations);
+      setRateRows(snapshots.flatMap(parseRateMultipliers));
       setSelectedModel((current) => current ?? nextPricing[0]?.model ?? null);
+      if (showSuccess) {
+        toast.success("价格表已刷新");
+      }
     } catch (requestError) {
-      setError(readError(requestError));
+      const message = readError(requestError);
+      setError(message);
+      toast.error("刷新价格表失败", message);
     } finally {
       setLoading(false);
     }
@@ -83,17 +92,6 @@ export function PricingPage() {
     return rowPrice < minPrice ? row : min;
   }, null);
 
-  const pricingColumns: DataTableColumn<PricingRule>[] = [
-    { key: "model", header: "模型", render: (row) => <span className="font-semibold text-slate-800">{row.model}</span> },
-    { key: "station", header: "中转站", render: (row) => stationName(row.stationId, stationById) },
-    { key: "group", header: "分组/Tier", render: (row) => `${row.groupName ?? "-"} / ${row.tierLabel ?? "-"}` },
-    { key: "input", header: "输入 / 1M", className: "text-right", render: (row) => formatMoney(row.inputPrice, row.currency) },
-    { key: "output", header: "输出 / 1M", className: "text-right", render: (row) => formatMoney(row.outputPrice, row.currency) },
-    { key: "source", header: "来源", render: (row) => <StatusBadge tone={sourceTone[row.source as keyof typeof sourceTone] ?? "info"}>{row.source}</StatusBadge> },
-    { key: "confidence", header: "可信度", className: "w-20 text-right", render: (row) => `${Math.round(row.confidence * 100)}%` },
-    { key: "updated", header: "更新时间", render: (row) => formatTime(row.updatedAt) },
-  ];
-
   const modelGroups = useMemo(() => {
     const map = new Map<string, PricingRule[]>();
     for (const row of filteredRows) {
@@ -103,12 +101,14 @@ export function PricingPage() {
     }
     return Array.from(map.entries()).map(([model, rows]) => ({ model, rows }));
   }, [filteredRows]);
+  const priceMatrix = useMemo(() => buildPriceMatrix(filteredRows, stations), [filteredRows, stations]);
+  const rateMatrix = useMemo(() => buildRateMatrix(rateRows, stations), [rateRows, stations]);
 
   return (
     <PageScaffold
-      title="价格表"
-      description="统一查看已归一化的模型价格与来源；当前展示的是数据库里的真实 pricing_rules。"
-      actions={<Button variant="secondary" onClick={() => void refresh()}><RefreshCw className="h-4 w-4" />刷新</Button>}
+      title="价格 / 倍率"
+      description="跨站点比较模型价格、分组倍率和模型可用性，不再按数据库表视角浏览 pricing_rules。"
+      actions={<Button variant="secondary" onClick={() => void refresh(true)}><RefreshCw className="h-4 w-4" />刷新</Button>}
     >
       <div className="grid gap-[var(--shell-page-gap)] md:grid-cols-3">
         <MetricCard icon={BadgeDollarSign} label="最低输出价" value={cheapest ? formatMoney(cheapest.outputPrice, cheapest.currency) : "暂无"} detail={cheapest?.model ?? "暂无数据"} />
@@ -116,22 +116,43 @@ export function PricingPage() {
         <MetricCard icon={TrendingDown} label="价格记录" value={`${pricingRules.length}`} detail="按站点 / 分组归一化" />
       </div>
 
-      <div className="grid gap-[var(--shell-page-gap)] xl:grid-cols-[minmax(0,1fr)_390px]">
-        <SectionCard title="模型价格" description="支持搜索、按站点筛选和按来源筛选。" contentClassName="p-0">
+      <div className="grid gap-[var(--shell-page-gap)]">
+        <SectionCard title="跨站点对比" description="按模型、分组倍率和可用性比较中转站。" contentClassName="p-0">
           <Toolbar>
             <div className="flex flex-wrap items-center gap-2">
+              <SegmentedControl
+                value={viewMode}
+                options={[
+                  { value: "prices", label: "模型价格" },
+                  { value: "rates", label: "分组倍率" },
+                  { value: "availability", label: "模型可用性" },
+                ]}
+                onChange={setViewMode}
+              />
               <input className={inputClassName} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模型 / 站点 / 分组" />
-              <select className={inputClassName} value={selectedStationId} onChange={(event) => setSelectedStationId(event.target.value)}>
-                <option value="all">全部中转站</option>
-                {stations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
-              </select>
-              <select className={inputClassName} value={selectedSource} onChange={(event) => setSelectedSource(event.target.value)}>
-                <option value="all">全部来源</option>
-                <option value="manual">manual</option>
-                <option value="collector">collector</option>
-                <option value="snapshot">snapshot</option>
-                <option value="unknown">unknown</option>
-              </select>
+              <SelectControl
+                ariaLabel="按中转站筛选价格"
+                className={inputClassName}
+                value={selectedStationId}
+                options={[
+                  { value: "all", label: "全部中转站" },
+                  ...stations.map((station) => ({ value: station.id, label: station.name })),
+                ]}
+                onChange={setSelectedStationId}
+              />
+              <SelectControl
+                ariaLabel="按来源筛选价格"
+                className={inputClassName}
+                value={selectedSource}
+                options={[
+                  { value: "all", label: "全部来源" },
+                  { value: "manual", label: "manual" },
+                  { value: "collector", label: "collector" },
+                  { value: "snapshot", label: "snapshot" },
+                  { value: "unknown", label: "unknown" },
+                ]}
+                onChange={setSelectedSource}
+              />
             </div>
           </Toolbar>
           {error && <div className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
@@ -139,19 +160,52 @@ export function PricingPage() {
             <div className="px-4 py-5 text-sm text-muted-foreground">正在读取价格表...</div>
           ) : filteredRows.length === 0 ? (
             <EmptyState title="暂无价格数据" description="先在中转站采集价格快照，或手动写入 pricing_rules。" />
+          ) : viewMode === "prices" ? (
+            <MatrixTable
+              rowHeader="模型"
+              stations={stations}
+              rows={priceMatrix.map((row) => ({
+                key: row.model,
+                label: row.model,
+                cells: row.cells.map((cell) => ({
+                  stationId: cell.stationId,
+                  content: cell.available ? formatPriceCell(cell) : "不可用",
+                  tone: cell.isCheapestOutput ? "good" : cell.available ? "neutral" : "muted",
+                })),
+              }))}
+            />
+          ) : viewMode === "rates" ? (
+            <MatrixTable
+              rowHeader="分组"
+              stations={stations}
+              rows={rateMatrix.map((row) => ({
+                key: row.groupName,
+                label: row.groupName,
+                cells: row.cells.map((cell) => ({
+                  stationId: cell.stationId,
+                  content: cell.multiplier == null ? "未采集" : `${cell.multiplier.toFixed(2)}x`,
+                  tone: cell.multiplier == null ? "muted" : cell.multiplier > 1 ? "warning" : cell.multiplier < 1 ? "good" : "neutral",
+                })),
+              }))}
+            />
           ) : (
-            <DataTableLite
-              columns={pricingColumns}
-              rows={filteredRows}
-              getRowKey={(row) => row.id}
-              selectedKey={selected?.id}
-              onRowClick={(row) => setSelectedModel(row.model)}
-              className="rounded-none border-0 shadow-none"
+            <MatrixTable
+              rowHeader="模型"
+              stations={stations}
+              rows={priceMatrix.map((row) => ({
+                key: row.model,
+                label: row.model,
+                cells: row.cells.map((cell) => ({
+                  stationId: cell.stationId,
+                  content: cell.available ? "可用" : "不可用",
+                  tone: cell.available ? "good" : "muted",
+                })),
+              }))}
             />
           )}
         </SectionCard>
 
-        <InspectorPanel title={selected ? `${selected.model} inspector` : "价格详情"} description="展示归一化后的真实价格与来源。">
+        <InspectorPanel title={selected ? `${selected.model} 对比详情` : "对比详情"} description="展示归一化后的真实价格与来源。">
           <div className="space-y-3 p-4">
             {selected ? (
               <>
@@ -182,6 +236,79 @@ export function PricingPage() {
       </div>
     </PageScaffold>
   );
+}
+
+function MatrixTable({
+  rowHeader,
+  stations,
+  rows,
+}: {
+  rowHeader: string;
+  stations: Station[];
+  rows: Array<{
+    key: string;
+    label: string;
+    cells: Array<{ stationId: string; content: string; tone: MatrixTone }>;
+  }>;
+}) {
+  if (rows.length === 0) {
+    return <EmptyState title="暂无对比数据" description="采集价格、倍率或模型后，这里会显示跨站点矩阵。" />;
+  }
+  return (
+    <div className="overflow-auto">
+      <div
+        className="grid min-w-[760px] border-b border-border bg-slate-50 text-xs font-semibold text-muted-foreground"
+        style={{ gridTemplateColumns: `180px repeat(${Math.max(stations.length, 1)}, minmax(132px, 1fr))` }}
+      >
+        <div className="px-3 py-2">{rowHeader}</div>
+        {stations.map((station) => (
+          <div key={station.id} className="truncate px-3 py-2">{station.name}</div>
+        ))}
+      </div>
+      <div className="min-w-[760px] divide-y divide-border">
+        {rows.map((row) => (
+          <div
+            key={row.key}
+            className="grid text-sm"
+            style={{ gridTemplateColumns: `180px repeat(${Math.max(stations.length, 1)}, minmax(132px, 1fr))` }}
+          >
+            <div className="truncate px-3 py-2.5 font-semibold text-slate-800">{row.label}</div>
+            {stations.map((station) => {
+              const cell = row.cells.find((item) => item.stationId === station.id);
+              return (
+                <div key={`${row.key}-${station.id}`} className={`px-3 py-2.5 ${matrixToneClassName(cell?.tone ?? "muted")}`}>
+                  {cell?.content ?? "无"}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function matrixToneClassName(tone: MatrixTone) {
+  if (tone === "good") {
+    return "bg-emerald-50 text-emerald-700";
+  }
+  if (tone === "warning") {
+    return "bg-amber-50 text-amber-700";
+  }
+  if (tone === "muted") {
+    return "text-muted-foreground";
+  }
+  return "text-slate-700";
+}
+
+function formatPriceCell(cell: {
+  inputPrice: number | null;
+  outputPrice: number | null;
+  fixedPrice: number | null;
+  currency: string;
+}) {
+  const output = cell.outputPrice ?? cell.inputPrice ?? cell.fixedPrice;
+  return output == null ? "暂无价格" : `${cell.currency} ${output.toFixed(4)}`;
 }
 
 function stationName(stationId: string, stationById: Map<string, Station>) {

@@ -8,6 +8,7 @@ import { RoutingPage } from "@/features/routing/RoutingPage";
 import { KeyPoolPage } from "@/features/key-pool/KeyPoolPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { ChannelStatusPage } from "@/features/channels/ChannelStatusPage";
+import { ChangeCenterPage } from "@/features/changes/ChangeCenterPage";
 import { AddProviderPage } from "@/features/stations/AddProviderPage";
 import { StationsPage } from "@/features/stations/StationsPage";
 import type { AppPageId } from "@/lib/types/navigation";
@@ -15,7 +16,8 @@ import type { AppRouteId } from "@/lib/types/navigation";
 
 export function App() {
   const [activeRouteId, setActiveRouteId] = useState<AppPageId>("dashboard");
-  const activeShellRouteId: AppRouteId = activeRouteId === "addProvider" ? "dashboard" : activeRouteId;
+  const activeShellRouteId: AppRouteId =
+    activeRouteId === "addProvider" ? "dashboard" : activeRouteId;
 
   const page = useMemo(() => {
     switch (activeRouteId) {
@@ -34,6 +36,8 @@ export function App() {
         return <ChannelStatusPage />;
       case "collectors":
         return <CollectorsPage />;
+      case "changes":
+        return <ChangeCenterPage />;
       case "pricing":
         return <PricingPage />;
       case "routing":

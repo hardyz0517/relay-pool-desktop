@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+﻿import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   closestCenter,
   type DraggableAttributes,
@@ -14,7 +14,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowRight, Edit3, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, Dialog, EmptyState, IconButton, ObjectRow, PropertyList, PropertyRow, StatusBadge, Toolbar } from "@/components/ui";
+import { Button, Dialog, EmptyState, IconButton, MaskedSecret, ObjectRow, PropertyList, PropertyRow, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import { createStation, deleteStation, listStations, reorderStations, updateStation } from "@/lib/api/stations";
 import {
   clearStationCredentials,
@@ -31,11 +31,20 @@ import {
   getLatestCollectorSnapshot,
   listCollectorSnapshots,
 } from "@/lib/api/collector";
+import { listChangeEvents } from "@/lib/api/changeEvents";
+import { listBalanceSnapshots } from "@/lib/api/economics";
+import type { ChangeEvent } from "@/lib/types/changeEvents";
 import { stationKeyStatusLabels, type CreateStationKeyInput, type StationCredentials, type StationKey, type StationKeyStatus, type UpdateStationKeyInput } from "@/lib/types/stationKeys";
 import type { CollectorSnapshot } from "@/lib/types/collector";
+import type { BalanceSnapshot } from "@/lib/types/economics";
 import { stationStatusLabels, stationTypeLabels, type Station, type StationInput, type StationType } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import { StationStatusDot } from "./components/StationStatusDot";
+import {
+  buildStationAssetRows,
+  formatStationBalance,
+  stationRiskTone,
+} from "./stationAssetViewModels";
 
 type StationFormState = {
   name: string;
@@ -99,11 +108,15 @@ const statusTone: Record<Station["status"], "healthy" | "warning" | "error" | "d
   unchecked: "info",
 };
 
+const stationAssetGridTemplate =
+  "minmax(150px,1.15fr) 86px minmax(170px,1fr) 96px minmax(130px,0.85fr) 64px 96px 104px 76px";
+
 type StationsPageProps = {
   onAddProvider?: () => void;
 };
 
 export function StationsPage({ onAddProvider }: StationsPageProps) {
+  const toast = useToast();
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -115,12 +128,17 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
   const [stationKeys, setStationKeys] = useState<StationKey[]>([]);
   const [snapshots, setSnapshots] = useState<CollectorSnapshot[]>([]);
   const [snapshot, setSnapshot] = useState<CollectorSnapshot | null>(null);
+  const [assetSnapshotsByStation, setAssetSnapshotsByStation] = useState<
+    Map<string, CollectorSnapshot | null>
+  >(new Map());
+  const [balanceSnapshots, setBalanceSnapshots] = useState<BalanceSnapshot[]>([]);
+  const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
+  const [drawerStationId, setDrawerStationId] = useState<string | null>(null);
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
   const [keyForm, setKeyForm] = useState<StationKeyFormState>(emptyKeyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actionSaving, setActionSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
@@ -152,6 +170,31 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     () => stations.filter((station) => station.status === "warning" || station.status === "error").length,
     [stations],
   );
+  const keysByStation = useMemo(() => {
+    const map = new Map<string, StationKey[]>();
+    if (activeDialogStation && stationKeys.length > 0) {
+      map.set(activeDialogStation.id, stationKeys);
+    }
+    return map;
+  }, [activeDialogStation, stationKeys]);
+  const snapshotsByStation = useMemo(() => {
+    const map = new Map(assetSnapshotsByStation);
+    if (detailStation && snapshot) {
+      map.set(detailStation.id, snapshot);
+    }
+    return map;
+  }, [assetSnapshotsByStation, detailStation, snapshot]);
+  const stationAssetRows = useMemo(
+    () =>
+      buildStationAssetRows({
+        stations,
+        keysByStation,
+        balances: balanceSnapshots,
+        snapshotsByStation,
+        changes: changeEvents,
+      }),
+    [balanceSnapshots, changeEvents, keysByStation, snapshotsByStation, stations],
+  );
 
   useEffect(() => {
     if (!activeDialogStation) {
@@ -164,8 +207,24 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     setLoading(true);
     setError(null);
     try {
-      const nextStations = await listStations();
+      const [nextStations, nextBalances, nextChanges] = await Promise.all([
+        listStations(),
+        listBalanceSnapshots(),
+        listChangeEvents(),
+      ]);
+      const nextSnapshotEntries = await Promise.all(
+        nextStations.map(async (station) => {
+          try {
+            return [station.id, await getLatestCollectorSnapshot(station.id)] as const;
+          } catch {
+            return [station.id, null] as const;
+          }
+        }),
+      );
       setStations(nextStations);
+      setBalanceSnapshots(nextBalances);
+      setChangeEvents(nextChanges);
+      setAssetSnapshotsByStation(new Map(nextSnapshotEntries));
       setSelectedStationId((current) => {
         if (current && nextStations.some((station) => station.id === current)) {
           return current;
@@ -173,7 +232,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
         return nextStations[0]?.id ?? null;
       });
     } catch (requestError) {
-      setError(readError(requestError));
+      const message = readError(requestError);
+      setError(message);
+      toast.error("读取中转站失败", message);
     } finally {
       setLoading(false);
     }
@@ -191,6 +252,11 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       setStationKeys(nextKeys);
       setSnapshots(nextSnapshots);
       setSnapshot(nextSnapshot);
+      setAssetSnapshotsByStation((current) => {
+        const next = new Map(current);
+        next.set(stationId, nextSnapshot);
+        return next;
+      });
       if (dialogMode === "edit") {
         setForm((current) => ({
           ...current,
@@ -199,7 +265,7 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
         }));
       }
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("读取中转站详情失败", readError(requestError));
     }
   }, [dialogMode]);
 
@@ -212,28 +278,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     setStationKeys([]);
     setSnapshots([]);
     setSnapshot(null);
-    setMessage(null);
-    setError(null);
-  }, []);
-
-  const openCreateWithExample = useCallback(() => {
-    setDialogMode("create");
-    setEditingStationId(null);
-    setDetailStationId(null);
-    setForm({
-      ...emptyForm,
-      name: "Orchid Relay",
-      baseUrl: "https://api.orchid-relay.example/v1",
-      apiKey: "sk-example-change-me",
-      note: "示例站点，仅用于验证本地 SQLite 持久化。",
-      loginUsername: "user@example.com",
-      rememberPassword: true,
-    });
-    setCredentials(null);
-    setStationKeys([]);
-    setSnapshots([]);
-    setSnapshot(null);
-    setMessage(null);
     setError(null);
   }, []);
 
@@ -254,18 +298,18 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       loginPassword: "",
       rememberPassword: false,
     });
-    setMessage(null);
     setError(null);
   }, []);
 
   const openDetail = useCallback((station: Station) => {
     setDialogMode("detail");
     setDetailStationId(station.id);
+    setDrawerStationId(station.id);
     setEditingStationId(null);
     setSelectedStationId(station.id);
-    setMessage(null);
     setError(null);
-  }, []);
+    void refreshExtras(station.id);
+  }, [refreshExtras]);
 
   const closeDialog = useCallback(() => {
     setDialogMode(null);
@@ -276,6 +320,7 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     setStationKeys([]);
     setSnapshots([]);
     setSnapshot(null);
+    setDrawerStationId(null);
     setKeyDialogOpen(false);
     setKeyForm(emptyKeyForm);
   }, []);
@@ -286,7 +331,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
 
   const handleToggleEnabled = useCallback(async (station: Station) => {
     setError(null);
-    setMessage(null);
     try {
       await updateStation({
         id: station.id,
@@ -300,9 +344,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
         note: station.note,
       });
       await refreshStations();
-      setMessage(station.enabled ? "站点已禁用。" : "站点已启用。");
+      toast.success(station.enabled ? "站点已禁用" : "站点已启用");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("更新站点状态失败", readError(requestError));
     }
   }, []);
 
@@ -311,13 +355,12 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       return;
     }
     setError(null);
-    setMessage(null);
     try {
       await deleteStation(station.id);
       await refreshStations();
-      setMessage("站点已删除。");
+      toast.success("站点已删除");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("删除站点失败", readError(requestError));
     }
   }, []);
 
@@ -348,10 +391,10 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     try {
       const savedStations = await reorderStations(nextStations.map((station) => station.id));
       setStations(savedStations);
-      setMessage("站点排序已保存。");
+      toast.success("站点排序已保存");
     } catch (requestError) {
       setStations(previousStations);
-      setError(readError(requestError));
+      toast.error("保存站点排序失败", readError(requestError));
     }
   }
 
@@ -359,7 +402,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     event.preventDefault();
     setSaving(true);
     setError(null);
-    setMessage(null);
     try {
       const input = formToInput(form);
       if (dialogMode === "edit" && editingStationId) {
@@ -376,7 +418,7 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
             rememberPassword: form.rememberPassword,
           });
         }
-        setMessage("站点已更新。");
+        toast.success("站点已更新");
       } else {
         const nextStation = await createStation(input);
         if (form.loginUsername.trim() || form.loginPassword.trim() || form.rememberPassword) {
@@ -387,12 +429,12 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
             rememberPassword: form.rememberPassword,
           });
         }
-        setMessage("站点已创建。");
+        toast.success("站点已创建");
       }
       await refreshStations();
       closeDialog();
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("保存站点失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -407,9 +449,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     try {
       await clearStationCredentials(stationId);
       await refreshExtras(stationId);
-      setMessage("登录信息已清除。");
+      toast.success("登录信息已清除");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("清除登录信息失败", readError(requestError));
     } finally {
       setActionSaving(false);
     }
@@ -425,27 +467,29 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       await detectSub2apiStation(selectedStation.id);
       await refreshStations();
       await refreshExtras(selectedStation.id);
-      setMessage("已执行站点探测。");
+      toast.success("已执行站点探测");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("站点探测失败", readError(requestError));
     } finally {
       setActionSaving(false);
     }
   }
 
-  async function handleRunCollect() {
-    if (!selectedStation) {
+  async function handleRunCollect(station = selectedStation) {
+    if (!station) {
       return;
     }
     setActionSaving(true);
     setError(null);
     try {
-      await collectSub2apiStation(selectedStation.id);
+      await collectSub2apiStation(station.id);
       await refreshStations();
-      await refreshExtras(selectedStation.id);
-      setMessage("已保存采集快照。");
+      if (station.id === selectedStationId || station.id === drawerStationId) {
+        await refreshExtras(station.id);
+      }
+      toast.success("已保存采集快照");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("保存采集快照失败", readError(requestError));
     } finally {
       setActionSaving(false);
     }
@@ -467,9 +511,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       setKeyDialogOpen(false);
       setKeyForm(emptyKeyForm);
       await refreshExtras(activeDialogStation.id);
-      setMessage("API Key 已保存。");
+      toast.success("API Key 已保存");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("保存 API Key 失败", readError(requestError));
     } finally {
       setActionSaving(false);
     }
@@ -486,9 +530,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     try {
       await deleteStationKey(key.id);
       await refreshExtras(activeDialogStation.id);
-      setMessage("API Key 已删除。");
+      toast.success("API Key 已删除");
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("删除 API Key 失败", readError(requestError));
     } finally {
       setActionSaving(false);
     }
@@ -498,8 +542,8 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
 
   return (
     <PageScaffold
-      title="中转站"
-      description="站点账号管理、登录信息与采集来源；Key 的全局排序由 Key 池负责。"
+      title="中转站资产"
+      description="站点资产、余额、倍率、采集和路由参与状态；Key 的全局排序由 Key 池负责。"
       actions={
         <Button onClick={onAddProvider ?? openCreate}>
           <Plus className="h-4 w-4" />
@@ -507,21 +551,17 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
         </Button>
       }
     >
-      <div className="min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
-        <Toolbar>
+      <div className="grid min-w-0 gap-3">
+        <div className="flex min-h-8 flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[13px] font-semibold text-slate-800">中转站列表</div>
             <div className="text-xs text-muted-foreground">
               {stations.length} 个站点，{enabledCount} 个启用，{attentionCount} 个需关注。
             </div>
           </div>
-          <Button variant="secondary" onClick={openCreateWithExample}>
-            <RefreshCw className="h-4 w-4" />
-            示例站点
-          </Button>
-        </Toolbar>
+        </div>
 
-        <div className="p-[var(--shell-page-gap)]">
+        <div>
           {loading ? (
             <div className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
               正在读取本地 SQLite...
@@ -530,53 +570,146 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
             <EmptyState
               title="还没有中转站"
               description="添加一个站点开始管理登录账号和多把 API Key。"
-              action={<Button onClick={openCreateWithExample}>添加示例站点</Button>}
+              action={<Button onClick={onAddProvider ?? openCreate}>添加 Provider</Button>}
             />
           ) : (
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}>
-              <SortableContext items={stationIds} strategy={verticalListSortingStrategy}>
-                <div className="space-y-2">
-                  {stations.map((station) => (
-                    <SortableStationRow
-                      key={station.id}
-                      active={station.id === selectedStation?.id}
-                      station={station}
-                      onDelete={handleDelete}
-                      onEdit={openEdit}
-                      onPreview={openDetail}
-                      onSelect={handleSelect}
-                      onToggleEnabled={handleToggleEnabled}
-                    />
-                  ))}
-                </div>
-              </SortableContext>
-              <DragOverlay dropAnimation={null}>
-                {activeDragStation ? (
-                  <StationRowContent
-                    active
-                    overlay
-                    station={activeDragStation}
-                    onDelete={handleDelete}
-                    onEdit={openEdit}
-                    onPreview={openDetail}
-                    onSelect={handleSelect}
-                    onToggleEnabled={handleToggleEnabled}
-                  />
-                ) : null}
-              </DragOverlay>
-            </DndContext>
+            <div className="overflow-auto rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+              <div
+                className="grid min-w-[940px] items-center gap-2 border-b border-border bg-slate-50 px-3 py-2 text-xs font-semibold text-muted-foreground"
+                style={{ gridTemplateColumns: stationAssetGridTemplate }}
+              >
+                <div>站点</div>
+                <div>类型</div>
+                <div>Base URL</div>
+                <div>余额</div>
+                <div>分组倍率</div>
+                <div>Key</div>
+                <div>健康</div>
+                <div>更新时间</div>
+                <div className="sticky right-0 bg-slate-50 pl-2 text-right">操作</div>
+              </div>
+              <div className="min-w-[940px] divide-y divide-border">
+                {stationAssetRows.map((row) => (
+                  <div
+                    key={row.station.id}
+                    role="button"
+                    tabIndex={0}
+                    className={cn(
+                      "grid w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--accent)/0.25)]",
+                      row.station.id === selectedStation?.id && "bg-teal-50/45",
+                    )}
+                    style={{ gridTemplateColumns: stationAssetGridTemplate }}
+                    onClick={() => openDetail(row.station)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openDetail(row.station);
+                      }
+                    }}
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-semibold text-slate-800">{row.station.name}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {row.riskEvents[0]?.title ?? row.station.note ?? "暂无风险摘要"}
+                        {" · "}
+                        {row.participatesInRouting ? "参与路由" : "暂停路由"}
+                      </div>
+                    </div>
+                    <div className="truncate text-slate-700">{stationTypeLabels[row.station.stationType]}</div>
+                    <code className="truncate text-xs text-slate-600">{row.station.baseUrl}</code>
+                    <div className="truncate text-slate-700">{formatStationBalance(row)}</div>
+                    <div className="flex min-w-0 flex-wrap gap-1">
+                      {row.rateChips.length === 0 ? (
+                        <span className="text-xs text-muted-foreground">未采集</span>
+                      ) : (
+                        row.rateChips.map((chip) => (
+                          <span key={`${row.station.id}-${chip.label}`} className="rounded-full border border-border bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700">
+                            {chip.label} {chip.value}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                    <div className="text-slate-700">{row.enabledKeyCount} / {row.station.keyCount}</div>
+                    <StatusBadge tone={stationRiskTone(row)}>{stationStatusLabels[row.station.status]}</StatusBadge>
+                    <div className="text-xs text-muted-foreground">{formatNullableTime(row.station.updatedAt)}</div>
+                    <div
+                      className={cn(
+                        "sticky right-0 flex justify-end bg-white pl-2",
+                        row.station.id === selectedStation?.id && "bg-teal-50",
+                      )}
+                    >
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={actionSaving || !row.station.enabled}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleRunCollect(row.station);
+                        }}
+                      >
+                        采集
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </div>
 
-      {(message || error) && (
-        <div
-          className={cn(
-            "fixed bottom-4 right-4 z-40 rounded-[var(--surface-radius)] border px-4 py-3 text-sm shadow-[var(--surface-shadow)]",
-            error ? "border-border bg-white text-slate-700" : "border-border bg-white text-slate-700",
-          )}
-        >
-          {error ?? message}
+      {drawerStationId && detailStation && (
+        <div className="fixed inset-y-0 right-0 z-40 w-[min(560px,calc(100vw-72px))] border-l border-border bg-white shadow-2xl">
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-slate-900">{detailStation.name}</div>
+                <div className="truncate text-xs text-muted-foreground">{detailStation.baseUrl}</div>
+              </div>
+              <Button variant="outline" onClick={() => {
+                setDrawerStationId(null);
+                setDialogMode(null);
+              }}>
+                关闭
+              </Button>
+            </div>
+            <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
+              <div className="text-xs text-muted-foreground">{keyCountLabel}</div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => void refreshExtras(detailStation.id)} disabled={actionSaving}>
+                  <RefreshCw className="h-4 w-4" />
+                  刷新
+                </Button>
+                <Button variant="secondary" onClick={() => {
+                  setKeyForm({ ...emptyKeyForm, priority: String(stationKeys.length) });
+                  setKeyDialogOpen(true);
+                }}>
+                  <Plus className="h-4 w-4" />
+                  新增 Key
+                </Button>
+                <Button variant="outline" onClick={() => openEdit(detailStation)}>
+                  <Edit3 className="h-4 w-4" />
+                  编辑
+                </Button>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto">
+              <DetailBody
+                activeDialogStation={detailStation}
+                changeEvents={changeEvents.filter((event) => event.stationId === detailStation.id)}
+                credentials={credentials}
+                keyCountLabel={keyCountLabel}
+                snapshot={snapshot}
+                snapshots={snapshots}
+                stationKeys={stationKeys}
+                onDeleteKey={handleDeleteKey}
+                onEditKey={(key) => {
+                  setKeyForm(keyToForm(key));
+                  setKeyDialogOpen(true);
+                }}
+              />
+            </div>
+          </div>
         </div>
       )}
 
@@ -660,51 +793,6 @@ function StationDialogs({
   if (dialogMode === "detail" && activeDialogStation) {
     return (
       <>
-        <Dialog
-          open
-          title="站点详情"
-          description="只读详情；编辑仍走独立编辑 Dialog。"
-          onClose={onClose}
-          footer={
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-xs text-muted-foreground">{keyCountLabel}</div>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={onRefreshDetail} disabled={actionSaving}>
-                  <RefreshCw className="h-4 w-4" />
-                  刷新
-                </Button>
-                <Button variant="secondary" onClick={() => {
-                  onKeyFormChange({ ...emptyKeyForm, priority: String(stationKeys.length) });
-                  onKeyDialogOpenChange(true);
-                }}>
-                  <Plus className="h-4 w-4" />
-                  新增 Key
-                </Button>
-                <Button variant="outline" onClick={onEdit}>
-                  <Edit3 className="h-4 w-4" />
-                  编辑
-                </Button>
-                <Button variant="outline" onClick={onClose}>
-                  关闭
-                </Button>
-              </div>
-            </div>
-          }
-        >
-          <DetailBody
-            activeDialogStation={activeDialogStation}
-            credentials={credentials}
-            keyCountLabel={keyCountLabel}
-            snapshot={snapshot}
-            snapshots={snapshots}
-            stationKeys={stationKeys}
-            onDeleteKey={onDeleteKey}
-            onEditKey={(key) => {
-              onKeyFormChange(keyToForm(key));
-              onKeyDialogOpenChange(true);
-            }}
-          />
-        </Dialog>
         {keyDialogOpen && (
           <KeyDialog
             actionSaving={actionSaving}
@@ -738,11 +826,16 @@ function StationDialogs({
               <input className={inputClassName} value={form.name} onChange={(event) => onChange({ ...form, name: event.target.value })} required />
             </Field>
             <Field label="站点类型">
-              <select className={inputClassName} value={form.stationType} onChange={(event) => onChange({ ...form, stationType: event.target.value as StationType })}>
-                {Object.entries(stationTypeLabels).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
+              <SelectControl
+                ariaLabel="站点类型"
+                className={inputClassName}
+                value={form.stationType}
+                options={Object.entries(stationTypeLabels).map(([value, label]) => ({
+                  value: value as StationType,
+                  label,
+                }))}
+                onChange={(stationType) => onChange({ ...form, stationType })}
+              />
             </Field>
           </div>
           <Field label="Base URL">
@@ -780,7 +873,7 @@ function StationDialogs({
                 <input checked={form.rememberPassword} className="h-4 w-4 accent-teal-600" type="checkbox" onChange={(event) => onChange({ ...form, rememberPassword: event.target.checked })} />
                 记住密码
               </label>
-              <span className="text-xs text-muted-foreground">P3 阶段密码暂存本地 SQLite，后续迁移到系统密钥链。</span>
+              <span className="text-xs text-muted-foreground">保存后密码会通过 SecretManager 加密写入本地 secrets；留空不会覆盖旧密码。</span>
             </div>
             {credentials && (
               <div className="mt-3 rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs text-slate-700 shadow-[var(--surface-shadow)]">
@@ -812,6 +905,7 @@ function StationDialogs({
 
 function DetailBody({
   activeDialogStation,
+  changeEvents,
   credentials,
   keyCountLabel,
   snapshot,
@@ -821,6 +915,7 @@ function DetailBody({
   onEditKey,
 }: {
   activeDialogStation: Station;
+  changeEvents: ChangeEvent[];
   credentials: StationCredentials | null;
   keyCountLabel: string;
   snapshot: CollectorSnapshot | null;
@@ -871,7 +966,7 @@ function DetailBody({
                     <span className="text-[11px] text-muted-foreground">P{key.priority}</span>
                   </div>
                   <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                    <span>{key.apiKeyMasked}</span>
+                    <MaskedSecret value={key.apiKeyMasked} present={key.apiKeyPresent} />
                     <span>{key.groupName ?? "未分组"}</span>
                     <span>{key.tierLabel ?? "无 tier"}</span>
                     <span>{key.enabled ? "启用" : "停用"}</span>
@@ -904,8 +999,28 @@ function DetailBody({
         )}
       </SectionBlock>
 
+      <SectionBlock title="关联变更">
+        {changeEvents.length === 0 ? (
+          <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无关联变更。</div>
+        ) : (
+          <div className="space-y-2">
+            {changeEvents.slice(0, 6).map((event) => (
+              <div key={event.id} className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm shadow-[var(--surface-shadow)]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-slate-800">{event.title}</span>
+                  <StatusBadge tone={event.severity === "critical" ? "error" : event.severity === "warning" ? "warning" : "info"}>
+                    {event.severity === "critical" ? "严重" : event.severity === "warning" ? "警告" : "信息"}
+                  </StatusBadge>
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">{event.message}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </SectionBlock>
+
       <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs leading-5 text-slate-700 shadow-[var(--surface-shadow)]">
-        登录捕获将在 P4 接入 WebView。当前密码仅在本地 SQLite 临时保存，后续将迁移到系统密钥链或本地加密。
+        登录账号用于信息采集；保存的密码经 SecretManager 加密，采集快照和请求日志会统一脱敏。
       </div>
     </div>
   );
@@ -1069,11 +1184,16 @@ function KeyDialog({
             <input className={inputClassName} value={keyForm.tierLabel} onChange={(event) => onKeyFormChange({ ...keyForm, tierLabel: event.target.value })} />
           </Field>
           <Field label="状态">
-            <select className={inputClassName} value={keyForm.status} onChange={(event) => onKeyFormChange({ ...keyForm, status: event.target.value as StationKeyStatus })}>
-              {Object.entries(stationKeyStatusLabels).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
+            <SelectControl
+              ariaLabel="Key 状态"
+              className={inputClassName}
+              value={keyForm.status}
+              options={Object.entries(stationKeyStatusLabels).map(([value, label]) => ({
+                value: value as StationKeyStatus,
+                label,
+              }))}
+              onChange={(status) => onKeyFormChange({ ...keyForm, status })}
+            />
           </Field>
         </div>
         <label className="flex items-center gap-2 text-sm text-slate-700">
@@ -1154,6 +1274,23 @@ function keyToForm(key: StationKey): StationKeyFormState {
 
 function readError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatNullableTime(value: string | null) {
+  if (!value) {
+    return "未记录";
+  }
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 const inputClassName = "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/40 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";

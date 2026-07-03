@@ -1,4 +1,5 @@
 pub mod capture;
+pub mod change_events;
 pub mod collectors;
 pub mod database;
 pub mod health;
@@ -6,4 +7,5 @@ pub mod logs;
 pub mod pricing;
 pub mod proxy;
 pub mod routing;
+pub mod secrets;
 pub mod stations;

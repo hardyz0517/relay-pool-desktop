@@ -24,11 +24,11 @@ export function PageScaffold({
     <section
       className={cn(
         width === "settings"
-          ? "flex w-full max-w-[1180px] flex-col gap-[var(--shell-page-gap)]"
-          : "flex min-h-full w-full flex-col gap-[var(--shell-page-gap)]",
+          ? "flex min-w-0 w-full flex-col gap-[var(--shell-page-gap)]"
+          : "flex min-h-full min-w-0 w-full flex-col gap-[var(--shell-page-gap)]",
       )}
     >
-      <div className="flex min-h-[44px] items-center justify-between gap-4">
+      <div className="flex min-h-[44px] flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           {backAction}
           <div className="min-w-0">

@@ -3,6 +3,7 @@ use tauri::{Manager, State};
 use crate::{
     models::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
+        change_events::{ChangeEvent, UpsertChangeEventInput},
         collector::{CollectorRunResult, CollectorSnapshot},
         credentials::{StationCredentials, UpdateStationCredentialsInput},
         pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
@@ -11,13 +12,17 @@ use crate::{
             ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyCapabilities,
             StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
         },
+        secrets::{SecretMigrationReport, SecretScanFinding},
         settings::{AppSettings, UpdateSettingsInput},
         station_keys::KeyPoolItem,
         station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
         stations::{CreateStationInput, Station, UpdateStationInput},
         AppStatus,
     },
-    services::{capture, collectors, database::AppDatabase, proxy::runtime::ProxyRuntimeState},
+    services::{
+        capture, collectors, database::AppDatabase, proxy::runtime::ProxyRuntimeState,
+        secrets::SecretManager,
+    },
 };
 
 #[tauri::command]
@@ -33,17 +38,19 @@ pub fn list_stations(database: State<'_, AppDatabase>) -> Result<Vec<Station>, S
 #[tauri::command]
 pub fn create_station(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     input: CreateStationInput,
 ) -> Result<Station, String> {
-    database.create_station(input)
+    database.create_station_with_data_key(input, Some(secrets.data_key()))
 }
 
 #[tauri::command]
 pub fn update_station(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     input: UpdateStationInput,
 ) -> Result<Station, String> {
-    database.update_station(input)
+    database.update_station_with_data_key(input, Some(secrets.data_key()))
 }
 
 #[tauri::command]
@@ -84,10 +91,16 @@ pub fn get_proxy_status(
 #[tauri::command]
 pub fn start_local_proxy(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
     let settings = database.get_settings()?;
-    proxy.start(database.inner().clone(), settings.local_proxy_port)
+    database.migrate_plaintext_secrets(secrets.data_key())?;
+    proxy.start(
+        database.inner().clone(),
+        *secrets.data_key(),
+        settings.local_proxy_port,
+    )
 }
 
 #[tauri::command]
@@ -102,10 +115,16 @@ pub fn stop_local_proxy(
 #[tauri::command]
 pub fn restart_local_proxy(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
     let settings = database.get_settings()?;
-    proxy.restart(database.inner().clone(), settings.local_proxy_port)
+    database.migrate_plaintext_secrets(secrets.data_key())?;
+    proxy.restart(
+        database.inner().clone(),
+        *secrets.data_key(),
+        settings.local_proxy_port,
+    )
 }
 
 #[tauri::command]
@@ -119,6 +138,20 @@ pub fn clear_request_logs(database: State<'_, AppDatabase>) -> Result<(), String
 }
 
 #[tauri::command]
+pub fn get_secret_migration_status(
+    database: State<'_, AppDatabase>,
+) -> Result<SecretMigrationReport, String> {
+    database.secret_migration_status()
+}
+
+#[tauri::command]
+pub fn run_secret_safety_scan(
+    database: State<'_, AppDatabase>,
+) -> Result<Vec<SecretScanFinding>, String> {
+    database.run_secret_safety_scan()
+}
+
+#[tauri::command]
 pub fn list_station_keys(
     database: State<'_, AppDatabase>,
     station_id: String,
@@ -129,17 +162,19 @@ pub fn list_station_keys(
 #[tauri::command]
 pub fn create_station_key(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     input: CreateStationKeyInput,
 ) -> Result<StationKey, String> {
-    database.create_station_key(input)
+    database.create_station_key_with_data_key(input, secrets.data_key())
 }
 
 #[tauri::command]
 pub fn update_station_key(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     input: UpdateStationKeyInput,
 ) -> Result<StationKey, String> {
-    database.update_station_key(input)
+    database.update_station_key_with_data_key(input, secrets.data_key())
 }
 
 #[tauri::command]
@@ -260,6 +295,43 @@ pub fn upsert_balance_snapshot(
 }
 
 #[tauri::command]
+pub fn list_change_events(database: State<'_, AppDatabase>) -> Result<Vec<ChangeEvent>, String> {
+    database.list_change_events()
+}
+
+#[tauri::command]
+pub fn upsert_change_event(
+    database: State<'_, AppDatabase>,
+    input: UpsertChangeEventInput,
+) -> Result<ChangeEvent, String> {
+    database.upsert_change_event(input)
+}
+
+#[tauri::command]
+pub fn mark_change_event_read(
+    database: State<'_, AppDatabase>,
+    id: String,
+) -> Result<ChangeEvent, String> {
+    database.mark_change_event_read(id)
+}
+
+#[tauri::command]
+pub fn dismiss_change_event(
+    database: State<'_, AppDatabase>,
+    id: String,
+) -> Result<ChangeEvent, String> {
+    database.dismiss_change_event(id)
+}
+
+#[tauri::command]
+pub fn resolve_change_event(
+    database: State<'_, AppDatabase>,
+    id: String,
+) -> Result<ChangeEvent, String> {
+    database.resolve_change_event(id)
+}
+
+#[tauri::command]
 pub fn get_station_credentials(
     database: State<'_, AppDatabase>,
     station_id: String,
@@ -270,9 +342,10 @@ pub fn get_station_credentials(
 #[tauri::command]
 pub fn update_station_credentials(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     input: UpdateStationCredentialsInput,
 ) -> Result<StationCredentials, String> {
-    database.update_station_credentials(input)
+    database.update_station_credentials_with_data_key(input, secrets.data_key())
 }
 
 #[tauri::command]
@@ -294,9 +367,10 @@ pub async fn detect_sub2api_station(
 #[tauri::command]
 pub async fn collect_sub2api_station(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
-    collect_station_info(database, station_id).await
+    collect_station_info(database, secrets, station_id).await
 }
 
 #[tauri::command]
@@ -315,11 +389,13 @@ pub async fn detect_station_info(
 #[tauri::command]
 pub async fn collect_station_info(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
     let database = database.inner().clone();
+    let data_key = *secrets.data_key();
     tauri::async_runtime::spawn_blocking(move || {
-        collectors::collect_station_info(&database, station_id)
+        collectors::collect_station_info(&database, &data_key, station_id)
     })
     .await
     .map_err(|error| format!("采集任务执行失败: {error}"))?
@@ -328,11 +404,13 @@ pub async fn collect_station_info(
 #[tauri::command]
 pub async fn test_station_login(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
     let database = database.inner().clone();
+    let data_key = *secrets.data_key();
     tauri::async_runtime::spawn_blocking(move || {
-        collectors::test_station_login(&database, station_id)
+        collectors::test_station_login(&database, &data_key, station_id)
     })
     .await
     .map_err(|error| format!("登录测试执行失败: {error}"))?

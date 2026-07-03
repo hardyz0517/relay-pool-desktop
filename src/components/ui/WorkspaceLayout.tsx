@@ -9,7 +9,7 @@ type WorkspaceLayoutProps = {
 
 export function WorkspaceLayout({
   children,
-  columns = "xl:grid-cols-[320px_minmax(0,1fr)]",
+  columns = "",
   className,
 }: WorkspaceLayoutProps) {
   return (

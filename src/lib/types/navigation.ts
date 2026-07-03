@@ -4,10 +4,11 @@ export type AppRouteId =
   | "dashboard"
   | "stations"
   | "keyPool"
+  | "routing"
+  | "pricing"
   | "channels"
   | "collectors"
-  | "pricing"
-  | "routing"
+  | "changes"
   | "logs"
   | "settings";
 

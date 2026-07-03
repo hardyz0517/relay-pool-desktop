@@ -52,6 +52,7 @@ struct ProxyRuntimeInner {
 
 struct ProxyServerContext {
     database: AppDatabase,
+    data_key: [u8; 32],
     active_requests: Arc<AtomicU32>,
     request_count: Arc<AtomicU64>,
 }
@@ -125,7 +126,12 @@ impl ProxyRuntimeState {
         }
     }
 
-    pub fn start(&self, database: AppDatabase, port: u16) -> Result<ProxyStatus, String> {
+    pub fn start(
+        &self,
+        database: AppDatabase,
+        data_key: [u8; 32],
+        port: u16,
+    ) -> Result<ProxyStatus, String> {
         if port == 0 {
             return Err("本地代理端口必须大于 0".to_string());
         }
@@ -150,6 +156,7 @@ impl ProxyRuntimeState {
         let thread_stop = Arc::clone(&stop_signal);
         let context = Arc::new(ProxyServerContext {
             database,
+            data_key,
             active_requests: Arc::clone(&active_requests),
             request_count: Arc::clone(&request_count),
         });
@@ -195,9 +202,14 @@ impl ProxyRuntimeState {
         Ok(self.status(default_port))
     }
 
-    pub fn restart(&self, database: AppDatabase, port: u16) -> Result<ProxyStatus, String> {
+    pub fn restart(
+        &self,
+        database: AppDatabase,
+        data_key: [u8; 32],
+        port: u16,
+    ) -> Result<ProxyStatus, String> {
         let _ = self.stop(port)?;
-        self.start(database, port)
+        self.start(database, data_key, port)
     }
 
     fn status_from_inner(&self, inner: &ProxyRuntimeInner, default_port: u16) -> ProxyStatus {
@@ -335,7 +347,10 @@ fn handle_proxy_request(context: &ProxyServerContext, request: &ParsedRequest) -
 }
 
 fn forward_models_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
-    let candidates = match context.database.proxy_route_candidates() {
+    let candidates = match context
+        .database
+        .proxy_route_candidates_with_data_key(&context.data_key)
+    {
         Ok(candidates) => enabled_candidates(candidates),
         Err(error) => return ProxyResponse::json_error(500, "database_error", &error),
     };
@@ -471,7 +486,7 @@ fn select_proxy_route(
 ) -> Result<crate::services::proxy::router::RouteSelection, ProxyResponse> {
     let rich_candidates = context
         .database
-        .proxy_rich_route_candidates()
+        .proxy_rich_route_candidates_with_data_key(&context.data_key)
         .map_err(|error| ProxyResponse::json_error(500, "database_error", &error))?;
     if rich_candidates.is_empty() {
         return Err(ProxyResponse::json_error(
@@ -1442,6 +1457,15 @@ mod tests {
     };
 
     #[test]
+    fn proxy_status_reports_localhost_bind_only() {
+        let proxy = ProxyRuntimeState::default();
+        let status = proxy.status(8787);
+
+        assert_eq!(status.bind_addr, "127.0.0.1");
+        assert_ne!(status.bind_addr, "0.0.0.0");
+    }
+
+    #[test]
     fn write_http_response_supports_streamed_bodies_without_content_length() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
         let port = listener.local_addr().expect("local addr").port();
@@ -1572,6 +1596,7 @@ mod tests {
             .expect("station");
         let context = ProxyServerContext {
             database,
+            data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
         };
@@ -1677,6 +1702,7 @@ mod tests {
             .expect("station");
         let context = ProxyServerContext {
             database,
+            data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
         };
@@ -1903,6 +1929,7 @@ mod tests {
             .expect("second station");
         let context = ProxyServerContext {
             database,
+            data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
         };
@@ -2087,6 +2114,7 @@ mod tests {
     fn proxy_context(database: AppDatabase) -> ProxyServerContext {
         ProxyServerContext {
             database,
+            data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
         }
@@ -2124,6 +2152,7 @@ mod tests {
     fn handle_proxy_request_returns_cors_preflight_response() {
         let context = ProxyServerContext {
             database: AppDatabase::new_in_memory_for_tests().expect("database"),
+            data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
         };
@@ -2180,5 +2209,6 @@ mod tests {
         assert!(text.contains("access-control-allow-origin: *"));
         assert!(text.contains("access-control-allow-methods: GET, POST, OPTIONS"));
         assert!(text.contains("access-control-allow-headers: authorization, content-type, accept"));
+        assert!(!text.to_lowercase().contains("x-tauri"));
     }
 }

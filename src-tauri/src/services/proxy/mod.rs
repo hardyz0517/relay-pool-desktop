@@ -1,5 +1,5 @@
-use serde_json::Value;
 use crate::models::proxy::UpstreamApiFormat;
+use serde_json::Value;
 
 pub mod adapters;
 pub mod router;
@@ -43,6 +43,7 @@ pub fn should_fallback(status: u16) -> bool {
 }
 
 pub fn openai_error(message: &str, status: &str) -> Value {
+    let message = crate::services::secrets::mask::redact_text(message);
     serde_json::json!({
         "error": {
             "message": message,
@@ -54,14 +55,7 @@ pub fn openai_error(message: &str, status: &str) -> Value {
 }
 
 pub fn redact_error_message(message: &str) -> String {
-    let mut output = message.to_string();
-    for marker in ["sk-", "Bearer ", "token=", "session=", "authorization"] {
-        if let Some(index) = output.to_lowercase().find(&marker.to_lowercase()) {
-            output.truncate(index);
-            output.push_str("[REDACTED]");
-            return output;
-        }
-    }
+    let mut output = crate::services::secrets::mask::redact_text(message);
     if output.len() > 160 {
         let boundary = output
             .char_indices()
@@ -117,6 +111,18 @@ mod tests {
         assert_eq!(value["error"]["message"], "No enabled keys");
         assert_eq!(value["error"]["type"], "relay_pool_error");
         assert_eq!(value["error"]["code"], "no_enabled_keys");
+    }
+
+    #[test]
+    fn openai_error_redacts_secret_like_message() {
+        let value = openai_error(
+            "upstream said Bearer sk-p8-secret-plaintext-canary",
+            "upstream_error",
+        );
+        let text = serde_json::to_string(&value).expect("json");
+
+        assert!(!text.contains("sk-p8-secret-plaintext-canary"));
+        assert!(text.contains("[REDACTED]"));
     }
 
     #[test]

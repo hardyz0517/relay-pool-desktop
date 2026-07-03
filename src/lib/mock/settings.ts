@@ -5,6 +5,7 @@ export type MockSettings = {
   lowBalanceThresholdCny: number;
   dataDir: string;
   trayBehavior: "minimize-to-tray" | "close-to-tray" | "disabled";
+  developerModeEnabled: boolean;
   themeNote: string;
 };
 
@@ -15,5 +16,6 @@ export const mockSettings: MockSettings = {
   lowBalanceThresholdCny: 15,
   dataDir: "%APPDATA%\\Relay Pool Desktop",
   trayBehavior: "minimize-to-tray",
-  themeNote: "第一版默认浅色主题；深色主题仅作为后续可选项预留。",
+  developerModeEnabled: false,
+  themeNote: "当前使用浅色桌面工具主题。",
 };

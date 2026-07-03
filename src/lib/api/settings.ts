@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, UpdateSettingsInput } from "@/lib/types/settings";
 
+export const SETTINGS_UPDATED_EVENT = "relay-pool-settings-updated";
+
 let memorySettings: AppSettings = {
   localProxyPort: 8787,
   localKeyMasked: "未读取",
@@ -8,7 +10,8 @@ let memorySettings: AppSettings = {
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   trayBehavior: "minimize-to-tray",
-  dataDir: "等待 Tauri 数据目录",
+  developerModeEnabled: false,
+  dataDir: "仅桌面端可读取",
 };
 
 export function getSettings() {
@@ -34,6 +37,9 @@ function normalizeSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
     defaultRoutingStrategy: normalizeRoutingStrategy(settings.defaultRoutingStrategy),
+    developerModeEnabled: normalizeBoolean(
+      (settings as AppSettings & { developerModeEnabled?: unknown }).developerModeEnabled,
+    ),
   };
 }
 
@@ -52,4 +58,8 @@ function normalizeRoutingStrategy(value: AppSettings["defaultRoutingStrategy"] |
 
 function isInvokeUnavailable(error: unknown) {
   return error instanceof Error && /invoke|__TAURI__/i.test(error.message);
+}
+
+function normalizeBoolean(value: unknown) {
+  return value === true || value === "true" || value === 1 || value === "1";
 }

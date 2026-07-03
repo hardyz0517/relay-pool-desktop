@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { ArrowLeft, Check, KeyRound, Server, Sparkles } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, Card, IconButton, PageForm, SectionCard, StatusBadge } from "@/components/ui";
+import { Button, Card, IconButton, PageForm, SectionCard, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import { createStation } from "@/lib/api/stations";
 import { stationTypeLabels, type StationType } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
@@ -28,6 +28,7 @@ const inputClassName =
   "h-8 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";
 
 export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
+  const toast = useToast();
   const [form, setForm] = useState<AddProviderFormState>({
     presetId: defaultPreset.id,
     name: defaultPreset.name,
@@ -60,15 +61,15 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form.name.trim()) {
-      setError("请填写 Provider 名称。");
+      toast.info("请填写 Provider 名称");
       return;
     }
     if (!form.baseUrl.trim()) {
-      setError("请填写 Base URL。");
+      toast.info("请填写 Base URL");
       return;
     }
     if (!form.apiKey.trim()) {
-      setError("请填写 API Key。");
+      toast.info("请填写 API Key");
       return;
     }
 
@@ -87,9 +88,12 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
           : null,
         note: form.note.trim() ? form.note.trim() : null,
       });
+      toast.success("Provider 已添加");
       onCreated();
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : String(requestError));
+      const message = requestError instanceof Error ? requestError.message : String(requestError);
+      setError(message);
+      toast.error("添加 Provider 失败", message);
     } finally {
       setSaving(false);
     }
@@ -107,6 +111,7 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
       status={<StatusBadge tone="info">{stationTypeLabels[form.stationType]}</StatusBadge>}
     >
       <PageForm
+        className="w-full"
         onSubmit={handleSubmit}
         footer={
           <>
@@ -120,10 +125,13 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
           </>
         }
       >
-        <section className="grid gap-[var(--shell-page-gap)] xl:grid-cols-[minmax(0,1fr)_360px]">
+        <section className="grid gap-[var(--shell-page-gap)]">
           <div className="grid gap-[var(--shell-page-gap)]">
-            <SectionCard title="Provider Preset" description="常用 OpenAI-compatible 入口会自动填充站点类型和 Base URL。">
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            <SectionCard
+              title="预设供应商"
+              description="选择后会自动填充站点类型和 Base URL；自定义配置可手动补齐。"
+            >
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,9rem),1fr))] gap-2">
                 {providerPresets.map((preset) => {
                   const selected = preset.id === form.presetId;
                   return (
@@ -131,20 +139,24 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
                       key={preset.id}
                       type="button"
                       className={cn(
-                        "min-h-[92px] rounded-[var(--surface-radius)] border p-3 text-left transition-colors",
+                        "relative flex h-8 min-w-0 cursor-pointer items-center gap-2 rounded-[var(--surface-radius)] px-2.5 text-left text-xs font-medium transition-colors",
                         selected
-                          ? "border-[hsl(var(--accent)/0.45)] bg-[hsl(var(--accent)/0.06)]"
-                          : "border-border bg-white hover:bg-slate-50",
+                          ? "bg-[hsl(var(--accent))] text-white shadow-sm"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900",
                       )}
                       onClick={() => applyPreset(preset.id)}
+                      title={preset.description}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="truncate text-[13px] font-semibold text-slate-900">{preset.name}</div>
-                        {selected && <Check className="h-4 w-4 text-[hsl(var(--accent))]" />}
-                      </div>
-                      <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                        {preset.description}
-                      </div>
+                      <span
+                        className={cn(
+                          "flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-[5px] bg-white text-[10px] font-semibold text-slate-600",
+                          selected && "text-[hsl(var(--accent))]",
+                        )}
+                      >
+                        {preset.name.slice(0, 1)}
+                      </span>
+                      <span className="min-w-0 truncate">{preset.name}</span>
+                      {selected && <Check className="ml-auto h-3.5 w-3.5 shrink-0" />}
                     </button>
                   );
                 })}
@@ -162,17 +174,16 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
                   />
                 </Field>
                 <Field label="站点类型">
-                  <select
+                  <SelectControl
+                    ariaLabel="站点类型"
                     className={inputClassName}
                     value={form.stationType}
-                    onChange={(event) => setForm({ ...form, stationType: event.target.value as StationType })}
-                  >
-                    {Object.entries(stationTypeLabels).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
+                    options={Object.entries(stationTypeLabels).map(([value, label]) => ({
+                      value: value as StationType,
+                      label,
+                    }))}
+                    onChange={(stationType) => setForm({ ...form, stationType })}
+                  />
                 </Field>
               </div>
               <div className="mt-3 grid gap-3">

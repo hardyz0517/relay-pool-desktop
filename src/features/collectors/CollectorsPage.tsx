@@ -9,7 +9,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, EmptyState, InspectorPanel, ObjectRow, SectionCard, StatusBadge } from "@/components/ui";
+import { Button, EmptyState, InspectorPanel, ObjectRow, SectionCard, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import {
   collectStationInfo,
   clearCaptureSession,
@@ -43,6 +43,7 @@ type TaskStatus =
   | "failed";
 
 export function CollectorsPage() {
+  const toast = useToast();
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<string>("");
   const [latestSnapshot, setLatestSnapshot] = useState<CollectorSnapshot | null>(null);
@@ -50,7 +51,6 @@ export function CollectorsPage() {
   const [loading, setLoading] = useState(true);
   const [taskStatus, setTaskStatus] = useState<TaskStatus>("idle");
   const [captureStatus, setCaptureStatus] = useState<CaptureSessionStatus | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const selectedStation = useMemo(
@@ -62,6 +62,10 @@ export function CollectorsPage() {
   const endpointResults = summary.endpointResults ?? [];
   const normalized = latestSnapshot?.normalizedJson ?? {};
   const modelCount = Array.isArray(normalized.models) ? normalized.models.length : 0;
+  const groupDetails = Array.isArray(normalized.groups) ? normalized.groups : [];
+  const rateMultiplierDetails = Array.isArray(normalized.rateMultipliers)
+    ? normalized.rateMultipliers
+    : [];
 
   useEffect(() => {
     void refreshStations();
@@ -90,7 +94,9 @@ export function CollectorsPage() {
         return nextStations[0]?.id ?? "";
       });
     } catch (requestError) {
-      setError(readError(requestError));
+      const message = readError(requestError);
+      setError(message);
+      toast.error("读取站点失败", message);
     } finally {
       setLoading(false);
     }
@@ -105,7 +111,7 @@ export function CollectorsPage() {
       setLatestSnapshot(nextSnapshot);
       setHistory(nextHistory.slice(0, 6));
     } catch (requestError) {
-      setError(readError(requestError));
+      toast.error("刷新采集快照失败", readError(requestError));
     }
   }
 
@@ -121,16 +127,15 @@ export function CollectorsPage() {
     if (!selectedStation) return;
     setTaskStatus("collecting");
     setError(null);
-    setMessage(null);
     try {
       const result = await collectStationInfo(selectedStation.id);
       setLatestSnapshot(result.snapshot);
       await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id)]);
       setTaskStatus("success");
-      setMessage("采集信息已完成。");
+      toast.success("采集信息已完成");
     } catch (requestError) {
       setTaskStatus("failed");
-      setError(shortError(readError(requestError)));
+      toast.error("采集信息失败", shortError(readError(requestError)));
     }
   }
 
@@ -138,16 +143,15 @@ export function CollectorsPage() {
     if (!selectedStation) return;
     setTaskStatus("testingLogin");
     setError(null);
-    setMessage(null);
     try {
       const result = await testStationLogin(selectedStation.id);
       setLatestSnapshot(result.snapshot);
       await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id)]);
       setTaskStatus("success");
-      setMessage("登录测试已完成。");
+      toast.success("登录测试已完成");
     } catch (requestError) {
       setTaskStatus("failed");
-      setError(shortError(readError(requestError)));
+      toast.error("登录测试失败", shortError(readError(requestError)));
     }
   }
 
@@ -155,16 +159,15 @@ export function CollectorsPage() {
     if (!selectedStation) return;
     setTaskStatus("detecting");
     setError(null);
-    setMessage(null);
     try {
       const result = await detectStationInfo(selectedStation.id);
       setLatestSnapshot(result.snapshot);
       await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id)]);
       setTaskStatus("success");
-      setMessage("高级探测已完成。");
+      toast.success("高级探测已完成");
     } catch (requestError) {
       setTaskStatus("failed");
-      setError(shortError(readError(requestError)));
+      toast.error("高级探测失败", shortError(readError(requestError)));
     }
   }
 
@@ -172,14 +175,13 @@ export function CollectorsPage() {
     if (!selectedStation) return;
     setTaskStatus("capturing");
     setError(null);
-    setMessage(null);
     try {
       const nextStatus = await startCaptureSession(selectedStation.id);
       setCaptureStatus(nextStatus);
-      setMessage("实验性网页登录捕获已打开。");
+      toast.success("实验性网页登录捕获已打开");
     } catch (requestError) {
       setTaskStatus("failed");
-      setError(shortError(readError(requestError)));
+      toast.error("打开网页登录捕获失败", shortError(readError(requestError)));
     }
   }
 
@@ -187,16 +189,15 @@ export function CollectorsPage() {
     if (!selectedStation) return;
     setTaskStatus("finishingCapture");
     setError(null);
-    setMessage(null);
     try {
       const result = await finishCaptureSession(selectedStation.id);
       setLatestSnapshot(result.snapshot);
       await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id), refreshCaptureStatus(selectedStation.id)]);
       setTaskStatus("success");
-      setMessage("网页登录捕获快照已保存。");
+      toast.success("网页登录捕获快照已保存");
     } catch (requestError) {
       setTaskStatus("failed");
-      setError(shortError(readError(requestError)));
+      toast.error("保存网页登录捕获失败", shortError(readError(requestError)));
     }
   }
 
@@ -207,9 +208,9 @@ export function CollectorsPage() {
       const nextStatus = await clearCaptureSession(selectedStation.id);
       setCaptureStatus(nextStatus);
       setTaskStatus("idle");
-      setMessage("捕获状态已清除。");
+      toast.success("捕获状态已清除");
     } catch (requestError) {
-      setError(shortError(readError(requestError)));
+      toast.error("清除捕获状态失败", shortError(readError(requestError)));
     }
   }
 
@@ -220,17 +221,21 @@ export function CollectorsPage() {
       const nextStatus = await closeCaptureSession(selectedStation.id);
       setCaptureStatus(nextStatus);
       setTaskStatus("idle");
-      setMessage("网页登录捕获窗口已关闭。");
+      toast.success("网页登录捕获窗口已关闭");
     } catch (requestError) {
-      setError(shortError(readError(requestError)));
+      toast.error("关闭捕获窗口失败", shortError(readError(requestError)));
     }
   }
 
   async function handleCopyDeveloperJson() {
     const text = buildDeveloperJson(latestSnapshot);
     if (!text) return;
-    await navigator.clipboard.writeText(text);
-    setMessage("已复制脱敏 JSON。");
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("已复制脱敏 JSON");
+    } catch (copyError) {
+      toast.error("复制失败", readError(copyError));
+    }
   }
 
   const actionBusy = taskStatus === "testingLogin" || taskStatus === "collecting" || taskStatus === "detecting" || taskStatus === "finishingCapture";
@@ -243,17 +248,15 @@ export function CollectorsPage() {
       description="填写中转站账号密码后，先做登录态采集；高级选项里保留接口探测和网页登录捕获兜底。"
       actions={
         <div className="flex items-center gap-2">
-          <select
+          <SelectControl
+            ariaLabel="选择采集中转站"
             className={selectClassName}
+            disabled={stations.length === 0}
+            placeholder="暂无中转站"
             value={selectedStationId}
-            onChange={(event) => setSelectedStationId(event.target.value)}
-          >
-            {stations.map((station) => (
-              <option key={station.id} value={station.id}>
-                {station.name}
-              </option>
-            ))}
-          </select>
+            options={stations.map((station) => ({ value: station.id, label: station.name }))}
+            onChange={setSelectedStationId}
+          />
           <Button variant="secondary" onClick={handleCollect} disabled={actionBusy || !selectedStation}>
             <Database className="h-4 w-4" />
             {taskStatus === "collecting" ? "采集中" : "采集信息"}
@@ -283,14 +286,14 @@ export function CollectorsPage() {
           description="先在中转站添加一个站点账号，再回到这里做登录态采集。"
         />
       ) : (
-        <div className="grid gap-[var(--shell-page-gap)] xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-[var(--shell-page-gap)]">
           <div className="space-y-3">
             <SectionCard
               title="采集结论"
               description={`${selectedStation.name} · ${stationTypeLabels[selectedStation.stationType]} · ${selectedStation.baseUrl}`}
               action={<StatusBadge tone={toneForConclusion(conclusion)}>{conclusion}</StatusBadge>}
             >
-              <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+              <div className="grid gap-3">
                 <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 shadow-[var(--surface-shadow)]">
                   <div className="flex items-start gap-3">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--surface-radius)] border border-border bg-white text-teal-700">
@@ -307,7 +310,7 @@ export function CollectorsPage() {
                     </div>
                   </div>
                 </div>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                <div className="grid gap-2 sm:grid-cols-2">
                   <CompactFact label="最近采集" value={formatDateTime(latestSnapshot?.fetchedAt)} />
                   <CompactFact label="登录状态" value={summary.loginStatus ?? loginStateLabel(latestSnapshot?.status)} />
                 </div>
@@ -323,6 +326,20 @@ export function CollectorsPage() {
                 <CompactFact label="模型" value={countValue(modelCount)} />
                 <CompactFact label="字段" value={countValue(recognized?.matchedFieldCount)} />
               </div>
+              {(groupDetails.length > 0 || rateMultiplierDetails.length > 0) && (
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  <DetailList
+                    title="分组明细"
+                    items={groupDetails.map(formatGroupDetail)}
+                    emptyText="未识别到分组名称"
+                  />
+                  <DetailList
+                    title="倍率明细"
+                    items={rateMultiplierDetails.map(formatRateMultiplierDetail)}
+                    emptyText="未识别到分组倍率"
+                  />
+                </div>
+              )}
               <div className="mt-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs leading-5 text-muted-foreground shadow-[var(--surface-shadow)]">
                 {summary.diagnosis ??
                   summary.nextStep ??
@@ -346,7 +363,7 @@ export function CollectorsPage() {
             </SectionCard>
           </div>
 
-          <aside className="space-y-3">
+          <div className="space-y-3">
             <InspectorPanel title="高级选项" description="接口探测与网页登录捕获都放这里。">
               <details className="group rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-slate-700">
@@ -463,22 +480,18 @@ export function CollectorsPage() {
                 </div>
               </details>
             </InspectorPanel>
-          </aside>
+          </div>
         </div>
       )}
 
-      {(message || error || actionBusy) && (
+      {actionBusy && (
         <div
           className={cn(
             "fixed bottom-4 right-4 z-40 rounded-[var(--surface-radius)] border px-4 py-3 text-sm shadow-[var(--surface-shadow)]",
-            error
-              ? "border-rose-200 bg-rose-50 text-rose-700"
-              : actionBusy
-                ? "border-cyan-200 bg-cyan-50 text-cyan-700"
-                : "border-emerald-200 bg-emerald-50 text-emerald-700",
+            "border-cyan-200 bg-cyan-50 text-cyan-700",
           )}
         >
-          {error ?? (actionBusy ? taskStatusLabel(taskStatus, summary) : message)}
+          {taskStatusLabel(taskStatus, summary)}
         </div>
       )}
     </PageScaffold>
@@ -490,6 +503,36 @@ function CompactFact({ label, value }: { label: string; value: string }) {
     <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 shadow-[var(--surface-shadow)]">
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className="mt-0.5 truncate text-sm font-semibold text-slate-800">{value}</div>
+    </div>
+  );
+}
+
+function DetailList({
+  title,
+  items,
+  emptyText,
+}: {
+  title: string;
+  items: string[];
+  emptyText: string;
+}) {
+  return (
+    <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 shadow-[var(--surface-shadow)]">
+      <div className="text-[11px] text-muted-foreground">{title}</div>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {items.length > 0 ? (
+          items.map((item, index) => (
+            <span
+              key={`${item}-${index}`}
+              className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700"
+            >
+              {item}
+            </span>
+          ))
+        ) : (
+          <span className="text-xs text-muted-foreground">{emptyText}</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -512,6 +555,28 @@ function toCollectorSummary(value: Record<string, unknown> | undefined): Collect
     webviewRequired: typeof value.webviewRequired === "boolean" ? value.webviewRequired : undefined,
     webviewNote: readString(value.webviewNote),
   };
+}
+
+function formatGroupDetail(value: unknown) {
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return readString(record.name) ?? readString(record.group) ?? readString(record.groupName) ?? displayValue(value);
+  }
+  return displayValue(value);
+}
+
+function formatRateMultiplierDetail(value: unknown) {
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const group = readString(record.group) ?? readString(record.groupName) ?? readString(record.name);
+    const multiplier = record.multiplier ?? record.rateMultiplier ?? record.ratio;
+    if (group && multiplier !== undefined && multiplier !== null) {
+      return `${group} = ${displayValue(multiplier)}`;
+    }
+  }
+  return displayValue(value);
 }
 
 function toEndpointResult(value: unknown): CollectorEndpointResult | null {

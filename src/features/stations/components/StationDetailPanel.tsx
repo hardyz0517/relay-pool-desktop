@@ -1,6 +1,6 @@
-import { Activity, Edit3, Power, RefreshCcw, Wifi } from "lucide-react";
+import { Edit3, Power } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { KeyValueRow, SectionCard, StatusBadge } from "@/components/ui";
+import { KeyValueRow, MaskedSecret, SectionCard, StatusBadge } from "@/components/ui";
 import {
   stationStatusLabels,
   stationTypeLabels,
@@ -32,7 +32,7 @@ export function StationDetailPanel({
     <div className="space-y-4">
       <SectionCard
         title={station.name}
-        description="站点基础信息已持久化到本地 SQLite；检测与采集仍为后续阶段。"
+        description="站点账号资产已保存；Key 池和信息采集页会使用这份配置。"
         action={
           <StatusBadge tone={statusTone[station.status]}>
             {stationStatusLabels[station.status]}
@@ -42,7 +42,10 @@ export function StationDetailPanel({
         <dl>
           <KeyValueRow label="站点类型" value={stationTypeLabels[station.stationType]} />
           <KeyValueRow label="Base URL" value={station.baseUrl} />
-          <KeyValueRow label="API Key" value={station.apiKeyMasked} />
+          <KeyValueRow
+            label="API Key"
+            value={<MaskedSecret value={station.apiKeyMasked} present={station.apiKeyPresent} />}
+          />
           <KeyValueRow
             label="启用状态"
             value={station.enabled ? "已启用" : "已禁用"}
@@ -70,15 +73,15 @@ export function StationDetailPanel({
         </dl>
       </SectionCard>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4">
         <SectionCard title="采集状态" contentClassName="space-y-2">
-          <KeyValueRow label="来源" value="等待 Phase 3 采集器接入" />
+          <KeyValueRow label="来源" value={station.lastPricingFetchedAt ? "信息采集快照" : "尚未采集"} />
           <KeyValueRow label="快照" value={station.lastPricingFetchedAt ?? "未采集"} />
         </SectionCard>
 
         <SectionCard title="健康状态" contentClassName="space-y-2">
           <KeyValueRow label="最近检测" value={station.lastCheckedAt ?? "未检测"} />
-          <KeyValueRow label="最近错误" value="等待健康检测服务接入" />
+          <KeyValueRow label="最近错误" value={station.status === "error" ? "请查看渠道状态或请求日志" : "无"} />
         </SectionCard>
       </div>
 
@@ -89,18 +92,6 @@ export function StationDetailPanel({
       </SectionCard>
 
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" disabled>
-          <Wifi className="h-4 w-4" />
-          测试连接
-        </Button>
-        <Button variant="outline" disabled>
-          <RefreshCcw className="h-4 w-4" />
-          刷新余额
-        </Button>
-        <Button variant="outline" disabled>
-          <Activity className="h-4 w-4" />
-          刷新倍率
-        </Button>
         <Button variant="outline" onClick={onEdit}>
           <Edit3 className="h-4 w-4" />
           编辑
