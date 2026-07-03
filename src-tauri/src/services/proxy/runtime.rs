@@ -80,6 +80,10 @@ struct ProxyResponse {
     route_policy: Option<String>,
     route_reason: Option<String>,
     rejected_candidates_json: Option<String>,
+    group_binding_id: Option<String>,
+    normalization_status: Option<String>,
+    balance_scope: Option<String>,
+    economic_context_json: Option<String>,
     request_cost: RequestCostEstimate,
 }
 
@@ -98,6 +102,10 @@ struct RouteLogMetadata {
     policy: String,
     reason: String,
     rejected_candidates_json: String,
+    group_binding_id: Option<String>,
+    normalization_status: Option<String>,
+    balance_scope: Option<String>,
+    economic_context_json: String,
 }
 
 impl ProxyRuntimeState {
@@ -321,6 +329,10 @@ fn handle_connection(mut stream: TcpStream, context: &ProxyServerContext) {
         pricing_rule_id: response.request_cost.pricing_rule_id.clone(),
         pricing_source: response.request_cost.pricing_source.clone(),
         cost_status: Some(response.request_cost.cost_status.clone()),
+        group_binding_id: response.group_binding_id.clone(),
+        normalization_status: response.normalization_status.clone(),
+        balance_scope: response.balance_scope.clone(),
+        economic_context_json: response.economic_context_json.clone(),
         started_at,
         finished_at: Some(finished_at),
         duration_ms: Some(started.elapsed().as_millis() as i64),
@@ -461,6 +473,10 @@ fn aggregate_models_request(
         route_policy: None,
         route_reason: None,
         rejected_candidates_json: None,
+        group_binding_id: None,
+        normalization_status: None,
+        balance_scope: None,
+        economic_context_json: None,
         request_cost: crate::services::pricing::request_cost_unknown(),
     }
 }
@@ -523,6 +539,7 @@ fn route_request_for_chat(
     stream: bool,
     body: &Value,
     policy: RoutingPolicy,
+    allow_depleted_fallback: bool,
 ) -> RouteRequest {
     RouteRequest {
         endpoint: RouteEndpointKind::ChatCompletions,
@@ -532,6 +549,7 @@ fn route_request_for_chat(
         uses_vision: uses_vision(body),
         uses_reasoning: uses_reasoning(body, model.as_deref()),
         policy,
+        allow_depleted_fallback,
         now_ms: now_millis_for_services() as i64,
     }
 }
@@ -541,6 +559,7 @@ fn route_request_for_responses(
     stream: bool,
     body: &Value,
     policy: RoutingPolicy,
+    allow_depleted_fallback: bool,
 ) -> RouteRequest {
     RouteRequest {
         endpoint: RouteEndpointKind::Responses,
@@ -550,6 +569,7 @@ fn route_request_for_responses(
         uses_vision: uses_vision(body),
         uses_reasoning: uses_reasoning(body, model.as_deref()),
         policy,
+        allow_depleted_fallback,
         now_ms: now_millis_for_services() as i64,
     }
 }
@@ -563,10 +583,20 @@ fn routing_policy(context: &ProxyServerContext) -> RoutingPolicy {
         .unwrap_or(RoutingPolicy::PriorityFallback)
 }
 
+fn allow_depleted_fallback(context: &ProxyServerContext) -> bool {
+    context
+        .database
+        .get_settings()
+        .ok()
+        .map(|settings| settings.allow_depleted_fallback)
+        .unwrap_or(false)
+}
+
 fn parse_routing_policy(value: &str) -> RoutingPolicy {
     match value {
         "stable_first" | "stable" => RoutingPolicy::StableFirst,
         "backup_only" => RoutingPolicy::BackupOnly,
+        "cheap_first" => RoutingPolicy::CheapFirst,
         _ => RoutingPolicy::PriorityFallback,
     }
 }
@@ -585,13 +615,14 @@ fn route_log_metadata(
     context: &RouteLogContext,
     selected_station_key_id: Option<&str>,
 ) -> RouteLogMetadata {
+    let selected = selected_station_key_id.and_then(|id| {
+        context
+            .explanations
+            .iter()
+            .find(|candidate| candidate.station_key_id == id)
+    });
     let reason = selected_station_key_id
-        .and_then(|id| {
-            context
-                .explanations
-                .iter()
-                .find(|candidate| candidate.station_key_id == id)
-        })
+        .and_then(|_| selected)
         .map(|candidate| {
             let reasons = if candidate.reasons.is_empty() {
                 "matched route selector".to_string()
@@ -618,12 +649,40 @@ fn route_log_metadata(
             })
         })
         .collect::<Vec<_>>();
+    let economic_context = json!({
+        "selected": selected.map(|candidate| json!({
+            "stationKeyId": candidate.station_key_id,
+            "stationId": candidate.station_id,
+            "stationName": candidate.station_name,
+            "keyName": candidate.key_name,
+            "pricingRuleId": candidate.pricing_rule_id,
+            "groupBindingId": candidate.group_binding_id,
+            "rateMultiplier": candidate.rate_multiplier,
+            "normalizationStatus": candidate.normalization_status,
+            "priceConfidence": candidate.price_confidence,
+            "estimatedInputPrice": candidate.estimated_input_price,
+            "estimatedOutputPrice": candidate.estimated_output_price,
+            "priceCurrency": candidate.price_currency,
+            "balanceStatus": candidate.balance_status,
+            "balanceValue": candidate.balance_value,
+            "balanceScope": candidate.balance_scope,
+            "balanceCollectedAt": candidate.balance_collected_at,
+            "economicFreshness": candidate.economic_freshness,
+            "economicReasons": candidate.economic_reasons,
+        })),
+        "rejected": rejected,
+    });
 
     RouteLogMetadata {
         policy: routing_policy_label(&context.policy).to_string(),
         reason,
         rejected_candidates_json: serde_json::to_string(&rejected)
             .unwrap_or_else(|_| "[]".to_string()),
+        group_binding_id: selected.and_then(|candidate| candidate.group_binding_id.clone()),
+        normalization_status: selected.and_then(|candidate| candidate.normalization_status.clone()),
+        balance_scope: selected.and_then(|candidate| candidate.balance_scope.clone()),
+        economic_context_json: serde_json::to_string(&economic_context)
+            .unwrap_or_else(|_| "{}".to_string()),
     }
 }
 
@@ -745,8 +804,13 @@ fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -
         }
     };
     let (model, stream) = extract_chat_request_metadata(&body_value);
-    let route_request =
-        route_request_for_chat(model.clone(), stream, &body_value, routing_policy(context));
+    let route_request = route_request_for_chat(
+        model.clone(),
+        stream,
+        &body_value,
+        routing_policy(context),
+        allow_depleted_fallback(context),
+    );
     let route = match select_proxy_route(context, &route_request) {
         Ok(route) => route,
         Err(response) => return response.with_request_meta(model, stream),
@@ -788,8 +852,13 @@ fn forward_responses_request(
         }
     };
     let (model, stream) = extract_responses_metadata(&body_value);
-    let route_request =
-        route_request_for_responses(model.clone(), stream, &body_value, routing_policy(context));
+    let route_request = route_request_for_responses(
+        model.clone(),
+        stream,
+        &body_value,
+        routing_policy(context),
+        allow_depleted_fallback(context),
+    );
     let route = match select_proxy_route(context, &route_request) {
         Ok(route) => route,
         Err(response) => return response.with_request_meta(model, stream),
@@ -974,6 +1043,10 @@ fn render_responses_proxy_response(
         route_policy: response.route_policy,
         route_reason: response.route_reason,
         rejected_candidates_json: response.rejected_candidates_json,
+        group_binding_id: response.group_binding_id,
+        normalization_status: response.normalization_status,
+        balance_scope: response.balance_scope,
+        economic_context_json: response.economic_context_json,
         request_cost: response.request_cost,
     }
 }
@@ -1120,6 +1193,10 @@ fn cors_preflight_response() -> ProxyResponse {
         route_policy: None,
         route_reason: None,
         rejected_candidates_json: None,
+        group_binding_id: None,
+        normalization_status: None,
+        balance_scope: None,
+        economic_context_json: None,
         request_cost: crate::services::pricing::request_cost_unknown(),
     }
 }
@@ -1146,6 +1223,10 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
             route_policy: None,
             route_reason: None,
             rejected_candidates_json: None,
+            group_binding_id: None,
+            normalization_status: None,
+            balance_scope: None,
+            economic_context_json: None,
             request_cost: crate::services::pricing::request_cost_unknown(),
         };
     }
@@ -1180,6 +1261,10 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
         route_policy: None,
         route_reason: None,
         rejected_candidates_json: None,
+        group_binding_id: None,
+        normalization_status: None,
+        balance_scope: None,
+        economic_context_json: None,
         request_cost: crate::services::pricing::request_cost_unknown(),
     }
 }
@@ -1278,6 +1363,10 @@ impl ProxyResponse {
             route_policy: None,
             route_reason: None,
             rejected_candidates_json: None,
+            group_binding_id: None,
+            normalization_status: None,
+            balance_scope: None,
+            economic_context_json: None,
             request_cost: crate::services::pricing::request_cost_unknown(),
         }
     }
@@ -1304,6 +1393,10 @@ impl ProxyResponse {
         self.route_policy = Some(metadata.policy);
         self.route_reason = Some(metadata.reason);
         self.rejected_candidates_json = Some(metadata.rejected_candidates_json);
+        self.group_binding_id = metadata.group_binding_id;
+        self.normalization_status = metadata.normalization_status;
+        self.balance_scope = metadata.balance_scope;
+        self.economic_context_json = Some(metadata.economic_context_json);
         self
     }
 
@@ -1489,6 +1582,10 @@ mod tests {
                 route_policy: None,
                 route_reason: None,
                 rejected_candidates_json: None,
+                group_binding_id: None,
+                normalization_status: None,
+                balance_scope: None,
+                economic_context_json: None,
                 request_cost: crate::services::pricing::request_cost_unknown(),
             };
             write_http_response(&mut server_stream, response).expect("write response");
@@ -2192,6 +2289,10 @@ mod tests {
                 route_policy: None,
                 route_reason: None,
                 rejected_candidates_json: None,
+                group_binding_id: None,
+                normalization_status: None,
+                balance_scope: None,
+                economic_context_json: None,
                 request_cost: crate::services::pricing::request_cost_unknown(),
             };
             write_http_response(&mut server_stream, response).expect("write response");

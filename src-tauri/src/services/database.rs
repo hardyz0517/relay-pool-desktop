@@ -37,6 +37,7 @@ use crate::services::change_events::{
     STATUS_DISMISSED, STATUS_READ, STATUS_RESOLVED, STATUS_UNREAD,
 };
 use crate::services::collectors::session::{token_is_fresh, ResolvedSession, SessionResolveStatus};
+use crate::services::pricing::sanitize_pricing_rule_input;
 use crate::services::proxy::{
     router::{select_route_candidates, RichRouteCandidate, RouteCandidateEconomics, RouteRequest},
     RouteCandidate,
@@ -89,6 +90,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移请求日志路由字段失败: {error}"))?;
         migrate_request_log_cost_columns(&connection)
             .map_err(|error| format!("迁移请求日志成本字段失败: {error}"))?;
+        migrate_request_log_economic_columns(&connection)
+            .map_err(|error| format!("迁移请求日志经济上下文字段失败: {error}"))?;
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -118,6 +121,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移请求日志路由字段失败: {error}"))?;
         migrate_request_log_cost_columns(&connection)
             .map_err(|error| format!("迁移请求日志成本字段失败: {error}"))?;
+        migrate_request_log_economic_columns(&connection)
+            .map_err(|error| format!("迁移请求日志经济上下文字段失败: {error}"))?;
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -1064,6 +1069,10 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             pricing_rule_id TEXT,
             pricing_source TEXT,
             cost_status TEXT,
+            group_binding_id TEXT,
+            normalization_status TEXT,
+            balance_scope TEXT,
+            economic_context_json TEXT,
             created_at TEXT NOT NULL
         );
 
@@ -2242,6 +2251,29 @@ fn migrate_request_log_cost_columns(connection: &Connection) -> rusqlite::Result
     Ok(())
 }
 
+fn migrate_request_log_economic_columns(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(request_logs)")?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for column in [
+        "group_binding_id",
+        "normalization_status",
+        "balance_scope",
+        "economic_context_json",
+    ] {
+        if !rows.iter().any(|existing| existing == column) {
+            connection.execute(
+                &format!("ALTER TABLE request_logs ADD COLUMN {column} TEXT"),
+                [],
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
 fn migrate_pricing_tables(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(
         "
@@ -3167,13 +3199,19 @@ fn route_candidate_economics_from_connection(
 ) -> Result<Option<RouteCandidateEconomics>, String> {
     let pricing_rule = connection
         .query_row(
-            "SELECT id, model, input_price, output_price, fixed_price, currency, source
+            "SELECT id, model, input_price, output_price, fixed_price, currency, source,
+                    group_binding_id, rate_multiplier, normalization_status, confidence
                FROM pricing_rules
               WHERE station_id = ?1
                 AND enabled = 1
-              ORDER BY updated_at DESC, created_at DESC
+                AND (station_key_id = ?2 OR station_key_id IS NULL)
+              ORDER BY
+                CASE WHEN station_key_id = ?2 THEN 0 ELSE 1 END,
+                CASE WHEN normalization_status = 'complete' THEN 0 ELSE 1 END,
+                updated_at DESC,
+                created_at DESC
               LIMIT 1",
-            params![station_id],
+            params![station_id, station_key_id],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -3183,6 +3221,10 @@ fn route_candidate_economics_from_connection(
                     row.get::<_, Option<f64>>(4)?,
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<f64>>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, f64>(10)?,
                 ))
             },
         )
@@ -3191,7 +3233,7 @@ fn route_candidate_economics_from_connection(
 
     let balance_snapshot = connection
         .query_row(
-            "SELECT value, currency, low_balance_threshold, status
+            "SELECT value, currency, low_balance_threshold, status, scope, collected_at
                FROM balance_snapshots
               WHERE station_id = ?1
                 AND (station_key_id = ?2 OR (station_key_id IS NULL AND scope = 'station'))
@@ -3204,6 +3246,8 @@ fn route_candidate_economics_from_connection(
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<f64>>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             },
         )
@@ -3212,17 +3256,42 @@ fn route_candidate_economics_from_connection(
 
     let economics = pricing_rule
         .map(
-            |(id, model, input_price, output_price, fixed_price, currency, source)| {
-                let (balance_value, balance_currency, low_balance_threshold, balance_status) =
+            |(
+                id,
+                model,
+                input_price,
+                output_price,
+                fixed_price,
+                currency,
+                source,
+                group_binding_id,
+                rate_multiplier,
+                normalization_status,
+                confidence,
+            )| {
+                let (
+                    balance_value,
+                    balance_currency,
+                    low_balance_threshold,
+                    balance_status,
+                    balance_scope,
+                    balance_collected_at,
+                ) =
                     balance_snapshot.clone().unwrap_or((
                         None,
                         "unknown".to_string(),
                         None,
                         "unknown".to_string(),
+                        "unknown".to_string(),
+                        None,
                     ));
                 RouteCandidateEconomics {
                     pricing_rule_id: Some(id),
                     pricing_model: Some(model),
+                    group_binding_id,
+                    rate_multiplier,
+                    normalization_status: Some(normalization_status),
+                    price_confidence: Some(confidence),
                     estimated_input_price: input_price,
                     estimated_output_price: output_price,
                     fixed_price,
@@ -3232,15 +3301,29 @@ fn route_candidate_economics_from_connection(
                     balance_value,
                     low_balance_threshold,
                     balance_currency: Some(balance_currency),
+                    balance_scope: Some(balance_scope),
+                    balance_collected_at,
+                    economic_freshness: Some("latest_available".to_string()),
                 }
             },
         )
         .or_else(|| {
             balance_snapshot.map(
-                |(balance_value, balance_currency, low_balance_threshold, balance_status)| {
+                |(
+                    balance_value,
+                    balance_currency,
+                    low_balance_threshold,
+                    balance_status,
+                    balance_scope,
+                    balance_collected_at,
+                )| {
                     RouteCandidateEconomics {
                         pricing_rule_id: None,
                         pricing_model: None,
+                        group_binding_id: None,
+                        rate_multiplier: None,
+                        normalization_status: None,
+                        price_confidence: None,
                         estimated_input_price: None,
                         estimated_output_price: None,
                         fixed_price: None,
@@ -3250,6 +3333,9 @@ fn route_candidate_economics_from_connection(
                         balance_value,
                         low_balance_threshold,
                         balance_currency: Some(balance_currency),
+                        balance_scope: Some(balance_scope),
+                        balance_collected_at,
+                        economic_freshness: Some("balance_only".to_string()),
                     }
                 },
             )
@@ -3279,9 +3365,10 @@ fn route_candidate_economics_by_station_key(
 fn list_pricing_rules_from_connection(connection: &Connection) -> Result<Vec<PricingRule>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, station_id, group_name, tier_label, model, input_price, output_price,
-                    fixed_price, currency, unit, price_type, source, confidence, enabled, note,
-                    collected_at, created_at, updated_at
+            "SELECT id, station_id, station_key_id, group_binding_id, group_name, tier_label,
+                    model, input_price, output_price, fixed_price, rate_multiplier, currency,
+                    unit, price_type, base_price_source, normalization_status, source, confidence,
+                    enabled, note, collected_at, valid_from, valid_until, created_at, updated_at
                FROM pricing_rules
               ORDER BY updated_at DESC, created_at DESC",
         )
@@ -3298,21 +3385,32 @@ fn upsert_pricing_rule_in_connection(
     connection: &Connection,
     input: UpsertPricingRuleInput,
 ) -> Result<PricingRule, String> {
+    let input = sanitize_pricing_rule_input(input);
     validate_station_exists(connection, &input.station_id)?;
+    if let Some(station_key_id) = input.station_key_id.as_deref() {
+        validate_station_key_exists(connection, station_key_id)?;
+    }
     if input.model.trim().is_empty() {
         return Err("模型不能为空".to_string());
     }
     let previous_rule = connection
         .query_row(
-            "SELECT id, station_id, group_name, tier_label, model, input_price, output_price,
-                    fixed_price, currency, unit, price_type, source, confidence, enabled, note,
-                    collected_at, created_at, updated_at
+            "SELECT id, station_id, station_key_id, group_binding_id, group_name, tier_label,
+                    model, input_price, output_price, fixed_price, rate_multiplier, currency,
+                    unit, price_type, base_price_source, normalization_status, source, confidence,
+                    enabled, note, collected_at, valid_from, valid_until, created_at, updated_at
                FROM pricing_rules
-              WHERE station_id = ?1 AND COALESCE(group_name, '') = COALESCE(?2, '') AND model = ?3
+              WHERE station_id = ?1
+                AND COALESCE(station_key_id, '') = COALESCE(?2, '')
+                AND COALESCE(group_binding_id, '') = COALESCE(?3, '')
+                AND COALESCE(group_name, '') = COALESCE(?4, '')
+                AND model = ?5
               ORDER BY updated_at DESC
               LIMIT 1",
             params![
                 &input.station_id,
+                normalize_optional_string(input.station_key_id.clone()),
+                normalize_optional_string(input.group_binding_id.clone()),
                 normalize_optional_string(input.group_name.clone()),
                 input.model.trim(),
             ],
@@ -3326,44 +3424,60 @@ fn upsert_pricing_rule_in_connection(
     connection
         .execute(
             "INSERT INTO pricing_rules (
-                id, station_id, group_name, tier_label, model, input_price, output_price,
-                fixed_price, currency, unit, price_type, source, confidence, enabled, note,
-                collected_at, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+                id, station_id, station_key_id, group_binding_id, group_name, tier_label, model,
+                input_price, output_price, fixed_price, rate_multiplier, currency, unit,
+                price_type, base_price_source, normalization_status, source, confidence, enabled,
+                note, collected_at, valid_from, valid_until, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
              ON CONFLICT(id) DO UPDATE SET
                 station_id = excluded.station_id,
+                station_key_id = excluded.station_key_id,
+                group_binding_id = excluded.group_binding_id,
                 group_name = excluded.group_name,
                 tier_label = excluded.tier_label,
                 model = excluded.model,
                 input_price = excluded.input_price,
                 output_price = excluded.output_price,
                 fixed_price = excluded.fixed_price,
+                rate_multiplier = excluded.rate_multiplier,
                 currency = excluded.currency,
                 unit = excluded.unit,
                 price_type = excluded.price_type,
+                base_price_source = excluded.base_price_source,
+                normalization_status = excluded.normalization_status,
                 source = excluded.source,
                 confidence = excluded.confidence,
                 enabled = excluded.enabled,
                 note = excluded.note,
                 collected_at = excluded.collected_at,
+                valid_from = excluded.valid_from,
+                valid_until = excluded.valid_until,
                 updated_at = excluded.updated_at",
             params![
                 id,
                 input.station_id,
+                normalize_optional_string(input.station_key_id),
+                normalize_optional_string(input.group_binding_id),
                 normalize_optional_string(input.group_name),
                 normalize_optional_string(input.tier_label),
                 input.model.trim(),
                 input.input_price,
                 input.output_price,
                 input.fixed_price,
+                input.rate_multiplier,
                 normalize_currency(input.currency),
                 normalize_unit(input.unit),
                 input.price_type.trim(),
+                normalize_optional_string(input.base_price_source),
+                normalize_optional_string(input.normalization_status)
+                    .unwrap_or_else(|| "manual".to_string()),
                 input.source.trim(),
                 confidence,
                 bool_to_i64(input.enabled),
                 normalize_optional_string(input.note),
                 normalize_optional_string(input.collected_at),
+                normalize_optional_string(input.valid_from),
+                normalize_optional_string(input.valid_until),
                 now,
                 now,
             ],
@@ -3493,29 +3607,29 @@ fn row_to_pricing_rule(row: &rusqlite::Row<'_>) -> rusqlite::Result<PricingRule>
     Ok(PricingRule {
         id: row.get(0)?,
         station_id: row.get(1)?,
-        station_key_id: None,
-        group_binding_id: None,
-        group_name: row.get(2)?,
-        tier_label: row.get(3)?,
-        model: row.get(4)?,
-        input_price: row.get(5)?,
-        output_price: row.get(6)?,
-        fixed_price: row.get(7)?,
-        rate_multiplier: None,
-        currency: row.get(8)?,
-        unit: row.get(9)?,
-        price_type: row.get(10)?,
-        base_price_source: None,
-        normalization_status: "manual".to_string(),
-        source: row.get(11)?,
-        confidence: row.get(12)?,
-        enabled: i64_to_bool(row.get(13)?),
-        note: row.get(14)?,
-        collected_at: row.get(15)?,
-        valid_from: None,
-        valid_until: None,
-        created_at: row.get(16)?,
-        updated_at: row.get(17)?,
+        station_key_id: row.get(2)?,
+        group_binding_id: row.get(3)?,
+        group_name: row.get(4)?,
+        tier_label: row.get(5)?,
+        model: row.get(6)?,
+        input_price: row.get(7)?,
+        output_price: row.get(8)?,
+        fixed_price: row.get(9)?,
+        rate_multiplier: row.get(10)?,
+        currency: row.get(11)?,
+        unit: row.get(12)?,
+        price_type: row.get(13)?,
+        base_price_source: row.get(14)?,
+        normalization_status: row.get(15)?,
+        source: row.get(16)?,
+        confidence: row.get(17)?,
+        enabled: i64_to_bool(row.get(18)?),
+        note: row.get(19)?,
+        collected_at: row.get(20)?,
+        valid_from: row.get(21)?,
+        valid_until: row.get(22)?,
+        created_at: row.get(23)?,
+        updated_at: row.get(24)?,
     })
 }
 
@@ -3543,9 +3657,10 @@ fn row_to_balance_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<BalanceS
 fn pricing_rule_by_id(connection: &Connection, id: &str) -> Result<PricingRule, String> {
     connection
         .query_row(
-            "SELECT id, station_id, group_name, tier_label, model, input_price, output_price,
-                    fixed_price, currency, unit, price_type, source, confidence, enabled, note,
-                    collected_at, created_at, updated_at
+            "SELECT id, station_id, station_key_id, group_binding_id, group_name, tier_label,
+                    model, input_price, output_price, fixed_price, rate_multiplier, currency,
+                    unit, price_type, base_price_source, normalization_status, source, confidence,
+                    enabled, note, collected_at, valid_from, valid_until, created_at, updated_at
                FROM pricing_rules
               WHERE id = ?1",
             params![id],
@@ -3811,6 +3926,9 @@ fn simulate_route_in_connection(
             .map(|settings| parse_routing_policy_value(&settings.default_routing_strategy))
             .unwrap_or(RoutingPolicy::PriorityFallback)
     });
+    let allow_depleted_fallback = settings_from_connection(connection, data_dir)
+        .map(|settings| settings.allow_depleted_fallback)
+        .unwrap_or(false);
     let request = RouteRequest {
         endpoint: input.endpoint,
         model: input.model,
@@ -3819,6 +3937,7 @@ fn simulate_route_in_connection(
         uses_vision: input.uses_vision,
         uses_reasoning: input.uses_reasoning,
         policy: policy.clone(),
+        allow_depleted_fallback,
         now_ms: now_millis_for_services() as i64,
     };
     let candidates = proxy_rich_route_candidates_from_connection(connection)?;
@@ -3870,6 +3989,7 @@ fn insert_request_log_in_connection(
     let error_message = redact_optional_text(input.error_message);
     let route_reason = redact_optional_text(input.route_reason);
     let rejected_candidates_json = redact_optional_text(input.rejected_candidates_json);
+    let economic_context_json = redact_optional_text(input.economic_context_json);
     connection
         .execute(
             "INSERT INTO request_logs (
@@ -3878,8 +3998,9 @@ fn insert_request_log_in_connection(
                 error_message, route_policy, route_reason, rejected_candidates_json,
                 prompt_tokens, completion_tokens, total_tokens, estimated_input_cost,
                 estimated_output_cost, estimated_total_cost, cost_currency, pricing_rule_id,
-                pricing_source, cost_status, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
+                pricing_source, cost_status, group_binding_id, normalization_status,
+                balance_scope, economic_context_json, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32)",
             params![
                 id,
                 input.started_at,
@@ -3908,6 +4029,10 @@ fn insert_request_log_in_connection(
                 normalize_optional_string(input.pricing_rule_id),
                 normalize_optional_string(input.pricing_source),
                 normalize_optional_string(input.cost_status),
+                normalize_optional_string(input.group_binding_id),
+                normalize_optional_string(input.normalization_status),
+                normalize_optional_string(input.balance_scope),
+                economic_context_json,
                 created_at,
             ],
         )
@@ -3945,7 +4070,11 @@ fn row_to_request_log(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLog> {
         pricing_rule_id: row.get(24)?,
         pricing_source: row.get(25)?,
         cost_status: row.get(26)?,
-        created_at: row.get(27)?,
+        group_binding_id: row.get(27)?,
+        normalization_status: row.get(28)?,
+        balance_scope: row.get(29)?,
+        economic_context_json: row.get(30)?,
+        created_at: row.get(31)?,
     })
 }
 
@@ -3957,7 +4086,8 @@ fn request_log_by_id(connection: &Connection, id: &str) -> Result<RequestLog, St
                     error_message, route_policy, route_reason, rejected_candidates_json,
                     prompt_tokens, completion_tokens, total_tokens, estimated_input_cost,
                     estimated_output_cost, estimated_total_cost, cost_currency, pricing_rule_id,
-                    pricing_source, cost_status, created_at
+                    pricing_source, cost_status, group_binding_id, normalization_status,
+                    balance_scope, economic_context_json, created_at
                FROM request_logs
               WHERE id = ?1",
             params![id],
@@ -3976,7 +4106,8 @@ fn list_request_logs_from_connection(connection: &Connection) -> Result<Vec<Requ
                     error_message, route_policy, route_reason, rejected_candidates_json,
                     prompt_tokens, completion_tokens, total_tokens, estimated_input_cost,
                     estimated_output_cost, estimated_total_cost, cost_currency, pricing_rule_id,
-                    pricing_source, cost_status, created_at
+                    pricing_source, cost_status, group_binding_id, normalization_status,
+                    balance_scope, economic_context_json, created_at
                FROM request_logs
               ORDER BY created_at DESC
               LIMIT 500",
@@ -5987,6 +6118,10 @@ mod tests {
             ("pricing_rules", "rate_multiplier"),
             ("pricing_rules", "normalization_status"),
             ("pricing_rules", "valid_until"),
+            ("request_logs", "group_binding_id"),
+            ("request_logs", "normalization_status"),
+            ("request_logs", "balance_scope"),
+            ("request_logs", "economic_context_json"),
         ] {
             let count: i64 = connection
                 .query_row(
@@ -6635,6 +6770,17 @@ mod tests {
                 pricing_rule_id: None,
                 pricing_source: None,
                 cost_status: None,
+                group_binding_id: Some("group-1".to_string()),
+                normalization_status: Some("complete".to_string()),
+                balance_scope: Some("station".to_string()),
+                economic_context_json: Some(
+                    serde_json::json!({
+                        "groupBindingId": "group-1",
+                        "normalizationStatus": "complete",
+                        "balanceScope": "station"
+                    })
+                    .to_string(),
+                ),
                 started_at: "1000".to_string(),
                 finished_at: Some("1100".to_string()),
                 duration_ms: Some(100),
@@ -6647,6 +6793,9 @@ mod tests {
             Some("selected key-1 because model allowed")
         );
         assert_eq!(log.rejected_candidates_json.as_deref(), Some("[]"));
+        assert_eq!(log.group_binding_id.as_deref(), Some("group-1"));
+        assert_eq!(log.normalization_status.as_deref(), Some("complete"));
+        assert_eq!(log.balance_scope.as_deref(), Some("station"));
         let serialized = serde_json::to_string(&log).unwrap();
         assert!(!serialized.contains("\"prompt\":"));
     }
@@ -6690,6 +6839,16 @@ mod tests {
                 pricing_rule_id: None,
                 pricing_source: None,
                 cost_status: None,
+                group_binding_id: None,
+                normalization_status: None,
+                balance_scope: None,
+                economic_context_json: Some(
+                    serde_json::json!({
+                        "authorization": "Bearer sk-p8-secret-plaintext-canary",
+                        "cookie": "rpd_session=p8-cookie-canary"
+                    })
+                    .to_string(),
+                ),
                 started_at: "1000".to_string(),
                 finished_at: Some("1100".to_string()),
                 duration_ms: Some(100),

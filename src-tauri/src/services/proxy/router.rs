@@ -15,6 +15,7 @@ pub struct RouteRequest {
     pub uses_vision: bool,
     pub uses_reasoning: bool,
     pub policy: RoutingPolicy,
+    pub allow_depleted_fallback: bool,
     pub now_ms: i64,
 }
 
@@ -33,6 +34,10 @@ pub struct RichRouteCandidate {
 pub struct RouteCandidateEconomics {
     pub pricing_rule_id: Option<String>,
     pub pricing_model: Option<String>,
+    pub group_binding_id: Option<String>,
+    pub rate_multiplier: Option<f64>,
+    pub normalization_status: Option<String>,
+    pub price_confidence: Option<f64>,
     pub estimated_input_price: Option<f64>,
     pub estimated_output_price: Option<f64>,
     pub fixed_price: Option<f64>,
@@ -42,6 +47,9 @@ pub struct RouteCandidateEconomics {
     pub balance_value: Option<f64>,
     pub low_balance_threshold: Option<f64>,
     pub balance_currency: Option<String>,
+    pub balance_scope: Option<String>,
+    pub balance_collected_at: Option<String>,
+    pub economic_freshness: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +100,22 @@ pub fn select_route_candidates(
                 .economics
                 .as_ref()
                 .and_then(|economics| economics.pricing_rule_id.clone()),
+            group_binding_id: candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.group_binding_id.clone()),
+            rate_multiplier: candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.rate_multiplier),
+            normalization_status: candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.normalization_status.clone()),
+            price_confidence: candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.price_confidence),
             estimated_input_price: candidate
                 .economics
                 .as_ref()
@@ -112,6 +136,18 @@ pub fn select_route_candidates(
                 .economics
                 .as_ref()
                 .and_then(|economics| economics.balance_value),
+            balance_scope: candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.balance_scope.clone()),
+            balance_collected_at: candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.balance_collected_at.clone()),
+            economic_freshness: candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.economic_freshness.clone()),
             economic_reasons: candidate_economic_reasons(&candidate, request),
         };
 
@@ -225,6 +261,16 @@ fn collect_rejections(
             }
         }
     }
+
+    if !request.allow_depleted_fallback
+        && candidate
+            .economics
+            .as_ref()
+            .and_then(|economics| economics.balance_status.as_deref())
+            == Some("depleted")
+    {
+        rejection_reasons.push("balance depleted and depleted fallback is disabled".to_string());
+    }
 }
 
 fn candidate_score(
@@ -271,6 +317,9 @@ fn candidate_score(
 }
 
 fn cheap_first_score(economics: &RouteCandidateEconomics) -> i64 {
+    if economics.normalization_status.as_deref() != Some("complete") {
+        return 50_000_000 + balance_penalty(economics);
+    }
     let estimated_cost = estimated_cost(economics);
     let mut score = (estimated_cost * 1_000_000.0).round() as i64;
     score += balance_penalty(economics);
@@ -319,12 +368,28 @@ fn candidate_economic_reasons(
     if let Some(rule_id) = economics.pricing_rule_id.as_deref() {
         reasons.push(format!("pricing rule {rule_id}"));
     }
+    if let Some(group_binding_id) = economics.group_binding_id.as_deref() {
+        reasons.push(format!("group binding {group_binding_id}"));
+    }
+    if let Some(rate_multiplier) = economics.rate_multiplier {
+        reasons.push(format!("rate multiplier {:.4}", rate_multiplier));
+    }
+    match economics.normalization_status.as_deref() {
+        Some("complete") => reasons.push("complete normalized price".to_string()),
+        Some("group_rate_only") => {
+            reasons.push("only group rate is available; exact price unknown".to_string())
+        }
+        Some(other) => reasons.push(format!("pricing normalization {other}")),
+        None => {}
+    }
     if let Some(currency) = economics.price_currency.as_deref() {
         reasons.push(format!("price currency {currency}"));
     }
 
     let estimated_cost = estimated_cost(economics);
-    if matches!(request.policy, RoutingPolicy::CheapFirst) {
+    if matches!(request.policy, RoutingPolicy::CheapFirst)
+        && economics.normalization_status.as_deref() == Some("complete")
+    {
         reasons.push(format!("lower estimated cost {:.4}", estimated_cost));
     }
 
@@ -340,6 +405,12 @@ fn candidate_economic_reasons(
     }
     if let Some(threshold) = economics.low_balance_threshold {
         reasons.push(format!("low balance threshold {:.2}", threshold));
+    }
+    if let Some(scope) = economics.balance_scope.as_deref() {
+        reasons.push(format!("balance scope {scope}"));
+    }
+    if let Some(freshness) = economics.economic_freshness.as_deref() {
+        reasons.push(format!("economic freshness {freshness}"));
     }
 
     reasons
@@ -542,6 +613,79 @@ mod tests {
                     .any(|reason| reason.contains("lower estimated cost"))));
     }
 
+    #[test]
+    fn cheap_first_does_not_treat_group_rate_only_as_complete_pricing() {
+        let request = route_request(
+            RouteEndpointKind::ChatCompletions,
+            Some("gpt-5.4"),
+            false,
+            RoutingPolicy::CheapFirst,
+        );
+        let mut group_rate_only = economics(None, None, Some(50.0), Some(1.0), "normal");
+        group_rate_only.normalization_status = Some("group_rate_only".to_string());
+        group_rate_only.rate_multiplier = Some(0.1);
+        group_rate_only.group_binding_id = Some("group-pro".to_string());
+
+        let candidates = vec![
+            rich_candidate_with_economics(
+                "rate-only",
+                0,
+                capabilities(|_| {}),
+                group_rate_only,
+            ),
+            rich_candidate_with_economics(
+                "complete-price",
+                0,
+                capabilities(|_| {}),
+                economics(Some(0.20), Some(0.40), Some(20.0), Some(1.0), "normal"),
+            ),
+        ];
+
+        let selected = select_route_candidates(&request, candidates, &[]).expect("selection");
+
+        assert_eq!(selected.accepted[0].candidate.station_key_id, "complete-price");
+        assert!(selected.explanations.iter().any(|item| {
+            item.station_key_id == "rate-only"
+                && item.normalization_status.as_deref() == Some("group_rate_only")
+                && item.economic_reasons.iter().any(|reason| {
+                    reason.contains("only group rate is available; exact price unknown")
+                })
+        }));
+    }
+
+    #[test]
+    fn balance_depleted_is_rejected_unless_fallback_allowed() {
+        let request = route_request(
+            RouteEndpointKind::ChatCompletions,
+            Some("gpt-5.4"),
+            false,
+            RoutingPolicy::PriorityFallback,
+        );
+        let candidates = vec![rich_candidate_with_economics(
+            "empty",
+            0,
+            capabilities(|_| {}),
+            economics(Some(0.20), Some(0.40), Some(0.0), Some(1.0), "depleted"),
+        )];
+
+        let selected = select_route_candidates(&request, candidates, &[]).expect("selection");
+
+        assert!(selected.accepted.is_empty());
+        assert!(selected.explanations.iter().any(|item| {
+            item.station_key_id == "empty"
+                && item.rejection_reasons.iter().any(|reason| {
+                    reason.contains("balance depleted and depleted fallback is disabled")
+                })
+        }));
+
+        let mut allowed_request = request.clone();
+        allowed_request.allow_depleted_fallback = true;
+        let selected =
+            select_route_candidates(&allowed_request, selected_candidate_fixture(), &[])
+                .expect("selection");
+        assert_eq!(selected.accepted[0].candidate.station_key_id, "empty");
+    }
+
     fn route_request(
         endpoint: RouteEndpointKind,
         model: Option<&str>,
@@ -556,6 +700,7 @@ mod tests {
             uses_vision: false,
             uses_reasoning: false,
             policy,
+            allow_depleted_fallback: false,
             now_ms: 1_800_000_000_000,
         }
     }
@@ -633,6 +778,10 @@ mod tests {
         RouteCandidateEconomics {
             pricing_rule_id: Some("price-test".to_string()),
             pricing_model: Some("gpt-5.4".to_string()),
+            group_binding_id: None,
+            rate_multiplier: None,
+            normalization_status: Some("complete".to_string()),
+            price_confidence: Some(0.9),
             estimated_input_price,
             estimated_output_price,
             fixed_price: None,
@@ -642,7 +791,19 @@ mod tests {
             balance_value,
             low_balance_threshold,
             balance_currency: Some("USD".to_string()),
+            balance_scope: Some("station".to_string()),
+            balance_collected_at: Some("1000".to_string()),
+            economic_freshness: Some("fresh".to_string()),
         }
+    }
+
+    fn selected_candidate_fixture() -> Vec<RichRouteCandidate> {
+        vec![rich_candidate_with_economics(
+            "empty",
+            0,
+            capabilities(|_| {}),
+            economics(Some(0.20), Some(0.40), Some(0.0), Some(1.0), "depleted"),
+        )]
     }
 
     fn health(configure: impl FnOnce(&mut StationKeyHealth)) -> Option<StationKeyHealth> {

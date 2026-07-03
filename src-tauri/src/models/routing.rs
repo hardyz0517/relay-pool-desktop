@@ -117,11 +117,18 @@ pub struct RouteCandidateExplanation {
     pub rejection_reasons: Vec<String>,
     pub mapped_model: Option<String>,
     pub pricing_rule_id: Option<String>,
+    pub group_binding_id: Option<String>,
+    pub rate_multiplier: Option<f64>,
+    pub normalization_status: Option<String>,
+    pub price_confidence: Option<f64>,
     pub estimated_input_price: Option<f64>,
     pub estimated_output_price: Option<f64>,
     pub price_currency: Option<String>,
     pub balance_status: Option<String>,
     pub balance_value: Option<f64>,
+    pub balance_scope: Option<String>,
+    pub balance_collected_at: Option<String>,
+    pub economic_freshness: Option<String>,
     pub economic_reasons: Vec<String>,
 }
 

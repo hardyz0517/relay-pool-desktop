@@ -42,6 +42,10 @@ pub struct RequestLog {
     pub pricing_rule_id: Option<String>,
     pub pricing_source: Option<String>,
     pub cost_status: Option<String>,
+    pub group_binding_id: Option<String>,
+    pub normalization_status: Option<String>,
+    pub balance_scope: Option<String>,
+    pub economic_context_json: Option<String>,
     pub created_at: String,
 }
 
@@ -71,6 +75,10 @@ pub struct CreateRequestLogInput {
     pub pricing_rule_id: Option<String>,
     pub pricing_source: Option<String>,
     pub cost_status: Option<String>,
+    pub group_binding_id: Option<String>,
+    pub normalization_status: Option<String>,
+    pub balance_scope: Option<String>,
+    pub economic_context_json: Option<String>,
     pub started_at: String,
     pub finished_at: Option<String>,
     pub duration_ms: Option<i64>,
