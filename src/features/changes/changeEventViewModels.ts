@@ -29,16 +29,31 @@ export const statusLabels: Record<ChangeEventStatus, string> = {
 export const eventTypeLabels: Record<string, string> = {
   balance_low: "余额偏低",
   balance_depleted: "余额耗尽",
+  group_added: "分组新增",
+  group_missing: "分组不可见",
   rate_changed: "倍率变化",
   price_changed: "价格变化",
+  price_expired: "价格过期",
   model_added: "模型新增",
   model_removed: "模型下架",
   key_invalid: "Key 异常",
+  key_group_bound: "Key 分组已绑定",
+  key_group_unresolved: "Key 分组无法识别",
   collector_failed: "采集失败",
   collector_recovered: "采集恢复",
   route_impacted: "路由受影响",
   station_down: "站点异常",
   station_recovered: "站点恢复",
+};
+
+export const objectTypeLabels: Record<string, string> = {
+  station: "中转站",
+  station_key: "Key",
+  group_binding: "分组绑定",
+  pricing_rule: "价格规则",
+  collector_run: "采集任务",
+  request_log: "请求日志",
+  route: "路由",
 };
 
 export function filterChangeEvents(events: ChangeEvent[], filter: ChangeFilter) {

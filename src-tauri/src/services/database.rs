@@ -3484,6 +3484,20 @@ fn upsert_pricing_rule_in_connection(
         )
         .map_err(|error| format!("保存价格规则失败: {error}"))?;
     let saved = pricing_rule_by_id(connection, &id)?;
+    if saved
+        .valid_until
+        .as_deref()
+        .map(timestamp_is_past)
+        .unwrap_or(false)
+    {
+        let event = crate::services::change_events::price_expired_event(
+            &saved.station_id,
+            &saved.id,
+            &saved.model,
+            saved.valid_until.as_deref(),
+        );
+        let _ = upsert_change_event_in_connection(connection, event);
+    }
     if let Some(previous) = previous_rule {
         if let Some(event) = crate::services::change_events::price_changed_event(
             &saved.station_id,
@@ -4038,7 +4052,34 @@ fn insert_request_log_in_connection(
         )
         .map_err(|error| format!("保存请求日志失败: {error}"))?;
 
-    request_log_by_id(connection, &id)
+    let saved = request_log_by_id(connection, &id)?;
+    if saved.status == "failed" {
+        if let Some(station_id) = saved.station_id.as_deref() {
+            let event = crate::services::change_events::route_impacted_event(
+                station_id,
+                saved
+                    .model
+                    .as_deref()
+                    .or(saved.path.strip_prefix("/v1/"))
+                    .unwrap_or("unknown"),
+                saved
+                    .route_reason
+                    .as_deref()
+                    .or(saved.error_message.as_deref())
+                    .unwrap_or("路由请求失败"),
+                Some(saved.id.as_str()),
+            );
+            let _ = upsert_change_event_in_connection(connection, event);
+        }
+    }
+    Ok(saved)
+}
+
+fn timestamp_is_past(value: &str) -> bool {
+    let Ok(timestamp) = value.trim().parse::<i64>() else {
+        return false;
+    };
+    timestamp <= now_millis_for_services() as i64
 }
 
 fn row_to_request_log(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLog> {
@@ -5139,6 +5180,11 @@ fn upsert_station_group_binding_in_connection(
         &binding_kind,
         &group_key_hash,
     )?;
+    let previous_binding = existing_id
+        .as_deref()
+        .map(|id| station_group_binding_by_id(connection, id))
+        .transpose()?;
+    let was_new = existing_id.is_none();
     let id = existing_id.unwrap_or_else(|| generate_id("group_binding"));
 
     connection
@@ -5195,7 +5241,60 @@ fn upsert_station_group_binding_in_connection(
         )
         .map_err(|error| format!("保存分组绑定失败: {error}"))?;
 
-    station_group_binding_by_id(connection, &id)
+    let saved = station_group_binding_by_id(connection, &id)?;
+    emit_group_binding_change_events(connection, previous_binding.as_ref(), &saved);
+    if was_new && saved.binding_kind == "station_group" && saved.binding_status == "available" {
+        let event = crate::services::change_events::group_added_event(
+            &saved.station_id,
+            &saved.group_name,
+            &saved.id,
+        );
+        let _ = upsert_change_event_in_connection(connection, event);
+    }
+
+    Ok(saved)
+}
+
+fn emit_group_binding_change_events(
+    connection: &Connection,
+    previous: Option<&StationGroupBinding>,
+    saved: &StationGroupBinding,
+) {
+    let previous_status = previous.map(|binding| binding.binding_status.as_str());
+    if saved.binding_kind == "station_group"
+        && saved.binding_status == "missing"
+        && previous_status != Some("missing")
+    {
+        let event = crate::services::change_events::group_missing_event(
+            &saved.station_id,
+            &saved.group_name,
+            &saved.id,
+        );
+        let _ = upsert_change_event_in_connection(connection, event);
+    }
+
+    if saved.binding_kind != "key_binding" {
+        return;
+    }
+
+    let Some(station_key_id) = saved.station_key_id.as_deref() else {
+        return;
+    };
+    if saved.binding_status == "bound" && previous_status != Some("bound") {
+        let event = crate::services::change_events::key_group_bound_event(
+            &saved.station_id,
+            station_key_id,
+            &saved.id,
+            &saved.group_name,
+        );
+        let _ = upsert_change_event_in_connection(connection, event);
+    } else if saved.binding_status == "missing" && previous_status != Some("missing") {
+        let event = crate::services::change_events::key_group_unresolved_event(
+            &saved.station_id,
+            station_key_id,
+        );
+        let _ = upsert_change_event_in_connection(connection, event);
+    }
 }
 
 fn list_station_group_bindings_from_connection(
@@ -5484,6 +5583,11 @@ fn finish_collector_run_in_connection(
     if input.endpoint_count < 0 || input.success_count < 0 || input.failure_count < 0 {
         return Err("采集运行计数不能为负数".to_string());
     }
+    let previous_run_status = latest_finished_collector_run_status(
+        connection,
+        &existing.station_id,
+        Some(existing.id.as_str()),
+    )?;
     let finished_at = now_string();
     let duration_ms = finished_at
         .parse::<i64>()
@@ -5521,7 +5625,36 @@ fn finish_collector_run_in_connection(
             ],
         )
         .map_err(|error| format!("完成采集运行记录失败: {error}"))?;
-    collector_run_by_id(connection, &input.id)
+    let saved = collector_run_by_id(connection, &input.id)?;
+    if matches!(saved.status.as_str(), "success" | "partial")
+        && previous_run_status.as_deref() == Some("failed")
+    {
+        let event =
+            crate::services::change_events::collector_recovered_event(&saved.station_id, &saved.id);
+        let _ = upsert_change_event_in_connection(connection, event);
+    }
+    Ok(saved)
+}
+
+fn latest_finished_collector_run_status(
+    connection: &Connection,
+    station_id: &str,
+    exclude_run_id: Option<&str>,
+) -> Result<Option<String>, String> {
+    connection
+        .query_row(
+            "SELECT status
+               FROM collector_runs
+              WHERE station_id = ?1
+                AND status != 'running'
+                AND (?2 IS NULL OR id != ?2)
+              ORDER BY COALESCE(finished_at, created_at) DESC, created_at DESC
+              LIMIT 1",
+            params![station_id, exclude_run_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取上一次采集状态失败: {error}"))
 }
 
 fn migrate_legacy_group_facts(connection: &Connection) -> Result<(), String> {
@@ -6036,7 +6169,8 @@ fn now_millis() -> u128 {
 mod tests {
     use super::*;
     use crate::models::group_facts::{
-        BINDING_KIND_STATION_GROUP, BINDING_STATUS_AVAILABLE,
+        BINDING_KIND_KEY_BINDING, BINDING_KIND_STATION_GROUP, BINDING_STATUS_AVAILABLE,
+        BINDING_STATUS_MISSING,
     };
     use crate::models::pricing::{UpsertBalanceSnapshotInput, UpsertPricingRuleInput};
     use crate::models::routing::RouteEndpointKind;
@@ -6183,6 +6317,109 @@ mod tests {
 
         assert_eq!(first.id, second.id);
         assert_eq!(second.effective_rate_multiplier, Some(1.2));
+    }
+
+    #[test]
+    fn group_missing_event_is_emitted_when_available_group_disappears() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "missing-group-relay");
+
+        let available = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:missing".to_string(),
+                group_id_hash: None,
+                group_name: "pro".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: None,
+                effective_rate_multiplier: Some(1.0),
+                rate_source: Some("groups_api".to_string()),
+                confidence: 0.9,
+                last_seen_at: Some("1000".to_string()),
+                raw_json_redacted: None,
+            })
+            .expect("available");
+        database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:missing".to_string(),
+                group_id_hash: None,
+                group_name: "pro".to_string(),
+                binding_status: BINDING_STATUS_MISSING.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: None,
+                effective_rate_multiplier: Some(1.0),
+                rate_source: Some("groups_api".to_string()),
+                confidence: 0.9,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("missing");
+
+        let events = database.list_change_events().expect("events");
+        assert!(events.iter().any(|event| {
+            event.event_type == "group_missing"
+                && event.object_type == "group_binding"
+                && event.object_id.as_deref() == Some(available.id.as_str())
+                && event.severity == "warning"
+        }));
+    }
+
+    #[test]
+    fn key_group_unresolved_event_is_emitted_for_missing_key_binding() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "unresolved-key-relay");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id.clone(),
+                name: "unresolved key".to_string(),
+                api_key: "sk-unresolved".to_string(),
+                enabled: true,
+                priority: Some(0),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect("key");
+
+        database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: Some(key.id.clone()),
+                binding_kind: BINDING_KIND_KEY_BINDING.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "key:unknown".to_string(),
+                group_id_hash: None,
+                group_name: "unknown".to_string(),
+                binding_status: BINDING_STATUS_MISSING.to_string(),
+                default_rate_multiplier: None,
+                user_rate_multiplier: None,
+                effective_rate_multiplier: None,
+                rate_source: Some("key_probe".to_string()),
+                confidence: 0.3,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("missing binding");
+
+        let events = database.list_change_events().expect("events");
+        assert!(events.iter().any(|event| {
+            event.event_type == "key_group_unresolved"
+                && event.station_key_id.as_deref() == Some(key.id.as_str())
+                && event.severity == "warning"
+        }));
     }
 
     #[test]

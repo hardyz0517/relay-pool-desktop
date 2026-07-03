@@ -38,6 +38,14 @@ pub fn model_dedupe_key(station_id: &str, event_type: &str, model: &str) -> Stri
     format!("{event_type}:station:{station_id}:model:{model}")
 }
 
+pub fn group_dedupe_key(station_id: &str, event_type: &str, group_binding_id: &str) -> String {
+    format!("{event_type}:station:{station_id}:group:{group_binding_id}")
+}
+
+pub fn route_dedupe_key(station_id: &str, route_scope: &str) -> String {
+    format!("route_impacted:station:{station_id}:scope:{route_scope}")
+}
+
 pub fn station_balance_event(
     station_id: &str,
     status: &str,
@@ -161,6 +169,178 @@ pub fn collector_failed_event(
         impact_json: Some(json!({ "staleDataRisk": true }).to_string()),
         dedupe_key: collector_dedupe_key(station_id, "collector_failed"),
         source: "collector".to_string(),
+    }
+}
+
+pub fn collector_recovered_event(station_id: &str, collector_run_id: &str) -> UpsertChangeEventInput {
+    UpsertChangeEventInput {
+        severity: SEVERITY_INFO.to_string(),
+        event_type: "collector_recovered".to_string(),
+        title: "采集恢复".to_string(),
+        message: "站点采集已恢复正常。".to_string(),
+        object_type: "collector_run".to_string(),
+        object_id: Some(collector_run_id.to_string()),
+        station_id: Some(station_id.to_string()),
+        station_key_id: None,
+        pricing_rule_id: None,
+        request_log_id: None,
+        old_value_json: Some(json!({ "status": "failed" }).to_string()),
+        new_value_json: Some(json!({ "status": "success" }).to_string()),
+        impact_json: Some(json!({ "staleDataRisk": false }).to_string()),
+        dedupe_key: collector_dedupe_key(station_id, "collector_recovered"),
+        source: "collector".to_string(),
+    }
+}
+
+pub fn group_added_event(
+    station_id: &str,
+    group_name: &str,
+    group_binding_id: &str,
+) -> UpsertChangeEventInput {
+    UpsertChangeEventInput {
+        severity: SEVERITY_INFO.to_string(),
+        event_type: "group_added".to_string(),
+        title: "分组新增".to_string(),
+        message: format!("站点新增可用分组 {group_name}"),
+        object_type: "group_binding".to_string(),
+        object_id: Some(group_binding_id.to_string()),
+        station_id: Some(station_id.to_string()),
+        station_key_id: None,
+        pricing_rule_id: None,
+        request_log_id: None,
+        old_value_json: None,
+        new_value_json: Some(json!({ "groupName": group_name }).to_string()),
+        impact_json: Some(json!({ "priceMatrixMayChange": true }).to_string()),
+        dedupe_key: group_dedupe_key(station_id, "group_added", group_binding_id),
+        source: "collector".to_string(),
+    }
+}
+
+pub fn group_missing_event(
+    station_id: &str,
+    group_name: &str,
+    group_binding_id: &str,
+) -> UpsertChangeEventInput {
+    UpsertChangeEventInput {
+        severity: SEVERITY_WARNING.to_string(),
+        event_type: "group_missing".to_string(),
+        title: "分组不可见".to_string(),
+        message: format!("分组 {group_name} 在最新采集中不可见"),
+        object_type: "group_binding".to_string(),
+        object_id: Some(group_binding_id.to_string()),
+        station_id: Some(station_id.to_string()),
+        station_key_id: None,
+        pricing_rule_id: None,
+        request_log_id: None,
+        old_value_json: Some(json!({ "bindingStatus": "available" }).to_string()),
+        new_value_json: Some(json!({ "bindingStatus": "missing" }).to_string()),
+        impact_json: Some(json!({ "routingRisk": "bound_keys_may_be_unavailable" }).to_string()),
+        dedupe_key: group_dedupe_key(station_id, "group_missing", group_binding_id),
+        source: "collector".to_string(),
+    }
+}
+
+pub fn key_group_bound_event(
+    station_id: &str,
+    station_key_id: &str,
+    group_binding_id: &str,
+    group_name: &str,
+) -> UpsertChangeEventInput {
+    UpsertChangeEventInput {
+        severity: SEVERITY_INFO.to_string(),
+        event_type: "key_group_bound".to_string(),
+        title: "Key 分组已绑定".to_string(),
+        message: format!("Key 已绑定到分组 {group_name}"),
+        object_type: "station_key".to_string(),
+        object_id: Some(station_key_id.to_string()),
+        station_id: Some(station_id.to_string()),
+        station_key_id: Some(station_key_id.to_string()),
+        pricing_rule_id: None,
+        request_log_id: None,
+        old_value_json: None,
+        new_value_json: Some(
+            json!({
+                "groupBindingId": group_binding_id,
+                "groupName": group_name
+            })
+            .to_string(),
+        ),
+        impact_json: Some(json!({ "cheapFirstConfidence": "improved" }).to_string()),
+        dedupe_key: station_key_dedupe_key(station_key_id, "key_group_bound"),
+        source: "collector".to_string(),
+    }
+}
+
+pub fn key_group_unresolved_event(
+    station_id: &str,
+    station_key_id: &str,
+) -> UpsertChangeEventInput {
+    UpsertChangeEventInput {
+        severity: SEVERITY_WARNING.to_string(),
+        event_type: "key_group_unresolved".to_string(),
+        title: "Key 分组无法识别".to_string(),
+        message: "采集器无法识别这把 Key 所属分组，需要手动绑定。".to_string(),
+        object_type: "station_key".to_string(),
+        object_id: Some(station_key_id.to_string()),
+        station_id: Some(station_id.to_string()),
+        station_key_id: Some(station_key_id.to_string()),
+        pricing_rule_id: None,
+        request_log_id: None,
+        old_value_json: None,
+        new_value_json: None,
+        impact_json: Some(json!({ "cheapFirstConfidence": "reduced" }).to_string()),
+        dedupe_key: station_key_dedupe_key(station_key_id, "key_group_unresolved"),
+        source: "collector".to_string(),
+    }
+}
+
+pub fn price_expired_event(
+    station_id: &str,
+    pricing_rule_id: &str,
+    model: &str,
+    valid_until: Option<&str>,
+) -> UpsertChangeEventInput {
+    UpsertChangeEventInput {
+        severity: SEVERITY_WARNING.to_string(),
+        event_type: "price_expired".to_string(),
+        title: "价格过期".to_string(),
+        message: format!("模型 {model} 的价格规则已过期"),
+        object_type: "pricing_rule".to_string(),
+        object_id: Some(pricing_rule_id.to_string()),
+        station_id: Some(station_id.to_string()),
+        station_key_id: None,
+        pricing_rule_id: Some(pricing_rule_id.to_string()),
+        request_log_id: None,
+        old_value_json: None,
+        new_value_json: Some(json!({ "validUntil": valid_until }).to_string()),
+        impact_json: Some(json!({ "cheapFirstConfidence": "reduced" }).to_string()),
+        dedupe_key: format!("price_expired:pricing_rule:{pricing_rule_id}"),
+        source: "pricing".to_string(),
+    }
+}
+
+pub fn route_impacted_event(
+    station_id: &str,
+    route_scope: &str,
+    reason: &str,
+    request_log_id: Option<&str>,
+) -> UpsertChangeEventInput {
+    UpsertChangeEventInput {
+        severity: SEVERITY_WARNING.to_string(),
+        event_type: "route_impacted".to_string(),
+        title: "路由受影响".to_string(),
+        message: reason.to_string(),
+        object_type: "route".to_string(),
+        object_id: Some(route_scope.to_string()),
+        station_id: Some(station_id.to_string()),
+        station_key_id: None,
+        pricing_rule_id: None,
+        request_log_id: request_log_id.map(ToString::to_string),
+        old_value_json: None,
+        new_value_json: Some(json!({ "reason": reason }).to_string()),
+        impact_json: Some(json!({ "routingRisk": true }).to_string()),
+        dedupe_key: route_dedupe_key(station_id, route_scope),
+        source: "routing".to_string(),
     }
 }
 
