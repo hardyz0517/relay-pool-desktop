@@ -15,7 +15,9 @@ use tauri::{AppHandle, Manager};
 use crate::models::{
     change_events::{ChangeEvent, UpsertChangeEventInput},
     collector::CollectorSnapshot,
+    collector_runs::CollectorRun,
     credentials::{StationCredentials, UpdateStationCredentialsInput},
+    group_facts::{GroupRateRecord, StationGroupBinding},
     pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
     proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
     routing::{
@@ -1082,7 +1084,158 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             created_at TEXT NOT NULL
         );
         ",
-    )
+    )?;
+    migrate_p9_fact_schema(connection)
+}
+
+fn migrate_p9_fact_schema(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS station_group_bindings (
+            id TEXT PRIMARY KEY,
+            station_id TEXT NOT NULL,
+            station_key_id TEXT,
+            binding_kind TEXT NOT NULL,
+            parent_group_binding_id TEXT,
+            group_key_hash TEXT NOT NULL,
+            group_id_hash TEXT,
+            group_id_enc TEXT,
+            group_name TEXT NOT NULL,
+            binding_status TEXT NOT NULL,
+            default_rate_multiplier REAL,
+            user_rate_multiplier REAL,
+            effective_rate_multiplier REAL,
+            rate_source TEXT,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            last_seen_at TEXT,
+            last_checked_at TEXT,
+            last_rate_changed_at TEXT,
+            raw_json_redacted TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE,
+            FOREIGN KEY(station_key_id) REFERENCES station_keys(id) ON DELETE CASCADE,
+            FOREIGN KEY(parent_group_binding_id) REFERENCES station_group_bindings(id) ON DELETE SET NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_group_bindings_station_group_key
+            ON station_group_bindings(station_id, binding_kind, group_key_hash)
+            WHERE binding_kind = 'station_group';
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_group_bindings_key_group_key
+            ON station_group_bindings(station_key_id, binding_kind, group_key_hash)
+            WHERE binding_kind = 'key_binding';
+
+        CREATE INDEX IF NOT EXISTS idx_group_bindings_station_status
+            ON station_group_bindings(station_id, binding_status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS group_rate_records (
+            id TEXT PRIMARY KEY,
+            station_id TEXT NOT NULL,
+            station_key_id TEXT,
+            group_binding_id TEXT,
+            binding_kind TEXT NOT NULL,
+            group_key_hash TEXT NOT NULL,
+            group_name TEXT NOT NULL,
+            default_rate_multiplier REAL,
+            user_rate_multiplier REAL,
+            effective_rate_multiplier REAL,
+            source TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            raw_json_redacted TEXT,
+            checked_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE,
+            FOREIGN KEY(station_key_id) REFERENCES station_keys(id) ON DELETE CASCADE,
+            FOREIGN KEY(group_binding_id) REFERENCES station_group_bindings(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_group_rate_records_binding_checked
+            ON group_rate_records(group_binding_id, checked_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_group_rate_records_station_checked
+            ON group_rate_records(station_id, checked_at DESC);
+
+        CREATE TABLE IF NOT EXISTS collector_runs (
+            id TEXT PRIMARY KEY,
+            station_id TEXT NOT NULL,
+            parent_run_id TEXT,
+            adapter TEXT NOT NULL,
+            task_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            duration_ms INTEGER,
+            endpoint_count INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            manual_action_required INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT,
+            error_message TEXT,
+            snapshot_id TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE,
+            FOREIGN KEY(parent_run_id) REFERENCES collector_runs(id) ON DELETE CASCADE,
+            FOREIGN KEY(snapshot_id) REFERENCES collector_snapshots(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_collector_runs_station_created
+            ON collector_runs(station_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_collector_runs_parent
+            ON collector_runs(parent_run_id, created_at ASC);
+        "#,
+    )?;
+
+    add_column_if_missing(
+        connection,
+        "station_credentials",
+        "access_token_secret_id",
+        "TEXT",
+    )?;
+    add_column_if_missing(
+        connection,
+        "station_credentials",
+        "refresh_token_secret_id",
+        "TEXT",
+    )?;
+    add_column_if_missing(
+        connection,
+        "station_credentials",
+        "cookie_secret_id",
+        "TEXT",
+    )?;
+    add_column_if_missing(connection, "station_credentials", "newapi_user_id", "TEXT")?;
+    add_column_if_missing(connection, "station_credentials", "token_expires_at", "TEXT")?;
+    add_column_if_missing(connection, "station_credentials", "token_refreshed_at", "TEXT")?;
+    add_column_if_missing(
+        connection,
+        "station_credentials",
+        "session_source",
+        "TEXT NOT NULL DEFAULT 'none'",
+    )?;
+
+    add_column_if_missing(connection, "station_keys", "group_binding_id", "TEXT")?;
+    add_column_if_missing(connection, "station_keys", "group_id_hash", "TEXT")?;
+    add_column_if_missing(connection, "station_keys", "rate_multiplier", "REAL")?;
+    add_column_if_missing(connection, "station_keys", "rate_source", "TEXT")?;
+    add_column_if_missing(connection, "station_keys", "rate_collected_at", "TEXT")?;
+    add_column_if_missing(connection, "station_keys", "balance_scope", "TEXT")?;
+
+    add_column_if_missing(connection, "pricing_rules", "station_key_id", "TEXT")?;
+    add_column_if_missing(connection, "pricing_rules", "group_binding_id", "TEXT")?;
+    add_column_if_missing(connection, "pricing_rules", "rate_multiplier", "REAL")?;
+    add_column_if_missing(connection, "pricing_rules", "base_price_source", "TEXT")?;
+    add_column_if_missing(
+        connection,
+        "pricing_rules",
+        "normalization_status",
+        "TEXT NOT NULL DEFAULT 'manual'",
+    )?;
+    add_column_if_missing(connection, "pricing_rules", "valid_from", "TEXT")?;
+    add_column_if_missing(connection, "pricing_rules", "valid_until", "TEXT")?;
+
+    Ok(())
 }
 
 fn migrate_secret_schema(connection: &Connection) -> rusqlite::Result<()> {
@@ -4339,6 +4492,77 @@ fn row_to_collector_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<Collec
     })
 }
 
+fn row_to_station_group_binding(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<StationGroupBinding> {
+    let raw_json: Option<String> = row.get("raw_json_redacted")?;
+    Ok(StationGroupBinding {
+        id: row.get("id")?,
+        station_id: row.get("station_id")?,
+        station_key_id: row.get("station_key_id")?,
+        binding_kind: row.get("binding_kind")?,
+        parent_group_binding_id: row.get("parent_group_binding_id")?,
+        group_key_hash: row.get("group_key_hash")?,
+        group_id_hash: row.get("group_id_hash")?,
+        group_name: row.get("group_name")?,
+        binding_status: row.get("binding_status")?,
+        default_rate_multiplier: row.get("default_rate_multiplier")?,
+        user_rate_multiplier: row.get("user_rate_multiplier")?,
+        effective_rate_multiplier: row.get("effective_rate_multiplier")?,
+        rate_source: row.get("rate_source")?,
+        confidence: row.get("confidence")?,
+        last_seen_at: row.get("last_seen_at")?,
+        last_checked_at: row.get("last_checked_at")?,
+        last_rate_changed_at: row.get("last_rate_changed_at")?,
+        raw_json_redacted: raw_json.as_deref().map(parse_json_value),
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+    })
+}
+
+fn row_to_group_rate_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<GroupRateRecord> {
+    let raw_json: Option<String> = row.get("raw_json_redacted")?;
+    Ok(GroupRateRecord {
+        id: row.get("id")?,
+        station_id: row.get("station_id")?,
+        station_key_id: row.get("station_key_id")?,
+        group_binding_id: row.get("group_binding_id")?,
+        binding_kind: row.get("binding_kind")?,
+        group_key_hash: row.get("group_key_hash")?,
+        group_name: row.get("group_name")?,
+        default_rate_multiplier: row.get("default_rate_multiplier")?,
+        user_rate_multiplier: row.get("user_rate_multiplier")?,
+        effective_rate_multiplier: row.get("effective_rate_multiplier")?,
+        source: row.get("source")?,
+        confidence: row.get("confidence")?,
+        raw_json_redacted: raw_json.as_deref().map(parse_json_value),
+        checked_at: row.get("checked_at")?,
+        created_at: row.get("created_at")?,
+    })
+}
+
+fn row_to_collector_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<CollectorRun> {
+    Ok(CollectorRun {
+        id: row.get("id")?,
+        station_id: row.get("station_id")?,
+        parent_run_id: row.get("parent_run_id")?,
+        adapter: row.get("adapter")?,
+        task_type: row.get("task_type")?,
+        status: row.get("status")?,
+        started_at: row.get("started_at")?,
+        finished_at: row.get("finished_at")?,
+        duration_ms: row.get("duration_ms")?,
+        endpoint_count: row.get("endpoint_count")?,
+        success_count: row.get("success_count")?,
+        failure_count: row.get("failure_count")?,
+        manual_action_required: i64_to_bool(row.get("manual_action_required")?),
+        error_code: row.get("error_code")?,
+        error_message: row.get("error_message")?,
+        snapshot_id: row.get("snapshot_id")?,
+        created_at: row.get("created_at")?,
+    })
+}
+
 fn collector_snapshot_by_id(
     connection: &Connection,
     id: &str,
@@ -4805,6 +5029,62 @@ mod tests {
             .expect("table count");
 
         assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn p9_fact_tables_are_initialized() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let connection = database.connection().expect("connection");
+
+        for table in [
+            "station_group_bindings",
+            "group_rate_records",
+            "collector_runs",
+        ] {
+            let count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    params![table],
+                    |row| row.get(0),
+                )
+                .expect("table count");
+            assert_eq!(count, 1, "{table} should exist");
+        }
+    }
+
+    #[test]
+    fn p9_extension_columns_are_initialized() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let connection = database.connection().expect("connection");
+
+        for (table, column) in [
+            ("station_credentials", "access_token_secret_id"),
+            ("station_credentials", "refresh_token_secret_id"),
+            ("station_credentials", "cookie_secret_id"),
+            ("station_credentials", "newapi_user_id"),
+            ("station_credentials", "session_source"),
+            ("station_keys", "group_binding_id"),
+            ("station_keys", "group_id_hash"),
+            ("station_keys", "rate_multiplier"),
+            ("station_keys", "rate_collected_at"),
+            ("station_keys", "balance_scope"),
+            ("pricing_rules", "station_key_id"),
+            ("pricing_rules", "group_binding_id"),
+            ("pricing_rules", "rate_multiplier"),
+            ("pricing_rules", "normalization_status"),
+            ("pricing_rules", "valid_until"),
+        ] {
+            let count: i64 = connection
+                .query_row(
+                    &format!(
+                        "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"
+                    ),
+                    params![column],
+                    |row| row.get(0),
+                )
+                .expect("column count");
+            assert_eq!(count, 1, "{table}.{column} should exist");
+        }
     }
 
     #[test]
