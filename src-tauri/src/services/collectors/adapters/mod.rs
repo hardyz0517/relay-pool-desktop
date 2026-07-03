@@ -1,4 +1,5 @@
 pub mod newapi;
+pub mod openai_compatible;
 pub mod sub2api;
 
 use crate::services::collectors::facts::CollectorFacts;
