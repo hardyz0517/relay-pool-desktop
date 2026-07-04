@@ -20,6 +20,7 @@ const memoryKeys = new Map<string, StationKey[]>();
 const memoryRemoteKeys = new Map<string, RemoteStationKey[]>();
 const memoryCredentials = new Map<string, StationCredentials>();
 let memoryKeyPool: KeyPoolItem[] = [];
+let memoryIdCounter = 0;
 
 export function listStationKeys(stationId: string) {
   return invoke<StationKey[]>("list_station_keys", { stationId }).catch((error) => {
@@ -67,7 +68,7 @@ export function scanRemoteStationKeys(stationId: string): Promise<RemoteKeyScanR
 export function createRemoteStationKey(input: CreateRemoteStationKeyInput): Promise<CreateRemoteStationKeyResult> {
   return invoke<CreateRemoteStationKeyResult>("create_remote_station_key", { input }).catch(async (error) => {
     if (isInvokeUnavailable(error)) {
-      const fullKeyOnce = `sk-browser-preview-${Date.now().toString(36)}`;
+      const fullKeyOnce = `sk-browser-preview-${nextMemoryId("secret")}`;
       const stationKey = await createStationKey({
         stationId: input.stationId,
         name: input.name,
@@ -104,27 +105,34 @@ export function bindRemoteStationKey(remoteKeyId: string, stationKeyId: string):
   }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       const now = new Date().toISOString();
-      for (const [stationId, keys] of memoryRemoteKeys) {
-        let matched = false;
-        const nextKeys = keys.map((key) => {
-          if (key.id !== remoteKeyId) {
-            return key;
-          }
-          matched = true;
-          return {
-            ...key,
-            matchStatus: "matched" as const,
-            matchedStationKeyId: stationKeyId,
-            matchConfidence: 1,
-            collectedAt: now,
-          };
-        });
-        if (matched) {
-          memoryRemoteKeys.set(stationId, nextKeys);
-          return nextKeys;
-        }
+      const targetKey = Array.from(memoryKeys.values())
+        .flat()
+        .find((key) => key.id === stationKeyId);
+      if (!targetKey) {
+        throw new Error("浏览器预览模式：未找到要绑定的本地密钥。");
       }
-      return [];
+
+      let matched = false;
+      const keys = memoryRemoteKeys.get(targetKey.stationId) ?? [];
+      const nextKeys = keys.map((key) => {
+        if (key.id !== remoteKeyId) {
+          return key;
+        }
+        matched = true;
+        return {
+          ...key,
+          matchStatus: "matched" as const,
+          matchedStationKeyId: stationKeyId,
+          matchConfidence: 1,
+          collectedAt: now,
+        };
+      });
+      if (!matched) {
+        throw new Error("浏览器预览模式：未找到同中转站的远端密钥。");
+      }
+
+      memoryRemoteKeys.set(targetKey.stationId, nextKeys);
+      return nextKeys;
     }
     throw error;
   });
@@ -350,14 +358,59 @@ async function memoryRemoteKeyCapability(stationId: string): Promise<RemoteKeyCa
   const station = await listStations()
     .then((items) => items.find((item) => item.id === stationId) ?? null)
     .catch(() => null);
+
+  if (!station) {
+    return unsupportedRemoteKeyCapability(
+      stationId,
+      "unknown",
+      "浏览器预览模式：未找到中转站，无法判断远端 Key 能力。",
+    );
+  }
+
+  if (station.stationType === "sub2api") {
+    return {
+      stationId,
+      stationType: station.stationType,
+      canListRemoteKeys: true,
+      canCreateRemoteKey: true,
+      canReadGroups: true,
+      requiresManualSession: true,
+      unsupportedReason: null,
+    };
+  }
+
+  if (station.stationType === "newapi") {
+    return {
+      stationId,
+      stationType: station.stationType,
+      canListRemoteKeys: false,
+      canCreateRemoteKey: false,
+      canReadGroups: true,
+      requiresManualSession: true,
+      unsupportedReason: "NewAPI 远端 Key 管理尚未适配。",
+    };
+  }
+
+  return unsupportedRemoteKeyCapability(
+    stationId,
+    station.stationType,
+    `暂不支持 ${station.stationType} 类型中转站的远端 Key 管理。`,
+  );
+}
+
+function unsupportedRemoteKeyCapability(
+  stationId: string,
+  stationType: string,
+  unsupportedReason: string,
+): RemoteKeyCapability {
   return {
     stationId,
-    stationType: station?.stationType ?? "sub2api",
-    canListRemoteKeys: true,
-    canCreateRemoteKey: true,
-    canReadGroups: true,
+    stationType,
+    canListRemoteKeys: false,
+    canCreateRemoteKey: false,
+    canReadGroups: false,
     requiresManualSession: false,
-    unsupportedReason: null,
+    unsupportedReason,
   };
 }
 
@@ -367,7 +420,7 @@ function memoryRemoteKeyFromStationKey(
 ): RemoteStationKey {
   const now = new Date().toISOString();
   return {
-    id: `remote-key-${Date.now()}`,
+    id: nextMemoryId("remote-key"),
     stationId: input.stationId,
     remoteKeyIdHash: `preview-${stationKey.id}`,
     remoteKeyName: input.name,
@@ -391,7 +444,7 @@ function memoryRemoteKeyFromStationKey(
 function memoryKeyFromInput(input: CreateStationKeyInput): StationKey {
   const now = new Date().toISOString();
   return {
-    id: `key-${Date.now()}`,
+    id: nextMemoryId("key"),
     stationId: input.stationId,
     name: input.name,
     apiKeyMasked: input.apiKey ? "sk-****" : "未设置",
@@ -413,6 +466,14 @@ function memoryKeyFromInput(input: CreateStationKeyInput): StationKey {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+function nextMemoryId(prefix: string) {
+  const randomId = globalThis.crypto?.randomUUID?.();
+  if (randomId) {
+    return `${prefix}-${randomId}`;
+  }
+  return `${prefix}-${Date.now()}-${++memoryIdCounter}`;
 }
 
 function memoryPoolItemFromKey(key: StationKey, station: Station | null): KeyPoolItem {
