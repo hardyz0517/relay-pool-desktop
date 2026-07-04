@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Button, EmptyState, useToast } from "@/components/ui";
 import { listChangeEvents } from "@/lib/api/changeEvents";
@@ -60,6 +60,7 @@ export function StationDetailPage({ stationId, onBack, onEditProvider }: Station
   const toast = useToast();
   const mountedRef = useRef(true);
   const loadRequestRef = useRef(0);
+  const refreshRequestRef = useRef(0);
   const activeStationIdRef = useRef<string | null>(stationId);
   const [detailData, setDetailData] = useState<DetailData | null>(null);
   const [initialLoading, setInitialLoading] = useState(false);
@@ -71,7 +72,24 @@ export function StationDetailPage({ stationId, onBack, onEditProvider }: Station
     return () => {
       mountedRef.current = false;
       loadRequestRef.current += 1;
+      refreshRequestRef.current += 1;
     };
+  }, []);
+
+  const isLoadCurrent = useCallback((id: string, requestId: number) => {
+    return (
+      mountedRef.current &&
+      loadRequestRef.current === requestId &&
+      activeStationIdRef.current === id
+    );
+  }, []);
+
+  const isRefreshCurrent = useCallback((id: string, requestId: number) => {
+    return (
+      mountedRef.current &&
+      refreshRequestRef.current === requestId &&
+      activeStationIdRef.current === id
+    );
   }, []);
 
   const loadDetail = useCallback(async (id: string, mode: LoadMode) => {
@@ -113,11 +131,7 @@ export function StationDetailPage({ stationId, onBack, onEditProvider }: Station
         throw new Error("未找到中转站");
       }
 
-      if (
-        !mountedRef.current ||
-        loadRequestRef.current !== requestId ||
-        activeStationIdRef.current !== id
-      ) {
+      if (!isLoadCurrent(id, requestId)) {
         return null;
       }
 
@@ -138,7 +152,7 @@ export function StationDetailPage({ stationId, onBack, onEditProvider }: Station
       return nextData;
     } catch (requestError) {
       const message = readError(requestError);
-      if (mountedRef.current && loadRequestRef.current === requestId) {
+      if (isLoadCurrent(id, requestId)) {
         if (mode === "initial") {
           setPageError(message);
           setDetailData(null);
@@ -148,14 +162,16 @@ export function StationDetailPage({ stationId, onBack, onEditProvider }: Station
       }
       throw requestError;
     } finally {
-      if (mountedRef.current && loadRequestRef.current === requestId && mode === "initial") {
+      if (isLoadCurrent(id, requestId) && mode === "initial") {
         setInitialLoading(false);
       }
     }
-  }, []);
+  }, [isLoadCurrent]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     activeStationIdRef.current = stationId;
+    refreshRequestRef.current += 1;
+    setLoadingAction(null);
 
     if (!stationId) {
       loadRequestRef.current += 1;
@@ -163,7 +179,6 @@ export function StationDetailPage({ stationId, onBack, onEditProvider }: Station
       setInitialLoading(false);
       setPageError("未选择中转站");
       setSectionError(null);
-      setLoadingAction(null);
       return;
     }
 
@@ -182,30 +197,32 @@ export function StationDetailPage({ stationId, onBack, onEditProvider }: Station
       return;
     }
 
+    const requestId = refreshRequestRef.current + 1;
+    refreshRequestRef.current = requestId;
     setLoadingAction(action);
     setSectionError(null);
     try {
       await collectStationTask(stationId, refreshTaskByAction[action]);
-      if (!mountedRef.current || activeStationIdRef.current !== stationId) {
+      if (!isRefreshCurrent(stationId, requestId)) {
         return;
       }
       const nextData = await loadDetail(stationId, "silent");
-      if (!nextData || !mountedRef.current || activeStationIdRef.current !== stationId) {
+      if (!nextData || !isRefreshCurrent(stationId, requestId)) {
         return;
       }
       toast.success(refreshSuccessLabel[action]);
     } catch (requestError) {
       const message = readError(requestError);
-      if (mountedRef.current && activeStationIdRef.current === stationId) {
+      if (isRefreshCurrent(stationId, requestId)) {
         setSectionError(message);
         toast.error("采集失败", message);
       }
     } finally {
-      if (mountedRef.current && activeStationIdRef.current === stationId) {
+      if (isRefreshCurrent(stationId, requestId)) {
         setLoadingAction(null);
       }
     }
-  }, [loadDetail, loadingAction, stationId, toast]);
+  }, [isRefreshCurrent, loadDetail, loadingAction, stationId, toast]);
 
   if (initialLoading) {
     return (
