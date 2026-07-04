@@ -260,12 +260,13 @@ export function buildStationDetailViewModel({
   const latestRun = latestByTime(stationRuns, (run) => run.finishedAt ?? run.startedAt);
   const stationKeyTotalCount = stationKeys.filter((key) => key.stationId === station.id).length;
   const stationKeyEnabledCount = stationKeys.filter((key) => key.stationId === station.id && key.enabled).length;
-  const latestActivity =
-    latestRun?.finishedAt ??
-    latestRun?.startedAt ??
-    latestSnapshot?.fetchedAt ??
-    station.lastCheckedAt ??
-    station.updatedAt;
+  const latestActivity = latestTime([
+    latestRun?.finishedAt,
+    latestRun?.startedAt,
+    latestSnapshot?.fetchedAt,
+    station.lastCheckedAt,
+    station.updatedAt,
+  ]);
 
   return {
     station,
@@ -450,6 +451,19 @@ function formatCollectorTaskType(taskType: string) {
 
 function trimFixed(value: number, digits: number) {
   return value.toFixed(digits).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function latestTime(values: Array<string | null | undefined>) {
+  let latestValue: string | null = null;
+  let latestTimeValue = 0;
+  for (const value of values) {
+    const time = toTime(value ?? null);
+    if (time > latestTimeValue) {
+      latestValue = value ?? null;
+      latestTimeValue = time;
+    }
+  }
+  return latestValue;
 }
 
 function toTime(value: string | null) {
