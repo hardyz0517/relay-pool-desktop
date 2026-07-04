@@ -16,7 +16,7 @@ const memoryRuns = new Map<string, ChannelMonitorRun[]>();
 export function listChannelMonitors() {
   return invoke<ChannelMonitor[]>("list_channel_monitors").catch((error) => {
     if (isInvokeUnavailable(error)) {
-      return memoryMonitors;
+      return memoryMonitors.map(copyMonitor);
     }
     throw error;
   });
@@ -105,7 +105,7 @@ export function runChannelMonitorNow(monitorId: string) {
 export function listChannelMonitorRuns(monitorId: string) {
   return invoke<ChannelMonitorRun[]>("list_channel_monitor_runs", { monitorId }).catch((error) => {
     if (isInvokeUnavailable(error)) {
-      return memoryRuns.get(monitorId) ?? [];
+      return (memoryRuns.get(monitorId) ?? []).map(copyRun);
     }
     throw error;
   });
@@ -114,7 +114,7 @@ export function listChannelMonitorRuns(monitorId: string) {
 export function listChannelMonitorTemplates() {
   return invoke<ChannelMonitorRequestTemplate[]>("list_channel_monitor_templates").catch((error) => {
     if (isInvokeUnavailable(error)) {
-      return ensureMemoryTemplates();
+      return ensureMemoryTemplates().map(copyTemplate);
     }
     throw error;
   });
@@ -146,10 +146,12 @@ export function updateChannelMonitorTemplate(input: UpdateChannelMonitorTemplate
       if (!existing) {
         throw new Error(`Channel monitor template ${input.id} does not exist in browser preview memory.`);
       }
+      if (existing.builtIn) {
+        throw new Error("Built-in channel monitor templates cannot be updated in browser preview memory.");
+      }
       const next: ChannelMonitorRequestTemplate = {
         ...existing,
         ...input,
-        builtIn: false,
         updatedAt: now,
       };
       memoryTemplates = ensureMemoryTemplates().map((template) => (template.id === input.id ? next : template));
@@ -226,6 +228,21 @@ function ensureMemoryTemplates() {
 
 function createMemoryId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function copyMonitor(monitor: ChannelMonitor): ChannelMonitor {
+  return {
+    ...monitor,
+    fallbackModels: [...monitor.fallbackModels],
+  };
+}
+
+function copyTemplate(template: ChannelMonitorRequestTemplate): ChannelMonitorRequestTemplate {
+  return { ...template };
+}
+
+function copyRun(run: ChannelMonitorRun): ChannelMonitorRun {
+  return { ...run };
 }
 
 function isInvokeUnavailable(error: unknown) {

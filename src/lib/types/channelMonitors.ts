@@ -1,13 +1,6 @@
-type ForwardCompatibleString = string & {};
-
 export type ChannelMonitorTargetType = "station_key" | "station";
 
-export type ChannelMonitorRunStatus =
-  | "success"
-  | "warning"
-  | "failed"
-  | "skipped"
-  | ForwardCompatibleString;
+export type ChannelMonitorRunStatus = "success" | "warning" | "failed" | "skipped";
 
 export type ChannelMonitorRequestTemplate = {
   id: string;
