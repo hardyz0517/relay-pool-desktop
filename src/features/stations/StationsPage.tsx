@@ -1,8 +1,21 @@
-﻿import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import {
+  closestCenter,
+  type DraggableAttributes,
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  type DragEndEvent,
+  type DragStartEvent,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Clock3, Edit3, GripVertical, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, useToast } from "@/components/ui";
-import { createStation, deleteStation, listStations, updateStation } from "@/lib/api/stations";
+import { Button, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, type StatusTone, useToast } from "@/components/ui";
+import { createStation, deleteStation, listStations, reorderStations, updateStation } from "@/lib/api/stations";
 import {
   clearStationCredentials,
   createStationKey,
@@ -32,6 +45,7 @@ import { stationStatusLabels, stationTypeLabels, type Station, type StationInput
 import { cn } from "@/lib/utils";
 import {
   buildStationAssetRows,
+  stationRiskTone,
   type StationAssetRow,
 } from "./stationAssetViewModels";
 
@@ -108,6 +122,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   const toast = useToast();
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
   const [editingStationId, setEditingStationId] = useState<string | null>(null);
   const [detailStationId, setDetailStationId] = useState<string | null>(null);
@@ -138,6 +153,8 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+
   useEffect(() => {
     void refreshStations();
   }, []);
@@ -167,6 +184,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     return () => window.clearTimeout(timeoutId);
   }, [drawerClosing]);
 
+  const stationIds = useMemo(() => stations.map((station) => station.id), [stations]);
   const selectedStation = useMemo(
     () => stations.find((station) => station.id === selectedStationId) ?? stations[0] ?? null,
     [selectedStationId, stations],
@@ -180,6 +198,10 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     [editingStationId, stations],
   );
   const activeDialogStation = dialogMode === "detail" ? detailStation : editingStation;
+  const activeDragStation = useMemo(
+    () => stations.find((station) => station.id === activeDragId) ?? null,
+    [activeDragId, stations],
+  );
   const attentionCount = useMemo(
     () => stations.filter((station) => station.status === "warning" || station.status === "error").length,
     [stations],
@@ -213,6 +235,10 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   const collectedBalanceCount = useMemo(
     () => stationAssetRows.filter((row) => row.latestBalance?.value != null || row.station.balanceCny != null).length,
     [stationAssetRows],
+  );
+  const activeDragRow = useMemo(
+    () => stationAssetRows.find((row) => row.station.id === activeDragStation?.id) ?? null,
+    [activeDragStation?.id, stationAssetRows],
   );
 
   useEffect(() => {
@@ -412,6 +438,40 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     }
   }, []);
 
+  function handleDragStart(event: DragStartEvent) {
+    setActiveDragId(String(event.active.id));
+  }
+
+  function handleDragCancel() {
+    setActiveDragId(null);
+  }
+
+  async function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    setActiveDragId(null);
+    if (!over || active.id === over.id) {
+      return;
+    }
+    const oldIndex = stations.findIndex((station) => station.id === active.id);
+    const newIndex = stations.findIndex((station) => station.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) {
+      return;
+    }
+    const previousStations = stations;
+    const nextStations = [...stations];
+    const [moved] = nextStations.splice(oldIndex, 1);
+    nextStations.splice(newIndex, 0, moved);
+    setStations(nextStations);
+    try {
+      const savedStations = await reorderStations(nextStations.map((station) => station.id));
+      setStations(savedStations);
+      toast.success("站点排序已保存");
+    } catch (requestError) {
+      setStations(previousStations);
+      toast.error("保存站点排序失败", readError(requestError));
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
@@ -472,7 +532,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   }
 
   async function handleRunCollect(station = selectedStation) {
-    if (!station) {
+    if (!station || stationAction !== null) {
       return;
     }
     setStationAction({ stationId: station.id, action: "collect" });
@@ -493,6 +553,9 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   }
 
   async function handleRefreshBalance(station: Station) {
+    if (stationAction !== null) {
+      return;
+    }
     setStationAction({ stationId: station.id, action: "balance" });
     setError(null);
     try {
@@ -559,7 +622,6 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
       setActionSaving(false);
     }
   }
-
   const keyCountLabel = activeDialogStation ? `${activeDialogStation.keyCount} 把` : "0 把";
 
   return (
@@ -594,21 +656,48 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
               action={<Button onClick={onAddProvider ?? openCreate}>添加供应商</Button>}
             />
           ) : (
-            <div className="space-y-2">
-              {stationAssetRows.map((row) => (
-                <StationAssetListRow
-                  key={row.station.id}
-                  active={row.station.id === selectedStation?.id}
-                  loadingAction={stationAction?.stationId === row.station.id ? stationAction.action : null}
-                  row={row}
-                  onCollect={(station) => void handleRunCollect(station)}
-                  onDelete={handleDelete}
-                  onEdit={openEdit}
-                  onOpen={openDetail}
-                  onRefreshBalance={(station) => void handleRefreshBalance(station)}
-                />
-              ))}
-            </div>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={handleDragStart}
+              onDragCancel={handleDragCancel}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext items={stationIds} strategy={verticalListSortingStrategy}>
+                <div className="space-y-2">
+                  {stationAssetRows.map((row) => (
+                    <SortableStationAssetListRow
+                      key={row.station.id}
+                      actionDisabled={stationAction !== null}
+                      active={row.station.id === selectedStation?.id}
+                      loadingAction={stationAction?.stationId === row.station.id ? stationAction.action : null}
+                      row={row}
+                      onCollect={(station) => void handleRunCollect(station)}
+                      onDelete={handleDelete}
+                      onEdit={openEdit}
+                      onOpen={openDetail}
+                      onRefreshBalance={(station) => void handleRefreshBalance(station)}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+              <DragOverlay dropAnimation={null}>
+                {activeDragRow ? (
+                  <StationAssetListRow
+                    actionDisabled
+                    active
+                    loadingAction={stationAction?.stationId === activeDragRow.station.id ? stationAction.action : null}
+                    overlay
+                    row={activeDragRow}
+                    onCollect={() => undefined}
+                    onDelete={() => undefined}
+                    onEdit={() => undefined}
+                    onOpen={() => undefined}
+                    onRefreshBalance={() => undefined}
+                  />
+                ) : null}
+              </DragOverlay>
+            </DndContext>
           )}
         </div>
       </div>
@@ -716,29 +805,59 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   );
 }
 
-function StationAssetListRow({
-  row,
-  active,
-  loadingAction,
-  onOpen,
-  onEdit,
-  onCollect,
-  onDelete,
-  onRefreshBalance,
-}: {
+type StationAssetListRowProps = {
   row: StationAssetRow;
   active: boolean;
+  actionDisabled: boolean;
   loadingAction: StationAction | null;
+  overlay?: boolean;
+  dragAttributes?: DraggableAttributes;
+  dragListeners?: ReturnType<typeof useSortable>["listeners"];
   onOpen: (station: Station) => void;
   onEdit: (station: Station) => void;
   onCollect: (station: Station) => void;
   onDelete: (station: Station) => void;
   onRefreshBalance: (station: Station) => void;
-}) {
+};
+
+function SortableStationAssetListRow(props: StationAssetListRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.row.station.id,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn("will-change-transform", isDragging && "opacity-35")}
+    >
+      <StationAssetListRow
+        {...props}
+        dragAttributes={attributes}
+        dragListeners={listeners}
+      />
+    </div>
+  );
+}
+
+function StationAssetListRow({
+  row,
+  active,
+  actionDisabled,
+  loadingAction,
+  overlay = false,
+  dragAttributes,
+  dragListeners,
+  onOpen,
+  onEdit,
+  onCollect,
+  onDelete,
+  onRefreshBalance,
+}: StationAssetListRowProps) {
   const station = row.station;
+  const statusToneValue = stationRiskTone(row);
   const balance = formatStationBalanceParts(row);
   const lastCollectText = formatRelativeTime(station.lastPricingFetchedAt ?? station.updatedAt);
-  const actionBusy = loadingAction !== null;
 
   return (
     <div
@@ -750,6 +869,7 @@ function StationAssetListRow({
         active
           ? "border-[hsl(var(--accent))] bg-[linear-gradient(90deg,#eff6ff_0%,#f7fbff_42%,#ffffff_100%)]"
           : "border-border bg-white hover:border-sky-200 hover:bg-slate-50/60",
+        overlay && "shadow-[0_18px_45px_rgba(15,23,42,0.16)]",
       )}
       onClick={() => onOpen(station)}
       onKeyDown={(event) => {
@@ -759,7 +879,21 @@ function StationAssetListRow({
         }
       }}
     >
-      <GripVertical className="h-4 w-4 shrink-0 text-slate-300 transition-colors group-hover:text-slate-400" />
+      <div
+        className="shrink-0"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          aria-label={`拖拽排序 ${station.name}`}
+          className="inline-flex h-7 w-5 cursor-grab items-center justify-center rounded-[6px] text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)]"
+          {...dragAttributes}
+          {...dragListeners}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+      </div>
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-600 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
         {stationAvatarLabel(station.name)}
       </div>
@@ -770,6 +904,10 @@ function StationAssetListRow({
           <span className="hidden rounded-full border border-slate-200 bg-white/80 px-2 py-0.5 text-[11px] font-medium leading-4 text-slate-500 sm:inline-flex">
             {stationTypeLabels[station.stationType]}
           </span>
+          <span
+            className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDotClassName(statusToneValue))}
+            title={stationStatusLabels[station.status]}
+          />
         </div>
         <div className="mt-1 truncate text-xs font-medium text-[hsl(var(--accent))]">
           {formatStationDisplayUrl(station.baseUrl)}
@@ -785,7 +923,7 @@ function StationAssetListRow({
               type="button"
               aria-label={`刷新余额 ${station.name}`}
               title={`刷新余额 ${station.name}`}
-              disabled={actionBusy || !station.enabled}
+              disabled={actionDisabled || !station.enabled}
               className="ml-0.5 inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-[5px] text-slate-400/80 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.22)] disabled:cursor-default disabled:opacity-40"
               onClick={(event) => {
                 event.stopPropagation();
@@ -818,7 +956,7 @@ function StationAssetListRow({
         </IconButton>
         <IconButton
           className="text-slate-500 hover:text-slate-900"
-          disabled={actionBusy || !station.enabled}
+          disabled={actionDisabled || !station.enabled}
           label={`采集信息 ${station.name}`}
           onClick={() => onCollect(station)}
         >
@@ -1385,6 +1523,14 @@ function formatRelativeTime(value: string | null) {
     return `${Math.floor(diffMs / hour)} 小时前`;
   }
   return `${Math.floor(diffMs / day)} 天前`;
+}
+
+function statusDotClassName(tone: StatusTone) {
+  if (tone === "healthy") return "bg-emerald-500";
+  if (tone === "warning") return "bg-amber-500";
+  if (tone === "error") return "bg-rose-500";
+  if (tone === "disabled") return "bg-slate-400";
+  return "bg-blue-500";
 }
 
 function formatNullableTime(value: string | null) {
