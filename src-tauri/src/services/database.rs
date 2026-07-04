@@ -2422,61 +2422,7 @@ fn migrate_remote_key_tables(connection: &Connection) -> rusqlite::Result<()> {
     )?;
 
     if table_exists && !remote_station_keys_have_required_foreign_keys(connection)? {
-        connection.execute_batch(
-            r#"
-            ALTER TABLE remote_station_keys
-                RENAME TO remote_station_keys_no_fk_migration;
-            "#,
-        )?;
-        create_remote_station_keys_table(connection)?;
-        connection.execute_batch(
-            r#"
-            INSERT INTO remote_station_keys (
-                id, station_id, remote_key_id_hash, remote_key_name, api_key_masked,
-                api_key_fingerprint, group_id_hash, group_name, tier_label, rate_multiplier,
-                rate_source, created_at_remote, last_used_at, raw_source, match_status,
-                matched_station_key_id, match_confidence, collected_at, updated_at
-            )
-            SELECT
-                remote_station_keys_no_fk_migration.id,
-                remote_station_keys_no_fk_migration.station_id,
-                remote_station_keys_no_fk_migration.remote_key_id_hash,
-                remote_station_keys_no_fk_migration.remote_key_name,
-                remote_station_keys_no_fk_migration.api_key_masked,
-                remote_station_keys_no_fk_migration.api_key_fingerprint,
-                remote_station_keys_no_fk_migration.group_id_hash,
-                remote_station_keys_no_fk_migration.group_name,
-                remote_station_keys_no_fk_migration.tier_label,
-                remote_station_keys_no_fk_migration.rate_multiplier,
-                remote_station_keys_no_fk_migration.rate_source,
-                remote_station_keys_no_fk_migration.created_at_remote,
-                remote_station_keys_no_fk_migration.last_used_at,
-                remote_station_keys_no_fk_migration.raw_source,
-                CASE
-                    WHEN station_keys.id IS NULL
-                         AND remote_station_keys_no_fk_migration.match_status = 'matched'
-                    THEN 'unbound'
-                    ELSE remote_station_keys_no_fk_migration.match_status
-                END,
-                station_keys.id,
-                CASE
-                    WHEN station_keys.id IS NULL
-                         AND remote_station_keys_no_fk_migration.match_status = 'matched'
-                    THEN 0.0
-                    ELSE remote_station_keys_no_fk_migration.match_confidence
-                END,
-                remote_station_keys_no_fk_migration.collected_at,
-                remote_station_keys_no_fk_migration.updated_at
-              FROM remote_station_keys_no_fk_migration
-              INNER JOIN stations
-                      ON stations.id = remote_station_keys_no_fk_migration.station_id
-              LEFT JOIN station_keys
-                     ON station_keys.id = remote_station_keys_no_fk_migration.matched_station_key_id;
-
-            DROP TABLE remote_station_keys_no_fk_migration;
-            "#,
-        )?;
-        create_remote_station_keys_indexes(connection)?;
+        rebuild_remote_station_keys_table_with_foreign_keys(connection)?;
         return Ok(());
     }
 
@@ -2506,6 +2452,85 @@ fn remote_station_keys_have_required_foreign_keys(
     });
 
     Ok(has_station_fk && has_station_key_fk)
+}
+
+fn rebuild_remote_station_keys_table_with_foreign_keys(
+    connection: &Connection,
+) -> rusqlite::Result<()> {
+    connection.execute_batch("SAVEPOINT remote_station_keys_migration;")?;
+    let result = rebuild_remote_station_keys_table_with_foreign_keys_inner(connection);
+
+    match result {
+        Ok(()) => connection.execute_batch("RELEASE SAVEPOINT remote_station_keys_migration;"),
+        Err(error) => {
+            let _ = connection.execute_batch(
+                "ROLLBACK TO SAVEPOINT remote_station_keys_migration;
+                 RELEASE SAVEPOINT remote_station_keys_migration;",
+            );
+            Err(error)
+        }
+    }
+}
+
+fn rebuild_remote_station_keys_table_with_foreign_keys_inner(
+    connection: &Connection,
+) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        r#"
+        ALTER TABLE remote_station_keys
+            RENAME TO remote_station_keys_no_fk_migration;
+        "#,
+    )?;
+    create_remote_station_keys_table(connection)?;
+    connection.execute_batch(
+        r#"
+        INSERT INTO remote_station_keys (
+            id, station_id, remote_key_id_hash, remote_key_name, api_key_masked,
+            api_key_fingerprint, group_id_hash, group_name, tier_label, rate_multiplier,
+            rate_source, created_at_remote, last_used_at, raw_source, match_status,
+            matched_station_key_id, match_confidence, collected_at, updated_at
+        )
+        SELECT
+            remote_station_keys_no_fk_migration.id,
+            remote_station_keys_no_fk_migration.station_id,
+            remote_station_keys_no_fk_migration.remote_key_id_hash,
+            remote_station_keys_no_fk_migration.remote_key_name,
+            remote_station_keys_no_fk_migration.api_key_masked,
+            remote_station_keys_no_fk_migration.api_key_fingerprint,
+            remote_station_keys_no_fk_migration.group_id_hash,
+            remote_station_keys_no_fk_migration.group_name,
+            remote_station_keys_no_fk_migration.tier_label,
+            remote_station_keys_no_fk_migration.rate_multiplier,
+            remote_station_keys_no_fk_migration.rate_source,
+            remote_station_keys_no_fk_migration.created_at_remote,
+            remote_station_keys_no_fk_migration.last_used_at,
+            remote_station_keys_no_fk_migration.raw_source,
+            CASE
+                WHEN station_keys.id IS NULL
+                     AND remote_station_keys_no_fk_migration.match_status = 'matched'
+                THEN 'unbound'
+                ELSE remote_station_keys_no_fk_migration.match_status
+            END,
+            station_keys.id,
+            CASE
+                WHEN station_keys.id IS NULL
+                     AND remote_station_keys_no_fk_migration.match_status = 'matched'
+                THEN 0.0
+                ELSE remote_station_keys_no_fk_migration.match_confidence
+            END,
+            remote_station_keys_no_fk_migration.collected_at,
+            remote_station_keys_no_fk_migration.updated_at
+          FROM remote_station_keys_no_fk_migration
+          INNER JOIN stations
+                  ON stations.id = remote_station_keys_no_fk_migration.station_id
+          LEFT JOIN station_keys
+                 ON station_keys.id = remote_station_keys_no_fk_migration.matched_station_key_id
+                AND station_keys.station_id = remote_station_keys_no_fk_migration.station_id;
+
+        DROP TABLE remote_station_keys_no_fk_migration;
+        "#,
+    )?;
+    create_remote_station_keys_indexes(connection)
 }
 
 fn create_remote_station_keys_table(connection: &Connection) -> rusqlite::Result<()> {
@@ -2756,6 +2781,19 @@ fn insert_remote_station_key(
     station_id: &str,
     key: &RemoteStationKey,
 ) -> Result<(), String> {
+    let matched_station_key_id = valid_remote_station_key_match(
+        transaction,
+        station_id,
+        key.matched_station_key_id.as_deref(),
+    )
+    .map_err(|error| format!("校验远端 Key 匹配关系失败: {error}"))?;
+    let (match_status, match_confidence) =
+        if key.matched_station_key_id.is_some() && matched_station_key_id.is_none() {
+            (RemoteKeyMatchStatus::Unbound.as_str(), 0.0)
+        } else {
+            (key.match_status.as_str(), key.match_confidence)
+        };
+
     transaction
         .execute(
             "INSERT INTO remote_station_keys (
@@ -2779,15 +2817,32 @@ fn insert_remote_station_key(
                 key.created_at,
                 key.last_used_at,
                 key.raw_source,
-                key.match_status.as_str(),
-                key.matched_station_key_id,
-                key.match_confidence,
+                match_status,
+                matched_station_key_id,
+                match_confidence,
                 key.collected_at,
                 now_string(),
             ],
         )
         .map_err(|error| format!("写入远端 Key 发现失败: {error}"))?;
     Ok(())
+}
+
+fn valid_remote_station_key_match(
+    connection: &Connection,
+    station_id: &str,
+    matched_station_key_id: Option<&str>,
+) -> rusqlite::Result<Option<String>> {
+    let Some(matched_station_key_id) = matched_station_key_id else {
+        return Ok(None);
+    };
+    connection
+        .query_row(
+            "SELECT id FROM station_keys WHERE id = ?1 AND station_id = ?2",
+            params![matched_station_key_id, station_id],
+            |row| row.get(0),
+        )
+        .optional()
 }
 
 fn list_key_pool_items_from_connection(
@@ -6940,6 +6995,64 @@ mod tests {
     }
 
     #[test]
+    fn remote_station_key_replace_sanitizes_cross_station_match() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "Remote Replace Station");
+        let other_station = test_station(&database, "Other Replace Station");
+        let other_station_key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: other_station.id,
+                name: "foreign local key".to_string(),
+                api_key: "sk-foreign-local".to_string(),
+                enabled: true,
+                priority: Some(0),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect("foreign station key");
+
+        let saved = database
+            .replace_remote_station_keys(
+                station.id,
+                vec![crate::models::remote_keys::RemoteStationKey {
+                    id: "remote-cross-replace".to_string(),
+                    station_id: "ignored-station".to_string(),
+                    remote_key_id_hash: Some("remote-cross-replace-hash".to_string()),
+                    remote_key_name: Some("remote cross replace".to_string()),
+                    api_key_masked: None,
+                    api_key_fingerprint: None,
+                    group_id_hash: None,
+                    group_name: None,
+                    tier_label: None,
+                    rate_multiplier: None,
+                    rate_source: None,
+                    created_at: None,
+                    last_used_at: None,
+                    raw_source: "sub2api".to_string(),
+                    match_status: crate::models::remote_keys::RemoteKeyMatchStatus::Matched,
+                    matched_station_key_id: Some(other_station_key.id),
+                    match_confidence: 1.0,
+                    collected_at: "3000".to_string(),
+                }],
+            )
+            .expect("replace remote keys");
+
+        assert_eq!(saved.len(), 1);
+        assert_eq!(
+            saved[0].match_status,
+            crate::models::remote_keys::RemoteKeyMatchStatus::Unbound
+        );
+        assert_eq!(saved[0].matched_station_key_id, None);
+        assert_eq!(saved[0].match_confidence, 0.0);
+    }
+
+    #[test]
     fn remote_station_key_migration_rebuilds_old_table_with_foreign_keys() {
         let connection = Connection::open_in_memory().expect("connection");
         connection
@@ -7015,12 +7128,18 @@ mod tests {
                 ) VALUES (
                     'station-old', 'Old Station', 'openai-compatible',
                     'https://example.test', 'sk-test', '1000', '1000'
+                ), (
+                    'station-other', 'Other Station', 'openai-compatible',
+                    'https://other.example.test', 'sk-other', '1000', '1000'
                 );
 
                 INSERT INTO station_keys (
                     id, station_id, name, api_key, created_at, updated_at
                 ) VALUES (
                     'key-old', 'station-old', 'Old Key', 'sk-local', '1000', '1000'
+                ), (
+                    'key-cross-station', 'station-other', 'Cross Station Key',
+                    'sk-cross', '1000', '1000'
                 );
 
                 INSERT INTO remote_station_keys (
@@ -7039,6 +7158,11 @@ mod tests {
                     'Remote Stale', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
                     NULL, NULL, 'sub2api', 'matched', 'missing-key', 1.0,
                     '1200', '1200'
+                ), (
+                    'remote-cross-station', 'station-old', 'remote-cross-hash',
+                    'Remote Cross Station', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                    NULL, NULL, 'sub2api', 'matched', 'key-cross-station', 1.0,
+                    '1300', '1300'
                 );
                 "#,
             )
@@ -7072,7 +7196,7 @@ mod tests {
                 row.get(0)
             })
             .expect("remote count");
-        assert_eq!(remote_count, 2);
+        assert_eq!(remote_count, 3);
 
         let stale_binding: (String, Option<String>, f64) = connection
             .query_row(
@@ -7086,6 +7210,19 @@ mod tests {
         assert_eq!(stale_binding.0, "unbound");
         assert_eq!(stale_binding.1, None);
         assert_eq!(stale_binding.2, 0.0);
+
+        let cross_station_binding: (String, Option<String>, f64) = connection
+            .query_row(
+                "SELECT match_status, matched_station_key_id, match_confidence
+                   FROM remote_station_keys
+                  WHERE id = 'remote-cross-station'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("cross station binding");
+        assert_eq!(cross_station_binding.0, "unbound");
+        assert_eq!(cross_station_binding.1, None);
+        assert_eq!(cross_station_binding.2, 0.0);
 
         connection
             .execute("DELETE FROM stations WHERE id = 'station-old'", [])
