@@ -283,10 +283,7 @@ pub fn remote_key_capability(station: &Station) -> Result<RemoteKeyCapability, S
         can_create_remote_key: true,
         can_read_groups: true,
         requires_manual_session: true,
-        unsupported_reason: Some(
-            "Sub2API 远端 Key 管理需要可用的登录 access token；可通过手动会话或保存账号密码刷新。"
-                .to_string(),
-        ),
+        unsupported_reason: None,
     })
 }
 
