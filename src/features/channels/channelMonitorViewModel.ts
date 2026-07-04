@@ -31,6 +31,11 @@ export type RunStatusView = {
   tone: StatusTone;
 };
 
+type MonitorValidationContext = {
+  templates: ChannelMonitorRequestTemplate[];
+  keys: KeyPoolItem[];
+};
+
 export const targetTypeOptions: Array<{ value: ChannelMonitorTargetType; label: string }> = [
   { value: "station_key", label: "单个密钥" },
   { value: "station", label: "中转站全部启用密钥" },
@@ -43,7 +48,7 @@ export function createEmptyMonitorDraft(stations: Station[] = [], templates: Cha
     targetType: "station_key",
     stationId,
     stationKeyId: "",
-    templateId: templates.find((template) => template.enabled)?.id ?? templates[0]?.id ?? "",
+    templateId: templates.find((template) => template.enabled)?.id ?? "",
     enabled: true,
     intervalSeconds: "60",
     jitterSeconds: "0",
@@ -115,7 +120,10 @@ export function draftToMonitorInput(draft: ChannelMonitorDraft): CreateChannelMo
   };
 }
 
-export function validateMonitorDraft(draft: ChannelMonitorDraft): string | null {
+export function validateMonitorDraft(
+  draft: ChannelMonitorDraft,
+  { templates, keys }: MonitorValidationContext,
+): string | null {
   const intervalSeconds = parseInteger(draft.intervalSeconds);
   const jitterSeconds = parseInteger(draft.jitterSeconds);
   const timeoutSeconds = parseInteger(draft.timeoutSeconds);
@@ -131,11 +139,27 @@ export function validateMonitorDraft(draft: ChannelMonitorDraft): string | null 
   if (draft.targetType === "station_key" && !draft.stationKeyId) {
     return "请选择要检测的密钥";
   }
+  if (draft.targetType === "station_key") {
+    const selectedKey = keys.find((key) => key.id === draft.stationKeyId);
+    if (!selectedKey) {
+      return "所选密钥不存在，请重新选择";
+    }
+    if (selectedKey.stationId !== draft.stationId) {
+      return "所选密钥不属于当前中转站，请重新选择";
+    }
+  }
   if (draft.targetType === "station" && draft.stationKeyId) {
     return "中转站目标不能绑定单个密钥";
   }
   if (!draft.templateId) {
-    return "请选择请求模板";
+    return templates.some((template) => template.enabled) ? "请选择启用的请求模板" : "暂无启用的请求模板";
+  }
+  const selectedTemplate = templates.find((template) => template.id === draft.templateId);
+  if (!selectedTemplate) {
+    return "所选请求模板不存在，请重新选择";
+  }
+  if (!selectedTemplate.enabled) {
+    return "所选请求模板已停用，请选择启用模板";
   }
   if (!draft.detectionModel.trim()) {
     return "请输入检测模型";

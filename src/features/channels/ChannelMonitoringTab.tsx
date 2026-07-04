@@ -22,7 +22,9 @@ import {
   formatTargetLabel,
   formatTemplateLabel,
   getRunStatusView,
+  monitorToDraft,
   monitorToCreateInput,
+  validateMonitorDraft,
 } from "./channelMonitorViewModel";
 
 type ChannelMonitoringTabProps = {
@@ -41,6 +43,7 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
   const [keys, setKeys] = useState<KeyPoolItem[]>([]);
   const [templates, setTemplates] = useState<ChannelMonitorRequestTemplate[]>([]);
   const [runsByMonitor, setRunsByMonitor] = useState(new Map<string, ChannelMonitorRun[]>());
+  const [runLoadFailedIds, setRunLoadFailedIds] = useState(new Set<string>());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actionState, setActionState] = useState<ActionState>(null);
@@ -84,9 +87,9 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
       const runEntries = await Promise.all(
         nextMonitors.map(async (monitor) => {
           try {
-            return [monitor.id, await listChannelMonitorRuns(monitor.id)] as const;
+            return { monitorId: monitor.id, runs: await listChannelMonitorRuns(monitor.id), failed: false };
           } catch {
-            return [monitor.id, [] as ChannelMonitorRun[]] as const;
+            return { monitorId: monitor.id, runs: [] as ChannelMonitorRun[], failed: true };
           }
         }),
       );
@@ -94,7 +97,8 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
       setStations(nextStations);
       setKeys(nextKeys);
       setTemplates(nextTemplates);
-      setRunsByMonitor(new Map(runEntries));
+      setRunsByMonitor(new Map(runEntries.map((entry) => [entry.monitorId, entry.runs] as const)));
+      setRunLoadFailedIds(new Set(runEntries.filter((entry) => entry.failed).map((entry) => entry.monitorId)));
       if (showSuccess) {
         toast.success("渠道监控已刷新");
       }
@@ -162,6 +166,11 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
   }
 
   async function handleDuplicate(monitor: ChannelMonitor) {
+    const validationError = validateMonitorDraft(monitorToDraft(monitor), { templates, keys });
+    if (validationError) {
+      toast.error("复制监控失败", validationError);
+      return;
+    }
     setActionState({ monitorId: monitor.id, kind: "duplicate" });
     setError(null);
     try {
@@ -247,7 +256,12 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
       key: "latest",
       header: "最近结果",
       className: "min-w-[150px]",
-      render: (monitor) => <LatestRunCell run={getLatestRun(runsByMonitor.get(monitor.id) ?? [])} />,
+      render: (monitor) => (
+        <LatestRunCell
+          run={getLatestRun(runsByMonitor.get(monitor.id) ?? [])}
+          historyFailed={runLoadFailedIds.has(monitor.id)}
+        />
+      ),
     },
     {
       key: "actions",
@@ -339,16 +353,31 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
   );
 }
 
-function LatestRunCell({ run }: { run: ChannelMonitorRun | null }) {
+function LatestRunCell({ run, historyFailed }: { run: ChannelMonitorRun | null; historyFailed: boolean }) {
+  if (historyFailed) {
+    return (
+      <div className="flex min-w-0 items-center gap-2">
+        <StatusBadge tone="warning">未读取</StatusBadge>
+        <span className="truncate text-xs text-muted-foreground">运行历史读取失败</span>
+      </div>
+    );
+  }
+
   const statusView = getRunStatusView(run?.status ?? null);
+  const durationLabel = formatRunDuration(run);
   return (
     <div className="flex min-w-0 items-center gap-2">
       <StatusBadge tone={statusView.tone}>{statusView.label}</StatusBadge>
       <span className="truncate text-xs text-muted-foreground">
-        {run ? `${formatRunTimestamp(run.startedAt)} · ${run.latencyMs ?? run.durationMs ?? "-"}ms` : "未运行"}
+        {run ? `${formatRunTimestamp(run.startedAt)} · ${durationLabel}` : "未运行"}
       </span>
     </div>
   );
+}
+
+function formatRunDuration(run: ChannelMonitorRun | null) {
+  const durationMs = run?.latencyMs ?? run?.durationMs;
+  return typeof durationMs === "number" ? `${durationMs}ms` : "--";
 }
 
 function SummaryPill({

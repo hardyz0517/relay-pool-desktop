@@ -74,7 +74,7 @@ export function ChannelMonitorForm({
       })),
     [templates],
   );
-  const validationError = validateMonitorDraft(draft);
+  const validationError = validateMonitorDraft(draft, { templates, keys });
   const canSubmit = !validationError && !saving;
   const isStationTarget = draft.targetType === "station";
 
