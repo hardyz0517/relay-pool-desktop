@@ -23,6 +23,10 @@ use crate::{
             BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput,
         },
         proxy::{ProxyStatus, RequestLog, UpstreamApiFormat},
+        remote_keys::{
+            BindRemoteStationKeyInput, CreateRemoteStationKeyInput, CreateRemoteStationKeyResult,
+            RemoteKeyCapability, RemoteKeyScanResult, RemoteStationKey,
+        },
         routing::{
             ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyCapabilities,
             StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
@@ -40,6 +44,7 @@ use crate::{
         proxy::{
             build_upstream_url, redact_error_message, runtime::ProxyRuntimeState, should_fallback,
         },
+        remote_keys,
         secrets::SecretManager,
     },
 };
@@ -261,6 +266,60 @@ pub fn reorder_station_keys(
     key_ids: Vec<String>,
 ) -> Result<Vec<StationKey>, String> {
     database.reorder_station_keys(station_id, key_ids)
+}
+
+#[tauri::command]
+pub fn get_remote_key_capability(
+    database: State<'_, AppDatabase>,
+    station_id: String,
+) -> Result<RemoteKeyCapability, String> {
+    remote_keys::remote_key_capability(&database, station_id)
+}
+
+#[tauri::command]
+pub fn list_remote_station_keys(
+    database: State<'_, AppDatabase>,
+    station_id: String,
+) -> Result<Vec<RemoteStationKey>, String> {
+    remote_keys::list_remote_keys(&database, station_id)
+}
+
+#[tauri::command]
+pub async fn scan_remote_station_keys(
+    database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
+    station_id: String,
+) -> Result<RemoteKeyScanResult, String> {
+    let database = database.inner().clone();
+    let data_key = *secrets.data_key();
+    tauri::async_runtime::spawn_blocking(move || {
+        remote_keys::scan_remote_keys(&database, &data_key, station_id)
+    })
+    .await
+    .map_err(|error| format!("远端 Key 扫描任务执行失败: {error}"))?
+}
+
+#[tauri::command]
+pub async fn create_remote_station_key(
+    database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
+    input: CreateRemoteStationKeyInput,
+) -> Result<CreateRemoteStationKeyResult, String> {
+    let database = database.inner().clone();
+    let data_key = *secrets.data_key();
+    tauri::async_runtime::spawn_blocking(move || {
+        remote_keys::create_remote_key(&database, &data_key, input)
+    })
+    .await
+    .map_err(|error| format!("远端 Key 创建任务执行失败: {error}"))?
+}
+
+#[tauri::command]
+pub fn bind_remote_station_key(
+    database: State<'_, AppDatabase>,
+    input: BindRemoteStationKeyInput,
+) -> Result<Vec<RemoteStationKey>, String> {
+    remote_keys::bind_remote_key(&database, input)
 }
 
 #[tauri::command]
