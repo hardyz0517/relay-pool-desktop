@@ -12,9 +12,9 @@ pub fn api_key_fingerprint(value: &str) -> Option<String> {
 
 pub fn visible_mask_parts(masked: &str) -> Option<(String, String)> {
     let trimmed = masked.trim();
-    let Some((prefix, suffix)) = trimmed.split_once("****") else {
-        return None;
-    };
+    let (prefix, suffix) = trimmed
+        .split_once("****")
+        .or_else(|| trimmed.split_once("..."))?;
     let prefix = prefix.trim().to_string();
     let suffix = suffix.trim().to_string();
     if prefix.len() < 3 || suffix.len() < 3 {
@@ -66,8 +66,17 @@ mod tests {
     #[test]
     fn masked_key_match_requires_visible_prefix_and_suffix() {
         assert!(masked_key_matches_full("sk-live****cdef", "sk-live-123-cdef"));
+        assert!(masked_key_matches_full(
+            "sk-live-...cdef",
+            "sk-live-123-cdef"
+        ));
         assert!(!masked_key_matches_full("sk-live****zzzz", "sk-live-123-cdef"));
+        assert!(!masked_key_matches_full(
+            "sk-live-...zzzz",
+            "sk-live-123-cdef"
+        ));
         assert!(!masked_key_matches_full("sk****ef", "sk-live-123-cdef"));
+        assert!(!masked_key_matches_full("sk-...ef", "sk-live-123-cdef"));
     }
 
     #[test]
