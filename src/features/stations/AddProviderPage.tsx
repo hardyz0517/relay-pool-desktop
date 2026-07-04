@@ -227,6 +227,8 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   });
   const [keyRows, setKeyRows] = useState<StationKeyDraft[]>([createEmptyStationKeyDraft(0)]);
   const [remoteCapability, setRemoteCapability] = useState<RemoteKeyCapability | null>(null);
+  const [remoteCapabilityError, setRemoteCapabilityError] = useState<string | null>(null);
+  const [remoteListError, setRemoteListError] = useState<string | null>(null);
   const [remoteKeys, setRemoteKeys] = useState<RemoteStationKey[]>([]);
   const [localStationKeys, setLocalStationKeys] = useState<StationKey[]>([]);
   const [remoteLoading, setRemoteLoading] = useState(false);
@@ -255,16 +257,30 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   }, [remoteKeys]);
 
   const remoteUnsupportedReason = remoteCapability?.unsupportedReason ?? null;
+  const remoteCapabilityUnavailableReason = remoteCapabilityError
+    ? `远端 Key 能力读取失败：${remoteCapabilityError}`
+    : remoteUnsupportedReason;
+  const remoteDiscoveryReason =
+    remoteCapabilityUnavailableReason ??
+    (remoteListError ? `远端 Key 列表读取失败：${remoteListError}` : null);
   const scanRemoteDisabled =
-    !editing || remoteLoading || remoteCapability?.canListRemoteKeys !== true;
+    !editing ||
+    remoteLoading ||
+    Boolean(remoteCapabilityError) ||
+    remoteCapability?.canListRemoteKeys !== true;
   const createRemoteDisabled =
-    !editing || remoteLoading || remoteCapability?.canCreateRemoteKey !== true;
+    !editing ||
+    remoteLoading ||
+    Boolean(remoteCapabilityError) ||
+    remoteCapability?.canCreateRemoteKey !== true;
 
   useEffect(() => {
     if (!stationId) {
       setKeyRows([createEmptyStationKeyDraft(0)]);
       setLocalStationKeys([]);
       setRemoteCapability(null);
+      setRemoteCapabilityError(null);
+      setRemoteListError(null);
       setRemoteKeys([]);
       setCreateRemoteOpen(false);
       setLoading(false);
@@ -278,10 +294,14 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       listStations(),
       getStationCredentials(stationId),
       listStationKeys(stationId),
-      getRemoteKeyCapability(stationId).catch(() => null),
-      listRemoteStationKeys(stationId).catch(() => []),
+      getRemoteKeyCapability(stationId)
+        .then((capability) => ({ capability, error: null }))
+        .catch((requestError) => ({ capability: null, error: readError(requestError) })),
+      listRemoteStationKeys(stationId)
+        .then((keys) => ({ keys, error: null }))
+        .catch((requestError) => ({ keys: [], error: readError(requestError) })),
     ])
-      .then(([stations, credentials, keys, capability, discoveredRemoteKeys]) => {
+      .then(([stations, credentials, keys, capabilityResult, discoveredRemoteKeysResult]) => {
         if (!alive) {
           return;
         }
@@ -292,8 +312,10 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         setForm(formFromStation(station, credentials));
         setLocalStationKeys(keys);
         setKeyRows(keys.length ? keys.map(keyToDraft) : []);
-        setRemoteCapability(capability);
-        setRemoteKeys(discoveredRemoteKeys);
+        setRemoteCapability(capabilityResult.capability);
+        setRemoteCapabilityError(capabilityResult.error);
+        setRemoteListError(discoveredRemoteKeysResult.error);
+        setRemoteKeys(discoveredRemoteKeysResult.keys);
         setConnectionTest({ status: "idle", message: null });
       })
       .catch((requestError) => {
@@ -493,15 +515,18 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
 
     setRemoteLoading(true);
     setError(null);
+    setRemoteListError(null);
     try {
       const result = await scanRemoteStationKeys(stationId);
       setRemoteCapability(result.capability);
+      setRemoteCapabilityError(null);
       setRemoteKeys(result.keys);
       await refreshLocalStationKeyState(stationId);
       toast.success("远端 Key 已更新", result.message || `发现 ${result.keys.length} 个远端 Key`);
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
+      setRemoteListError(message);
       toast.error("获取远端 Key 失败", message);
     } finally {
       setRemoteLoading(false);
@@ -520,6 +545,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
 
     setRemoteLoading(true);
     setError(null);
+    setRemoteListError(null);
     try {
       const result = await createRemoteStationKey({
         stationId,
@@ -550,7 +576,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     setError(null);
     try {
       const keys = await bindRemoteStationKey(remoteKeyId, stationKeyId);
-      setRemoteKeys(keys);
+      setRemoteKeys(keys.filter((key) => key.stationId === stationId));
       toast.success("远端 Key 已绑定");
     } catch (requestError) {
       const message = readError(requestError);
@@ -732,7 +758,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                   <Button
                     disabled={scanRemoteDisabled}
                     size="sm"
-                    title={remoteUnsupportedReason ?? undefined}
+                    title={remoteCapabilityUnavailableReason ?? undefined}
                     variant="outline"
                     onClick={() => void handleScanRemoteKeys()}
                   >
@@ -742,7 +768,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                   <Button
                     disabled={createRemoteDisabled}
                     size="sm"
-                    title={remoteUnsupportedReason ?? undefined}
+                    title={remoteCapabilityUnavailableReason ?? undefined}
                     variant="secondary"
                     onClick={() => setCreateRemoteOpen(true)}
                   >
@@ -763,19 +789,26 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                     <KeyRound className="h-3.5 w-3.5" />
                     远端发现
                   </div>
-                  {remoteUnsupportedReason && remoteCapability?.canListRemoteKeys !== true ? (
+                  {remoteCapabilityError || (remoteUnsupportedReason && remoteCapability?.canListRemoteKeys !== true) ? (
                     <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
-                      {remoteUnsupportedReason}
+                      {remoteDiscoveryReason}
                     </div>
                   ) : (
-                    <RemoteKeyDiscoveryList
-                      keys={remoteKeys}
-                      loading={remoteLoading}
-                      localKeys={localStationKeys}
-                      onBind={(remoteKeyId, stationKeyId) =>
-                        void handleBindRemoteKey(remoteKeyId, stationKeyId)
-                      }
-                    />
+                    <>
+                      <RemoteKeyDiscoveryList
+                        keys={remoteKeys}
+                        loading={remoteLoading}
+                        localKeys={localStationKeys}
+                        onBind={(remoteKeyId, stationKeyId) =>
+                          void handleBindRemoteKey(remoteKeyId, stationKeyId)
+                        }
+                      />
+                      {remoteListError && (
+                        <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
+                          {remoteDiscoveryReason}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               )}

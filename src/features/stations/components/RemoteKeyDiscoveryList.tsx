@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link2 } from "lucide-react";
 import { Button, SelectControl, StatusBadge, type StatusTone } from "@/components/ui";
 import type { RemoteKeyMatchStatus, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
@@ -50,6 +50,18 @@ export function RemoteKeyDiscoveryList({
     [localKeys],
   );
 
+  useEffect(() => {
+    setSelectedLocalKeyIds((current) => {
+      const nextEntries = Object.entries(current).filter(([, selectedId]) =>
+        localKeyById.has(selectedId),
+      );
+      if (nextEntries.length === Object.keys(current).length) {
+        return current;
+      }
+      return Object.fromEntries(nextEntries);
+    });
+  }, [localKeyById]);
+
   if (loading && keys.length === 0) {
     return <RemoteKeyEmptyState>正在获取远端 Key...</RemoteKeyEmptyState>;
   }
@@ -77,11 +89,17 @@ export function RemoteKeyDiscoveryList({
               const matchedLocalKey = key.matchedStationKeyId
                 ? localKeyById.get(key.matchedStationKeyId) ?? null
                 : null;
-              const selectedLocalKeyId =
-                selectedLocalKeyIds[key.id] ??
-                key.matchedStationKeyId ??
-                (localKeys.length === 1 ? localKeys[0].id : "");
+              const selectedLocalKeyId = selectedLocalKeyIds[key.id];
+              const effectiveSelectedLocalKeyId =
+                selectedLocalKeyId && localKeyById.has(selectedLocalKeyId)
+                  ? selectedLocalKeyId
+                  : key.matchedStationKeyId && localKeyById.has(key.matchedStationKeyId)
+                    ? key.matchedStationKeyId
+                    : localKeys.length === 1
+                      ? localKeys[0].id
+                      : "";
               const canBind = key.matchStatus !== "matched";
+              const bindDisabled = loading || !effectiveSelectedLocalKeyId;
 
               return (
                 <div
@@ -117,9 +135,10 @@ export function RemoteKeyDiscoveryList({
                             <SelectControl
                               ariaLabel={`选择 ${key.remoteKeyName ?? "远端 Key"} 的本地 Key`}
                               className={selectClassName}
+                              disabled={loading}
                               menuClassName="text-xs"
                               options={localKeyOptions}
-                              value={selectedLocalKeyId}
+                              value={effectiveSelectedLocalKeyId}
                               onChange={(stationKeyId) =>
                                 setSelectedLocalKeyIds((current) => ({
                                   ...current,
@@ -135,8 +154,11 @@ export function RemoteKeyDiscoveryList({
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={!selectedLocalKeyId}
-                            onClick={() => selectedLocalKeyId && onBind(key.id, selectedLocalKeyId)}
+                            disabled={bindDisabled}
+                            onClick={() =>
+                              effectiveSelectedLocalKeyId &&
+                              onBind(key.id, effectiveSelectedLocalKeyId)
+                            }
                           >
                             <Link2 className="h-3.5 w-3.5" />
                             绑定
