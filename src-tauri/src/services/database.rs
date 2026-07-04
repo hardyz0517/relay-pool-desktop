@@ -1108,7 +1108,7 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             timeout_seconds INTEGER NOT NULL CHECK(timeout_seconds BETWEEN 5 AND 120),
             max_concurrency INTEGER NOT NULL DEFAULT 1 CHECK(max_concurrency BETWEEN 1 AND 16),
             consecutive_failure_threshold INTEGER NOT NULL DEFAULT 3 CHECK(consecutive_failure_threshold BETWEEN 1 AND 20),
-            fallback_models_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(fallback_models_json)),
+            fallback_models_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(fallback_models_json) AND json_type(fallback_models_json) = 'array'),
             note TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -2565,8 +2565,14 @@ fn validate_channel_monitor_run_input(input: &CreateChannelMonitorRunInput) -> R
             )
         }
     }
-    if input.started_at.trim().is_empty() {
-        return Err("Channel monitor run started_at cannot be empty".to_string());
+    let started_at = parse_channel_monitor_run_time(&input.started_at, "started_at")?;
+    if let Some(finished_at) = input.finished_at.as_deref() {
+        let finished_at = parse_channel_monitor_run_time(finished_at, "finished_at")?;
+        if finished_at < started_at {
+            return Err(
+                "Channel monitor run finished_at cannot be earlier than started_at".to_string(),
+            );
+        }
     }
     if input.duration_ms.is_some_and(|value| value < 0) {
         return Err("Channel monitor run duration_ms must be non-negative".to_string());
@@ -2581,6 +2587,21 @@ fn validate_channel_monitor_run_input(input: &CreateChannelMonitorRunInput) -> R
         return Err("Channel monitor run status_code must be between 100 and 599".to_string());
     }
     Ok(())
+}
+
+fn parse_channel_monitor_run_time(value: &str, field_name: &str) -> Result<i64, String> {
+    let timestamp = value
+        .trim()
+        .parse::<i64>()
+        .map_err(|_| {
+            format!("Channel monitor run {field_name} must be a positive millisecond epoch")
+        })?;
+    if timestamp <= 0 {
+        return Err(format!(
+            "Channel monitor run {field_name} must be a positive millisecond epoch"
+        ));
+    }
+    Ok(timestamp)
 }
 
 fn create_channel_monitor_in_connection(
@@ -7475,6 +7496,84 @@ mod tests {
             })
             .expect_err("bad status code rejected");
         assert!(bad_status.contains("status_code must be between 100 and 599"));
+    }
+
+    #[test]
+    fn channel_monitor_run_rejects_non_numeric_started_at() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let monitor = test_channel_monitor(&database, "invalid started at");
+
+        let error = database
+            .insert_channel_monitor_run(CreateChannelMonitorRunInput {
+                monitor_id: monitor.id,
+                template_id: monitor.template_id,
+                station_id: monitor.station_id,
+                station_key_id: monitor.station_key_id,
+                status: "success".to_string(),
+                started_at: "not-a-time".to_string(),
+                finished_at: Some("1100".to_string()),
+                duration_ms: Some(100),
+                http_status: Some(200),
+                latency_ms: Some(95),
+                response_model: None,
+                fallback_model: None,
+                error_message: None,
+            })
+            .expect_err("invalid started_at rejected");
+
+        assert!(error.contains("started_at must be a positive millisecond epoch"));
+    }
+
+    #[test]
+    fn channel_monitor_run_rejects_non_numeric_finished_at() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let monitor = test_channel_monitor(&database, "invalid finished at");
+
+        let error = database
+            .insert_channel_monitor_run(CreateChannelMonitorRunInput {
+                monitor_id: monitor.id,
+                template_id: monitor.template_id,
+                station_id: monitor.station_id,
+                station_key_id: monitor.station_key_id,
+                status: "success".to_string(),
+                started_at: "1000".to_string(),
+                finished_at: Some("not-a-time".to_string()),
+                duration_ms: Some(100),
+                http_status: Some(200),
+                latency_ms: Some(95),
+                response_model: None,
+                fallback_model: None,
+                error_message: None,
+            })
+            .expect_err("invalid finished_at rejected");
+
+        assert!(error.contains("finished_at must be a positive millisecond epoch"));
+    }
+
+    #[test]
+    fn channel_monitor_run_rejects_finished_at_before_started_at() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let monitor = test_channel_monitor(&database, "finished before started");
+
+        let error = database
+            .insert_channel_monitor_run(CreateChannelMonitorRunInput {
+                monitor_id: monitor.id,
+                template_id: monitor.template_id,
+                station_id: monitor.station_id,
+                station_key_id: monitor.station_key_id,
+                status: "warning".to_string(),
+                started_at: "2000".to_string(),
+                finished_at: Some("1000".to_string()),
+                duration_ms: Some(100),
+                http_status: Some(200),
+                latency_ms: Some(95),
+                response_model: None,
+                fallback_model: None,
+                error_message: None,
+            })
+            .expect_err("finished_at before started_at rejected");
+
+        assert!(error.contains("finished_at cannot be earlier than started_at"));
     }
 
     #[test]
