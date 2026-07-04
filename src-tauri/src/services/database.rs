@@ -214,7 +214,7 @@ impl AppDatabase {
                   WHERE id = ?2",
                 params![now_string(), station_key_id],
             )
-            .map_err(|error| format!("娓呴櫎 Station Key 鍑嵁澶辫触: {error}"))?;
+            .map_err(|error| format!("Clear station key secret failed: {error}"))?;
         Ok(())
     }
 
@@ -2954,7 +2954,7 @@ fn update_channel_monitor_after_run_in_connection(
                 id,
             ],
         )
-        .map_err(|error| format!("鏇存柊閫氶亾鐩戞帶杩愯鎽樿澶辫触: {error}"))?;
+        .map_err(|error| format!("Update channel monitor run summary failed: {error}"))?;
     if updated == 0 {
         return Err("Channel monitor does not exist".to_string());
     }
@@ -2982,7 +2982,7 @@ fn schedule_next_channel_monitor_run_in_connection(
               WHERE id = ?3",
             params![next_run_at, now_string(), id],
         )
-        .map_err(|error| format!("璁℃划閫氶亾鐩戞帶涓嬫杩愯澶辫触: {error}"))?;
+        .map_err(|error| format!("Schedule next channel monitor run failed: {error}"))?;
     Ok(next_run_at)
 }
 
@@ -3002,12 +3002,12 @@ fn due_channel_monitors_from_connection(
                 AND (next_run_at IS NULL OR CAST(next_run_at AS INTEGER) <= ?1)
               ORDER BY COALESCE(CAST(next_run_at AS INTEGER), 0) ASC, created_at ASC",
         )
-        .map_err(|error| format!("璇诲彇鍒版湡閫氶亾鐩戞帶澶辫触: {error}"))?;
+        .map_err(|error| format!("Read due channel monitors failed: {error}"))?;
     let monitors = statement
         .query_map(params![now_ms], row_to_channel_monitor)
-        .map_err(|error| format!("鏌ヨ鍒版湡閫氶亾鐩戞帶澶辫触: {error}"))?
+        .map_err(|error| format!("Query due channel monitors failed: {error}"))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("瑙ｆ瀽鍒版湡閫氶亾鐩戞帶澶辫触: {error}"))?;
+        .map_err(|error| format!("Parse due channel monitors failed: {error}"))?;
     Ok(monitors)
 }
 

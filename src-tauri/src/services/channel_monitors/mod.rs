@@ -46,6 +46,17 @@ fn run_monitor(
     data_key: &[u8; 32],
     monitor: ChannelMonitor,
 ) -> Result<Vec<ChannelMonitorRun>, String> {
+    let monitor_id = monitor.id.clone();
+    let result = run_monitor_once(database, data_key, monitor, None);
+    schedule_after_started_monitor(database, &monitor_id, result)
+}
+
+fn run_monitor_once(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    monitor: ChannelMonitor,
+    stop_requested: Option<&AtomicBool>,
+) -> Result<Vec<ChannelMonitorRun>, String> {
     let template = database.get_channel_monitor_template(&monitor.template_id)?;
     let targets = monitor_targets(database, &monitor)?;
 
@@ -57,12 +68,14 @@ fn run_monitor(
             run.finished_at.as_deref().unwrap_or(&run.started_at),
             run.error_message.as_deref(),
         )?;
-        database.schedule_next_channel_monitor_run(&monitor.id)?;
         return Ok(vec![run]);
     }
 
     let mut runs = Vec::with_capacity(targets.len());
     for target in targets {
+        if monitor_stop_requested(stop_requested) {
+            break;
+        }
         let run = run_monitor_for_key(database, data_key, &monitor, &template, &target)?;
         database.update_channel_monitor_after_run(
             &monitor.id,
@@ -72,8 +85,27 @@ fn run_monitor(
         )?;
         runs.push(run);
     }
-    database.schedule_next_channel_monitor_run(&monitor.id)?;
     Ok(runs)
+}
+
+fn schedule_after_started_monitor<T>(
+    database: &AppDatabase,
+    monitor_id: &str,
+    result: Result<T, String>,
+) -> Result<T, String> {
+    let schedule_result = database.schedule_next_channel_monitor_run(monitor_id);
+    match (result, schedule_result) {
+        (Ok(value), Ok(_)) => Ok(value),
+        (Err(error), Ok(_)) => Err(error),
+        (Ok(_), Err(schedule_error)) => Err(schedule_error),
+        (Err(error), Err(schedule_error)) => Err(format!(
+            "{error}; failed to schedule next channel monitor run: {schedule_error}"
+        )),
+    }
+}
+
+fn monitor_stop_requested(stop_requested: Option<&AtomicBool>) -> bool {
+    stop_requested.is_some_and(|stop_requested| stop_requested.load(Ordering::Relaxed))
 }
 
 fn monitor_targets(
@@ -308,7 +340,12 @@ fn runner_loop(database: AppDatabase, data_key: [u8; 32], stop_requested: Arc<At
                     if stop_requested.load(Ordering::Relaxed) {
                         break;
                     }
-                    if let Err(error) = run_monitor(&database, &data_key, monitor) {
+                    let monitor_id = monitor.id.clone();
+                    let result =
+                        run_monitor_once(&database, &data_key, monitor, Some(&stop_requested));
+                    if let Err(error) =
+                        schedule_after_started_monitor(&database, &monitor_id, result)
+                    {
                         eprintln!("Channel monitor runner failed: {error}");
                     }
                 }
@@ -333,6 +370,7 @@ mod tests {
     use crate::{
         models::{
             channel_monitors::{CreateChannelMonitorInput, CreateChannelMonitorTemplateInput},
+            station_keys::UpdateStationKeyInput,
             stations::CreateStationInput,
         },
         services::database::AppDatabase,
@@ -508,6 +546,147 @@ mod tests {
         assert_eq!(health.failure_count, 1);
         assert_eq!(health.consecutive_failures, 1);
         assert!(health.last_error_summary.is_some());
+    }
+
+    #[test]
+    fn started_monitor_error_still_advances_next_schedule() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let monitor = station_monitor(&database, "schedule error");
+        let before_due = database
+            .due_channel_monitors(&now_string())
+            .expect("due monitors before error");
+
+        let result = schedule_after_started_monitor(
+            &database,
+            &monitor.id,
+            Err::<Vec<ChannelMonitorRun>, String>("synthetic run error".to_string()),
+        );
+
+        let after_due = database
+            .due_channel_monitors(&now_string())
+            .expect("due monitors after error");
+        assert_eq!(result.expect_err("original error preserved"), "synthetic run error");
+        assert!(before_due.iter().any(|item| item.id == monitor.id));
+        assert!(!after_due.iter().any(|item| item.id == monitor.id));
+    }
+
+    #[test]
+    fn stopped_station_monitor_starts_no_key_runs() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = [3_u8; 32];
+        let monitor = station_monitor(&database, "stopped monitor");
+        let stop_requested = AtomicBool::new(true);
+
+        let runs = run_monitor_once(&database, &data_key, monitor.clone(), Some(&stop_requested))
+            .expect("stopped monitor run");
+        let stored_runs = database
+            .list_channel_monitor_runs(monitor.id)
+            .expect("stored runs");
+
+        assert!(runs.is_empty());
+        assert!(stored_runs.is_empty());
+    }
+
+    #[test]
+    fn station_monitor_skips_when_no_enabled_keys_match() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = [4_u8; 32];
+        let station = database
+            .create_station(CreateStationInput {
+                name: "disabled key station".to_string(),
+                station_type: "openai-compatible".to_string(),
+                base_url: "https://example.test".to_string(),
+                api_key: "sk-disabled-key".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                note: None,
+            })
+            .expect("station");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        database
+            .update_station_key(UpdateStationKeyInput {
+                id: key.id.clone(),
+                station_id: key.station_id.clone(),
+                name: key.name.clone(),
+                api_key: None,
+                enabled: false,
+                priority: key.priority,
+                group_name: key.group_name.clone(),
+                tier_label: key.tier_label.clone(),
+                group_binding_id: key.group_binding_id.clone(),
+                group_id_hash: key.group_id_hash.clone(),
+                rate_multiplier: key.rate_multiplier,
+                rate_source: key.rate_source.clone(),
+                balance_scope: key.balance_scope.clone(),
+                status: key.status.clone(),
+                note: key.note.clone(),
+            })
+            .expect("disable key");
+        let monitor = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "No enabled keys monitor".to_string(),
+                target_type: "station".to_string(),
+                station_id: station.id,
+                station_key_id: None,
+                template_id: "builtin-openai-chat-default".to_string(),
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 5,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 3,
+                fallback_models: Vec::new(),
+                note: None,
+            })
+            .expect("monitor");
+
+        let runs = run_channel_monitor_now(&database, &data_key, &monitor.id).expect("manual run");
+        let health = database
+            .get_station_key_health(key.id)
+            .expect("station key health");
+
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, "skipped");
+        assert_eq!(runs[0].station_key_id, None);
+        assert_eq!(health.success_count, 0);
+        assert_eq!(health.failure_count, 0);
+        assert_eq!(health.consecutive_failures, 0);
+    }
+
+    fn station_monitor(database: &AppDatabase, name: &str) -> ChannelMonitor {
+        let station = database
+            .create_station(CreateStationInput {
+                name: name.to_string(),
+                station_type: "openai-compatible".to_string(),
+                base_url: "https://example.test".to_string(),
+                api_key: "sk-test-monitor".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                note: None,
+            })
+            .expect("station");
+        database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: format!("{name} monitor"),
+                target_type: "station".to_string(),
+                station_id: station.id,
+                station_key_id: None,
+                template_id: "builtin-openai-chat-default".to_string(),
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 5,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 3,
+                fallback_models: Vec::new(),
+                note: None,
+            })
+            .expect("monitor")
     }
 
     fn spawn_upstream(response: &'static str) -> (String, mpsc::Receiver<String>) {
