@@ -83,7 +83,7 @@ fn monitor_targets(
     let keys = database.list_key_pool_items()?;
     let targets = keys
         .into_iter()
-        .filter(|key| key.enabled && key.api_key_present)
+        .filter(|key| key.enabled)
         .filter(|key| match monitor.target_type.as_str() {
             "station_key" => monitor.station_key_id.as_deref() == Some(key.id.as_str()),
             "station" => key.station_id == monitor.station_id,
@@ -430,6 +430,84 @@ mod tests {
         assert!(raw_request.contains(r#""model":"gpt-test""#));
         assert!(raw_request.contains(r#""max_tokens":1"#));
         assert!(raw_request.contains(r#""stream":false"#));
+    }
+
+    #[test]
+    fn manual_monitor_run_fails_enabled_key_without_api_key() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = [9_u8; 32];
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "missing secret station".to_string(),
+                    station_type: "openai-compatible".to_string(),
+                    base_url: "http://127.0.0.1:9".to_string(),
+                    api_key: "sk-to-be-cleared".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        database
+            .clear_station_key_secret_for_tests(&key.id)
+            .expect("clear station key secret");
+        let template = database
+            .create_channel_monitor_template(CreateChannelMonitorTemplateInput {
+                name: "Missing secret template".to_string(),
+                endpoint_kind: "chat_completions".to_string(),
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                request_body_json: r#"{ "model": "{{model}}" }"#.to_string(),
+                enabled: true,
+                note: None,
+            })
+            .expect("template");
+        let monitor = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "Missing secret key monitor".to_string(),
+                target_type: "station_key".to_string(),
+                station_id: station.id,
+                station_key_id: Some(key.id.clone()),
+                template_id: template.id,
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 5,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 3,
+                fallback_models: Vec::new(),
+                note: None,
+            })
+            .expect("monitor");
+
+        let runs = run_channel_monitor_now(&database, &data_key, &monitor.id).expect("manual run");
+        let stored_runs = database
+            .list_channel_monitor_runs(monitor.id)
+            .expect("stored runs");
+        let health = database
+            .get_station_key_health(key.id)
+            .expect("station key health");
+
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, "failed");
+        assert_eq!(
+            runs[0].station_key_id.as_deref(),
+            Some(health.station_key_id.as_str())
+        );
+        assert!(runs[0].error_message.is_some());
+        assert_eq!(stored_runs.len(), 1);
+        assert_eq!(stored_runs[0].status, "failed");
+        assert_eq!(health.success_count, 0);
+        assert_eq!(health.failure_count, 1);
+        assert_eq!(health.consecutive_failures, 1);
+        assert!(health.last_error_summary.is_some());
     }
 
     fn spawn_upstream(response: &'static str) -> (String, mpsc::Receiver<String>) {

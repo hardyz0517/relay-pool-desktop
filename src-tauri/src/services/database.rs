@@ -202,6 +202,22 @@ impl AppDatabase {
         resolve_station_key_api_key(&connection, data_key, station_key_id)
     }
 
+    #[cfg(test)]
+    pub fn clear_station_key_secret_for_tests(&self, station_key_id: &str) -> Result<(), String> {
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "UPDATE station_keys
+                    SET api_key = '',
+                        api_key_secret_id = NULL,
+                        updated_at = ?1
+                  WHERE id = ?2",
+                params![now_string(), station_key_id],
+            )
+            .map_err(|error| format!("娓呴櫎 Station Key 鍑嵁澶辫触: {error}"))?;
+        Ok(())
+    }
+
     pub fn list_stations(&self) -> Result<Vec<Station>, String> {
         let connection = self.connection()?;
         list_stations_from_connection(&connection)
