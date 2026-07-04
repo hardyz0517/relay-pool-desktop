@@ -373,10 +373,13 @@ function balanceToneFor(
   threshold: number | null | undefined,
   status: string | null | undefined,
 ): DetailTone {
+  if (status === "depleted") {
+    return "error";
+  }
   if (value == null || !Number.isFinite(value)) {
     return "muted";
   }
-  if (status === "depleted" || value <= 0) {
+  if (value <= 0) {
     return "error";
   }
   if (status === "low" || (threshold != null && Number.isFinite(threshold) && value <= threshold)) {
