@@ -14,6 +14,11 @@ use tauri::{AppHandle, Manager};
 
 use crate::models::{
     change_events::{ChangeEvent, UpsertChangeEventInput},
+    channel_monitors::{
+        ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
+        CreateChannelMonitorInput, CreateChannelMonitorRunInput, CreateChannelMonitorTemplateInput,
+        UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
+    },
     collector::CollectorSnapshot,
     collector_runs::{CollectorRun, CreateCollectorRunInput, FinishCollectorRunInput},
     credentials::{StationCredentials, UpdateStationCredentialsInput, UpdateStationSessionInput},
@@ -778,6 +783,90 @@ impl AppDatabase {
         list_collector_runs_from_connection(&connection, &station_id)
     }
 
+    pub fn seed_builtin_channel_monitor_templates(&self) -> Result<(), String> {
+        let connection = self.connection()?;
+        seed_builtin_channel_monitor_templates_in_connection(&connection)
+            .map_err(|error| format!("初始化通道监控模板失败: {error}"))
+    }
+
+    pub fn list_channel_monitor_templates(
+        &self,
+    ) -> Result<Vec<ChannelMonitorRequestTemplate>, String> {
+        let connection = self.connection()?;
+        list_channel_monitor_templates_from_connection(&connection)
+    }
+
+    pub fn create_channel_monitor_template(
+        &self,
+        input: CreateChannelMonitorTemplateInput,
+    ) -> Result<ChannelMonitorRequestTemplate, String> {
+        let connection = self.connection()?;
+        create_channel_monitor_template_in_connection(&connection, input)
+    }
+
+    pub fn update_channel_monitor_template(
+        &self,
+        input: UpdateChannelMonitorTemplateInput,
+    ) -> Result<ChannelMonitorRequestTemplate, String> {
+        let connection = self.connection()?;
+        update_channel_monitor_template_in_connection(&connection, input)
+    }
+
+    pub fn duplicate_channel_monitor_template(
+        &self,
+        id: String,
+    ) -> Result<ChannelMonitorRequestTemplate, String> {
+        let connection = self.connection()?;
+        duplicate_channel_monitor_template_in_connection(&connection, &id)
+    }
+
+    pub fn delete_channel_monitor_template(&self, id: String) -> Result<(), String> {
+        let connection = self.connection()?;
+        delete_channel_monitor_template_in_connection(&connection, &id)
+    }
+
+    pub fn list_channel_monitors(&self) -> Result<Vec<ChannelMonitor>, String> {
+        let connection = self.connection()?;
+        list_channel_monitors_from_connection(&connection)
+    }
+
+    pub fn create_channel_monitor(
+        &self,
+        input: CreateChannelMonitorInput,
+    ) -> Result<ChannelMonitor, String> {
+        let connection = self.connection()?;
+        create_channel_monitor_in_connection(&connection, input)
+    }
+
+    pub fn update_channel_monitor(
+        &self,
+        input: UpdateChannelMonitorInput,
+    ) -> Result<ChannelMonitor, String> {
+        let connection = self.connection()?;
+        update_channel_monitor_in_connection(&connection, input)
+    }
+
+    pub fn delete_channel_monitor(&self, id: String) -> Result<(), String> {
+        let connection = self.connection()?;
+        delete_channel_monitor_in_connection(&connection, &id)
+    }
+
+    pub fn list_channel_monitor_runs(
+        &self,
+        monitor_id: String,
+    ) -> Result<Vec<ChannelMonitorRun>, String> {
+        let connection = self.connection()?;
+        list_channel_monitor_runs_from_connection(&connection, &monitor_id)
+    }
+
+    pub fn insert_channel_monitor_run(
+        &self,
+        input: CreateChannelMonitorRunInput,
+    ) -> Result<ChannelMonitorRun, String> {
+        let connection = self.connection()?;
+        insert_channel_monitor_run_in_connection(&connection, input)
+    }
+
     pub fn create_collector_run(
         &self,
         input: CreateCollectorRunInput,
@@ -988,6 +1077,79 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_station_keys_station_priority
             ON station_keys(station_id, priority ASC, created_at ASC);
+
+        CREATE TABLE IF NOT EXISTS channel_monitor_request_templates (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            endpoint_kind TEXT NOT NULL,
+            method TEXT NOT NULL,
+            path TEXT NOT NULL,
+            request_body_json TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            built_in INTEGER NOT NULL DEFAULT 0,
+            note TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_monitor_templates_enabled
+            ON channel_monitor_request_templates(enabled, built_in, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS channel_monitors (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            station_id TEXT NOT NULL,
+            station_key_id TEXT,
+            template_id TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            interval_seconds INTEGER NOT NULL,
+            jitter_seconds INTEGER NOT NULL DEFAULT 0,
+            timeout_seconds INTEGER NOT NULL,
+            max_concurrency INTEGER NOT NULL DEFAULT 1,
+            consecutive_failure_threshold INTEGER NOT NULL DEFAULT 3,
+            fallback_models_json TEXT NOT NULL DEFAULT '[]',
+            note TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE,
+            FOREIGN KEY(station_key_id) REFERENCES station_keys(id) ON DELETE CASCADE,
+            FOREIGN KEY(template_id) REFERENCES channel_monitor_request_templates(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_monitors_enabled_target
+            ON channel_monitors(enabled, target_type, station_id, station_key_id);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_monitors_template
+            ON channel_monitors(template_id);
+
+        CREATE TABLE IF NOT EXISTS channel_monitor_runs (
+            id TEXT PRIMARY KEY,
+            monitor_id TEXT NOT NULL,
+            template_id TEXT NOT NULL,
+            station_id TEXT NOT NULL,
+            station_key_id TEXT,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            duration_ms INTEGER,
+            http_status INTEGER,
+            latency_ms INTEGER,
+            response_model TEXT,
+            fallback_model TEXT,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(monitor_id) REFERENCES channel_monitors(id) ON DELETE CASCADE,
+            FOREIGN KEY(template_id) REFERENCES channel_monitor_request_templates(id),
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE,
+            FOREIGN KEY(station_key_id) REFERENCES station_keys(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_monitor_runs_monitor_created
+            ON channel_monitor_runs(monitor_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_monitor_runs_station_created
+            ON channel_monitor_runs(station_id, station_key_id, created_at DESC);
 
         CREATE TABLE IF NOT EXISTS collector_snapshots (
             id TEXT PRIMARY KEY,
@@ -1201,7 +1363,8 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
         );
         ",
     )?;
-    migrate_p9_fact_schema(connection)
+    migrate_p9_fact_schema(connection)?;
+    seed_builtin_channel_monitor_templates_in_connection(connection)
 }
 
 fn migrate_p9_fact_schema(connection: &Connection) -> rusqlite::Result<()> {
@@ -1901,6 +2064,704 @@ fn seed_default_settings(connection: &Connection) -> rusqlite::Result<()> {
     }
 
     Ok(())
+}
+
+fn seed_builtin_channel_monitor_templates_in_connection(
+    connection: &Connection,
+) -> rusqlite::Result<()> {
+    let templates = [
+        (
+            "builtin-openai-chat-default",
+            "OpenAI Chat Default",
+            "chat_completions",
+            "/v1/chat/completions",
+            json!({
+                "model": "gpt-4o-mini",
+                "messages": [
+                    { "role": "user", "content": "Reply with OK." }
+                ],
+                "temperature": 0
+            }),
+        ),
+        (
+            "builtin-openai-chat-low-token",
+            "OpenAI Chat Low Token",
+            "chat_completions",
+            "/v1/chat/completions",
+            json!({
+                "model": "gpt-4o-mini",
+                "messages": [
+                    { "role": "user", "content": "OK?" }
+                ],
+                "max_tokens": 1,
+                "temperature": 0
+            }),
+        ),
+        (
+            "builtin-openai-responses-default",
+            "OpenAI Responses Default",
+            "responses",
+            "/v1/responses",
+            json!({
+                "model": "gpt-4o-mini",
+                "input": "Reply with OK.",
+                "temperature": 0
+            }),
+        ),
+        (
+            "builtin-openai-responses-low-token",
+            "OpenAI Responses Low Token",
+            "responses",
+            "/v1/responses",
+            json!({
+                "model": "gpt-4o-mini",
+                "input": "OK?",
+                "max_output_tokens": 1,
+                "temperature": 0
+            }),
+        ),
+    ];
+
+    for (id, name, endpoint_kind, path, body) in templates {
+        connection.execute(
+            "INSERT INTO channel_monitor_request_templates (
+                id, name, endpoint_kind, method, path, request_body_json,
+                enabled, built_in, note, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, 'POST', ?4, ?5, 1, 1, NULL, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                endpoint_kind = excluded.endpoint_kind,
+                method = excluded.method,
+                path = excluded.path,
+                request_body_json = excluded.request_body_json,
+                enabled = 1,
+                built_in = 1,
+                updated_at = excluded.updated_at",
+            params![
+                id,
+                name,
+                endpoint_kind,
+                path,
+                body.to_string(),
+                now_string(),
+                now_string()
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn row_to_channel_monitor_template(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<ChannelMonitorRequestTemplate> {
+    Ok(ChannelMonitorRequestTemplate {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        endpoint_kind: row.get(2)?,
+        method: row.get(3)?,
+        path: row.get(4)?,
+        request_body_json: row.get(5)?,
+        enabled: i64_to_bool(row.get(6)?),
+        built_in: i64_to_bool(row.get(7)?),
+        note: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
+}
+
+fn list_channel_monitor_templates_from_connection(
+    connection: &Connection,
+) -> Result<Vec<ChannelMonitorRequestTemplate>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, name, endpoint_kind, method, path, request_body_json,
+                    enabled, built_in, note, created_at, updated_at
+               FROM channel_monitor_request_templates
+              ORDER BY built_in DESC, name ASC, created_at ASC",
+        )
+        .map_err(|error| format!("读取通道监控模板失败: {error}"))?;
+
+    let templates = statement
+        .query_map([], row_to_channel_monitor_template)
+        .map_err(|error| format!("查询通道监控模板失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析通道监控模板失败: {error}"))?;
+    Ok(templates)
+}
+
+fn channel_monitor_template_by_id(
+    connection: &Connection,
+    id: &str,
+) -> Result<ChannelMonitorRequestTemplate, String> {
+    connection
+        .query_row(
+            "SELECT id, name, endpoint_kind, method, path, request_body_json,
+                    enabled, built_in, note, created_at, updated_at
+               FROM channel_monitor_request_templates
+              WHERE id = ?1",
+            params![id],
+            row_to_channel_monitor_template,
+        )
+        .optional()
+        .map_err(|error| format!("读取通道监控模板失败: {error}"))?
+        .ok_or_else(|| "Channel monitor template does not exist".to_string())
+}
+
+fn validate_channel_monitor_template_fields(
+    name: &str,
+    endpoint_kind: &str,
+    method: &str,
+    path: &str,
+    request_body_json: &str,
+) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("Channel monitor template name cannot be empty".to_string());
+    }
+    if endpoint_kind.trim().is_empty() {
+        return Err("Channel monitor endpoint kind cannot be empty".to_string());
+    }
+    if method.trim().is_empty() {
+        return Err("Channel monitor method cannot be empty".to_string());
+    }
+    if !path.trim().starts_with('/') {
+        return Err("Channel monitor path must start with /".to_string());
+    }
+    serde_json::from_str::<Value>(request_body_json)
+        .map_err(|error| format!("Channel monitor request body must be valid JSON: {error}"))?;
+    Ok(())
+}
+
+fn create_channel_monitor_template_in_connection(
+    connection: &Connection,
+    input: CreateChannelMonitorTemplateInput,
+) -> Result<ChannelMonitorRequestTemplate, String> {
+    validate_channel_monitor_template_fields(
+        &input.name,
+        &input.endpoint_kind,
+        &input.method,
+        &input.path,
+        &input.request_body_json,
+    )?;
+    let id = generate_id("channel_monitor_template");
+    let now = now_string();
+
+    connection
+        .execute(
+            "INSERT INTO channel_monitor_request_templates (
+                id, name, endpoint_kind, method, path, request_body_json,
+                enabled, built_in, note, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10)",
+            params![
+                id,
+                input.name.trim(),
+                input.endpoint_kind.trim(),
+                input.method.trim().to_uppercase(),
+                input.path.trim(),
+                input.request_body_json,
+                bool_to_i64(input.enabled),
+                normalize_optional_string(input.note),
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("创建通道监控模板失败: {error}"))?;
+
+    channel_monitor_template_by_id(connection, &id)
+}
+
+fn update_channel_monitor_template_in_connection(
+    connection: &Connection,
+    input: UpdateChannelMonitorTemplateInput,
+) -> Result<ChannelMonitorRequestTemplate, String> {
+    let existing = channel_monitor_template_by_id(connection, &input.id)?;
+    if existing.built_in {
+        return Err("Built-in channel monitor templates cannot be updated".to_string());
+    }
+    validate_channel_monitor_template_fields(
+        &input.name,
+        &input.endpoint_kind,
+        &input.method,
+        &input.path,
+        &input.request_body_json,
+    )?;
+
+    connection
+        .execute(
+            "UPDATE channel_monitor_request_templates
+                SET name = ?1,
+                    endpoint_kind = ?2,
+                    method = ?3,
+                    path = ?4,
+                    request_body_json = ?5,
+                    enabled = ?6,
+                    note = ?7,
+                    updated_at = ?8
+              WHERE id = ?9",
+            params![
+                input.name.trim(),
+                input.endpoint_kind.trim(),
+                input.method.trim().to_uppercase(),
+                input.path.trim(),
+                input.request_body_json,
+                bool_to_i64(input.enabled),
+                normalize_optional_string(input.note),
+                now_string(),
+                input.id,
+            ],
+        )
+        .map_err(|error| format!("更新通道监控模板失败: {error}"))?;
+
+    channel_monitor_template_by_id(connection, &input.id)
+}
+
+fn duplicate_channel_monitor_template_in_connection(
+    connection: &Connection,
+    id: &str,
+) -> Result<ChannelMonitorRequestTemplate, String> {
+    let source = channel_monitor_template_by_id(connection, id)?;
+    let copy_id = generate_id("channel_monitor_template");
+    let now = now_string();
+    let copy_name = format!("{} Copy", source.name);
+
+    connection
+        .execute(
+            "INSERT INTO channel_monitor_request_templates (
+                id, name, endpoint_kind, method, path, request_body_json,
+                enabled, built_in, note, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10)",
+            params![
+                copy_id,
+                copy_name,
+                source.endpoint_kind,
+                source.method,
+                source.path,
+                source.request_body_json,
+                bool_to_i64(source.enabled),
+                source.note,
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("复制通道监控模板失败: {error}"))?;
+
+    channel_monitor_template_by_id(connection, &copy_id)
+}
+
+fn delete_channel_monitor_template_in_connection(
+    connection: &Connection,
+    id: &str,
+) -> Result<(), String> {
+    let template = channel_monitor_template_by_id(connection, id)?;
+    if template.built_in {
+        return Err("Built-in channel monitor templates cannot be deleted".to_string());
+    }
+    let references: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM channel_monitors WHERE template_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("检查通道监控模板引用失败: {error}"))?;
+    if references > 0 {
+        return Err("Channel monitor template is referenced by channel monitors".to_string());
+    }
+
+    connection
+        .execute(
+            "DELETE FROM channel_monitor_request_templates WHERE id = ?1",
+            params![id],
+        )
+        .map_err(|error| format!("删除通道监控模板失败: {error}"))?;
+    Ok(())
+}
+
+fn row_to_channel_monitor(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChannelMonitor> {
+    let fallback_models_json: String = row.get(12)?;
+    let fallback_models =
+        serde_json::from_str::<Vec<String>>(&fallback_models_json).unwrap_or_else(|_| Vec::new());
+
+    Ok(ChannelMonitor {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        target_type: row.get(2)?,
+        station_id: row.get(3)?,
+        station_key_id: row.get(4)?,
+        template_id: row.get(5)?,
+        enabled: i64_to_bool(row.get(6)?),
+        interval_seconds: row.get(7)?,
+        jitter_seconds: row.get(8)?,
+        timeout_seconds: row.get(9)?,
+        max_concurrency: row.get(10)?,
+        consecutive_failure_threshold: row.get(11)?,
+        fallback_models,
+        note: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
+    })
+}
+
+fn list_channel_monitors_from_connection(
+    connection: &Connection,
+) -> Result<Vec<ChannelMonitor>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, name, target_type, station_id, station_key_id, template_id,
+                    enabled, interval_seconds, jitter_seconds, timeout_seconds,
+                    max_concurrency, consecutive_failure_threshold, fallback_models_json,
+                    note, created_at, updated_at
+               FROM channel_monitors
+              ORDER BY enabled DESC, station_id ASC, created_at ASC",
+        )
+        .map_err(|error| format!("读取通道监控失败: {error}"))?;
+
+    let monitors = statement
+        .query_map([], row_to_channel_monitor)
+        .map_err(|error| format!("查询通道监控失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析通道监控失败: {error}"))?;
+    Ok(monitors)
+}
+
+fn channel_monitor_by_id(connection: &Connection, id: &str) -> Result<ChannelMonitor, String> {
+    connection
+        .query_row(
+            "SELECT id, name, target_type, station_id, station_key_id, template_id,
+                    enabled, interval_seconds, jitter_seconds, timeout_seconds,
+                    max_concurrency, consecutive_failure_threshold, fallback_models_json,
+                    note, created_at, updated_at
+               FROM channel_monitors
+              WHERE id = ?1",
+            params![id],
+            row_to_channel_monitor,
+        )
+        .optional()
+        .map_err(|error| format!("读取通道监控失败: {error}"))?
+        .ok_or_else(|| "Channel monitor does not exist".to_string())
+}
+
+fn validate_enabled_channel_monitor_template(
+    connection: &Connection,
+    template_id: &str,
+) -> Result<(), String> {
+    let template = channel_monitor_template_by_id(connection, template_id)?;
+    if !template.enabled {
+        return Err("Channel monitor template is disabled".to_string());
+    }
+    Ok(())
+}
+
+fn validate_station_key_belongs_to_station(
+    connection: &Connection,
+    station_id: &str,
+    station_key_id: &str,
+) -> Result<(), String> {
+    let owner_station_id: Option<String> = connection
+        .query_row(
+            "SELECT station_id FROM station_keys WHERE id = ?1",
+            params![station_key_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取 Station Key 失败: {error}"))?;
+
+    match owner_station_id {
+        Some(owner_station_id) if owner_station_id == station_id => Ok(()),
+        Some(_) => Err("Station key does not belong to station".to_string()),
+        None => Err("Station key does not exist".to_string()),
+    }
+}
+
+fn validate_channel_monitor_values(
+    connection: &Connection,
+    name: &str,
+    target_type: &str,
+    station_id: &str,
+    station_key_id: Option<&str>,
+    template_id: &str,
+    interval_seconds: i64,
+    jitter_seconds: i64,
+    timeout_seconds: i64,
+    max_concurrency: i64,
+    consecutive_failure_threshold: i64,
+) -> Result<String, String> {
+    if name.trim().is_empty() {
+        return Err("Channel monitor name cannot be empty".to_string());
+    }
+    let target_type = match target_type.trim() {
+        "station" => "station".to_string(),
+        "station_key" => "station_key".to_string(),
+        _ => return Err("Channel monitor target_type must be station_key or station".to_string()),
+    };
+    validate_station_exists(connection, station_id)?;
+    match target_type.as_str() {
+        "station" => {
+            if station_key_id.is_some() {
+                return Err("Station-wide channel monitor cannot have station_key_id".to_string());
+            }
+        }
+        "station_key" => {
+            let Some(station_key_id) = station_key_id else {
+                return Err("Key channel monitor requires station_key_id".to_string());
+            };
+            validate_station_key_belongs_to_station(connection, station_id, station_key_id)?;
+        }
+        _ => unreachable!(),
+    }
+    validate_enabled_channel_monitor_template(connection, template_id)?;
+
+    if !(15..=3600).contains(&interval_seconds) {
+        return Err("Channel monitor interval_seconds must be between 15 and 3600".to_string());
+    }
+    if !(0..=600).contains(&jitter_seconds) {
+        return Err("Channel monitor jitter_seconds must be between 0 and 600".to_string());
+    }
+    if interval_seconds - jitter_seconds < 15 {
+        return Err(
+            "Channel monitor interval_seconds minus jitter_seconds must be at least 15".to_string(),
+        );
+    }
+    if !(5..=120).contains(&timeout_seconds) {
+        return Err("Channel monitor timeout_seconds must be between 5 and 120".to_string());
+    }
+    if !(1..=16).contains(&max_concurrency) {
+        return Err("Channel monitor max_concurrency must be between 1 and 16".to_string());
+    }
+    if !(1..=20).contains(&consecutive_failure_threshold) {
+        return Err(
+            "Channel monitor consecutive_failure_threshold must be between 1 and 20".to_string(),
+        );
+    }
+
+    Ok(target_type)
+}
+
+fn create_channel_monitor_in_connection(
+    connection: &Connection,
+    input: CreateChannelMonitorInput,
+) -> Result<ChannelMonitor, String> {
+    let target_type = validate_channel_monitor_values(
+        connection,
+        &input.name,
+        &input.target_type,
+        &input.station_id,
+        input.station_key_id.as_deref(),
+        &input.template_id,
+        input.interval_seconds,
+        input.jitter_seconds,
+        input.timeout_seconds,
+        input.max_concurrency,
+        input.consecutive_failure_threshold,
+    )?;
+    let id = generate_id("channel_monitor");
+    let now = now_string();
+    let fallback_models_json = serde_json::to_string(&input.fallback_models)
+        .map_err(|error| format!("序列化 fallback models 失败: {error}"))?;
+
+    connection
+        .execute(
+            "INSERT INTO channel_monitors (
+                id, name, target_type, station_id, station_key_id, template_id,
+                enabled, interval_seconds, jitter_seconds, timeout_seconds,
+                max_concurrency, consecutive_failure_threshold, fallback_models_json,
+                note, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            params![
+                id,
+                input.name.trim(),
+                target_type,
+                input.station_id,
+                normalize_optional_string(input.station_key_id),
+                input.template_id,
+                bool_to_i64(input.enabled),
+                input.interval_seconds,
+                input.jitter_seconds,
+                input.timeout_seconds,
+                input.max_concurrency,
+                input.consecutive_failure_threshold,
+                fallback_models_json,
+                normalize_optional_string(input.note),
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("创建通道监控失败: {error}"))?;
+
+    channel_monitor_by_id(connection, &id)
+}
+
+fn update_channel_monitor_in_connection(
+    connection: &Connection,
+    input: UpdateChannelMonitorInput,
+) -> Result<ChannelMonitor, String> {
+    channel_monitor_by_id(connection, &input.id)?;
+    let target_type = validate_channel_monitor_values(
+        connection,
+        &input.name,
+        &input.target_type,
+        &input.station_id,
+        input.station_key_id.as_deref(),
+        &input.template_id,
+        input.interval_seconds,
+        input.jitter_seconds,
+        input.timeout_seconds,
+        input.max_concurrency,
+        input.consecutive_failure_threshold,
+    )?;
+    let fallback_models_json = serde_json::to_string(&input.fallback_models)
+        .map_err(|error| format!("序列化 fallback models 失败: {error}"))?;
+
+    connection
+        .execute(
+            "UPDATE channel_monitors
+                SET name = ?1,
+                    target_type = ?2,
+                    station_id = ?3,
+                    station_key_id = ?4,
+                    template_id = ?5,
+                    enabled = ?6,
+                    interval_seconds = ?7,
+                    jitter_seconds = ?8,
+                    timeout_seconds = ?9,
+                    max_concurrency = ?10,
+                    consecutive_failure_threshold = ?11,
+                    fallback_models_json = ?12,
+                    note = ?13,
+                    updated_at = ?14
+              WHERE id = ?15",
+            params![
+                input.name.trim(),
+                target_type,
+                input.station_id,
+                normalize_optional_string(input.station_key_id),
+                input.template_id,
+                bool_to_i64(input.enabled),
+                input.interval_seconds,
+                input.jitter_seconds,
+                input.timeout_seconds,
+                input.max_concurrency,
+                input.consecutive_failure_threshold,
+                fallback_models_json,
+                normalize_optional_string(input.note),
+                now_string(),
+                input.id,
+            ],
+        )
+        .map_err(|error| format!("更新通道监控失败: {error}"))?;
+
+    channel_monitor_by_id(connection, &input.id)
+}
+
+fn delete_channel_monitor_in_connection(connection: &Connection, id: &str) -> Result<(), String> {
+    let deleted = connection
+        .execute("DELETE FROM channel_monitors WHERE id = ?1", params![id])
+        .map_err(|error| format!("删除通道监控失败: {error}"))?;
+    if deleted == 0 {
+        return Err("Channel monitor does not exist".to_string());
+    }
+    Ok(())
+}
+
+fn row_to_channel_monitor_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChannelMonitorRun> {
+    Ok(ChannelMonitorRun {
+        id: row.get(0)?,
+        monitor_id: row.get(1)?,
+        template_id: row.get(2)?,
+        station_id: row.get(3)?,
+        station_key_id: row.get(4)?,
+        status: row.get(5)?,
+        started_at: row.get(6)?,
+        finished_at: row.get(7)?,
+        duration_ms: row.get(8)?,
+        http_status: row.get(9)?,
+        latency_ms: row.get(10)?,
+        response_model: row.get(11)?,
+        fallback_model: row.get(12)?,
+        error_message: row.get(13)?,
+        created_at: row.get(14)?,
+    })
+}
+
+fn list_channel_monitor_runs_from_connection(
+    connection: &Connection,
+    monitor_id: &str,
+) -> Result<Vec<ChannelMonitorRun>, String> {
+    channel_monitor_by_id(connection, monitor_id)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id, monitor_id, template_id, station_id, station_key_id, status,
+                    started_at, finished_at, duration_ms, http_status, latency_ms,
+                    response_model, fallback_model, error_message, created_at
+               FROM channel_monitor_runs
+              WHERE monitor_id = ?1
+              ORDER BY created_at DESC",
+        )
+        .map_err(|error| format!("读取通道监控运行记录失败: {error}"))?;
+
+    let runs = statement
+        .query_map(params![monitor_id], row_to_channel_monitor_run)
+        .map_err(|error| format!("查询通道监控运行记录失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析通道监控运行记录失败: {error}"))?;
+    Ok(runs)
+}
+
+fn insert_channel_monitor_run_in_connection(
+    connection: &Connection,
+    input: CreateChannelMonitorRunInput,
+) -> Result<ChannelMonitorRun, String> {
+    let monitor = channel_monitor_by_id(connection, &input.monitor_id)?;
+    if input.template_id != monitor.template_id
+        || input.station_id != monitor.station_id
+        || input.station_key_id != monitor.station_key_id
+    {
+        return Err("Channel monitor run target does not match monitor".to_string());
+    }
+    if input.status.trim().is_empty() {
+        return Err("Channel monitor run status cannot be empty".to_string());
+    }
+    let id = generate_id("channel_monitor_run");
+
+    connection
+        .execute(
+            "INSERT INTO channel_monitor_runs (
+                id, monitor_id, template_id, station_id, station_key_id, status,
+                started_at, finished_at, duration_ms, http_status, latency_ms,
+                response_model, fallback_model, error_message, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                id,
+                input.monitor_id,
+                input.template_id,
+                input.station_id,
+                normalize_optional_string(input.station_key_id),
+                input.status.trim(),
+                input.started_at,
+                normalize_optional_string(input.finished_at),
+                input.duration_ms,
+                input.http_status,
+                input.latency_ms,
+                normalize_optional_string(input.response_model),
+                normalize_optional_string(input.fallback_model),
+                redact_optional_text(input.error_message),
+                now_string(),
+            ],
+        )
+        .map_err(|error| format!("保存通道监控运行记录失败: {error}"))?;
+
+    connection
+        .query_row(
+            "SELECT id, monitor_id, template_id, station_id, station_key_id, status,
+                    started_at, finished_at, duration_ms, http_status, latency_ms,
+                    response_model, fallback_model, error_message, created_at
+               FROM channel_monitor_runs
+              WHERE id = ?1",
+            params![id],
+            row_to_channel_monitor_run,
+        )
+        .optional()
+        .map_err(|error| format!("读取通道监控运行记录失败: {error}"))?
+        .ok_or_else(|| "Channel monitor run does not exist".to_string())
 }
 
 fn row_to_station(row: &rusqlite::Row<'_>) -> rusqlite::Result<Station> {
@@ -6266,6 +7127,10 @@ fn now_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::channel_monitors::{
+        CreateChannelMonitorInput, CreateChannelMonitorTemplateInput,
+        UpdateChannelMonitorTemplateInput,
+    };
     use crate::models::group_facts::{
         BINDING_KIND_KEY_BINDING, BINDING_KIND_STATION_GROUP, BINDING_STATUS_AVAILABLE,
         BINDING_STATUS_MISSING, UpdateStationKeyGroupBindingInput,
@@ -6286,6 +7151,175 @@ mod tests {
                 note: None,
             })
             .expect("station")
+    }
+
+    #[test]
+    fn channel_monitor_builtin_template_seeding_is_idempotent() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+
+        database
+            .seed_builtin_channel_monitor_templates()
+            .expect("seed again");
+        let templates = database
+            .list_channel_monitor_templates()
+            .expect("templates");
+        let built_in_ids: Vec<_> = templates
+            .iter()
+            .filter(|template| template.built_in)
+            .map(|template| template.id.as_str())
+            .collect();
+
+        assert_eq!(built_in_ids.len(), 4);
+        for expected_id in [
+            "builtin-openai-chat-default",
+            "builtin-openai-chat-low-token",
+            "builtin-openai-responses-default",
+            "builtin-openai-responses-low-token",
+        ] {
+            assert!(
+                built_in_ids.contains(&expected_id),
+                "{expected_id} should be seeded"
+            );
+        }
+    }
+
+    #[test]
+    fn create_key_channel_monitor_round_trips_fallback_models() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "monitor key station");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+
+        let monitor = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "key smoke".to_string(),
+                target_type: "station_key".to_string(),
+                station_id: station.id.clone(),
+                station_key_id: Some(key.id.clone()),
+                template_id: "builtin-openai-chat-default".to_string(),
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 10,
+                timeout_seconds: 15,
+                max_concurrency: 2,
+                consecutive_failure_threshold: 3,
+                fallback_models: vec!["gpt-4o-mini".to_string(), "gpt-4.1-mini".to_string()],
+                note: Some("round trip".to_string()),
+            })
+            .expect("create monitor");
+        let monitors = database.list_channel_monitors().expect("monitors");
+        let saved = monitors
+            .iter()
+            .find(|item| item.id == monitor.id)
+            .expect("saved monitor");
+
+        assert_eq!(saved.target_type, "station_key");
+        assert_eq!(saved.station_id, station.id);
+        assert_eq!(saved.station_key_id.as_deref(), Some(key.id.as_str()));
+        assert_eq!(
+            saved.fallback_models,
+            vec!["gpt-4o-mini".to_string(), "gpt-4.1-mini".to_string()]
+        );
+    }
+
+    #[test]
+    fn channel_monitor_rejects_station_key_mismatch() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "monitor owning station");
+        let other_station = test_station(&database, "monitor other station");
+        let other_key = database
+            .list_station_keys(other_station.id)
+            .expect("keys")
+            .remove(0);
+
+        let error = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "bad key".to_string(),
+                target_type: "station_key".to_string(),
+                station_id: station.id,
+                station_key_id: Some(other_key.id),
+                template_id: "builtin-openai-chat-default".to_string(),
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 15,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 3,
+                fallback_models: Vec::new(),
+                note: None,
+            })
+            .expect_err("mismatch rejected");
+
+        assert!(error.contains("Station key does not belong to station"));
+    }
+
+    #[test]
+    fn deleting_referenced_channel_monitor_template_is_rejected() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "template reference station");
+        let template = database
+            .create_channel_monitor_template(CreateChannelMonitorTemplateInput {
+                name: "custom template".to_string(),
+                endpoint_kind: "chat_completions".to_string(),
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                request_body_json: r#"{"model":"gpt-4o-mini","messages":[]}"#.to_string(),
+                enabled: true,
+                note: None,
+            })
+            .expect("template");
+        database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "station smoke".to_string(),
+                target_type: "station".to_string(),
+                station_id: station.id,
+                station_key_id: None,
+                template_id: template.id.clone(),
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 15,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 3,
+                fallback_models: Vec::new(),
+                note: None,
+            })
+            .expect("monitor");
+
+        let error = database
+            .delete_channel_monitor_template(template.id)
+            .expect_err("referenced template rejected");
+
+        assert!(error.contains("referenced by channel monitors"));
+    }
+
+    #[test]
+    fn duplicating_builtin_channel_monitor_template_creates_editable_copy() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+
+        let copy = database
+            .duplicate_channel_monitor_template("builtin-openai-chat-default".to_string())
+            .expect("duplicate");
+        assert!(!copy.built_in);
+        assert_ne!(copy.id, "builtin-openai-chat-default");
+
+        let updated = database
+            .update_channel_monitor_template(UpdateChannelMonitorTemplateInput {
+                id: copy.id.clone(),
+                name: "custom editable copy".to_string(),
+                endpoint_kind: copy.endpoint_kind,
+                method: copy.method,
+                path: copy.path,
+                request_body_json: copy.request_body_json,
+                enabled: true,
+                note: Some("edited".to_string()),
+            })
+            .expect("update custom copy");
+
+        assert_eq!(updated.name, "custom editable copy");
+        assert_eq!(updated.note.as_deref(), Some("edited"));
     }
 
     #[test]
