@@ -1,63 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StationKeyDeserializePayload {
-    id: String,
-    station_id: String,
-    name: String,
-    api_key_masked: String,
-    api_key_present: bool,
-    enabled: bool,
-    priority: i64,
-    group_name: Option<String>,
-    tier_label: Option<String>,
-    group_binding_id: Option<String>,
-    group_id_hash: Option<String>,
-    rate_multiplier: Option<f64>,
-    rate_source: Option<String>,
-    rate_collected_at: Option<String>,
-    balance_scope: Option<String>,
-    status: String,
-    last_checked_at: Option<String>,
-    last_used_at: Option<String>,
-    note: Option<String>,
-    created_at: String,
-    updated_at: String,
-}
-
-impl<'de> Deserialize<'de> for crate::models::station_keys::StationKey {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let payload = StationKeyDeserializePayload::deserialize(deserializer)?;
-        Ok(Self {
-            id: payload.id,
-            station_id: payload.station_id,
-            name: payload.name,
-            api_key_masked: payload.api_key_masked,
-            api_key_present: payload.api_key_present,
-            enabled: payload.enabled,
-            priority: payload.priority,
-            group_name: payload.group_name,
-            tier_label: payload.tier_label,
-            group_binding_id: payload.group_binding_id,
-            group_id_hash: payload.group_id_hash,
-            rate_multiplier: payload.rate_multiplier,
-            rate_source: payload.rate_source,
-            rate_collected_at: payload.rate_collected_at,
-            balance_scope: payload.balance_scope,
-            status: payload.status,
-            last_checked_at: payload.last_checked_at,
-            last_used_at: payload.last_used_at,
-            note: payload.note,
-            created_at: payload.created_at,
-            updated_at: payload.updated_at,
-        })
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteKeyCapability {
@@ -138,7 +80,7 @@ pub struct CreateRemoteStationKeyInput {
     pub group_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateRemoteStationKeyResult {
     pub remote_key: RemoteStationKey,
