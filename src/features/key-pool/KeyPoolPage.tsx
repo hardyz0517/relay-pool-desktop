@@ -35,6 +35,14 @@ const statusTone: Record<StationKeyStatus, "healthy" | "warning" | "error" | "di
   disabled: "disabled",
 };
 
+const statusLabels: Record<StationKeyStatus, string> = {
+  unchecked: "未检测",
+  healthy: "正常",
+  warning: "警告",
+  error: "错误",
+  disabled: "禁用",
+};
+
 export function KeyPoolPage() {
   const toast = useToast();
   const [stations, setStations] = useState<Station[]>([]);
@@ -97,7 +105,7 @@ export function KeyPoolPage() {
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
-      toast.error("读取 Key 池失败", message);
+      toast.error("读取密钥池失败", message);
     } finally {
       setLoading(false);
     }
@@ -145,7 +153,7 @@ export function KeyPoolPage() {
     try {
       const saved = await reorderKeyPool(nextOrder.map((item) => item.id));
       setItems(saved);
-      toast.success("Key 池排序已保存");
+      toast.success("密钥排序已保存");
     } catch (requestError) {
       setItems(previousItems);
       toast.error("保存排序失败", readError(requestError));
@@ -176,16 +184,16 @@ export function KeyPoolPage() {
         note: item.note,
       });
       await refresh();
-      toast.success(item.enabled ? "Key 已禁用" : "Key 已启用");
+      toast.success(item.enabled ? "密钥已禁用" : "密钥已启用");
     } catch (requestError) {
-      toast.error("更新 Key 状态失败", readError(requestError));
+      toast.error("更新密钥状态失败", readError(requestError));
     } finally {
       setSaving(false);
     }
   }
 
   async function handleDelete(item: KeyPoolItem) {
-    if (!window.confirm(`确认删除 Key「${item.name}」？`)) {
+    if (!window.confirm(`确认删除密钥「${item.name}」？`)) {
       return;
     }
     setSaving(true);
@@ -193,9 +201,9 @@ export function KeyPoolPage() {
     try {
       await deleteStationKey(item.id);
       await refresh();
-      toast.success("Key 已删除");
+      toast.success("密钥已删除");
     } catch (requestError) {
-      toast.error("删除 Key 失败", readError(requestError));
+      toast.error("删除密钥失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -215,7 +223,7 @@ export function KeyPoolPage() {
       setBindingsForEdit(bindings);
       setEditForm((current) => current.id === item.id ? mergeCapabilitiesIntoForm(current, capabilities) : current);
     } catch (requestError) {
-      toast.error("读取 Key 详情失败", readError(requestError));
+      toast.error("读取密钥详情失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -267,13 +275,13 @@ export function KeyPoolPage() {
         });
       } catch (capabilityError) {
         await refresh();
-        throw new Error(`Key 基础信息已保存，但路由能力保存失败：${readError(capabilityError)}`);
+        throw new Error(`密钥基础信息已保存，但路由能力保存失败：${readError(capabilityError)}`);
       }
       setEditingItem(null);
       await refresh();
-      toast.success("Key 已更新");
+      toast.success("密钥已更新");
     } catch (requestError) {
-      toast.error("保存 Key 失败", readError(requestError));
+      toast.error("保存密钥失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -281,8 +289,7 @@ export function KeyPoolPage() {
 
   return (
     <PageScaffold
-      title="Key 池"
-      description="统一管理所有中转站账号下的 API Key。这里的排序、启用状态和健康信息会直接参与本地代理路由。"
+      title="密钥池"
       actions={
         <div className="flex items-center gap-2">
           <SelectControl
@@ -308,7 +315,7 @@ export function KeyPoolPage() {
           />
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
-            <input className={`${selectClassName} pl-8`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 key / 站点" />
+            <input className={`${selectClassName} pl-8`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索密钥 / 站点" />
           </div>
           <Button variant="secondary" onClick={() => void refresh()} disabled={loading || saving}>
             <RefreshCcw className="h-4 w-4" />
@@ -319,20 +326,20 @@ export function KeyPoolPage() {
     >
       {loading ? (
         <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/85 px-4 py-5 text-sm text-muted-foreground">
-          正在读取 Key 池...
+          正在读取密钥池...
         </div>
       ) : filteredItems.length === 0 ? (
         <EmptyState
-          title="还没有可管理的 Key"
-          description="先在中转站页创建一个站点和它下面的 API Key。"
+          title="还没有可管理的密钥"
+          description="先在中转站页创建一个站点和它下面的密钥。"
         />
       ) : (
         <div className="space-y-[var(--shell-page-gap)]">
           <Toolbar>
             <div className="min-w-0">
-              <div className="text-[13px] font-semibold text-slate-800">Key 池列表</div>
+              <div className="text-[13px] font-semibold text-slate-800">密钥列表</div>
               <div className="text-xs text-muted-foreground">
-                {filteredItems.length} 个 Key，{filteredItems.filter((item) => item.enabled).length} 个启用，{saving ? "保存中" : dragEnabled ? "可拖拽调整全局顺序" : "清除筛选后可排序"}。
+                {filteredItems.length} 个密钥，{filteredItems.filter((item) => item.enabled).length} 个启用，{saving ? "保存中" : dragEnabled ? "可拖拽排序" : "清除筛选后可排序"}。
               </div>
               {!dragEnabled && (
                 <div className="mt-1 text-xs text-amber-700">当前有筛选条件，拖拽排序已禁用。</div>
@@ -448,7 +455,7 @@ function KeyRowContent({
       }
       badges={
         <>
-          <StatusBadge tone={statusTone[item.status]}>{item.status}</StatusBadge>
+          <StatusBadge tone={statusTone[item.status]}>{statusLabels[item.status]}</StatusBadge>
           <StatusBadge tone={item.enabled ? "healthy" : "disabled"}>{item.enabled ? "启用" : "禁用"}</StatusBadge>
           {item.onlyUseAsBackup && <StatusBadge tone="warning">备用</StatusBadge>}
           {cooldownActive && <StatusBadge tone="warning">冷却中</StatusBadge>}
@@ -465,7 +472,7 @@ function KeyRowContent({
       ]}
       actions={
         <>
-          <IconButton label="复制脱敏 Key" disabled>
+          <IconButton label="复制脱敏密钥" disabled>
             <Copy className="h-4 w-4" />
           </IconButton>
           <IconButton label={item.enabled ? `停用 ${item.name}` : `启用 ${item.name}`} variant="secondary" disabled={overlay} onClick={() => onToggleEnabled?.(item)}>
@@ -561,8 +568,8 @@ function KeyEditDialog({
   return (
     <Dialog
       open
-      title="编辑 Key"
-      description="API Key 留空则保留旧值。"
+      title="编辑密钥"
+      description="密钥留空则保留旧值。"
       onClose={onClose}
       footer={
         <div className="flex justify-end gap-2">
@@ -583,8 +590,8 @@ function KeyEditDialog({
         <Field label="所属中转站">
           <input className={inputClassName} value={form.stationName} disabled />
         </Field>
-        <Field label="API Key">
-          <input className={inputClassName} value={form.apiKey} onChange={(event) => onFormChange({ ...form, apiKey: event.target.value })} placeholder="留空保留旧 key" />
+        <Field label="密钥">
+          <input className={inputClassName} value={form.apiKey} onChange={(event) => onFormChange({ ...form, apiKey: event.target.value })} placeholder="留空保留旧密钥" />
         </Field>
         <div className="grid gap-3 md:grid-cols-3">
           <Field label="分组绑定">
@@ -609,12 +616,12 @@ function KeyEditDialog({
           <Field label="分组">
             <input className={inputClassName} value={form.groupName} onChange={(event) => onFormChange({ ...form, groupName: event.target.value })} />
           </Field>
-          <Field label="Tier">
+          <Field label="档位">
             <input className={inputClassName} value={form.tierLabel} onChange={(event) => onFormChange({ ...form, tierLabel: event.target.value })} />
           </Field>
           <Field label="状态">
             <SelectControl
-              ariaLabel="Key 状态"
+              ariaLabel="密钥状态"
               className={inputClassName}
               value={form.status}
               options={[
@@ -635,13 +642,13 @@ function KeyEditDialog({
         <div className="grid gap-2 rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/25 p-3">
           <div className="text-xs font-semibold text-slate-700">协议能力</div>
           <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
-            <CheckField label="Chat Completions" checked={form.supportsChatCompletions} onChange={(checked) => onFormChange({ ...form, supportsChatCompletions: checked })} />
-            <CheckField label="Responses" checked={form.supportsResponses} onChange={(checked) => onFormChange({ ...form, supportsResponses: checked })} />
-            <CheckField label="Embeddings" checked={form.supportsEmbeddings} onChange={(checked) => onFormChange({ ...form, supportsEmbeddings: checked })} />
-            <CheckField label="Stream" checked={form.supportsStream} onChange={(checked) => onFormChange({ ...form, supportsStream: checked })} />
-            <CheckField label="Tools" checked={form.supportsTools} onChange={(checked) => onFormChange({ ...form, supportsTools: checked })} />
-            <CheckField label="Vision" checked={form.supportsVision} onChange={(checked) => onFormChange({ ...form, supportsVision: checked })} />
-            <CheckField label="Reasoning" checked={form.supportsReasoning} onChange={(checked) => onFormChange({ ...form, supportsReasoning: checked })} />
+            <CheckField label="聊天补全" checked={form.supportsChatCompletions} onChange={(checked) => onFormChange({ ...form, supportsChatCompletions: checked })} />
+            <CheckField label="响应接口" checked={form.supportsResponses} onChange={(checked) => onFormChange({ ...form, supportsResponses: checked })} />
+            <CheckField label="向量接口" checked={form.supportsEmbeddings} onChange={(checked) => onFormChange({ ...form, supportsEmbeddings: checked })} />
+            <CheckField label="流式响应" checked={form.supportsStream} onChange={(checked) => onFormChange({ ...form, supportsStream: checked })} />
+            <CheckField label="工具调用" checked={form.supportsTools} onChange={(checked) => onFormChange({ ...form, supportsTools: checked })} />
+            <CheckField label="图片输入" checked={form.supportsVision} onChange={(checked) => onFormChange({ ...form, supportsVision: checked })} />
+            <CheckField label="推理模型" checked={form.supportsReasoning} onChange={(checked) => onFormChange({ ...form, supportsReasoning: checked })} />
           </div>
         </div>
         <div className="grid gap-3 md:grid-cols-3">
@@ -658,10 +665,10 @@ function KeyEditDialog({
         <div className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)]">
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input checked={form.onlyUseAsBackup} className="h-4 w-4 accent-teal-600" type="checkbox" onChange={(event) => onFormChange({ ...form, onlyUseAsBackup: event.target.checked })} />
-            仅作为备用 Key
+            仅作为备用密钥
           </label>
           <Field label="路由标签">
-            <input className={inputClassName} value={form.routingTags} onChange={(event) => onFormChange({ ...form, routingTags: event.target.value })} placeholder="逗号分隔，例如 pro, low-latency" />
+            <input className={inputClassName} value={form.routingTags} onChange={(event) => onFormChange({ ...form, routingTags: event.target.value })} placeholder="逗号分隔，例如 高优先级, 低延迟" />
           </Field>
         </div>
         <Field label="备注">
@@ -715,7 +722,7 @@ function routeabilitySummary(item: KeyPoolItem, cooldownActive: boolean): { labe
     return { label: "不参与路由", tone: "disabled" };
   }
   if (!item.apiKeyPresent) {
-    return { label: "缺少 Key", tone: "error" };
+    return { label: "缺少密钥", tone: "error" };
   }
   if (cooldownActive || item.status === "error") {
     return { label: "暂不可路由", tone: "warning" };

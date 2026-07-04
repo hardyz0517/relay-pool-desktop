@@ -27,14 +27,14 @@ export const appRoutes: AppRoute[] = [
   },
   {
     id: "keyPool",
-    label: "Key 池",
-    description: "所有 Station Key 的路由可用性和优先级",
+    label: "密钥池",
+    description: "所有密钥的可用性和优先级",
     icon: KeyRound,
   },
   {
     id: "routing",
     label: "路由规则",
-    description: "默认策略、模型映射和候选解释",
+    description: "默认策略、模型映射和选择解释",
     icon: GitBranch,
   },
   {
@@ -46,7 +46,7 @@ export const appRoutes: AppRoute[] = [
   {
     id: "channels",
     label: "渠道状态",
-    description: "Key / Channel 的延迟、成功率和最近状态",
+    description: "密钥延迟、成功率和最近状态",
     icon: Radar,
   },
   {
@@ -58,13 +58,13 @@ export const appRoutes: AppRoute[] = [
   {
     id: "changes",
     label: "变更中心",
-    description: "余额、Key、采集、价格、倍率、模型和路由变化",
+    description: "余额、密钥、采集、价格、倍率、模型和路由变化",
     icon: Activity,
   },
   {
     id: "logs",
     label: "请求日志",
-    description: "请求、耗时、成本和 fallback 轨迹",
+    description: "请求、耗时、成本和重试轨迹",
     icon: ClipboardList,
   },
   {

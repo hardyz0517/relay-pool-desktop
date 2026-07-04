@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import type { LucideIcon } from "lucide-react";
 import { Radio, RefreshCw, Server, Timer } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, EmptyState, MetricCard, SegmentedControl, StatusBadge, useToast } from "@/components/ui";
+import { Button, EmptyState, SegmentedControl, StatusBadge, useToast } from "@/components/ui";
 import { listRequestLogs } from "@/lib/api/proxy";
 import { listStationKeyHealth } from "@/lib/api/routing";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
@@ -12,6 +13,7 @@ import { stationTypeLabels } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 
 type RecentOutcome = "success" | "warning" | "failed" | "unknown";
+type ChannelWindow = "recent" | "24h" | "7d";
 
 type ChannelHealth = {
   id: string;
@@ -21,6 +23,7 @@ type ChannelHealth = {
   modelSummary: string;
   status: StationKeyStatus;
   latencyMs: number | null;
+  endpointPingMs: number | null;
   availabilityPercent: number | null;
   lastCheckedAt: string | null;
   lastUsedAt: string | null;
@@ -60,6 +63,7 @@ export function ChannelStatusPage() {
   const [keys, setKeys] = useState<KeyPoolItem[]>([]);
   const [logs, setLogs] = useState<RequestLog[]>([]);
   const [health, setHealth] = useState<StationKeyHealth[]>([]);
+  const [timeWindow, setTimeWindow] = useState<ChannelWindow>("recent");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,7 +71,8 @@ export function ChannelStatusPage() {
     void refresh();
   }, []);
 
-  const channels = useMemo(() => buildChannels(keys, logs, health), [health, keys, logs]);
+  const visibleLogs = useMemo(() => filterLogsByWindow(logs, timeWindow), [logs, timeWindow]);
+  const channels = useMemo(() => buildChannels(keys, visibleLogs, health), [health, keys, visibleLogs]);
 
   async function refresh(showSuccess = false) {
     setLoading(true);
@@ -96,16 +101,17 @@ export function ChannelStatusPage() {
   return (
     <PageScaffold
       title="渠道状态"
-      description="监控 Key / Channel 的可用性、延迟、成功率和最近请求状态；健康状态来自本地代理真实请求。"
       actions={
         <div className="flex items-center gap-2">
           <SegmentedControl
-            value="recent"
+            ariaLabel="渠道状态范围"
+            value={timeWindow}
             options={[
               { value: "recent", label: "最近请求" },
               { value: "24h", label: "24 小时" },
               { value: "7d", label: "7 天" },
             ]}
+            onChange={setTimeWindow}
           />
           <Button variant="secondary" onClick={() => void refresh(true)}>
             <RefreshCw className="h-4 w-4" />
@@ -117,8 +123,8 @@ export function ChannelStatusPage() {
       {error && <div className="mb-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
       {channels.length === 0 ? (
         <EmptyState
-          title={loading ? "正在读取渠道状态" : "暂无可展示的 Key"}
-          description="在 Key 池添加并启用 Station Key 后，本地代理请求会在这里形成真实状态。"
+          title={loading ? "正在读取渠道状态" : "暂无可展示的密钥"}
+          description="添加并启用密钥后，本地代理请求会在这里形成状态。"
         />
       ) : (
         <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
@@ -134,93 +140,126 @@ export function ChannelStatusPage() {
 function ChannelHealthCard({ channel }: { channel: ChannelHealth }) {
   const typeLabel = stationTypeLabels[channel.stationType as keyof typeof stationTypeLabels] ?? channel.stationType;
   const cooldownActive = isFutureTime(channel.cooldownUntil);
+  const availability = formatAvailability(channel.availabilityPercent);
 
   return (
-    <section className="min-h-[248px] rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)]">
+    <section className="rounded-[var(--surface-radius)] border border-border bg-white p-3.5 shadow-[var(--surface-shadow)]">
       <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
-          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--surface-radius)] border border-border", iconTone(channel.status))}>
+        <div className="flex min-w-0 items-start gap-2.5">
+          <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px]", iconTone(channel.status))}>
             <Server className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-slate-800">{channel.keyName}</div>
-            <div className="mt-0.5 truncate text-xs text-muted-foreground">
-              {channel.stationName} · {typeLabel} · {channel.modelSummary}
+            <div className="truncate text-[15px] font-semibold leading-5 text-slate-900">{channel.keyName}</div>
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              <span className="shrink-0 rounded-[6px] bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium leading-4 text-emerald-700">
+                {typeLabel}
+              </span>
+              <span className="min-w-0 truncate text-xs text-slate-500">
+                {channel.stationName} · {channel.modelSummary}
+              </span>
             </div>
           </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <StatusBadge tone={statusTone[channel.status]}>{statusLabel[channel.status]}</StatusBadge>
-          {cooldownActive && <StatusBadge tone="warning">冷却中</StatusBadge>}
+          <StatusBadge tone={statusTone[channel.status]} className="h-6 border-0 px-2.5">
+            {cooldownActive ? "冷却中" : statusLabel[channel.status]}
+          </StatusBadge>
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2.5">
-        <MetricCard
-          icon={Timer}
-          label="平均耗时"
-          value={channel.latencyMs === null ? "--" : `${channel.latencyMs}ms`}
-        />
-        <MetricCard
-          icon={Radio}
-          label="最近使用"
-          value={formatCompactTime(channel.lastUsedAt)}
-        />
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <ChannelMetric icon={Timer} label="对话延迟" value={formatLatency(channel.latencyMs)} />
+        <ChannelMetric icon={Radio} label="端点 PING" value={formatLatency(channel.endpointPingMs)} />
       </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-        <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2">
-          <div className="text-muted-foreground">成功</div>
-          <div className="mt-1 font-semibold text-slate-800">{channel.successCount}</div>
-        </div>
-        <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2">
-          <div className="text-muted-foreground">失败</div>
-          <div className="mt-1 font-semibold text-slate-800">{channel.failureCount}</div>
-        </div>
-        <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2">
-          <div className="text-muted-foreground">连续失败</div>
-          <div className="mt-1 font-semibold text-slate-800">{channel.consecutiveFailures}</div>
-        </div>
-      </div>
-
-      <div className="mt-4 rounded-[var(--surface-radius)] border border-border bg-slate-50 p-3">
+      <div className="mt-3 border-t border-slate-100 pt-3">
         <div className="flex items-end justify-between gap-3">
-          <div>
-            <div className="text-[11px] text-muted-foreground">可用性 · 最近日志</div>
-            <div className="mt-0.5 text-3xl font-semibold tracking-normal text-slate-800">
-              {channel.availabilityPercent === null ? "--" : `${channel.availabilityPercent.toFixed(1)}%`}
-            </div>
-          </div>
-          <div className="pb-1 text-right text-[11px] text-muted-foreground">
-            最近检查
-            <div className="mt-0.5 font-medium text-slate-600">{formatCompactTime(channel.lastCheckedAt)}</div>
+          <div className="min-w-0 text-xs font-medium text-slate-500">可用性 · 近 60 次</div>
+          <div className={cn("shrink-0 text-3xl font-semibold leading-8 tracking-normal", availabilityTone(channel))}>
+            {availability}
           </div>
         </div>
       </div>
 
-      <div className="mt-4">
-        <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
-          <span>PAST</span>
-          <span>近 60 次请求</span>
-          <span>NOW</span>
+      <div className="mt-2.5 border-t border-slate-100 pt-2.5">
+        <div className="mb-1.5 flex items-center justify-between text-[11px] text-slate-400">
+          <span>较早</span>
+          <span>最后检查 {formatCompactTime(channel.lastCheckedAt)}</span>
         </div>
-        <div className="grid grid-cols-[repeat(60,minmax(0,1fr))] gap-[3px]">
+        <div className="grid grid-cols-[repeat(60,minmax(2px,1fr))] gap-[2px]">
           {channel.recentOutcomes.map((outcome, index) => (
             <span
               key={`${channel.id}-${index}`}
-              className={cn("h-7 rounded-[3px]", outcomeClassName[outcome])}
-              title={outcome}
+              className={cn("h-5 rounded-[2px]", outcomeClassName[outcome])}
+              title={outcomeLabel(outcome)}
             />
           ))}
         </div>
+        <div className="mt-1 flex justify-between text-[10px] leading-3 text-slate-400">
+          <span>过去</span>
+          <span>现在</span>
+        </div>
       </div>
 
-      <div className="mt-3 truncate text-xs text-muted-foreground">
-        {cooldownActive ? `冷却至 ${formatCompactTime(channel.cooldownUntil)} · ` : ""}
-        {channel.lastError ?? "暂无错误摘要"}
-      </div>
+      {(cooldownActive || channel.lastError) && (
+        <div className="mt-2 truncate text-xs text-muted-foreground">
+          {cooldownActive ? `冷却至 ${formatCompactTime(channel.cooldownUntil)} · ` : ""}
+          {channel.lastError ?? ""}
+        </div>
+      )}
     </section>
   );
+}
+
+function ChannelMetric({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-[8px] border border-slate-100 bg-slate-50/70 px-3 py-2.5">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400">
+        <Icon className="h-3.5 w-3.5" />
+        <span className="truncate">{label}</span>
+      </div>
+      <div className="mt-2 truncate text-[18px] font-semibold leading-6 text-slate-800">{value}</div>
+    </div>
+  );
+}
+
+function formatLatency(value: number | null) {
+  return value === null ? "--" : `${value}ms`;
+}
+
+function formatAvailability(value: number | null) {
+  return value === null ? "--" : `${value.toFixed(2)}%`;
+}
+
+function availabilityTone(channel: ChannelHealth) {
+  if (channel.status === "disabled" || channel.availabilityPercent === null) {
+    return "text-slate-500";
+  }
+  if (channel.status === "error" || channel.availabilityPercent < 90) {
+    return "text-rose-600";
+  }
+  if (channel.status === "warning" || channel.availabilityPercent < 98) {
+    return "text-amber-600";
+  }
+  return "text-emerald-600";
+}
+
+function filterLogsByWindow(logs: RequestLog[], timeWindow: ChannelWindow) {
+  if (timeWindow === "recent") {
+    return logs;
+  }
+  const windowMs = timeWindow === "24h" ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - windowMs;
+  return logs.filter((log) => toTime(log.startedAt) >= cutoff);
 }
 
 function buildChannels(keys: KeyPoolItem[], logs: RequestLog[], health: StationKeyHealth[]): ChannelHealth[] {
@@ -233,8 +272,10 @@ function buildChannels(keys: KeyPoolItem[], logs: RequestLog[], health: StationK
     const totalHealthRequests = (keyHealth?.successCount ?? 0) + (keyHealth?.failureCount ?? 0);
     const availabilityPercent =
       totalHealthRequests === 0 ? key.successRate === null ? null : key.successRate * 100 : ((keyHealth?.successCount ?? 0) / totalHealthRequests) * 100;
-    const latencyMs = keyHealth?.avgLatencyMs ?? key.avgLatencyMs;
-    const recentOutcomes = keyLogs.slice(-60).map(logToOutcome);
+    const recentLogs = keyLogs.slice(-60);
+    const latencyMs = averageDurationMs(recentLogs);
+    const endpointPingMs = keyHealth?.avgLatencyMs ?? key.avgLatencyMs;
+    const recentOutcomes = recentLogs.map(logToOutcome);
     const unknownOutcomes: RecentOutcome[] = Array.from({ length: 60 - recentOutcomes.length }, () => "unknown");
     const paddedOutcomes = unknownOutcomes.concat(recentOutcomes);
     const lastError =
@@ -248,6 +289,7 @@ function buildChannels(keys: KeyPoolItem[], logs: RequestLog[], health: StationK
       modelSummary: key.modelScopeSummary || key.groupName || key.tierLabel || "全部模型",
       status: key.enabled ? cooldownStatus(key.status, keyHealth?.cooldownUntil ?? key.cooldownUntil) : "disabled",
       latencyMs,
+      endpointPingMs,
       availabilityPercent,
       lastCheckedAt: keyHealth?.updatedAt ?? key.lastCheckedAt,
       lastUsedAt: keyHealth?.lastSuccessAt ?? key.lastUsedAt,
@@ -259,6 +301,14 @@ function buildChannels(keys: KeyPoolItem[], logs: RequestLog[], health: StationK
       recentOutcomes: paddedOutcomes,
     };
   });
+}
+
+function averageDurationMs(logs: RequestLog[]) {
+  const durations = logs.flatMap((log) => (typeof log.durationMs === "number" ? [log.durationMs] : []));
+  if (durations.length === 0) {
+    return null;
+  }
+  return Math.round(durations.reduce((sum, duration) => sum + duration, 0) / durations.length);
 }
 
 function cooldownStatus(status: StationKeyStatus, cooldownUntil: string | null): StationKeyStatus {
@@ -279,6 +329,13 @@ function logToOutcome(log: RequestLog): RecentOutcome {
     return "failed";
   }
   return "unknown";
+}
+
+function outcomeLabel(outcome: RecentOutcome) {
+  if (outcome === "success") return "成功";
+  if (outcome === "warning") return "兜底";
+  if (outcome === "failed") return "失败";
+  return "暂无";
 }
 
 function iconTone(status: StationKeyStatus) {

@@ -34,10 +34,10 @@ import { cn } from "@/lib/utils";
 const policyOptions: RoutingPolicy[] = ["priority_fallback", "stable_first", "backup_only", "cheap_first"];
 
 const endpointLabels: Record<RouteEndpointKind, string> = {
-  models: "Models",
-  chat_completions: "Chat Completions",
-  responses: "Responses",
-  embeddings: "Embeddings",
+  models: "模型列表",
+  chat_completions: "聊天补全",
+  responses: "响应接口",
+  embeddings: "向量接口",
 };
 
 const fallbackSettings: AppSettings = {
@@ -225,7 +225,6 @@ export function RoutingPage() {
   return (
       <PageScaffold
         title="路由规则"
-      description="管理默认策略、模型映射和候选解释，说明请求为什么会走到某把 Key。"
       actions={
         <Button disabled={loading || saving} variant="secondary" onClick={() => void refresh()}>
           <RefreshCcw className="h-4 w-4" />
@@ -235,7 +234,7 @@ export function RoutingPage() {
     >
       <div className="grid gap-3">
         <div className="grid gap-3">
-          <SectionCard title="默认策略" description="当前策略只影响 Key 池候选排序。">
+          <SectionCard title="默认策略">
             <div className="flex flex-wrap items-center gap-3">
               <SegmentedControl
                 value={settings.defaultRoutingStrategy}
@@ -248,13 +247,12 @@ export function RoutingPage() {
               <StatusBadge tone={saving ? "warning" : "healthy"}>{saving ? "保存中" : "已同步"}</StatusBadge>
             </div>
             <div className="mt-3 text-xs leading-5 text-muted-foreground">
-              当前默认策略：{routingStrategyLabels[settings.defaultRoutingStrategy]}。真实请求和模拟器都会从 enabled Key 中过滤协议、模型、冷却和能力冲突。
+              当前默认策略：{routingStrategyLabels[settings.defaultRoutingStrategy]}。真实请求和模拟器都会过滤协议、模型、冷却和能力冲突。
             </div>
           </SectionCard>
 
           <SectionCard
             title="模型映射"
-            description="客户端模型名会在转发前映射为上游模型名；未命中时保持原模型名。"
           >
             <div className="grid gap-3">
               <div className="grid gap-2">
@@ -320,11 +318,11 @@ export function RoutingPage() {
           </SectionCard>
         </div>
 
-        <InspectorPanel title="路由模拟器" description="用真实 selector 解释候选排序。">
+        <InspectorPanel title="路由模拟器">
           <div className="grid gap-3 p-4">
-            <Field label="Endpoint">
+            <Field label="接口">
               <SelectControl
-                ariaLabel="模拟 endpoint"
+                ariaLabel="模拟接口"
                 className={inputClassName}
                 value={simulation.endpoint}
                 options={(["responses", "chat_completions", "models", "embeddings"] as RouteEndpointKind[]).map((endpoint) => ({
@@ -353,10 +351,10 @@ export function RoutingPage() {
               />
             </Field>
             <div className="grid gap-2 sm:grid-cols-2">
-              <CheckField label="Stream" checked={simulation.stream} onChange={(checked) => setSimulation({ ...simulation, stream: checked })} />
-              <CheckField label="Tools" checked={simulation.usesTools} onChange={(checked) => setSimulation({ ...simulation, usesTools: checked })} />
-              <CheckField label="Vision" checked={simulation.usesVision} onChange={(checked) => setSimulation({ ...simulation, usesVision: checked })} />
-              <CheckField label="Reasoning" checked={simulation.usesReasoning} onChange={(checked) => setSimulation({ ...simulation, usesReasoning: checked })} />
+              <CheckField label="流式响应" checked={simulation.stream} onChange={(checked) => setSimulation({ ...simulation, stream: checked })} />
+              <CheckField label="工具调用" checked={simulation.usesTools} onChange={(checked) => setSimulation({ ...simulation, usesTools: checked })} />
+              <CheckField label="图片输入" checked={simulation.usesVision} onChange={(checked) => setSimulation({ ...simulation, usesVision: checked })} />
+              <CheckField label="推理模型" checked={simulation.usesReasoning} onChange={(checked) => setSimulation({ ...simulation, usesReasoning: checked })} />
             </div>
             <Button disabled={saving} type="button" onClick={() => void handleSimulate()}>
               <Play className="h-4 w-4" />
@@ -421,12 +419,12 @@ function CandidateList({
 function CandidateEconomicsDetails({ candidate }: { candidate: RouteSimulationResult["candidates"][number] }) {
   return (
     <div className="grid gap-2 px-3 py-2 text-xs text-muted-foreground md:grid-cols-2">
-      <div>Group: {candidate.groupBindingId ?? "未绑定"}</div>
-      <div>Rate: {candidate.rateMultiplier == null ? "未知" : formatRate(candidate.rateMultiplier)}</div>
-      <div>Pricing: {candidate.normalizationStatus ?? "unknown"}</div>
-      <div>Balance: {candidate.balanceStatus ?? "unknown"} · {candidate.balanceScope ?? "unknown"}</div>
-      <div>Freshness: {candidate.economicFreshness ?? "unknown"}</div>
-      <div>Rule: {candidate.pricingRuleId ?? "未命中"}</div>
+      <div>分组：{candidate.groupBindingId ?? "未绑定"}</div>
+      <div>倍率：{candidate.rateMultiplier == null ? "未知" : formatRate(candidate.rateMultiplier)}</div>
+      <div>价格：{normalizationLabel(candidate.normalizationStatus)}</div>
+      <div>余额：{candidate.balanceStatus ?? "未知"} · {candidate.balanceScope ?? "未知"}</div>
+      <div>新鲜度：{candidate.economicFreshness ?? "未知"}</div>
+      <div>规则：{candidate.pricingRuleId ?? "未命中"}</div>
       {candidate.rejectionReasons.length > 0 && (
         <div className="flex flex-wrap gap-1 md:col-span-2">
           {candidate.rejectionReasons.map((reason) => (
@@ -497,4 +495,12 @@ function formatCandidateBalance(candidate: RouteSimulationResult["candidates"][n
 
 function formatRate(value: number) {
   return `${value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}x`;
+}
+
+function normalizationLabel(value: string | null | undefined) {
+  if (!value) return "未知";
+  if (value === "complete") return "完整";
+  if (value === "group_rate_only") return "仅倍率";
+  if (value === "expired") return "已过期";
+  return value;
 }

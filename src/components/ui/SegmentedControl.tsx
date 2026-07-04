@@ -1,45 +1,128 @@
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { cn } from "@/lib/utils";
 
 type SegmentedControlOption<T extends string> = {
   value: T;
   label: string;
+  disabled?: boolean;
 };
 
 type SegmentedControlProps<T extends string> = {
-  value: T;
+  value?: T;
+  defaultValue?: T;
   options: SegmentedControlOption<T>[];
   onChange?: (value: T) => void;
+  ariaLabel?: string;
+  disabled?: boolean;
   className?: string;
 };
 
 export function SegmentedControl<T extends string>({
   value,
+  defaultValue,
   options,
   onChange,
+  ariaLabel = "分段切换",
+  disabled = false,
   className,
 }: SegmentedControlProps<T>) {
+  const firstEnabledValue = options.find((option) => !option.disabled)?.value;
+  const initialValue = value ?? defaultValue ?? firstEnabledValue;
+  const [internalValue, setInternalValue] = useState<T | undefined>(initialValue);
+  const selectedValue = onChange ? value : internalValue;
+  const selectedIndex = Math.max(0, options.findIndex((option) => option.value === selectedValue));
+  const canUse = !disabled && options.length > 0;
+
+  useEffect(() => {
+    if (!onChange) {
+      setInternalValue(value ?? defaultValue ?? firstEnabledValue);
+    }
+  }, [defaultValue, firstEnabledValue, onChange, value]);
+
+  const activeStyle = useMemo(
+    () => ({
+      width: `calc((100% - 4px) / ${Math.max(options.length, 1)})`,
+      transform: `translateX(${selectedIndex * 100}%)`,
+    }),
+    [options.length, selectedIndex],
+  );
+
+  function selectOption(nextValue: T) {
+    if (!canUse) {
+      return;
+    }
+    const option = options.find((item) => item.value === nextValue);
+    if (!option || option.disabled || nextValue === selectedValue) {
+      return;
+    }
+    if (!onChange) {
+      setInternalValue(nextValue);
+    }
+    onChange?.(nextValue);
+  }
+
+  function moveSelection(direction: 1 | -1) {
+    if (!canUse) {
+      return;
+    }
+    const enabledOptions = options.filter((option) => !option.disabled);
+    const currentIndex = Math.max(0, enabledOptions.findIndex((option) => option.value === selectedValue));
+    const nextIndex = (currentIndex + direction + enabledOptions.length) % enabledOptions.length;
+    const nextOption = enabledOptions[nextIndex];
+    if (nextOption) {
+      selectOption(nextOption.value);
+    }
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      event.preventDefault();
+      moveSelection(1);
+    }
+    if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveSelection(-1);
+    }
+  }
+
   return (
     <div
+      role="radiogroup"
+      aria-label={ariaLabel}
+      aria-disabled={!canUse}
+      onKeyDown={handleKeyDown}
       className={cn(
-        "inline-flex items-center rounded-[var(--surface-radius)] border border-border bg-slate-100 p-0.5",
+        "relative inline-grid h-8 min-w-0 items-center overflow-hidden rounded-[var(--surface-radius)] border border-slate-200 bg-slate-100/80 p-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]",
         className,
       )}
+      style={{ gridTemplateColumns: `repeat(${Math.max(options.length, 1)}, minmax(0, 1fr))` }}
     >
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          onClick={() => onChange?.(option.value)}
-          className={cn(
-            "cursor-pointer rounded-[calc(var(--surface-radius)-3px)] px-2.5 text-xs font-medium transition-colors",
-            option.value === value
-              ? "bg-white text-slate-900 shadow-sm"
-              : "text-slate-600 hover:text-slate-900",
-          )}
-        >
-          {option.label}
-        </button>
-      ))}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute left-0.5 top-0.5 h-[calc(100%-4px)] rounded-[calc(var(--surface-radius)-3px)] bg-white shadow-[0_1px_3px_rgba(15,23,42,0.16)] transition-transform duration-200 ease-out"
+        style={activeStyle}
+      />
+      {options.map((option) => {
+        const selected = option.value === selectedValue;
+        const optionDisabled = disabled || option.disabled;
+
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            disabled={optionDisabled}
+            onClick={() => selectOption(option.value)}
+            className={cn(
+              "relative z-10 h-7 min-w-0 cursor-pointer rounded-[calc(var(--surface-radius)-3px)] px-3 text-xs font-medium leading-7 text-slate-600 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)] disabled:cursor-default disabled:opacity-45",
+              selected ? "text-slate-900" : "hover:text-slate-900",
+            )}
+          >
+            <span className="block truncate">{option.label}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

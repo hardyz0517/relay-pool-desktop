@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Activity,
   AlertTriangle,
   BadgeDollarSign,
   Copy,
@@ -8,11 +7,11 @@ import {
   Plus,
   Route,
   Server,
+  Upload,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
-  MaskedSecret,
   MetricPanel,
   ObjectRow,
   SectionCard,
@@ -22,7 +21,7 @@ import {
 import { listChangeEvents } from "@/lib/api/changeEvents";
 import { listBalanceSnapshots } from "@/lib/api/economics";
 import { getProxyStatus, listRequestLogs } from "@/lib/api/proxy";
-import { getSettings } from "@/lib/api/settings";
+import { getLocalAccessKey, getSettings, importRelayPoolToCCSwitch } from "@/lib/api/settings";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { BalanceSnapshot } from "@/lib/types/economics";
@@ -58,6 +57,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [balanceSnapshots, setBalanceSnapshots] = useState<BalanceSnapshot[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
+  const [importingCCSwitch, setImportingCCSwitch] = useState(false);
 
   useEffect(() => {
     void Promise.all([
@@ -82,11 +82,37 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   }, []);
 
   async function copyText(value: string, label = "内容") {
+    if (isMaskedDisplayValue(value)) {
+      toast.error("复制失败", `${label}是脱敏展示值，不能复制。`);
+      return;
+    }
     try {
       await navigator.clipboard.writeText(value);
       toast.success(`${label}已复制`);
     } catch (copyError) {
       toast.error("复制失败", readError(copyError));
+    }
+  }
+
+  async function copyLocalAccessKey() {
+    try {
+      const localAccessKey = await getLocalAccessKey();
+      await navigator.clipboard.writeText(localAccessKey);
+      toast.success("本地访问密钥已复制");
+    } catch (copyError) {
+      toast.error("复制失败", readError(copyError));
+    }
+  }
+
+  async function handleImportToCCSwitch() {
+    setImportingCCSwitch(true);
+    try {
+      const result = await importRelayPoolToCCSwitch();
+      toast.success("已唤起 CCSwitch", `${result.providerName} - ${result.endpoint}`);
+    } catch (importError) {
+      toast.error("导入 CCSwitch 失败", readError(importError));
+    } finally {
+      setImportingCCSwitch(false);
     }
   }
 
@@ -141,16 +167,11 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   return (
     <PageScaffold
       title="总览"
-      description="优先展示当前风险、本地代理状态、今日请求、失败率和成本摘要。"
       actions={
         <>
-          <Button variant="secondary" onClick={() => void copyText(proxyBaseUrl, "本地入口")}>
-            <Copy className="h-4 w-4" />
-            复制本地入口
-          </Button>
           <Button onClick={() => onNavigate("addProvider")}>
             <Plus className="h-4 w-4" />
-            添加 Provider
+            添加供应商
           </Button>
         </>
       }
@@ -158,43 +179,70 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       <div className="grid gap-4">
         <SectionCard
           title="当前路由"
-          description="外部工具会优先使用这条本地 OpenAI-compatible 入口。"
           action={
             <StatusBadge tone={proxyRunning ? "healthy" : "warning"}>
               {proxyRunning ? "运行中" : "未启动"}
             </StatusBadge>
           }
+          contentClassName="p-3"
         >
-          <div className="grid gap-3">
-            <div className="rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)]">
-              <div className="text-xs text-muted-foreground">Base URL</div>
-              <div className="mt-1 flex min-w-0 items-center gap-2">
-                <code className="min-w-0 flex-1 truncate text-[15px] font-semibold text-slate-800">
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_64px] sm:items-center">
+            <div className="grid min-w-0 gap-2 md:grid-cols-[minmax(220px,1.35fr)_minmax(170px,0.85fr)] md:items-center">
+              <div className="grid min-h-9 min-w-0 grid-cols-[56px_minmax(0,1fr)_28px] items-center gap-2 rounded-[8px] bg-slate-50/70 px-2">
+                <span className="text-xs font-medium text-slate-500">地址</span>
+                <code className="min-w-0 truncate text-[13px] font-semibold text-slate-900">
                   {proxyBaseUrl}
                 </code>
-                <Button size="icon" variant="outline" aria-label="复制 Base URL" onClick={() => void copyText(proxyBaseUrl, "Base URL")}>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 shrink-0 text-slate-500 hover:text-slate-800"
+                  aria-label="复制基础地址"
+                  onClick={() => void copyText(proxyBaseUrl, "基础地址")}
+                >
                   <Copy className="h-4 w-4" />
                 </Button>
               </div>
-              <div className="mt-2 text-xs text-muted-foreground">
-                监听地址 {proxyStatus?.bindAddr ?? "127.0.0.1"} - 运行次数 {proxyRequestCount.toLocaleString("zh-CN")}
+              <div className="grid min-h-9 min-w-0 grid-cols-[56px_minmax(0,1fr)_28px] items-center gap-2 rounded-[8px] bg-slate-50/70 px-2">
+                <span className="text-xs font-medium text-slate-500">密钥</span>
+                <code className="min-w-0 truncate text-[13px] font-medium text-slate-700">
+                  {localKeyMasked}
+                </code>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 shrink-0 text-slate-500 hover:text-slate-800"
+                  aria-label="复制本地访问密钥"
+                  onClick={() => void copyLocalAccessKey()}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
               </div>
             </div>
-            <div className="rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)]">
-              <div className="text-xs text-muted-foreground">Local Key</div>
-              <div className="mt-1 flex items-center justify-between gap-2">
-                <MaskedSecret value={localKeyMasked} />
-                <Button size="icon" variant="outline" aria-label="复制 Local Key" onClick={() => void copyText(localKeyMasked, "Local Key")}>
-                  <Copy className="h-4 w-4" />
-                </Button>
-              </div>
+            <div className="flex items-center sm:justify-end">
+              <button
+                type="button"
+                onClick={() => void handleImportToCCSwitch()}
+                disabled={importingCCSwitch}
+                className="flex h-16 w-16 shrink-0 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[8px] border border-slate-200 bg-white px-2 py-2 text-[12px] font-medium leading-[14px] text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.35)] disabled:pointer-events-none disabled:cursor-default disabled:opacity-50"
+                aria-label="导入到 CCSwitch"
+              >
+                <Upload className="h-4 w-4 shrink-0" />
+                {importingCCSwitch ? (
+                  <span>导入中</span>
+                ) : (
+                  <span className="grid gap-0 text-center">
+                    <span>导入到</span>
+                    <span>CCS</span>
+                  </span>
+                )}
+              </button>
             </div>
           </div>
         </SectionCard>
 
         <MetricPanel
           title="今日指标"
-          description="突出风险、Key 可用性、失败率和成本。"
           metrics={[
             {
               label: "当前风险",
@@ -204,7 +252,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               tone: activeRiskEvents.length > 0 ? "warning" : "good",
             },
             {
-              label: "可用 Key",
+              label: "可用密钥",
               value: `${enabledKeyCount}`,
               detail: "启用中",
               icon: KeyRound,
@@ -224,17 +272,16 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
       <SectionCard
         title="当前风险"
-        description="来自变更中心的未解决严重 / 警告事件。"
         action={<StatusBadge tone={unreadRisks > 0 ? "warning" : "healthy"}>{unreadRisks > 0 ? `${unreadRisks} 未读` : "无未读风险"}</StatusBadge>}
       >
         <div className="mb-3 grid gap-2 md:grid-cols-4">
           <RiskMiniTile label="严重未解决" value={p9RiskBreakdown.unresolvedCritical} />
-          <RiskMiniTile label="分组 / Key" value={p9RiskBreakdown.groupBindingIssues} />
+          <RiskMiniTile label="分组 / 密钥" value={p9RiskBreakdown.groupBindingIssues} />
           <RiskMiniTile label="采集失败" value={p9RiskBreakdown.collectorFailures} />
           <RiskMiniTile label="价格 / 倍率" value={p9RiskBreakdown.priceRateIssues} />
         </div>
         {activeRiskEvents.length === 0 ? (
-          <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
+          <div className="rounded-[10px] bg-slate-50/70 p-3 text-sm text-muted-foreground">
             当前没有未解决的严重或警告变更。
           </div>
         ) : (
@@ -255,7 +302,6 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
       <SectionCard
         title="路由队列"
-        description="轻量显示当前可用对象，详细管理仍在中转站和 Key 池页面。"
       >
         <div className="grid gap-2">
           {keyPoolItems.slice(0, 6).map((key) => (
@@ -283,7 +329,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       </SectionCard>
 
       <div className="grid min-h-0 gap-3">
-        <SectionCard title="最近活动" description="请求、成本和余额变化合并为桌面工具活动流。">
+        <SectionCard title="最近活动">
           <div className="grid gap-4">
             <div className="space-y-2">
               <div className="text-sm font-semibold text-slate-900">请求日志</div>
@@ -295,7 +341,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                   subtitle={`${request.path} - ${request.stationId ?? "未选择"} - ${request.durationMs ?? 0}ms - ${formatCost(request.estimatedTotalCost ?? 0)}`}
                   badges={
                     <StatusBadge tone={requestTone[request.status as keyof typeof requestTone] ?? "info"}>
-                      {request.status}
+                      {requestStatusLabel(request.status)}
                     </StatusBadge>
                   }
                   metrics={[{ label: "时间", value: formatTime(request.startedAt) }]}
@@ -310,7 +356,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                   icon={<Route className="h-4 w-4" />}
                   title={snapshot.scope}
                   subtitle={`${snapshot.stationId} - ${snapshot.currency} ${snapshot.value ?? 0}`}
-                  badges={<StatusBadge tone={balanceStatusTone(snapshot.status)}>{snapshot.status}</StatusBadge>}
+                  badges={<StatusBadge tone={balanceStatusTone(snapshot.status)}>{balanceStatusLabel(snapshot.status)}</StatusBadge>}
                   metrics={[
                     { label: "来源", value: snapshot.source },
                     { label: "可信度", value: `${Math.round(snapshot.confidence * 100)}%` },
@@ -321,24 +367,24 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           </div>
         </SectionCard>
 
-        <SectionCard title="站点健康" description="余额与请求状态聚合。">
-          <div className="grid grid-cols-2 gap-3">
+        <SectionCard title="站点健康">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-2">
             {(Object.keys(stationStatusLabels) as Array<keyof typeof stationStatusLabels>).map((key) => (
               <div
                 key={key}
-                className="rounded-[var(--surface-radius)] border border-border bg-white p-3 shadow-[var(--surface-shadow)]"
+                className="flex min-h-[52px] items-center justify-between gap-3 rounded-[10px] border border-slate-100 bg-slate-50/70 px-3 py-2"
               >
-                <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
                   <StatusBadge tone={healthTone[key]}>{stationStatusLabels[key]}</StatusBadge>
-                  <span className="text-xl font-semibold text-slate-800">
-                    {keyPoolItems.filter((item) => item.status === key).length}
-                  </span>
+                  <div className="mt-1 text-[11px] text-muted-foreground">密钥</div>
                 </div>
-                <div className="mt-1 text-xs text-muted-foreground">Key</div>
+                <span className="shrink-0 text-lg font-semibold leading-6 text-slate-800">
+                  {keyPoolItems.filter((item) => item.status === key).length}
+                </span>
               </div>
             ))}
           </div>
-          <div className="mt-4 rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs leading-5 text-slate-700 shadow-[var(--surface-shadow)]">
+          <div className="mt-3 rounded-[10px] bg-slate-50/70 px-3 py-2 text-xs leading-5 text-slate-700">
             已知余额总计 {totalBalance.toFixed(2)} - 余额告警 {lowBalanceStations} - 最近错误：{recentError}
           </div>
         </SectionCard>
@@ -349,7 +395,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
 function RiskMiniTile({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 shadow-[var(--surface-shadow)]">
+    <div className="rounded-[10px] border border-slate-100 bg-slate-50/70 p-3">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className={cnRiskTileValue(value)}>{value}</div>
     </div>
@@ -381,6 +427,20 @@ function formatTokens(value: number) {
   return `${value.toLocaleString("zh-CN")} t`;
 }
 
+function requestStatusLabel(status: string) {
+  if (status === "success") return "成功";
+  if (status === "fallback") return "兜底";
+  if (status === "failed") return "失败";
+  return status;
+}
+
+function balanceStatusLabel(status: string) {
+  if (status === "normal") return "正常";
+  if (status === "low") return "偏低";
+  if (status === "depleted") return "耗尽";
+  return status;
+}
+
 function balanceStatusTone(status: string) {
   if (status === "normal") {
     return "healthy";
@@ -396,4 +456,8 @@ function balanceStatusTone(status: string) {
 
 function readError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isMaskedDisplayValue(value: string) {
+  return /\*{2,}|\[REDACTED\]/i.test(value);
 }

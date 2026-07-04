@@ -3,11 +3,12 @@ import { cn } from "@/lib/utils";
 
 type PageScaffoldProps = {
   title: string;
-  description: string;
+  description?: string;
   actions?: ReactNode;
   status?: ReactNode;
   backAction?: ReactNode;
   width?: "full" | "settings";
+  stickyHeader?: boolean;
   children?: ReactNode;
 };
 
@@ -18,6 +19,7 @@ export function PageScaffold({
   status,
   backAction,
   width = "full",
+  stickyHeader = false,
   children,
 }: PageScaffoldProps) {
   return (
@@ -28,7 +30,13 @@ export function PageScaffold({
           : "flex min-h-full min-w-0 w-full flex-col gap-[var(--shell-page-gap)]",
       )}
     >
-      <div className="flex min-h-[44px] flex-wrap items-center justify-between gap-3">
+      <div
+        className={cn(
+          "flex min-h-[44px] flex-wrap items-center justify-between gap-3",
+          stickyHeader &&
+            "sticky top-[calc(var(--shell-page-gap)*-1)] z-20 -mx-[var(--shell-page-gap)] -mt-[var(--shell-page-gap)] border-b border-border bg-background/95 px-[var(--shell-page-gap)] py-3 backdrop-blur",
+        )}
+      >
         <div className="flex min-w-0 items-center gap-3">
           {backAction}
           <div className="min-w-0">
@@ -38,9 +46,11 @@ export function PageScaffold({
               </h1>
               {status}
             </div>
-            <p className="mt-0.5 max-w-3xl truncate text-xs text-muted-foreground">
-              {description}
-            </p>
+            {description && (
+              <p className="mt-0.5 max-w-3xl truncate text-xs text-muted-foreground">
+                {description}
+              </p>
+            )}
           </div>
         </div>
         {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}

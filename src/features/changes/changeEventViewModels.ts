@@ -37,9 +37,9 @@ export const eventTypeLabels: Record<string, string> = {
   price_expired: "价格过期",
   model_added: "模型新增",
   model_removed: "模型下架",
-  key_invalid: "Key 异常",
-  key_group_bound: "Key 分组已绑定",
-  key_group_unresolved: "Key 分组无法识别",
+  key_invalid: "密钥异常",
+  key_group_bound: "密钥分组已绑定",
+  key_group_unresolved: "密钥分组无法识别",
   collector_failed: "采集失败",
   collector_recovered: "采集恢复",
   route_impacted: "路由受影响",
@@ -49,7 +49,7 @@ export const eventTypeLabels: Record<string, string> = {
 
 export const objectTypeLabels: Record<string, string> = {
   station: "中转站",
-  station_key: "Key",
+  station_key: "密钥",
   group_binding: "分组",
   pricing_rule: "价格",
   routing_rule: "路由规则",

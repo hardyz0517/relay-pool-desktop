@@ -141,17 +141,16 @@ export function PricingPage() {
   return (
     <PageScaffold
       title="价格 / 倍率"
-      description="跨站点比较模型价格、分组倍率和模型可用性，不再按数据库表视角浏览 pricing_rules。"
       actions={<Button variant="secondary" onClick={() => void refresh(true)}><RefreshCw className="h-4 w-4" />刷新</Button>}
     >
       <div className="grid gap-[var(--shell-page-gap)] md:grid-cols-3">
         <MetricCard icon={BadgeDollarSign} label="最低输出价" value={cheapest ? formatMoney(cheapest.outputPrice, cheapest.currency) : "暂无"} detail={cheapest?.model ?? "暂无数据"} />
-        <MetricCard icon={Layers3} label="覆盖模型" value={`${modelGroups.length}`} detail="真实 pricing_rules" />
-        <MetricCard icon={TrendingDown} label="倍率事实" value={`${rateRows.length}`} detail="group bindings / rate records" />
+        <MetricCard icon={Layers3} label="覆盖模型" value={`${modelGroups.length}`} detail="已采集价格规则" />
+        <MetricCard icon={TrendingDown} label="倍率事实" value={`${rateRows.length}`} detail="分组绑定与倍率记录" />
       </div>
 
       <div className="grid gap-[var(--shell-page-gap)]">
-        <SectionCard title="跨站点对比" description="按模型、分组倍率和可用性比较中转站。" contentClassName="p-0">
+        <SectionCard title="跨站点对比" contentClassName="p-0">
           <Toolbar>
             <div className="flex flex-wrap items-center gap-2">
               <SegmentedControl
@@ -190,7 +189,7 @@ export function PricingPage() {
           {loading ? (
             <div className="px-4 py-5 text-sm text-muted-foreground">正在读取价格表...</div>
           ) : !hasCurrentData ? (
-            <EmptyState title="暂无对比数据" description="先运行价格、分组或模型采集；倍率页现在读取 durable facts，不再解析 raw snapshot。" />
+            <EmptyState title="暂无对比数据" description="先运行价格、分组或模型采集。" />
           ) : viewMode === "prices" ? (
             <MatrixTable
               rowHeader="模型"
@@ -236,7 +235,7 @@ export function PricingPage() {
           )}
         </SectionCard>
 
-        <InspectorPanel title={selected ? `${selected.model} 对比详情` : "对比详情"} description="展示归一化后的真实价格与来源。">
+        <InspectorPanel title={selected ? `${selected.model} 对比详情` : "对比详情"}>
           <div className="space-y-3 p-4">
             {selected ? (
               <>
@@ -256,7 +255,7 @@ export function PricingPage() {
                   className="shadow-none"
                 />
                 <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs leading-5 text-muted-foreground">
-                  complete 才参与最低价判断；group_rate_only 只说明倍率，不作为精确模型价格。
+                  完整价格才参与最低价判断；仅倍率记录不作为精确模型价格。
                 </div>
               </>
             ) : (
@@ -279,7 +278,7 @@ function PriceCellView({ cell }: { cell: PriceMatrixCell }) {
         </StatusBadge>
         {cell.rateMultiplier !== null && <span className="text-xs text-muted-foreground">{formatRate(cell.rateMultiplier)}</span>}
       </div>
-      <div className="truncate text-xs text-muted-foreground">{cell.source || "unknown"} · {Math.round(cell.confidence * 100)}%</div>
+      <div className="truncate text-xs text-muted-foreground">{cell.source || "未知"} · {Math.round(cell.confidence * 100)}%</div>
     </div>
   );
 }
@@ -288,7 +287,7 @@ function RateCellView({ multiplier, source, status }: { multiplier: number; sour
   return (
     <div className="grid gap-1">
       <div className="font-medium">{formatRate(multiplier)}</div>
-      <div className="truncate text-xs text-muted-foreground">{status} · {source || "unknown"}</div>
+      <div className="truncate text-xs text-muted-foreground">{normalizationLabel(status)} · {source || "未知"}</div>
     </div>
   );
 }
@@ -393,12 +392,15 @@ function normalizationTone(status: string): StatusTone {
 
 function normalizationLabel(status: string) {
   if (status === "complete") {
-    return "complete";
+    return "完整";
   }
   if (status === "group_rate_only") {
     return "仅倍率";
   }
-  return status || "unknown";
+  if (status === "expired") {
+    return "已过期";
+  }
+  return status || "未知";
 }
 
 function stationName(stationId: string, stationById: Map<string, Station>) {

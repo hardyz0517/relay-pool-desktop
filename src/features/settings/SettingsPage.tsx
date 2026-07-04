@@ -9,7 +9,7 @@ import {
   stopLocalProxy,
 } from "@/lib/api/proxy";
 import { getSecretMigrationStatus, runSecretSafetyScan } from "@/lib/api/secrets";
-import { getSettings, SETTINGS_UPDATED_EVENT, updateSettings } from "@/lib/api/settings";
+import { getLocalAccessKey, getSettings, SETTINGS_UPDATED_EVENT, updateSettings } from "@/lib/api/settings";
 import type { ProxyStatus } from "@/lib/types/proxy";
 import type { SecretMigrationReport, SecretScanFinding } from "@/lib/types/secrets";
 import {
@@ -159,6 +159,11 @@ export function SettingsPage() {
     );
   }
 
+  async function copyLocalAccessKey() {
+    const localAccessKey = await getLocalAccessKey();
+    await navigator.clipboard.writeText(localAccessKey);
+  }
+
   async function persistSettings(
     nextForm: SettingsFormState,
     successMessage: string,
@@ -187,7 +192,6 @@ export function SettingsPage() {
   return (
     <PageScaffold
       title="设置"
-      description="管理本地 OpenAI-compatible 代理、路由偏好和数据目录。"
       width="settings"
       actions={
         <Button disabled={saving || loading} form="settings-form" type="submit">
@@ -199,7 +203,6 @@ export function SettingsPage() {
       <form id="settings-form" className="grid min-w-0 gap-[var(--shell-page-gap)]" onSubmit={handleSubmit}>
         <SectionCard
           title="本地代理"
-          description="本地代理仅监听 127.0.0.1，外部工具可使用这个 OpenAI-compatible 入口。"
           action={
             <StatusBadge tone={proxyStatus.running ? "healthy" : "disabled"}>
               {proxyStatus.running ? "运行中" : "已停止"}
@@ -257,17 +260,17 @@ export function SettingsPage() {
           />
           <SettingRow
             control={<code className="break-all text-xs text-slate-700">http://127.0.0.1:{settings.localProxyPort}/v1</code>}
-            description="复制到 CCSwitch 或其他 OpenAI-compatible 客户端。"
-            label="Base URL"
+            description="复制到 CCSwitch 或其他兼容客户端。"
+            label="基础地址"
           />
           <SettingRow
-            control={<MaskedSecret value={settings.localKeyMasked} />}
-            description="只展示脱敏值；真实本地访问密钥由 SecretManager 管理。"
-            label="Local Key"
+            control={<MaskedSecret value={settings.localKeyMasked} onCopy={copyLocalAccessKey} />}
+            description="只展示脱敏值；真实本地访问密钥由加密存储管理。"
+            label="本地访问密钥"
           />
         </SectionCard>
 
-        <SectionCard title="采集与路由" description="控制后台采集频率、超时、并发和余额耗尽兜底策略。">
+        <SectionCard title="采集与路由">
           <SettingRow
             control={
               <SelectControl
@@ -281,7 +284,7 @@ export function SettingsPage() {
                 onChange={(defaultRoutingStrategy) => setForm({ ...form, defaultRoutingStrategy })}
               />
             }
-            description="当前本地代理会按所选策略对 Key 池候选排序。"
+            description="当前本地代理会按所选策略对密钥池候选排序。"
             label="默认路由策略"
           />
           <SettingRow
@@ -312,7 +315,7 @@ export function SettingsPage() {
           />
           <SettingRow
             control={<SettingsNumberInput min="1" value={form.modelListIntervalMinutes} onChange={(modelListIntervalMinutes) => setForm({ ...form, modelListIntervalMinutes })} />}
-            description="OpenAI-compatible 模型列表刷新周期。"
+            description="模型列表刷新周期。"
             label="模型采集周期（分钟）"
           />
           <SettingRow
@@ -354,7 +357,7 @@ export function SettingsPage() {
                 onCheckedChange={() => void handleDeveloperModeToggle()}
               />
             }
-            description="打开后侧边栏显示采集中心，用于调试登录态、采集快照和字段识别；关闭后采集能力仍可被内部流程使用。"
+            description="打开后侧边栏显示采集中心。"
             label="开发者模式"
           />
         </SectionCard>
@@ -362,12 +365,12 @@ export function SettingsPage() {
         <SectionCard title="数据与安全">
           <SettingRow
             control={<code className="break-all text-xs text-slate-700">{settings.dataDir}</code>}
-            description="SQLite 文件不在仓库目录。"
+            description="本地数据库不在仓库目录。"
             label="数据目录"
           />
           <SettingRow
             control={<StatusBadge tone="healthy">已启用</StatusBadge>}
-            description="Station Key、站点 API Key 和登录密码通过 SecretManager 写入本地加密存储。"
+            description="本地访问密钥、站点密钥和登录密码写入本地加密存储。"
             label="加密存储"
           />
           <SettingRow
@@ -404,7 +407,7 @@ export function SettingsPage() {
             label="安全扫描"
           />
           <div className="rounded-[var(--surface-radius)] border border-cyan-200 bg-cyan-50/80 px-4 py-3 text-xs leading-5 text-cyan-900">
-            默认列表 API 只返回脱敏值和 present 状态；request logs、route details 和 collector snapshots 在入库前统一脱敏。
+            默认列表接口只返回脱敏值和存在状态；请求日志、路由详情和采集快照在入库前统一脱敏。
           </div>
         </SectionCard>
 

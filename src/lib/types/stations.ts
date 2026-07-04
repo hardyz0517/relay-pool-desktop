@@ -49,8 +49,8 @@ export type StationUpdateInput = Omit<StationInput, "apiKey"> & {
 export const stationTypeLabels: Record<StationType, string> = {
   sub2api: "Sub2API",
   newapi: "NewAPI",
-  "openai-compatible": "OpenAI-compatible",
-  custom: "Custom",
+  "openai-compatible": "兼容 OpenAI",
+  custom: "自定义",
 };
 
 export const stationStatusLabels: Record<StationStatus, string> = {

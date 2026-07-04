@@ -32,7 +32,6 @@ export function StationDetailPanel({
     <div className="space-y-4">
       <SectionCard
         title={station.name}
-        description="站点账号资产已保存；Key 池和信息采集页会使用这份配置。"
         action={
           <StatusBadge tone={statusTone[station.status]}>
             {stationStatusLabels[station.status]}
@@ -41,9 +40,9 @@ export function StationDetailPanel({
       >
         <dl>
           <KeyValueRow label="站点类型" value={stationTypeLabels[station.stationType]} />
-          <KeyValueRow label="Base URL" value={station.baseUrl} />
+          <KeyValueRow label="基础地址" value={station.baseUrl} />
           <KeyValueRow
-            label="API Key"
+            label="密钥"
             value={<MaskedSecret value={station.apiKeyMasked} present={station.apiKeyPresent} />}
           />
           <KeyValueRow
@@ -54,7 +53,7 @@ export function StationDetailPanel({
             label="余额"
             value={station.balanceCny === null ? "未采集" : `¥${station.balanceCny.toFixed(2)}`}
           />
-          <KeyValueRow label="兑换比例" value={`1 元 = ${station.creditPerCny} credit`} />
+          <KeyValueRow label="兑换比例" value={`1 元 = ${station.creditPerCny} 点`} />
           <KeyValueRow
             label="低余额阈值"
             value={

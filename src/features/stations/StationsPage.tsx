@@ -12,9 +12,9 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ArrowRight, Edit3, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowRight, Clock3, Edit3, GripVertical, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, Dialog, EmptyState, IconButton, MaskedSecret, ObjectRow, PropertyList, PropertyRow, SelectControl, StatusBadge, useToast } from "@/components/ui";
+import { Button, Dialog, EmptyState, IconButton, MaskedSecret, ObjectRow, PropertyList, PropertyRow, SelectControl, StatusBadge, type StatusTone, useToast } from "@/components/ui";
 import { createStation, deleteStation, listStations, reorderStations, updateStation } from "@/lib/api/stations";
 import {
   clearStationCredentials,
@@ -27,6 +27,7 @@ import {
 } from "@/lib/api/stationKeys";
 import {
   collectSub2apiStation,
+  collectStationTask,
   detectSub2apiStation,
   getLatestCollectorSnapshot,
   listCollectorSnapshots,
@@ -48,6 +49,7 @@ import {
   buildStationAssetRows,
   formatStationBalance,
   stationRiskTone,
+  type StationAssetRow,
 } from "./stationAssetViewModels";
 
 type StationFormState = {
@@ -112,9 +114,6 @@ const statusTone: Record<Station["status"], "healthy" | "warning" | "error" | "d
   unchecked: "info",
 };
 
-const stationAssetGridTemplate =
-  "minmax(150px,1.15fr) 86px minmax(170px,1fr) 96px minmax(130px,0.85fr) 64px 96px 104px 76px";
-
 type StationsPageProps = {
   onAddProvider?: () => void;
 };
@@ -141,6 +140,8 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
   const [balanceSnapshots, setBalanceSnapshots] = useState<BalanceSnapshot[]>([]);
   const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
   const [drawerStationId, setDrawerStationId] = useState<string | null>(null);
+  const [drawerVisible, setDrawerVisible] = useState(false);
+  const [drawerClosing, setDrawerClosing] = useState(false);
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
   const [keyForm, setKeyForm] = useState<StationKeyFormState>(emptyKeyForm);
   const [loading, setLoading] = useState(true);
@@ -153,6 +154,31 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
   useEffect(() => {
     void refreshStations();
   }, []);
+
+  useEffect(() => {
+    if (!drawerStationId) {
+      setDrawerVisible(false);
+      return;
+    }
+
+    setDrawerClosing(false);
+    setDrawerVisible(false);
+    const frameId = window.requestAnimationFrame(() => setDrawerVisible(true));
+    return () => window.cancelAnimationFrame(frameId);
+  }, [drawerStationId]);
+
+  useEffect(() => {
+    if (!drawerClosing) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setDrawerStationId(null);
+      setDetailStationId(null);
+      setDrawerClosing(false);
+    }, 220);
+    return () => window.clearTimeout(timeoutId);
+  }, [drawerClosing]);
 
   const stationIds = useMemo(() => stations.map((station) => station.id), [stations]);
   const selectedStation = useMemo(
@@ -322,14 +348,29 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
   }, []);
 
   const openDetail = useCallback((station: Station) => {
+    const restoringCurrentDrawer = drawerStationId === station.id;
     setDialogMode("detail");
     setDetailStationId(station.id);
     setDrawerStationId(station.id);
+    setDrawerClosing(false);
+    if (restoringCurrentDrawer) {
+      setDrawerVisible(true);
+    }
     setEditingStationId(null);
     setSelectedStationId(station.id);
     setError(null);
     void refreshExtras(station.id);
-  }, [refreshExtras]);
+  }, [drawerStationId, refreshExtras]);
+
+  const closeDrawer = useCallback(() => {
+    if (!drawerStationId || drawerClosing) {
+      return;
+    }
+
+    setDialogMode(null);
+    setDrawerVisible(false);
+    setDrawerClosing(true);
+  }, [drawerClosing, drawerStationId]);
 
   const closeDialog = useCallback(() => {
     setDialogMode(null);
@@ -341,6 +382,8 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     setSnapshots([]);
     setSnapshot(null);
     setDrawerStationId(null);
+    setDrawerVisible(false);
+    setDrawerClosing(false);
     setKeyDialogOpen(false);
     setKeyForm(emptyKeyForm);
   }, []);
@@ -516,6 +559,24 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     }
   }
 
+  async function handleRefreshBalance(station: Station) {
+    setActionSaving(true);
+    setError(null);
+    try {
+      await collectStationTask(station.id, "balance");
+      await refreshStations();
+      if (station.id === selectedStationId || station.id === drawerStationId) {
+        await refreshExtras(station.id);
+      }
+      await refreshStationFacts(station.id);
+      toast.success("余额已刷新");
+    } catch (requestError) {
+      toast.error("刷新余额失败", readError(requestError));
+    } finally {
+      setActionSaving(false);
+    }
+  }
+
   async function handleSaveKey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!activeDialogStation) {
@@ -532,9 +593,9 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       setKeyDialogOpen(false);
       setKeyForm(emptyKeyForm);
       await refreshExtras(activeDialogStation.id);
-      toast.success("API Key 已保存");
+      toast.success("密钥已保存");
     } catch (requestError) {
-      toast.error("保存 API Key 失败", readError(requestError));
+      toast.error("保存密钥失败", readError(requestError));
     } finally {
       setActionSaving(false);
     }
@@ -544,31 +605,30 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     if (!activeDialogStation) {
       return;
     }
-    if (!window.confirm(`确认删除 Key「${key.name}」？`)) {
+    if (!window.confirm(`确认删除密钥「${key.name}」？`)) {
       return;
     }
     setActionSaving(true);
     try {
       await deleteStationKey(key.id);
       await refreshExtras(activeDialogStation.id);
-      toast.success("API Key 已删除");
+      toast.success("密钥已删除");
     } catch (requestError) {
-      toast.error("删除 API Key 失败", readError(requestError));
+      toast.error("删除密钥失败", readError(requestError));
     } finally {
       setActionSaving(false);
     }
   }
 
-  const keyCountLabel = activeDialogStation ? `${activeDialogStation.keyCount} keys` : "0 keys";
+  const keyCountLabel = activeDialogStation ? `${activeDialogStation.keyCount} 把` : "0 把";
 
   return (
     <PageScaffold
       title="中转站资产"
-      description="站点资产、余额、倍率、采集和路由参与状态；Key 的全局排序由 Key 池负责。"
       actions={
         <Button onClick={onAddProvider ?? openCreate}>
           <Plus className="h-4 w-4" />
-          添加 Provider
+          添加供应商
         </Button>
       }
     >
@@ -585,153 +645,102 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
         <div>
           {loading ? (
             <div className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
-              正在读取本地 SQLite...
+              正在读取本地数据...
             </div>
           ) : stations.length === 0 ? (
             <EmptyState
               title="还没有中转站"
-              description="添加一个站点开始管理登录账号和多把 API Key。"
-              action={<Button onClick={onAddProvider ?? openCreate}>添加 Provider</Button>}
+              description="添加一个站点开始管理登录账号和多把密钥。"
+              action={<Button onClick={onAddProvider ?? openCreate}>添加供应商</Button>}
             />
           ) : (
-            <div className="overflow-auto rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
-              <div
-                className="grid min-w-[940px] items-center gap-2 border-b border-border bg-slate-50 px-3 py-2 text-xs font-semibold text-muted-foreground"
-                style={{ gridTemplateColumns: stationAssetGridTemplate }}
-              >
-                <div>站点</div>
-                <div>类型</div>
-                <div>Base URL</div>
-                <div>余额</div>
-                <div>分组倍率</div>
-                <div>Key</div>
-                <div>健康</div>
-                <div>更新时间</div>
-                <div className="sticky right-0 bg-slate-50 pl-2 text-right">操作</div>
-              </div>
-              <div className="min-w-[940px] divide-y divide-border">
-                {stationAssetRows.map((row) => (
-                  <div
-                    key={row.station.id}
-                    role="button"
-                    tabIndex={0}
-                    className={cn(
-                      "grid w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--accent)/0.25)]",
-                      row.station.id === selectedStation?.id && "bg-teal-50/45",
-                    )}
-                    style={{ gridTemplateColumns: stationAssetGridTemplate }}
-                    onClick={() => openDetail(row.station)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        openDetail(row.station);
-                      }
-                    }}
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate font-semibold text-slate-800">{row.station.name}</div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {row.riskEvents[0]?.title ?? row.station.note ?? "暂无风险摘要"}
-                        {" · "}
-                        {row.participatesInRouting ? "参与路由" : "暂停路由"}
-                      </div>
-                    </div>
-                    <div className="truncate text-slate-700">{stationTypeLabels[row.station.stationType]}</div>
-                    <code className="truncate text-xs text-slate-600">{row.station.baseUrl}</code>
-                    <div className="truncate text-slate-700">{formatStationBalance(row)}</div>
-                    <div className="flex min-w-0 flex-wrap gap-1">
-                      {row.rateChips.length === 0 ? (
-                        <span className="text-xs text-muted-foreground">未采集</span>
-                      ) : (
-                        row.rateChips.map((chip) => (
-                          <span key={`${row.station.id}-${chip.label}`} className="rounded-full border border-border bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700">
-                            {chip.label} {chip.value}
-                          </span>
-                        ))
-                      )}
-                    </div>
-                    <div className="text-slate-700">{row.enabledKeyCount} / {row.station.keyCount}</div>
-                    <StatusBadge tone={stationRiskTone(row)}>{stationStatusLabels[row.station.status]}</StatusBadge>
-                    <div className="text-xs text-muted-foreground">{formatNullableTime(row.station.updatedAt)}</div>
-                    <div
-                      className={cn(
-                        "sticky right-0 flex justify-end bg-white pl-2",
-                        row.station.id === selectedStation?.id && "bg-teal-50",
-                      )}
-                    >
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        disabled={actionSaving || !row.station.enabled}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void handleRunCollect(row.station);
-                        }}
-                      >
-                        采集
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+            <div className="space-y-2">
+              {stationAssetRows.map((row) => (
+                <StationAssetListRow
+                  key={row.station.id}
+                  actionSaving={actionSaving}
+                  active={row.station.id === selectedStation?.id}
+                  row={row}
+                  onCollect={(station) => void handleRunCollect(station)}
+                  onDelete={handleDelete}
+                  onEdit={openEdit}
+                  onOpen={openDetail}
+                  onRefreshBalance={(station) => void handleRefreshBalance(station)}
+                />
+              ))}
             </div>
           )}
         </div>
       </div>
 
       {drawerStationId && detailStation && (
-        <div className="fixed inset-y-0 right-0 z-40 w-[min(560px,calc(100vw-72px))] border-l border-border bg-white shadow-2xl">
-          <div className="flex h-full min-h-0 flex-col">
-            <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-slate-900">{detailStation.name}</div>
-                <div className="truncate text-xs text-muted-foreground">{detailStation.baseUrl}</div>
+        <div
+          className={cn(
+            "fixed inset-0 z-40 bg-slate-900/0 transition-colors duration-200 ease-out",
+            drawerVisible && !drawerClosing && "bg-slate-900/10",
+          )}
+          onMouseDown={closeDrawer}
+        >
+          <div
+            className={cn(
+              "absolute inset-y-0 right-0 w-[min(560px,calc(100vw-72px))] border-l border-border bg-white shadow-[0_24px_80px_rgba(15,23,42,0.18)] transition-transform duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform",
+              drawerVisible && !drawerClosing ? "translate-x-0" : "translate-x-full",
+            )}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-slate-900">{detailStation.name}</div>
+                  <div className="truncate text-xs text-muted-foreground">{detailStation.baseUrl}</div>
+                </div>
+                <IconButton
+                  className="shrink-0 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 active:bg-slate-200"
+                  label="关闭详情抽屉"
+                  onClick={closeDrawer}
+                >
+                  <X className="h-4 w-4" />
+                </IconButton>
               </div>
-              <Button variant="outline" onClick={() => {
-                setDrawerStationId(null);
-                setDialogMode(null);
-              }}>
-                关闭
-              </Button>
-            </div>
-            <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
-              <div className="text-xs text-muted-foreground">{keyCountLabel}</div>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => void refreshExtras(detailStation.id)} disabled={actionSaving}>
-                  <RefreshCw className="h-4 w-4" />
-                  刷新
-                </Button>
-                <Button variant="secondary" onClick={() => {
-                  setKeyForm({ ...emptyKeyForm, priority: String(stationKeys.length) });
-                  setKeyDialogOpen(true);
-                }}>
-                  <Plus className="h-4 w-4" />
-                  新增 Key
-                </Button>
-                <Button variant="outline" onClick={() => openEdit(detailStation)}>
-                  <Edit3 className="h-4 w-4" />
-                  编辑
-                </Button>
+              <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
+                <div className="text-xs text-muted-foreground">{keyCountLabel}</div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => void refreshExtras(detailStation.id)} disabled={actionSaving}>
+                    <RefreshCw className="h-4 w-4" />
+                    刷新
+                  </Button>
+                  <Button variant="secondary" onClick={() => {
+                    setKeyForm({ ...emptyKeyForm, priority: String(stationKeys.length) });
+                    setKeyDialogOpen(true);
+                  }}>
+                    <Plus className="h-4 w-4" />
+                    新增密钥
+                  </Button>
+                  <Button variant="outline" onClick={() => openEdit(detailStation)}>
+                    <Edit3 className="h-4 w-4" />
+                    编辑
+                  </Button>
+                </div>
               </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto">
-              <DetailBody
-                activeDialogStation={detailStation}
-                changeEvents={changeEvents.filter((event) => event.stationId === detailStation.id)}
-                credentials={credentials}
-                keyCountLabel={keyCountLabel}
-                snapshot={snapshot}
-                snapshots={snapshots}
-                stationKeys={stationKeys}
-                groupBindings={groupBindingsByStation.get(detailStation.id) ?? []}
-                rateRecords={rateRecordsByStation.get(detailStation.id) ?? []}
-                collectorRuns={collectorRunsByStation.get(detailStation.id) ?? []}
-                onDeleteKey={handleDeleteKey}
-                onEditKey={(key) => {
-                  setKeyForm(keyToForm(key));
-                  setKeyDialogOpen(true);
-                }}
-              />
+              <div className="min-h-0 flex-1 overflow-auto">
+                <DetailBody
+                  activeDialogStation={detailStation}
+                  changeEvents={changeEvents.filter((event) => event.stationId === detailStation.id)}
+                  credentials={credentials}
+                  keyCountLabel={keyCountLabel}
+                  snapshot={snapshot}
+                  snapshots={snapshots}
+                  stationKeys={stationKeys}
+                  groupBindings={groupBindingsByStation.get(detailStation.id) ?? []}
+                  rateRecords={rateRecordsByStation.get(detailStation.id) ?? []}
+                  collectorRuns={collectorRunsByStation.get(detailStation.id) ?? []}
+                  onDeleteKey={handleDeleteKey}
+                  onEditKey={(key) => {
+                    setKeyForm(keyToForm(key));
+                    setKeyDialogOpen(true);
+                  }}
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -764,6 +773,127 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
         />
       )}
     </PageScaffold>
+  );
+}
+
+function StationAssetListRow({
+  row,
+  active,
+  actionSaving,
+  onOpen,
+  onEdit,
+  onCollect,
+  onDelete,
+  onRefreshBalance,
+}: {
+  row: StationAssetRow;
+  active: boolean;
+  actionSaving: boolean;
+  onOpen: (station: Station) => void;
+  onEdit: (station: Station) => void;
+  onCollect: (station: Station) => void;
+  onDelete: (station: Station) => void;
+  onRefreshBalance: (station: Station) => void;
+}) {
+  const station = row.station;
+  const statusToneValue = stationRiskTone(row);
+  const balance = formatStationBalanceParts(row);
+  const lastCollectText = formatRelativeTime(station.lastPricingFetchedAt ?? station.updatedAt);
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-pressed={active}
+      className={cn(
+        "group flex min-h-[78px] w-full cursor-pointer items-center gap-3 rounded-[14px] border px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)]",
+        active
+          ? "border-[hsl(var(--accent))] bg-[linear-gradient(90deg,#eff6ff_0%,#f7fbff_42%,#ffffff_100%)]"
+          : "border-border bg-white hover:border-sky-200 hover:bg-slate-50/60",
+      )}
+      onClick={() => onOpen(station)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen(station);
+        }
+      }}
+    >
+      <GripVertical className="h-4 w-4 shrink-0 text-slate-300 transition-colors group-hover:text-slate-400" />
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-600 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+        {stationAvatarLabel(station.name)}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="truncate text-[15px] font-semibold leading-5 text-slate-950">{station.name}</div>
+          <span className="hidden rounded-full border border-slate-200 bg-white/80 px-2 py-0.5 text-[11px] font-medium leading-4 text-slate-500 sm:inline-flex">
+            {stationTypeLabels[station.stationType]}
+          </span>
+          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDotClassName(statusToneValue))} />
+        </div>
+        <div className="mt-1 truncate text-xs font-medium text-[hsl(var(--accent))]">
+          {formatStationDisplayUrl(station.baseUrl)}
+        </div>
+      </div>
+
+      <div className="hidden shrink-0 items-center gap-5 md:flex">
+        <div className="min-w-[78px] text-right">
+          <div className="flex items-center justify-end gap-1 text-[11px] leading-4 text-slate-400">
+            <Clock3 className="h-3 w-3" />
+            <span>{lastCollectText}</span>
+            <button
+              type="button"
+              aria-label={`刷新余额 ${station.name}`}
+              title={`刷新余额 ${station.name}`}
+              disabled={actionSaving || !station.enabled}
+              className="ml-1 inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded-[6px] text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)] disabled:cursor-default disabled:opacity-40"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRefreshBalance(station);
+              }}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+              }}
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", actionSaving && "animate-spin")} />
+            </button>
+          </div>
+          <div className="mt-1 text-xs leading-4 text-slate-500">
+            余额：
+            <span className={cn("font-semibold", balance.amount === "未采集" ? "text-slate-500" : "text-emerald-600")}>
+              {balance.amount}
+            </span>
+            {balance.currency && <span className="ml-1 text-slate-500">{balance.currency}</span>}
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="flex shrink-0 items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        <IconButton className="text-slate-500 hover:text-slate-900" label={`编辑 ${station.name}`} onClick={() => onEdit(station)}>
+          <Edit3 className="h-4 w-4" />
+        </IconButton>
+        <IconButton
+          className="text-slate-500 hover:text-slate-900"
+          disabled={actionSaving || !station.enabled}
+          label={`采集信息 ${station.name}`}
+          onClick={() => onCollect(station)}
+        >
+          <RefreshCw className={cn("h-4 w-4", actionSaving && "animate-spin")} />
+        </IconButton>
+        <IconButton
+          className="text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+          label={`删除 ${station.name}`}
+          onClick={() => onDelete(station)}
+        >
+          <Trash2 className="h-4 w-4" />
+        </IconButton>
+      </div>
+    </div>
   );
 }
 
@@ -835,7 +965,7 @@ function StationDialogs({
       <Dialog
         open
         title={dialogMode === "edit" ? "编辑站点" : "新增站点"}
-        description={dialogMode === "edit" ? "API Key 留空则保留旧值。登录账号区用于采集。": "新增 provider 记录到本地 SQLite。"}
+        description={dialogMode === "edit" ? "密钥留空则保留旧值。登录账号区用于采集。": undefined}
         onClose={onClose}
         footer={
           <div className="flex justify-end gap-2">
@@ -862,11 +992,11 @@ function StationDialogs({
               />
             </Field>
           </div>
-          <Field label="Base URL">
+          <Field label="基础地址">
             <input className={inputClassName} value={form.baseUrl} onChange={(event) => onChange({ ...form, baseUrl: event.target.value })} placeholder="https://example.com/v1" required />
           </Field>
-          <Field label={dialogMode === "edit" ? "API Key（留空保留旧值）" : "API Key"}>
-            <input className={inputClassName} value={form.apiKey} onChange={(event) => onChange({ ...form, apiKey: event.target.value })} placeholder={dialogMode === "edit" ? "留空保留旧 key" : "sk-..."} required={dialogMode !== "edit"} />
+          <Field label={dialogMode === "edit" ? "密钥（留空保留旧值）" : "密钥"}>
+            <input className={inputClassName} value={form.apiKey} onChange={(event) => onChange({ ...form, apiKey: event.target.value })} placeholder={dialogMode === "edit" ? "留空保留旧密钥" : "sk-..."} required={dialogMode !== "edit"} />
           </Field>
           <div className="grid gap-3 md:grid-cols-3">
             <Field label="兑换比例">
@@ -897,7 +1027,7 @@ function StationDialogs({
                 <input checked={form.rememberPassword} className="h-4 w-4 accent-teal-600" type="checkbox" onChange={(event) => onChange({ ...form, rememberPassword: event.target.checked })} />
                 记住密码
               </label>
-              <span className="text-xs text-muted-foreground">保存后密码会通过 SecretManager 加密写入本地 secrets；留空不会覆盖旧密码。</span>
+              <span className="text-xs text-muted-foreground">保存后密码会写入本地加密存储；留空不会覆盖旧密码。</span>
             </div>
             {credentials && (
               <div className="mt-3 rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs text-slate-700 shadow-[var(--surface-shadow)]">
@@ -959,9 +1089,9 @@ function DetailBody({
       <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80">
         <PropertyRow label="站点名称" value={activeDialogStation.name} />
         <PropertyRow label="站点类型" value={stationTypeLabels[activeDialogStation.stationType]} />
-        <PropertyRow label="Base URL" value={<code className="text-xs">{activeDialogStation.baseUrl}</code>} />
+        <PropertyRow label="基础地址" value={<code className="text-xs">{activeDialogStation.baseUrl}</code>} />
         <PropertyRow label="余额" value={activeDialogStation.balanceCny === null ? "未采集" : `¥${activeDialogStation.balanceCny.toFixed(2)}`} />
-        <PropertyRow label="key 数量" value={keyCountLabel} />
+        <PropertyRow label="密钥数量" value={keyCountLabel} />
         <PropertyRow label="状态" value={stationStatusLabels[activeDialogStation.status]} />
         <PropertyRow label="采集时间" value={activeDialogStation.lastPricingFetchedAt ?? "未采集"} />
         <PropertyRow label="刷新时间" value={activeDialogStation.lastCheckedAt ?? "未检测"} />
@@ -982,10 +1112,10 @@ function DetailBody({
         )}
       </SectionBlock>
 
-      <SectionBlock title="API Keys">
+      <SectionBlock title="密钥">
         <div className="space-y-2">
           {stationKeys.length === 0 ? (
-            <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无 Key。</div>
+            <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无密钥。</div>
           ) : (
             stationKeys.map((key) => (
               <div key={key.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2.5 shadow-[var(--surface-shadow)]">
@@ -998,7 +1128,7 @@ function DetailBody({
                   <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <MaskedSecret value={key.apiKeyMasked} present={key.apiKeyPresent} />
                     <span>{key.groupName ?? "未分组"}</span>
-                    <span>{key.tierLabel ?? "无 tier"}</span>
+                    <span>{key.tierLabel ?? "无档位"}</span>
                     <span>{key.enabled ? "启用" : "停用"}</span>
                   </div>
                 </div>
@@ -1012,7 +1142,7 @@ function DetailBody({
         </div>
       </SectionBlock>
 
-      <SectionBlock title="Group bindings">
+      <SectionBlock title="分组绑定">
         <div className="space-y-2">
           {groupBindings.length === 0 ? (
             <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无分组绑定事实。</div>
@@ -1025,16 +1155,16 @@ function DetailBody({
                 <span className="truncate font-medium text-slate-700">{binding.groupName}</span>
                 <span>{formatMultiplier(binding.effectiveRateMultiplier ?? binding.defaultRateMultiplier)}</span>
                 <StatusBadge tone={binding.bindingStatus === "missing" ? "warning" : "info"}>
-                  {binding.bindingStatus}
+                  {groupBindingStatusLabel(binding.bindingStatus)}
                 </StatusBadge>
-                <span className="truncate text-muted-foreground">{binding.rateSource ?? "unknown"}</span>
+                <span className="truncate text-muted-foreground">{binding.rateSource ?? "未知"}</span>
               </div>
             ))
           )}
         </div>
       </SectionBlock>
 
-      <SectionBlock title="Rate history">
+      <SectionBlock title="倍率历史">
         <div className="space-y-2">
           {rateRecords.length === 0 ? (
             <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无倍率历史。</div>
@@ -1053,7 +1183,7 @@ function DetailBody({
         </div>
       </SectionBlock>
 
-      <SectionBlock title="Collector runs">
+      <SectionBlock title="采集任务">
         <div className="space-y-2">
           {collectorRuns.length === 0 ? (
             <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无采集任务。</div>
@@ -1063,11 +1193,11 @@ function DetailBody({
                 key={run.id}
                 className="grid grid-cols-[5rem_6rem_minmax(0,1fr)_5rem] items-center gap-2 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs shadow-[var(--surface-shadow)]"
               >
-                <span className="font-medium text-slate-700">{run.taskType}</span>
+                <span className="font-medium text-slate-700">{collectorTaskTypeLabel(run.taskType)}</span>
                 <StatusBadge tone={run.status === "success" ? "healthy" : run.status === "failed" ? "error" : run.status === "manual_required" ? "warning" : "info"}>
-                  {run.status}
+                  {collectorRunStatusLabel(run.status)}
                 </StatusBadge>
-                <span className="truncate text-muted-foreground">{run.errorMessage ?? `${run.successCount}/${run.endpointCount} endpoint`}</span>
+                <span className="truncate text-muted-foreground">{run.errorMessage ?? `${run.successCount}/${run.endpointCount} 接口`}</span>
                 <span className="text-right text-muted-foreground">{run.durationMs == null ? "-" : `${run.durationMs}ms`}</span>
               </div>
             ))
@@ -1079,10 +1209,10 @@ function DetailBody({
         {snapshot ? (
           <div className="space-y-2 rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm shadow-[var(--surface-shadow)]">
             <PropertyList>
-              <PropertyRow label="source" value={snapshot.source} />
-              <PropertyRow label="status" value={snapshot.status} />
-              <PropertyRow label="fetchedAt" value={snapshot.fetchedAt} />
-              <PropertyRow label="error" value={snapshot.errorMessage ?? "无"} />
+              <PropertyRow label="来源" value={snapshot.source} />
+              <PropertyRow label="状态" value={collectorRunStatusLabel(snapshot.status)} />
+              <PropertyRow label="采集时间" value={snapshot.fetchedAt} />
+              <PropertyRow label="错误" value={snapshot.errorMessage ?? "无"} />
             </PropertyList>
             <pre className="max-h-40 overflow-auto rounded-[var(--surface-radius)] border border-border bg-white p-3 text-[11px] text-slate-600">{JSON.stringify(snapshot.summaryJson, null, 2)}</pre>
             <div className="text-xs text-muted-foreground">历史快照：{snapshots.length} 条</div>
@@ -1113,109 +1243,9 @@ function DetailBody({
       </SectionBlock>
 
       <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs leading-5 text-slate-700 shadow-[var(--surface-shadow)]">
-        登录账号用于信息采集；保存的密码经 SecretManager 加密，采集快照和请求日志会统一脱敏。
+        登录账号用于信息采集；保存的密码会加密存储，采集快照和请求日志会统一脱敏。
       </div>
     </div>
-  );
-}
-
-function SortableStationRow({
-  station,
-  active,
-  onSelect,
-  onEdit,
-  onPreview,
-  onDelete,
-  onToggleEnabled,
-}: {
-  station: Station;
-  active: boolean;
-  onSelect: (station: Station) => void;
-  onEdit: (station: Station) => void;
-  onPreview: (station: Station) => void;
-  onDelete: (station: Station) => void;
-  onToggleEnabled: (station: Station) => void;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: station.id });
-  return (
-    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={cn("will-change-transform", isDragging && "opacity-35")}>
-      <StationRowContent
-        active={active}
-        station={station}
-        dragAttributes={attributes}
-        dragListeners={listeners}
-        onDelete={onDelete}
-        onEdit={onEdit}
-        onPreview={onPreview}
-        onSelect={onSelect}
-        onToggleEnabled={onToggleEnabled}
-      />
-    </div>
-  );
-}
-
-function StationRowContent({
-  station,
-  active = false,
-  overlay = false,
-  dragAttributes,
-  dragListeners,
-  onSelect,
-  onEdit,
-  onPreview,
-  onDelete,
-  onToggleEnabled,
-}: {
-  station: Station;
-  active?: boolean;
-  overlay?: boolean;
-  dragAttributes?: DraggableAttributes;
-  dragListeners?: ReturnType<typeof useSortable>["listeners"];
-  onSelect?: (station: Station) => void;
-  onEdit?: (station: Station) => void;
-  onPreview?: (station: Station) => void;
-  onDelete?: (station: Station) => void;
-  onToggleEnabled?: (station: Station) => void;
-}) {
-  const balanceText = station.balanceCny === null ? "未采集" : `¥${station.balanceCny.toFixed(2)}`;
-  return (
-    <ObjectRow
-      className={overlay ? "border-[hsl(var(--accent)/0.45)] bg-slate-50" : undefined}
-      draggable
-      dragHandleProps={{ attributes: dragAttributes, listeners: dragListeners }}
-      icon={<StationStatusDot status={station.status} />}
-      selected={active}
-      title={station.name}
-      subtitle={`${stationTypeLabels[station.stationType]} · ${station.baseUrl}`}
-      badges={
-        <>
-          <StatusBadge tone={statusTone[station.status]}>{stationStatusLabels[station.status]}</StatusBadge>
-          <StatusBadge tone={station.enabled ? "healthy" : "disabled"}>{station.enabled ? "启用" : "停用"}</StatusBadge>
-        </>
-      }
-      metrics={[
-        { label: "Key", value: `${station.keyCount}` },
-        { label: "余额", value: balanceText, tone: station.status === "warning" ? "warning" : "neutral" },
-        { label: "延迟", value: station.latencyMs === null ? "-" : `${station.latencyMs}ms` },
-      ]}
-      actions={
-        <>
-          <IconButton label={station.enabled ? `停用 ${station.name}` : `启用 ${station.name}`} variant="secondary" onClick={() => onToggleEnabled?.(station)}>
-            <ShieldCheck className="h-4 w-4" />
-          </IconButton>
-          <IconButton label={`查看 ${station.name}`} onClick={() => onPreview?.(station)}>
-            <ArrowRight className="h-4 w-4" />
-          </IconButton>
-          <IconButton label={`编辑 ${station.name}`} onClick={() => onEdit?.(station)}>
-            <Edit3 className="h-4 w-4" />
-          </IconButton>
-          <IconButton label={`删除 ${station.name}`} variant="danger" onClick={() => onDelete?.(station)}>
-            <Trash2 className="h-4 w-4" />
-          </IconButton>
-        </>
-      }
-      onClick={() => onSelect?.(station)}
-    />
   );
 }
 
@@ -1247,8 +1277,7 @@ function KeyDialog({
   return (
     <Dialog
       open
-      title={keyForm.id ? "编辑 API Key" : "新增 API Key"}
-      description="一个站点下面可以管理多把 Key。"
+      title={keyForm.id ? "编辑密钥" : "新增密钥"}
       onClose={() => onKeyDialogOpenChange(false)}
       footer={
         <div className="flex justify-end gap-2">
@@ -1266,19 +1295,19 @@ function KeyDialog({
             <input className={inputClassName} type="number" value={keyForm.priority} onChange={(event) => onKeyFormChange({ ...keyForm, priority: event.target.value })} />
           </Field>
         </div>
-        <Field label="API Key">
-          <input className={inputClassName} value={keyForm.apiKey} onChange={(event) => onKeyFormChange({ ...keyForm, apiKey: event.target.value })} placeholder={keyForm.id ? "留空保留旧 key" : "sk-..."} required={!keyForm.id} />
+        <Field label="密钥">
+          <input className={inputClassName} value={keyForm.apiKey} onChange={(event) => onKeyFormChange({ ...keyForm, apiKey: event.target.value })} placeholder={keyForm.id ? "留空保留旧密钥" : "sk-..."} required={!keyForm.id} />
         </Field>
         <div className="grid gap-3 md:grid-cols-3">
           <Field label="分组">
             <input className={inputClassName} value={keyForm.groupName} onChange={(event) => onKeyFormChange({ ...keyForm, groupName: event.target.value })} />
           </Field>
-          <Field label="Tier">
+          <Field label="档位">
             <input className={inputClassName} value={keyForm.tierLabel} onChange={(event) => onKeyFormChange({ ...keyForm, tierLabel: event.target.value })} />
           </Field>
           <Field label="状态">
             <SelectControl
-              ariaLabel="Key 状态"
+              ariaLabel="密钥状态"
               className={inputClassName}
               value={keyForm.status}
               options={Object.entries(stationKeyStatusLabels).map(([value, label]) => ({
@@ -1369,6 +1398,64 @@ function readError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function stationAvatarLabel(name: string) {
+  const trimmed = name.trim();
+  return trimmed ? Array.from(trimmed)[0] : "?";
+}
+
+function formatStationDisplayUrl(baseUrl: string) {
+  try {
+    const url = new URL(baseUrl);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return baseUrl.replace(/\/+$/, "");
+  }
+}
+
+function formatStationBalanceParts(row: StationAssetRow) {
+  const value = row.latestBalance?.value ?? row.station.balanceCny;
+  if (value == null) {
+    return { amount: "未采集", currency: "" };
+  }
+  return {
+    amount: value.toFixed(2),
+    currency: row.latestBalance?.currency ?? "CNY",
+  };
+}
+
+function formatRelativeTime(value: string | null) {
+  if (!value) {
+    return "未采集";
+  }
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  const diffMs = Math.max(0, Date.now() - date.getTime());
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (diffMs < minute) {
+    return "刚刚";
+  }
+  if (diffMs < hour) {
+    return `${Math.floor(diffMs / minute)} 分钟前`;
+  }
+  if (diffMs < day) {
+    return `${Math.floor(diffMs / hour)} 小时前`;
+  }
+  return `${Math.floor(diffMs / day)} 天前`;
+}
+
+function statusDotClassName(tone: StatusTone) {
+  if (tone === "healthy") return "bg-emerald-500";
+  if (tone === "warning") return "bg-amber-500";
+  if (tone === "error") return "bg-rose-500";
+  if (tone === "disabled") return "bg-slate-400";
+  return "bg-blue-500";
+}
+
 function formatNullableTime(value: string | null) {
   if (!value) {
     return "未记录";
@@ -1388,6 +1475,31 @@ function formatNullableTime(value: string | null) {
 
 function formatMultiplier(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)}x` : "-";
+}
+
+function collectorTaskTypeLabel(value: string) {
+  if (value === "detect") return "探测";
+  if (value === "balance") return "余额";
+  if (value === "groups") return "分组";
+  if (value === "models") return "模型";
+  if (value === "full") return "完整";
+  return value;
+}
+
+function collectorRunStatusLabel(status: string) {
+  if (status === "success") return "成功";
+  if (status === "failed") return "失败";
+  if (status === "manual_required") return "需要登录";
+  if (status === "running") return "运行中";
+  if (status === "partial") return "部分完成";
+  return status;
+}
+
+function groupBindingStatusLabel(status: string) {
+  if (status === "available") return "可用";
+  if (status === "missing") return "缺失";
+  if (status === "manual") return "手动";
+  return status;
 }
 
 const inputClassName = "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/40 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";

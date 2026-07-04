@@ -132,7 +132,6 @@ export function ChangeCenterPage() {
   return (
     <PageScaffold
       title="变更中心"
-      description="记录余额、倍率、价格、模型、Key、采集和路由状态的变化。"
       actions={
         <Button variant="secondary" onClick={() => void refresh(true)} disabled={loading || saving}>
           <RefreshCw className="h-4 w-4" />
@@ -199,7 +198,7 @@ export function ChangeCenterPage() {
             {filteredEvents.length === 0 ? (
               <EmptyState
                 title={loading ? "正在读取变更" : "暂无变更"}
-                description="余额、Key、采集、价格、倍率、模型和路由状态变化会在这里形成记录。"
+                description="余额、密钥、采集、价格、倍率、模型和路由状态变化会在这里形成记录。"
               />
             ) : (
               <DataTableLite
@@ -230,7 +229,7 @@ export function ChangeCenterPage() {
                 <div className="grid gap-2 text-xs text-muted-foreground">
                   <div>对象：{objectTypeLabels[selected.objectType] ?? selected.objectType} / {selected.objectId ?? "-"}</div>
                   <div>来源：{selected.source}</div>
-                  <div>Dedupe：{selected.dedupeKey}</div>
+                  <div>去重键：{selected.dedupeKey}</div>
                 </div>
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button variant="outline" disabled={saving || selected.status === "read"} onClick={() => void runAction(() => markChangeEventRead(selected.id), "已标记为已读")}>

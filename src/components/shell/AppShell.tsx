@@ -67,12 +67,12 @@ export function AppShell({
   const changeRiskCount = useMemo(() => unreadRiskCount(changeEvents), [changeEvents]);
 
   return (
-    <div className="flex h-screen min-h-[640px] overflow-hidden bg-background text-foreground">
+    <div className="flex h-dvh min-h-0 overflow-hidden bg-background text-foreground">
       <aside
-        className="flex shrink-0 flex-col border-r border-border bg-white"
+        className="flex min-h-0 shrink-0 flex-col border-r border-border bg-white"
         style={{ width: shellLayout.sidebarWidth }}
       >
-        <nav className="flex flex-1 flex-col items-center gap-1 px-2 py-2">
+        <nav className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto px-2 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {visibleRoutes.map((route) => {
             const Icon = route.icon;
             const active = route.id === activeRouteId;
@@ -117,7 +117,7 @@ export function AppShell({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <main className="min-h-0 flex-1 overflow-auto bg-background p-[var(--shell-page-gap)]">
+        <main className="min-h-0 flex-1 overflow-auto bg-background p-[var(--shell-page-gap)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {children}
         </main>
       </div>

@@ -21,14 +21,14 @@ export type ProviderPreset = {
 export const providerPresets: ProviderPreset[] = [
   {
     id: "custom",
-    name: "Custom",
-    description: "完全自定义 Provider。",
+    name: "自定义",
+    description: "完全自定义供应商。",
     stationType: "custom",
     baseUrl: "",
   },
   {
     id: "openai-compatible",
-    name: "OpenAI Compatible",
+    name: "兼容 OpenAI",
     description: "适用于大多数兼容 /v1 的中转站。",
     stationType: "openai-compatible",
     baseUrl: "https://api.example.com/v1",
@@ -57,21 +57,21 @@ export const providerPresets: ProviderPreset[] = [
   {
     id: "qwen",
     name: "Qwen",
-    description: "通义千问 OpenAI-compatible 入口。",
+    description: "通义千问兼容入口。",
     stationType: "openai-compatible",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   },
   {
     id: "siliconflow",
     name: "SiliconFlow",
-    description: "硅基流动 OpenAI-compatible 入口。",
+    description: "硅基流动兼容入口。",
     stationType: "openai-compatible",
     baseUrl: "https://api.siliconflow.cn/v1",
   },
   {
     id: "minimax",
     name: "MiniMax",
-    description: "MiniMax OpenAI-compatible 入口。",
+    description: "MiniMax 兼容入口。",
     stationType: "openai-compatible",
     baseUrl: "https://api.minimax.chat/v1",
   },

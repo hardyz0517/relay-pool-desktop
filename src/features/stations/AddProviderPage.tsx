@@ -61,15 +61,15 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form.name.trim()) {
-      toast.info("请填写 Provider 名称");
+      toast.info("请填写供应商名称");
       return;
     }
     if (!form.baseUrl.trim()) {
-      toast.info("请填写 Base URL");
+      toast.info("请填写基础地址");
       return;
     }
     if (!form.apiKey.trim()) {
-      toast.info("请填写 API Key");
+      toast.info("请填写密钥");
       return;
     }
 
@@ -88,12 +88,12 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
           : null,
         note: form.note.trim() ? form.note.trim() : null,
       });
-      toast.success("Provider 已添加");
+      toast.success("供应商已添加");
       onCreated();
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : String(requestError);
       setError(message);
-      toast.error("添加 Provider 失败", message);
+      toast.error("添加供应商失败", message);
     } finally {
       setSaving(false);
     }
@@ -101,8 +101,8 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
 
   return (
     <PageScaffold
-      title="添加 Provider"
-      description="先选择常见预设，再补齐 Base URL 和 API Key。"
+      title="添加新供应商"
+      stickyHeader
       backAction={
         <IconButton label="返回中转站" onClick={onBack}>
           <ArrowLeft className="h-4 w-4" />
@@ -120,7 +120,7 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
             </Button>
             <Button type="submit" disabled={saving}>
               <Check className="h-4 w-4" />
-              {saving ? "添加中" : "添加 Provider"}
+              {saving ? "添加中" : "添加供应商"}
             </Button>
           </>
         }
@@ -129,7 +129,6 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
           <div className="grid gap-[var(--shell-page-gap)]">
             <SectionCard
               title="预设供应商"
-              description="选择后会自动填充站点类型和 Base URL；自定义配置可手动补齐。"
             >
               <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,9rem),1fr))] gap-2">
                 {providerPresets.map((preset) => {
@@ -163,9 +162,9 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
               </div>
             </SectionCard>
 
-            <SectionCard title="连接信息" description="这些字段会写入现有中转站配置，不改变后端数据结构。">
+            <SectionCard title="连接信息">
               <div className="grid gap-3 md:grid-cols-2">
-                <Field label="Provider 名称">
+                <Field label="供应商名称">
                   <input
                     className={inputClassName}
                     value={form.name}
@@ -187,7 +186,7 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
                 </Field>
               </div>
               <div className="mt-3 grid gap-3">
-                <Field label="Base URL">
+                <Field label="基础地址">
                   <input
                     className={inputClassName}
                     value={form.baseUrl}
@@ -195,7 +194,7 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
                     placeholder="https://api.example.com/v1"
                   />
                 </Field>
-                <Field label="API Key">
+                <Field label="密钥">
                   <input
                     className={inputClassName}
                     type="password"
@@ -226,11 +225,11 @@ export function AddProviderPage({ onBack, onCreated }: AddProviderPageProps) {
               </div>
               <div className="mt-4 grid gap-2 text-xs">
                 <SummaryRow icon={<Server className="h-3.5 w-3.5" />} label="类型" value={stationTypeLabels[form.stationType]} />
-                <SummaryRow icon={<KeyRound className="h-3.5 w-3.5" />} label="Key" value={form.apiKey.trim() ? "已填写" : "待填写"} />
+                <SummaryRow icon={<KeyRound className="h-3.5 w-3.5" />} label="密钥" value={form.apiKey.trim() ? "已填写" : "待填写"} />
               </div>
             </Card>
 
-            <SectionCard title="可选项" description="低余额阈值和备注可稍后在中转站详情里调整。">
+            <SectionCard title="可选项">
               <div className="grid gap-3">
                 <Field label="低余额阈值 CNY">
                   <input

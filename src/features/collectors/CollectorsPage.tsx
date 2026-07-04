@@ -296,7 +296,6 @@ export function CollectorsPage() {
   return (
     <PageScaffold
       title="信息采集"
-      description="填写中转站账号密码后，先做登录态采集；高级选项里保留接口探测和网页登录捕获兜底。"
       actions={
         <div className="flex items-center gap-2">
           <SelectControl
@@ -314,11 +313,11 @@ export function CollectorsPage() {
             disabled={!selectedStation || actionBusy}
             value={taskType}
             options={[
-              { value: "detect", label: "Detect" },
+              { value: "detect", label: "探测" },
               { value: "balance", label: "余额" },
               { value: "groups", label: "分组 / 倍率" },
               { value: "models", label: "模型" },
-              { value: "full", label: "Full" },
+              { value: "full", label: "完整采集" },
             ]}
             onChange={(value) => setTaskType(value as CollectorTaskType)}
           />
@@ -359,9 +358,9 @@ export function CollectorsPage() {
               action={<StatusBadge tone={toneForConclusion(conclusion)}>{conclusion}</StatusBadge>}
             >
               <div className="grid gap-3">
-                <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 shadow-[var(--surface-shadow)]">
+                <div className="rounded-[10px] bg-slate-50/70 p-3">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--surface-radius)] border border-border bg-white text-teal-700">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-white text-teal-700">
                       <ShieldCheck className="h-5 w-5" />
                     </div>
                     <div className="min-w-0">
@@ -370,7 +369,7 @@ export function CollectorsPage() {
                       </div>
                       <div className="mt-1 text-xs leading-5 text-muted-foreground">
                         采集器：{summary.adapter ?? adapterForStation(selectedStation)} · 识别类型：
-                        {summary.detectedType ?? "Unknown"}
+                        {summary.detectedType ?? "未知"}
                       </div>
                     </div>
                   </div>
@@ -385,7 +384,7 @@ export function CollectorsPage() {
                 <CompactFact label="余额" value={displayValue(recognized?.balanceLabel)} />
                 <CompactFact label="分组" value={countValue(recognized?.groupCount)} />
                 <CompactFact label="倍率" value={countValue(recognized?.rateCount)} />
-                <CompactFact label="Keys" value={countValue(recognized?.keyCount)} />
+                <CompactFact label="密钥" value={countValue(recognized?.keyCount)} />
               </div>
               <div className="mt-3 grid gap-2 md:grid-cols-2">
                 <CompactFact label="模型" value={countValue(modelCount)} />
@@ -405,7 +404,7 @@ export function CollectorsPage() {
                   />
                 </div>
               )}
-              <div className="mt-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs leading-5 text-muted-foreground shadow-[var(--surface-shadow)]">
+              <div className="mt-3 rounded-[10px] bg-slate-50/70 px-3 py-2 text-xs leading-5 text-muted-foreground">
                 {summary.diagnosis ??
                   summary.nextStep ??
                   (summary.loginRequired
@@ -414,22 +413,22 @@ export function CollectorsPage() {
               </div>
             </SectionCard>
 
-            <SectionCard title="采集摘要" description="主界面只展示用户看得懂的结果。">
+            <SectionCard title="采集摘要">
               <div className="grid gap-2 md:grid-cols-3">
                 <CompactFact label="站点账号" value={selectedStation.name} />
                 <CompactFact label="站点类型" value={stationTypeLabels[selectedStation.stationType]} />
-                <CompactFact label="API Keys" value={`${selectedStation.keyCount} keys`} />
+                <CompactFact label="密钥" value={`${selectedStation.keyCount}`} />
               </div>
-              <div className="mt-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-sm text-slate-700 shadow-[var(--surface-shadow)]">
+              <div className="mt-3 rounded-[10px] bg-slate-50/70 px-3 py-2 text-sm text-slate-700">
                 {summary.loginRequired
                   ? "这个站点当前更像需要登录后才能拿到完整信息。先测试登录，再做采集。"
-                  : "已尽量使用登录态接口读取余额、分组、倍率、key 和模型信息。"}
+                  : "已尽量使用登录态接口读取余额、分组、倍率、密钥和模型信息。"}
               </div>
             </SectionCard>
 
             <SectionCard
               title="手动登录态"
-              description="保存 access token、refresh token、NewAPI User ID 或 cookie；保存后不会回显原文。"
+              description="保存后不会回显原文。"
               action={
                 <Button variant="secondary" onClick={handleSaveManualSession} disabled={!selectedStation || actionBusy}>
                   保存登录态
@@ -437,7 +436,7 @@ export function CollectorsPage() {
               }
             >
               <div className="grid gap-3 md:grid-cols-2">
-                <Field label="Access Token">
+                <Field label="访问令牌">
                   <input
                     type="password"
                     className={inputClassName}
@@ -447,7 +446,7 @@ export function CollectorsPage() {
                     }
                   />
                 </Field>
-                <Field label="Refresh Token">
+                <Field label="刷新令牌">
                   <input
                     type="password"
                     className={inputClassName}
@@ -457,7 +456,7 @@ export function CollectorsPage() {
                     }
                   />
                 </Field>
-                <Field label="NewAPI User ID">
+                <Field label="NewAPI 用户 ID">
                   <input
                     className={inputClassName}
                     value={manualSession.newapiUserId}
@@ -476,7 +475,7 @@ export function CollectorsPage() {
                     }
                   />
                 </Field>
-                <Field label="Token Expires At">
+                <Field label="令牌过期时间">
                   <input
                     className={inputClassName}
                     placeholder="Unix ms 或 ISO 时间"
@@ -491,8 +490,8 @@ export function CollectorsPage() {
           </div>
 
           <div className="space-y-3">
-            <InspectorPanel title="高级选项" description="接口探测与网页登录捕获都放这里。">
-              <details className="group rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+            <InspectorPanel title="高级选项">
+              <details className="group rounded-[10px] border border-slate-100 bg-slate-50/70">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-slate-700">
                   高级功能
                   <ChevronDown className="h-4 w-4 text-muted-foreground transition group-open:rotate-180" />
@@ -508,8 +507,8 @@ export function CollectorsPage() {
                       <Radar className="h-4 w-4" />
                       {taskStatus === "detecting" ? "高级探测中" : "重新探测接口"}
                     </Button>
-                    <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs leading-5 text-slate-700 shadow-[var(--surface-shadow)]">
-                      实验功能：用于验证码、2FA 或魔改站兜底，当前需要技术验证，不保证能捕获所有请求。
+                    <div className="rounded-[10px] bg-white/75 px-3 py-2 text-xs leading-5 text-slate-700">
+                      实验功能：用于验证码、二次验证或魔改站兜底，当前需要技术验证，不保证能捕获所有请求。
                     </div>
                     {captureActive ? (
                       <div className="space-y-2">
@@ -553,22 +552,22 @@ export function CollectorsPage() {
               </details>
             </InspectorPanel>
 
-            <SectionCard title="最近采集任务" description="Full 父任务会展开为 balance / groups / models 子任务。">
+            <SectionCard title="最近采集任务">
               <div className="grid gap-2">
                 {runs.length === 0 ? (
-                  <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-white px-3 py-4 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
+                  <div className="rounded-[10px] border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-sm text-muted-foreground">
                     暂无采集任务。
                   </div>
                 ) : (
                   runs.slice(0, 10).map((run) => (
                     <div
                       key={run.id}
-                      className="grid grid-cols-[5rem_7rem_minmax(0,1fr)_5rem] items-center gap-2 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs shadow-[var(--surface-shadow)]"
+                      className="grid grid-cols-[5rem_7rem_minmax(0,1fr)_5rem] items-center gap-2 rounded-[10px] border border-slate-100 bg-slate-50/70 px-3 py-2 text-xs"
                     >
-                      <span className="font-medium text-slate-700">{run.taskType}</span>
-                      <StatusBadge tone={toneForRunStatus(run.status)}>{run.status}</StatusBadge>
+                      <span className="font-medium text-slate-700">{taskTypeLabel(run.taskType)}</span>
+                      <StatusBadge tone={toneForRunStatus(run.status)}>{runStatusLabel(run.status)}</StatusBadge>
                       <span className="truncate text-muted-foreground">
-                        {run.errorMessage ?? `${run.successCount}/${run.endpointCount} endpoint`}
+                        {run.errorMessage ?? `${run.successCount}/${run.endpointCount} 接口`}
                       </span>
                       <span className="text-right text-muted-foreground">
                         {run.durationMs == null ? "-" : `${run.durationMs}ms`}
@@ -579,7 +578,7 @@ export function CollectorsPage() {
               </div>
             </SectionCard>
 
-            <InspectorPanel title="历史快照" description="最近保存的采集记录。">
+            <InspectorPanel title="历史快照">
               <div className="space-y-2">
                 {history.length > 0 ? (
                   history.map((snapshot) => {
@@ -606,7 +605,7 @@ export function CollectorsPage() {
                     );
                   })
                 ) : (
-                  <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-white px-3 py-4 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
+                  <div className="rounded-[10px] border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-sm text-muted-foreground">
                     暂无历史快照。
                   </div>
                 )}
@@ -614,9 +613,9 @@ export function CollectorsPage() {
             </InspectorPanel>
 
             <InspectorPanel title="开发者详情" description="默认收起，仅用于排查采集器。">
-              <details className="group rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+              <details className="group rounded-[10px] border border-slate-100 bg-slate-50/70">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-slate-700">
-                  脱敏 snapshot JSON
+                  脱敏快照 JSON
                   <span className="text-xs text-muted-foreground group-open:hidden">展开</span>
                   <span className="hidden text-xs text-muted-foreground group-open:inline">收起</span>
                 </summary>
@@ -628,7 +627,7 @@ export function CollectorsPage() {
                     </Button>
                   </div>
                   <pre className="max-h-72 overflow-auto rounded-xl bg-white p-3 text-[11px] leading-5 text-slate-600">
-                    {buildDeveloperJson(latestSnapshot) || "暂无 snapshot。"}
+                        {buildDeveloperJson(latestSnapshot) || "暂无快照。"}
                   </pre>
                 </div>
               </details>
@@ -653,7 +652,7 @@ export function CollectorsPage() {
 
 function CompactFact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 shadow-[var(--surface-shadow)]">
+    <div className="rounded-[10px] border border-slate-100 bg-slate-50/70 px-3 py-2">
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className="mt-0.5 truncate text-sm font-semibold text-slate-800">{value}</div>
     </div>
@@ -679,7 +678,7 @@ function DetailList({
   emptyText: string;
 }) {
   return (
-    <div className="rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 shadow-[var(--surface-shadow)]">
+    <div className="rounded-[10px] border border-slate-100 bg-slate-50/70 px-3 py-2">
       <div className="text-[11px] text-muted-foreground">{title}</div>
       <div className="mt-1 flex flex-wrap gap-1.5">
         {items.length > 0 ? (
@@ -859,10 +858,10 @@ function readNumber(value: unknown) {
 }
 
 function adapterForStation(station: Station) {
-  if (station.stationType === "sub2api") return "Login State Adapter";
-  if (station.stationType === "newapi") return "NewAPI Adapter（待接入）";
-  if (station.stationType === "openai-compatible") return "OpenAI-compatible Adapter（基础探测）";
-  return "Auto Detect";
+  if (station.stationType === "sub2api") return "登录态采集";
+  if (station.stationType === "newapi") return "NewAPI 采集（待接入）";
+  if (station.stationType === "openai-compatible") return "OpenAI 兼容探测";
+  return "自动探测";
 }
 
 function sourceLabel(source: string) {
@@ -885,6 +884,24 @@ function toneForRunStatus(status: string) {
   if (status === "manual_required") return "warning" as const;
   if (status === "running" || status === "partial") return "info" as const;
   return "info" as const;
+}
+
+function taskTypeLabel(value: string) {
+  if (value === "detect") return "探测";
+  if (value === "balance") return "余额";
+  if (value === "groups") return "分组";
+  if (value === "models") return "模型";
+  if (value === "full") return "完整";
+  return value;
+}
+
+function runStatusLabel(status: string) {
+  if (status === "success") return "成功";
+  if (status === "failed") return "失败";
+  if (status === "manual_required") return "需要登录";
+  if (status === "running") return "运行中";
+  if (status === "partial") return "部分完成";
+  return status;
 }
 
 function shortError(error: string) {
