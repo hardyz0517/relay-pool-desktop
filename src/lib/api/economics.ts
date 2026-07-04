@@ -47,6 +47,20 @@ export function listBalanceSnapshots() {
   });
 }
 
+export function listBalanceSnapshotsForStation(stationId: string) {
+  return invoke<BalanceSnapshot[]>("list_balance_snapshots_for_station", { stationId }).catch((error) => {
+    if (isCommandNotFound(error)) {
+      return listBalanceSnapshots().then((snapshots) =>
+        snapshots.filter((snapshot) => snapshot.stationId === stationId),
+      );
+    }
+    if (isInvokeUnavailable(error)) {
+      return ensureMemoryBalanceSnapshots().filter((snapshot) => snapshot.stationId === stationId);
+    }
+    throw error;
+  });
+}
+
 export function upsertBalanceSnapshot(input: unknown) {
   return invoke<BalanceSnapshot>("upsert_balance_snapshot", { input }).catch((error) => {
     if (isInvokeUnavailable(error)) {
@@ -217,5 +231,13 @@ function stationIdFromName(name: string) {
 }
 
 function isInvokeUnavailable(error: unknown) {
-  return error instanceof Error && /invoke|__TAURI__/i.test(error.message);
+  return /invoke|__TAURI__/i.test(getErrorMessage(error));
+}
+
+function isCommandNotFound(error: unknown) {
+  return /command .* not found/i.test(getErrorMessage(error));
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }

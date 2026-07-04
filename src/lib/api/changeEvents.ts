@@ -7,13 +7,33 @@ import {
 import type { ChangeEvent, UpsertChangeEventInput } from "@/lib/types/changeEvents";
 
 function isInvokeUnavailable(error: unknown) {
-  return error instanceof Error && /invoke/i.test(error.message);
+  return /invoke/i.test(getErrorMessage(error));
+}
+
+function isCommandNotFound(error: unknown) {
+  return /command .* not found/i.test(getErrorMessage(error));
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function listChangeEvents() {
   return invoke<ChangeEvent[]>("list_change_events").catch((error) => {
     if (isInvokeUnavailable(error)) {
       return listMockChangeEvents();
+    }
+    throw error;
+  });
+}
+
+export function listChangeEventsForStation(stationId: string) {
+  return invoke<ChangeEvent[]>("list_change_events_for_station", { stationId }).catch((error) => {
+    if (isCommandNotFound(error)) {
+      return listChangeEvents().then((events) => events.filter((event) => event.stationId === stationId));
+    }
+    if (isInvokeUnavailable(error)) {
+      return listMockChangeEvents().then((events) => events.filter((event) => event.stationId === stationId));
     }
     throw error;
   });
