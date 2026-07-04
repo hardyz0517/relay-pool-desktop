@@ -2412,6 +2412,103 @@ fn migrate_request_log_economic_columns(connection: &Connection) -> rusqlite::Re
 }
 
 fn migrate_remote_key_tables(connection: &Connection) -> rusqlite::Result<()> {
+    let table_exists: bool = connection.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM sqlite_master
+             WHERE type = 'table' AND name = 'remote_station_keys'
+        )",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if table_exists && !remote_station_keys_have_required_foreign_keys(connection)? {
+        connection.execute_batch(
+            r#"
+            ALTER TABLE remote_station_keys
+                RENAME TO remote_station_keys_no_fk_migration;
+            "#,
+        )?;
+        create_remote_station_keys_table(connection)?;
+        connection.execute_batch(
+            r#"
+            INSERT INTO remote_station_keys (
+                id, station_id, remote_key_id_hash, remote_key_name, api_key_masked,
+                api_key_fingerprint, group_id_hash, group_name, tier_label, rate_multiplier,
+                rate_source, created_at_remote, last_used_at, raw_source, match_status,
+                matched_station_key_id, match_confidence, collected_at, updated_at
+            )
+            SELECT
+                remote_station_keys_no_fk_migration.id,
+                remote_station_keys_no_fk_migration.station_id,
+                remote_station_keys_no_fk_migration.remote_key_id_hash,
+                remote_station_keys_no_fk_migration.remote_key_name,
+                remote_station_keys_no_fk_migration.api_key_masked,
+                remote_station_keys_no_fk_migration.api_key_fingerprint,
+                remote_station_keys_no_fk_migration.group_id_hash,
+                remote_station_keys_no_fk_migration.group_name,
+                remote_station_keys_no_fk_migration.tier_label,
+                remote_station_keys_no_fk_migration.rate_multiplier,
+                remote_station_keys_no_fk_migration.rate_source,
+                remote_station_keys_no_fk_migration.created_at_remote,
+                remote_station_keys_no_fk_migration.last_used_at,
+                remote_station_keys_no_fk_migration.raw_source,
+                CASE
+                    WHEN station_keys.id IS NULL
+                         AND remote_station_keys_no_fk_migration.match_status = 'matched'
+                    THEN 'unbound'
+                    ELSE remote_station_keys_no_fk_migration.match_status
+                END,
+                station_keys.id,
+                CASE
+                    WHEN station_keys.id IS NULL
+                         AND remote_station_keys_no_fk_migration.match_status = 'matched'
+                    THEN 0.0
+                    ELSE remote_station_keys_no_fk_migration.match_confidence
+                END,
+                remote_station_keys_no_fk_migration.collected_at,
+                remote_station_keys_no_fk_migration.updated_at
+              FROM remote_station_keys_no_fk_migration
+              INNER JOIN stations
+                      ON stations.id = remote_station_keys_no_fk_migration.station_id
+              LEFT JOIN station_keys
+                     ON station_keys.id = remote_station_keys_no_fk_migration.matched_station_key_id;
+
+            DROP TABLE remote_station_keys_no_fk_migration;
+            "#,
+        )?;
+        create_remote_station_keys_indexes(connection)?;
+        return Ok(());
+    }
+
+    create_remote_station_keys_table(connection)?;
+    create_remote_station_keys_indexes(connection)
+}
+
+fn remote_station_keys_have_required_foreign_keys(
+    connection: &Connection,
+) -> rusqlite::Result<bool> {
+    let mut statement = connection.prepare("PRAGMA foreign_key_list(remote_station_keys)")?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(6)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let has_station_fk = rows.iter().any(|(table, from, on_delete)| {
+        table == "stations" && from == "station_id" && on_delete == "CASCADE"
+    });
+    let has_station_key_fk = rows.iter().any(|(table, from, on_delete)| {
+        table == "station_keys" && from == "matched_station_key_id" && on_delete == "SET NULL"
+    });
+
+    Ok(has_station_fk && has_station_key_fk)
+}
+
+fn create_remote_station_keys_table(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS remote_station_keys (
@@ -2437,7 +2534,13 @@ fn migrate_remote_key_tables(connection: &Connection) -> rusqlite::Result<()> {
             FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE,
             FOREIGN KEY(matched_station_key_id) REFERENCES station_keys(id) ON DELETE SET NULL
         );
+        "#,
+    )
+}
 
+fn create_remote_station_keys_indexes(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        r#"
         CREATE INDEX IF NOT EXISTS idx_remote_station_keys_station
             ON remote_station_keys(station_id, collected_at DESC);
 
@@ -6834,6 +6937,165 @@ mod tests {
         );
         assert_eq!(remote_key.matched_station_key_id, None);
         assert_eq!(remote_key.match_confidence, 0.0);
+    }
+
+    #[test]
+    fn remote_station_key_migration_rebuilds_old_table_with_foreign_keys() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection
+            .execute_batch(
+                r#"
+                PRAGMA foreign_keys = ON;
+
+                CREATE TABLE stations (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    station_type TEXT NOT NULL,
+                    base_url TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    upstream_api_format TEXT NOT NULL DEFAULT 'auto',
+                    upstream_api_base_path TEXT NOT NULL DEFAULT '/v1',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    credit_per_cny REAL NOT NULL DEFAULT 1,
+                    balance_raw REAL,
+                    balance_cny REAL,
+                    low_balance_threshold_cny REAL,
+                    status TEXT NOT NULL DEFAULT 'unchecked',
+                    latency_ms INTEGER,
+                    last_checked_at TEXT,
+                    last_pricing_fetched_at TEXT,
+                    note TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE station_keys (
+                    id TEXT PRIMARY KEY,
+                    station_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    group_name TEXT,
+                    tier_label TEXT,
+                    status TEXT NOT NULL DEFAULT 'unchecked',
+                    last_checked_at TEXT,
+                    last_used_at TEXT,
+                    note TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE remote_station_keys (
+                    id TEXT PRIMARY KEY,
+                    station_id TEXT NOT NULL,
+                    remote_key_id_hash TEXT,
+                    remote_key_name TEXT,
+                    api_key_masked TEXT,
+                    api_key_fingerprint TEXT,
+                    group_id_hash TEXT,
+                    group_name TEXT,
+                    tier_label TEXT,
+                    rate_multiplier REAL,
+                    rate_source TEXT,
+                    created_at_remote TEXT,
+                    last_used_at TEXT,
+                    raw_source TEXT NOT NULL,
+                    match_status TEXT NOT NULL,
+                    matched_station_key_id TEXT,
+                    match_confidence REAL NOT NULL,
+                    collected_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                INSERT INTO stations (
+                    id, name, station_type, base_url, api_key, created_at, updated_at
+                ) VALUES (
+                    'station-old', 'Old Station', 'openai-compatible',
+                    'https://example.test', 'sk-test', '1000', '1000'
+                );
+
+                INSERT INTO station_keys (
+                    id, station_id, name, api_key, created_at, updated_at
+                ) VALUES (
+                    'key-old', 'station-old', 'Old Key', 'sk-local', '1000', '1000'
+                );
+
+                INSERT INTO remote_station_keys (
+                    id, station_id, remote_key_id_hash, remote_key_name,
+                    api_key_masked, api_key_fingerprint, group_id_hash, group_name,
+                    tier_label, rate_multiplier, rate_source, created_at_remote,
+                    last_used_at, raw_source, match_status, matched_station_key_id,
+                    match_confidence, collected_at, updated_at
+                ) VALUES (
+                    'remote-old', 'station-old', 'remote-hash', 'Remote Old',
+                    'sk-****old', 'fingerprint-old', 'group-hash', 'pro',
+                    'tier-a', 0.75, 'legacy', '900', '950', 'sub2api',
+                    'matched', 'key-old', 1.0, '1100', '1100'
+                ), (
+                    'remote-stale-binding', 'station-old', 'remote-stale-hash',
+                    'Remote Stale', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                    NULL, NULL, 'sub2api', 'matched', 'missing-key', 1.0,
+                    '1200', '1200'
+                );
+                "#,
+            )
+            .expect("old schema");
+
+        migrate_remote_key_tables(&connection).expect("migrate remote keys");
+
+        let mut foreign_keys = connection
+            .prepare("PRAGMA foreign_key_list(remote_station_keys)")
+            .expect("foreign key list");
+        let references = foreign_keys
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })
+            .expect("query foreign keys")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect foreign keys");
+        assert!(references.iter().any(|(from, table, on_delete)| {
+            from == "station_id" && table == "stations" && on_delete == "CASCADE"
+        }));
+        assert!(references.iter().any(|(from, table, on_delete)| {
+            from == "matched_station_key_id" && table == "station_keys" && on_delete == "SET NULL"
+        }));
+
+        let remote_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM remote_station_keys", [], |row| {
+                row.get(0)
+            })
+            .expect("remote count");
+        assert_eq!(remote_count, 2);
+
+        let stale_binding: (String, Option<String>, f64) = connection
+            .query_row(
+                "SELECT match_status, matched_station_key_id, match_confidence
+                   FROM remote_station_keys
+                  WHERE id = 'remote-stale-binding'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("stale binding");
+        assert_eq!(stale_binding.0, "unbound");
+        assert_eq!(stale_binding.1, None);
+        assert_eq!(stale_binding.2, 0.0);
+
+        connection
+            .execute("DELETE FROM stations WHERE id = 'station-old'", [])
+            .expect("delete station");
+        let remaining_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM remote_station_keys", [], |row| {
+                row.get(0)
+            })
+            .expect("remaining remote count");
+        assert_eq!(remaining_count, 0);
     }
 
     #[test]
