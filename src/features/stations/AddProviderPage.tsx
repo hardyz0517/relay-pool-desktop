@@ -497,6 +497,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       const result = await scanRemoteStationKeys(stationId);
       setRemoteCapability(result.capability);
       setRemoteKeys(result.keys);
+      await refreshLocalStationKeyState(stationId);
       toast.success("远端 Key 已更新", result.message || `发现 ${result.keys.length} 个远端 Key`);
     } catch (requestError) {
       const message = readError(requestError);
