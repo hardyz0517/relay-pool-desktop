@@ -20,6 +20,12 @@ export type AppSettings = {
   dataDir: string;
 };
 
+export type CcswitchImportResult = {
+  app: string;
+  providerName: string;
+  endpoint: string;
+};
+
 export type UpdateSettingsInput = {
   localProxyPort: number;
   defaultRoutingStrategy: RoutingStrategy;
@@ -37,7 +43,7 @@ export type UpdateSettingsInput = {
 };
 
 export const routingStrategyLabels: Record<RoutingStrategy, string> = {
-  priority_fallback: "优先级 fallback",
+  priority_fallback: "优先级轮换",
   stable_first: "稳定优先",
   backup_only: "备用模式",
   cheap_first: "便宜优先",

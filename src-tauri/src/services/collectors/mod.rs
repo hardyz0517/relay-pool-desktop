@@ -1,5 +1,5 @@
-pub mod apply;
 pub mod adapters;
+pub mod apply;
 pub mod facts;
 pub mod session;
 pub mod sub2api;
@@ -27,7 +27,12 @@ pub fn collect_station_info(
     data_key: &[u8; 32],
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
-    collect_station_task(database, data_key, station_id, adapters::CollectorTask::Full)
+    collect_station_task(
+        database,
+        data_key,
+        station_id,
+        adapters::CollectorTask::Full,
+    )
 }
 
 pub fn collect_station_task(
@@ -124,6 +129,7 @@ fn collect_full_station_task(
         .filter_map(|model| model.as_str().map(ToString::to_string))
         .collect::<Vec<_>>();
 
+    let business_summary = full_business_summary(database, &station_id, model_names)?;
     let snapshot = database.insert_collector_snapshot(
         &station_id,
         &format!("{adapter}-full"),
@@ -131,13 +137,26 @@ fn collect_full_station_task(
         json!({
             "adapter": adapter,
             "task": "full",
+            "conclusion": conclusion_for_full_status(&status),
+            "message": full_summary_message(&business_summary),
             "childRuns": child_runs,
             "endpointCount": endpoint_count,
             "successCount": success_count,
             "failureCount": failure_count,
+            "recognized": {
+                "balanceLabel": business_summary.balance_label,
+                "groupCount": business_summary.groups.len(),
+                "rateCount": business_summary.rate_multipliers.len(),
+                "keyCount": business_summary.key_count,
+                "matchedFieldCount": business_summary.matched_field_count(),
+            },
         }),
         json!({
-            "models": model_names,
+            "balance": business_summary.balance_value,
+            "balanceLabel": business_summary.balance_label,
+            "groups": business_summary.groups,
+            "rateMultipliers": business_summary.rate_multipliers,
+            "models": business_summary.models,
             "childSnapshots": child_snapshots,
         }),
         None,
@@ -169,6 +188,147 @@ fn collect_full_station_task(
     });
 
     Ok(CollectorRunResult { snapshot, events })
+}
+
+#[derive(Debug, Clone)]
+struct FullBusinessSummary {
+    balance_value: Value,
+    balance_label: Option<String>,
+    groups: Vec<Value>,
+    rate_multipliers: Vec<Value>,
+    models: Vec<String>,
+    key_count: usize,
+}
+
+impl FullBusinessSummary {
+    fn matched_field_count(&self) -> usize {
+        usize::from(self.balance_label.is_some())
+            + self.groups.len()
+            + self.rate_multipliers.len()
+            + self.models.len()
+    }
+}
+
+fn full_business_summary(
+    database: &AppDatabase,
+    station_id: &str,
+    models: Vec<String>,
+) -> Result<FullBusinessSummary, String> {
+    let latest_balance = database
+        .list_balance_snapshots()?
+        .into_iter()
+        .filter(|snapshot| snapshot.station_id == station_id)
+        .max_by(|left, right| left.updated_at.cmp(&right.updated_at));
+    let balance_value = latest_balance
+        .as_ref()
+        .and_then(|snapshot| snapshot.value)
+        .map(Value::from)
+        .unwrap_or(Value::Null);
+    let balance_label = latest_balance.as_ref().and_then(|snapshot| {
+        snapshot
+            .value
+            .map(|value| format_balance_label(value, &snapshot.currency))
+    });
+
+    let groups = database
+        .list_station_group_bindings(station_id.to_string())?
+        .into_iter()
+        .filter(|binding| {
+            binding.binding_kind == "station_group" && binding.binding_status != "missing"
+        })
+        .map(|binding| {
+            json!({
+                "id": binding.id,
+                "groupName": binding.group_name,
+                "status": binding.binding_status,
+                "defaultRateMultiplier": binding.default_rate_multiplier,
+                "userRateMultiplier": binding.user_rate_multiplier,
+                "effectiveRateMultiplier": binding.effective_rate_multiplier,
+                "source": binding.rate_source,
+                "lastCheckedAt": binding.last_checked_at,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let rate_multipliers = database
+        .list_group_rate_records(station_id.to_string())?
+        .into_iter()
+        .filter_map(|rate| {
+            rate.effective_rate_multiplier.map(|multiplier| {
+                json!({
+                    "groupName": rate.group_name,
+                    "multiplier": multiplier,
+                    "defaultRateMultiplier": rate.default_rate_multiplier,
+                    "userRateMultiplier": rate.user_rate_multiplier,
+                    "source": rate.source,
+                    "checkedAt": rate.checked_at,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let key_count = database
+        .list_station_keys(station_id.to_string())?
+        .into_iter()
+        .filter(|key| key.enabled)
+        .count();
+
+    Ok(FullBusinessSummary {
+        balance_value,
+        balance_label,
+        groups,
+        rate_multipliers,
+        models,
+        key_count,
+    })
+}
+
+fn conclusion_for_full_status(status: &str) -> &'static str {
+    match status {
+        "success" => "已采集",
+        "partial" => "部分采集",
+        "manual_required" => "需要登录",
+        "failed" => "失败",
+        _ => "已检查",
+    }
+}
+
+fn full_summary_message(summary: &FullBusinessSummary) -> String {
+    let mut parts = Vec::new();
+    if summary.balance_label.is_some() {
+        parts.push("余额");
+    }
+    if !summary.groups.is_empty() {
+        parts.push("分组");
+    }
+    if !summary.rate_multipliers.is_empty() {
+        parts.push("倍率");
+    }
+    if !summary.models.is_empty() {
+        parts.push("模型");
+    }
+
+    if parts.is_empty() {
+        "Full 采集已完成，但暂未识别到可展示的业务字段。".to_string()
+    } else {
+        format!("Full 采集已识别{}。", parts.join("、"))
+    }
+}
+
+fn format_balance_label(value: f64, currency: &str) -> String {
+    let mut amount = format!("{value:.6}");
+    while amount.contains('.') && amount.ends_with('0') {
+        amount.pop();
+    }
+    if amount.ends_with('.') {
+        amount.pop();
+    }
+    let currency = currency.trim();
+    if currency.is_empty() {
+        amount
+    } else {
+        format!("{amount} {currency}")
+    }
 }
 
 fn dispatch_adapter_output(
@@ -225,7 +385,10 @@ fn adapter_name_for_station_type(station_type: &str) -> Result<&'static str, Str
 
 fn full_child_tasks(adapter: &str) -> Vec<adapters::CollectorTask> {
     match adapter {
-        "sub2api" | "newapi" => vec![adapters::CollectorTask::Balance, adapters::CollectorTask::Groups],
+        "sub2api" | "newapi" => vec![
+            adapters::CollectorTask::Balance,
+            adapters::CollectorTask::Groups,
+        ],
         "openai-compatible" => vec![adapters::CollectorTask::Models],
         _ => Vec::new(),
     }
@@ -282,7 +445,8 @@ pub fn test_station_login(
         ));
     }
 
-    let password = database.get_station_login_password_with_data_key(station_id.clone(), data_key)?;
+    let password =
+        database.get_station_login_password_with_data_key(station_id.clone(), data_key)?;
     let Some(login_password) = password else {
         return Ok(build_status_result(
             station_id,
@@ -371,7 +535,11 @@ pub fn test_station_login(
             "loginPasswordPresent": !login_password.trim().is_empty(),
             "note": "测试登录只验证登录接口，不执行余额、分组和倍率采集。",
         })),
-        if login_succeeded { None } else { Some(diagnosis) },
+        if login_succeeded {
+            None
+        } else {
+            Some(diagnosis)
+        },
     )?;
 
     Ok(CollectorRunResult {
@@ -462,10 +630,7 @@ fn has_login_credentials(username: &Option<String>, password_present: bool) -> b
 mod tests {
     use super::*;
     use crate::{
-        models::{
-            credentials::UpdateStationCredentialsInput,
-            stations::CreateStationInput,
-        },
+        models::{credentials::UpdateStationCredentialsInput, stations::CreateStationInput},
         services::{database::AppDatabase, secrets::crypto::generate_data_key},
     };
     use serde_json::Value;
@@ -522,7 +687,10 @@ mod tests {
         let result = test_station_login(&database, &data_key, station.id).expect("login test");
 
         assert_eq!(result.snapshot.status, "success");
-        assert_eq!(server.last_login_password(), Some("correct-password".to_string()));
+        assert_eq!(
+            server.last_login_password(),
+            Some("correct-password".to_string())
+        );
         assert_eq!(
             result
                 .snapshot
@@ -533,9 +701,90 @@ mod tests {
         );
     }
 
+    #[test]
+    fn full_snapshot_summarizes_child_business_facts() {
+        let server = TestFullServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "full collect".to_string(),
+                    station_type: "sub2api".to_string(),
+                    base_url: server.base_url,
+                    api_key: "sk-route-key".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        database
+            .update_station_credentials_with_data_key(
+                UpdateStationCredentialsInput {
+                    station_id: station.id.clone(),
+                    login_username: Some("user@example.test".to_string()),
+                    login_password: Some("correct-password".to_string()),
+                    remember_password: true,
+                },
+                &data_key,
+            )
+            .expect("credentials");
+
+        let result = collect_station_task(
+            &database,
+            &data_key,
+            station.id,
+            adapters::CollectorTask::Full,
+        )
+        .expect("full collect");
+        let summary = &result.snapshot.summary_json;
+        let normalized = &result.snapshot.normalized_json;
+
+        assert_eq!(result.snapshot.status, "success");
+        assert_eq!(
+            summary
+                .pointer("/recognized/balanceLabel")
+                .and_then(Value::as_str),
+            Some("42.5 CNY")
+        );
+        assert_eq!(
+            summary
+                .pointer("/recognized/groupCount")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            summary
+                .pointer("/recognized/rateCount")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            normalized
+                .get("groups")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+        assert_eq!(
+            normalized
+                .get("rateMultipliers")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+    }
+
     struct TestLoginServer {
         base_url: String,
         last_login_password: Arc<Mutex<Option<String>>>,
+    }
+
+    struct TestFullServer {
+        base_url: String,
     }
 
     impl TestLoginServer {
@@ -558,11 +807,30 @@ mod tests {
         }
 
         fn last_login_password(&self) -> Option<String> {
-            self.last_login_password.lock().ok().and_then(|value| value.clone())
+            self.last_login_password
+                .lock()
+                .ok()
+                .and_then(|value| value.clone())
         }
     }
 
-    fn handle_login_request(mut stream: TcpStream, last_login_password: Arc<Mutex<Option<String>>>) {
+    impl TestFullServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            thread::spawn(move || {
+                for stream in listener.incoming().take(4).flatten() {
+                    handle_full_request(stream);
+                }
+            });
+            Self { base_url }
+        }
+    }
+
+    fn handle_login_request(
+        mut stream: TcpStream,
+        last_login_password: Arc<Mutex<Option<String>>>,
+    ) {
         let request = read_http_request(&mut stream);
         let path = request
             .lines()
@@ -601,7 +869,71 @@ mod tests {
             "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
             text.len()
         );
-        stream.write_all(response.as_bytes()).expect("write response");
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
+    }
+
+    fn handle_full_request(mut stream: TcpStream) {
+        let request = read_http_request(&mut stream);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
+        let authorized = request
+            .to_lowercase()
+            .contains("authorization: bearer full-collector-token");
+
+        let (status, response) = match path {
+            "/v1/usage" => (
+                "200 OK",
+                json!({
+                    "quota": {
+                        "remaining": 42.5,
+                        "used": 7.5,
+                        "total": 50.0,
+                        "unit": "CNY"
+                    }
+                }),
+            ),
+            "/api/v1/auth/login" => {
+                let parsed = serde_json::from_str::<Value>(body).expect("login json");
+                if parsed.get("password").and_then(Value::as_str) == Some("correct-password") {
+                    (
+                        "200 OK",
+                        json!({ "data": { "access_token": "full-collector-token" } }),
+                    )
+                } else {
+                    (
+                        "401 Unauthorized",
+                        json!({ "message": "invalid credentials" }),
+                    )
+                }
+            }
+            "/api/v1/groups/available" if authorized => (
+                "200 OK",
+                json!({
+                    "data": [
+                        { "id": "default", "name": "Default", "rate_multiplier": 1.0 },
+                        { "id": "pro", "name": "Pro", "rate_multiplier": 1.5 }
+                    ]
+                }),
+            ),
+            "/api/v1/groups/rates" if authorized => {
+                ("200 OK", json!({ "data": { "default": 0.8, "pro": 1.2 } }))
+            }
+            _ => ("404 Not Found", json!({ "message": "not found" })),
+        };
+        let text = response.to_string();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
     }
 
     fn read_http_request(stream: &mut TcpStream) -> String {

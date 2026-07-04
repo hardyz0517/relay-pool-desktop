@@ -1,3 +1,5 @@
+use serde::Serialize;
+use std::process::Command;
 use tauri::{Manager, State};
 
 use crate::{
@@ -74,6 +76,54 @@ pub fn reorder_stations(
 #[tauri::command]
 pub fn get_settings(database: State<'_, AppDatabase>) -> Result<AppSettings, String> {
     database.get_settings()
+}
+
+#[tauri::command]
+pub fn get_local_access_key(database: State<'_, AppDatabase>) -> Result<String, String> {
+    database.get_local_access_key()
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcswitchImportResult {
+    app: String,
+    provider_name: String,
+    endpoint: String,
+}
+
+#[tauri::command]
+pub fn import_relay_pool_to_ccswitch(
+    database: State<'_, AppDatabase>,
+    proxy: State<'_, ProxyRuntimeState>,
+) -> Result<CcswitchImportResult, String> {
+    let settings = database.get_settings()?;
+    let local_access_key = database.get_local_access_key()?;
+    if local_access_key.trim().is_empty() {
+        return Err("本地访问密钥为空，无法导入 CCSwitch。".to_string());
+    }
+
+    let proxy_status = proxy.status(settings.local_proxy_port);
+    let endpoint = format!(
+        "http://{}:{}/v1",
+        proxy_status.bind_addr, proxy_status.port
+    );
+    let homepage = format!("http://{}:{}", proxy_status.bind_addr, proxy_status.port);
+    let provider_name = "Relay Pool Desktop".to_string();
+    let deeplink = build_ccswitch_provider_deeplink(
+        "codex",
+        &provider_name,
+        &homepage,
+        &endpoint,
+        &local_access_key,
+    );
+
+    open_url_with_system(&deeplink)?;
+
+    Ok(CcswitchImportResult {
+        app: "codex".to_string(),
+        provider_name,
+        endpoint,
+    })
 }
 
 #[tauri::command]
@@ -764,4 +814,49 @@ fn capture_script(station_id: &str, window_label: &str) -> String {
 }})();
 "#
     )
+}
+
+fn build_ccswitch_provider_deeplink(
+    app: &str,
+    provider_name: &str,
+    homepage: &str,
+    endpoint: &str,
+    api_key: &str,
+) -> String {
+    format!(
+        "ccswitch://v1/import?resource=provider&app={}&name={}&homepage={}&endpoint={}&apiKey={}&enabled=true",
+        encode_query_param(app),
+        encode_query_param(provider_name),
+        encode_query_param(homepage),
+        encode_query_param(endpoint),
+        encode_query_param(api_key),
+    )
+}
+
+fn encode_query_param(value: &str) -> String {
+    let mut output = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                output.push(byte as char);
+            }
+            _ => output.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    output
+}
+
+fn open_url_with_system(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let result = Command::new("explorer.exe").arg(url).spawn();
+
+    #[cfg(target_os = "macos")]
+    let result = Command::new("open").arg(url).spawn();
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = Command::new("xdg-open").arg(url).spawn();
+
+    result
+        .map(|_| ())
+        .map_err(|error| format!("无法打开 CCSwitch 导入链接: {error}"))
 }

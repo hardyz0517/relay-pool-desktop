@@ -292,6 +292,11 @@ impl AppDatabase {
         settings_from_connection(&connection, self.db_path.to_string_lossy().as_ref())
     }
 
+    pub fn get_local_access_key(&self) -> Result<String, String> {
+        let connection = self.connection()?;
+        read_setting(&connection, "local_key")
+    }
+
     pub fn update_settings(&self, input: UpdateSettingsInput) -> Result<AppSettings, String> {
         if input.local_proxy_port == 0 {
             return Err("本地代理端口必须大于 0".to_string());

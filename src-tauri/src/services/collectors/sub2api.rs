@@ -155,7 +155,10 @@ fn run_probe(
         database.update_station_login_status(
             &station_id,
             "manual_required",
-            Some("已保存登录信息；采集信息会尝试登录态接口，验证码或 2FA 场景可使用网页登录捕获。".to_string()),
+            Some(
+                "已保存登录信息；采集信息会尝试登录态接口，验证码或 2FA 场景可使用网页登录捕获。"
+                    .to_string(),
+            ),
         )?;
     }
 
@@ -535,6 +538,10 @@ pub(crate) struct LoginProbeOutcome {
     pub manual_required: Option<String>,
 }
 
+pub(crate) struct LoginTokenOutcome {
+    pub access_token: Option<String>,
+}
+
 pub(crate) fn test_login_credentials(
     base_url: &str,
     username: &str,
@@ -551,6 +558,23 @@ pub(crate) fn test_login_credentials(
         token_present: attempt.token.is_some(),
         login_message: attempt.login_message,
         manual_required: attempt.manual_required,
+    })
+}
+
+pub(crate) fn login_access_token(
+    base_url: &str,
+    username: &str,
+    password: &str,
+) -> Result<LoginTokenOutcome, String> {
+    let config = ProbeMode::Collect.config();
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(config.connect_timeout)
+        .timeout_read(config.read_timeout)
+        .timeout_write(config.connect_timeout)
+        .build();
+    let attempt = attempt_login(&agent, base_url, username, password)?;
+    Ok(LoginTokenOutcome {
+        access_token: attempt.token,
     })
 }
 
@@ -1065,7 +1089,10 @@ fn detected_type_label(
 fn conclusion_message(conclusion: &str, matched_count: u64, needs_login: bool) -> String {
     match conclusion {
         "可用" | "已采集" => format!("识别到 {matched_count} 个候选字段。"),
-        "需要登录" if needs_login => "接口需要登录；请先保存站点登录账号和密码，验证码或 2FA 场景可使用网页登录捕获。".to_string(),
+        "需要登录" if needs_login => {
+            "接口需要登录；请先保存站点登录账号和密码，验证码或 2FA 场景可使用网页登录捕获。"
+                .to_string()
+        }
         "失败" => "站点请求失败或超时。".to_string(),
         _ => "未识别到余额、分组或倍率字段。".to_string(),
     }
@@ -1419,16 +1446,7 @@ fn rate_multiplier_from_embedded_group_record(map: &Map<String, Value>) -> Optio
 }
 
 fn group_identifier_from_record(map: &Map<String, Value>) -> Option<Value> {
-    find_record_scalar(
-        map,
-        &[
-            "group_name",
-            "group",
-            "group_id",
-            "tier",
-            "name",
-        ],
-    )
+    find_record_scalar(map, &["group_name", "group", "group_id", "tier", "name"])
 }
 
 fn group_identifier_for_rate_record(map: &Map<String, Value>) -> Option<Value> {
@@ -1445,7 +1463,10 @@ fn find_record_scalar(map: &Map<String, Value>, fields: &[&str]) -> Option<Value
 }
 
 fn is_group_collection_field(field: &str) -> bool {
-    matches!(field, "groups" | "group_list" | "group_infos" | "group_info")
+    matches!(
+        field,
+        "groups" | "group_list" | "group_infos" | "group_info"
+    )
 }
 
 fn is_group_rate_map_field(field: &str) -> bool {
@@ -1520,9 +1541,10 @@ fn push_unique_rate_multiplier(items: &mut Vec<Value>, value: Value) {
     }
 
     if scalar_value(&value).is_some() {
-        if items.iter().any(|item| {
-            item.get("group").is_some() && item.get("multiplier").is_some()
-        }) {
+        if items
+            .iter()
+            .any(|item| item.get("group").is_some() && item.get("multiplier").is_some())
+        {
             return;
         }
         if items.iter().any(|item| {
@@ -1639,10 +1661,7 @@ fn join_url(base_url: &str, path: &str) -> String {
 mod tests {
     use super::*;
     use crate::{
-        models::{
-            credentials::UpdateStationCredentialsInput,
-            stations::CreateStationInput,
-        },
+        models::{credentials::UpdateStationCredentialsInput, stations::CreateStationInput},
         services::{database::AppDatabase, secrets::crypto::generate_data_key},
     };
     use serde_json::Value;
@@ -1687,8 +1706,14 @@ mod tests {
         let raw_text = serde_json::to_string(&result.snapshot.raw_json_redacted).expect("raw");
 
         assert_eq!(result.snapshot.status, "success");
-        assert_eq!(server.last_login_password(), Some("correct-password".to_string()));
-        assert_eq!(normalized.get("balance").and_then(Value::as_f64), Some(42.5));
+        assert_eq!(
+            server.last_login_password(),
+            Some("correct-password".to_string())
+        );
+        assert_eq!(
+            normalized.get("balance").and_then(Value::as_f64),
+            Some(42.5)
+        );
         assert_eq!(
             normalized
                 .get("groups")
@@ -1943,7 +1968,10 @@ mod tests {
         }
 
         fn last_login_password(&self) -> Option<String> {
-            self.last_login_password.lock().ok().and_then(|value| value.clone())
+            self.last_login_password
+                .lock()
+                .ok()
+                .and_then(|value| value.clone())
         }
     }
 
@@ -2028,7 +2056,9 @@ mod tests {
             "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
             text.len()
         );
-        stream.write_all(response.as_bytes()).expect("write response");
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
     }
 
     fn read_http_request(stream: &mut TcpStream) -> String {

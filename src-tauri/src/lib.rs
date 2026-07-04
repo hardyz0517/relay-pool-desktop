@@ -27,6 +27,8 @@ pub fn run() {
             commands::delete_station,
             commands::reorder_stations,
             commands::get_settings,
+            commands::get_local_access_key,
+            commands::import_relay_pool_to_ccswitch,
             commands::update_settings,
             commands::get_proxy_status,
             commands::start_local_proxy,

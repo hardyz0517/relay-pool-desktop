@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde_json::{json, Value};
 
 use crate::{
-    models::station_keys::StationKey,
+    models::{credentials::UpdateStationSessionInput, station_keys::StationKey},
     services::{
         collectors::{
             adapters::{AdapterOutput, CollectorTask},
@@ -299,11 +299,9 @@ pub fn collect(
             "unsupported_task",
             "Sub2API adapter 暂不支持模型列表采集。",
         ),
-        CollectorTask::Full => unsupported_output(
-            task,
-            "internal_task",
-            "Full 采集由父任务拆分为子任务执行。",
-        ),
+        CollectorTask::Full => {
+            unsupported_output(task, "internal_task", "Full 采集由父任务拆分为子任务执行。")
+        }
     }
 }
 
@@ -341,22 +339,14 @@ pub fn collect_groups(
         data_key,
         crate::services::database::now_millis_for_services() as i64,
     )?;
-    let Some(access_token) = session.access_token else {
-        return Ok(AdapterOutput {
-            adapter: "sub2api".to_string(),
-            task: CollectorTask::Groups,
-            status: "manual_required".to_string(),
-            summary_json: json!({
-                "adapter": "sub2api",
-                "task": "groups",
-                "message": session.message.unwrap_or_else(|| "Sub2API 分组采集需要 access token。".to_string()),
-            }),
-            normalized_json: json!({ "groups": 0, "rates": 0 }),
-            raw_json_redacted: None,
-            error_code: Some("manual_session_required".to_string()),
-            error_message: Some("Sub2API 分组采集需要 access token。".to_string()),
-            facts: CollectorFacts::default(),
-        });
+    let access_token = match session.access_token {
+        Some(access_token) => access_token,
+        None => match login_and_store_access_token(database, data_key, &station)? {
+            Some(access_token) => access_token,
+            None => {
+                return Ok(manual_session_required_output(session.message));
+            }
+        },
     };
 
     let urls = collector_base_urls(&station.base_url);
@@ -411,6 +401,70 @@ pub fn collect_groups(
         },
         facts,
     })
+}
+
+fn manual_session_required_output(message: Option<String>) -> AdapterOutput {
+    AdapterOutput {
+        adapter: "sub2api".to_string(),
+        task: CollectorTask::Groups,
+        status: "manual_required".to_string(),
+        summary_json: json!({
+            "adapter": "sub2api",
+            "task": "groups",
+            "message": message.unwrap_or_else(|| "Sub2API 分组采集需要 access token。".to_string()),
+        }),
+        normalized_json: json!({ "groups": 0, "rates": 0 }),
+        raw_json_redacted: None,
+        error_code: Some("manual_session_required".to_string()),
+        error_message: Some("Sub2API 分组采集需要 access token。".to_string()),
+        facts: CollectorFacts::default(),
+    }
+}
+
+fn login_and_store_access_token(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &crate::models::stations::Station,
+) -> Result<Option<String>, String> {
+    let credentials = database.get_station_credentials(station.id.clone())?;
+    let Some(username) = credentials
+        .login_username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    if !credentials.password_present {
+        return Ok(None);
+    }
+    let Some(password) =
+        database.get_station_login_password_with_data_key(station.id.clone(), data_key)?
+    else {
+        return Ok(None);
+    };
+    let login = crate::services::collectors::sub2api::login_access_token(
+        &station.base_url,
+        username,
+        &password,
+    )?;
+    let Some(access_token) = login.access_token else {
+        return Ok(None);
+    };
+
+    database.update_station_session_with_data_key(
+        UpdateStationSessionInput {
+            station_id: station.id.clone(),
+            access_token: Some(access_token.clone()),
+            refresh_token: None,
+            cookie: None,
+            newapi_user_id: credentials.newapi_user_id,
+            token_expires_at: None,
+        },
+        data_key,
+    )?;
+
+    Ok(Some(access_token))
 }
 
 #[derive(Debug, Clone)]
@@ -564,6 +618,13 @@ pub fn collect_balance(
                 .push(parse_usage_balance(&station.id, Some(key.id), &parsed));
         }
     }
+    if facts.balances.is_empty() {
+        if let Some(balance) =
+            collect_account_balance_fallback(database, data_key, &station, &mut endpoint_results)?
+        {
+            facts.balances.push(balance);
+        }
+    }
 
     let status = if facts.balances.is_empty() {
         "failed"
@@ -597,9 +658,94 @@ pub fn collect_balance(
     })
 }
 
+fn collect_account_balance_fallback(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &crate::models::stations::Station,
+    endpoint_results: &mut Vec<Value>,
+) -> Result<Option<CollectedBalanceFact>, String> {
+    let session = database.resolve_station_session_with_data_key(
+        station.id.clone(),
+        data_key,
+        crate::services::database::now_millis_for_services() as i64,
+    )?;
+    let access_token = match session.access_token {
+        Some(access_token) => access_token,
+        None => match login_and_store_access_token(database, data_key, station)? {
+            Some(access_token) => access_token,
+            None => return Ok(None),
+        },
+    };
+
+    let urls = collector_base_urls(&station.base_url);
+    for path in ["/api/v1/user/profile", "/api/v1/auth/me"] {
+        let url = join_url(&urls.management_base_url, path);
+        let result = fetch_json_with_bearer(&url, &access_token);
+        let payload = result.payload.clone().unwrap_or(Value::Null);
+        endpoint_results.push(result.to_redacted_json());
+        if !result.ok {
+            continue;
+        }
+        if let Some(balance) = parse_account_balance(&station.id, &payload) {
+            return Ok(Some(balance));
+        }
+    }
+
+    Ok(None)
+}
+
+fn parse_account_balance(station_id: &str, payload: &Value) -> Option<CollectedBalanceFact> {
+    let value = payload
+        .pointer("/data/balance")
+        .and_then(Value::as_f64)
+        .or_else(|| payload.get("balance").and_then(Value::as_f64))
+        .or_else(|| payload.pointer("/data/quota/remaining").and_then(Value::as_f64))
+        .or_else(|| payload.pointer("/quota/remaining").and_then(Value::as_f64))?;
+    let used = payload
+        .pointer("/data/used")
+        .and_then(Value::as_f64)
+        .or_else(|| payload.pointer("/data/quota/used").and_then(Value::as_f64))
+        .or_else(|| payload.get("used").and_then(Value::as_f64));
+    let total = payload
+        .pointer("/data/total")
+        .and_then(Value::as_f64)
+        .or_else(|| payload.pointer("/data/quota/total").and_then(Value::as_f64))
+        .or_else(|| payload.get("total").and_then(Value::as_f64));
+    let currency = payload
+        .pointer("/data/currency")
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("currency").and_then(Value::as_str))
+        .unwrap_or("CNY")
+        .to_string();
+
+    Some(CollectedBalanceFact {
+        station_id: station_id.to_string(),
+        station_key_id: None,
+        scope: "station".to_string(),
+        value: Some(value),
+        used_value: used,
+        total_value: total,
+        currency,
+        credit_unit: None,
+        status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
+        source: "sub2api_account_profile".to_string(),
+        confidence: 0.85,
+        collected_at: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        models::{credentials::UpdateStationCredentialsInput, stations::CreateStationInput},
+        services::{database::AppDatabase, secrets::crypto::generate_data_key},
+    };
+    use std::{
+        io::{Read, Write},
+        net::{TcpListener, TcpStream},
+        thread,
+    };
 
     #[test]
     fn sub2api_usage_parses_remaining_from_nested_quota() {
@@ -655,5 +801,251 @@ mod tests {
         assert!(facts.rates.iter().any(|rate| {
             rate.group_name == "Pro" && rate.effective_rate_multiplier == Some(1.2)
         }));
+    }
+
+    #[test]
+    fn sub2api_groups_logs_in_with_saved_password_when_access_token_missing() {
+        let server = TestGroupServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station(CreateStationInput {
+                name: "group login station".to_string(),
+                station_type: "sub2api".to_string(),
+                base_url: server.base_url,
+                api_key: "sk-station".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                note: None,
+            })
+            .expect("station");
+        database
+            .update_station_credentials_with_data_key(
+                UpdateStationCredentialsInput {
+                    station_id: station.id.clone(),
+                    login_username: Some("user@example.test".to_string()),
+                    login_password: Some("correct-password".to_string()),
+                    remember_password: true,
+                },
+                &data_key,
+            )
+            .expect("credentials");
+
+        let output = collect_groups(&database, &data_key, &station.id).expect("groups");
+        let session = database
+            .resolve_station_session_with_data_key(station.id, &data_key, 100000)
+            .expect("session");
+
+        assert_eq!(output.status, "success");
+        assert_eq!(output.facts.groups.len(), 2);
+        assert!(output.facts.rates.iter().any(|rate| {
+            rate.group_name == "Pro" && rate.effective_rate_multiplier == Some(1.2)
+        }));
+        assert_eq!(
+            session.access_token.as_deref(),
+            Some("collector-token-secret")
+        );
+    }
+
+    #[test]
+    fn sub2api_balance_falls_back_to_account_profile_when_usage_is_unauthorized() {
+        let server = TestBalanceFallbackServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "balance fallback station".to_string(),
+                    station_type: "sub2api".to_string(),
+                    base_url: server.base_url,
+                    api_key: "sk-invalid-for-usage".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        database
+            .update_station_session_with_data_key(
+                UpdateStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: Some("profile-token-secret".to_string()),
+                    refresh_token: None,
+                    cookie: None,
+                    newapi_user_id: None,
+                    token_expires_at: None,
+                },
+                &data_key,
+            )
+            .expect("session");
+
+        let output = collect_balance(&database, &data_key, &station.id).expect("balance");
+
+        assert_eq!(output.status, "success");
+        assert_eq!(output.facts.balances.len(), 1);
+        assert_eq!(output.facts.balances[0].station_key_id, None);
+        assert_eq!(output.facts.balances[0].scope, "station");
+        assert_eq!(output.facts.balances[0].value, Some(5.12962411));
+        assert_eq!(output.facts.balances[0].source, "sub2api_account_profile");
+    }
+
+    struct TestGroupServer {
+        base_url: String,
+    }
+
+    struct TestBalanceFallbackServer {
+        base_url: String,
+    }
+
+    impl TestGroupServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            thread::spawn(move || {
+                for stream in listener.incoming().take(4).flatten() {
+                    handle_group_test_request(stream);
+                }
+            });
+            Self { base_url }
+        }
+    }
+
+    impl TestBalanceFallbackServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            thread::spawn(move || {
+                for stream in listener.incoming().take(2).flatten() {
+                    handle_balance_fallback_request(stream);
+                }
+            });
+            Self { base_url }
+        }
+    }
+
+    fn handle_group_test_request(mut stream: TcpStream) {
+        let request = read_http_request(&mut stream);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
+        let authorized = request
+            .to_lowercase()
+            .contains("authorization: bearer collector-token-secret");
+
+        let (status, response) = match path {
+            "/api/v1/auth/login" => {
+                let parsed = serde_json::from_str::<Value>(body).expect("login json");
+                if parsed.get("password").and_then(Value::as_str) == Some("correct-password") {
+                    (
+                        "200 OK",
+                        json!({ "data": { "access_token": "collector-token-secret" } }),
+                    )
+                } else {
+                    (
+                        "401 Unauthorized",
+                        json!({ "message": "invalid credentials" }),
+                    )
+                }
+            }
+            "/api/v1/groups/available" if authorized => (
+                "200 OK",
+                json!({
+                    "data": [
+                        { "id": "default", "name": "Default", "rate_multiplier": 1.0 },
+                        { "id": "pro", "name": "Pro", "rate_multiplier": 1.5 }
+                    ]
+                }),
+            ),
+            "/api/v1/groups/rates" if authorized => {
+                ("200 OK", json!({ "data": { "default": 0.8, "pro": 1.2 } }))
+            }
+            _ => ("401 Unauthorized", json!({ "message": "unauthorized" })),
+        };
+        let text = response.to_string();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
+    }
+
+    fn handle_balance_fallback_request(mut stream: TcpStream) {
+        let request = read_http_request(&mut stream);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
+        let authorized = request
+            .to_lowercase()
+            .contains("authorization: bearer profile-token-secret");
+
+        let (status, response) = match path {
+            "/v1/usage" => ("401 Unauthorized", json!({ "message": "unauthorized" })),
+            "/api/v1/user/profile" if authorized => (
+                "200 OK",
+                json!({
+                    "data": {
+                        "balance": 5.12962411
+                    }
+                }),
+            ),
+            _ => ("404 Not Found", json!({ "message": "not found" })),
+        };
+        let text = response.to_string();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
+    }
+
+    fn read_http_request(stream: &mut TcpStream) -> String {
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        let mut header_end = None;
+        let mut content_length = 0_usize;
+
+        loop {
+            let read = stream.read(&mut buffer).expect("read request");
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&buffer[..read]);
+            if header_end.is_none() {
+                if let Some(position) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                    header_end = Some(position + 4);
+                    let headers = String::from_utf8_lossy(&bytes[..position]);
+                    content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            if name.eq_ignore_ascii_case("content-length") {
+                                value.trim().parse::<usize>().ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(0);
+                }
+            }
+            if let Some(header_end) = header_end {
+                if bytes.len() >= header_end + content_length {
+                    break;
+                }
+            }
+        }
+
+        String::from_utf8_lossy(&bytes).to_string()
     }
 }

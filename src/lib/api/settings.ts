@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppSettings, UpdateSettingsInput } from "@/lib/types/settings";
+import type { AppSettings, CcswitchImportResult, UpdateSettingsInput } from "@/lib/types/settings";
 
 export const SETTINGS_UPDATED_EVENT = "relay-pool-settings-updated";
 
@@ -25,6 +25,24 @@ export function getSettings() {
   return invoke<AppSettings>("get_settings").then(normalizeSettings).catch((error) => {
     if (isInvokeUnavailable(error)) {
       return normalizeSettings(memorySettings);
+    }
+    throw error;
+  });
+}
+
+export function getLocalAccessKey() {
+  return invoke<string>("get_local_access_key").catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      throw new Error("只有桌面端可以复制真实本地访问密钥");
+    }
+    throw error;
+  });
+}
+
+export function importRelayPoolToCCSwitch() {
+  return invoke<CcswitchImportResult>("import_relay_pool_to_ccswitch").catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      throw new Error("只有桌面端可以导入 CCSwitch");
     }
     throw error;
   });
