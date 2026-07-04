@@ -74,12 +74,22 @@ pub fn run_monitor_probe(
 }
 
 fn build_probe_url(base_url: &str, path: &str) -> Option<String> {
-    let trimmed = path.trim();
-    if !trimmed.starts_with('/') || trimmed.starts_with("//") || trimmed.contains("://") {
+    if path != path.trim()
+        || path.chars().any(|ch| ch.is_whitespace() || ch.is_control())
+        || !path.starts_with('/')
+        || path.starts_with("//")
+        || path.contains("://")
+        || has_dot_segment(path)
+    {
         return None;
     }
 
-    Some(build_upstream_url(base_url, trimmed))
+    Some(build_upstream_url(base_url, path))
+}
+
+fn has_dot_segment(path: &str) -> bool {
+    path.split('/')
+        .any(|segment| segment == "." || segment == "..")
 }
 
 fn response_result(started_at: Instant, response: ureq::Response) -> MonitorProbeResult {
@@ -235,6 +245,28 @@ mod tests {
         assert!(!result.ok);
         assert_eq!(result.status_code, None);
         assert!(result.error_summary.unwrap().contains("path"));
+    }
+
+    #[test]
+    fn rejects_paths_with_whitespace_or_dot_segments() {
+        for path in [
+            "/v1/models bad",
+            "/../v1/models",
+            "/v1/../models",
+            "/./v1/models",
+        ] {
+            let request = RenderedMonitorRequest {
+                method: "GET".to_string(),
+                path: path.to_string(),
+                headers: HashMap::new(),
+                body: Vec::new(),
+            };
+
+            let result = run_monitor_probe("http://127.0.0.1:9", "sk-real-key", &request, 1);
+
+            assert!(!result.ok, "{path} should be rejected");
+            assert_eq!(result.status_code, None);
+        }
     }
 
     fn spawn_upstream(response: &'static str) -> (String, mpsc::Receiver<String>) {

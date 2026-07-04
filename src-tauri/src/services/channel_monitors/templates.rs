@@ -4,6 +4,7 @@ use crate::{
     models::channel_monitors::ChannelMonitorRequestTemplate,
     services::database::now_millis_for_services,
 };
+use serde_json::{Number, Value};
 
 #[derive(Debug, Clone)]
 pub struct MonitorTemplateContext {
@@ -25,9 +26,9 @@ pub fn render_monitor_request(
     template: &ChannelMonitorRequestTemplate,
     context: &MonitorTemplateContext,
 ) -> Result<RenderedMonitorRequest, String> {
-    let rendered_body = render_template_text(&template.request_body_json, context);
-    let body_value: serde_json::Value = serde_json::from_str(&rendered_body)
-        .map_err(|error| format!("Monitor request body must render to valid JSON: {error}"))?;
+    let template_value: Value = serde_json::from_str(&template.request_body_json)
+        .map_err(|error| format!("Monitor request template must be valid JSON: {error}"))?;
+    let body_value = render_json_value(&template_value, context);
     let body = serde_json::to_vec(&body_value)
         .map_err(|error| format!("Monitor request body could not be encoded as JSON: {error}"))?;
     let mut headers = HashMap::new();
@@ -41,22 +42,46 @@ pub fn render_monitor_request(
     })
 }
 
-fn render_template_text(template: &str, context: &MonitorTemplateContext) -> String {
-    template
-        .replace("{{model}}", &json_string_fragment(&context.model))
-        .replace("{{max_tokens}}", &context.max_tokens.to_string())
-        .replace("{{stream}}", if context.stream { "true" } else { "false" })
-        .replace("{{challenge}}", &json_string_fragment(&context.challenge))
-        .replace("{{timestamp}}", &now_millis_for_services().to_string())
+fn render_json_value(value: &Value, context: &MonitorTemplateContext) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| render_json_value(item, context))
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, value)| (key.clone(), render_json_value(value, context)))
+                .collect(),
+        ),
+        Value::String(text) => render_string_value(text, context),
+        _ => value.clone(),
+    }
 }
 
-fn json_string_fragment(value: &str) -> String {
-    let encoded = serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string());
-    encoded
-        .strip_prefix('"')
-        .and_then(|item| item.strip_suffix('"'))
-        .unwrap_or("")
-        .to_string()
+fn render_string_value(value: &str, context: &MonitorTemplateContext) -> Value {
+    match value {
+        "{{model}}" => Value::String(context.model.clone()),
+        "{{challenge}}" => Value::String(context.challenge.clone()),
+        "{{max_tokens}}" => Value::Number(Number::from(context.max_tokens)),
+        "{{stream}}" => Value::Bool(context.stream),
+        "{{timestamp}}" => Value::Number(Number::from(timestamp_u64())),
+        _ => Value::String(render_mixed_string(value, context)),
+    }
+}
+
+fn render_mixed_string(value: &str, context: &MonitorTemplateContext) -> String {
+    value
+        .replace("{{model}}", &context.model)
+        .replace("{{max_tokens}}", &context.max_tokens.to_string())
+        .replace("{{stream}}", if context.stream { "true" } else { "false" })
+        .replace("{{challenge}}", &context.challenge)
+        .replace("{{timestamp}}", &timestamp_u64().to_string())
+}
+
+fn timestamp_u64() -> u64 {
+    now_millis_for_services().min(u64::MAX as u128) as u64
 }
 
 #[cfg(test)]
@@ -71,8 +96,8 @@ mod tests {
             "/v1/chat/completions",
             r#"{
                 "model": "{{model}}",
-                "max_tokens": {{max_tokens}},
-                "stream": {{stream}},
+                "max_tokens": "{{max_tokens}}",
+                "stream": "{{stream}}",
                 "messages": [
                     { "role": "user", "content": "{{challenge}} at {{timestamp}}" }
                 ]
@@ -101,6 +126,68 @@ mod tests {
         assert!(content.starts_with("ping-check at "));
         assert!(!content.contains("{{timestamp}}"));
         assert!(!body.to_string().contains("{{model}}"));
+    }
+
+    #[test]
+    fn renders_whole_string_placeholders_to_json_types() {
+        let template = template(
+            "POST",
+            "/v1/chat/completions",
+            r#"{
+                "model": "{{model}}",
+                "max_tokens": "{{max_tokens}}",
+                "stream": "{{stream}}",
+                "created_at": "{{timestamp}}",
+                "messages": [
+                    { "role": "user", "content": "{{challenge}}" }
+                ]
+            }"#,
+        );
+        let context = MonitorTemplateContext {
+            model: "gpt-4o-mini".to_string(),
+            max_tokens: 13,
+            stream: true,
+            challenge: "ping".to_string(),
+        };
+
+        let rendered = render_monitor_request(&template, &context).expect("rendered");
+        let body: Value = serde_json::from_slice(&rendered.body).expect("valid json");
+
+        assert_eq!(body["model"], "gpt-4o-mini");
+        assert_eq!(body["max_tokens"], 13);
+        assert!(body["max_tokens"].is_number());
+        assert_eq!(body["stream"], true);
+        assert!(body["stream"].is_boolean());
+        assert!(body["created_at"].is_number());
+    }
+
+    #[test]
+    fn renders_mixed_placeholders_with_json_string_escaping() {
+        let template = template(
+            "POST",
+            "/v1/chat/completions",
+            r#"{
+                "model": "{{model}}",
+                "messages": [
+                    { "role": "user", "content": "Model {{model}} says {{challenge}}" }
+                ]
+            }"#,
+        );
+        let context = MonitorTemplateContext {
+            model: "gpt-4o\n\"mini\"".to_string(),
+            max_tokens: 1,
+            stream: false,
+            challenge: "quote: \"hello\"\nnext line".to_string(),
+        };
+
+        let rendered = render_monitor_request(&template, &context).expect("rendered");
+        let body: Value = serde_json::from_slice(&rendered.body).expect("valid json");
+
+        assert_eq!(body["model"], "gpt-4o\n\"mini\"");
+        assert_eq!(
+            body["messages"][0]["content"],
+            "Model gpt-4o\n\"mini\" says quote: \"hello\"\nnext line"
+        );
     }
 
     #[test]
