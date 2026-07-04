@@ -112,6 +112,61 @@ export type StationKeyConnectivityTestResult = {
   message: string;
 };
 
+export type RemoteKeyMatchStatus = "matched" | "possible" | "unbound";
+
+export type RemoteKeyCapability = {
+  stationId: string;
+  stationType: string;
+  canListRemoteKeys: boolean;
+  canCreateRemoteKey: boolean;
+  canReadGroups: boolean;
+  requiresManualSession: boolean;
+  unsupportedReason: string | null;
+};
+
+export type RemoteStationKey = {
+  id: string;
+  stationId: string;
+  remoteKeyIdHash: string | null;
+  remoteKeyName: string | null;
+  apiKeyMasked: string | null;
+  apiKeyFingerprint: string | null;
+  groupIdHash: string | null;
+  groupName: string | null;
+  tierLabel: string | null;
+  rateMultiplier: number | null;
+  rateSource: string | null;
+  createdAt: string | null;
+  lastUsedAt: string | null;
+  rawSource: string;
+  matchStatus: RemoteKeyMatchStatus;
+  matchedStationKeyId: string | null;
+  matchConfidence: number;
+  collectedAt: string;
+};
+
+export type RemoteKeyScanResult = {
+  stationId: string;
+  capability: RemoteKeyCapability;
+  keys: RemoteStationKey[];
+  syncedStationKeyIds: string[];
+  message: string;
+};
+
+export type CreateRemoteStationKeyInput = {
+  stationId: string;
+  name: string;
+  groupIdHash: string | null;
+  groupName: string | null;
+};
+
+export type CreateRemoteStationKeyResult = {
+  remoteKey: RemoteStationKey;
+  stationKey: StationKey;
+  fullKeyOnce: string | null;
+  message: string;
+};
+
 export const stationKeyStatusLabels: Record<StationKeyStatus, string> = {
   unchecked: "未检测",
   healthy: "正常",
