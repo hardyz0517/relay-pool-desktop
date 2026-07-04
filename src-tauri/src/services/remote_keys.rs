@@ -8,11 +8,11 @@ use crate::{
         },
         station_keys::CreateStationKeyInput,
     },
-    services::database::{now_millis_for_services, AppDatabase},
+    services::{
+        collectors::adapters::{self, CreatedRemoteKey},
+        database::{now_millis_for_services, AppDatabase},
+    },
 };
-
-const REMOTE_KEY_ADAPTER_PENDING_MESSAGE: &str =
-    "远端 Key 管理适配器尚未接入，请等待 Task 4 完成后再执行该操作。";
 
 pub fn remote_key_capability(
     database: &AppDatabase,
@@ -20,23 +20,21 @@ pub fn remote_key_capability(
 ) -> Result<RemoteKeyCapability, String> {
     let station = database.station_for_collector(&station_id)?;
     let station_type = station.station_type.trim().to_string();
-    let supported = matches!(station_type.as_str(), "sub2api" | "newapi");
-
-    Ok(RemoteKeyCapability {
-        station_id,
-        station_type: station_type.clone(),
-        can_list_remote_keys: supported,
-        can_create_remote_key: supported,
-        can_read_groups: supported,
-        requires_manual_session: supported,
-        unsupported_reason: if supported {
-            None
-        } else {
-            Some(format!(
+    match station_type.as_str() {
+        "sub2api" => adapters::sub2api::remote_key_capability(&station),
+        "newapi" => adapters::newapi::remote_key_capability(&station),
+        _ => Ok(RemoteKeyCapability {
+            station_id,
+            station_type: station_type.clone(),
+            can_list_remote_keys: false,
+            can_create_remote_key: false,
+            can_read_groups: false,
+            requires_manual_session: false,
+            unsupported_reason: Some(format!(
                 "暂不支持 {station_type} 类型中转站的远端 Key 管理。"
-            ))
-        },
-    })
+            )),
+        }),
+    }
 }
 
 pub fn list_remote_keys(
@@ -94,9 +92,15 @@ pub fn create_remote_key(
             .unwrap_or_else(|| "该中转站暂不支持创建远端 Key。".to_string()));
     }
 
-    let (remote_key, full_key) =
-        create_remote_key_with_adapter(database, data_key, input, &capability.station_type)?;
-    save_created_remote_key(database, data_key, remote_key, full_key)
+    let CreatedRemoteKey {
+        remote_key,
+        full_key_once,
+        message,
+    } = create_remote_key_with_adapter(database, data_key, input, &capability.station_type)?;
+    let full_key = full_key_once
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "远端站点未返回完整 Key，无法保存到本地 Station Key。".to_string())?;
+    save_created_remote_key(database, data_key, remote_key, full_key, message)
 }
 
 pub fn bind_remote_key(
@@ -113,13 +117,8 @@ fn scan_remote_keys_with_adapter(
     station_type: &str,
 ) -> Result<Vec<RemoteStationKey>, String> {
     match station_type {
-        "sub2api" | "newapi" => {
-            let _ = (database, data_key, station_id);
-            Err(format!(
-                "{} 当前中转站类型：{}。",
-                REMOTE_KEY_ADAPTER_PENDING_MESSAGE, station_type
-            ))
-        }
+        "sub2api" => adapters::sub2api::scan_remote_keys(database, data_key, station_id),
+        "newapi" => adapters::newapi::scan_remote_keys(database, data_key, station_id),
         _ => Err(format!(
             "暂不支持 {station_type} 类型中转站的远端 Key 扫描。"
         )),
@@ -131,15 +130,10 @@ fn create_remote_key_with_adapter(
     data_key: &[u8; 32],
     input: CreateRemoteStationKeyInput,
     station_type: &str,
-) -> Result<(RemoteStationKey, String), String> {
+) -> Result<CreatedRemoteKey, String> {
     match station_type {
-        "sub2api" | "newapi" => {
-            let _ = (database, data_key, input);
-            Err(format!(
-                "{} 当前中转站类型：{}。",
-                REMOTE_KEY_ADAPTER_PENDING_MESSAGE, station_type
-            ))
-        }
+        "sub2api" => adapters::sub2api::create_remote_key(database, data_key, input),
+        "newapi" => adapters::newapi::create_remote_key(database, data_key, input),
         _ => Err(format!(
             "暂不支持 {station_type} 类型中转站的远端 Key 创建。"
         )),
@@ -151,6 +145,7 @@ fn save_created_remote_key(
     data_key: &[u8; 32],
     remote_key: RemoteStationKey,
     full_key: String,
+    adapter_message: String,
 ) -> Result<CreateRemoteStationKeyResult, String> {
     if full_key.trim().is_empty() {
         return Err("远端站点未返回完整 Key，无法保存到本地 Station Key。".to_string());
@@ -198,7 +193,11 @@ fn save_created_remote_key(
         remote_key,
         station_key,
         full_key_once: Some(full_key),
-        message: "远端 Key 已创建，并已保存为启用的本地 Station Key。".to_string(),
+        message: if adapter_message.trim().is_empty() {
+            "远端 Key 已创建，并已保存为启用的本地 Station Key。".to_string()
+        } else {
+            format!("{adapter_message} 已保存为启用的本地 Station Key。")
+        },
     })
 }
 
@@ -321,6 +320,25 @@ mod tests {
         assert!(capability.can_read_groups);
         assert!(capability.requires_manual_session);
         assert_eq!(capability.unsupported_reason, None);
+    }
+
+    #[test]
+    fn capability_does_not_advertise_newapi_remote_key_creation() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "newapi");
+
+        let capability = remote_key_capability(&database, station.id).expect("capability");
+
+        assert_eq!(capability.station_type, "newapi");
+        assert!(!capability.can_list_remote_keys);
+        assert!(!capability.can_create_remote_key);
+        assert!(capability.can_read_groups);
+        assert!(capability.requires_manual_session);
+        assert!(capability
+            .unsupported_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("尚未适配"));
     }
 
     #[test]

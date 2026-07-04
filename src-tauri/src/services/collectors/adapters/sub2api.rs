@@ -3,10 +3,18 @@ use std::collections::HashMap;
 use serde_json::{json, Value};
 
 use crate::{
-    models::{credentials::UpdateStationSessionInput, station_keys::StationKey},
+    models::{
+        credentials::UpdateStationSessionInput,
+        remote_keys::{
+            CreateRemoteStationKeyInput, RemoteKeyCapability, RemoteKeyMatchStatus,
+            RemoteStationKey,
+        },
+        station_keys::StationKey,
+        stations::Station,
+    },
     services::{
         collectors::{
-            adapters::{AdapterOutput, CollectorTask},
+            adapters::{AdapterOutput, CollectorTask, CreatedRemoteKey},
             facts::{CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts},
             url::{collector_base_urls, join_url},
         },
@@ -265,6 +273,288 @@ fn stable_group_key_hash(
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
+}
+
+pub fn remote_key_capability(station: &Station) -> Result<RemoteKeyCapability, String> {
+    Ok(RemoteKeyCapability {
+        station_id: station.id.clone(),
+        station_type: station.station_type.trim().to_string(),
+        can_list_remote_keys: true,
+        can_create_remote_key: true,
+        can_read_groups: true,
+        requires_manual_session: true,
+        unsupported_reason: Some(
+            "Sub2API 远端 Key 管理需要可用的登录 access token；可通过手动会话或保存账号密码刷新。"
+                .to_string(),
+        ),
+    })
+}
+
+pub fn scan_remote_keys(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station_id: &str,
+) -> Result<Vec<RemoteStationKey>, String> {
+    let station = database.station_for_collector(station_id)?;
+    let access_token = resolve_sub2api_access_token(database, data_key, &station)?;
+    let urls = collector_base_urls(&station.base_url);
+    let url = join_url(
+        &urls.management_base_url,
+        "/api/v1/keys?page=1&page_size=100",
+    );
+    let result = fetch_json_with_bearer(&url, &access_token);
+    let payload = result.payload.unwrap_or(Value::Null);
+    if !result.ok {
+        return Err(result.error_message.unwrap_or_else(|| {
+            format!("Sub2API 远端 Key 扫描失败，HTTP 状态 {:?}。", result.status)
+        }));
+    }
+
+    Ok(parse_remote_key_payload(&station.id, &payload))
+}
+
+pub fn create_remote_key(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    input: CreateRemoteStationKeyInput,
+) -> Result<CreatedRemoteKey, String> {
+    let station = database.station_for_collector(&input.station_id)?;
+    let access_token = resolve_sub2api_access_token(database, data_key, &station)?;
+    let urls = collector_base_urls(&station.base_url);
+    let url = join_url(&urls.management_base_url, "/api/v1/keys");
+    let mut body = json!({
+        "name": input.name,
+    });
+    if let Some(group_name) = input
+        .group_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        body["group"] = json!(group_name);
+        body["group_name"] = json!(group_name);
+    }
+
+    let result = post_json_with_bearer(&url, &access_token, &body);
+    let payload = result.payload.unwrap_or(Value::Null);
+    if !result.ok {
+        return Err(result.error_message.unwrap_or_else(|| {
+            format!("Sub2API 远端 Key 创建失败，HTTP 状态 {:?}。", result.status)
+        }));
+    }
+
+    let full_key_once = full_key_from_create_payload(&payload);
+    let remote_key = parse_remote_key_payload(&station.id, &payload)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| {
+            remote_key_from_create_input(&station.id, &input, full_key_once.as_deref())
+        });
+    Ok(CreatedRemoteKey {
+        remote_key,
+        full_key_once,
+        message: "Sub2API 远端 Key 已创建。".to_string(),
+    })
+}
+
+fn resolve_sub2api_access_token(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &Station,
+) -> Result<String, String> {
+    let session = database.resolve_station_session_with_data_key(
+        station.id.clone(),
+        data_key,
+        crate::services::database::now_millis_for_services() as i64,
+    )?;
+    if let Some(access_token) = session
+        .access_token
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(access_token);
+    }
+    if let Some(access_token) = login_and_store_access_token(database, data_key, station)? {
+        return Ok(access_token);
+    }
+    Err(session.message.unwrap_or_else(|| {
+        "Sub2API 远端 Key 管理需要 access token，请先导入手动会话或保存登录账号密码。".to_string()
+    }))
+}
+
+fn parse_remote_key_payload(station_id: &str, payload: &Value) -> Vec<RemoteStationKey> {
+    remote_key_items(payload)
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, value)| remote_key_from_value(station_id, value, index))
+        .collect()
+}
+
+fn remote_key_items(payload: &Value) -> Vec<&Value> {
+    if let Some(items) = payload.as_array() {
+        return items.iter().collect();
+    }
+    for pointer in [
+        "/data/items",
+        "/data/list",
+        "/data/keys",
+        "/data",
+        "/items",
+        "/list",
+        "/keys",
+    ] {
+        if let Some(value) = payload.pointer(pointer) {
+            if let Some(items) = value.as_array() {
+                return items.iter().collect();
+            }
+        }
+    }
+    if payload.is_object() {
+        vec![payload]
+    } else {
+        Vec::new()
+    }
+}
+
+fn remote_key_from_value(
+    station_id: &str,
+    value: &Value,
+    index: usize,
+) -> Option<RemoteStationKey> {
+    let remote_key_id = string_field(value, &["id", "key_id", "keyId", "token_id", "tokenId"]);
+    let name = string_field(value, &["name", "key_name", "keyName", "label", "remark"]);
+    let full_key = full_key_from_key_value(value);
+    let masked = string_field(
+        value,
+        &[
+            "api_key_masked",
+            "apiKeyMasked",
+            "masked_key",
+            "maskedKey",
+            "key_masked",
+        ],
+    )
+    .or_else(|| {
+        full_key
+            .as_deref()
+            .map(crate::services::secrets::mask::mask_secret)
+    });
+    let identity = remote_key_id
+        .as_deref()
+        .or(full_key.as_deref())
+        .or(masked.as_deref())
+        .or(name.as_deref())?;
+    let remote_key_id_hash = remote_key_id
+        .as_deref()
+        .or(masked.as_deref())
+        .map(|value| sha256_hex(value.as_bytes()));
+    let group_id = string_field(value, &["group_id", "groupId", "group"]);
+    let group_name = string_field(value, &["group_name", "groupName", "group", "group_label"]);
+
+    Some(RemoteStationKey {
+        id: format!(
+            "sub2api-remote-key-{}",
+            &sha256_hex(format!("{station_id}:{identity}:{index}").as_bytes())[..16]
+        ),
+        station_id: station_id.to_string(),
+        remote_key_id_hash,
+        remote_key_name: name,
+        api_key_masked: masked,
+        api_key_fingerprint: full_key
+            .as_deref()
+            .and_then(crate::services::remote_keys::api_key_fingerprint),
+        group_id_hash: group_id
+            .as_deref()
+            .or(group_name.as_deref())
+            .map(|value| stable_group_key_hash(station_id, "sub2api", Some(value), value)),
+        group_name,
+        tier_label: string_field(value, &["tier", "tier_label", "tierLabel", "plan"]),
+        rate_multiplier: numeric_field(
+            value,
+            &[
+                "rate_multiplier",
+                "rateMultiplier",
+                "ratio",
+                "multiplier",
+                "rate",
+            ],
+        ),
+        rate_source: Some("sub2api_keys".to_string()),
+        created_at: string_field(value, &["created_at", "createdAt", "created"]),
+        last_used_at: string_field(value, &["last_used_at", "lastUsedAt", "last_used"]),
+        raw_source: "sub2api_keys".to_string(),
+        match_status: RemoteKeyMatchStatus::Unbound,
+        matched_station_key_id: None,
+        match_confidence: 0.0,
+        collected_at: crate::services::database::now_millis_for_services().to_string(),
+    })
+}
+
+fn remote_key_from_create_input(
+    station_id: &str,
+    input: &CreateRemoteStationKeyInput,
+    full_key: Option<&str>,
+) -> RemoteStationKey {
+    let identity = full_key.unwrap_or(input.name.as_str());
+    RemoteStationKey {
+        id: format!(
+            "sub2api-remote-key-{}",
+            &sha256_hex(format!("{station_id}:{identity}").as_bytes())[..16]
+        ),
+        station_id: station_id.to_string(),
+        remote_key_id_hash: None,
+        remote_key_name: Some(input.name.clone()),
+        api_key_masked: full_key.map(crate::services::secrets::mask::mask_secret),
+        api_key_fingerprint: full_key.and_then(crate::services::remote_keys::api_key_fingerprint),
+        group_id_hash: input.group_id_hash.clone(),
+        group_name: input.group_name.clone(),
+        tier_label: None,
+        rate_multiplier: None,
+        rate_source: Some("sub2api_keys".to_string()),
+        created_at: None,
+        last_used_at: None,
+        raw_source: "sub2api_keys".to_string(),
+        match_status: RemoteKeyMatchStatus::Unbound,
+        matched_station_key_id: None,
+        match_confidence: 0.0,
+        collected_at: crate::services::database::now_millis_for_services().to_string(),
+    }
+}
+
+fn full_key_from_key_value(value: &Value) -> Option<String> {
+    string_field(value, &["key", "api_key", "apiKey", "token"]).filter(|value| {
+        !value.contains("...")
+            && !value.contains("****")
+            && !value.eq_ignore_ascii_case("[REDACTED]")
+    })
+}
+
+fn full_key_from_create_payload(payload: &Value) -> Option<String> {
+    full_key_from_key_value(payload)
+        .or_else(|| {
+            payload
+                .pointer("/data/key")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
+        .or_else(|| {
+            payload
+                .pointer("/data/api_key")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
+        .or_else(|| {
+            payload
+                .pointer("/data/apiKey")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
 }
 
 fn routeable_keys_for_station(
@@ -540,6 +830,47 @@ fn fetch_json_with_bearer(url: &str, access_token: &str) -> EndpointJsonResult {
         duration_ms: started.elapsed().as_millis() as i64,
         payload,
         error_message: None,
+    }
+}
+
+fn post_json_with_bearer(url: &str, access_token: &str, body: &Value) -> EndpointJsonResult {
+    let started = std::time::Instant::now();
+    let response = match ureq::post(url)
+        .set("Authorization", &format!("Bearer {access_token}"))
+        .set("Content-Type", "application/json")
+        .send_string(&body.to_string())
+    {
+        Ok(response) => response,
+        Err(ureq::Error::Status(_, response)) => response,
+        Err(error) => {
+            return EndpointJsonResult {
+                url: url.to_string(),
+                status: None,
+                ok: false,
+                duration_ms: started.elapsed().as_millis() as i64,
+                payload: None,
+                error_message: Some(crate::services::secrets::mask::redact_text(
+                    &error.to_string(),
+                )),
+            };
+        }
+    };
+    let status = response.status();
+    let text = response.into_string().unwrap_or_default();
+    let payload = serde_json::from_str::<Value>(&text).ok();
+    let error_message = if (200..400).contains(&status) {
+        None
+    } else {
+        Some(crate::services::secrets::mask::redact_text(&text))
+    };
+
+    EndpointJsonResult {
+        url: url.to_string(),
+        status: Some(status),
+        ok: (200..400).contains(&status),
+        duration_ms: started.elapsed().as_millis() as i64,
+        payload,
+        error_message,
     }
 }
 
@@ -854,6 +1185,41 @@ mod tests {
         assert!(facts.rates.iter().any(|rate| {
             rate.group_name == "Pro" && rate.effective_rate_multiplier == Some(1.2)
         }));
+    }
+
+    #[test]
+    fn parses_sub2api_remote_key_payload() {
+        let keys = parse_remote_key_payload(
+            "station-1",
+            &json!({
+                "data": {
+                    "items": [
+                        {
+                            "id": "remote-123",
+                            "name": "Claude pool",
+                            "key": "sk-live-secret-abcdef",
+                            "group": "pro",
+                            "rate_multiplier": 0.8,
+                            "created_at": "2026-07-01T12:00:00Z",
+                            "last_used_at": "2026-07-02T12:00:00Z"
+                        }
+                    ]
+                }
+            }),
+        );
+
+        assert_eq!(keys.len(), 1);
+        let key = keys.first().expect("remote key");
+        assert_eq!(key.station_id, "station-1");
+        assert_eq!(key.remote_key_name.as_deref(), Some("Claude pool"));
+        assert_eq!(key.api_key_masked.as_deref(), Some("sk-...cdef"));
+        assert!(key.api_key_fingerprint.is_some());
+        assert_eq!(key.group_name.as_deref(), Some("pro"));
+        assert_eq!(key.rate_multiplier, Some(0.8));
+        assert_eq!(key.rate_source.as_deref(), Some("sub2api_keys"));
+        assert_eq!(key.created_at.as_deref(), Some("2026-07-01T12:00:00Z"));
+        assert_eq!(key.last_used_at.as_deref(), Some("2026-07-02T12:00:00Z"));
+        assert_eq!(key.raw_source, "sub2api_keys");
     }
 
     #[test]
