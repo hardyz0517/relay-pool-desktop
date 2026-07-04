@@ -516,7 +516,7 @@ impl AppDatabase {
     }
 
     pub fn delete_station_key(&self, id: String) -> Result<(), String> {
-        let connection = self.connection()?;
+        let mut connection = self.connection()?;
         let station_id: Option<String> = connection
             .query_row(
                 "SELECT station_id FROM station_keys WHERE id = ?1",
@@ -530,10 +530,27 @@ impl AppDatabase {
             return Err("Station Key 不存在，无法删除".to_string());
         };
 
-        connection
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始删除 Station Key 事务失败: {error}"))?;
+        transaction
+            .execute(
+                "UPDATE remote_station_keys
+                    SET match_status = ?1,
+                        matched_station_key_id = NULL,
+                        match_confidence = 0.0,
+                        updated_at = ?2
+                  WHERE matched_station_key_id = ?3",
+                params![RemoteKeyMatchStatus::Unbound.as_str(), now_string(), id],
+            )
+            .map_err(|error| format!("解除远端 Key 绑定失败: {error}"))?;
+        transaction
             .execute("DELETE FROM station_keys WHERE id = ?1", params![id])
             .map_err(|error| format!("删除 Station Key 失败: {error}"))?;
-        normalize_station_key_priorities(&connection, &station_id)?;
+        normalize_station_key_priorities(&transaction, &station_id)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("保存删除 Station Key 事务失败: {error}"))?;
         Ok(())
     }
 
@@ -2416,7 +2433,9 @@ fn migrate_remote_key_tables(connection: &Connection) -> rusqlite::Result<()> {
             matched_station_key_id TEXT,
             match_confidence REAL NOT NULL,
             collected_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE,
+            FOREIGN KEY(matched_station_key_id) REFERENCES station_keys(id) ON DELETE SET NULL
         );
 
         CREATE INDEX IF NOT EXISTS idx_remote_station_keys_station
@@ -6700,6 +6719,121 @@ mod tests {
             Some(station_key.id.as_str())
         );
         assert_eq!(matched.match_confidence, 1.0);
+    }
+
+    #[test]
+    fn remote_station_keys_are_removed_when_station_is_deleted() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "Remote Cascade Station");
+
+        database
+            .replace_remote_station_keys(
+                station.id.clone(),
+                vec![crate::models::remote_keys::RemoteStationKey {
+                    id: "remote-cascade-1".to_string(),
+                    station_id: station.id.clone(),
+                    remote_key_id_hash: Some("remote-cascade-hash".to_string()),
+                    remote_key_name: Some("remote cascade key".to_string()),
+                    api_key_masked: None,
+                    api_key_fingerprint: None,
+                    group_id_hash: None,
+                    group_name: None,
+                    tier_label: None,
+                    rate_multiplier: None,
+                    rate_source: None,
+                    created_at: None,
+                    last_used_at: None,
+                    raw_source: "sub2api".to_string(),
+                    match_status: crate::models::remote_keys::RemoteKeyMatchStatus::Unbound,
+                    matched_station_key_id: None,
+                    match_confidence: 0.0,
+                    collected_at: "3000".to_string(),
+                }],
+            )
+            .expect("insert remote key");
+
+        database
+            .delete_station(station.id.clone())
+            .expect("delete station");
+
+        let connection = database.connection().expect("connection");
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM remote_station_keys WHERE station_id = ?1",
+                params![station.id],
+                |row| row.get(0),
+            )
+            .expect("remote key count");
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn remote_station_key_is_unmatched_when_station_key_is_deleted() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "Remote Unmatch Station");
+        let station_key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id.clone(),
+                name: "local matched key".to_string(),
+                api_key: "sk-local-unmatch".to_string(),
+                enabled: true,
+                priority: Some(0),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect("station key");
+
+        database
+            .replace_remote_station_keys(
+                station.id.clone(),
+                vec![crate::models::remote_keys::RemoteStationKey {
+                    id: "remote-unmatch-1".to_string(),
+                    station_id: station.id.clone(),
+                    remote_key_id_hash: Some("remote-unmatch-hash".to_string()),
+                    remote_key_name: Some("remote unmatch key".to_string()),
+                    api_key_masked: None,
+                    api_key_fingerprint: None,
+                    group_id_hash: None,
+                    group_name: None,
+                    tier_label: None,
+                    rate_multiplier: None,
+                    rate_source: None,
+                    created_at: None,
+                    last_used_at: None,
+                    raw_source: "sub2api".to_string(),
+                    match_status: crate::models::remote_keys::RemoteKeyMatchStatus::Unbound,
+                    matched_station_key_id: None,
+                    match_confidence: 0.0,
+                    collected_at: "3000".to_string(),
+                }],
+            )
+            .expect("insert remote key");
+        database
+            .bind_remote_station_key("remote-unmatch-1".to_string(), station_key.id.clone())
+            .expect("bind remote key");
+
+        database
+            .delete_station_key(station_key.id)
+            .expect("delete station key");
+        let remote_key = database
+            .list_remote_station_keys(station.id)
+            .expect("remote keys")
+            .into_iter()
+            .find(|key| key.id == "remote-unmatch-1")
+            .expect("remote key remains");
+
+        assert_eq!(
+            remote_key.match_status,
+            crate::models::remote_keys::RemoteKeyMatchStatus::Unbound
+        );
+        assert_eq!(remote_key.matched_station_key_id, None);
+        assert_eq!(remote_key.match_confidence, 0.0);
     }
 
     #[test]
