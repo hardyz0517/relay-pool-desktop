@@ -36,6 +36,8 @@ type BusyState = {
   kind: "save" | "duplicate" | "delete" | "toggle";
 } | null;
 
+const allEndpointKindFilter = "__all__";
+
 const inputClassName =
   "h-8 rounded-[8px] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:ring-2 focus:ring-teal-100";
 
@@ -58,6 +60,7 @@ export function ChannelMonitorTemplateManager({
 }: ChannelMonitorTemplateManagerProps) {
   const toast = useToast();
   const [draft, setDraft] = useState<TemplateDraft>(() => createEmptyDraft());
+  const [endpointKindFilter, setEndpointKindFilter] = useState(allEndpointKindFilter);
   const [busyState, setBusyState] = useState<BusyState>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,14 +72,49 @@ export function ChannelMonitorTemplateManager({
     }
   }, [open]);
 
+  const endpointKindOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const template of templates) {
+      const key = template.endpointKind || "custom";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return [
+      { value: allEndpointKindFilter, label: "全部", count: templates.length },
+      ...[...counts.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([value, count]) => ({
+          value,
+          label: formatEndpointKind(value),
+          count,
+        })),
+    ];
+  }, [templates]);
+
+  useEffect(() => {
+    if (
+      endpointKindFilter !== allEndpointKindFilter &&
+      !endpointKindOptions.some((option) => option.value === endpointKindFilter)
+    ) {
+      setEndpointKindFilter(allEndpointKindFilter);
+    }
+  }, [endpointKindFilter, endpointKindOptions]);
+
+  const filteredTemplates = useMemo(
+    () =>
+      endpointKindFilter === allEndpointKindFilter
+        ? templates
+        : templates.filter((template) => (template.endpointKind || "custom") === endpointKindFilter),
+    [endpointKindFilter, templates],
+  );
+
   const groupedTemplates = useMemo(() => {
     const groups = new Map<string, ChannelMonitorRequestTemplate[]>();
-    for (const template of templates) {
+    for (const template of filteredTemplates) {
       const key = template.endpointKind || "未分类";
       groups.set(key, [...(groups.get(key) ?? []), template]);
     }
     return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
-  }, [templates]);
+  }, [filteredTemplates]);
 
   const validationError = validateDraft(draft);
   const editingBuiltIn = templates.some((template) => template.id === draft.id && template.builtIn);
@@ -252,10 +290,35 @@ export function ChannelMonitorTemplateManager({
               新建
             </Button>
           </div>
+          <div className="flex flex-wrap gap-1.5 border-b border-border bg-slate-50/70 px-3 py-2">
+            {endpointKindOptions.map((option) => {
+              const selected = option.value === endpointKindFilter;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1 rounded-[7px] border px-2 text-xs font-medium transition-colors",
+                    selected
+                      ? "border-teal-200 bg-white text-teal-700 shadow-[var(--surface-shadow)]"
+                      : "border-transparent text-slate-600 hover:border-border hover:bg-white",
+                  )}
+                  onClick={() => setEndpointKindFilter(option.value)}
+                >
+                  <span>{option.label}</span>
+                  <span className="text-[11px] text-muted-foreground">{option.count}</span>
+                </button>
+              );
+            })}
+          </div>
           <div className="max-h-[520px] overflow-auto p-3">
             {templates.length === 0 ? (
               <div className="rounded-[8px] border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
                 暂无模板
+              </div>
+            ) : filteredTemplates.length === 0 ? (
+              <div className="rounded-[8px] border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                当前筛选下暂无模板
               </div>
             ) : (
               <div className="grid gap-3">
@@ -477,6 +540,18 @@ function draftToInput(draft: TemplateDraft): CreateChannelMonitorTemplateInput {
     enabled: draft.enabled,
     note: draft.note.trim() || null,
   };
+}
+
+function formatEndpointKind(endpointKind: string) {
+  const labels: Record<string, string> = {
+    chat_completions: "OpenAI Chat",
+    responses: "Responses",
+    models: "Models",
+    embeddings: "Embeddings",
+    custom: "自定义路径",
+    custom_path: "自定义路径",
+  };
+  return labels[endpointKind] ?? endpointKind;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
