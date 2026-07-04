@@ -98,13 +98,22 @@ function rowHasMeaningfulContent(row: StationKeyDraft) {
   );
 }
 
+function rowHasMeaningfulNonSecretContent(row: StationKeyDraft) {
+  return Boolean(
+    row.name.trim() || row.groupName.trim() || row.rateMultiplier.trim() || row.note.trim(),
+  );
+}
+
 function parseOptionalRateMultiplier(value: string) {
   if (!value.trim()) {
     return null;
   }
   const rate = Number(value);
   if (!Number.isFinite(rate)) {
-    throw new Error("密钥倍率必须是有效数字");
+    throw new Error("密钥倍率必须是大于 0 的有效数字");
+  }
+  if (rate <= 0) {
+    throw new Error("密钥倍率必须大于 0");
   }
   return rate;
 }
@@ -114,11 +123,22 @@ function validateKeyRows(rows: StationKeyDraft[]) {
     .filter((row) => !row.deleteRequested)
     .forEach((row) => {
       const hasContent = rowHasMeaningfulContent(row);
+      if (!row.id && rowHasMeaningfulNonSecretContent(row) && !row.apiKey.trim()) {
+        throw new Error("新增密钥请填写密钥内容，或删除该行。");
+      }
       if (hasContent && !row.name.trim()) {
         throw new Error("请填写密钥名称");
       }
       parseOptionalRateMultiplier(row.rateMultiplier);
     });
+}
+
+function findReusableDefaultKey(keys: StationKey[]) {
+  if (keys.length === 1) {
+    return keys[0];
+  }
+  const defaultKeys = keys.filter((key) => key.priority === 0 && key.name === "Default Key");
+  return defaultKeys.length === 1 ? defaultKeys[0] : null;
 }
 
 async function saveKeyRows(targetStationId: string, rows: StationKeyDraft[]) {
@@ -136,7 +156,9 @@ async function saveKeyRows(targetStationId: string, rows: StationKeyDraft[]) {
 
   for (const [priority, row] of visibleRows.entries()) {
     const rateMultiplier = parseOptionalRateMultiplier(row.rateMultiplier);
-    const rateSource = rateMultiplier === null ? null : "manual";
+    const rateFields = row.rateMultiplier.trim()
+      ? { rateMultiplier, rateSource: "manual" as const }
+      : {};
     const input = {
       stationId: targetStationId,
       name: row.name.trim(),
@@ -146,10 +168,9 @@ async function saveKeyRows(targetStationId: string, rows: StationKeyDraft[]) {
       groupIdHash: null,
       groupName: row.groupName.trim() ? row.groupName.trim() : null,
       tierLabel: null,
-      rateMultiplier,
-      rateSource,
       balanceScope: "station_key",
       note: row.note.trim() ? row.note.trim() : null,
+      ...rateFields,
     };
 
     if (row.id) {
@@ -282,6 +303,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
 
     setSaving(true);
     setError(null);
+    let createdStationId: string | null = null;
     try {
       if (stationId) {
         await updateStation({
@@ -325,13 +347,11 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           : null,
         note: form.note.trim() ? form.note.trim() : null,
       });
+      createdStationId = station.id;
       let rowsToSave = keyRows;
       if (!form.apiKey.trim() && firstKeyDraft) {
         const createdKeys = await listStationKeys(station.id);
-        const defaultKey =
-          createdKeys.find((key) => key.priority === 0) ??
-          createdKeys.find((key) => key.name === "Default Key") ??
-          createdKeys[0];
+        const defaultKey = findReusableDefaultKey(createdKeys);
         if (defaultKey) {
           rowsToSave = keyRows.map((row) =>
             row.clientId === firstKeyDraft.clientId
@@ -353,8 +373,15 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       onCreated?.();
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : String(requestError);
-      setError(message);
-      toast.error(editing ? "保存供应商失败" : "添加供应商失败", message);
+      if (!editing && createdStationId) {
+        const partialSuccessMessage = "供应商已创建，但密钥或登录信息保存失败，请重新打开后补全。";
+        setError(partialSuccessMessage);
+        toast.error("供应商部分保存成功", partialSuccessMessage);
+        onCreated?.();
+      } else {
+        setError(message);
+        toast.error(editing ? "保存供应商失败" : "添加供应商失败", message);
+      }
     } finally {
       setSaving(false);
     }
