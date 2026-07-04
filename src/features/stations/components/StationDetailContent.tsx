@@ -10,7 +10,7 @@ import {
   RotateCw,
   WalletCards,
 } from "lucide-react";
-import { Button, EmptyState, StatusBadge, type StatusTone } from "@/components/ui";
+import { Button, StatusBadge, type StatusTone } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import type {
   DetailTone,
@@ -176,10 +176,17 @@ export function StationDetailContent({
         </div>
         <div className="p-4">
           {viewModel.groupRows.length === 0 ? (
-            <EmptyState
-              title={viewModel.groupEmptyMessage}
-              description="点击采集分组倍率或重新采集后，这里会显示站点分组、默认倍率与用户倍率。"
-            />
+            <div className="flex min-h-[148px] flex-col items-center justify-center px-4 py-8 text-center">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+                <Layers3 className="h-4 w-4" />
+              </div>
+              <div className="mt-3 text-sm font-medium text-slate-800">
+                {viewModel.groupEmptyMessage}
+              </div>
+              <p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">
+                点击采集分组倍率或重新采集后，这里会显示站点分组、默认倍率与用户倍率。
+              </p>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-[820px] w-full border-separate border-spacing-0 text-left text-xs">
