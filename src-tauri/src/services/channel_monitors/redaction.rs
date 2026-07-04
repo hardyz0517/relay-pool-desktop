@@ -427,4 +427,17 @@ mod tests {
         assert!(!redacted.contains("c=d"));
         assert!(redacted.contains("[REDACTED]"));
     }
+
+    #[test]
+    fn redacts_secret_values_in_url_query_text() {
+        let input = "https://x.test/path?accessToken=secret&session=abc";
+
+        let redacted = redact_monitor_text(input);
+
+        assert!(redacted.contains("https://x.test/path?"));
+        assert!(!redacted.contains("secret"));
+        assert!(!redacted.contains("session=abc"));
+        assert!(!redacted.contains("=abc"));
+        assert!(redacted.matches("[REDACTED]").count() >= 2);
+    }
 }

@@ -35,11 +35,45 @@ pub fn render_monitor_request(
     headers.insert("content-type".to_string(), "application/json".to_string());
 
     Ok(RenderedMonitorRequest {
-        method: template.method.to_ascii_uppercase(),
+        method: normalize_monitor_method(&template.method)?,
         path: template.path.clone(),
         headers,
         body,
     })
+}
+
+pub(crate) fn normalize_monitor_method(method: &str) -> Result<String, String> {
+    if method.is_empty() || method != method.trim() || !method.chars().all(is_http_token_char) {
+        return Err("Invalid monitor request method".to_string());
+    }
+
+    let method = method.to_ascii_uppercase();
+    if !matches!(method.as_str(), "GET" | "POST" | "HEAD") {
+        return Err(format!("Unsupported monitor request method: {method}"));
+    }
+
+    Ok(method)
+}
+
+fn is_http_token_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric()
+        || matches!(
+            ch,
+            '!' | '#'
+                | '$'
+                | '%'
+                | '&'
+                | '\''
+                | '*'
+                | '+'
+                | '-'
+                | '.'
+                | '^'
+                | '_'
+                | '`'
+                | '|'
+                | '~'
+        )
 }
 
 fn render_json_value(value: &Value, context: &MonitorTemplateContext) -> Value {
@@ -203,6 +237,29 @@ mod tests {
         let error = render_monitor_request(&template, &context).expect_err("invalid json rejected");
 
         assert!(error.contains("JSON"));
+    }
+
+    #[test]
+    fn rejects_unsupported_or_invalid_request_methods() {
+        let context = MonitorTemplateContext {
+            model: "gpt-4o-mini".to_string(),
+            max_tokens: 1,
+            stream: false,
+            challenge: "ping".to_string(),
+        };
+
+        for method in ["TRACE", "BAD METHOD", "POST\r\nX-Bad: yes"] {
+            let template = template(
+                method,
+                "/v1/chat/completions",
+                r#"{ "model": "{{model}}" }"#,
+            );
+
+            let error = render_monitor_request(&template, &context)
+                .expect_err("invalid method should be rejected");
+
+            assert!(error.contains("method"), "{error}");
+        }
     }
 
     fn template(

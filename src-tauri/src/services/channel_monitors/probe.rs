@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::services::{
     channel_monitors::{
         redaction::{redact_monitor_json, redact_monitor_text},
-        templates::RenderedMonitorRequest,
+        templates::{normalize_monitor_method, RenderedMonitorRequest},
     },
     proxy::build_upstream_url,
 };
@@ -39,14 +39,45 @@ pub fn run_monitor_probe(
             None,
         );
     };
-    let timeout = Duration::from_secs(timeout_seconds.max(1) as u64);
+    let method = match normalize_monitor_method(&request.method) {
+        Ok(method) => method,
+        Err(error) => return failed_result(started_at, None, &error, None),
+    };
+    if let Some((name, _)) = request
+        .headers
+        .iter()
+        .find(|(name, _)| !is_valid_header_name(name))
+    {
+        return failed_result(
+            started_at,
+            None,
+            &format!("Invalid monitor request header name: {name}"),
+            None,
+        );
+    }
+    if let Some((name, _)) = request
+        .headers
+        .iter()
+        .find(|(_, value)| !is_valid_header_value(value))
+    {
+        return failed_result(
+            started_at,
+            None,
+            &format!("Invalid monitor request header value for: {name}"),
+            None,
+        );
+    }
+
+    let timeout = probe_timeout(timeout_seconds);
     let agent = ureq::AgentBuilder::new()
+        .timeout(timeout)
         .timeout_connect(timeout)
         .timeout_read(timeout)
         .timeout_write(timeout)
         .build();
     let mut upstream = agent
-        .request(&request.method.to_ascii_uppercase(), &url)
+        .request(&method, &url)
+        .timeout(timeout)
         .set("Authorization", &format!("Bearer {api_key}"));
 
     for (name, value) in &request.headers {
@@ -90,6 +121,10 @@ fn build_probe_url(base_url: &str, path: &str) -> Option<String> {
 fn has_dot_segment(path: &str) -> bool {
     path.split('/')
         .any(|segment| segment == "." || segment == "..")
+}
+
+fn probe_timeout(timeout_seconds: i64) -> Duration {
+    Duration::from_secs(timeout_seconds.max(1) as u64)
 }
 
 fn response_result(started_at: Instant, response: ureq::Response) -> MonitorProbeResult {
@@ -154,6 +189,35 @@ fn is_forbidden_header(name: &str) -> bool {
         name.trim().to_ascii_lowercase().as_str(),
         "authorization" | "cookie" | "set-cookie"
     )
+}
+
+fn is_valid_header_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(is_http_token_char)
+}
+
+fn is_http_token_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric()
+        || matches!(
+            ch,
+            '!' | '#'
+                | '$'
+                | '%'
+                | '&'
+                | '\''
+                | '*'
+                | '+'
+                | '-'
+                | '.'
+                | '^'
+                | '_'
+                | '`'
+                | '|'
+                | '~'
+        )
+}
+
+fn is_valid_header_value(value: &str) -> bool {
+    value.chars().all(|ch| ch == '\t' || !ch.is_ascii_control())
 }
 
 #[cfg(test)]
@@ -267,6 +331,54 @@ mod tests {
             assert!(!result.ok, "{path} should be rejected");
             assert_eq!(result.status_code, None);
         }
+    }
+
+    #[test]
+    fn rejects_invalid_or_unsupported_methods_at_probe_boundary() {
+        for method in ["TRACE", "BAD METHOD", "POST\r\nX-Bad: yes"] {
+            let request = RenderedMonitorRequest {
+                method: method.to_string(),
+                path: "/v1/models".to_string(),
+                headers: HashMap::new(),
+                body: Vec::new(),
+            };
+
+            let result = run_monitor_probe("http://127.0.0.1:9", "sk-real-key", &request, 1);
+
+            assert!(!result.ok, "{method} should be rejected");
+            assert_eq!(result.status_code, None);
+            assert!(result.error_summary.unwrap().contains("method"));
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_forwarded_headers_at_probe_boundary() {
+        for (name, value) in [
+            ("x-bad\r\nInjected", "safe"),
+            ("x-safe", "ok\r\nX-Evil: yes"),
+        ] {
+            let mut headers = HashMap::new();
+            headers.insert(name.to_string(), value.to_string());
+            let request = RenderedMonitorRequest {
+                method: "GET".to_string(),
+                path: "/v1/models".to_string(),
+                headers,
+                body: Vec::new(),
+            };
+
+            let result = run_monitor_probe("http://127.0.0.1:9", "sk-real-key", &request, 1);
+
+            assert!(!result.ok, "{name:?}: {value:?} should be rejected");
+            assert_eq!(result.status_code, None);
+            assert!(result.error_summary.unwrap().contains("header"));
+        }
+    }
+
+    #[test]
+    fn normalizes_probe_timeout_to_minimum_one_second() {
+        assert_eq!(probe_timeout(-5), Duration::from_secs(1));
+        assert_eq!(probe_timeout(0), Duration::from_secs(1));
+        assert_eq!(probe_timeout(3), Duration::from_secs(3));
     }
 
     fn spawn_upstream(response: &'static str) -> (String, mpsc::Receiver<String>) {
