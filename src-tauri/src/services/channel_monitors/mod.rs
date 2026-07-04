@@ -31,6 +31,7 @@ const RUNNER_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const RUNNER_STOP_SLICE: Duration = Duration::from_millis(250);
 const DEFAULT_MONITOR_MODEL: &str = "gpt-4o-mini";
 const DEFAULT_MONITOR_CHALLENGE: &str = "relay-pool-monitor-ping";
+const MONITOR_ALREADY_RUNNING_ERROR: &str = "Channel monitor is already running";
 static ACTIVE_MONITOR_RUNS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 #[allow(dead_code)]
@@ -134,6 +135,11 @@ fn schedule_after_started_monitor<T>(
     monitor_id: &str,
     result: Result<T, String>,
 ) -> Result<T, String> {
+    if let Err(error) = result.as_ref() {
+        if is_monitor_already_running_error(error) {
+            return result;
+        }
+    }
     let schedule_result = database.schedule_next_channel_monitor_run(monitor_id);
     match (result, schedule_result) {
         (Ok(value), Ok(_)) => Ok(value),
@@ -149,6 +155,10 @@ fn monitor_stop_requested(stop_requested: Option<&AtomicBool>) -> bool {
     stop_requested.is_some_and(|stop_requested| stop_requested.load(Ordering::Relaxed))
 }
 
+fn is_monitor_already_running_error(error: &str) -> bool {
+    error == MONITOR_ALREADY_RUNNING_ERROR
+}
+
 struct MonitorRunGuard {
     monitor_id: String,
 }
@@ -160,7 +170,7 @@ impl MonitorRunGuard {
             .lock()
             .map_err(|_| "Channel monitor run guard is unavailable".to_string())?;
         if !active_runs.insert(monitor_id.to_string()) {
-            return Err("Channel monitor is already running".to_string());
+            return Err(MONITOR_ALREADY_RUNNING_ERROR.to_string());
         }
         Ok(Self {
             monitor_id: monitor_id.to_string(),
@@ -932,14 +942,28 @@ mod tests {
         accepted
             .recv_timeout(Duration::from_secs(2))
             .expect("first request accepted");
+        let due_before_overlap = database
+            .due_channel_monitors(&now_string())
+            .expect("due before overlap");
 
         let error = run_channel_monitor_now(&database, &[10_u8; 32], &monitor.id)
             .expect_err("overlapping run should be rejected");
+        let due_after_overlap = database
+            .due_channel_monitors(&now_string())
+            .expect("due after overlap");
         let first_result = first_run.join().expect("first run joined");
 
         assert!(
             error.contains("already running"),
             "overlap error should be explicit: {error}"
+        );
+        assert!(
+            due_before_overlap.iter().any(|item| item.id == monitor.id),
+            "monitor should be due before rejected overlap"
+        );
+        assert!(
+            due_after_overlap.iter().any(|item| item.id == monitor.id),
+            "rejected overlap must not advance next_run_at"
         );
         assert!(first_result.expect("first run").len() == 1);
     }
