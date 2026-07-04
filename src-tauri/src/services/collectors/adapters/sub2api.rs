@@ -329,7 +329,6 @@ pub fn create_remote_key(
         .filter(|value| !value.is_empty())
     {
         body["group"] = json!(group_name);
-        body["group_name"] = json!(group_name);
     }
 
     let result = post_json_with_bearer(&url, &access_token, &body);
@@ -341,6 +340,12 @@ pub fn create_remote_key(
     }
 
     let full_key_once = full_key_from_create_payload(&payload);
+    if full_key_once.is_none() {
+        return Err(
+            "Sub2API 远端 Key 已创建，但响应没有返回完整 Key，无法自动保存到本地。请到网站复制后手动添加。"
+                .to_string(),
+        );
+    }
     let remote_key = parse_remote_key_payload(&station.id, &payload)
         .into_iter()
         .next()
@@ -436,22 +441,40 @@ fn remote_key_from_value(
             .as_deref()
             .map(crate::services::secrets::mask::mask_secret)
     });
-    let identity = remote_key_id
-        .as_deref()
-        .or(full_key.as_deref())
-        .or(masked.as_deref())
-        .or(name.as_deref())?;
+    let (identity_kind, identity, include_index) = remote_key_identity(
+        remote_key_id.as_deref(),
+        full_key.as_deref(),
+        masked.as_deref(),
+        name.as_deref(),
+    )?;
     let remote_key_id_hash = remote_key_id
         .as_deref()
-        .or(masked.as_deref())
         .map(|value| sha256_hex(value.as_bytes()));
-    let group_id = string_field(value, &["group_id", "groupId", "group"]);
-    let group_name = string_field(value, &["group_name", "groupName", "group", "group_label"]);
+    let explicit_group_id = string_field(value, &["group_id", "groupId"]);
+    let group_name = string_field(value, &["group_name", "groupName", "group", "group_label"])
+        .or_else(|| explicit_group_id.clone());
+    let group_id_hash = match (explicit_group_id.as_deref(), group_name.as_deref()) {
+        (Some(group_id), Some(group_name)) => Some(stable_group_key_hash(
+            station_id,
+            "sub2api",
+            Some(group_id),
+            group_name,
+        )),
+        (None, Some(group_name)) => Some(stable_group_key_hash(
+            station_id, "sub2api", None, group_name,
+        )),
+        _ => None,
+    };
+    let identity_seed = if include_index {
+        format!("{station_id}:{identity_kind}:{identity}:{index}")
+    } else {
+        format!("{station_id}:{identity_kind}:{identity}")
+    };
 
     Some(RemoteStationKey {
         id: format!(
             "sub2api-remote-key-{}",
-            &sha256_hex(format!("{station_id}:{identity}:{index}").as_bytes())[..16]
+            &sha256_hex(identity_seed.as_bytes())[..16]
         ),
         station_id: station_id.to_string(),
         remote_key_id_hash,
@@ -460,10 +483,7 @@ fn remote_key_from_value(
         api_key_fingerprint: full_key
             .as_deref()
             .and_then(crate::services::remote_keys::api_key_fingerprint),
-        group_id_hash: group_id
-            .as_deref()
-            .or(group_name.as_deref())
-            .map(|value| stable_group_key_hash(station_id, "sub2api", Some(value), value)),
+        group_id_hash,
         group_name,
         tier_label: string_field(value, &["tier", "tier_label", "tierLabel", "plan"]),
         rate_multiplier: numeric_field(
@@ -485,6 +505,19 @@ fn remote_key_from_value(
         match_confidence: 0.0,
         collected_at: crate::services::database::now_millis_for_services().to_string(),
     })
+}
+
+fn remote_key_identity<'a>(
+    remote_key_id: Option<&'a str>,
+    full_key: Option<&'a str>,
+    masked: Option<&'a str>,
+    name: Option<&'a str>,
+) -> Option<(&'static str, &'a str, bool)> {
+    remote_key_id
+        .map(|value| ("remote_id", value, false))
+        .or_else(|| full_key.map(|value| ("full_key", value, false)))
+        .or_else(|| masked.map(|value| ("masked_key", value, false)))
+        .or_else(|| name.map(|value| ("name", value, true)))
 }
 
 fn remote_key_from_create_input(
@@ -519,39 +552,50 @@ fn remote_key_from_create_input(
 }
 
 fn full_key_from_key_value(value: &Value) -> Option<String> {
-    string_field(value, &["key", "api_key", "apiKey", "token"]).filter(|value| {
-        !value.contains("...")
-            && !value.contains("****")
-            && !value.eq_ignore_ascii_case("[REDACTED]")
-    })
+    string_field(value, &["key", "api_key", "apiKey", "token"])
+        .filter(|value| looks_like_full_api_key(value))
 }
 
 fn full_key_from_create_payload(payload: &Value) -> Option<String> {
     full_key_from_key_value(payload)
-        .or_else(|| {
-            payload
-                .pointer("/data/key")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string)
-        })
-        .or_else(|| {
-            payload
-                .pointer("/data/api_key")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string)
-        })
-        .or_else(|| {
-            payload
-                .pointer("/data/apiKey")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string)
-        })
+        .or_else(|| full_key_at_pointer(payload, "/data/key"))
+        .or_else(|| full_key_at_pointer(payload, "/data/api_key"))
+        .or_else(|| full_key_at_pointer(payload, "/data/apiKey"))
+}
+
+fn full_key_at_pointer(payload: &Value, pointer: &str) -> Option<String> {
+    payload
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| looks_like_full_api_key(value))
+        .map(ToString::to_string)
+}
+
+fn looks_like_full_api_key(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.len() < 12 {
+        return false;
+    }
+    let lower = trimmed.to_lowercase();
+    if lower == "[redacted]"
+        || lower == "<redacted>"
+        || lower == "redacted"
+        || lower == "masked"
+        || lower.contains("redacted")
+        || lower.contains("masked")
+        || lower.contains("[redacted]")
+        || lower.contains("<redacted>")
+    {
+        return false;
+    }
+    if trimmed.contains('*') || trimmed.contains("...") || trimmed.contains('…') {
+        return false;
+    }
+    if lower.starts_with("sk-") && lower.contains("xxx") {
+        return false;
+    }
+    true
 }
 
 fn routeable_keys_for_station(
@@ -1217,6 +1261,140 @@ mod tests {
         assert_eq!(key.created_at.as_deref(), Some("2026-07-01T12:00:00Z"));
         assert_eq!(key.last_used_at.as_deref(), Some("2026-07-02T12:00:00Z"));
         assert_eq!(key.raw_source, "sub2api_keys");
+    }
+
+    #[test]
+    fn remote_key_rejects_masked_and_redacted_full_key_values() {
+        for value in [
+            "sk-live...cdef",
+            "sk-live****cdef",
+            "sk-live…cdef",
+            "[REDACTED]",
+            "<redacted>",
+            "redacted",
+            "masked",
+            "sk-live-xxx-cdef",
+            "sk-live-XXXX-cdef",
+        ] {
+            let keys = parse_remote_key_payload(
+                "station-1",
+                &json!({
+                    "data": [{
+                        "id": format!("remote-{value}"),
+                        "name": "Masked payload",
+                        "key": value
+                    }]
+                }),
+            );
+
+            assert_eq!(keys.len(), 1, "payload should still be discovered");
+            assert_eq!(
+                keys[0].api_key_fingerprint, None,
+                "{value} must not be fingerprinted as a full key"
+            );
+            assert_eq!(
+                full_key_from_create_payload(&json!({ "data": { "key": value } })),
+                None,
+                "{value} must not be returned as a create full key"
+            );
+        }
+
+        assert_eq!(
+            full_key_from_create_payload(&json!({
+                "data": { "api_key": "sk-live-secret-abcdef" }
+            })),
+            Some("sk-live-secret-abcdef".to_string())
+        );
+    }
+
+    #[test]
+    fn remote_key_discovery_id_is_stable_for_strong_identities() {
+        let by_remote_id_first = parse_remote_key_payload(
+            "station-1",
+            &json!([
+                { "id": "remote-123", "name": "Primary" },
+                { "id": "remote-other", "name": "Other" }
+            ]),
+        );
+        let by_remote_id_second = parse_remote_key_payload(
+            "station-1",
+            &json!([
+                { "id": "remote-other", "name": "Other" },
+                { "id": "remote-123", "name": "Primary" }
+            ]),
+        );
+        assert_eq!(by_remote_id_first[0].id, by_remote_id_second[1].id);
+        let expected_remote_id_hash = sha256_hex("remote-123".as_bytes());
+        assert_eq!(
+            by_remote_id_first[0].remote_key_id_hash.as_deref(),
+            Some(expected_remote_id_hash.as_str())
+        );
+
+        let by_full_key_first = parse_remote_key_payload(
+            "station-1",
+            &json!([
+                { "name": "Key A", "key": "sk-live-secret-abcdef" },
+                { "name": "Other", "key": "sk-live-secret-other" }
+            ]),
+        );
+        let by_full_key_second = parse_remote_key_payload(
+            "station-1",
+            &json!([
+                { "name": "Other", "key": "sk-live-secret-other" },
+                { "name": "Key A", "key": "sk-live-secret-abcdef" }
+            ]),
+        );
+        assert_eq!(by_full_key_first[0].id, by_full_key_second[1].id);
+
+        let by_masked_first = parse_remote_key_payload(
+            "station-1",
+            &json!([
+                { "name": "Masked A", "masked_key": "sk-...cdef" },
+                { "name": "Other", "masked_key": "sk-...ffff" }
+            ]),
+        );
+        let by_masked_second = parse_remote_key_payload(
+            "station-1",
+            &json!([
+                { "name": "Other", "masked_key": "sk-...ffff" },
+                { "name": "Masked A", "masked_key": "sk-...cdef" }
+            ]),
+        );
+        assert_eq!(by_masked_first[0].id, by_masked_second[1].id);
+        assert_eq!(by_masked_first[0].remote_key_id_hash, None);
+    }
+
+    #[test]
+    fn remote_key_group_hash_distinguishes_id_from_name_fallback() {
+        let with_group_id = parse_remote_key_payload(
+            "station-1",
+            &json!({
+                "id": "remote-with-group-id",
+                "name": "With group id",
+                "group_id": "gid-pro",
+                "group_name": "Pro"
+            }),
+        );
+        let name_only = parse_remote_key_payload(
+            "station-1",
+            &json!({
+                "id": "remote-with-group-name",
+                "name": "With group name",
+                "group": "Pro"
+            }),
+        );
+
+        assert_eq!(with_group_id[0].group_name.as_deref(), Some("Pro"));
+        assert_eq!(
+            with_group_id[0].group_id_hash.as_deref(),
+            Some(stable_group_key_hash("station-1", "sub2api", Some("gid-pro"), "Pro").as_str())
+        );
+        assert_eq!(name_only[0].group_name.as_deref(), Some("Pro"));
+        assert_eq!(
+            name_only[0].group_id_hash.as_deref(),
+            Some(stable_group_key_hash("station-1", "sub2api", None, "Pro").as_str())
+        );
+        assert_ne!(with_group_id[0].group_id_hash, name_only[0].group_id_hash);
     }
 
     #[test]
