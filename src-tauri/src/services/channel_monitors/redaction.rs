@@ -22,7 +22,8 @@ const SENSITIVE_KEY_HINTS: [&str; 16] = [
 ];
 
 pub fn redact_monitor_text(input: &str) -> String {
-    truncate_text(&redact_secret_tokens(input))
+    let assignment_redacted = redact_sensitive_assignments(input);
+    truncate_text(&redact_secret_tokens(&assignment_redacted))
 }
 
 pub fn redact_monitor_json(value: &Value) -> Value {
@@ -94,12 +95,6 @@ fn flush_token(output: &mut String, token: &mut String, redact_next: &mut bool) 
         return;
     }
 
-    if let Some(redacted_assignment) = redact_assignment_token(token, redact_next) {
-        output.push_str(&redacted_assignment);
-        token.clear();
-        return;
-    }
-
     let lower = token
         .trim_matches(is_boundary_punctuation)
         .to_ascii_lowercase();
@@ -114,31 +109,133 @@ fn flush_token(output: &mut String, token: &mut String, redact_next: &mut bool) 
     token.clear();
 }
 
-fn redact_assignment_token(token: &str, redact_next: &mut bool) -> Option<String> {
-    let (delimiter_index, delimiter) = token
-        .char_indices()
-        .find(|(_, ch)| *ch == '=' || *ch == ':')?;
-    let key = token[..delimiter_index].trim_matches(is_boundary_punctuation);
-    if !is_sensitive_key(key) {
+fn is_boundary_punctuation(ch: char) -> bool {
+    ch.is_ascii_punctuation() && ch != '_' && ch != '-'
+}
+
+fn redact_sensitive_assignments(input: &str) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut output = String::with_capacity(input.len());
+    let mut last_written = 0;
+    let mut index = 0;
+
+    while index < chars.len() {
+        if chars[index] != ':' && chars[index] != '=' {
+            index += 1;
+            continue;
+        }
+
+        let Some(key) = assignment_key_before(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        if !is_sensitive_key(&key) {
+            index += 1;
+            continue;
+        }
+
+        let (value_start, value_end) = assignment_value_range(&chars, index + 1);
+        push_chars(&mut output, &chars[last_written..value_start]);
+        output.push_str(REDACTED);
+        last_written = value_end;
+        index = value_end;
+    }
+
+    push_chars(&mut output, &chars[last_written..]);
+    output
+}
+
+fn assignment_key_before(chars: &[char], delimiter_index: usize) -> Option<String> {
+    let mut end = delimiter_index;
+    while end > 0 && chars[end - 1].is_whitespace() {
+        end -= 1;
+    }
+    if end == 0 {
         return None;
     }
 
-    let value_start = delimiter_index + delimiter.len_utf8();
-    let value = token[value_start..].trim_start_matches(is_boundary_punctuation);
-    if value.is_empty() {
-        *redact_next = true;
+    if chars[end - 1] == '"' || chars[end - 1] == '\'' {
+        let quote = chars[end - 1];
+        let key_end = end - 1;
+        let mut start_quote = key_end;
+        while start_quote > 0 {
+            start_quote -= 1;
+            if chars[start_quote] == quote && !is_escaped(chars, start_quote) {
+                let key: String = chars[start_quote + 1..key_end].iter().collect();
+                return Some(key);
+            }
+        }
+        return unquoted_key_before(chars, key_end);
     }
 
-    Some(format!(
-        "{}{}{}",
-        &token[..delimiter_index],
-        delimiter,
-        REDACTED
-    ))
+    unquoted_key_before(chars, end)
 }
 
-fn is_boundary_punctuation(ch: char) -> bool {
-    ch.is_ascii_punctuation() && ch != '_' && ch != '-'
+fn unquoted_key_before(chars: &[char], key_end: usize) -> Option<String> {
+    let mut key_start = key_end;
+    while key_start > 0 && is_key_char(chars[key_start - 1]) {
+        key_start -= 1;
+    }
+    if key_start == key_end {
+        return None;
+    }
+    Some(chars[key_start..key_end].iter().collect())
+}
+
+fn assignment_value_range(chars: &[char], mut value_start: usize) -> (usize, usize) {
+    while value_start < chars.len() && chars[value_start].is_whitespace() {
+        value_start += 1;
+    }
+
+    if value_start < chars.len() && (chars[value_start] == '"' || chars[value_start] == '\'') {
+        let quote = chars[value_start];
+        let content_start = value_start + 1;
+        let mut value_end = content_start;
+        while value_end < chars.len() {
+            if chars[value_end] == quote && !is_escaped(chars, value_end) {
+                return (content_start, value_end);
+            }
+            value_end += 1;
+        }
+        let fallback_end = unclosed_quoted_value_boundary(chars, content_start);
+        return (content_start, fallback_end);
+    }
+
+    let mut value_end = value_start;
+    while value_end < chars.len() && !is_unquoted_value_boundary(chars[value_end]) {
+        value_end += 1;
+    }
+    (value_start, value_end)
+}
+
+fn is_key_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'
+}
+
+fn is_unquoted_value_boundary(ch: char) -> bool {
+    ch.is_whitespace() || matches!(ch, ',' | '}' | ']' | ';' | '&')
+}
+
+fn unclosed_quoted_value_boundary(chars: &[char], start: usize) -> usize {
+    let mut value_end = start;
+    while value_end < chars.len() && !is_unquoted_value_boundary(chars[value_end]) {
+        value_end += 1;
+    }
+    value_end
+}
+
+fn is_escaped(chars: &[char], index: usize) -> bool {
+    let mut backslash_count = 0;
+    let mut cursor = index;
+    while cursor > 0 && chars[cursor - 1] == '\\' {
+        backslash_count += 1;
+        cursor -= 1;
+    }
+    backslash_count % 2 == 1
+}
+
+fn push_chars(output: &mut String, chars: &[char]) {
+    output.extend(chars.iter());
 }
 
 fn is_secret_like_token(token: &str) -> bool {
@@ -241,5 +338,39 @@ mod tests {
         assert!(!redacted.contains("access-secret"));
         assert!(!redacted.contains("refresh-secret"));
         assert!(redacted.matches("[REDACTED]").count() >= 4);
+    }
+
+    #[test]
+    fn redacts_compact_invalid_json_secret_text() {
+        let input = r#"{"error":"bad","accessToken":"secret""#;
+
+        let redacted = redact_monitor_text(input);
+
+        assert!(redacted.contains(r#""error":"bad""#));
+        assert!(!redacted.contains("secret"));
+        assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn redacts_compact_json_like_secret_inside_context() {
+        let input = r#"prefix {"ok":false,"api_key":"plain-secret"} suffix"#;
+
+        let redacted = redact_monitor_text(input);
+
+        assert!(redacted.contains("prefix"));
+        assert!(redacted.contains(r#""ok":false"#));
+        assert!(redacted.contains("suffix"));
+        assert!(!redacted.contains("plain-secret"));
+    }
+
+    #[test]
+    fn redacts_comma_delimited_secret_assignments() {
+        let input = "session=abc,accessToken=secret";
+
+        let redacted = redact_monitor_text(input);
+
+        assert!(!redacted.contains("abc"));
+        assert!(!redacted.contains("secret"));
+        assert!(redacted.matches("[REDACTED]").count() >= 2);
     }
 }
