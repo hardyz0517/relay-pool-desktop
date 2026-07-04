@@ -8,7 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, types::Type, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
@@ -1084,9 +1084,9 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             endpoint_kind TEXT NOT NULL,
             method TEXT NOT NULL,
             path TEXT NOT NULL,
-            request_body_json TEXT NOT NULL,
-            enabled INTEGER NOT NULL DEFAULT 1,
-            built_in INTEGER NOT NULL DEFAULT 0,
+            request_body_json TEXT NOT NULL CHECK(json_valid(request_body_json)),
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+            built_in INTEGER NOT NULL DEFAULT 0 CHECK(built_in IN (0, 1)),
             note TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -1098,20 +1098,25 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS channel_monitors (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            target_type TEXT NOT NULL,
+            target_type TEXT NOT NULL CHECK(target_type IN ('station_key', 'station')),
             station_id TEXT NOT NULL,
             station_key_id TEXT,
             template_id TEXT NOT NULL,
-            enabled INTEGER NOT NULL DEFAULT 1,
-            interval_seconds INTEGER NOT NULL,
-            jitter_seconds INTEGER NOT NULL DEFAULT 0,
-            timeout_seconds INTEGER NOT NULL,
-            max_concurrency INTEGER NOT NULL DEFAULT 1,
-            consecutive_failure_threshold INTEGER NOT NULL DEFAULT 3,
-            fallback_models_json TEXT NOT NULL DEFAULT '[]',
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+            interval_seconds INTEGER NOT NULL CHECK(interval_seconds BETWEEN 15 AND 3600),
+            jitter_seconds INTEGER NOT NULL DEFAULT 0 CHECK(jitter_seconds BETWEEN 0 AND 600),
+            timeout_seconds INTEGER NOT NULL CHECK(timeout_seconds BETWEEN 5 AND 120),
+            max_concurrency INTEGER NOT NULL DEFAULT 1 CHECK(max_concurrency BETWEEN 1 AND 16),
+            consecutive_failure_threshold INTEGER NOT NULL DEFAULT 3 CHECK(consecutive_failure_threshold BETWEEN 1 AND 20),
+            fallback_models_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(fallback_models_json)),
             note TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
+            CHECK(interval_seconds - jitter_seconds >= 15),
+            CHECK(
+                (target_type = 'station_key' AND station_key_id IS NOT NULL)
+                OR (target_type = 'station' AND station_key_id IS NULL)
+            ),
             FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE,
             FOREIGN KEY(station_key_id) REFERENCES station_keys(id) ON DELETE CASCADE,
             FOREIGN KEY(template_id) REFERENCES channel_monitor_request_templates(id)
@@ -1129,12 +1134,12 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             template_id TEXT NOT NULL,
             station_id TEXT NOT NULL,
             station_key_id TEXT,
-            status TEXT NOT NULL,
-            started_at TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('success', 'warning', 'failed', 'skipped')),
+            started_at TEXT NOT NULL CHECK(TRIM(started_at) != ''),
             finished_at TEXT,
-            duration_ms INTEGER,
-            http_status INTEGER,
-            latency_ms INTEGER,
+            duration_ms INTEGER CHECK(duration_ms IS NULL OR duration_ms >= 0),
+            http_status INTEGER CHECK(http_status IS NULL OR http_status BETWEEN 100 AND 599),
+            latency_ms INTEGER CHECK(latency_ms IS NULL OR latency_ms >= 0),
             response_model TEXT,
             fallback_model TEXT,
             error_message TEXT,
@@ -2224,8 +2229,18 @@ fn validate_channel_monitor_template_fields(
     if method.trim().is_empty() {
         return Err("Channel monitor method cannot be empty".to_string());
     }
-    if !path.trim().starts_with('/') {
-        return Err("Channel monitor path must start with /".to_string());
+    let path = path.trim();
+    if !path.starts_with('/')
+        || path.starts_with("//")
+        || path.contains("://")
+        || path
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err(
+            "Channel monitor path must be a same-origin path starting with exactly one /"
+                .to_string(),
+        );
     }
     serde_json::from_str::<Value>(request_body_json)
         .map_err(|error| format!("Channel monitor request body must be valid JSON: {error}"))?;
@@ -2379,7 +2394,9 @@ fn delete_channel_monitor_template_in_connection(
 fn row_to_channel_monitor(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChannelMonitor> {
     let fallback_models_json: String = row.get(12)?;
     let fallback_models =
-        serde_json::from_str::<Vec<String>>(&fallback_models_json).unwrap_or_else(|_| Vec::new());
+        serde_json::from_str::<Vec<String>>(&fallback_models_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(12, Type::Text, Box::new(error))
+        })?;
 
     Ok(ChannelMonitor {
         id: row.get(0)?,
@@ -2456,6 +2473,8 @@ fn validate_station_key_belongs_to_station(
     station_id: &str,
     station_key_id: &str,
 ) -> Result<(), String> {
+    // SQLite CHECK constraints cannot query station_keys, so station/key ownership
+    // remains guarded here before monitor writes.
     let owner_station_id: Option<String> = connection
         .query_row(
             "SELECT station_id FROM station_keys WHERE id = ?1",
@@ -2534,6 +2553,34 @@ fn validate_channel_monitor_values(
     }
 
     Ok(target_type)
+}
+
+fn validate_channel_monitor_run_input(input: &CreateChannelMonitorRunInput) -> Result<(), String> {
+    match input.status.trim() {
+        "success" | "warning" | "failed" | "skipped" => {}
+        _ => {
+            return Err(
+                "Channel monitor run status must be success, warning, failed, or skipped"
+                    .to_string(),
+            )
+        }
+    }
+    if input.started_at.trim().is_empty() {
+        return Err("Channel monitor run started_at cannot be empty".to_string());
+    }
+    if input.duration_ms.is_some_and(|value| value < 0) {
+        return Err("Channel monitor run duration_ms must be non-negative".to_string());
+    }
+    if input.latency_ms.is_some_and(|value| value < 0) {
+        return Err("Channel monitor run latency_ms must be non-negative".to_string());
+    }
+    if input
+        .http_status
+        .is_some_and(|value| !(100..=599).contains(&value))
+    {
+        return Err("Channel monitor run status_code must be between 100 and 599".to_string());
+    }
+    Ok(())
 }
 
 fn create_channel_monitor_in_connection(
@@ -2717,9 +2764,7 @@ fn insert_channel_monitor_run_in_connection(
     {
         return Err("Channel monitor run target does not match monitor".to_string());
     }
-    if input.status.trim().is_empty() {
-        return Err("Channel monitor run status cannot be empty".to_string());
-    }
+    validate_channel_monitor_run_input(&input)?;
     let id = generate_id("channel_monitor_run");
 
     connection
@@ -7128,7 +7173,7 @@ fn now_millis() -> u128 {
 mod tests {
     use super::*;
     use crate::models::channel_monitors::{
-        CreateChannelMonitorInput, CreateChannelMonitorTemplateInput,
+        CreateChannelMonitorInput, CreateChannelMonitorRunInput, CreateChannelMonitorTemplateInput,
         UpdateChannelMonitorTemplateInput,
     };
     use crate::models::group_facts::{
@@ -7151,6 +7196,27 @@ mod tests {
                 note: None,
             })
             .expect("station")
+    }
+
+    fn test_channel_monitor(database: &AppDatabase, name: &str) -> ChannelMonitor {
+        let station = test_station(database, name);
+        database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: format!("{name} monitor"),
+                target_type: "station".to_string(),
+                station_id: station.id,
+                station_key_id: None,
+                template_id: "builtin-openai-chat-default".to_string(),
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 15,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 3,
+                fallback_models: Vec::new(),
+                note: None,
+            })
+            .expect("monitor")
     }
 
     #[test]
@@ -7320,6 +7386,118 @@ mod tests {
 
         assert_eq!(updated.name, "custom editable copy");
         assert_eq!(updated.note.as_deref(), Some("edited"));
+    }
+
+    #[test]
+    fn channel_monitor_template_rejects_external_origin_path() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+
+        let error = database
+            .create_channel_monitor_template(CreateChannelMonitorTemplateInput {
+                name: "external path".to_string(),
+                endpoint_kind: "chat_completions".to_string(),
+                method: "POST".to_string(),
+                path: "//example.com/v1/chat/completions".to_string(),
+                request_body_json: r#"{"model":"gpt-4o-mini","messages":[]}"#.to_string(),
+                enabled: true,
+                note: None,
+            })
+            .expect_err("external origin path rejected");
+
+        assert!(error.contains("same-origin"));
+    }
+
+    #[test]
+    fn channel_monitor_run_rejects_invalid_status() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let monitor = test_channel_monitor(&database, "invalid run status");
+
+        let error = database
+            .insert_channel_monitor_run(CreateChannelMonitorRunInput {
+                monitor_id: monitor.id,
+                template_id: monitor.template_id,
+                station_id: monitor.station_id,
+                station_key_id: monitor.station_key_id,
+                status: "running".to_string(),
+                started_at: "1000".to_string(),
+                finished_at: Some("1100".to_string()),
+                duration_ms: Some(100),
+                http_status: Some(200),
+                latency_ms: Some(95),
+                response_model: Some("gpt-4o-mini".to_string()),
+                fallback_model: None,
+                error_message: None,
+            })
+            .expect_err("invalid status rejected");
+
+        assert!(error.contains("status must be success, warning, failed, or skipped"));
+    }
+
+    #[test]
+    fn channel_monitor_run_rejects_negative_latency_and_bad_status_code() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let monitor = test_channel_monitor(&database, "invalid run metrics");
+
+        let negative_latency = database
+            .insert_channel_monitor_run(CreateChannelMonitorRunInput {
+                monitor_id: monitor.id.clone(),
+                template_id: monitor.template_id.clone(),
+                station_id: monitor.station_id.clone(),
+                station_key_id: monitor.station_key_id.clone(),
+                status: "success".to_string(),
+                started_at: "1000".to_string(),
+                finished_at: Some("1100".to_string()),
+                duration_ms: Some(100),
+                http_status: Some(200),
+                latency_ms: Some(-1),
+                response_model: None,
+                fallback_model: None,
+                error_message: None,
+            })
+            .expect_err("negative latency rejected");
+        assert!(negative_latency.contains("latency_ms must be non-negative"));
+
+        let bad_status = database
+            .insert_channel_monitor_run(CreateChannelMonitorRunInput {
+                monitor_id: monitor.id,
+                template_id: monitor.template_id,
+                station_id: monitor.station_id,
+                station_key_id: monitor.station_key_id,
+                status: "failed".to_string(),
+                started_at: "1000".to_string(),
+                finished_at: Some("1100".to_string()),
+                duration_ms: Some(100),
+                http_status: Some(42),
+                latency_ms: Some(10),
+                response_model: None,
+                fallback_model: None,
+                error_message: Some("bad upstream".to_string()),
+            })
+            .expect_err("bad status code rejected");
+        assert!(bad_status.contains("status_code must be between 100 and 599"));
+    }
+
+    #[test]
+    fn channel_monitor_table_rejects_invalid_target_shape() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "db target shape");
+        let connection = database.connection().expect("connection");
+
+        let result = connection.execute(
+            "INSERT INTO channel_monitors (
+                id, name, target_type, station_id, station_key_id, template_id,
+                enabled, interval_seconds, jitter_seconds, timeout_seconds,
+                max_concurrency, consecutive_failure_threshold, fallback_models_json,
+                note, created_at, updated_at
+             ) VALUES (
+                'bad-target-shape', 'bad target shape', 'station_key', ?1, NULL,
+                'builtin-openai-chat-default', 1, 60, 0, 15, 1, 3, '[]',
+                NULL, '1000', '1000'
+             )",
+            params![station.id],
+        );
+
+        assert!(result.is_err(), "invalid target shape should fail CHECK");
     }
 
     #[test]
