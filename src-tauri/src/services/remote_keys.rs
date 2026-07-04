@@ -65,12 +65,18 @@ mod tests {
 
     #[test]
     fn masked_key_match_requires_visible_prefix_and_suffix() {
-        assert!(masked_key_matches_full("sk-live****cdef", "sk-live-123-cdef"));
+        assert!(masked_key_matches_full(
+            "sk-live****cdef",
+            "sk-live-123-cdef"
+        ));
         assert!(masked_key_matches_full(
             "sk-live-...cdef",
             "sk-live-123-cdef"
         ));
-        assert!(!masked_key_matches_full("sk-live****zzzz", "sk-live-123-cdef"));
+        assert!(!masked_key_matches_full(
+            "sk-live****zzzz",
+            "sk-live-123-cdef"
+        ));
         assert!(!masked_key_matches_full(
             "sk-live-...zzzz",
             "sk-live-123-cdef"
