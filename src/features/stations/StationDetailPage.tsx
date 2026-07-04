@@ -69,6 +69,7 @@ export function StationDetailPage({ stationId, onBack, onEditProvider }: Station
   const [loadingAction, setLoadingAction] = useState<StationDetailRefreshAction | null>(null);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       loadRequestRef.current += 1;
@@ -143,8 +144,8 @@ export function StationDetailPage({ stationId, onBack, onEditProvider }: Station
         groupRates,
         collectorRuns,
         latestSnapshot,
-        balances: balanceSnapshots.filter((balance) => balance.stationId === id),
-        changes: changeEvents.filter((event) => event.stationId === id),
+        balances: balanceSnapshots.filter((balance: BalanceSnapshot) => balance.stationId === id),
+        changes: changeEvents.filter((event: ChangeEvent) => event.stationId === id),
       };
       setDetailData(nextData);
       setPageError(null);
