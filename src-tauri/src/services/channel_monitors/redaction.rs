@@ -134,7 +134,7 @@ fn redact_sensitive_assignments(input: &str) -> String {
             continue;
         }
 
-        let (value_start, value_end) = assignment_value_range(&chars, index + 1);
+        let (value_start, value_end) = assignment_value_range(&chars, index + 1, &key);
         push_chars(&mut output, &chars[last_written..value_start]);
         output.push_str(REDACTED);
         last_written = value_end;
@@ -182,7 +182,7 @@ fn unquoted_key_before(chars: &[char], key_end: usize) -> Option<String> {
     Some(chars[key_start..key_end].iter().collect())
 }
 
-fn assignment_value_range(chars: &[char], mut value_start: usize) -> (usize, usize) {
+fn assignment_value_range(chars: &[char], mut value_start: usize, key: &str) -> (usize, usize) {
     while value_start < chars.len() && chars[value_start].is_whitespace() {
         value_start += 1;
     }
@@ -201,6 +201,10 @@ fn assignment_value_range(chars: &[char], mut value_start: usize) -> (usize, usi
         return (content_start, fallback_end);
     }
 
+    if is_header_style_secret_key(key) {
+        return (value_start, header_style_value_end(chars, value_start));
+    }
+
     let mut value_end = value_start;
     while value_end < chars.len() && !is_unquoted_value_boundary(chars[value_end]) {
         value_end += 1;
@@ -214,6 +218,21 @@ fn is_key_char(ch: char) -> bool {
 
 fn is_unquoted_value_boundary(ch: char) -> bool {
     ch.is_whitespace() || matches!(ch, ',' | '}' | ']' | ';' | '&')
+}
+
+fn is_header_style_secret_key(key: &str) -> bool {
+    matches!(
+        normalize_key(key).as_str(),
+        "authorization" | "cookie" | "setcookie"
+    )
+}
+
+fn header_style_value_end(chars: &[char], start: usize) -> usize {
+    let mut value_end = start;
+    while value_end < chars.len() && chars[value_end] != '\r' && chars[value_end] != '\n' {
+        value_end += 1;
+    }
+    value_end
 }
 
 fn unclosed_quoted_value_boundary(chars: &[char], start: usize) -> usize {
@@ -372,5 +391,40 @@ mod tests {
         assert!(!redacted.contains("abc"));
         assert!(!redacted.contains("secret"));
         assert!(redacted.matches("[REDACTED]").count() >= 2);
+    }
+
+    #[test]
+    fn redacts_authorization_header_value_with_spaces() {
+        let input = "authorization: Bearer opaque-token";
+
+        let redacted = redact_monitor_text(input);
+
+        assert!(redacted.contains("authorization: "));
+        assert!(!redacted.contains("Bearer"));
+        assert!(!redacted.contains("opaque-token"));
+        assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn redacts_case_insensitive_authorization_header_value() {
+        let input = "Authorization: Bearer ghp_example";
+
+        let redacted = redact_monitor_text(input);
+
+        assert!(redacted.contains("Authorization: "));
+        assert!(!redacted.contains("ghp_example"));
+        assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn redacts_cookie_header_value_with_semicolon_segments() {
+        let input = "cookie: a=b; c=d";
+
+        let redacted = redact_monitor_text(input);
+
+        assert!(redacted.contains("cookie: "));
+        assert!(!redacted.contains("a=b"));
+        assert!(!redacted.contains("c=d"));
+        assert!(redacted.contains("[REDACTED]"));
     }
 }
