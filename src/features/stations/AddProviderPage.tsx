@@ -3,11 +3,23 @@ import { ArrowLeft, Check, ShieldCheck } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
 import { testStationLoginInput } from "@/lib/api/collector";
-import { getStationCredentials, updateStationCredentials } from "@/lib/api/stationKeys";
+import {
+  createStationKey,
+  deleteStationKey,
+  getStationCredentials,
+  listStationKeys,
+  updateStationCredentials,
+  updateStationKey,
+} from "@/lib/api/stationKeys";
 import { createStation, listStations, updateStation } from "@/lib/api/stations";
-import type { StationCredentials } from "@/lib/types/stationKeys";
+import type { StationCredentials, StationKey } from "@/lib/types/stationKeys";
 import { stationTypeLabels, type Station, type StationType } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
+import {
+  createEmptyStationKeyDraft,
+  StationKeyRowsEditor,
+  type StationKeyDraft,
+} from "./components/StationKeyRowsEditor";
 import { providerPresets, type ProviderPresetId } from "./providerPresets";
 
 type AddProviderPageProps = {
@@ -61,6 +73,106 @@ function formFromStation(station: Station, credentials: StationCredentials): Add
   };
 }
 
+function keyToDraft(key: StationKey): StationKeyDraft {
+  return {
+    clientId: key.id,
+    id: key.id,
+    name: key.name,
+    apiKey: "",
+    groupName: key.groupName ?? "",
+    rateMultiplier: key.rateMultiplier === null ? "" : String(key.rateMultiplier),
+    enabled: key.enabled,
+    note: key.note ?? "",
+    deleteRequested: false,
+  };
+}
+
+function rowHasMeaningfulContent(row: StationKeyDraft) {
+  return Boolean(
+    row.id ||
+      row.name.trim() ||
+      row.apiKey.trim() ||
+      row.groupName.trim() ||
+      row.rateMultiplier.trim() ||
+      row.note.trim(),
+  );
+}
+
+function parseOptionalRateMultiplier(value: string) {
+  if (!value.trim()) {
+    return null;
+  }
+  const rate = Number(value);
+  if (!Number.isFinite(rate)) {
+    throw new Error("密钥倍率必须是有效数字");
+  }
+  return rate;
+}
+
+function validateKeyRows(rows: StationKeyDraft[]) {
+  rows
+    .filter((row) => !row.deleteRequested)
+    .forEach((row) => {
+      const hasContent = rowHasMeaningfulContent(row);
+      if (hasContent && !row.name.trim()) {
+        throw new Error("请填写密钥名称");
+      }
+      parseOptionalRateMultiplier(row.rateMultiplier);
+    });
+}
+
+async function saveKeyRows(targetStationId: string, rows: StationKeyDraft[]) {
+  validateKeyRows(rows);
+
+  await Promise.all(
+    rows
+      .filter((row) => row.id && row.deleteRequested)
+      .map((row) => deleteStationKey(row.id ?? "")),
+  );
+
+  const visibleRows = rows
+    .filter((row) => !row.deleteRequested)
+    .filter((row) => row.id || row.apiKey.trim());
+
+  for (const [priority, row] of visibleRows.entries()) {
+    const rateMultiplier = parseOptionalRateMultiplier(row.rateMultiplier);
+    const rateSource = rateMultiplier === null ? null : "manual";
+    const input = {
+      stationId: targetStationId,
+      name: row.name.trim(),
+      enabled: row.enabled,
+      priority,
+      groupBindingId: null,
+      groupIdHash: null,
+      groupName: row.groupName.trim() ? row.groupName.trim() : null,
+      tierLabel: null,
+      rateMultiplier,
+      rateSource,
+      balanceScope: "station_key",
+      note: row.note.trim() ? row.note.trim() : null,
+    };
+
+    if (row.id) {
+      await updateStationKey({
+        ...input,
+        id: row.id,
+        apiKey: row.apiKey.trim() ? row.apiKey.trim() : null,
+        status: "unchecked",
+      });
+      continue;
+    }
+
+    if (!row.apiKey.trim()) {
+      continue;
+    }
+
+    await createStationKey({
+      ...input,
+      apiKey: row.apiKey.trim(),
+    });
+  }
+}
+
 export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: AddProviderPageProps) {
   const toast = useToast();
   const editing = Boolean(stationId);
@@ -85,10 +197,12 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     status: "idle",
     message: null,
   });
+  const [keyRows, setKeyRows] = useState<StationKeyDraft[]>([createEmptyStationKeyDraft(0)]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!stationId) {
+      setKeyRows([createEmptyStationKeyDraft(0)]);
       setLoading(false);
       return;
     }
@@ -96,8 +210,8 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     let alive = true;
     setLoading(true);
     setError(null);
-    void Promise.all([listStations(), getStationCredentials(stationId)])
-      .then(([stations, credentials]) => {
+    void Promise.all([listStations(), getStationCredentials(stationId), listStationKeys(stationId)])
+      .then(([stations, credentials, keys]) => {
         if (!alive) {
           return;
         }
@@ -106,6 +220,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           throw new Error("未找到要编辑的供应商");
         }
         setForm(formFromStation(station, credentials));
+        setKeyRows(keys.length ? keys.map(keyToDraft) : []);
         setConnectionTest({ status: "idle", message: null });
       })
       .catch((requestError) => {
@@ -151,7 +266,17 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       return;
     }
     if (!editing && !form.apiKey.trim()) {
-      toast.info("请填写密钥");
+      const firstDraftKey = keyRows.find((row) => !row.deleteRequested && row.apiKey.trim());
+      if (!firstDraftKey) {
+        toast.info("请填写默认密钥或本地密钥");
+        return;
+      }
+    }
+
+    try {
+      validateKeyRows(keyRows);
+    } catch (validationError) {
+      toast.info(readError(validationError));
       return;
     }
 
@@ -172,6 +297,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
             : null,
           note: form.note.trim() ? form.note.trim() : null,
         });
+        await saveKeyRows(stationId, keyRows);
         if (form.loginUsername.trim() || form.loginPassword.trim() || form.rememberPassword) {
           await updateStationCredentials({
             stationId,
@@ -185,11 +311,13 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         return;
       }
 
+      const firstKeyDraft = keyRows.find((row) => !row.deleteRequested && row.apiKey.trim());
+      const stationApiKey = form.apiKey.trim() || firstKeyDraft?.apiKey.trim() || "";
       const station = await createStation({
         name: form.name.trim(),
         stationType: form.stationType,
         baseUrl: form.baseUrl.trim(),
-        apiKey: form.apiKey.trim(),
+        apiKey: stationApiKey,
         enabled: form.enabled,
         creditPerCny: Number(form.creditPerCny),
         lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim()
@@ -197,6 +325,22 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           : null,
         note: form.note.trim() ? form.note.trim() : null,
       });
+      let rowsToSave = keyRows;
+      if (!form.apiKey.trim() && firstKeyDraft) {
+        const createdKeys = await listStationKeys(station.id);
+        const defaultKey =
+          createdKeys.find((key) => key.priority === 0) ??
+          createdKeys.find((key) => key.name === "Default Key") ??
+          createdKeys[0];
+        if (defaultKey) {
+          rowsToSave = keyRows.map((row) =>
+            row.clientId === firstKeyDraft.clientId
+              ? { ...row, id: defaultKey.id, apiKey: "" }
+              : row,
+          );
+        }
+      }
+      await saveKeyRows(station.id, rowsToSave);
       if (form.loginUsername.trim() || form.loginPassword.trim()) {
         await updateStationCredentials({
           stationId: station.id,
@@ -210,7 +354,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : String(requestError);
       setError(message);
-      toast.error("添加供应商失败", message);
+      toast.error(editing ? "保存供应商失败" : "添加供应商失败", message);
     } finally {
       setSaving(false);
     }
@@ -416,6 +560,14 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                   {error}
                 </div>
               )}
+            </SectionCard>
+
+            <SectionCard title="密钥">
+              <StationKeyRowsEditor
+                disabled={saving || loading}
+                rows={keyRows}
+                onRowsChange={setKeyRows}
+              />
             </SectionCard>
           </div>
 
