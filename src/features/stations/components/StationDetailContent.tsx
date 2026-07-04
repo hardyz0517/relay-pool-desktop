@@ -1,0 +1,303 @@
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Clock3,
+  Database,
+  Edit3,
+  KeyRound,
+  Layers3,
+  RefreshCw,
+  RotateCw,
+  WalletCards,
+} from "lucide-react";
+import { Button, EmptyState, StatusBadge, type StatusTone } from "@/components/ui";
+import { cn } from "@/lib/utils";
+import type {
+  DetailTone,
+  StationDetailDiagnosticItem,
+  StationDetailViewModel,
+} from "../stationDetailViewModels";
+
+export type StationDetailRefreshAction = "balance" | "groups" | "full";
+
+export type StationDetailContentProps = {
+  viewModel: StationDetailViewModel;
+  loadingAction: StationDetailRefreshAction | null;
+  sectionError: string | null;
+  onBack: () => void;
+  onEdit: () => void;
+  onRefresh: (action: StationDetailRefreshAction) => void;
+};
+
+const statusToneByDetailTone: Record<DetailTone, StatusTone> = {
+  neutral: "info",
+  good: "healthy",
+  warning: "warning",
+  error: "error",
+  muted: "disabled",
+};
+
+const textToneClassName: Record<DetailTone, string> = {
+  neutral: "text-slate-700",
+  good: "text-emerald-700",
+  warning: "text-amber-700",
+  error: "text-rose-700",
+  muted: "text-slate-500",
+};
+
+const surfaceToneClassName: Record<DetailTone, string> = {
+  neutral: "border-border bg-white",
+  good: "border-emerald-100 bg-emerald-50/60",
+  warning: "border-amber-100 bg-amber-50/70",
+  error: "border-rose-100 bg-rose-50/70",
+  muted: "border-border bg-slate-50",
+};
+
+export function StationDetailContent({
+  viewModel,
+  loadingAction,
+  sectionError,
+  onBack,
+  onEdit,
+  onRefresh,
+}: StationDetailContentProps) {
+  const station = viewModel.station;
+  const actionBusy = loadingAction !== null;
+
+  return (
+    <div className="space-y-4">
+      <header className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-3 shadow-[var(--surface-shadow)]">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 space-y-2">
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.35)]"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              返回中转站资产
+            </button>
+
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h1 className="min-w-0 truncate text-xl font-semibold tracking-normal text-slate-900">
+                {station.name}
+              </h1>
+              <StatusBadge tone={statusToneByDetailTone[viewModel.statusTone]}>
+                {viewModel.statusLabel}
+              </StatusBadge>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <span>{viewModel.stationTypeLabel}</span>
+              <span className="max-w-full truncate font-mono text-[11px] text-slate-600">
+                {station.baseUrl}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Clock3 className="h-3.5 w-3.5" />
+                最近活动 {viewModel.lastActivityLabel}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={actionBusy}
+              onClick={() => onRefresh("balance")}
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", loadingAction === "balance" && "animate-spin")} />
+              刷新余额
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={actionBusy}
+              onClick={() => onRefresh("groups")}
+            >
+              <Layers3 className={cn("h-3.5 w-3.5", loadingAction === "groups" && "animate-pulse")} />
+              采集分组倍率
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={actionBusy}
+              onClick={() => onRefresh("full")}
+            >
+              <RotateCw className={cn("h-3.5 w-3.5", loadingAction === "full" && "animate-spin")} />
+              重新采集
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onEdit}>
+              <Edit3 className="h-3.5 w-3.5" />
+              编辑供应商
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      {sectionError && (
+        <div className="flex items-start gap-2 rounded-[var(--surface-radius)] border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{sectionError}</span>
+        </div>
+      )}
+
+      <section className="rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+          <WalletCards className="h-4 w-4 text-slate-500" />
+          <h2 className="text-sm font-semibold text-slate-900">余额</h2>
+        </div>
+        <div className="grid gap-3 p-4 md:grid-cols-3">
+          {viewModel.balanceCards.map((card) => (
+            <div
+              key={card.label}
+              className={cn(
+                "min-h-[84px] rounded-[var(--surface-radius)] border px-3 py-2.5",
+                surfaceToneClassName[card.tone],
+              )}
+            >
+              <div className="text-xs text-muted-foreground">{card.label}</div>
+              <div className={cn("mt-1 truncate text-lg font-semibold", textToneClassName[card.tone])}>
+                {card.value}
+              </div>
+              <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{card.helper}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <Layers3 className="h-4 w-4 text-slate-500" />
+            <h2 className="text-sm font-semibold text-slate-900">分组与倍率</h2>
+          </div>
+          <span className="text-xs text-muted-foreground">{viewModel.groupRows.length} 条记录</span>
+        </div>
+        <div className="p-4">
+          {viewModel.groupRows.length === 0 ? (
+            <EmptyState
+              title={viewModel.groupEmptyMessage}
+              description="点击采集分组倍率或重新采集后，这里会显示站点分组、默认倍率与用户倍率。"
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-[820px] w-full border-separate border-spacing-0 text-left text-xs">
+                <thead>
+                  <tr className="text-muted-foreground">
+                    <TableHead className="pl-0">分组</TableHead>
+                    <TableHead>生效倍率</TableHead>
+                    <TableHead>默认倍率</TableHead>
+                    <TableHead>用户倍率</TableHead>
+                    <TableHead>绑定状态</TableHead>
+                    <TableHead>来源</TableHead>
+                    <TableHead>最近检查</TableHead>
+                    <TableHead className="pr-0">提示</TableHead>
+                  </tr>
+                </thead>
+                <tbody>
+                  {viewModel.groupRows.map((row) => (
+                    <tr key={row.id} className="border-t border-border">
+                      <TableCell className="max-w-[220px] pl-0">
+                        <div className="truncate font-medium text-slate-800">{row.groupName}</div>
+                        <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                          {row.groupId}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className={cn("font-semibold", textToneClassName[row.tone])}>
+                          {row.effectiveRate}
+                        </span>
+                      </TableCell>
+                      <TableCell>{row.defaultRate}</TableCell>
+                      <TableCell>{row.userRate}</TableCell>
+                      <TableCell>
+                        <StatusBadge tone={statusToneByDetailTone[row.tone]}>{row.bindingStatus}</StatusBadge>
+                      </TableCell>
+                      <TableCell>{row.source}</TableCell>
+                      <TableCell>{row.lastChecked}</TableCell>
+                      <TableCell className="pr-0">
+                        {row.warning ? (
+                          <span className="inline-flex items-center gap-1 text-amber-700">
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                            {row.warning}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">无</span>
+                        )}
+                      </TableCell>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <DiagnosticSection icon={KeyRound} title="登录与密钥" items={viewModel.loginItems} />
+        <DiagnosticSection icon={RefreshCw} title="采集任务" items={viewModel.collectorItems} />
+        <DiagnosticSection icon={Database} title="最新快照" items={viewModel.snapshotItems} />
+        <DiagnosticSection icon={AlertTriangle} title="相关变化" items={viewModel.changeItems} />
+      </div>
+    </div>
+  );
+}
+
+function TableHead({
+  className,
+  children,
+}: {
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <th className={cn("border-b border-border px-3 pb-2 font-medium", className)}>
+      {children}
+    </th>
+  );
+}
+
+function TableCell({
+  className,
+  children,
+}: {
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <td className={cn("border-b border-border px-3 py-2.5 align-top text-slate-700", className)}>
+      {children}
+    </td>
+  );
+}
+
+function DiagnosticSection({
+  icon: Icon,
+  title,
+  items,
+}: {
+  icon: typeof KeyRound;
+  title: string;
+  items: StationDetailDiagnosticItem[];
+}) {
+  return (
+    <section className="rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+        <Icon className="h-4 w-4 text-slate-500" />
+        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+      </div>
+      <dl className="divide-y divide-border px-4">
+        {items.map((item) => (
+          <div key={`${item.label}-${item.value}`} className="grid grid-cols-[112px_minmax(0,1fr)] gap-3 py-2.5 text-xs">
+            <dt className="text-muted-foreground">{item.label}</dt>
+            <dd className={cn("min-w-0 break-words font-medium", textToneClassName[item.tone])}>
+              {item.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
