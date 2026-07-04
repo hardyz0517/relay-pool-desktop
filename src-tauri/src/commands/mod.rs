@@ -6,6 +6,11 @@ use crate::{
     models::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
         change_events::{ChangeEvent, UpsertChangeEventInput},
+        channel_monitors::{
+            ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
+            CreateChannelMonitorInput, CreateChannelMonitorTemplateInput,
+            UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
+        },
         collector::{CollectorRunResult, CollectorSnapshot},
         collector_runs::CollectorRun,
         credentials::{StationCredentials, UpdateStationCredentialsInput, UpdateStationSessionInput},
@@ -306,6 +311,100 @@ pub fn list_station_key_health(
     database: State<'_, AppDatabase>,
 ) -> Result<Vec<StationKeyHealth>, String> {
     database.list_station_key_health()
+}
+
+#[tauri::command]
+pub fn list_channel_monitors(
+    database: State<'_, AppDatabase>,
+) -> Result<Vec<ChannelMonitor>, String> {
+    database.list_channel_monitors()
+}
+
+#[tauri::command]
+pub fn create_channel_monitor(
+    database: State<'_, AppDatabase>,
+    input: CreateChannelMonitorInput,
+) -> Result<ChannelMonitor, String> {
+    database.create_channel_monitor(input)
+}
+
+#[tauri::command]
+pub fn update_channel_monitor(
+    database: State<'_, AppDatabase>,
+    input: UpdateChannelMonitorInput,
+) -> Result<ChannelMonitor, String> {
+    database.update_channel_monitor(input)
+}
+
+#[tauri::command]
+pub fn delete_channel_monitor(database: State<'_, AppDatabase>, id: String) -> Result<(), String> {
+    database.delete_channel_monitor(id)
+}
+
+#[tauri::command]
+pub fn list_channel_monitor_runs(
+    database: State<'_, AppDatabase>,
+    monitor_id: String,
+) -> Result<Vec<ChannelMonitorRun>, String> {
+    database.list_channel_monitor_runs(monitor_id)
+}
+
+#[tauri::command]
+pub fn list_channel_monitor_templates(
+    database: State<'_, AppDatabase>,
+) -> Result<Vec<ChannelMonitorRequestTemplate>, String> {
+    database.list_channel_monitor_templates()
+}
+
+#[tauri::command]
+pub fn create_channel_monitor_template(
+    database: State<'_, AppDatabase>,
+    input: CreateChannelMonitorTemplateInput,
+) -> Result<ChannelMonitorRequestTemplate, String> {
+    database.create_channel_monitor_template(input)
+}
+
+#[tauri::command]
+pub fn update_channel_monitor_template(
+    database: State<'_, AppDatabase>,
+    input: UpdateChannelMonitorTemplateInput,
+) -> Result<ChannelMonitorRequestTemplate, String> {
+    database.update_channel_monitor_template(input)
+}
+
+#[tauri::command]
+pub fn duplicate_channel_monitor_template(
+    database: State<'_, AppDatabase>,
+    id: String,
+) -> Result<ChannelMonitorRequestTemplate, String> {
+    database.duplicate_channel_monitor_template(id)
+}
+
+#[tauri::command]
+pub fn delete_channel_monitor_template(
+    database: State<'_, AppDatabase>,
+    id: String,
+) -> Result<(), String> {
+    database.delete_channel_monitor_template(id)
+}
+
+#[tauri::command]
+pub async fn run_channel_monitor_now(
+    database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
+    monitor_id: String,
+) -> Result<Vec<ChannelMonitorRun>, String> {
+    let database = database.inner().clone();
+    let data_key = *secrets.data_key();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::channel_monitors::run_channel_monitor_now(
+            &database,
+            &data_key,
+            &monitor_id,
+        )
+    })
+    .await
+    .map_err(|error| format!("Channel monitor run failed to join: {error}"))?
 }
 
 #[tauri::command]
