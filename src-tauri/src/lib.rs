@@ -9,12 +9,19 @@ pub fn run() {
         .setup(|app| {
             let secret_manager = services::secrets::SecretManager::initialize()?;
             let database = services::database::AppDatabase::initialize(app.handle())?;
+            let data_key = *secret_manager.data_key();
+            let channel_monitor_runner =
+                services::channel_monitors::ChannelMonitorRunnerState::start(
+                    database.clone(),
+                    data_key,
+                );
             println!(
                 "Relay Pool Desktop database initialized at {}",
                 database.db_path().display()
             );
             app.manage(secret_manager);
             app.manage(database);
+            app.manage(channel_monitor_runner);
             app.manage(services::capture::session::CaptureSessionStore::default());
             app.manage(services::proxy::runtime::ProxyRuntimeState::default());
             Ok(())

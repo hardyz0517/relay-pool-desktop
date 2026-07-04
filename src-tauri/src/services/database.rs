@@ -1,5 +1,7 @@
 use std::{
+    collections::hash_map::DefaultHasher,
     fs,
+    hash::{Hash, Hasher},
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -796,6 +798,14 @@ impl AppDatabase {
         list_channel_monitor_templates_from_connection(&connection)
     }
 
+    pub fn get_channel_monitor_template(
+        &self,
+        id: &str,
+    ) -> Result<ChannelMonitorRequestTemplate, String> {
+        let connection = self.connection()?;
+        channel_monitor_template_by_id(&connection, id)
+    }
+
     pub fn create_channel_monitor_template(
         &self,
         input: CreateChannelMonitorTemplateInput,
@@ -828,6 +838,11 @@ impl AppDatabase {
     pub fn list_channel_monitors(&self) -> Result<Vec<ChannelMonitor>, String> {
         let connection = self.connection()?;
         list_channel_monitors_from_connection(&connection)
+    }
+
+    pub fn get_channel_monitor(&self, id: &str) -> Result<ChannelMonitor, String> {
+        let connection = self.connection()?;
+        channel_monitor_by_id(&connection, id)
     }
 
     pub fn create_channel_monitor(
@@ -865,6 +880,33 @@ impl AppDatabase {
     ) -> Result<ChannelMonitorRun, String> {
         let connection = self.connection()?;
         insert_channel_monitor_run_in_connection(&connection, input)
+    }
+
+    pub fn update_channel_monitor_after_run(
+        &self,
+        id: &str,
+        status: &str,
+        finished_at: &str,
+        error_message: Option<&str>,
+    ) -> Result<(), String> {
+        let connection = self.connection()?;
+        update_channel_monitor_after_run_in_connection(
+            &connection,
+            id,
+            status,
+            finished_at,
+            error_message,
+        )
+    }
+
+    pub fn schedule_next_channel_monitor_run(&self, id: &str) -> Result<String, String> {
+        let connection = self.connection()?;
+        schedule_next_channel_monitor_run_in_connection(&connection, id)
+    }
+
+    pub fn due_channel_monitors(&self, now: &str) -> Result<Vec<ChannelMonitor>, String> {
+        let connection = self.connection()?;
+        due_channel_monitors_from_connection(&connection, now)
     }
 
     pub fn create_collector_run(
@@ -1109,6 +1151,10 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             max_concurrency INTEGER NOT NULL DEFAULT 1 CHECK(max_concurrency BETWEEN 1 AND 16),
             consecutive_failure_threshold INTEGER NOT NULL DEFAULT 3 CHECK(consecutive_failure_threshold BETWEEN 1 AND 20),
             fallback_models_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(fallback_models_json) AND json_type(fallback_models_json) = 'array'),
+            last_run_at TEXT,
+            next_run_at TEXT,
+            last_status TEXT CHECK(last_status IS NULL OR last_status IN ('success', 'warning', 'failed', 'skipped')),
+            last_error_message TEXT,
             note TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -1369,7 +1415,21 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
         ",
     )?;
     migrate_p9_fact_schema(connection)?;
+    migrate_channel_monitor_runtime_columns(connection)?;
     seed_builtin_channel_monitor_templates_in_connection(connection)
+}
+
+fn migrate_channel_monitor_runtime_columns(connection: &Connection) -> rusqlite::Result<()> {
+    add_column_if_missing(connection, "channel_monitors", "last_run_at", "TEXT")?;
+    add_column_if_missing(connection, "channel_monitors", "next_run_at", "TEXT")?;
+    add_column_if_missing(connection, "channel_monitors", "last_status", "TEXT")?;
+    add_column_if_missing(connection, "channel_monitors", "last_error_message", "TEXT")?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_channel_monitors_due
+            ON channel_monitors(enabled, next_run_at)",
+        [],
+    )?;
+    Ok(())
 }
 
 fn migrate_p9_fact_schema(connection: &Connection) -> rusqlite::Result<()> {
@@ -2779,11 +2839,25 @@ fn insert_channel_monitor_run_in_connection(
     input: CreateChannelMonitorRunInput,
 ) -> Result<ChannelMonitorRun, String> {
     let monitor = channel_monitor_by_id(connection, &input.monitor_id)?;
-    if input.template_id != monitor.template_id
-        || input.station_id != monitor.station_id
-        || input.station_key_id != monitor.station_key_id
-    {
+    if input.template_id != monitor.template_id || input.station_id != monitor.station_id {
         return Err("Channel monitor run target does not match monitor".to_string());
+    }
+    match monitor.target_type.as_str() {
+        "station_key" => {
+            if input.station_key_id != monitor.station_key_id {
+                return Err("Channel monitor run target does not match monitor".to_string());
+            }
+        }
+        "station" => {
+            if let Some(station_key_id) = input.station_key_id.as_deref() {
+                validate_station_key_belongs_to_station(
+                    connection,
+                    &monitor.station_id,
+                    station_key_id,
+                )?;
+            }
+        }
+        _ => return Err("Channel monitor target_type must be station_key or station".to_string()),
     }
     validate_channel_monitor_run_input(&input)?;
     let id = generate_id("channel_monitor_run");
@@ -2828,6 +2902,114 @@ fn insert_channel_monitor_run_in_connection(
         .optional()
         .map_err(|error| format!("读取通道监控运行记录失败: {error}"))?
         .ok_or_else(|| "Channel monitor run does not exist".to_string())
+}
+
+fn update_channel_monitor_after_run_in_connection(
+    connection: &Connection,
+    id: &str,
+    status: &str,
+    finished_at: &str,
+    error_message: Option<&str>,
+) -> Result<(), String> {
+    channel_monitor_by_id(connection, id)?;
+    match status.trim() {
+        "success" | "warning" | "failed" | "skipped" => {}
+        _ => {
+            return Err(
+                "Channel monitor last_status must be success, warning, failed, or skipped"
+                    .to_string(),
+            )
+        }
+    }
+    parse_channel_monitor_run_time(finished_at, "finished_at")?;
+    let updated = connection
+        .execute(
+            "UPDATE channel_monitors
+                SET last_run_at = ?1,
+                    last_status = ?2,
+                    last_error_message = ?3,
+                    updated_at = ?4
+              WHERE id = ?5",
+            params![
+                finished_at,
+                status.trim(),
+                redact_optional_text(error_message.map(ToString::to_string)),
+                now_string(),
+                id,
+            ],
+        )
+        .map_err(|error| format!("鏇存柊閫氶亾鐩戞帶杩愯鎽樿澶辫触: {error}"))?;
+    if updated == 0 {
+        return Err("Channel monitor does not exist".to_string());
+    }
+    Ok(())
+}
+
+fn schedule_next_channel_monitor_run_in_connection(
+    connection: &Connection,
+    id: &str,
+) -> Result<String, String> {
+    let monitor = channel_monitor_by_id(connection, id)?;
+    let now = now_millis_for_services() as i64;
+    let next_run_at = channel_monitor_next_run_at(
+        &monitor.id,
+        now,
+        monitor.interval_seconds,
+        monitor.jitter_seconds,
+    )
+    .to_string();
+    connection
+        .execute(
+            "UPDATE channel_monitors
+                SET next_run_at = ?1,
+                    updated_at = ?2
+              WHERE id = ?3",
+            params![next_run_at, now_string(), id],
+        )
+        .map_err(|error| format!("璁℃划閫氶亾鐩戞帶涓嬫杩愯澶辫触: {error}"))?;
+    Ok(next_run_at)
+}
+
+fn due_channel_monitors_from_connection(
+    connection: &Connection,
+    now: &str,
+) -> Result<Vec<ChannelMonitor>, String> {
+    let now_ms = parse_channel_monitor_run_time(now, "now")?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id, name, target_type, station_id, station_key_id, template_id,
+                    enabled, interval_seconds, jitter_seconds, timeout_seconds,
+                    max_concurrency, consecutive_failure_threshold, fallback_models_json,
+                    note, created_at, updated_at
+               FROM channel_monitors
+              WHERE enabled = 1
+                AND (next_run_at IS NULL OR CAST(next_run_at AS INTEGER) <= ?1)
+              ORDER BY COALESCE(CAST(next_run_at AS INTEGER), 0) ASC, created_at ASC",
+        )
+        .map_err(|error| format!("璇诲彇鍒版湡閫氶亾鐩戞帶澶辫触: {error}"))?;
+    let monitors = statement
+        .query_map(params![now_ms], row_to_channel_monitor)
+        .map_err(|error| format!("鏌ヨ鍒版湡閫氶亾鐩戞帶澶辫触: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("瑙ｆ瀽鍒版湡閫氶亾鐩戞帶澶辫触: {error}"))?;
+    Ok(monitors)
+}
+
+fn channel_monitor_next_run_at(
+    monitor_id: &str,
+    now_ms: i64,
+    interval_seconds: i64,
+    jitter_seconds: i64,
+) -> i64 {
+    let jitter_ms = if jitter_seconds <= 0 {
+        0
+    } else {
+        let mut hasher = DefaultHasher::new();
+        monitor_id.hash(&mut hasher);
+        now_ms.hash(&mut hasher);
+        (hasher.finish() % ((jitter_seconds as u64 * 1000) + 1)) as i64
+    };
+    now_ms + interval_seconds.max(1) * 1000 + jitter_ms
 }
 
 fn row_to_station(row: &rusqlite::Row<'_>) -> rusqlite::Result<Station> {
