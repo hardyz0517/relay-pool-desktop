@@ -1,4 +1,21 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  type DragEndEvent,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { LucideIcon } from "lucide-react";
 import { Radio, RefreshCw, Server, Timer } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
@@ -11,8 +28,13 @@ import type { StationKeyHealth } from "@/lib/types/routing";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { stationTypeLabels } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
+import {
+  availabilityToneClassName,
+  buildRecentOutcomes,
+  orderChannelsBySavedOrder,
+  type RecentOutcome,
+} from "./channelStatusViewModel";
 
-type RecentOutcome = "success" | "warning" | "failed" | "unknown";
 type ChannelWindow = "recent" | "24h" | "7d";
 
 type ChannelHealth = {
@@ -63,6 +85,7 @@ export function ChannelStatusPage() {
   const [keys, setKeys] = useState<KeyPoolItem[]>([]);
   const [logs, setLogs] = useState<RequestLog[]>([]);
   const [health, setHealth] = useState<StationKeyHealth[]>([]);
+  const [channelOrder, setChannelOrder] = useState<string[]>([]);
   const [timeWindow, setTimeWindow] = useState<ChannelWindow>("recent");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +95,15 @@ export function ChannelStatusPage() {
   }, []);
 
   const visibleLogs = useMemo(() => filterLogsByWindow(logs, timeWindow), [logs, timeWindow]);
-  const channels = useMemo(() => buildChannels(keys, visibleLogs, health), [health, keys, visibleLogs]);
+  const channels = useMemo(
+    () => orderChannelsBySavedOrder(buildChannels(keys, visibleLogs, health), channelOrder),
+    [channelOrder, health, keys, visibleLogs],
+  );
+  const channelIds = useMemo(() => channels.map((channel) => channel.id), [channels]);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   async function refresh(showSuccess = false) {
     setLoading(true);
@@ -96,6 +127,21 @@ export function ChannelStatusPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) {
+      return;
+    }
+
+    const activeIndex = channelIds.indexOf(String(active.id));
+    const overIndex = channelIds.indexOf(String(over.id));
+    if (activeIndex === -1 || overIndex === -1) {
+      return;
+    }
+
+    setChannelOrder(arrayMove(channelIds, activeIndex, overIndex));
   }
 
   return (
@@ -127,23 +173,97 @@ export function ChannelStatusPage() {
           description="添加并启用密钥后，本地代理请求会在这里形成状态。"
         />
       ) : (
-        <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-          {channels.map((channel) => (
-            <ChannelHealthCard key={channel.id} channel={channel} />
-          ))}
-        </div>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={channelIds} strategy={rectSortingStrategy}>
+            <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+              {channels.map((channel) => (
+                <SortableChannelHealthCard key={channel.id} channel={channel} />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
     </PageScaffold>
   );
 }
 
-function ChannelHealthCard({ channel }: { channel: ChannelHealth }) {
+function SortableChannelHealthCard({ channel }: { channel: ChannelHealth }) {
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: channel.id });
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 20 : undefined,
+  };
+
+  return (
+    <ChannelHealthCard
+      channel={channel}
+      dragAttributes={attributes}
+      dragListeners={listeners}
+      isDragging={isDragging}
+      setActivatorNodeRef={setActivatorNodeRef}
+      setNodeRef={setNodeRef}
+      style={style}
+    />
+  );
+}
+
+function ChannelHealthCard({
+  channel,
+  dragAttributes,
+  dragListeners,
+  isDragging = false,
+  setActivatorNodeRef,
+  setNodeRef,
+  style,
+}: {
+  channel: ChannelHealth;
+  dragAttributes?: React.HTMLAttributes<HTMLElement>;
+  dragListeners?: React.HTMLAttributes<HTMLElement>;
+  isDragging?: boolean;
+  setActivatorNodeRef?: (element: HTMLButtonElement | null) => void;
+  setNodeRef?: (element: HTMLElement | null) => void;
+  style?: CSSProperties;
+}) {
   const typeLabel = stationTypeLabels[channel.stationType as keyof typeof stationTypeLabels] ?? channel.stationType;
   const cooldownActive = isFutureTime(channel.cooldownUntil);
   const availability = formatAvailability(channel.availabilityPercent);
 
   return (
-    <section className="rounded-[var(--surface-radius)] border border-border bg-white p-3.5 shadow-[var(--surface-shadow)]">
+    <section
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "relative rounded-[var(--surface-radius)] border border-border bg-white p-3.5 pt-5 shadow-[var(--surface-shadow)] outline-none",
+        "transition-[box-shadow,opacity] duration-150",
+        isDragging && "opacity-90 shadow-[var(--surface-shadow-hover)]",
+      )}
+    >
+      <button
+        ref={setActivatorNodeRef}
+        type="button"
+        aria-label={`拖动排序 ${channel.keyName}`}
+        title="拖动排序"
+        className={cn(
+          "group absolute left-1/2 top-1.5 flex h-3.5 w-12 -translate-x-1/2 flex-col items-center justify-center gap-[2px] rounded-full text-slate-300",
+          "cursor-grab touch-none transition-colors hover:text-slate-500 active:cursor-grabbing",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 focus-visible:ring-offset-1",
+        )}
+        {...dragAttributes}
+        {...dragListeners}
+      >
+        <span className="h-[2px] w-4 rounded-full bg-current opacity-75 transition-[width,opacity] duration-150 group-hover:w-5 group-hover:opacity-90" />
+        <span className="h-[2px] w-6 rounded-full bg-current opacity-90 transition-opacity duration-150 group-hover:opacity-100" />
+        <span className="h-[2px] w-3.5 rounded-full bg-current opacity-70 transition-[width,opacity] duration-150 group-hover:w-5 group-hover:opacity-90" />
+      </button>
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-2.5">
           <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px]", iconTone(channel.status))}>
@@ -176,7 +296,7 @@ function ChannelHealthCard({ channel }: { channel: ChannelHealth }) {
       <div className="mt-3 border-t border-slate-100 pt-3">
         <div className="flex items-end justify-between gap-3">
           <div className="min-w-0 text-xs font-medium text-slate-500">可用性 · 近 60 次</div>
-          <div className={cn("shrink-0 text-3xl font-semibold leading-8 tracking-normal", availabilityTone(channel))}>
+          <div className={cn("shrink-0 text-3xl font-semibold leading-8 tracking-normal", availabilityToneClassName(channel))}>
             {availability}
           </div>
         </div>
@@ -240,19 +360,6 @@ function formatAvailability(value: number | null) {
   return value === null ? "--" : `${value.toFixed(2)}%`;
 }
 
-function availabilityTone(channel: ChannelHealth) {
-  if (channel.status === "disabled" || channel.availabilityPercent === null) {
-    return "text-slate-500";
-  }
-  if (channel.status === "error" || channel.availabilityPercent < 90) {
-    return "text-rose-600";
-  }
-  if (channel.status === "warning" || channel.availabilityPercent < 98) {
-    return "text-amber-600";
-  }
-  return "text-emerald-600";
-}
-
 function filterLogsByWindow(logs: RequestLog[], timeWindow: ChannelWindow) {
   if (timeWindow === "recent") {
     return logs;
@@ -275,9 +382,7 @@ function buildChannels(keys: KeyPoolItem[], logs: RequestLog[], health: StationK
     const recentLogs = keyLogs.slice(-60);
     const latencyMs = averageDurationMs(recentLogs);
     const endpointPingMs = keyHealth?.avgLatencyMs ?? key.avgLatencyMs;
-    const recentOutcomes = recentLogs.map(logToOutcome);
-    const unknownOutcomes: RecentOutcome[] = Array.from({ length: 60 - recentOutcomes.length }, () => "unknown");
-    const paddedOutcomes = unknownOutcomes.concat(recentOutcomes);
+    const recentOutcomes = buildRecentOutcomes(recentLogs, keyHealth);
     const lastError =
       keyHealth?.lastErrorSummary ?? key.lastErrorSummary ?? [...keyLogs].reverse().find((log) => log.errorMessage)?.errorMessage ?? null;
 
@@ -298,7 +403,7 @@ function buildChannels(keys: KeyPoolItem[], logs: RequestLog[], health: StationK
       failureCount: keyHealth?.failureCount ?? 0,
       consecutiveFailures: keyHealth?.consecutiveFailures ?? key.consecutiveFailures,
       cooldownUntil: keyHealth?.cooldownUntil ?? key.cooldownUntil,
-      recentOutcomes: paddedOutcomes,
+      recentOutcomes,
     };
   });
 }
@@ -316,19 +421,6 @@ function cooldownStatus(status: StationKeyStatus, cooldownUntil: string | null):
     return "warning";
   }
   return status;
-}
-
-function logToOutcome(log: RequestLog): RecentOutcome {
-  if (log.status === "success") {
-    return "success";
-  }
-  if (log.status === "fallback" || log.fallbackCount > 0) {
-    return "warning";
-  }
-  if (log.status === "failed") {
-    return "failed";
-  }
-  return "unknown";
 }
 
 function outcomeLabel(outcome: RecentOutcome) {

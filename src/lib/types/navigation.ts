@@ -12,7 +12,7 @@ export type AppRouteId =
   | "logs"
   | "settings";
 
-export type AppPageId = AppRouteId | "addProvider" | "editProvider" | "stationDetail";
+export type AppPageId = AppRouteId | "addProvider" | "editProvider" | "stationDetail" | "addKey";
 
 export type AppRoute = {
   id: AppRouteId;

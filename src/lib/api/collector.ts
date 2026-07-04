@@ -4,6 +4,8 @@ import type {
   CollectorRunResult,
   CollectorSnapshot,
   CollectorTaskType,
+  StationLoginTestInput,
+  StationLoginTestResult,
 } from "@/lib/types/collector";
 
 const memorySnapshots = new Map<string, CollectorSnapshot>();
@@ -47,6 +49,20 @@ export function testStationLogin(stationId: string) {
   return invoke<CollectorRunResult>("test_station_login", { stationId }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       return createMemoryRun(stationId, "login-state-test", "manual_required");
+    }
+    throw error;
+  });
+}
+
+export function testStationLoginInput(input: StationLoginTestInput) {
+  return invoke<StationLoginTestResult>("test_station_login_input", { input }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return {
+        status: "manual_required",
+        message: "普通浏览器环境无法执行真实连通性测试。",
+        diagnosis: "请在 Tauri 桌面窗口中测试。",
+        tokenPresent: false,
+      };
     }
     throw error;
   });

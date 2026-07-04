@@ -1,6 +1,7 @@
 export { ActivityItem, ActivityList } from "./ActivityList";
 export { Button, type ButtonSize, type ButtonVariant } from "./button";
 export { Card } from "./Card";
+export { ConfirmDialog } from "./ConfirmDialog";
 export { DataTableLite, type DataTableColumn } from "./DataTableLite";
 export { EmptyState } from "./EmptyState";
 export { Dialog } from "./Dialog";

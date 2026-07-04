@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize)]
@@ -29,4 +29,21 @@ pub struct CollectorEvent {
 pub struct CollectorRunResult {
     pub snapshot: CollectorSnapshot,
     pub events: Vec<CollectorEvent>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StationLoginTestInput {
+    pub base_url: String,
+    pub login_username: String,
+    pub login_password: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StationLoginTestResult {
+    pub status: String,
+    pub message: String,
+    pub diagnosis: Option<String>,
+    pub token_present: bool,
 }

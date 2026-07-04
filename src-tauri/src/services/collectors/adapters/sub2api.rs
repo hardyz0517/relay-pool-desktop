@@ -18,6 +18,7 @@ pub fn parse_usage_balance(
     station_id: &str,
     station_key_id: Option<String>,
     payload: &Value,
+    credit_per_cny: f64,
 ) -> CollectedBalanceFact {
     let remaining = payload
         .pointer("/quota/remaining")
@@ -42,9 +43,9 @@ pub fn parse_usage_balance(
         station_id: station_id.to_string(),
         station_key_id,
         scope: "station_key".to_string(),
-        value: remaining,
-        used_value: used,
-        total_value: total,
+        value: normalize_credit_value(remaining, credit_per_cny),
+        used_value: normalize_credit_value(used, credit_per_cny),
+        total_value: normalize_credit_value(total, credit_per_cny),
         currency: "CNY".to_string(),
         credit_unit: payload
             .pointer("/quota/unit")
@@ -70,6 +71,7 @@ pub fn parse_group_rate_facts(
     station_id: &str,
     available: &Value,
     rates: &Value,
+    credit_per_cny: f64,
 ) -> CollectorFacts {
     let mut facts = CollectorFacts::default();
     let groups = collect_available_groups(available);
@@ -102,9 +104,12 @@ pub fn parse_group_rate_facts(
             group_id,
             group_key_hash,
             group_name: group.group_name,
-            default_rate_multiplier: group.default_rate_multiplier,
-            user_rate_multiplier: user_rate,
-            effective_rate_multiplier: effective,
+            default_rate_multiplier: normalize_credit_value(
+                group.default_rate_multiplier,
+                credit_per_cny,
+            ),
+            user_rate_multiplier: normalize_credit_value(user_rate, credit_per_cny),
+            effective_rate_multiplier: normalize_credit_value(effective, credit_per_cny),
             source: "sub2api_groups_rates".to_string(),
             confidence: if effective.is_some() { 0.9 } else { 0.6 },
             checked_at: None,
@@ -113,6 +118,15 @@ pub fn parse_group_rate_facts(
     }
 
     facts
+}
+
+fn normalize_credit_value(value: Option<f64>, credit_per_cny: f64) -> Option<f64> {
+    let divisor = if credit_per_cny.is_finite() && credit_per_cny > 0.0 {
+        credit_per_cny
+    } else {
+        1.0
+    };
+    value.map(|value| value / divisor)
 }
 
 fn collect_available_groups(payload: &Value) -> Vec<AvailableGroup> {
@@ -356,7 +370,12 @@ pub fn collect_groups(
     let rates_result = fetch_json_with_bearer(&rates_url, &access_token);
     let available_payload = available_result.payload.clone().unwrap_or(Value::Null);
     let rates_payload = rates_result.payload.clone().unwrap_or(Value::Null);
-    let mut facts = parse_group_rate_facts(&station.id, &available_payload, &rates_payload);
+    let mut facts = parse_group_rate_facts(
+        &station.id,
+        &available_payload,
+        &rates_payload,
+        station.credit_per_cny,
+    );
     let keys = routeable_keys_for_station(database, station_id)?;
     add_single_group_key_bindings(&mut facts, &keys);
 
@@ -613,9 +632,12 @@ pub fn collect_balance(
             "ok": (200..400).contains(&status),
         }));
         if (200..400).contains(&status) {
-            facts
-                .balances
-                .push(parse_usage_balance(&station.id, Some(key.id), &parsed));
+            facts.balances.push(parse_usage_balance(
+                &station.id,
+                Some(key.id),
+                &parsed,
+                station.credit_per_cny,
+            ));
         }
     }
     if facts.balances.is_empty() {
@@ -686,7 +708,8 @@ fn collect_account_balance_fallback(
         if !result.ok {
             continue;
         }
-        if let Some(balance) = parse_account_balance(&station.id, &payload) {
+        if let Some(balance) = parse_account_balance(&station.id, &payload, station.credit_per_cny)
+        {
             return Ok(Some(balance));
         }
     }
@@ -694,12 +717,20 @@ fn collect_account_balance_fallback(
     Ok(None)
 }
 
-fn parse_account_balance(station_id: &str, payload: &Value) -> Option<CollectedBalanceFact> {
+fn parse_account_balance(
+    station_id: &str,
+    payload: &Value,
+    credit_per_cny: f64,
+) -> Option<CollectedBalanceFact> {
     let value = payload
         .pointer("/data/balance")
         .and_then(Value::as_f64)
         .or_else(|| payload.get("balance").and_then(Value::as_f64))
-        .or_else(|| payload.pointer("/data/quota/remaining").and_then(Value::as_f64))
+        .or_else(|| {
+            payload
+                .pointer("/data/quota/remaining")
+                .and_then(Value::as_f64)
+        })
         .or_else(|| payload.pointer("/quota/remaining").and_then(Value::as_f64))?;
     let used = payload
         .pointer("/data/used")
@@ -722,9 +753,9 @@ fn parse_account_balance(station_id: &str, payload: &Value) -> Option<CollectedB
         station_id: station_id.to_string(),
         station_key_id: None,
         scope: "station".to_string(),
-        value: Some(value),
-        used_value: used,
-        total_value: total,
+        value: normalize_credit_value(Some(value), credit_per_cny),
+        used_value: normalize_credit_value(used, credit_per_cny),
+        total_value: normalize_credit_value(total, credit_per_cny),
         currency,
         credit_unit: None,
         status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
@@ -761,6 +792,7 @@ mod tests {
                 },
                 "planName": "pro"
             }),
+            1.0,
         );
 
         assert_eq!(fact.station_id, "station-1");
@@ -773,8 +805,29 @@ mod tests {
 
     #[test]
     fn sub2api_usage_marks_zero_balance_depleted() {
-        let fact = parse_usage_balance("station-1", None, &json!({ "remaining": 0.0 }));
+        let fact = parse_usage_balance("station-1", None, &json!({ "remaining": 0.0 }), 1.0);
         assert_eq!(fact.status, "depleted");
+    }
+
+    #[test]
+    fn sub2api_usage_normalizes_credit_balance_to_cny() {
+        let fact = parse_usage_balance(
+            "station-1",
+            Some("key-1".to_string()),
+            &json!({
+                "quota": {
+                    "remaining": 100.0,
+                    "used": 25.0,
+                    "total": 125.0
+                }
+            }),
+            10.0,
+        );
+
+        assert_eq!(fact.value, Some(10.0));
+        assert_eq!(fact.used_value, Some(2.5));
+        assert_eq!(fact.total_value, Some(12.5));
+        assert_eq!(fact.currency, "CNY");
     }
 
     #[test]
@@ -792,7 +845,7 @@ mod tests {
             }
         });
 
-        let facts = parse_group_rate_facts("station-1", &available, &rates);
+        let facts = parse_group_rate_facts("station-1", &available, &rates, 1.0);
 
         assert!(facts
             .groups
@@ -801,6 +854,27 @@ mod tests {
         assert!(facts.rates.iter().any(|rate| {
             rate.group_name == "Pro" && rate.effective_rate_multiplier == Some(1.2)
         }));
+    }
+
+    #[test]
+    fn sub2api_group_rates_normalize_credit_multiplier_to_cny() {
+        let available = json!({
+            "data": [
+                { "id": "default", "name": "Default", "rate_multiplier": 1.0 }
+            ]
+        });
+        let rates = json!({
+            "data": {
+                "default": 1.0
+            }
+        });
+
+        let facts = parse_group_rate_facts("station-1", &available, &rates, 10.0);
+        let rate = facts.rates.first().expect("rate");
+
+        assert_eq!(rate.default_rate_multiplier, Some(0.1));
+        assert_eq!(rate.user_rate_multiplier, Some(0.1));
+        assert_eq!(rate.effective_rate_multiplier, Some(0.1));
     }
 
     #[test]

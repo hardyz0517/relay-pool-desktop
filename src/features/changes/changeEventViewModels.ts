@@ -60,6 +60,31 @@ export const objectTypeLabels: Record<string, string> = {
   route: "路由",
 };
 
+export const sourceLabels: Record<string, string> = {
+  balance: "余额",
+  collector: "采集",
+  health: "密钥",
+  pricing: "价格",
+  routing: "路由",
+};
+
+export type ChangeEventListDiff = {
+  label: string;
+  before: string | null;
+  after: string | null;
+};
+
+export type ChangeEventListItem = {
+  title: string;
+  description: string;
+  kindLabel: string;
+  objectLabel: string;
+  sourceLabel: string;
+  statusLabel: string;
+  severityLabel: string;
+  diff: ChangeEventListDiff | null;
+};
+
 export function filterChangeEvents(events: ChangeEvent[], filter: ChangeFilter) {
   const query = filter.query.trim().toLowerCase();
   return events.filter((event) => {
@@ -79,7 +104,8 @@ export function filterChangeEvents(events: ChangeEvent[], filter: ChangeFilter) 
     if (!query) {
       return true;
     }
-    return `${event.title} ${event.message} ${event.eventType} ${event.source} ${event.objectType}`
+    const item = buildChangeEventListItem(event);
+    return `${event.title} ${event.message} ${event.eventType} ${event.source} ${event.objectType} ${item.title} ${item.diff?.before ?? ""} ${item.diff?.after ?? ""}`
       .toLowerCase()
       .includes(query);
   });
@@ -89,6 +115,130 @@ export function unreadRiskCount(events: ChangeEvent[]) {
   return events.filter(
     (event) => event.status === "unread" && (event.severity === "critical" || event.severity === "warning"),
   ).length;
+}
+
+export async function markUnreadChangeEventsRead(
+  events: ChangeEvent[],
+  markRead: (id: string) => Promise<ChangeEvent>,
+) {
+  const unreadEvents = events.filter((event) => event.status === "unread");
+  const updatedEvents = await Promise.all(unreadEvents.map((event) => markRead(event.id)));
+  const updatedById = new Map(updatedEvents.map((event) => [event.id, event]));
+
+  return {
+    changedCount: updatedEvents.length,
+    events: events.map((event) => updatedById.get(event.id) ?? event),
+  };
+}
+
+export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListItem {
+  const oldValue = parseJsonRecord(event.oldValueJson);
+  const newValue = parseJsonRecord(event.newValueJson);
+  const baseItem: ChangeEventListItem = {
+    title: event.title,
+    description: event.message,
+    kindLabel: eventTypeLabels[event.eventType] ?? event.eventType,
+    objectLabel: objectTypeLabels[event.objectType] ?? event.objectType,
+    sourceLabel: sourceLabels[event.source] ?? event.source,
+    statusLabel: statusLabels[event.status] ?? event.status,
+    severityLabel: severityLabels[event.severity] ?? event.severity,
+    diff: buildGenericDiff(oldValue, newValue),
+  };
+
+  if (event.eventType === "rate_changed") {
+    const groupName = readString(newValue, "groupName") ?? readString(oldValue, "groupName") ?? extractGroupName(event.message);
+    const before = readNumber(oldValue, "multiplier");
+    const after = readNumber(newValue, "multiplier");
+    return {
+      ...baseItem,
+      title: groupName ? `分组 ${groupName} ${event.title}` : event.title,
+      diff: {
+        label: "倍率",
+        before: before == null ? null : `${formatCompactNumber(before)} 倍`,
+        after: after == null ? null : `${formatCompactNumber(after)} 倍`,
+      },
+    };
+  }
+
+  if (event.eventType === "group_added") {
+    const groupName = readString(newValue, "groupName") ?? extractGroupName(event.message);
+    return {
+      ...baseItem,
+      title: groupName ? `新增分组 ${groupName}` : event.title,
+      diff: {
+        label: "分组",
+        before: null,
+        after: groupName,
+      },
+    };
+  }
+
+  if (event.eventType === "group_missing") {
+    const groupName = readString(newValue, "groupName") ?? readString(oldValue, "groupName") ?? extractGroupName(event.message);
+    return {
+      ...baseItem,
+      title: groupName ? `分组 ${groupName} 不可见` : event.title,
+      diff: {
+        label: "状态",
+        before: formatBindingStatus(readString(oldValue, "bindingStatus")),
+        after: formatBindingStatus(readString(newValue, "bindingStatus")),
+      },
+    };
+  }
+
+  if (event.eventType === "price_changed") {
+    const model = extractModelName(event.message);
+    const currency = readString(newValue, "currency") ?? readString(oldValue, "currency");
+    return {
+      ...baseItem,
+      title: model ? `模型 ${model} 价格变化` : event.title,
+      diff: {
+        label: "输出价格",
+        before: formatPrice(readNumber(oldValue, "outputPrice"), currency),
+        after: formatPrice(readNumber(newValue, "outputPrice"), currency),
+      },
+    };
+  }
+
+  if (event.eventType === "model_added" || event.eventType === "model_removed") {
+    const model = readString(newValue, "model") ?? readString(oldValue, "model") ?? extractModelName(event.message);
+    return {
+      ...baseItem,
+      title: model ? `${event.eventType === "model_added" ? "新增模型" : "下架模型"} ${model}` : event.title,
+      diff: {
+        label: "模型",
+        before: event.eventType === "model_removed" ? model : null,
+        after: event.eventType === "model_added" ? model : null,
+      },
+    };
+  }
+
+  if (event.eventType === "balance_low" || event.eventType === "balance_depleted") {
+    const value = readNumber(newValue, "value");
+    const threshold = readNumber(newValue, "threshold");
+    return {
+      ...baseItem,
+      diff: {
+        label: "余额",
+        before: threshold == null ? null : `阈值 ${formatCompactNumber(threshold)}`,
+        after: value == null ? null : formatCompactNumber(value),
+      },
+    };
+  }
+
+  if (event.eventType === "key_invalid") {
+    const failures = readNumber(newValue, "consecutiveFailures");
+    return {
+      ...baseItem,
+      diff: {
+        label: "失败次数",
+        before: null,
+        after: failures == null ? null : `${formatCompactNumber(failures)} 次`,
+      },
+    };
+  }
+
+  return baseItem;
 }
 
 export function formatChangeTime(value: string) {
@@ -103,6 +253,89 @@ export function formatChangeTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function buildGenericDiff(
+  oldValue: Record<string, unknown> | null,
+  newValue: Record<string, unknown> | null,
+): ChangeEventListDiff | null {
+  if (!oldValue && !newValue) {
+    return null;
+  }
+  return {
+    label: "变化",
+    before: formatRecordSummary(oldValue),
+    after: formatRecordSummary(newValue),
+  };
+}
+
+function parseJsonRecord(value: string | null) {
+  const parsed = parseJsonObject(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function readString(value: Record<string, unknown> | null, key: string) {
+  const item = value?.[key];
+  return typeof item === "string" && item.trim() ? item.trim() : null;
+}
+
+function readNumber(value: Record<string, unknown> | null, key: string) {
+  const item = value?.[key];
+  return typeof item === "number" && Number.isFinite(item) ? item : null;
+}
+
+function formatCompactNumber(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function formatPrice(value: number | null, currency: string | null) {
+  if (value == null) {
+    return null;
+  }
+  return `${currency ?? ""} ${formatCompactNumber(value)}`.trim();
+}
+
+function formatBindingStatus(value: string | null) {
+  if (value === "available") {
+    return "可用";
+  }
+  if (value === "missing") {
+    return "不可见";
+  }
+  return value;
+}
+
+function formatRecordSummary(value: Record<string, unknown> | null) {
+  if (!value) {
+    return null;
+  }
+  const firstEntry = Object.entries(value).find(([, item]) => item != null);
+  if (!firstEntry) {
+    return null;
+  }
+  const [, item] = firstEntry;
+  return typeof item === "number" ? formatCompactNumber(item) : String(item);
+}
+
+function extractGroupName(message: string) {
+  const missingMatch = message.match(/^分组\s+(.+?)\s+在最新采集中不可见/);
+  if (missingMatch?.[1]) {
+    return missingMatch[1].trim();
+  }
+  const rateMatch = message.match(/^分组\s+(.+?)\s+倍率发生变化/);
+  if (rateMatch?.[1]) {
+    return rateMatch[1].trim();
+  }
+  const addedMatch = message.match(/分组\s+(.+)$/);
+  return addedMatch?.[1]?.trim() ?? null;
+}
+
+function extractModelName(message: string) {
+  const match = message.match(/^模型\s+(.+?)\s+(?:输出价格发生变化|的价格规则已过期|新增|下架)/);
+  return match?.[1]?.trim() ?? null;
 }
 
 export function parseJsonObject(value: string | null) {

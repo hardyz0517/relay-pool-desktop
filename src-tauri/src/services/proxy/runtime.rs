@@ -14,8 +14,8 @@ use serde_json::{json, Value};
 
 use crate::{
     models::{
-        proxy::{CreateRequestLogInput, ProxyStatus},
         pricing::RequestCostEstimate,
+        proxy::{CreateRequestLogInput, ProxyStatus},
         routing::{RouteCandidateExplanation, RouteEndpointKind, RoutingPolicy},
     },
     services::{
@@ -305,7 +305,7 @@ fn handle_connection(mut stream: TcpStream, context: &ProxyServerContext) {
         ),
     };
     let finished_at = now_string();
-        let _ = context.database.insert_request_log(CreateRequestLogInput {
+    let _ = context.database.insert_request_log(CreateRequestLogInput {
         method,
         path,
         model: response.model.clone(),
@@ -938,12 +938,8 @@ fn forward_responses_with_fallback(
                         &format!("上游返回 HTTP {}", routed_response.status_code),
                     );
                 }
-                let request_cost = extract_request_cost(
-                    context,
-                    candidate,
-                    &routed_response,
-                    false,
-                );
+                let request_cost =
+                    extract_request_cost(context, candidate, &routed_response, false);
                 return routed_response.with_request_cost(request_cost);
             }
             Ok(response) => {
@@ -1095,12 +1091,7 @@ fn forward_with_fallback(
                         &format!("上游返回 HTTP {}", routed_response.status_code),
                     );
                 }
-                let request_cost = extract_request_cost(
-                    context,
-                    candidate,
-                    &routed_response,
-                    true,
-                );
+                let request_cost = extract_request_cost(context, candidate, &routed_response, true);
                 return routed_response.with_request_cost(request_cost);
             }
             Ok(response) => {
@@ -1289,7 +1280,9 @@ fn extract_request_cost(
     let completion_tokens = usage.get("completion_tokens").and_then(Value::as_i64);
     let total_tokens = usage.get("total_tokens").and_then(Value::as_i64);
     let Some(total_tokens) = total_tokens.or_else(|| {
-        prompt_tokens.zip(completion_tokens).map(|(prompt, completion)| prompt + completion)
+        prompt_tokens
+            .zip(completion_tokens)
+            .map(|(prompt, completion)| prompt + completion)
     }) else {
         return crate::services::pricing::request_cost_unknown();
     };
@@ -1328,7 +1321,9 @@ fn extract_request_cost(
         estimated_total_cost,
         cost_currency,
         pricing_rule_id,
-        pricing_source: economics.as_ref().and_then(|economics| economics.pricing_source.clone()),
+        pricing_source: economics
+            .as_ref()
+            .and_then(|economics| economics.pricing_source.clone()),
         cost_status: if estimated_total_cost.is_some() {
             "estimated".to_string()
         } else {

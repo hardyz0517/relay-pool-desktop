@@ -1,18 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   AlertTriangle,
   BadgeDollarSign,
+  BarChart3,
+  Clock3,
   Copy,
+  Gauge,
   KeyRound,
-  Plus,
+  type LucideIcon,
   Route,
   Server,
   Upload,
+  Wallet,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
   MetricPanel,
+  type MetricTone,
   ObjectRow,
   SectionCard,
   StatusBadge,
@@ -27,13 +33,10 @@ import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 import type { AppSettings } from "@/lib/types/settings";
-import type { KeyPoolItem } from "@/lib/types/stationKeys";
-import { stationStatusLabels } from "@/lib/types/stations";
+import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
+import { stationKeyStatusLabels } from "@/lib/types/stationKeys";
 import { formatChangeTime, severityLabels, severityTone, unreadRiskCount } from "@/features/changes/changeEventViewModels";
-
-type DashboardPageProps = {
-  onNavigate: (pageId: "addProvider") => void;
-};
+import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
 
 const healthTone = {
   healthy: "healthy",
@@ -49,7 +52,21 @@ const requestTone = {
   failed: "error",
 } as const;
 
-export function DashboardPage({ onNavigate }: DashboardPageProps) {
+const dashboardMetricToneClassName: Record<MetricTone, string> = {
+  neutral: "text-slate-700",
+  good: "text-emerald-700",
+  warning: "text-amber-700",
+  danger: "text-rose-700",
+};
+
+const dashboardMetricIconClassName: Record<MetricTone, string> = {
+  neutral: "bg-slate-100",
+  good: "bg-emerald-50",
+  warning: "bg-amber-50",
+  danger: "bg-rose-50",
+};
+
+export function DashboardPage() {
   const toast = useToast();
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
@@ -126,9 +143,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
   const todayRequests = todayLogs.length;
   const todayFailedRequests = todayLogs.filter((log) => log.status === "failed").length;
-  const failureRate = todayRequests > 0 ? todayFailedRequests / todayRequests : 0;
-  const failureRateText = `${(failureRate * 100).toFixed(1)}%`;
-  const failureRateTone = failureRate > 0.1 ? "danger" : failureRate > 0.03 ? "warning" : "good";
+  const todaySuccessRate = todayRequests > 0 ? (todayRequests - todayFailedRequests) / todayRequests : null;
   const recentError = requestLogs.find((log) => log.status === "failed")?.errorMessage ?? "最近没有代理错误。";
   const proxyRunning = proxyStatus?.running ?? false;
   const proxyBaseUrl = proxyStatus
@@ -139,12 +154,17 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const proxyRequestCount = proxyStatus?.requestCount ?? requestLogs.length;
   const todayCost = todayLogs.reduce((sum, log) => sum + (log.estimatedTotalCost ?? 0), 0);
   const todayTokens = todayLogs.reduce((sum, log) => sum + (log.totalTokens ?? 0), 0);
-  const lowBalanceStations = new Set(
-    balanceSnapshots
-      .filter((snapshot) => snapshot.status === "low" || snapshot.status === "depleted")
-      .map((snapshot) => snapshot.stationId),
-  ).size;
-  const totalBalance = balanceSnapshots.reduce((sum, snapshot) => sum + (snapshot.value ?? 0), 0);
+  const todayPromptTokens = todayLogs.reduce((sum, log) => sum + (log.promptTokens ?? 0), 0);
+  const todayCompletionTokens = todayLogs.reduce((sum, log) => sum + (log.completionTokens ?? 0), 0);
+  const totalTokens = requestLogs.reduce((sum, log) => sum + (log.totalTokens ?? 0), 0);
+  const totalPromptTokens = requestLogs.reduce((sum, log) => sum + (log.promptTokens ?? 0), 0);
+  const totalCompletionTokens = requestLogs.reduce((sum, log) => sum + (log.completionTokens ?? 0), 0);
+  const totalCost = requestLogs.reduce((sum, log) => sum + (log.estimatedTotalCost ?? 0), 0);
+  const averageResponseMs = averageDurationMs(todayLogs);
+  const todayTpm = getTodayAverageTpm(todayTokens);
+  const activeRequests = proxyStatus?.activeRequests ?? 0;
+  const balanceSummary = useMemo(() => summarizeDashboardBalances(balanceSnapshots), [balanceSnapshots]);
+  const { latestStationBalances, lowBalanceStations, primaryBalanceCurrency, totalBalance } = balanceSummary;
   const activeRiskEvents = useMemo(
     () =>
       changeEvents.filter(
@@ -156,7 +176,6 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     [changeEvents],
   );
   const unreadRisks = unreadRiskCount(changeEvents);
-  const criticalRisks = activeRiskEvents.filter((event) => event.severity === "critical").length;
   const p9RiskBreakdown = useMemo(() => ({
     unresolvedCritical: activeRiskEvents.filter((event) => event.severity === "critical").length,
     groupBindingIssues: activeRiskEvents.filter((event) => event.eventType === "group_missing" || event.eventType === "key_group_unresolved").length,
@@ -165,17 +184,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   }), [activeRiskEvents]);
 
   return (
-    <PageScaffold
-      title="总览"
-      actions={
-        <>
-          <Button onClick={() => onNavigate("addProvider")}>
-            <Plus className="h-4 w-4" />
-            添加供应商
-          </Button>
-        </>
-      }
-    >
+    <PageScaffold title="总览">
       <div className="grid gap-4">
         <SectionCard
           title="当前路由"
@@ -245,11 +254,12 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           title="今日指标"
           metrics={[
             {
-              label: "当前风险",
-              value: `${activeRiskEvents.length}`,
-              detail: `${criticalRisks} 严重`,
-              icon: AlertTriangle,
-              tone: activeRiskEvents.length > 0 ? "warning" : "good",
+              label: "总余额",
+              value: formatBalance(totalBalance, primaryBalanceCurrency),
+              detail: `${lowBalanceStations} 个余额告警`,
+              icon: Wallet,
+              tone: lowBalanceStations > 0 ? "warning" : "good",
+              accent: "emerald",
             },
             {
               label: "可用密钥",
@@ -257,31 +267,97 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               detail: "启用中",
               icon: KeyRound,
               tone: enabledKeyCount > 0 ? "good" : "warning",
+              accent: "blue",
             },
             {
-              label: "失败率",
-              value: failureRateText,
-              detail: "今日请求",
-              icon: AlertTriangle,
-              tone: failureRateTone,
+              label: "今日请求",
+              value: formatCompactNumber(todayRequests),
+              detail: `累计 ${formatCompactNumber(proxyRequestCount)}`,
+              icon: Activity,
+              tone: todayRequests > 0 ? "good" : "neutral",
+              accent: "green",
             },
-            { label: "今日成本", value: formatCost(todayCost), detail: formatTokens(todayTokens), icon: BadgeDollarSign },
+            {
+              label: "今日消耗",
+              value: formatCost(todayCost),
+              detail: `累计 ${formatCost(totalCost)}`,
+              icon: BadgeDollarSign,
+              tone: todayCost > 0 ? "warning" : "neutral",
+              accent: "purple",
+            },
+            {
+              label: "今日 Token",
+              value: formatCompactNumber(todayTokens),
+              detail: `输入 ${formatCompactNumber(todayPromptTokens)} / 输出 ${formatCompactNumber(todayCompletionTokens)}`,
+              icon: BarChart3,
+              tone: todayTokens > 0 ? "good" : "neutral",
+              accent: "amber",
+            },
+            {
+              label: "累计 Token",
+              value: formatCompactNumber(totalTokens),
+              detail: `输入 ${formatCompactNumber(totalPromptTokens)} / 输出 ${formatCompactNumber(totalCompletionTokens)}`,
+              icon: Server,
+              tone: totalTokens > 0 ? "good" : "neutral",
+              accent: "indigo",
+            },
+            {
+              label: "平均响应",
+              value: formatDuration(averageResponseMs),
+              detail: averageResponseMs === null ? "暂无今日样本" : "今日平均",
+              icon: Clock3,
+              tone: averageResponseMs !== null && averageResponseMs > 15000 ? "warning" : "neutral",
+              accent: "rose",
+            },
+            {
+              label: "性能概览",
+              value: formatPercent(todaySuccessRate),
+              detail: `${formatCompactNumber(todayTpm)} TPM · ${activeRequests} 活跃`,
+              icon: Gauge,
+              tone: todaySuccessRate === null ? "neutral" : todaySuccessRate < 0.9 ? "warning" : "good",
+              accent: "violet",
+            },
           ]}
         />
       </div>
 
       <SectionCard
         title="当前风险"
+        contentClassName="border-0"
         action={<StatusBadge tone={unreadRisks > 0 ? "warning" : "healthy"}>{unreadRisks > 0 ? `${unreadRisks} 未读` : "无未读风险"}</StatusBadge>}
       >
         <div className="mb-3 grid gap-2 md:grid-cols-4">
-          <RiskMiniTile label="严重未解决" value={p9RiskBreakdown.unresolvedCritical} />
-          <RiskMiniTile label="分组 / 密钥" value={p9RiskBreakdown.groupBindingIssues} />
-          <RiskMiniTile label="采集失败" value={p9RiskBreakdown.collectorFailures} />
-          <RiskMiniTile label="价格 / 倍率" value={p9RiskBreakdown.priceRateIssues} />
+          <DashboardMetricTile
+            label="严重未解决"
+            value={p9RiskBreakdown.unresolvedCritical}
+            detail="严重变更"
+            icon={AlertTriangle}
+            tone={p9RiskBreakdown.unresolvedCritical > 0 ? "warning" : "good"}
+          />
+          <DashboardMetricTile
+            label="分组 / 密钥"
+            value={p9RiskBreakdown.groupBindingIssues}
+            detail="绑定问题"
+            icon={KeyRound}
+            tone={p9RiskBreakdown.groupBindingIssues > 0 ? "warning" : "good"}
+          />
+          <DashboardMetricTile
+            label="采集失败"
+            value={p9RiskBreakdown.collectorFailures}
+            detail="同步异常"
+            icon={Upload}
+            tone={p9RiskBreakdown.collectorFailures > 0 ? "warning" : "good"}
+          />
+          <DashboardMetricTile
+            label="价格 / 倍率"
+            value={p9RiskBreakdown.priceRateIssues}
+            detail="价格变更"
+            icon={BadgeDollarSign}
+            tone={p9RiskBreakdown.priceRateIssues > 0 ? "warning" : "good"}
+          />
         </div>
         {activeRiskEvents.length === 0 ? (
-          <div className="rounded-[10px] bg-slate-50/70 p-3 text-sm text-muted-foreground">
+          <div className="rounded-[8px] bg-slate-50/60 px-3 py-2.5 text-sm text-muted-foreground">
             当前没有未解决的严重或警告变更。
           </div>
         ) : (
@@ -350,7 +426,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             </div>
             <div className="space-y-2">
               <div className="text-sm font-semibold text-slate-900">余额变化</div>
-              {balanceSnapshots.slice(0, 5).map((snapshot) => (
+              {latestStationBalances.slice(0, 5).map((snapshot) => (
                 <ObjectRow
                   key={snapshot.id}
                   icon={<Route className="h-4 w-4" />}
@@ -367,24 +443,20 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           </div>
         </SectionCard>
 
-        <SectionCard title="站点健康">
+        <SectionCard title="Key 健康" contentClassName="border-0">
           <div className="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-2">
-            {(Object.keys(stationStatusLabels) as Array<keyof typeof stationStatusLabels>).map((key) => (
-              <div
+            {(Object.keys(stationKeyStatusLabels) as StationKeyStatus[]).map((key) => (
+              <DashboardMetricTile
                 key={key}
-                className="flex min-h-[52px] items-center justify-between gap-3 rounded-[10px] border border-slate-100 bg-slate-50/70 px-3 py-2"
-              >
-                <div className="min-w-0">
-                  <StatusBadge tone={healthTone[key]}>{stationStatusLabels[key]}</StatusBadge>
-                  <div className="mt-1 text-[11px] text-muted-foreground">密钥</div>
-                </div>
-                <span className="shrink-0 text-lg font-semibold leading-6 text-slate-800">
-                  {keyPoolItems.filter((item) => item.status === key).length}
-                </span>
-              </div>
+                label={stationKeyStatusLabels[key]}
+                value={keyPoolItems.filter((item) => item.status === key).length}
+                detail="密钥"
+                icon={Server}
+                tone={metricToneForHealth(key)}
+              />
             ))}
           </div>
-          <div className="mt-3 rounded-[10px] bg-slate-50/70 px-3 py-2 text-xs leading-5 text-slate-700">
+          <div className="mt-3 rounded-[8px] bg-slate-50/60 px-3 py-2.5 text-xs leading-5 text-slate-700">
             已知余额总计 {totalBalance.toFixed(2)} - 余额告警 {lowBalanceStations} - 最近错误：{recentError}
           </div>
         </SectionCard>
@@ -393,17 +465,47 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   );
 }
 
-function RiskMiniTile({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-[10px] border border-slate-100 bg-slate-50/70 p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={cnRiskTileValue(value)}>{value}</div>
-    </div>
-  );
+function metricToneForHealth(status: StationKeyStatus): MetricTone {
+  const tone = healthTone[status];
+  if (tone === "healthy") return "good";
+  if (tone === "warning") return "warning";
+  if (tone === "error") return "danger";
+  return "neutral";
 }
 
-function cnRiskTileValue(value: number) {
-  return `mt-1 text-xl font-semibold ${value > 0 ? "text-amber-700" : "text-emerald-700"}`;
+function DashboardMetricTile({
+  label,
+  value,
+  detail,
+  icon: Icon,
+  tone = "neutral",
+}: {
+  label: string;
+  value: ReactNode;
+  detail?: ReactNode;
+  icon: LucideIcon;
+  tone?: MetricTone;
+}) {
+  return (
+    <div className="flex min-h-[78px] items-center gap-3 rounded-[8px] border border-border bg-slate-50/60 px-3 py-2.5">
+      <div
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${dashboardMetricIconClassName[tone]} ${dashboardMetricToneClassName[tone]}`}
+      >
+        <Icon className="h-4 w-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-xs text-muted-foreground">{label}</div>
+        <div className={`mt-0.5 truncate text-[21px] font-semibold leading-7 ${dashboardMetricToneClassName[tone]}`}>
+          {value}
+        </div>
+        {detail && (
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">
+            {detail}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function parseLogDate(value: string) {
@@ -419,12 +521,84 @@ function formatTime(value: string) {
   return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+function averageDurationMs(logs: RequestLog[]) {
+  const durations = logs
+    .map((log) => log.durationMs)
+    .filter((duration): duration is number => typeof duration === "number" && Number.isFinite(duration));
+
+  if (durations.length === 0) {
+    return null;
+  }
+
+  return durations.reduce((sum, duration) => sum + duration, 0) / durations.length;
+}
+
+function getTodayAverageTpm(tokens: number) {
+  if (tokens <= 0) {
+    return 0;
+  }
+
+  const now = new Date();
+  const startOfDay = new Date(now);
+  startOfDay.setHours(0, 0, 0, 0);
+  const elapsedMinutes = Math.max(1, (now.getTime() - startOfDay.getTime()) / 60000);
+  return tokens / elapsedMinutes;
+}
+
+function formatBalance(value: number, currency?: string) {
+  const symbol = currencySymbol(currency);
+  return `${symbol}${value.toFixed(2)}`;
+}
+
 function formatCost(value: number) {
   return `¥${value.toFixed(4)}`;
 }
 
-function formatTokens(value: number) {
-  return `${value.toLocaleString("zh-CN")} t`;
+function formatCompactNumber(value: number) {
+  const absValue = Math.abs(value);
+  if (absValue >= 1_000_000_000) {
+    return `${trimFixed(value / 1_000_000_000)}B`;
+  }
+  if (absValue >= 1_000_000) {
+    return `${trimFixed(value / 1_000_000)}M`;
+  }
+  if (absValue >= 1_000) {
+    return `${trimFixed(value / 1_000)}K`;
+  }
+  if (!Number.isInteger(value)) {
+    return trimFixed(value);
+  }
+  return value.toLocaleString("zh-CN");
+}
+
+function formatDuration(value: number | null) {
+  if (value === null) {
+    return "-";
+  }
+  if (value >= 1000) {
+    return `${trimFixed(value / 1000)}s`;
+  }
+  return `${Math.round(value)}ms`;
+}
+
+function formatPercent(value: number | null) {
+  if (value === null) {
+    return "-";
+  }
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function trimFixed(value: number) {
+  return value.toFixed(1).replace(/\.0$/, "");
+}
+
+function currencySymbol(currency?: string) {
+  const normalized = currency?.toUpperCase();
+  if (normalized === "USD") return "$";
+  if (normalized === "CNY" || normalized === "RMB") return "¥";
+  if (normalized === "EUR") return "€";
+  if (normalized === "GBP") return "£";
+  return "";
 }
 
 function requestStatusLabel(status: string) {

@@ -48,3 +48,11 @@ export type GroupRateRecord = {
   checkedAt: string;
   createdAt: string;
 };
+
+export function isCollectedStationGroupBinding(binding: StationGroupBinding) {
+  return (
+    binding.bindingKind === "station_group" &&
+    binding.bindingStatus !== "manual_legacy" &&
+    binding.rateSource !== "legacy_key_group"
+  );
+}

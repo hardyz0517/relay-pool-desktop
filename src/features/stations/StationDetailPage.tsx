@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Button, EmptyState, useToast } from "@/components/ui";
-import { listChangeEvents } from "@/lib/api/changeEvents";
+import { listChangeEventsForStation } from "@/lib/api/changeEvents";
 import { collectStationTask, getLatestCollectorSnapshot } from "@/lib/api/collector";
 import { listCollectorRuns } from "@/lib/api/collectorRuns";
-import { listBalanceSnapshots } from "@/lib/api/economics";
+import { listBalanceSnapshotsForStation } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getStationCredentials, listStationKeys } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
@@ -26,6 +26,7 @@ import {
 
 type StationDetailPageProps = {
   stationId: string | null;
+  initialStation?: Station | null;
   onBack: () => void;
   onEditProvider: (stationId: string) => void;
 };
@@ -56,13 +57,20 @@ const refreshSuccessLabel: Record<StationDetailRefreshAction, string> = {
   full: "采集已完成",
 };
 
-export function StationDetailPage({ stationId, onBack, onEditProvider }: StationDetailPageProps) {
+export function StationDetailPage({
+  stationId,
+  initialStation = null,
+  onBack,
+  onEditProvider,
+}: StationDetailPageProps) {
   const toast = useToast();
   const mountedRef = useRef(true);
   const loadRequestRef = useRef(0);
   const refreshRequestRef = useRef(0);
   const activeStationIdRef = useRef<string | null>(stationId);
-  const [detailData, setDetailData] = useState<DetailData | null>(null);
+  const [detailData, setDetailData] = useState<DetailData | null>(() =>
+    initialStation && initialStation.id === stationId ? createDetailDataSeed(initialStation) : null,
+  );
   const [initialLoading, setInitialLoading] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
   const [sectionError, setSectionError] = useState<string | null>(null);
@@ -123,8 +131,8 @@ export function StationDetailPage({ stationId, onBack, onEditProvider }: Station
         listGroupRateRecords(id),
         listCollectorRuns(id),
         getLatestCollectorSnapshot(id),
-        listBalanceSnapshots(),
-        listChangeEvents(),
+        listBalanceSnapshotsForStation(id),
+        listChangeEventsForStation(id),
       ]);
       const station = stations.find((item) => item.id === id);
 
@@ -144,8 +152,8 @@ export function StationDetailPage({ stationId, onBack, onEditProvider }: Station
         groupRates,
         collectorRuns,
         latestSnapshot,
-        balances: balanceSnapshots.filter((balance: BalanceSnapshot) => balance.stationId === id),
-        changes: changeEvents.filter((event: ChangeEvent) => event.stationId === id),
+        balances: balanceSnapshots,
+        changes: changeEvents,
       };
       setDetailData(nextData);
       setPageError(null);
@@ -183,8 +191,19 @@ export function StationDetailPage({ stationId, onBack, onEditProvider }: Station
       return;
     }
 
+    if (initialStation?.id === stationId) {
+      setDetailData((current) =>
+        current?.station.id === stationId ? current : createDetailDataSeed(initialStation),
+      );
+      setInitialLoading(false);
+      setPageError(null);
+      setSectionError(null);
+      void loadDetail(stationId, "silent").catch(() => undefined);
+      return;
+    }
+
     void loadDetail(stationId, "initial").catch(() => undefined);
-  }, [loadDetail, stationId]);
+  }, [initialStation, loadDetail, stationId]);
 
   const viewModel = useMemo<StationDetailViewModel | null>(() => {
     if (!detailData) {
@@ -262,4 +281,18 @@ export function StationDetailPage({ stationId, onBack, onEditProvider }: Station
 
 function readError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function createDetailDataSeed(station: Station): DetailData {
+  return {
+    station,
+    balances: [],
+    groupBindings: [],
+    groupRates: [],
+    collectorRuns: [],
+    latestSnapshot: null,
+    credentials: null,
+    stationKeys: [],
+    changes: [],
+  };
 }
