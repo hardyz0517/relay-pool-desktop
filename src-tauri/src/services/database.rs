@@ -23,6 +23,7 @@ use crate::models::{
     },
     pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
     proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
+    remote_keys::{RemoteKeyMatchStatus, RemoteStationKey},
     routing::{
         ModelAlias, RouteSimulationInput, RouteSimulationResult, RoutingPolicy,
         StationKeyCapabilities, StationKeyHealth, UpdateStationKeyCapabilitiesInput,
@@ -92,6 +93,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移请求日志成本字段失败: {error}"))?;
         migrate_request_log_economic_columns(&connection)
             .map_err(|error| format!("迁移请求日志经济上下文字段失败: {error}"))?;
+        migrate_remote_key_tables(&connection)
+            .map_err(|error| format!("迁移远端 Key 表失败: {error}"))?;
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -123,6 +126,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移请求日志成本字段失败: {error}"))?;
         migrate_request_log_economic_columns(&connection)
             .map_err(|error| format!("迁移请求日志经济上下文字段失败: {error}"))?;
+        migrate_remote_key_tables(&connection)
+            .map_err(|error| format!("迁移远端 Key 表失败: {error}"))?;
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -377,6 +382,82 @@ impl AppDatabase {
     pub fn list_station_keys(&self, station_id: String) -> Result<Vec<StationKey>, String> {
         let connection = self.connection()?;
         list_station_keys_from_connection(&connection, &station_id)
+    }
+
+    pub fn list_remote_station_keys(
+        &self,
+        station_id: String,
+    ) -> Result<Vec<RemoteStationKey>, String> {
+        let connection = self.connection()?;
+        list_remote_station_keys_from_connection(&connection, &station_id)
+    }
+
+    pub fn replace_remote_station_keys(
+        &self,
+        station_id: String,
+        keys: Vec<RemoteStationKey>,
+    ) -> Result<Vec<RemoteStationKey>, String> {
+        let mut connection = self.connection()?;
+        validate_station_exists(&connection, &station_id)?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始远端 Key 发现事务失败: {error}"))?;
+        transaction
+            .execute(
+                "DELETE FROM remote_station_keys WHERE station_id = ?1",
+                params![station_id],
+            )
+            .map_err(|error| format!("清空远端 Key 发现失败: {error}"))?;
+        for key in keys {
+            insert_remote_station_key(&transaction, &station_id, &key)?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("保存远端 Key 发现失败: {error}"))?;
+        list_remote_station_keys_from_connection(&connection, &station_id)
+    }
+
+    pub fn bind_remote_station_key(
+        &self,
+        remote_key_id: String,
+        station_key_id: String,
+    ) -> Result<Vec<RemoteStationKey>, String> {
+        let connection = self.connection()?;
+        let station_id: Option<String> = connection
+            .query_row(
+                "SELECT station_id FROM station_keys WHERE id = ?1",
+                params![station_key_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("读取 Station Key 失败: {error}"))?;
+
+        let Some(station_id) = station_id else {
+            return Err("Station Key 不存在，无法绑定远端 Key".to_string());
+        };
+
+        let updated = connection
+            .execute(
+                "UPDATE remote_station_keys
+                    SET match_status = ?1,
+                        matched_station_key_id = ?2,
+                        match_confidence = 1.0,
+                        updated_at = ?3
+                  WHERE id = ?4 AND station_id = ?5",
+                params![
+                    RemoteKeyMatchStatus::Matched.as_str(),
+                    station_key_id,
+                    now_string(),
+                    remote_key_id,
+                    station_id,
+                ],
+            )
+            .map_err(|error| format!("绑定远端 Key 失败: {error}"))?;
+        if updated == 0 {
+            return Err("远端 Key 不存在，无法绑定".to_string());
+        }
+
+        list_remote_station_keys_from_connection(&connection, &station_id)
     }
 
     pub fn create_station_key(&self, input: CreateStationKeyInput) -> Result<StationKey, String> {
@@ -2313,6 +2394,40 @@ fn migrate_request_log_economic_columns(connection: &Connection) -> rusqlite::Re
     Ok(())
 }
 
+fn migrate_remote_key_tables(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS remote_station_keys (
+            id TEXT PRIMARY KEY,
+            station_id TEXT NOT NULL,
+            remote_key_id_hash TEXT,
+            remote_key_name TEXT,
+            api_key_masked TEXT,
+            api_key_fingerprint TEXT,
+            group_id_hash TEXT,
+            group_name TEXT,
+            tier_label TEXT,
+            rate_multiplier REAL,
+            rate_source TEXT,
+            created_at_remote TEXT,
+            last_used_at TEXT,
+            raw_source TEXT NOT NULL,
+            match_status TEXT NOT NULL,
+            matched_station_key_id TEXT,
+            match_confidence REAL NOT NULL,
+            collected_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_remote_station_keys_station
+            ON remote_station_keys(station_id, collected_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_remote_station_keys_matched_key
+            ON remote_station_keys(matched_station_key_id);
+        "#,
+    )
+}
+
 fn migrate_pricing_tables(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(
         "
@@ -2464,6 +2579,93 @@ fn list_station_keys_from_connection(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析 Station Key 失败: {error}"))?;
     Ok(rows)
+}
+
+fn list_remote_station_keys_from_connection(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<Vec<RemoteStationKey>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, station_id, remote_key_id_hash, remote_key_name, api_key_masked,
+                    api_key_fingerprint, group_id_hash, group_name, tier_label, rate_multiplier,
+                    rate_source, created_at_remote, last_used_at, raw_source, match_status,
+                    matched_station_key_id, match_confidence, collected_at
+               FROM remote_station_keys
+              WHERE station_id = ?1
+              ORDER BY collected_at DESC, id ASC",
+        )
+        .map_err(|error| format!("读取远端 Key 发现列表失败: {error}"))?;
+
+    let rows = statement
+        .query_map(params![station_id], row_to_remote_station_key)
+        .map_err(|error| format!("查询远端 Key 发现失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析远端 Key 发现失败: {error}"))?;
+    Ok(rows)
+}
+
+fn row_to_remote_station_key(row: &rusqlite::Row<'_>) -> rusqlite::Result<RemoteStationKey> {
+    let match_status: String = row.get(14)?;
+    Ok(RemoteStationKey {
+        id: row.get(0)?,
+        station_id: row.get(1)?,
+        remote_key_id_hash: row.get(2)?,
+        remote_key_name: row.get(3)?,
+        api_key_masked: row.get(4)?,
+        api_key_fingerprint: row.get(5)?,
+        group_id_hash: row.get(6)?,
+        group_name: row.get(7)?,
+        tier_label: row.get(8)?,
+        rate_multiplier: row.get(9)?,
+        rate_source: row.get(10)?,
+        created_at: row.get(11)?,
+        last_used_at: row.get(12)?,
+        raw_source: row.get(13)?,
+        match_status: RemoteKeyMatchStatus::from_str(&match_status),
+        matched_station_key_id: row.get(15)?,
+        match_confidence: row.get(16)?,
+        collected_at: row.get(17)?,
+    })
+}
+
+fn insert_remote_station_key(
+    transaction: &rusqlite::Transaction<'_>,
+    station_id: &str,
+    key: &RemoteStationKey,
+) -> Result<(), String> {
+    transaction
+        .execute(
+            "INSERT INTO remote_station_keys (
+                id, station_id, remote_key_id_hash, remote_key_name, api_key_masked,
+                api_key_fingerprint, group_id_hash, group_name, tier_label, rate_multiplier,
+                rate_source, created_at_remote, last_used_at, raw_source, match_status,
+                matched_station_key_id, match_confidence, collected_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            params![
+                key.id,
+                station_id,
+                key.remote_key_id_hash,
+                key.remote_key_name,
+                key.api_key_masked,
+                key.api_key_fingerprint,
+                key.group_id_hash,
+                key.group_name,
+                key.tier_label,
+                key.rate_multiplier,
+                key.rate_source,
+                key.created_at,
+                key.last_used_at,
+                key.raw_source,
+                key.match_status.as_str(),
+                key.matched_station_key_id,
+                key.match_confidence,
+                key.collected_at,
+                now_string(),
+            ],
+        )
+        .map_err(|error| format!("写入远端 Key 发现失败: {error}"))?;
+    Ok(())
 }
 
 fn list_key_pool_items_from_connection(
@@ -6379,6 +6581,125 @@ mod tests {
                 note: None,
             })
             .expect("station")
+    }
+
+    #[test]
+    fn remote_station_keys_replace_per_station() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "Remote Key Station");
+
+        let saved = database
+            .replace_remote_station_keys(
+                station.id.clone(),
+                vec![crate::models::remote_keys::RemoteStationKey {
+                    id: "remote-key-1".to_string(),
+                    station_id: station.id.clone(),
+                    remote_key_id_hash: Some("remote-id-hash".to_string()),
+                    remote_key_name: Some("remote key".to_string()),
+                    api_key_masked: Some("sk-****abcd".to_string()),
+                    api_key_fingerprint: Some("fingerprint".to_string()),
+                    group_id_hash: Some("group-hash".to_string()),
+                    group_name: Some("pro".to_string()),
+                    tier_label: Some("tier-a".to_string()),
+                    rate_multiplier: Some(0.75),
+                    rate_source: Some("remote".to_string()),
+                    created_at: Some("1000".to_string()),
+                    last_used_at: Some("2000".to_string()),
+                    raw_source: "sub2api".to_string(),
+                    match_status: crate::models::remote_keys::RemoteKeyMatchStatus::Unbound,
+                    matched_station_key_id: None,
+                    match_confidence: 0.0,
+                    collected_at: "3000".to_string(),
+                }],
+            )
+            .expect("replace remote keys");
+
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].group_name.as_deref(), Some("pro"));
+        assert_eq!(saved[0].rate_multiplier, Some(0.75));
+
+        let listed = database
+            .list_remote_station_keys(station.id.clone())
+            .expect("list remote keys");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].group_name.as_deref(), Some("pro"));
+        assert_eq!(listed[0].rate_multiplier, Some(0.75));
+
+        let cleared = database
+            .replace_remote_station_keys(station.id.clone(), Vec::new())
+            .expect("clear remote keys");
+        assert!(cleared.is_empty());
+        assert!(database
+            .list_remote_station_keys(station.id)
+            .expect("list after clear")
+            .is_empty());
+    }
+
+    #[test]
+    fn remote_station_key_bind_marks_match() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "Remote Bind Station");
+        let station_key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id.clone(),
+                name: "local key".to_string(),
+                api_key: "sk-local-bind".to_string(),
+                enabled: true,
+                priority: Some(0),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect("station key");
+
+        database
+            .replace_remote_station_keys(
+                station.id.clone(),
+                vec![crate::models::remote_keys::RemoteStationKey {
+                    id: "remote-bind-1".to_string(),
+                    station_id: station.id.clone(),
+                    remote_key_id_hash: Some("remote-bind-hash".to_string()),
+                    remote_key_name: Some("remote bind key".to_string()),
+                    api_key_masked: None,
+                    api_key_fingerprint: None,
+                    group_id_hash: None,
+                    group_name: None,
+                    tier_label: None,
+                    rate_multiplier: None,
+                    rate_source: None,
+                    created_at: None,
+                    last_used_at: None,
+                    raw_source: "sub2api".to_string(),
+                    match_status: crate::models::remote_keys::RemoteKeyMatchStatus::Unbound,
+                    matched_station_key_id: None,
+                    match_confidence: 0.0,
+                    collected_at: "3000".to_string(),
+                }],
+            )
+            .expect("insert remote key");
+
+        let keys = database
+            .bind_remote_station_key("remote-bind-1".to_string(), station_key.id.clone())
+            .expect("bind remote key");
+        let matched = keys
+            .into_iter()
+            .find(|key| key.id == "remote-bind-1")
+            .expect("matched remote key");
+
+        assert_eq!(
+            matched.match_status,
+            crate::models::remote_keys::RemoteKeyMatchStatus::Matched
+        );
+        assert_eq!(
+            matched.matched_station_key_id.as_deref(),
+            Some(station_key.id.as_str())
+        );
+        assert_eq!(matched.match_confidence, 1.0);
     }
 
     #[test]
