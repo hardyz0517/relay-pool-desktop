@@ -70,6 +70,7 @@ export function App() {
           <StationsPage
             onAddProvider={() => setActiveRouteId("addProvider")}
             onEditProvider={openEditProvider}
+            onOpenStation={openStationDetail}
           />
         );
       case "keyPool":

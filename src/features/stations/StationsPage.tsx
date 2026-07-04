@@ -1,21 +1,8 @@
 ﻿import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import {
-  closestCenter,
-  type DraggableAttributes,
-  DndContext,
-  DragOverlay,
-  PointerSensor,
-  type DragEndEvent,
-  type DragStartEvent,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import { ArrowRight, Clock3, Edit3, GripVertical, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
+import { Clock3, Edit3, GripVertical, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, Dialog, EmptyState, IconButton, MaskedSecret, ObjectRow, PropertyList, PropertyRow, SelectControl, StatusBadge, type StatusTone, useToast } from "@/components/ui";
-import { createStation, deleteStation, listStations, reorderStations, updateStation } from "@/lib/api/stations";
+import { Button, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, useToast } from "@/components/ui";
+import { createStation, deleteStation, listStations, updateStation } from "@/lib/api/stations";
 import {
   clearStationCredentials,
   createStationKey,
@@ -28,7 +15,6 @@ import {
 import {
   collectSub2apiStation,
   collectStationTask,
-  detectSub2apiStation,
   getLatestCollectorSnapshot,
   listCollectorSnapshots,
 } from "@/lib/api/collector";
@@ -44,11 +30,8 @@ import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
 import { stationStatusLabels, stationTypeLabels, type Station, type StationInput, type StationType } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
-import { StationStatusDot } from "./components/StationStatusDot";
 import {
   buildStationAssetRows,
-  formatStationBalance,
-  stationRiskTone,
   type StationAssetRow,
 } from "./stationAssetViewModels";
 
@@ -79,6 +62,7 @@ type StationKeyFormState = {
 };
 
 type DialogMode = "create" | "edit" | "detail" | null;
+type StationAction = "collect" | "balance";
 
 const emptyForm: StationFormState = {
   name: "",
@@ -116,13 +100,14 @@ const statusTone: Record<Station["status"], "healthy" | "warning" | "error" | "d
 
 type StationsPageProps = {
   onAddProvider?: () => void;
+  onEditProvider?: (stationId: string) => void;
+  onOpenStation?: (stationId: string) => void;
 };
 
-export function StationsPage({ onAddProvider }: StationsPageProps) {
+export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: StationsPageProps) {
   const toast = useToast();
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
-  const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
   const [editingStationId, setEditingStationId] = useState<string | null>(null);
   const [detailStationId, setDetailStationId] = useState<string | null>(null);
@@ -147,9 +132,11 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actionSaving, setActionSaving] = useState(false);
+  const [stationAction, setStationAction] = useState<{
+    stationId: string;
+    action: StationAction;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   useEffect(() => {
     void refreshStations();
@@ -180,7 +167,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     return () => window.clearTimeout(timeoutId);
   }, [drawerClosing]);
 
-  const stationIds = useMemo(() => stations.map((station) => station.id), [stations]);
   const selectedStation = useMemo(
     () => stations.find((station) => station.id === selectedStationId) ?? stations[0] ?? null,
     [selectedStationId, stations],
@@ -194,11 +180,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     [editingStationId, stations],
   );
   const activeDialogStation = dialogMode === "detail" ? detailStation : editingStation;
-  const activeDragStation = useMemo(
-    () => stations.find((station) => station.id === activeDragId) ?? null,
-    [activeDragId, stations],
-  );
-  const enabledCount = useMemo(() => stations.filter((station) => station.enabled).length, [stations]);
   const attentionCount = useMemo(
     () => stations.filter((station) => station.status === "warning" || station.status === "error").length,
     [stations],
@@ -228,6 +209,10 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
         changes: changeEvents,
       }),
     [balanceSnapshots, changeEvents, groupBindingsByStation, keysByStation, snapshotsByStation, stations],
+  );
+  const collectedBalanceCount = useMemo(
+    () => stationAssetRows.filter((row) => row.latestBalance?.value != null || row.station.balanceCny != null).length,
+    [stationAssetRows],
   );
 
   useEffect(() => {
@@ -328,6 +313,17 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
   }, []);
 
   const openEdit = useCallback((station: Station) => {
+    if (onEditProvider) {
+      setDialogMode(null);
+      setEditingStationId(null);
+      setDetailStationId(null);
+      setDrawerStationId(null);
+      setDrawerVisible(false);
+      setDrawerClosing(false);
+      onEditProvider(station.id);
+      return;
+    }
+
     setDialogMode("edit");
     setEditingStationId(station.id);
     setDetailStationId(null);
@@ -345,9 +341,23 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       rememberPassword: false,
     });
     setError(null);
-  }, []);
+  }, [onEditProvider]);
 
   const openDetail = useCallback((station: Station) => {
+    if (onOpenStation) {
+      setDialogMode(null);
+      setDetailStationId(null);
+      setEditingStationId(null);
+      setDrawerStationId(null);
+      setDrawerVisible(false);
+      setDrawerClosing(false);
+      setKeyDialogOpen(false);
+      setKeyForm(emptyKeyForm);
+      setError(null);
+      onOpenStation(station.id);
+      return;
+    }
+
     const restoringCurrentDrawer = drawerStationId === station.id;
     setDialogMode("detail");
     setDetailStationId(station.id);
@@ -360,7 +370,7 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     setSelectedStationId(station.id);
     setError(null);
     void refreshExtras(station.id);
-  }, [drawerStationId, refreshExtras]);
+  }, [drawerStationId, onOpenStation, refreshExtras]);
 
   const closeDrawer = useCallback(() => {
     if (!drawerStationId || drawerClosing) {
@@ -388,31 +398,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     setKeyForm(emptyKeyForm);
   }, []);
 
-  const handleSelect = useCallback((station: Station) => {
-    setSelectedStationId(station.id);
-  }, []);
-
-  const handleToggleEnabled = useCallback(async (station: Station) => {
-    setError(null);
-    try {
-      await updateStation({
-        id: station.id,
-        name: station.name,
-        stationType: station.stationType,
-        baseUrl: station.baseUrl,
-        apiKey: null,
-        enabled: !station.enabled,
-        creditPerCny: station.creditPerCny,
-        lowBalanceThresholdCny: station.lowBalanceThresholdCny,
-        note: station.note,
-      });
-      await refreshStations();
-      toast.success(station.enabled ? "站点已禁用" : "站点已启用");
-    } catch (requestError) {
-      toast.error("更新站点状态失败", readError(requestError));
-    }
-  }, []);
-
   const handleDelete = useCallback(async (station: Station) => {
     if (!window.confirm(`确认删除站点「${station.name}」？`)) {
       return;
@@ -426,40 +411,6 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
       toast.error("删除站点失败", readError(requestError));
     }
   }, []);
-
-  function handleDragStart(event: DragStartEvent) {
-    setActiveDragId(String(event.active.id));
-  }
-
-  function handleDragCancel() {
-    setActiveDragId(null);
-  }
-
-  async function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    setActiveDragId(null);
-    if (!over || active.id === over.id) {
-      return;
-    }
-    const oldIndex = stations.findIndex((station) => station.id === active.id);
-    const newIndex = stations.findIndex((station) => station.id === over.id);
-    if (oldIndex < 0 || newIndex < 0) {
-      return;
-    }
-    const previousStations = stations;
-    const nextStations = [...stations];
-    const [moved] = nextStations.splice(oldIndex, 1);
-    nextStations.splice(newIndex, 0, moved);
-    setStations(nextStations);
-    try {
-      const savedStations = await reorderStations(nextStations.map((station) => station.id));
-      setStations(savedStations);
-      toast.success("站点排序已保存");
-    } catch (requestError) {
-      setStations(previousStations);
-      toast.error("保存站点排序失败", readError(requestError));
-    }
-  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -520,29 +471,11 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     }
   }
 
-  async function handleRunDetect() {
-    if (!selectedStation) {
-      return;
-    }
-    setActionSaving(true);
-    setError(null);
-    try {
-      await detectSub2apiStation(selectedStation.id);
-      await refreshStations();
-      await refreshExtras(selectedStation.id);
-      toast.success("已执行站点探测");
-    } catch (requestError) {
-      toast.error("站点探测失败", readError(requestError));
-    } finally {
-      setActionSaving(false);
-    }
-  }
-
   async function handleRunCollect(station = selectedStation) {
     if (!station) {
       return;
     }
-    setActionSaving(true);
+    setStationAction({ stationId: station.id, action: "collect" });
     setError(null);
     try {
       await collectSub2apiStation(station.id);
@@ -555,25 +488,32 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
     } catch (requestError) {
       toast.error("保存采集快照失败", readError(requestError));
     } finally {
-      setActionSaving(false);
+      setStationAction(null);
     }
   }
 
   async function handleRefreshBalance(station: Station) {
-    setActionSaving(true);
+    setStationAction({ stationId: station.id, action: "balance" });
     setError(null);
     try {
-      await collectStationTask(station.id, "balance");
+      const result = await collectStationTask(station.id, "balance");
       await refreshStations();
       if (station.id === selectedStationId || station.id === drawerStationId) {
         await refreshExtras(station.id);
       }
       await refreshStationFacts(station.id);
-      toast.success("余额已刷新");
+      if (result.snapshot.status === "success") {
+        toast.success("余额已刷新");
+      } else {
+        toast.error(
+          "余额未采集到",
+          result.snapshot.errorMessage ?? "采集任务已结束，但没有写入可显示的余额。",
+        );
+      }
     } catch (requestError) {
       toast.error("刷新余额失败", readError(requestError));
     } finally {
-      setActionSaving(false);
+      setStationAction(null);
     }
   }
 
@@ -637,7 +577,7 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
           <div className="min-w-0">
             <div className="text-[13px] font-semibold text-slate-800">中转站列表</div>
             <div className="text-xs text-muted-foreground">
-              {stations.length} 个站点，{enabledCount} 个启用，{attentionCount} 个需关注。
+              {stations.length} 个站点，{collectedBalanceCount} 个已有余额，{attentionCount} 个需关注。
             </div>
           </div>
         </div>
@@ -658,8 +598,8 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
               {stationAssetRows.map((row) => (
                 <StationAssetListRow
                   key={row.station.id}
-                  actionSaving={actionSaving}
                   active={row.station.id === selectedStation?.id}
+                  loadingAction={stationAction?.stationId === row.station.id ? stationAction.action : null}
                   row={row}
                   onCollect={(station) => void handleRunCollect(station)}
                   onDelete={handleDelete}
@@ -779,7 +719,7 @@ export function StationsPage({ onAddProvider }: StationsPageProps) {
 function StationAssetListRow({
   row,
   active,
-  actionSaving,
+  loadingAction,
   onOpen,
   onEdit,
   onCollect,
@@ -788,7 +728,7 @@ function StationAssetListRow({
 }: {
   row: StationAssetRow;
   active: boolean;
-  actionSaving: boolean;
+  loadingAction: StationAction | null;
   onOpen: (station: Station) => void;
   onEdit: (station: Station) => void;
   onCollect: (station: Station) => void;
@@ -796,9 +736,9 @@ function StationAssetListRow({
   onRefreshBalance: (station: Station) => void;
 }) {
   const station = row.station;
-  const statusToneValue = stationRiskTone(row);
   const balance = formatStationBalanceParts(row);
   const lastCollectText = formatRelativeTime(station.lastPricingFetchedAt ?? station.updatedAt);
+  const actionBusy = loadingAction !== null;
 
   return (
     <div
@@ -806,7 +746,7 @@ function StationAssetListRow({
       tabIndex={0}
       aria-pressed={active}
       className={cn(
-        "group flex min-h-[78px] w-full cursor-pointer items-center gap-3 rounded-[14px] border px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)]",
+        "group flex min-h-[78px] w-full cursor-pointer flex-wrap items-center gap-3 rounded-[14px] border px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)] md:flex-nowrap",
         active
           ? "border-[hsl(var(--accent))] bg-[linear-gradient(90deg,#eff6ff_0%,#f7fbff_42%,#ffffff_100%)]"
           : "border-border bg-white hover:border-sky-200 hover:bg-slate-50/60",
@@ -824,13 +764,12 @@ function StationAssetListRow({
         {stationAvatarLabel(station.name)}
       </div>
 
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-[1_1_calc(100%-5rem)] md:flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <div className="truncate text-[15px] font-semibold leading-5 text-slate-950">{station.name}</div>
           <span className="hidden rounded-full border border-slate-200 bg-white/80 px-2 py-0.5 text-[11px] font-medium leading-4 text-slate-500 sm:inline-flex">
             {stationTypeLabels[station.stationType]}
           </span>
-          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDotClassName(statusToneValue))} />
         </div>
         <div className="mt-1 truncate text-xs font-medium text-[hsl(var(--accent))]">
           {formatStationDisplayUrl(station.baseUrl)}
@@ -846,8 +785,8 @@ function StationAssetListRow({
               type="button"
               aria-label={`刷新余额 ${station.name}`}
               title={`刷新余额 ${station.name}`}
-              disabled={actionSaving || !station.enabled}
-              className="ml-1 inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded-[6px] text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)] disabled:cursor-default disabled:opacity-40"
+              disabled={actionBusy || !station.enabled}
+              className="ml-0.5 inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-[5px] text-slate-400/80 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.22)] disabled:cursor-default disabled:opacity-40"
               onClick={(event) => {
                 event.stopPropagation();
                 onRefreshBalance(station);
@@ -856,7 +795,7 @@ function StationAssetListRow({
                 event.stopPropagation();
               }}
             >
-              <RefreshCw className={cn("h-3.5 w-3.5", actionSaving && "animate-spin")} />
+              <RefreshCw className={cn("h-3 w-3", loadingAction === "balance" && "animate-spin")} />
             </button>
           </div>
           <div className="mt-1 text-xs leading-4 text-slate-500">
@@ -870,7 +809,7 @@ function StationAssetListRow({
       </div>
 
       <div
-        className="flex shrink-0 items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+        className="ml-auto flex shrink-0 items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}
       >
@@ -879,11 +818,11 @@ function StationAssetListRow({
         </IconButton>
         <IconButton
           className="text-slate-500 hover:text-slate-900"
-          disabled={actionSaving || !station.enabled}
+          disabled={actionBusy || !station.enabled}
           label={`采集信息 ${station.name}`}
           onClick={() => onCollect(station)}
         >
-          <RefreshCw className={cn("h-4 w-4", actionSaving && "animate-spin")} />
+          <RefreshCw className={cn("h-4 w-4", loadingAction === "collect" && "animate-spin")} />
         </IconButton>
         <IconButton
           className="text-slate-400 hover:bg-rose-50 hover:text-rose-600"
@@ -1446,14 +1385,6 @@ function formatRelativeTime(value: string | null) {
     return `${Math.floor(diffMs / hour)} 小时前`;
   }
   return `${Math.floor(diffMs / day)} 天前`;
-}
-
-function statusDotClassName(tone: StatusTone) {
-  if (tone === "healthy") return "bg-emerald-500";
-  if (tone === "warning") return "bg-amber-500";
-  if (tone === "error") return "bg-rose-500";
-  if (tone === "disabled") return "bg-slate-400";
-  return "bg-blue-500";
 }
 
 function formatNullableTime(value: string | null) {
