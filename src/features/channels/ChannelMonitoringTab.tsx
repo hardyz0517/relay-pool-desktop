@@ -16,6 +16,7 @@ import type { ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun, 
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
 import { ChannelMonitorForm } from "./ChannelMonitorForm";
+import { ChannelMonitorTemplateManager } from "./ChannelMonitorTemplateManager";
 import {
   formatInterval,
   formatRunTimestamp,
@@ -49,6 +50,7 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
   const [actionState, setActionState] = useState<ActionState>(null);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
   const [editingMonitor, setEditingMonitor] = useState<ChannelMonitor | null>(null);
 
   useEffect(() => {
@@ -309,7 +311,7 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
             <RefreshCw className="h-4 w-4" />
             刷新
           </Button>
-          <Button variant="outline" disabled title="模板管理将在 Task 7 接入">
+          <Button variant="outline" onClick={() => setTemplateManagerOpen(true)}>
             <LayoutTemplate className="h-4 w-4" />
             模板管理
           </Button>
@@ -348,6 +350,12 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
         saving={saving}
         onClose={closeForm}
         onSubmit={handleSave}
+      />
+      <ChannelMonitorTemplateManager
+        open={templateManagerOpen}
+        templates={templates}
+        onClose={() => setTemplateManagerOpen(false)}
+        onChanged={() => refresh()}
       />
     </>
   );
