@@ -12,7 +12,7 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Clock3, Edit3, GripVertical, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
+import { Clock3, Edit3, GripVertical, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, type StatusTone, useToast } from "@/components/ui";
 import { createStation, deleteStation, listStations, reorderStations, updateStation } from "@/lib/api/stations";
@@ -972,6 +972,9 @@ function StationAssetListRow({
       >
         <IconButton className="text-slate-500 hover:text-slate-900" label={`编辑 ${station.name}`} onClick={() => onEdit(station)}>
           <Edit3 className="h-4 w-4" />
+        </IconButton>
+        <IconButton className="text-slate-500 hover:text-slate-900" label={`管理 Key ${station.name}`} onClick={() => onEdit(station)}>
+          <KeyRound className="h-4 w-4" />
         </IconButton>
         <IconButton
           className="text-slate-500 hover:text-slate-900"

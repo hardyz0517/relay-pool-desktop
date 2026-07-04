@@ -1,18 +1,23 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, Check, ShieldCheck } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { ArrowLeft, Check, KeyRound, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
 import { testStationLoginInput } from "@/lib/api/collector";
 import {
+  bindRemoteStationKey,
   createStationKey,
+  createRemoteStationKey,
   deleteStationKey,
   getStationCredentials,
+  getRemoteKeyCapability,
   listStationKeys,
+  listRemoteStationKeys,
+  scanRemoteStationKeys,
   updateStationCredentials,
   updateStationKey,
 } from "@/lib/api/stationKeys";
 import { createStation, listStations, updateStation } from "@/lib/api/stations";
-import type { StationCredentials, StationKey } from "@/lib/types/stationKeys";
+import type { RemoteKeyCapability, RemoteStationKey, StationCredentials, StationKey } from "@/lib/types/stationKeys";
 import { stationTypeLabels, type Station, type StationType } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import {
@@ -20,6 +25,8 @@ import {
   StationKeyRowsEditor,
   type StationKeyDraft,
 } from "./components/StationKeyRowsEditor";
+import { CreateRemoteKeyDialog } from "./components/CreateRemoteKeyDialog";
+import { RemoteKeyDiscoveryList } from "./components/RemoteKeyDiscoveryList";
 import { providerPresets, type ProviderPresetId } from "./providerPresets";
 
 type AddProviderPageProps = {
@@ -219,11 +226,47 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     message: null,
   });
   const [keyRows, setKeyRows] = useState<StationKeyDraft[]>([createEmptyStationKeyDraft(0)]);
+  const [remoteCapability, setRemoteCapability] = useState<RemoteKeyCapability | null>(null);
+  const [remoteKeys, setRemoteKeys] = useState<RemoteStationKey[]>([]);
+  const [localStationKeys, setLocalStationKeys] = useState<StationKey[]>([]);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [createRemoteOpen, setCreateRemoteOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const remoteGroupOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const groups: Array<{ groupIdHash: string | null; groupName: string }> = [];
+    remoteKeys.forEach((key) => {
+      if (!key.groupIdHash && !key.groupName) {
+        return;
+      }
+      const groupName = key.groupName?.trim() || "未命名分组";
+      const groupKey = `${key.groupIdHash ?? ""}|${groupName}`;
+      if (seen.has(groupKey)) {
+        return;
+      }
+      seen.add(groupKey);
+      groups.push({
+        groupIdHash: key.groupIdHash,
+        groupName,
+      });
+    });
+    return groups;
+  }, [remoteKeys]);
+
+  const remoteUnsupportedReason = remoteCapability?.unsupportedReason ?? null;
+  const scanRemoteDisabled =
+    !editing || remoteLoading || remoteCapability?.canListRemoteKeys !== true;
+  const createRemoteDisabled =
+    !editing || remoteLoading || remoteCapability?.canCreateRemoteKey !== true;
 
   useEffect(() => {
     if (!stationId) {
       setKeyRows([createEmptyStationKeyDraft(0)]);
+      setLocalStationKeys([]);
+      setRemoteCapability(null);
+      setRemoteKeys([]);
+      setCreateRemoteOpen(false);
       setLoading(false);
       return;
     }
@@ -231,8 +274,14 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     let alive = true;
     setLoading(true);
     setError(null);
-    void Promise.all([listStations(), getStationCredentials(stationId), listStationKeys(stationId)])
-      .then(([stations, credentials, keys]) => {
+    void Promise.all([
+      listStations(),
+      getStationCredentials(stationId),
+      listStationKeys(stationId),
+      getRemoteKeyCapability(stationId).catch(() => null),
+      listRemoteStationKeys(stationId).catch(() => []),
+    ])
+      .then(([stations, credentials, keys, capability, discoveredRemoteKeys]) => {
         if (!alive) {
           return;
         }
@@ -241,7 +290,10 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           throw new Error("未找到要编辑的供应商");
         }
         setForm(formFromStation(station, credentials));
+        setLocalStationKeys(keys);
         setKeyRows(keys.length ? keys.map(keyToDraft) : []);
+        setRemoteCapability(capability);
+        setRemoteKeys(discoveredRemoteKeys);
         setConnectionTest({ status: "idle", message: null });
       })
       .catch((requestError) => {
@@ -274,6 +326,13 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     }));
     setError(null);
     setConnectionTest({ status: "idle", message: null });
+  }
+
+  async function refreshLocalStationKeyState(targetStationId: string) {
+    const keys = await listStationKeys(targetStationId);
+    setLocalStationKeys(keys);
+    setKeyRows(keys.length ? keys.map(keyToDraft) : []);
+    return keys;
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -320,6 +379,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           note: form.note.trim() ? form.note.trim() : null,
         });
         await saveKeyRows(stationId, keyRows);
+        await refreshLocalStationKeyState(stationId);
         if (form.loginUsername.trim() || form.loginPassword.trim() || form.rememberPassword) {
           await updateStationCredentials({
             stationId,
@@ -422,6 +482,81 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       toast.error("连通性测试失败", message);
     } finally {
       setTestingConnection(false);
+    }
+  }
+
+  async function handleScanRemoteKeys() {
+    if (!stationId) {
+      toast.info("请先保存供应商后再获取远端 Key");
+      return;
+    }
+
+    setRemoteLoading(true);
+    setError(null);
+    try {
+      const result = await scanRemoteStationKeys(stationId);
+      setRemoteCapability(result.capability);
+      setRemoteKeys(result.keys);
+      toast.success("远端 Key 已更新", result.message || `发现 ${result.keys.length} 个远端 Key`);
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      toast.error("获取远端 Key 失败", message);
+    } finally {
+      setRemoteLoading(false);
+    }
+  }
+
+  async function handleCreateRemoteKey(input: {
+    name: string;
+    groupIdHash: string | null;
+    groupName: string | null;
+  }) {
+    if (!stationId) {
+      toast.info("请先保存供应商后再新建远端 Key");
+      return;
+    }
+
+    setRemoteLoading(true);
+    setError(null);
+    try {
+      const result = await createRemoteStationKey({
+        stationId,
+        ...input,
+      });
+      setRemoteKeys((current) => [
+        result.remoteKey,
+        ...current.filter(
+          (key) =>
+            key.id !== result.remoteKey.id &&
+            key.remoteKeyIdHash !== result.remoteKey.remoteKeyIdHash,
+        ),
+      ]);
+      await refreshLocalStationKeyState(stationId);
+      setCreateRemoteOpen(false);
+      toast.success("远端 Key 已创建", result.message || "已同步保存为本地 Key");
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      toast.error("创建远端 Key 失败", message);
+    } finally {
+      setRemoteLoading(false);
+    }
+  }
+
+  async function handleBindRemoteKey(remoteKeyId: string, stationKeyId: string) {
+    setRemoteLoading(true);
+    setError(null);
+    try {
+      const keys = await bindRemoteStationKey(remoteKeyId, stationKeyId);
+      setRemoteKeys(keys);
+      toast.success("远端 Key 已绑定");
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      toast.error("绑定远端 Key 失败", message);
+    } finally {
+      setRemoteLoading(false);
     }
   }
 
@@ -589,12 +724,60 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
               )}
             </SectionCard>
 
-            <SectionCard title="密钥">
+            <SectionCard
+              title="密钥"
+              action={
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    disabled={scanRemoteDisabled}
+                    size="sm"
+                    title={remoteUnsupportedReason ?? undefined}
+                    variant="outline"
+                    onClick={() => void handleScanRemoteKeys()}
+                  >
+                    <RefreshCw className={cn("h-3.5 w-3.5", remoteLoading && "animate-spin")} />
+                    获取所有 Key
+                  </Button>
+                  <Button
+                    disabled={createRemoteDisabled}
+                    size="sm"
+                    title={remoteUnsupportedReason ?? undefined}
+                    variant="secondary"
+                    onClick={() => setCreateRemoteOpen(true)}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    新建远端 Key
+                  </Button>
+                </div>
+              }
+            >
               <StationKeyRowsEditor
                 disabled={saving || loading}
                 rows={keyRows}
                 onRowsChange={setKeyRows}
               />
+              {editing && (
+                <div className="mt-3 grid gap-2 border-t border-border pt-3">
+                  <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                    <KeyRound className="h-3.5 w-3.5" />
+                    远端发现
+                  </div>
+                  {remoteUnsupportedReason && remoteCapability?.canListRemoteKeys !== true ? (
+                    <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
+                      {remoteUnsupportedReason}
+                    </div>
+                  ) : (
+                    <RemoteKeyDiscoveryList
+                      keys={remoteKeys}
+                      loading={remoteLoading}
+                      localKeys={localStationKeys}
+                      onBind={(remoteKeyId, stationKeyId) =>
+                        void handleBindRemoteKey(remoteKeyId, stationKeyId)
+                      }
+                    />
+                  )}
+                </div>
+              )}
             </SectionCard>
           </div>
 
@@ -635,6 +818,13 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           </aside>
         </section>
       </PageForm>
+      <CreateRemoteKeyDialog
+        groups={remoteGroupOptions}
+        open={createRemoteOpen}
+        saving={remoteLoading}
+        onClose={() => setCreateRemoteOpen(false)}
+        onSubmit={(input) => void handleCreateRemoteKey(input)}
+      />
     </PageScaffold>
   );
 }
