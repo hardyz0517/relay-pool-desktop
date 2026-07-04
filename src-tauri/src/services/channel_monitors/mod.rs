@@ -3,9 +3,10 @@ pub mod redaction;
 pub mod templates;
 
 use std::{
+    collections::HashSet,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -30,6 +31,7 @@ const RUNNER_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const RUNNER_STOP_SLICE: Duration = Duration::from_millis(250);
 const DEFAULT_MONITOR_MODEL: &str = "gpt-4o-mini";
 const DEFAULT_MONITOR_CHALLENGE: &str = "relay-pool-monitor-ping";
+static ACTIVE_MONITOR_RUNS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 #[allow(dead_code)]
 pub fn run_channel_monitor_now(
@@ -47,8 +49,18 @@ fn run_monitor(
     monitor: ChannelMonitor,
 ) -> Result<Vec<ChannelMonitorRun>, String> {
     let monitor_id = monitor.id.clone();
-    let result = run_monitor_once(database, data_key, monitor, None);
+    let result = run_monitor_once_guarded(database, data_key, monitor, None);
     schedule_after_started_monitor(database, &monitor_id, result)
+}
+
+fn run_monitor_once_guarded(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    monitor: ChannelMonitor,
+    stop_requested: Option<&AtomicBool>,
+) -> Result<Vec<ChannelMonitorRun>, String> {
+    let _guard = MonitorRunGuard::try_start(&monitor.id)?;
+    run_monitor_once(database, data_key, monitor, stop_requested)
 }
 
 fn run_monitor_once(
@@ -71,19 +83,48 @@ fn run_monitor_once(
         return Ok(vec![run]);
     }
 
+    let max_concurrency = if monitor.target_type == "station" {
+        monitor.max_concurrency.clamp(1, 16) as usize
+    } else {
+        1
+    };
     let mut runs = Vec::with_capacity(targets.len());
-    for target in targets {
+    let mut next_target = 0;
+    while next_target < targets.len() {
         if monitor_stop_requested(stop_requested) {
             break;
         }
-        let run = run_monitor_for_key(database, data_key, &monitor, &template, &target)?;
-        database.update_channel_monitor_after_run(
-            &monitor.id,
-            &run.status,
-            run.finished_at.as_deref().unwrap_or(&run.started_at),
-            run.error_message.as_deref(),
-        )?;
-        runs.push(run);
+        let batch_end = (next_target + max_concurrency).min(targets.len());
+        let mut handles = Vec::with_capacity(batch_end - next_target);
+        for target in &targets[next_target..batch_end] {
+            if monitor_stop_requested(stop_requested) {
+                break;
+            }
+            let database = database.clone();
+            let data_key = *data_key;
+            let monitor = monitor.clone();
+            let template = template.clone();
+            let target = target.clone();
+            handles.push(thread::spawn(move || {
+                run_monitor_for_key(&database, &data_key, &monitor, &template, &target)
+            }));
+        }
+        if handles.is_empty() {
+            break;
+        }
+        next_target += handles.len();
+        for handle in handles {
+            let run = handle
+                .join()
+                .map_err(|_| "Channel monitor probe worker panicked".to_string())??;
+            database.update_channel_monitor_after_run(
+                &monitor.id,
+                &run.status,
+                run.finished_at.as_deref().unwrap_or(&run.started_at),
+                run.error_message.as_deref(),
+            )?;
+            runs.push(run);
+        }
     }
     Ok(runs)
 }
@@ -106,6 +147,35 @@ fn schedule_after_started_monitor<T>(
 
 fn monitor_stop_requested(stop_requested: Option<&AtomicBool>) -> bool {
     stop_requested.is_some_and(|stop_requested| stop_requested.load(Ordering::Relaxed))
+}
+
+struct MonitorRunGuard {
+    monitor_id: String,
+}
+
+impl MonitorRunGuard {
+    fn try_start(monitor_id: &str) -> Result<Self, String> {
+        let active_runs = ACTIVE_MONITOR_RUNS.get_or_init(|| Mutex::new(HashSet::new()));
+        let mut active_runs = active_runs
+            .lock()
+            .map_err(|_| "Channel monitor run guard is unavailable".to_string())?;
+        if !active_runs.insert(monitor_id.to_string()) {
+            return Err("Channel monitor is already running".to_string());
+        }
+        Ok(Self {
+            monitor_id: monitor_id.to_string(),
+        })
+    }
+}
+
+impl Drop for MonitorRunGuard {
+    fn drop(&mut self) {
+        if let Some(active_runs) = ACTIVE_MONITOR_RUNS.get() {
+            if let Ok(mut active_runs) = active_runs.lock() {
+                active_runs.remove(&self.monitor_id);
+            }
+        }
+    }
 }
 
 fn monitor_targets(
@@ -191,7 +261,7 @@ fn insert_probe_run(
     if result.ok {
         database.record_station_key_success(station_key_id, result.latency_ms, &finished_at)?;
     } else {
-        database.record_station_key_failure(
+        database.record_station_key_failure_with_threshold(
             station_key_id,
             &short_error(
                 result
@@ -200,6 +270,7 @@ fn insert_probe_run(
                     .unwrap_or("Channel monitor probe failed"),
             ),
             &finished_at,
+            monitor.consecutive_failure_threshold,
         )?;
     }
     database.insert_channel_monitor_run(CreateChannelMonitorRunInput {
@@ -229,7 +300,12 @@ fn insert_failed_key_run(
     error_message: String,
 ) -> Result<ChannelMonitorRun, String> {
     let finished_at = now_string();
-    database.record_station_key_failure(station_key_id, &error_message, &finished_at)?;
+    database.record_station_key_failure_with_threshold(
+        station_key_id,
+        &error_message,
+        &finished_at,
+        monitor.consecutive_failure_threshold,
+    )?;
     database.insert_channel_monitor_run(CreateChannelMonitorRunInput {
         monitor_id: monitor.id.clone(),
         template_id: monitor.template_id.clone(),
@@ -341,8 +417,12 @@ fn runner_loop(database: AppDatabase, data_key: [u8; 32], stop_requested: Arc<At
                         break;
                     }
                     let monitor_id = monitor.id.clone();
-                    let result =
-                        run_monitor_once(&database, &data_key, monitor, Some(&stop_requested));
+                    let result = run_monitor_once_guarded(
+                        &database,
+                        &data_key,
+                        monitor,
+                        Some(&stop_requested),
+                    );
                     if let Err(error) =
                         schedule_after_started_monitor(&database, &monitor_id, result)
                     {
@@ -370,7 +450,7 @@ mod tests {
     use crate::{
         models::{
             channel_monitors::{CreateChannelMonitorInput, CreateChannelMonitorTemplateInput},
-            station_keys::UpdateStationKeyInput,
+            station_keys::{CreateStationKeyInput, UpdateStationKeyInput},
             stations::CreateStationInput,
         },
         services::database::AppDatabase,
@@ -378,7 +458,10 @@ mod tests {
     use std::{
         io::{Read, Write},
         net::TcpListener,
-        sync::mpsc,
+        sync::{
+            atomic::{AtomicUsize, Ordering as AtomicOrdering},
+            mpsc, Arc,
+        },
         thread,
         time::Duration,
     };
@@ -549,6 +632,319 @@ mod tests {
     }
 
     #[test]
+    fn monitor_failure_threshold_controls_key_cooldown() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = [8_u8; 32];
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "threshold station".to_string(),
+                    station_type: "openai-compatible".to_string(),
+                    base_url: "http://127.0.0.1:9".to_string(),
+                    api_key: "sk-threshold".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        let template = database
+            .create_channel_monitor_template(CreateChannelMonitorTemplateInput {
+                name: "Threshold template".to_string(),
+                endpoint_kind: "chat_completions".to_string(),
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                request_body_json: r#"{ "model": "{{model}}" }"#.to_string(),
+                enabled: true,
+                note: None,
+            })
+            .expect("template");
+        let first_key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        let high_threshold_key = database
+            .create_station_key_with_data_key(
+                CreateStationKeyInput {
+                    station_id: station.id.clone(),
+                    name: "high threshold key".to_string(),
+                    api_key: "sk-high-threshold".to_string(),
+                    enabled: true,
+                    priority: Some(20),
+                    group_name: None,
+                    tier_label: None,
+                    group_binding_id: None,
+                    group_id_hash: None,
+                    rate_multiplier: None,
+                    rate_source: None,
+                    balance_scope: None,
+                    note: None,
+                },
+                &data_key,
+            )
+            .expect("second key");
+        database
+            .clear_station_key_secret_for_tests(&first_key.id)
+            .expect("clear first key secret");
+        database
+            .clear_station_key_secret_for_tests(&high_threshold_key.id)
+            .expect("clear second key secret");
+        let immediate_monitor = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "Immediate cooldown monitor".to_string(),
+                target_type: "station_key".to_string(),
+                station_id: station.id.clone(),
+                station_key_id: Some(first_key.id.clone()),
+                template_id: template.id.clone(),
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 5,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 1,
+                fallback_models: Vec::new(),
+                note: None,
+            })
+            .expect("immediate monitor");
+        let tolerant_monitor = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "Tolerant cooldown monitor".to_string(),
+                target_type: "station_key".to_string(),
+                station_id: station.id,
+                station_key_id: Some(high_threshold_key.id.clone()),
+                template_id: template.id,
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 5,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 20,
+                fallback_models: Vec::new(),
+                note: None,
+            })
+            .expect("tolerant monitor");
+
+        run_channel_monitor_now(&database, &data_key, &immediate_monitor.id)
+            .expect("first monitor run");
+        for _ in 0..3 {
+            run_channel_monitor_now(&database, &data_key, &tolerant_monitor.id)
+                .expect("tolerant monitor run");
+        }
+
+        let immediate_health = database
+            .get_station_key_health(first_key.id)
+            .expect("immediate health");
+        let tolerant_health = database
+            .get_station_key_health(high_threshold_key.id)
+            .expect("tolerant health");
+        assert_eq!(immediate_health.consecutive_failures, 1);
+        assert!(
+            immediate_health.cooldown_until.is_some(),
+            "threshold 1 monitor should cool down after first failure"
+        );
+        assert_eq!(tolerant_health.consecutive_failures, 3);
+        assert_eq!(
+            tolerant_health.cooldown_until, None,
+            "threshold 20 monitor should not cool down after 3 failures"
+        );
+    }
+
+    #[test]
+    fn built_in_template_uses_monitor_fallback_model() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = [5_u8; 32];
+        let (base_url, received) = spawn_upstream(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 29\r\n\r\n{\"model\":\"custom-model\",\"ok\":true}",
+        );
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "builtin template station".to_string(),
+                    station_type: "openai-compatible".to_string(),
+                    base_url,
+                    api_key: "sk-builtin-template".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        let monitor = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "Built-in model monitor".to_string(),
+                target_type: "station_key".to_string(),
+                station_id: station.id,
+                station_key_id: Some(key.id),
+                template_id: "builtin-openai-chat-low-token".to_string(),
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 5,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 3,
+                fallback_models: vec!["custom-monitor-model".to_string()],
+                note: None,
+            })
+            .expect("monitor");
+
+        let runs = run_channel_monitor_now(&database, &data_key, &monitor.id).expect("manual run");
+        let raw_request = received
+            .recv_timeout(Duration::from_secs(2))
+            .expect("upstream request");
+
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, "success");
+        assert!(
+            raw_request.contains(r#""model":"custom-monitor-model""#),
+            "built-in template should render monitor fallback model: {raw_request}"
+        );
+        assert!(
+            !raw_request.contains("gpt-4o-mini"),
+            "built-in template should not hard-code gpt-4o-mini"
+        );
+    }
+
+    #[test]
+    fn station_monitor_applies_max_concurrency_to_key_probes() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = [6_u8; 32];
+        let (base_url, max_active, _received) =
+            spawn_counting_upstream(3, Duration::from_millis(250));
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "concurrent station".to_string(),
+                    station_type: "openai-compatible".to_string(),
+                    base_url,
+                    api_key: "sk-concurrent-1".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        for index in 2..=3 {
+            database
+                .create_station_key_with_data_key(
+                    CreateStationKeyInput {
+                        station_id: station.id.clone(),
+                        name: format!("concurrent key {index}"),
+                        api_key: format!("sk-concurrent-{index}"),
+                        enabled: true,
+                        priority: Some(index),
+                        group_name: None,
+                        tier_label: None,
+                        group_binding_id: None,
+                        group_id_hash: None,
+                        rate_multiplier: None,
+                        rate_source: None,
+                        balance_scope: None,
+                        note: None,
+                    },
+                    &data_key,
+                )
+                .expect("extra key");
+        }
+        let monitor = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "Concurrent station monitor".to_string(),
+                target_type: "station".to_string(),
+                station_id: station.id,
+                station_key_id: None,
+                template_id: "builtin-openai-chat-low-token".to_string(),
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 5,
+                max_concurrency: 2,
+                consecutive_failure_threshold: 3,
+                fallback_models: vec!["gpt-concurrency".to_string()],
+                note: None,
+            })
+            .expect("monitor");
+
+        let runs = run_channel_monitor_now(&database, &data_key, &monitor.id).expect("manual run");
+
+        assert_eq!(runs.len(), 3);
+        assert_eq!(
+            max_active.load(AtomicOrdering::SeqCst),
+            2,
+            "station monitor should run more than one probe but cap at max_concurrency"
+        );
+    }
+
+    #[test]
+    fn overlapping_runs_for_same_monitor_are_rejected() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = [10_u8; 32];
+        let (base_url, accepted) = spawn_delayed_upstream(Duration::from_millis(400));
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "overlap station".to_string(),
+                    station_type: "openai-compatible".to_string(),
+                    base_url,
+                    api_key: "sk-overlap".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        let monitor = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "Overlap monitor".to_string(),
+                target_type: "station_key".to_string(),
+                station_id: station.id,
+                station_key_id: Some(key.id),
+                template_id: "builtin-openai-chat-low-token".to_string(),
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 5,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 3,
+                fallback_models: vec!["gpt-overlap".to_string()],
+                note: None,
+            })
+            .expect("monitor");
+        let first_database = database.clone();
+        let first_monitor_id = monitor.id.clone();
+        let first_run = thread::spawn(move || {
+            run_channel_monitor_now(&first_database, &data_key, &first_monitor_id)
+        });
+        accepted
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first request accepted");
+
+        let error = run_channel_monitor_now(&database, &[10_u8; 32], &monitor.id)
+            .expect_err("overlapping run should be rejected");
+        let first_result = first_run.join().expect("first run joined");
+
+        assert!(
+            error.contains("already running"),
+            "overlap error should be explicit: {error}"
+        );
+        assert!(first_result.expect("first run").len() == 1);
+    }
+
+    #[test]
     fn started_monitor_error_still_advances_next_schedule() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let monitor = station_monitor(&database, "schedule error");
@@ -565,7 +961,10 @@ mod tests {
         let after_due = database
             .due_channel_monitors(&now_string())
             .expect("due monitors after error");
-        assert_eq!(result.expect_err("original error preserved"), "synthetic run error");
+        assert_eq!(
+            result.expect_err("original error preserved"),
+            "synthetic run error"
+        );
         assert!(before_due.iter().any(|item| item.id == monitor.id));
         assert!(!after_due.iter().any(|item| item.id == monitor.id));
     }
@@ -718,6 +1117,117 @@ mod tests {
                 .expect("write response");
         });
         (format!("http://{address}"), receiver)
+    }
+
+    fn spawn_counting_upstream(
+        expected_requests: usize,
+        response_delay: Duration,
+    ) -> (String, Arc<AtomicUsize>, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        listener
+            .set_nonblocking(true)
+            .expect("set nonblocking upstream");
+        let address = listener.local_addr().expect("local addr");
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let (sender, receiver) = mpsc::channel();
+        let thread_active = Arc::clone(&active);
+        let thread_max_active = Arc::clone(&max_active);
+        thread::spawn(move || {
+            let mut accepted = 0;
+            let mut idle_rounds = 0;
+            while accepted < expected_requests && idle_rounds < 200 {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        accepted += 1;
+                        idle_rounds = 0;
+                        let handler_active = Arc::clone(&thread_active);
+                        let handler_max_active = Arc::clone(&thread_max_active);
+                        let handler_sender = sender.clone();
+                        thread::spawn(move || {
+                            handle_counted_connection(
+                                stream,
+                                response_delay,
+                                handler_active,
+                                handler_max_active,
+                                handler_sender,
+                            );
+                        });
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        idle_rounds += 1;
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept counted upstream: {error}"),
+                }
+            }
+        });
+        (format!("http://{address}"), max_active, receiver)
+    }
+
+    fn spawn_delayed_upstream(response_delay: Duration) -> (String, mpsc::Receiver<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        let address = listener.local_addr().expect("local addr");
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            sender.send(()).expect("send accepted");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            loop {
+                let size = stream.read(&mut buffer).expect("read request");
+                if size == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..size]);
+                if request_is_complete(&request) {
+                    break;
+                }
+            }
+            thread::sleep(response_delay);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"ok\":true}",
+                )
+                .expect("write response");
+        });
+        (format!("http://{address}"), receiver)
+    }
+
+    fn handle_counted_connection(
+        mut stream: std::net::TcpStream,
+        response_delay: Duration,
+        active: Arc<AtomicUsize>,
+        max_active: Arc<AtomicUsize>,
+        sender: mpsc::Sender<String>,
+    ) {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout");
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let size = stream.read(&mut buffer).expect("read request");
+            if size == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..size]);
+            if request_is_complete(&request) {
+                break;
+            }
+        }
+        let active_now = active.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+        max_active.fetch_max(active_now, AtomicOrdering::SeqCst);
+        thread::sleep(response_delay);
+        active.fetch_sub(1, AtomicOrdering::SeqCst);
+        sender
+            .send(String::from_utf8_lossy(&request).to_string())
+            .expect("send request");
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"ok\":true}",
+            )
+            .expect("write response");
     }
 
     fn request_is_complete(request: &[u8]) -> bool {

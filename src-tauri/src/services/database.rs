@@ -1050,7 +1050,24 @@ impl AppDatabase {
         now: &str,
     ) -> Result<(), String> {
         let connection = self.connection()?;
-        record_station_key_failure_in_connection(&connection, station_key_id, error_summary, now)
+        record_station_key_failure_in_connection(&connection, station_key_id, error_summary, now, 3)
+    }
+
+    pub fn record_station_key_failure_with_threshold(
+        &self,
+        station_key_id: &str,
+        error_summary: &str,
+        now: &str,
+        consecutive_failure_threshold: i64,
+    ) -> Result<(), String> {
+        let connection = self.connection()?;
+        record_station_key_failure_in_connection(
+            &connection,
+            station_key_id,
+            error_summary,
+            now,
+            consecutive_failure_threshold,
+        )
     }
 
     pub fn simulate_route(
@@ -2157,9 +2174,9 @@ fn seed_builtin_channel_monitor_templates_in_connection(
             "chat_completions",
             "/v1/chat/completions",
             json!({
-                "model": "gpt-4o-mini",
+                "model": "{{model}}",
                 "messages": [
-                    { "role": "user", "content": "Reply with OK." }
+                    { "role": "user", "content": "{{challenge}}" }
                 ],
                 "temperature": 0
             }),
@@ -2170,9 +2187,9 @@ fn seed_builtin_channel_monitor_templates_in_connection(
             "chat_completions",
             "/v1/chat/completions",
             json!({
-                "model": "gpt-4o-mini",
+                "model": "{{model}}",
                 "messages": [
-                    { "role": "user", "content": "OK?" }
+                    { "role": "user", "content": "{{challenge}}" }
                 ],
                 "max_tokens": 1,
                 "temperature": 0
@@ -2184,8 +2201,8 @@ fn seed_builtin_channel_monitor_templates_in_connection(
             "responses",
             "/v1/responses",
             json!({
-                "model": "gpt-4o-mini",
-                "input": "Reply with OK.",
+                "model": "{{model}}",
+                "input": "{{challenge}}",
                 "temperature": 0
             }),
         ),
@@ -2195,8 +2212,8 @@ fn seed_builtin_channel_monitor_templates_in_connection(
             "responses",
             "/v1/responses",
             json!({
-                "model": "gpt-4o-mini",
-                "input": "OK?",
+                "model": "{{model}}",
+                "input": "{{challenge}}",
                 "max_output_tokens": 1,
                 "temperature": 0
             }),
@@ -4045,12 +4062,14 @@ fn record_station_key_failure_in_connection(
     station_key_id: &str,
     error_summary: &str,
     now: &str,
+    consecutive_failure_threshold: i64,
 ) -> Result<(), String> {
     validate_station_key_exists(connection, station_key_id)?;
     let current = station_key_health_by_id(connection, station_key_id)?;
     let consecutive_failures = current.consecutive_failures + 1;
     let failure_count = current.failure_count + 1;
-    let cooldown_until = cooldown_until(consecutive_failures, now);
+    let cooldown_until =
+        cooldown_until_with_threshold(consecutive_failures, consecutive_failure_threshold, now);
 
     connection
         .execute(
@@ -4103,12 +4122,17 @@ fn record_station_key_failure_in_connection(
     Ok(())
 }
 
-fn cooldown_until(consecutive_failures: i64, now: &str) -> Option<String> {
+fn cooldown_until_with_threshold(
+    consecutive_failures: i64,
+    consecutive_failure_threshold: i64,
+    now: &str,
+) -> Option<String> {
     let now = now.parse::<i64>().ok()?;
-    let duration_ms = match consecutive_failures {
-        failures if failures < 3 => return None,
-        3 => 2 * 60 * 1000,
-        4 => 5 * 60 * 1000,
+    let threshold = consecutive_failure_threshold.max(1);
+    let duration_ms = match consecutive_failures - threshold {
+        failures_before_threshold if failures_before_threshold < 0 => return None,
+        0 => 2 * 60 * 1000,
+        1 => 5 * 60 * 1000,
         _ => 15 * 60 * 1000,
     };
     Some((now + duration_ms).to_string())
