@@ -26,8 +26,8 @@ export function PageScaffold({
     <section
       className={cn(
         width === "settings"
-          ? "flex min-w-0 w-full flex-col gap-[var(--shell-page-gap)]"
-          : "flex min-h-full min-w-0 w-full flex-col gap-[var(--shell-page-gap)]",
+          ? "relative flex min-w-0 w-full flex-col gap-[var(--shell-page-gap)]"
+          : "relative flex min-h-full min-w-0 w-full flex-col gap-[var(--shell-page-gap)]",
       )}
     >
       <div

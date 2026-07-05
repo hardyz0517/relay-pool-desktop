@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { Button, Dialog, SelectControl, SwitchControl } from "@/components/ui";
+import { ArrowLeft } from "lucide-react";
+import { PageScaffold } from "@/components/shell/PageScaffold";
+import { Button, IconButton, PageForm, SelectControl, SwitchControl } from "@/components/ui";
 import type { ChannelMonitor, ChannelMonitorRequestTemplate, CreateChannelMonitorInput } from "@/lib/types/channelMonitors";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
@@ -105,28 +107,40 @@ export function ChannelMonitorForm({
     await onSubmit(draftToMonitorInput(draft));
   }
 
+  if (!open) {
+    return null;
+  }
+
   return (
-    <Dialog
-      open={open}
-      title={monitor ? "编辑渠道监控" : "新增渠道监控"}
-      description="配置本地探测任务"
-      onClose={onClose}
-      className="max-w-[860px]"
-      footer={
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0 truncate text-xs text-rose-600">{validationError ?? ""}</div>
-          <div className="flex shrink-0 justify-end gap-2">
-            <Button variant="outline" onClick={onClose} disabled={saving}>
-              取消
-            </Button>
-            <Button type="submit" form="channel-monitor-form" disabled={!canSubmit}>
-              {saving ? "保存中" : "保存"}
-            </Button>
-          </div>
-        </div>
-      }
-    >
-      <form id="channel-monitor-form" className="grid gap-4 p-5" onSubmit={handleSubmit}>
+    <div className="absolute -inset-[var(--shell-page-gap)] z-30 overflow-y-auto overflow-x-hidden bg-background p-[var(--shell-page-gap)]">
+      <PageScaffold
+        title={monitor ? "编辑渠道监控" : "新增渠道监控"}
+        description="配置本地探测任务"
+        stickyHeader
+        backAction={
+          <IconButton label="返回监控列表" onClick={onClose} disabled={saving}>
+            <ArrowLeft className="h-4 w-4" />
+          </IconButton>
+        }
+      >
+        <PageForm
+          id="channel-monitor-form"
+          className="min-h-[520px]"
+          onSubmit={handleSubmit}
+          footer={
+            <div className="flex w-full min-w-0 items-center justify-between gap-3">
+              <div className="min-w-0 truncate text-xs text-rose-600">{validationError ?? ""}</div>
+              <div className="flex shrink-0 justify-end gap-2">
+                <Button variant="outline" onClick={onClose} disabled={saving}>
+                  取消
+                </Button>
+                <Button type="submit" disabled={!canSubmit}>
+                  {saving ? "保存中" : "保存"}
+                </Button>
+              </div>
+            </div>
+          }
+        >
         <div className="grid gap-3 md:grid-cols-[minmax(0,1.3fr)_12rem_12rem]">
           <Field label="监控名称">
             <input
@@ -233,8 +247,9 @@ export function ChannelMonitorForm({
             onChange={(event) => updateDraft({ note: event.target.value })}
           />
         </Field>
-      </form>
-    </Dialog>
+        </PageForm>
+      </PageScaffold>
+    </div>
   );
 }
 
