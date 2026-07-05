@@ -9,25 +9,32 @@ import { KeyPoolPage } from "@/features/key-pool/KeyPoolPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { ChannelStatusPage } from "@/features/channels/ChannelStatusPage";
 import { ChangeCenterPage } from "@/features/changes/ChangeCenterPage";
+import { AddKeyPage } from "@/features/key-pool/AddKeyPage";
 import { AddProviderPage } from "@/features/stations/AddProviderPage";
 import { StationDetailPage } from "@/features/stations/StationDetailPage";
 import { StationsPage } from "@/features/stations/StationsPage";
 import type { AppPageId } from "@/lib/types/navigation";
 import type { AppRouteId } from "@/lib/types/navigation";
+import type { Station } from "@/lib/types/stations";
 
 export function App() {
   const [activeRouteId, setActiveRouteId] = useState<AppPageId>("dashboard");
   const [editingStationId, setEditingStationId] = useState<string | null>(null);
   const [detailStationId, setDetailStationId] = useState<string | null>(null);
-  const activeShellRouteId: AppRouteId =
-    activeRouteId === "addProvider" || activeRouteId === "editProvider" || activeRouteId === "stationDetail"
-      ? "stations"
-      : activeRouteId;
+  const [detailStationPreview, setDetailStationPreview] = useState<Station | null>(null);
+  const [initialKeyStationId, setInitialKeyStationId] = useState<string | null>(null);
+  const activeShellRouteId = getShellRouteId(activeRouteId);
 
   function returnToStations() {
     setEditingStationId(null);
     setDetailStationId(null);
+    setDetailStationPreview(null);
     setActiveRouteId("stations");
+  }
+
+  function returnToKeyPool() {
+    setInitialKeyStationId(null);
+    setActiveRouteId("keyPool");
   }
 
   function openEditProvider(stationId: string) {
@@ -35,9 +42,15 @@ export function App() {
     setActiveRouteId("editProvider");
   }
 
-  function openStationDetail(stationId: string) {
-    setDetailStationId(stationId);
+  function openStationDetail(station: Station) {
+    setDetailStationId(station.id);
+    setDetailStationPreview(station);
     setActiveRouteId("stationDetail");
+  }
+
+  function openAddKey(stationId: string | null) {
+    setInitialKeyStationId(stationId);
+    setActiveRouteId("addKey");
   }
 
   const page = useMemo(() => {
@@ -61,8 +74,17 @@ export function App() {
         return (
           <StationDetailPage
             stationId={detailStationId}
+            initialStation={detailStationPreview}
             onBack={returnToStations}
             onEditProvider={openEditProvider}
+          />
+        );
+      case "addKey":
+        return (
+          <AddKeyPage
+            initialStationId={initialKeyStationId}
+            onBack={returnToKeyPool}
+            onCreated={returnToKeyPool}
           />
         );
       case "stations":
@@ -74,7 +96,7 @@ export function App() {
           />
         );
       case "keyPool":
-        return <KeyPoolPage />;
+        return <KeyPoolPage onAddKey={openAddKey} />;
       case "channels":
         return <ChannelStatusPage />;
       case "collectors":
@@ -93,11 +115,21 @@ export function App() {
       default:
         return <DashboardPage />;
     }
-  }, [activeRouteId, editingStationId, detailStationId]);
+  }, [activeRouteId, editingStationId, detailStationId, detailStationPreview, initialKeyStationId]);
 
   return (
     <AppShell activeRouteId={activeShellRouteId} onRouteChange={(routeId) => setActiveRouteId(routeId)}>
       {page}
     </AppShell>
   );
+}
+
+function getShellRouteId(pageId: AppPageId): AppRouteId {
+  if (pageId === "addProvider" || pageId === "editProvider" || pageId === "stationDetail") {
+    return "stations";
+  }
+  if (pageId === "addKey") {
+    return "keyPool";
+  }
+  return pageId;
 }

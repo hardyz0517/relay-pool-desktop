@@ -1,5 +1,7 @@
 use serde::Serialize;
+use serde_json::{json, Value};
 use std::process::Command;
+use std::time::Instant;
 use tauri::{Manager, State};
 
 use crate::{
@@ -11,15 +13,21 @@ use crate::{
             CreateChannelMonitorInput, CreateChannelMonitorTemplateInput,
             UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
         },
-        collector::{CollectorRunResult, CollectorSnapshot},
+        collector::{
+            CollectorRunResult, CollectorSnapshot, StationLoginTestInput, StationLoginTestResult,
+        },
         collector_runs::CollectorRun,
-        credentials::{StationCredentials, UpdateStationCredentialsInput, UpdateStationSessionInput},
+        credentials::{
+            StationCredentials, UpdateStationCredentialsInput, UpdateStationSessionInput,
+        },
         group_facts::{
             GroupRateRecord, StationGroupBinding, UpdateStationKeyGroupBindingInput,
             UpsertStationGroupBindingInput,
         },
-        pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
-        proxy::{ProxyStatus, RequestLog},
+        pricing::{
+            BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput,
+        },
+        proxy::{ProxyStatus, RequestLog, UpstreamApiFormat},
         routing::{
             ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyCapabilities,
             StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
@@ -32,7 +40,11 @@ use crate::{
         AppStatus,
     },
     services::{
-        capture, collectors, database::AppDatabase, proxy::runtime::ProxyRuntimeState,
+        capture, collectors,
+        database::{now_millis_for_services, AppDatabase},
+        proxy::{
+            build_upstream_url, redact_error_message, runtime::ProxyRuntimeState, should_fallback,
+        },
         secrets::SecretManager,
     },
 };
@@ -108,10 +120,7 @@ pub fn import_relay_pool_to_ccswitch(
     }
 
     let proxy_status = proxy.status(settings.local_proxy_port);
-    let endpoint = format!(
-        "http://{}:{}/v1",
-        proxy_status.bind_addr, proxy_status.port
-    );
+    let endpoint = format!("http://{}:{}/v1", proxy_status.bind_addr, proxy_status.port);
     let homepage = format!("http://{}:{}", proxy_status.bind_addr, proxy_status.port);
     let provider_name = "Relay Pool Desktop".to_string();
     let deeplink = build_ccswitch_provider_deeplink(
@@ -415,6 +424,66 @@ pub fn get_station_key_health(
     database.get_station_key_health(station_key_id)
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StationKeyConnectivityTestResult {
+    station_key_id: String,
+    ok: bool,
+    status_code: u16,
+    duration_ms: i64,
+    model: String,
+    message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StationKeyConnectivityProbeKind {
+    Responses,
+    ChatCompletions,
+}
+
+#[derive(Debug, Clone)]
+struct StationKeyConnectivityProbeResult {
+    ok: bool,
+    status_code: u16,
+    duration_ms: i64,
+    message: String,
+}
+
+impl StationKeyConnectivityProbeResult {
+    fn success(status_code: u16, duration_ms: i64, message: String) -> Self {
+        Self {
+            ok: true,
+            status_code,
+            duration_ms,
+            message,
+        }
+    }
+
+    fn failure(status_code: u16, duration_ms: i64, message: String) -> Self {
+        Self {
+            ok: false,
+            status_code,
+            duration_ms,
+            message,
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn test_station_key_connectivity(
+    database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
+    station_key_id: String,
+) -> Result<StationKeyConnectivityTestResult, String> {
+    let database = database.inner().clone();
+    let data_key = *secrets.data_key();
+    tauri::async_runtime::spawn_blocking(move || {
+        test_station_key_connectivity_blocking(&database, &data_key, &station_key_id)
+    })
+    .await
+    .map_err(|error| format!("测试密钥连通性任务失败: {error}"))?
+}
+
 #[tauri::command]
 pub fn simulate_route(
     database: State<'_, AppDatabase>,
@@ -446,6 +515,14 @@ pub fn list_balance_snapshots(
     database: State<'_, AppDatabase>,
 ) -> Result<Vec<BalanceSnapshot>, String> {
     database.list_balance_snapshots()
+}
+
+#[tauri::command]
+pub fn list_balance_snapshots_for_station(
+    database: State<'_, AppDatabase>,
+    station_id: String,
+) -> Result<Vec<BalanceSnapshot>, String> {
+    database.list_balance_snapshots_for_station(station_id)
 }
 
 #[tauri::command]
@@ -491,6 +568,14 @@ pub fn list_collector_runs(
 #[tauri::command]
 pub fn list_change_events(database: State<'_, AppDatabase>) -> Result<Vec<ChangeEvent>, String> {
     database.list_change_events()
+}
+
+#[tauri::command]
+pub fn list_change_events_for_station(
+    database: State<'_, AppDatabase>,
+    station_id: String,
+) -> Result<Vec<ChangeEvent>, String> {
+    database.list_change_events_for_station(station_id)
 }
 
 #[tauri::command]
@@ -641,6 +726,15 @@ pub async fn test_station_login(
     })
     .await
     .map_err(|error| format!("登录测试执行失败: {error}"))?
+}
+
+#[tauri::command]
+pub async fn test_station_login_input(
+    input: StationLoginTestInput,
+) -> Result<StationLoginTestResult, String> {
+    tauri::async_runtime::spawn_blocking(move || collectors::test_station_login_input(input))
+        .await
+        .map_err(|error| format!("连通性测试执行失败: {error}"))?
 }
 
 #[tauri::command]
@@ -958,4 +1052,523 @@ fn open_url_with_system(url: &str) -> Result<(), String> {
     result
         .map(|_| ())
         .map_err(|error| format!("无法打开 CCSwitch 导入链接: {error}"))
+}
+
+fn test_station_key_connectivity_blocking(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station_key_id: &str,
+) -> Result<StationKeyConnectivityTestResult, String> {
+    let key = database
+        .list_key_pool_items()?
+        .into_iter()
+        .find(|item| item.id == station_key_id)
+        .ok_or_else(|| "Station Key 不存在，无法测试连通性".to_string())?;
+    if !key.api_key_present {
+        return Err("该密钥没有保存 API Key，无法测试连通性。".to_string());
+    }
+
+    let api_key = database.resolve_station_key_secret_with_data_key(data_key, station_key_id)?;
+    let capabilities = database
+        .get_station_key_capabilities(station_key_id.to_string())
+        .ok();
+    let upstream_api_format = database
+        .proxy_route_candidates_with_data_key(data_key)
+        .ok()
+        .and_then(|candidates| {
+            candidates
+                .into_iter()
+                .find(|candidate| candidate.station_key_id == station_key_id)
+                .map(|candidate| candidate.upstream_api_format)
+        })
+        .unwrap_or(UpstreamApiFormat::Auto);
+    let discovered_models =
+        discover_station_key_connectivity_models(&key.station_base_url, &api_key)
+            .unwrap_or_default();
+    let candidates =
+        station_key_connectivity_model_candidates(capabilities.as_ref(), None, &discovered_models);
+    let (model, result) = run_station_key_connectivity_model_attempts(&candidates, |candidate| {
+        run_station_key_connectivity_single_model_probe(
+            &upstream_api_format,
+            capabilities.as_ref(),
+            |kind| {
+                send_station_key_connectivity_probe(
+                    &key.station_base_url,
+                    &api_key,
+                    candidate,
+                    kind,
+                )
+            },
+        )
+    });
+
+    record_station_key_connectivity_result(
+        database,
+        station_key_id,
+        result.ok,
+        result.duration_ms,
+        &result.message,
+    )?;
+
+    Ok(StationKeyConnectivityTestResult {
+        station_key_id: station_key_id.to_string(),
+        ok: result.ok,
+        status_code: result.status_code,
+        duration_ms: result.duration_ms,
+        model,
+        message: result.message,
+    })
+}
+
+fn build_station_key_connectivity_probe_url(
+    base_url: &str,
+    kind: StationKeyConnectivityProbeKind,
+) -> String {
+    let path = match kind {
+        StationKeyConnectivityProbeKind::Responses => "/v1/responses",
+        StationKeyConnectivityProbeKind::ChatCompletions => "/v1/chat/completions",
+    };
+    build_upstream_url(base_url, path)
+}
+
+fn build_station_key_connectivity_probe_body(
+    model: &str,
+    kind: StationKeyConnectivityProbeKind,
+) -> Value {
+    match kind {
+        StationKeyConnectivityProbeKind::Responses => json!({
+            "model": model,
+            "input": "ping",
+            "store": false,
+            "max_output_tokens": 16,
+        }),
+        StationKeyConnectivityProbeKind::ChatCompletions => json!({
+            "model": model,
+            "messages": [{
+                "role": "user",
+                "content": "ping",
+            }],
+            "stream": false,
+            "max_tokens": 16,
+        }),
+    }
+}
+
+fn should_try_station_key_connectivity_chat_fallback(
+    upstream_api_format: &UpstreamApiFormat,
+    capabilities: Option<&StationKeyCapabilities>,
+    status_code: u16,
+) -> bool {
+    if !matches!(
+        upstream_api_format,
+        UpstreamApiFormat::Auto | UpstreamApiFormat::CustomOpenAiCompatible
+    ) {
+        return false;
+    }
+    if capabilities
+        .map(|capabilities| !capabilities.supports_chat_completions)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    matches!(status_code, 404 | 405 | 501) || should_fallback(status_code)
+}
+
+fn station_key_connectivity_model_candidates(
+    capabilities: Option<&StationKeyCapabilities>,
+    configured_model: Option<&str>,
+    discovered_models: &[String],
+) -> Vec<String> {
+    let mut candidates = Vec::new();
+    push_station_key_connectivity_model_candidate(&mut candidates, configured_model);
+    if let Some(capabilities) = capabilities {
+        for model in capabilities
+            .preferred_models
+            .iter()
+            .chain(capabilities.model_allowlist.iter())
+        {
+            push_station_key_connectivity_model_candidate(&mut candidates, Some(model.as_str()));
+        }
+    }
+    for model in discovered_models {
+        push_station_key_connectivity_model_candidate(&mut candidates, Some(model.as_str()));
+    }
+    if candidates.is_empty() {
+        candidates.push("gpt-4o-mini".to_string());
+    }
+    candidates.truncate(8);
+    candidates
+}
+
+fn push_station_key_connectivity_model_candidate(
+    candidates: &mut Vec<String>,
+    model: Option<&str>,
+) {
+    let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) else {
+        return;
+    };
+    if !candidates.iter().any(|candidate| candidate == model) {
+        candidates.push(model.to_string());
+    }
+}
+
+fn run_station_key_connectivity_model_attempts<F>(
+    candidates: &[String],
+    mut probe: F,
+) -> (String, StationKeyConnectivityProbeResult)
+where
+    F: FnMut(&str) -> StationKeyConnectivityProbeResult,
+{
+    let fallback_candidates;
+    let candidates = if candidates.is_empty() {
+        fallback_candidates = vec!["gpt-4o-mini".to_string()];
+        fallback_candidates.as_slice()
+    } else {
+        candidates
+    };
+    let mut last = None;
+    for model in candidates {
+        let result = probe(model);
+        if result.ok {
+            return (model.clone(), result);
+        }
+        last = Some((model.clone(), result));
+    }
+    last.unwrap_or_else(|| {
+        (
+            "gpt-4o-mini".to_string(),
+            StationKeyConnectivityProbeResult::failure(0, 0, "未执行连通性探测".to_string()),
+        )
+    })
+}
+
+fn run_station_key_connectivity_single_model_probe<F>(
+    upstream_api_format: &UpstreamApiFormat,
+    capabilities: Option<&StationKeyCapabilities>,
+    mut send_probe: F,
+) -> StationKeyConnectivityProbeResult
+where
+    F: FnMut(StationKeyConnectivityProbeKind) -> StationKeyConnectivityProbeResult,
+{
+    let response_result = send_probe(StationKeyConnectivityProbeKind::Responses);
+    if response_result.ok {
+        return response_result;
+    }
+    if !should_try_station_key_connectivity_chat_fallback(
+        upstream_api_format,
+        capabilities,
+        response_result.status_code,
+    ) {
+        return response_result;
+    }
+
+    let chat_result = send_probe(StationKeyConnectivityProbeKind::ChatCompletions);
+    let duration_ms = response_result
+        .duration_ms
+        .saturating_add(chat_result.duration_ms);
+    if chat_result.ok {
+        return StationKeyConnectivityProbeResult::success(
+            chat_result.status_code,
+            duration_ms,
+            format!(
+                "Responses 直连返回 HTTP {}，Chat Completions 兼容探测正常",
+                response_result.status_code
+            ),
+        );
+    }
+
+    StationKeyConnectivityProbeResult::failure(
+        chat_result.status_code,
+        duration_ms,
+        format!(
+            "Responses: {}; Chat Completions: {}",
+            response_result.message, chat_result.message
+        ),
+    )
+}
+
+fn send_station_key_connectivity_probe(
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    kind: StationKeyConnectivityProbeKind,
+) -> StationKeyConnectivityProbeResult {
+    let url = build_station_key_connectivity_probe_url(base_url, kind);
+    let body = build_station_key_connectivity_probe_body(model, kind);
+    let started = Instant::now();
+    let response_result = ureq::post(&url)
+        .timeout(std::time::Duration::from_secs(20))
+        .set("Authorization", &format!("Bearer {api_key}"))
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json")
+        .send_json(body);
+    let duration_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
+    let (status_code, response_text) = match response_result {
+        Ok(response) => response_text_pair(response),
+        Err(ureq::Error::Status(_, response)) => response_text_pair(response),
+        Err(error) => {
+            return StationKeyConnectivityProbeResult::failure(
+                0,
+                duration_ms,
+                redact_error_message(&format!("{error}")),
+            );
+        }
+    };
+    if (200..300).contains(&status_code) {
+        let message = match kind {
+            StationKeyConnectivityProbeKind::Responses => "Responses 连通正常",
+            StationKeyConnectivityProbeKind::ChatCompletions => "Chat Completions 连通正常",
+        };
+        return StationKeyConnectivityProbeResult::success(
+            status_code,
+            duration_ms,
+            message.to_string(),
+        );
+    }
+    StationKeyConnectivityProbeResult::failure(
+        status_code,
+        duration_ms,
+        response_error_message(&response_text, status_code),
+    )
+}
+
+fn discover_station_key_connectivity_models(base_url: &str, api_key: &str) -> Option<Vec<String>> {
+    let url = build_upstream_url(base_url, "/v1/models");
+    let response = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .set("Authorization", &format!("Bearer {api_key}"))
+        .set("Accept", "application/json")
+        .call()
+        .ok()?;
+    if !(200..300).contains(&response.status()) {
+        return None;
+    }
+    let body = response.into_string().ok()?;
+    let value = serde_json::from_str::<Value>(&body).ok()?;
+    let models = model_ids_from_models_response(&value);
+    if models.is_empty() {
+        None
+    } else {
+        Some(models)
+    }
+}
+
+fn model_ids_from_models_response(value: &Value) -> Vec<String> {
+    value
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|model| model.get("id").and_then(Value::as_str))
+        .filter(|model| !model.trim().is_empty())
+        .map(|model| model.trim().to_string())
+        .collect()
+}
+
+fn response_text_pair(response: ureq::Response) -> (u16, String) {
+    let status = response.status();
+    let text = response.into_string().unwrap_or_default();
+    (status, text)
+}
+
+fn response_error_message(response_text: &str, status_code: u16) -> String {
+    let parsed = serde_json::from_str::<Value>(response_text).ok();
+    let message = parsed
+        .as_ref()
+        .and_then(|value| value.pointer("/error/message"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            parsed
+                .as_ref()
+                .and_then(|value| value.get("message"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or(response_text)
+        .trim();
+    let fallback = if message.is_empty() {
+        format!("Responses 返回 HTTP {status_code}")
+    } else {
+        message.to_string()
+    };
+    redact_error_message(&fallback)
+}
+
+fn record_station_key_connectivity_result(
+    database: &AppDatabase,
+    station_key_id: &str,
+    ok: bool,
+    duration_ms: i64,
+    message: &str,
+) -> Result<(), String> {
+    let now = now_millis_for_services().to_string();
+    if ok {
+        database.record_station_key_success(station_key_id, duration_ms, &now)?;
+        database.touch_station_key_usage(station_key_id, "healthy", None, Some(&now))
+    } else {
+        database.record_station_key_failure(station_key_id, message, &now)?;
+        database.touch_station_key_usage(station_key_id, "error", None, Some(&now))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn station_key_connectivity_probe_uses_low_token_responses_request() {
+        let body = build_station_key_connectivity_probe_body(
+            "gpt-test",
+            StationKeyConnectivityProbeKind::Responses,
+        );
+
+        assert_eq!(body["model"], "gpt-test");
+        assert_eq!(body["input"], "ping");
+        assert_eq!(body["store"], false);
+        assert_eq!(body["max_output_tokens"], 16);
+    }
+
+    #[test]
+    fn station_key_connectivity_probe_posts_to_responses_endpoint() {
+        let url = build_station_key_connectivity_probe_url(
+            "https://relay.example/v1",
+            StationKeyConnectivityProbeKind::Responses,
+        );
+
+        assert_eq!(url, "https://relay.example/v1/responses");
+    }
+
+    #[test]
+    fn station_key_connectivity_candidates_use_discovered_model_when_not_configured() {
+        let discovered = vec!["claude-test".to_string()];
+        let candidates =
+            station_key_connectivity_model_candidates(None, None, discovered.as_slice());
+
+        assert_eq!(candidates, vec!["claude-test"]);
+    }
+
+    #[test]
+    fn station_key_connectivity_candidates_keep_multiple_discovered_models() {
+        let discovered = vec![
+            "codex-auto-review".to_string(),
+            "gpt-5.4".to_string(),
+            "gpt-5.5".to_string(),
+        ];
+
+        let candidates =
+            station_key_connectivity_model_candidates(None, None, discovered.as_slice());
+
+        assert_eq!(candidates, vec!["codex-auto-review", "gpt-5.4", "gpt-5.5"]);
+    }
+
+    #[test]
+    fn station_key_connectivity_attempts_next_model_after_503() {
+        let candidates = vec!["codex-auto-review".to_string(), "gpt-5.4".to_string()];
+        let mut attempted = Vec::new();
+
+        let (model, result) =
+            run_station_key_connectivity_model_attempts(&candidates, |candidate| {
+                attempted.push(candidate.to_string());
+                if candidate == "gpt-5.4" {
+                    StationKeyConnectivityProbeResult::success(
+                        200,
+                        42,
+                        "Chat Completions 连通正常".to_string(),
+                    )
+                } else {
+                    StationKeyConnectivityProbeResult::failure(
+                        503,
+                        12,
+                        "Service temporarily unavailable".to_string(),
+                    )
+                }
+            });
+
+        assert_eq!(attempted, vec!["codex-auto-review", "gpt-5.4"]);
+        assert_eq!(model, "gpt-5.4");
+        assert!(result.ok);
+    }
+
+    #[test]
+    fn station_key_connectivity_attempts_next_model_after_responses_and_chat_fail() {
+        let candidates = vec!["codex-auto-review".to_string(), "gpt-5.4".to_string()];
+        let mut attempted = Vec::new();
+
+        let (model, result) =
+            run_station_key_connectivity_model_attempts(&candidates, |candidate| {
+                run_station_key_connectivity_single_model_probe(
+                    &UpstreamApiFormat::Auto,
+                    None,
+                    |kind| {
+                        attempted.push((candidate.to_string(), kind));
+                        match (candidate, kind) {
+                            ("gpt-5.4", StationKeyConnectivityProbeKind::ChatCompletions) => {
+                                StationKeyConnectivityProbeResult::success(
+                                    200,
+                                    11,
+                                    "Chat Completions 连通正常".to_string(),
+                                )
+                            }
+                            _ => StationKeyConnectivityProbeResult::failure(
+                                503,
+                                7,
+                                "Service temporarily unavailable".to_string(),
+                            ),
+                        }
+                    },
+                )
+            });
+
+        assert_eq!(
+            attempted,
+            vec![
+                (
+                    "codex-auto-review".to_string(),
+                    StationKeyConnectivityProbeKind::Responses,
+                ),
+                (
+                    "codex-auto-review".to_string(),
+                    StationKeyConnectivityProbeKind::ChatCompletions,
+                ),
+                (
+                    "gpt-5.4".to_string(),
+                    StationKeyConnectivityProbeKind::Responses,
+                ),
+                (
+                    "gpt-5.4".to_string(),
+                    StationKeyConnectivityProbeKind::ChatCompletions,
+                ),
+            ]
+        );
+        assert_eq!(model, "gpt-5.4");
+        assert!(result.ok);
+        assert_eq!(result.status_code, 200);
+        assert_eq!(result.duration_ms, 18);
+        assert_eq!(
+            result.message,
+            "Responses 直连返回 HTTP 503，Chat Completions 兼容探测正常"
+        );
+    }
+
+    #[test]
+    fn station_key_connectivity_chat_probe_uses_low_token_request() {
+        let body = build_station_key_connectivity_probe_body(
+            "claude-test",
+            StationKeyConnectivityProbeKind::ChatCompletions,
+        );
+
+        assert_eq!(body["model"], "claude-test");
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"][0]["content"], "ping");
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["max_tokens"], 16);
+    }
+
+    #[test]
+    fn station_key_connectivity_auto_format_can_fallback_to_chat_on_503() {
+        assert!(should_try_station_key_connectivity_chat_fallback(
+            &UpstreamApiFormat::Auto,
+            None,
+            503,
+        ));
+    }
 }

@@ -54,9 +54,9 @@ export const stationTypeLabels: Record<StationType, string> = {
 };
 
 export const stationStatusLabels: Record<StationStatus, string> = {
-  healthy: "正常",
-  warning: "警告",
-  error: "错误",
+  healthy: "采集正常",
+  warning: "采集需关注",
+  error: "采集异常",
   disabled: "禁用",
-  unchecked: "未检测",
+  unchecked: "未采集",
 };

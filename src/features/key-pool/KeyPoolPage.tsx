@@ -12,22 +12,26 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { CheckCircle2, Copy, Edit3, KeyRound, RefreshCcw, Search, Trash2 } from "lucide-react";
+import { Activity, Edit3, GripVertical, KeyRound, Loader2, Plus, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, Dialog, EmptyState, IconButton, MaskedSecret, ObjectRow, SelectControl, StatusBadge, Toolbar, useToast } from "@/components/ui";
+import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, SelectControl, StatusBadge, SwitchControl, type StatusTone, useToast } from "@/components/ui";
 import { listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getStationKeyCapabilities, updateStationKeyCapabilities } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
-import { deleteStationKey, listKeyPoolItems, reorderKeyPool, updateStationKey, updateStationKeyGroupBinding } from "@/lib/api/stationKeys";
-import type { StationGroupBinding } from "@/lib/types/groupFacts";
+import { createStationKey, deleteStationKey, listKeyPoolItems, reorderKeyPool, testStationKeyConnectivity, updateStationKey, updateStationKeyGroupBinding } from "@/lib/api/stationKeys";
+import { isCollectedStationGroupBinding, type StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { Station } from "@/lib/types/stations";
-import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
+import type { CreateStationKeyInput, KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
 
 type FilterMode = "all" | "enabled" | "disabled";
 
-const statusTone: Record<StationKeyStatus, "healthy" | "warning" | "error" | "disabled" | "info"> = {
+type KeyPoolPageProps = {
+  onAddKey?: (stationId: string | null) => void;
+};
+
+const statusTone: Record<StationKeyStatus, StatusTone> = {
   unchecked: "info",
   healthy: "healthy",
   warning: "warning",
@@ -43,7 +47,10 @@ const statusLabels: Record<StationKeyStatus, string> = {
   disabled: "禁用",
 };
 
-export function KeyPoolPage() {
+const keyPoolGridClassName =
+  "grid min-w-[720px] grid-cols-[2rem_minmax(18rem,1fr)_7rem_5rem_12rem_5.5rem] items-center gap-3";
+
+export function KeyPoolPage({ onAddKey }: KeyPoolPageProps) {
   const toast = useToast();
   const [stations, setStations] = useState<Station[]>([]);
   const [items, setItems] = useState<KeyPoolItem[]>([]);
@@ -53,9 +60,12 @@ export function KeyPoolPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [creatingKey, setCreatingKey] = useState(false);
   const [editingItem, setEditingItem] = useState<KeyPoolItem | null>(null);
+  const [pendingDeleteItem, setPendingDeleteItem] = useState<KeyPoolItem | null>(null);
   const [editForm, setEditForm] = useState<KeyPoolEditForm>(emptyEditForm);
   const [bindingsForEdit, setBindingsForEdit] = useState<StationGroupBinding[]>([]);
+  const [testingKeyId, setTestingKeyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
@@ -80,7 +90,7 @@ export function KeyPoolPage() {
         return false;
       }
       if (query.trim()) {
-        const text = `${item.name} ${item.apiKeyMasked} ${item.stationName} ${item.groupName ?? ""} ${item.tierLabel ?? ""}`.toLowerCase();
+        const text = `${item.name} ${item.stationBaseUrl} ${item.stationName} ${item.groupName ?? ""} ${item.tierLabel ?? ""}`.toLowerCase();
         if (!text.includes(query.trim().toLowerCase())) {
           return false;
         }
@@ -89,6 +99,7 @@ export function KeyPoolPage() {
     });
   }, [filterMode, items, query, selectedStationId]);
   const dragEnabled = filteredItems.length === items.length;
+  const filteredEnabledCount = filteredItems.filter((item) => item.enabled).length;
 
   const stationOptions = useMemo(
     () => stations.map((station) => ({ id: station.id, label: station.name })),
@@ -192,14 +203,19 @@ export function KeyPoolPage() {
     }
   }
 
-  async function handleDelete(item: KeyPoolItem) {
-    if (!window.confirm(`确认删除密钥「${item.name}」？`)) {
+  function handleDelete(item: KeyPoolItem) {
+    setPendingDeleteItem(item);
+  }
+
+  async function handleConfirmDelete() {
+    if (!pendingDeleteItem) {
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      await deleteStationKey(item.id);
+      await deleteStationKey(pendingDeleteItem.id);
+      setPendingDeleteItem(null);
       await refresh();
       toast.success("密钥已删除");
     } catch (requestError) {
@@ -209,7 +225,30 @@ export function KeyPoolPage() {
     }
   }
 
+  async function handleTestConnectivity(item: KeyPoolItem) {
+    if (!item.apiKeyPresent) {
+      toast.error("无法测试连通性", "该密钥没有保存 API Key。");
+      return;
+    }
+    setTestingKeyId(item.id);
+    setError(null);
+    try {
+      const result = await testStationKeyConnectivity(item.id);
+      await refresh();
+      if (result.ok) {
+        toast.success("连通性正常", `${item.name} · ${result.durationMs}ms · ${result.model}`);
+      } else {
+        toast.error("连通性异常", `${result.statusCode || "网络"} · ${result.message}`);
+      }
+    } catch (requestError) {
+      toast.error("测试连通性失败", readError(requestError));
+    } finally {
+      setTestingKeyId(null);
+    }
+  }
+
   async function handleEdit(item: KeyPoolItem) {
+    setCreatingKey(false);
     setEditingItem(item);
     setEditForm(formFromItem(item));
     setBindingsForEdit([]);
@@ -224,6 +263,115 @@ export function KeyPoolPage() {
       setEditForm((current) => current.id === item.id ? mergeCapabilitiesIntoForm(current, capabilities) : current);
     } catch (requestError) {
       toast.error("读取密钥详情失败", readError(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleCreateKey() {
+    if (stations.length === 0) {
+      toast.info("请先添加中转站");
+      return;
+    }
+    const station = selectedStationId !== "all"
+      ? stations.find((item) => item.id === selectedStationId) ?? stations[0]
+      : stations[0];
+    setEditingItem(null);
+    setCreatingKey(true);
+    setEditForm(createFormForStation(station, items));
+    setBindingsForEdit([]);
+    setSaving(true);
+    setError(null);
+    try {
+      const bindings = await listStationGroupBindings(station.id);
+      setBindingsForEdit(bindings);
+    } catch (requestError) {
+      toast.error("读取中转站分组失败", readError(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleCreateStationChange(stationId: string) {
+    const station = stations.find((item) => item.id === stationId);
+    if (!station) {
+      return;
+    }
+    setEditForm((current) => ({
+      ...current,
+      stationId: station.id,
+      stationName: station.name,
+      priority: String(items.filter((item) => item.stationId === station.id).length),
+      groupBindingId: "",
+      groupName: "",
+      tierLabel: "",
+    }));
+    setBindingsForEdit([]);
+    setSaving(true);
+    try {
+      const bindings = await listStationGroupBindings(station.id);
+      setBindingsForEdit(bindings);
+    } catch (requestError) {
+      toast.error("读取中转站分组失败", readError(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleCreateSave(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editForm.stationId) {
+      toast.info("请选择中转站");
+      return;
+    }
+    if (!editForm.apiKey.trim()) {
+      toast.info("请填写密钥");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const input: CreateStationKeyInput = {
+        stationId: editForm.stationId,
+        name: editForm.name.trim(),
+        apiKey: editForm.apiKey.trim(),
+        enabled: editForm.enabled,
+        priority: Number(editForm.priority),
+        groupBindingId: editForm.groupBindingId || null,
+        groupName: editForm.groupName.trim() ? editForm.groupName.trim() : null,
+        tierLabel: editForm.tierLabel.trim() ? editForm.tierLabel.trim() : null,
+        note: editForm.note.trim() ? editForm.note.trim() : null,
+      };
+      const createdKey = await createStationKey(input);
+      if (editForm.groupBindingId) {
+        await updateStationKeyGroupBinding(createdKey.id, editForm.groupBindingId);
+      }
+      try {
+        await updateStationKeyCapabilities({
+          stationKeyId: createdKey.id,
+          supportsChatCompletions: editForm.supportsChatCompletions,
+          supportsResponses: editForm.supportsResponses,
+          supportsEmbeddings: editForm.supportsEmbeddings,
+          supportsStream: editForm.supportsStream,
+          supportsTools: editForm.supportsTools,
+          supportsVision: editForm.supportsVision,
+          supportsReasoning: editForm.supportsReasoning,
+          modelAllowlist: linesToList(editForm.modelAllowlist),
+          modelBlocklist: linesToList(editForm.modelBlocklist),
+          preferredModels: linesToList(editForm.preferredModels),
+          onlyUseAsBackup: editForm.onlyUseAsBackup,
+          routingTags: commaListToList(editForm.routingTags),
+        });
+      } catch (capabilityError) {
+        await refresh();
+        throw new Error(`密钥已创建，但路由能力保存失败：${readError(capabilityError)}`);
+      }
+      setCreatingKey(false);
+      setEditForm(emptyEditForm);
+      await refresh();
+      toast.success("密钥已添加");
+    } catch (requestError) {
+      toast.error("添加密钥失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -290,6 +438,16 @@ export function KeyPoolPage() {
   return (
     <PageScaffold
       title="密钥池"
+      status={
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5" aria-label="密钥池状态">
+          <StatusBadge tone="info" className="bg-slate-50 text-slate-600">
+            {`${filteredItems.length} 密钥`}
+          </StatusBadge>
+          <StatusBadge tone={filteredEnabledCount > 0 ? "healthy" : "disabled"}>
+            {`${filteredEnabledCount} 启用`}
+          </StatusBadge>
+        </div>
+      }
       actions={
         <div className="flex items-center gap-2">
           <SelectControl
@@ -317,9 +475,19 @@ export function KeyPoolPage() {
             <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
             <input className={`${selectClassName} pl-8`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索密钥 / 站点" />
           </div>
-          <Button variant="secondary" onClick={() => void refresh()} disabled={loading || saving}>
-            <RefreshCcw className="h-4 w-4" />
-            刷新
+          <Button
+            variant="secondary"
+            onClick={() => {
+              if (onAddKey) {
+                onAddKey(selectedStationId === "all" ? null : selectedStationId);
+                return;
+              }
+              void handleCreateKey();
+            }}
+            disabled={loading || saving || stations.length === 0}
+          >
+            <Plus className="h-4 w-4" />
+            新增密钥
           </Button>
         </div>
       }
@@ -335,18 +503,6 @@ export function KeyPoolPage() {
         />
       ) : (
         <div className="space-y-[var(--shell-page-gap)]">
-          <Toolbar>
-            <div className="min-w-0">
-              <div className="text-[13px] font-semibold text-slate-800">密钥列表</div>
-              <div className="text-xs text-muted-foreground">
-                {filteredItems.length} 个密钥，{filteredItems.filter((item) => item.enabled).length} 个启用，{saving ? "保存中" : dragEnabled ? "可拖拽排序" : "清除筛选后可排序"}。
-              </div>
-              {!dragEnabled && (
-                <div className="mt-1 text-xs text-amber-700">当前有筛选条件，拖拽排序已禁用。</div>
-              )}
-            </div>
-          </Toolbar>
-
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -355,17 +511,29 @@ export function KeyPoolPage() {
             onDragEnd={handleDragEnd}
           >
             <SortableContext items={filteredItems.map((item) => item.id)} strategy={verticalListSortingStrategy}>
-              <div className="space-y-2">
-                {filteredItems.map((item) => (
-                  <SortableKeyRow
-                    key={item.id}
-                    item={item}
-                    dragEnabled={dragEnabled}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                    onToggleEnabled={handleToggleEnabled}
-                  />
-                ))}
+              <div className="overflow-x-auto">
+                <div className={cn(keyPoolGridClassName, "border-b border-slate-200 px-3 pb-2 text-[11px] font-medium text-slate-500")}>
+                  <div aria-hidden />
+                  <TableHeadCell>名称</TableHeadCell>
+                  <TableHeadCell align="center">状态</TableHeadCell>
+                  <TableHeadCell align="center">调度</TableHeadCell>
+                  <TableHeadCell align="center">分组</TableHeadCell>
+                  <div className="text-right">操作</div>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {filteredItems.map((item) => (
+                    <SortableKeyRow
+                      key={item.id}
+                      item={item}
+                      dragEnabled={dragEnabled}
+                      onEdit={handleEdit}
+                      onDelete={handleDelete}
+                      onTestConnectivity={handleTestConnectivity}
+                      testing={testingKeyId === item.id}
+                      onToggleEnabled={handleToggleEnabled}
+                    />
+                  ))}
+                </div>
               </div>
             </SortableContext>
             <DragOverlay dropAnimation={null}>
@@ -375,16 +543,31 @@ export function KeyPoolPage() {
         </div>
       )}
 
-      {editingItem && (
+      {(creatingKey || editingItem) && (
         <KeyEditDialog
           actionSaving={saving}
           bindings={bindingsForEdit}
+          mode={creatingKey ? "create" : "edit"}
           form={editForm}
-          onClose={() => setEditingItem(null)}
+          stations={stations}
+          onClose={() => {
+            setCreatingKey(false);
+            setEditingItem(null);
+          }}
           onFormChange={setEditForm}
-          onSave={handleEditSave}
+          onSave={creatingKey ? handleCreateSave : handleEditSave}
+          onStationChange={creatingKey ? handleCreateStationChange : undefined}
         />
       )}
+
+      <ConfirmDialog
+        open={pendingDeleteItem !== null}
+        title="删除密钥"
+        description={`确定要删除密钥 "${pendingDeleteItem?.name ?? ""}" 吗？此操作无法撤销。`}
+        confirming={saving}
+        onCancel={() => setPendingDeleteItem(null)}
+        onConfirm={() => void handleConfirmDelete()}
+      />
     </PageScaffold>
   );
 }
@@ -392,20 +575,24 @@ export function KeyPoolPage() {
 function SortableKeyRow({
   item,
   dragEnabled,
+  testing,
   onEdit,
+  onTestConnectivity,
   onToggleEnabled,
   onDelete,
 }: {
   item: KeyPoolItem;
   dragEnabled: boolean;
+  testing: boolean;
   onEdit: (item: KeyPoolItem) => void;
+  onTestConnectivity: (item: KeyPoolItem) => void;
   onToggleEnabled: (item: KeyPoolItem) => void;
   onDelete: (item: KeyPoolItem) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id, disabled: !dragEnabled });
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={cn("will-change-transform", isDragging && "opacity-35")}>
-      <KeyRowContent item={item} dragAttributes={dragEnabled ? attributes : undefined} dragListeners={dragEnabled ? listeners : undefined} dragDisabled={!dragEnabled} onEdit={onEdit} onToggleEnabled={onToggleEnabled} onDelete={onDelete} />
+      <KeyRowContent item={item} testing={testing} dragAttributes={dragEnabled ? attributes : undefined} dragListeners={dragEnabled ? listeners : undefined} dragDisabled={!dragEnabled} onEdit={onEdit} onTestConnectivity={onTestConnectivity} onToggleEnabled={onToggleEnabled} onDelete={onDelete} />
     </div>
   );
 }
@@ -413,81 +600,176 @@ function SortableKeyRow({
 function KeyRowContent({
   item,
   overlay = false,
+  testing = false,
   dragDisabled = false,
   dragAttributes,
   dragListeners,
   onEdit,
+  onTestConnectivity,
   onToggleEnabled,
   onDelete,
 }: {
   item: KeyPoolItem;
   overlay?: boolean;
+  testing?: boolean;
   dragDisabled?: boolean;
   dragAttributes?: DraggableAttributes;
   dragListeners?: ReturnType<typeof useSortable>["listeners"];
   onEdit?: (item: KeyPoolItem) => void;
+  onTestConnectivity?: (item: KeyPoolItem) => void;
   onToggleEnabled?: (item: KeyPoolItem) => void;
   onDelete?: (item: KeyPoolItem) => void;
 }) {
   const cooldownActive = isFutureTime(item.cooldownUntil);
-  const routeability = routeabilitySummary(item, cooldownActive);
-  const healthSummary = [
-    item.successRate === null ? "成功率暂无" : `成功率 ${Math.round(item.successRate * 100)}%`,
-    item.avgLatencyMs === null ? "延迟暂无" : `平均 ${item.avgLatencyMs}ms`,
-    item.consecutiveFailures > 0 ? `连续失败 ${item.consecutiveFailures}` : "无连续失败",
-  ].join(" · ");
+  const badges = compactKeyBadges(item, cooldownActive);
+  const status = keyStatusView(item, badges);
+
   return (
-    <ObjectRow
-      className={overlay ? "border-[hsl(var(--accent)/0.45)] bg-slate-50" : undefined}
-      draggable
-      dragHandleProps={{ attributes: dragAttributes, listeners: dragListeners, disabled: dragDisabled }}
-      icon={<KeyRound className="h-4 w-4" />}
-      title={item.name}
-      subtitle={
-        <span className="inline-flex min-w-0 flex-wrap items-center gap-1.5">
-          <span>{item.stationName}</span>
-          <span>·</span>
-          <MaskedSecret value={item.apiKeyMasked} present={item.apiKeyPresent} />
-          <span>·</span>
-          <span>{healthSummary}</span>
-          {cooldownActive ? <span>· 冷却至 {formatNullableTime(item.cooldownUntil)}</span> : null}
+    <div
+      className={cn(
+        keyPoolGridClassName,
+        "group min-h-[66px] px-3 py-2.5 text-left transition-colors hover:bg-slate-50/45",
+        overlay && "bg-slate-50",
+      )}
+    >
+      <button
+        type="button"
+        aria-label="拖拽排序"
+        title="拖拽排序"
+        tabIndex={dragDisabled ? -1 : 0}
+        disabled={dragDisabled}
+        className={cn(
+          "flex h-7 w-5 shrink-0 items-center justify-center text-slate-300",
+          dragDisabled ? "cursor-not-allowed" : "cursor-grab hover:text-slate-500 active:cursor-grabbing",
+        )}
+        {...dragAttributes}
+        {...dragListeners}
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
+
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-slate-100 text-slate-600">
+          <KeyRound className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <div className="min-w-0 truncate text-[13px] font-semibold text-slate-900">{item.name}</div>
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">{formatStationBaseUrl(item.stationBaseUrl)}</div>
+        </div>
+      </div>
+
+      <div className="flex min-w-0 justify-center">
+        {testing ? (
+          <span
+            className="inline-flex h-6 min-w-[4.75rem] items-center justify-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-2 text-xs font-medium text-teal-700 shadow-[0_1px_0_rgba(15,23,42,0.03)]"
+            aria-live="polite"
+          >
+            <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+            测试中
+          </span>
+        ) : (
+          <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+        )}
+      </div>
+
+      <div className="flex min-w-0 items-center justify-center">
+        <SwitchControl
+          checked={item.enabled}
+          ariaLabel={item.enabled ? `关闭调度 ${item.name}` : `打开调度 ${item.name}`}
+          className="h-7 w-10 justify-center border-transparent bg-transparent px-0 shadow-none"
+          disabled={overlay}
+          onCheckedChange={() => onToggleEnabled?.(item)}
+          showLabel={false}
+        />
+      </div>
+
+      <div className="flex min-w-0 justify-center">
+        <span className="inline-flex max-w-full items-center rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-100">
+          <span className="truncate">{item.stationName}</span>
         </span>
-      }
-      badges={
-        <>
-          <StatusBadge tone={statusTone[item.status]}>{statusLabels[item.status]}</StatusBadge>
-          <StatusBadge tone={item.enabled ? "healthy" : "disabled"}>{item.enabled ? "启用" : "禁用"}</StatusBadge>
-          {item.onlyUseAsBackup && <StatusBadge tone="warning">备用</StatusBadge>}
-          {cooldownActive && <StatusBadge tone="warning">冷却中</StatusBadge>}
-          <StatusBadge tone={routeability.tone}>{routeability.label}</StatusBadge>
-        </>
-      }
-      metrics={[
-        { label: "优先级", value: `P${item.priority}` },
-        { label: "分组绑定", value: groupBindingSummary(item) },
-        { label: "倍率", value: formatRate(item.rateMultiplier) },
-        { label: "余额作用域", value: item.balanceScope ?? "未知" },
-        { label: "价格状态", value: item.priceState ?? (item.rateMultiplier === null ? "未知" : "倍率已记录") },
-        { label: "延迟", value: item.avgLatencyMs === null ? "-" : `${item.avgLatencyMs}ms` },
-      ]}
-      actions={
-        <>
-          <IconButton label="复制脱敏密钥" disabled>
-            <Copy className="h-4 w-4" />
-          </IconButton>
-          <IconButton label={item.enabled ? `停用 ${item.name}` : `启用 ${item.name}`} variant="secondary" disabled={overlay} onClick={() => onToggleEnabled?.(item)}>
-            <CheckCircle2 className="h-4 w-4" />
-          </IconButton>
-          <IconButton label={`编辑 ${item.name}`} onClick={() => onEdit?.(item)}>
-            <Edit3 className="h-4 w-4" />
-          </IconButton>
-          <IconButton label={`删除 ${item.name}`} variant="danger" onClick={() => onDelete?.(item)}>
-            <Trash2 className="h-4 w-4" />
-          </IconButton>
-        </>
-      }
-    />
+      </div>
+
+      <div
+        className="flex shrink-0 items-center justify-end gap-3 md:opacity-0 md:transition-opacity md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        <IconButton
+          className={cn(
+            "text-slate-500 hover:bg-teal-50 hover:text-teal-700",
+            testing && "animate-pulse text-teal-700",
+          )}
+          disabled={overlay || testing || !item.apiKeyPresent}
+          label={`测试连通性 ${item.name}`}
+          onClick={() => onTestConnectivity?.(item)}
+        >
+          <Activity className="h-4 w-4" />
+        </IconButton>
+        <IconButton className="text-slate-500 hover:bg-slate-100 hover:text-slate-800" label={`编辑 ${item.name}`} onClick={() => onEdit?.(item)}>
+          <Edit3 className="h-4 w-4" />
+        </IconButton>
+        <IconButton className="text-slate-500 hover:bg-rose-50 hover:text-rose-600" label={`删除 ${item.name}`} onClick={() => onDelete?.(item)}>
+          <Trash2 className="h-4 w-4" />
+        </IconButton>
+      </div>
+    </div>
   );
+}
+
+function TableHeadCell({
+  align = "start",
+  children,
+}: {
+  align?: "start" | "center";
+  children: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "min-w-0 truncate",
+        align === "center" && "text-center",
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+function keyStatusView(
+  item: KeyPoolItem,
+  badges: Array<{ label: string; tone: StatusTone }>,
+) {
+  if (badges[0]) {
+    return badges[0];
+  }
+  if (item.status === "healthy") {
+    return { label: "正常", tone: "healthy" as const };
+  }
+  return { label: "未检测", tone: "info" as const };
+}
+
+function compactKeyBadges(item: KeyPoolItem, cooldownActive: boolean) {
+  const badges: Array<{ label: string; tone: StatusTone }> = [];
+  if (!item.apiKeyPresent) {
+    badges.push({ label: "缺少密钥", tone: "error" });
+    return badges;
+  }
+  if (item.status === "disabled" && item.enabled) {
+    badges.push({ label: "状态禁用", tone: "disabled" });
+    return badges;
+  }
+  if (item.status === "warning" || item.status === "error") {
+    badges.push({ label: statusLabels[item.status], tone: statusTone[item.status] });
+    return badges;
+  }
+  if (cooldownActive) {
+    badges.push({ label: "冷却中", tone: "warning" });
+    return badges;
+  }
+  if (item.onlyUseAsBackup) {
+    badges.push({ label: "备用", tone: "warning" });
+  }
+  return badges;
 }
 
 type KeyPoolEditForm = {
@@ -548,19 +830,26 @@ function KeyEditDialog({
   actionSaving,
   bindings,
   form,
+  mode,
   onClose,
   onFormChange,
   onSave,
+  onStationChange,
+  stations,
 }: {
   actionSaving: boolean;
   bindings: StationGroupBinding[];
   form: KeyPoolEditForm;
+  mode: "create" | "edit";
   onClose: () => void;
   onFormChange: (next: KeyPoolEditForm) => void;
   onSave: (event: FormEvent<HTMLFormElement>) => void;
+  onStationChange?: (stationId: string) => void;
+  stations: Station[];
 }) {
+  const creating = mode === "create";
   const bindingOptions = bindings
-    .filter((binding) => binding.bindingKind === "station_group" || binding.stationKeyId === form.id)
+    .filter((binding) => isCollectedStationGroupBinding(binding) || binding.stationKeyId === form.id)
     .map((binding) => ({
       value: binding.id,
       label: bindingOptionLabel(binding),
@@ -568,8 +857,8 @@ function KeyEditDialog({
   return (
     <Dialog
       open
-      title="编辑密钥"
-      description="密钥留空则保留旧值。"
+      title={creating ? "新增密钥" : "编辑密钥"}
+      description={creating ? "选择已有中转站并保存一枚可调度密钥。" : "密钥留空则保留旧值。"}
       onClose={onClose}
       footer={
         <div className="flex justify-end gap-2">
@@ -579,6 +868,18 @@ function KeyEditDialog({
       }
     >
       <form id="key-pool-edit-form" className="grid gap-4 p-5" onSubmit={onSave}>
+        {creating && (
+          <div className="grid gap-2 rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/25 p-3">
+            <div className="text-xs font-semibold text-slate-700">预设中转站</div>
+            <SelectControl
+              ariaLabel="预设中转站"
+              className={inputClassName}
+              value={form.stationId}
+              options={stations.map((station) => ({ value: station.id, label: station.name }))}
+              onChange={(stationId) => onStationChange?.(stationId)}
+            />
+          </div>
+        )}
         <div className="grid gap-3 md:grid-cols-2">
           <Field label="名称">
             <input className={inputClassName} value={form.name} onChange={(event) => onFormChange({ ...form, name: event.target.value })} required />
@@ -591,7 +892,14 @@ function KeyEditDialog({
           <input className={inputClassName} value={form.stationName} disabled />
         </Field>
         <Field label="密钥">
-          <input className={inputClassName} value={form.apiKey} onChange={(event) => onFormChange({ ...form, apiKey: event.target.value })} placeholder="留空保留旧密钥" />
+          <input
+            className={inputClassName}
+            value={form.apiKey}
+            onChange={(event) => onFormChange({ ...form, apiKey: event.target.value })}
+            placeholder={creating ? "sk-..." : "留空保留旧密钥"}
+            required={creating}
+            type="password"
+          />
         </Field>
         <div className="grid gap-3 md:grid-cols-3">
           <Field label="分组绑定">
@@ -683,23 +991,6 @@ function readError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function formatNullableTime(value: string | null) {
-  if (!value) {
-    return "暂无";
-  }
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 function formatRate(value: number | null) {
   if (value === null || !Number.isFinite(value)) {
     return "未知";
@@ -707,30 +998,13 @@ function formatRate(value: number | null) {
   return `${value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}x`;
 }
 
-function groupBindingSummary(item: KeyPoolItem) {
-  if (item.groupBindingId) {
-    return item.groupName ? `${item.groupName} · 已绑定` : "已绑定";
+function formatStationBaseUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return value.replace(/\/+$/, "");
   }
-  if (item.groupName) {
-    return `${item.groupName} · 未绑定`;
-  }
-  return "未绑定";
-}
-
-function routeabilitySummary(item: KeyPoolItem, cooldownActive: boolean): { label: string; tone: "healthy" | "warning" | "error" | "disabled" | "info" } {
-  if (!item.enabled || item.status === "disabled") {
-    return { label: "不参与路由", tone: "disabled" };
-  }
-  if (!item.apiKeyPresent) {
-    return { label: "缺少密钥", tone: "error" };
-  }
-  if (cooldownActive || item.status === "error") {
-    return { label: "暂不可路由", tone: "warning" };
-  }
-  if (!item.groupBindingId) {
-    return { label: "可路由 · 未绑定分组", tone: "warning" };
-  }
-  return { label: "可路由", tone: "healthy" };
 }
 
 function bindingOptionLabel(binding: StationGroupBinding) {
@@ -799,6 +1073,17 @@ function formFromItem(item: KeyPoolItem): KeyPoolEditForm {
     preferredModels: "",
     onlyUseAsBackup: item.onlyUseAsBackup,
     routingTags: "",
+  };
+}
+
+function createFormForStation(station: Station, items: KeyPoolItem[]): KeyPoolEditForm {
+  const nextIndex = items.filter((item) => item.stationId === station.id).length;
+  return {
+    ...emptyEditForm,
+    stationId: station.id,
+    stationName: station.name,
+    name: `${station.name} Key ${nextIndex + 1}`,
+    priority: String(nextIndex),
   };
 }
 

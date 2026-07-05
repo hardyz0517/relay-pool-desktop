@@ -26,8 +26,7 @@ use crate::models::{
     credentials::{StationCredentials, UpdateStationCredentialsInput, UpdateStationSessionInput},
     group_facts::{
         GroupRateRecord, InsertGroupRateRecordInput, StationGroupBinding,
-        UpdateStationKeyGroupBindingInput,
-        UpsertStationGroupBindingInput,
+        UpdateStationKeyGroupBindingInput, UpsertStationGroupBindingInput,
     },
     pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
     proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
@@ -756,6 +755,14 @@ impl AppDatabase {
         list_balance_snapshots_from_connection(&connection)
     }
 
+    pub fn list_balance_snapshots_for_station(
+        &self,
+        station_id: String,
+    ) -> Result<Vec<BalanceSnapshot>, String> {
+        let connection = self.connection()?;
+        list_balance_snapshots_for_station_from_connection(&connection, &station_id)
+    }
+
     pub fn upsert_balance_snapshot(
         &self,
         input: UpsertBalanceSnapshotInput,
@@ -944,6 +951,14 @@ impl AppDatabase {
     pub fn list_change_events(&self) -> Result<Vec<ChangeEvent>, String> {
         let connection = self.connection()?;
         list_change_events_from_connection(&connection)
+    }
+
+    pub fn list_change_events_for_station(
+        &self,
+        station_id: String,
+    ) -> Result<Vec<ChangeEvent>, String> {
+        let connection = self.connection()?;
+        list_change_events_for_station_from_connection(&connection, &station_id)
     }
 
     pub fn upsert_change_event(
@@ -1583,8 +1598,18 @@ fn migrate_p9_fact_schema(connection: &Connection) -> rusqlite::Result<()> {
         "TEXT",
     )?;
     add_column_if_missing(connection, "station_credentials", "newapi_user_id", "TEXT")?;
-    add_column_if_missing(connection, "station_credentials", "token_expires_at", "TEXT")?;
-    add_column_if_missing(connection, "station_credentials", "token_refreshed_at", "TEXT")?;
+    add_column_if_missing(
+        connection,
+        "station_credentials",
+        "token_expires_at",
+        "TEXT",
+    )?;
+    add_column_if_missing(
+        connection,
+        "station_credentials",
+        "token_refreshed_at",
+        "TEXT",
+    )?;
     add_column_if_missing(
         connection,
         "station_credentials",
@@ -4447,15 +4472,14 @@ fn route_candidate_economics_from_connection(
                     balance_status,
                     balance_scope,
                     balance_collected_at,
-                ) =
-                    balance_snapshot.clone().unwrap_or((
-                        None,
-                        "unknown".to_string(),
-                        None,
-                        "unknown".to_string(),
-                        "unknown".to_string(),
-                        None,
-                    ));
+                ) = balance_snapshot.clone().unwrap_or((
+                    None,
+                    "unknown".to_string(),
+                    None,
+                    "unknown".to_string(),
+                    "unknown".to_string(),
+                    None,
+                ));
                 RouteCandidateEconomics {
                     pricing_rule_id: Some(id),
                     pricing_model: Some(model),
@@ -4715,6 +4739,28 @@ fn list_balance_snapshots_from_connection(
     Ok(rows)
 }
 
+fn list_balance_snapshots_for_station_from_connection(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<Vec<BalanceSnapshot>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, station_id, station_key_id, scope, value, currency, credit_unit,
+                    used_value, total_value, low_balance_threshold, status, source, confidence,
+                    collected_at, created_at, updated_at
+               FROM balance_snapshots
+              WHERE station_id = ?1
+              ORDER BY updated_at DESC, created_at DESC",
+        )
+        .map_err(|error| format!("读取中转站余额快照失败: {error}"))?;
+    let rows = statement
+        .query_map(params![station_id], row_to_balance_snapshot)
+        .map_err(|error| format!("查询中转站余额快照失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析中转站余额快照失败: {error}"))?;
+    Ok(rows)
+}
+
 fn upsert_balance_snapshot_in_connection(
     connection: &Connection,
     input: UpsertBalanceSnapshotInput,
@@ -4888,6 +4934,29 @@ fn list_change_events_from_connection(connection: &Connection) -> Result<Vec<Cha
         .map_err(|error| format!("查询变更事件失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析变更事件失败: {error}"))?;
+    Ok(rows)
+}
+
+fn list_change_events_for_station_from_connection(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<Vec<ChangeEvent>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, severity, event_type, status, title, message, object_type, object_id,
+                    station_id, station_key_id, pricing_rule_id, request_log_id,
+                    old_value_json, new_value_json, impact_json, dedupe_key, source,
+                    detected_at, resolved_at, created_at, updated_at
+               FROM change_events
+              WHERE station_id = ?1
+              ORDER BY updated_at DESC, detected_at DESC",
+        )
+        .map_err(|error| format!("读取中转站变更事件失败: {error}"))?;
+    let rows = statement
+        .query_map(params![station_id], row_to_change_event)
+        .map_err(|error| format!("查询中转站变更事件失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析中转站变更事件失败: {error}"))?;
     Ok(rows)
 }
 
@@ -6138,7 +6207,10 @@ fn insert_collector_snapshot_in_connection(
     if let Some(previous_snapshot) = previous_snapshot.as_ref() {
         let previous_models = models_from_snapshot_value(&previous_snapshot.normalized_json);
         let next_models = models_from_snapshot_value(&saved.normalized_json);
-        for model in next_models.iter().filter(|model| !previous_models.contains(model)) {
+        for model in next_models
+            .iter()
+            .filter(|model| !previous_models.contains(model))
+        {
             let event = UpsertChangeEventInput {
                 severity: crate::services::change_events::SEVERITY_INFO.to_string(),
                 event_type: "model_added".to_string(),
@@ -6162,7 +6234,10 @@ fn insert_collector_snapshot_in_connection(
             };
             let _ = upsert_change_event_in_connection(connection, event);
         }
-        for model in previous_models.iter().filter(|model| !next_models.contains(model)) {
+        for model in previous_models
+            .iter()
+            .filter(|model| !next_models.contains(model))
+        {
             let event = UpsertChangeEventInput {
                 severity: crate::services::change_events::SEVERITY_WARNING.to_string(),
                 event_type: "model_removed".to_string(),
@@ -6176,7 +6251,9 @@ fn insert_collector_snapshot_in_connection(
                 request_log_id: None,
                 old_value_json: Some(json!({ "model": model }).to_string()),
                 new_value_json: None,
-                impact_json: Some(json!({ "routingRisk": "model_candidates_may_change" }).to_string()),
+                impact_json: Some(
+                    json!({ "routingRisk": "model_candidates_may_change" }).to_string(),
+                ),
                 dedupe_key: crate::services::change_events::model_dedupe_key(
                     &saved.station_id,
                     "model_removed",
@@ -6187,7 +6264,8 @@ fn insert_collector_snapshot_in_connection(
             let _ = upsert_change_event_in_connection(connection, event);
         }
 
-        let previous_rates = rate_multipliers_from_snapshot_value(&previous_snapshot.normalized_json);
+        let previous_rates =
+            rate_multipliers_from_snapshot_value(&previous_snapshot.normalized_json);
         let next_rates = rate_multipliers_from_snapshot_value(&saved.normalized_json);
         for (group_name, next_multiplier) in next_rates {
             if let Some((_, old_multiplier)) = previous_rates
@@ -6227,9 +6305,7 @@ fn row_to_collector_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<Collec
     })
 }
 
-fn row_to_station_group_binding(
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<StationGroupBinding> {
+fn row_to_station_group_binding(row: &rusqlite::Row<'_>) -> rusqlite::Result<StationGroupBinding> {
     let raw_json: Option<String> = row.get("raw_json_redacted")?;
     Ok(StationGroupBinding {
         id: row.get("id")?,
@@ -6873,6 +6949,7 @@ fn finish_collector_run_in_connection(
         )
         .map_err(|error| format!("完成采集运行记录失败: {error}"))?;
     let saved = collector_run_by_id(connection, &input.id)?;
+    update_station_collector_summary(connection, &saved.station_id, &saved.status, &finished_at)?;
     if matches!(saved.status.as_str(), "success" | "partial")
         && previous_run_status.as_deref() == Some("failed")
     {
@@ -6881,6 +6958,40 @@ fn finish_collector_run_in_connection(
         let _ = upsert_change_event_in_connection(connection, event);
     }
     Ok(saved)
+}
+
+fn update_station_collector_summary(
+    connection: &Connection,
+    station_id: &str,
+    run_status: &str,
+    checked_at: &str,
+) -> Result<(), String> {
+    let station_status = match run_status {
+        "success" => Some("healthy"),
+        "partial" | "manual_required" => Some("warning"),
+        "failed" => Some("error"),
+        _ => None,
+    };
+    let Some(station_status) = station_status else {
+        return Ok(());
+    };
+
+    connection
+        .execute(
+            "UPDATE stations
+                SET status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE ?1 END,
+                    last_checked_at = ?2,
+                    last_pricing_fetched_at = CASE
+                        WHEN ?3 IN ('success', 'partial') THEN ?2
+                        ELSE last_pricing_fetched_at
+                    END,
+                    updated_at = ?2
+              WHERE id = ?4",
+            params![station_status, checked_at, run_status, station_id],
+        )
+        .map_err(|error| format!("同步站点采集状态失败: {error}"))?;
+
+    Ok(())
 }
 
 fn latest_finished_collector_run_status(
@@ -6925,33 +7036,13 @@ fn migrate_legacy_group_facts(connection: &Connection) -> Result<(), String> {
 
     for (station_key_id, station_id, group_name) in rows {
         let group_key_hash = stable_group_key_hash(&station_id, "legacy", None, &group_name);
-        let station_binding = upsert_station_group_binding_in_connection(
-            connection,
-            UpsertStationGroupBindingInput {
-                station_id: station_id.clone(),
-                station_key_id: None,
-                binding_kind: "station_group".to_string(),
-                parent_group_binding_id: None,
-                group_key_hash: group_key_hash.clone(),
-                group_id_hash: None,
-                group_name: group_name.clone(),
-                binding_status: "manual_legacy".to_string(),
-                default_rate_multiplier: None,
-                user_rate_multiplier: None,
-                effective_rate_multiplier: None,
-                rate_source: Some("legacy_key_group".to_string()),
-                confidence: 0.4,
-                last_seen_at: None,
-                raw_json_redacted: None,
-            },
-        )?;
         let key_binding = upsert_station_group_binding_in_connection(
             connection,
             UpsertStationGroupBindingInput {
                 station_id,
                 station_key_id: Some(station_key_id.clone()),
                 binding_kind: "key_binding".to_string(),
-                parent_group_binding_id: Some(station_binding.id),
+                parent_group_binding_id: None,
                 group_key_hash,
                 group_id_hash: None,
                 group_name,
@@ -7055,10 +7146,12 @@ fn models_from_snapshot_value(value: &Value) -> Vec<String> {
             models
                 .iter()
                 .filter_map(|model| {
-                    model
-                        .as_str()
-                        .map(ToString::to_string)
-                        .or_else(|| model.get("id").and_then(Value::as_str).map(ToString::to_string))
+                    model.as_str().map(ToString::to_string).or_else(|| {
+                        model
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string)
+                    })
                 })
                 .collect::<Vec<_>>()
         })
@@ -7420,8 +7513,8 @@ mod tests {
         UpdateChannelMonitorTemplateInput,
     };
     use crate::models::group_facts::{
-        BINDING_KIND_KEY_BINDING, BINDING_KIND_STATION_GROUP, BINDING_STATUS_AVAILABLE,
-        BINDING_STATUS_MISSING, UpdateStationKeyGroupBindingInput,
+        UpdateStationKeyGroupBindingInput, BINDING_KIND_KEY_BINDING, BINDING_KIND_STATION_GROUP,
+        BINDING_STATUS_AVAILABLE, BINDING_STATUS_MISSING,
     };
     use crate::models::pricing::{UpsertBalanceSnapshotInput, UpsertPricingRuleInput};
     use crate::models::routing::RouteEndpointKind;
@@ -7945,15 +8038,115 @@ mod tests {
         ] {
             let count: i64 = connection
                 .query_row(
-                    &format!(
-                        "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"
-                    ),
+                    &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"),
                     params![column],
                     |row| row.get(0),
                 )
                 .expect("column count");
             assert_eq!(count, 1, "{table}.{column} should exist");
         }
+    }
+
+    #[test]
+    fn station_detail_balance_snapshots_are_filtered_in_database() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let target = test_station(&database, "Target Station");
+        let other = test_station(&database, "Other Station");
+        database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: Some("balance-target".to_string()),
+                station_id: target.id.clone(),
+                station_key_id: None,
+                scope: "station".to_string(),
+                value: Some(10.0),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                low_balance_threshold: None,
+                status: "normal".to_string(),
+                source: "test".to_string(),
+                confidence: 1.0,
+                collected_at: None,
+            })
+            .expect("target balance");
+        database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: Some("balance-other".to_string()),
+                station_id: other.id.clone(),
+                station_key_id: None,
+                scope: "station".to_string(),
+                value: Some(99.0),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                low_balance_threshold: None,
+                status: "normal".to_string(),
+                source: "test".to_string(),
+                confidence: 1.0,
+                collected_at: None,
+            })
+            .expect("other balance");
+
+        let snapshots = database
+            .list_balance_snapshots_for_station(target.id.clone())
+            .expect("station balance snapshots");
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].id, "balance-target");
+    }
+
+    #[test]
+    fn station_detail_change_events_are_filtered_in_database() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let target = test_station(&database, "Target Station");
+        let other = test_station(&database, "Other Station");
+        database
+            .upsert_change_event(UpsertChangeEventInput {
+                severity: crate::services::change_events::SEVERITY_INFO.to_string(),
+                event_type: "test_event".to_string(),
+                title: "Target".to_string(),
+                message: "Target message".to_string(),
+                object_type: "station".to_string(),
+                object_id: Some(target.id.clone()),
+                station_id: Some(target.id.clone()),
+                station_key_id: None,
+                pricing_rule_id: None,
+                request_log_id: None,
+                old_value_json: None,
+                new_value_json: None,
+                impact_json: None,
+                dedupe_key: "event-target".to_string(),
+                source: "test".to_string(),
+            })
+            .expect("target event");
+        database
+            .upsert_change_event(UpsertChangeEventInput {
+                severity: crate::services::change_events::SEVERITY_INFO.to_string(),
+                event_type: "test_event".to_string(),
+                title: "Other".to_string(),
+                message: "Other message".to_string(),
+                object_type: "station".to_string(),
+                object_id: Some(other.id.clone()),
+                station_id: Some(other.id.clone()),
+                station_key_id: None,
+                pricing_rule_id: None,
+                request_log_id: None,
+                old_value_json: None,
+                new_value_json: None,
+                impact_json: None,
+                dedupe_key: "event-other".to_string(),
+                source: "test".to_string(),
+            })
+            .expect("other event");
+
+        let events = database
+            .list_change_events_for_station(target.id.clone())
+            .expect("station change events");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].dedupe_key, "event-target");
     }
 
     #[test]
@@ -8199,7 +8392,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_key_group_name_migrates_to_group_binding_once() {
+    fn legacy_key_group_name_migrates_to_key_binding_only() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let station = test_station(&database, "legacy-relay");
         let key = database
@@ -8233,9 +8426,17 @@ mod tests {
             .iter()
             .filter(|binding| binding.station_key_id.as_deref() == Some(key.id.as_str()))
             .collect::<Vec<_>>();
+        let legacy_station_groups = bindings
+            .iter()
+            .filter(|binding| {
+                binding.binding_kind == "station_group"
+                    && binding.rate_source.as_deref() == Some("legacy_key_group")
+            })
+            .collect::<Vec<_>>();
 
         assert_eq!(key_bindings.len(), 1);
         assert_eq!(key_bindings[0].binding_status, "manual_legacy");
+        assert_eq!(legacy_station_groups.len(), 0);
     }
 
     #[test]
@@ -9151,6 +9352,44 @@ mod tests {
             resolved.access_token.as_deref(),
             Some("p9-access-token-canary")
         );
+    }
+
+    #[test]
+    fn successful_collector_run_marks_station_as_collected() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "collector-success-station-status");
+
+        assert_eq!(station.status, "unchecked");
+
+        let run = database
+            .create_collector_run(CreateCollectorRunInput {
+                station_id: station.id.clone(),
+                parent_run_id: None,
+                adapter: "sub2api".to_string(),
+                task_type: "balance".to_string(),
+            })
+            .expect("create run");
+
+        database
+            .finish_collector_run(FinishCollectorRunInput {
+                id: run.id,
+                status: "success".to_string(),
+                endpoint_count: 1,
+                success_count: 1,
+                failure_count: 0,
+                manual_action_required: false,
+                error_code: None,
+                error_message: None,
+                snapshot_id: None,
+            })
+            .expect("finish run");
+
+        let updated = database
+            .station_for_collector(&station.id)
+            .expect("updated station");
+
+        assert_eq!(updated.status, "healthy");
+        assert!(updated.last_pricing_fetched_at.is_some());
     }
 
     #[test]

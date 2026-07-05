@@ -114,21 +114,32 @@ pub fn sanitize_pricing_rule_input(input: UpsertPricingRuleInput) -> UpsertPrici
     }
 }
 
-pub fn sanitize_balance_snapshot_input(input: UpsertBalanceSnapshotInput) -> UpsertBalanceSnapshotInput {
+pub fn sanitize_balance_snapshot_input(
+    input: UpsertBalanceSnapshotInput,
+) -> UpsertBalanceSnapshotInput {
     UpsertBalanceSnapshotInput {
         station_id: input.station_id,
-        station_key_id: input.station_key_id.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
+        station_key_id: input
+            .station_key_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
         scope: input.scope.trim().to_string(),
         value: input.value,
         currency: normalize_currency(input.currency),
-        credit_unit: input.credit_unit.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
+        credit_unit: input
+            .credit_unit
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
         used_value: input.used_value,
         total_value: input.total_value,
         low_balance_threshold: input.low_balance_threshold,
         status: input.status.trim().to_string(),
         source: input.source.trim().to_string(),
         confidence: clamp_confidence(input.confidence),
-        collected_at: input.collected_at.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
+        collected_at: input
+            .collected_at
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
         id: input.id,
     }
 }
@@ -145,7 +156,10 @@ pub fn summarize_pricing_rules(rules: &[PricingRule]) -> Vec<String> {
                 .output_price
                 .map(|value| format!("{value:.4}"))
                 .unwrap_or_else(|| "unknown".to_string());
-            format!("{}: {}/{} {} {}", rule.model, input, output, rule.currency, rule.unit)
+            format!(
+                "{}: {}/{} {} {}",
+                rule.model, input, output, rule.currency, rule.unit
+            )
         })
         .collect()
 }

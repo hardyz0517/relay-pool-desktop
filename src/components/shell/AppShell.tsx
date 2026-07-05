@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Circle, Copy } from "lucide-react";
+import { Circle } from "lucide-react";
 import { appRoutes } from "@/app/routes";
-import { IconButton } from "@/components/ui";
 import { shellLayout } from "@/components/ui/layout";
 import { listChangeEvents } from "@/lib/api/changeEvents";
 import { getSettings, SETTINGS_UPDATED_EVENT } from "@/lib/api/settings";
@@ -110,9 +109,6 @@ export function AppShell({
           >
             <Circle className="h-2.5 w-2.5 fill-current text-amber-500" />
           </span>
-          <IconButton label="复制本地入口">
-            <Copy className="h-4 w-4" />
-          </IconButton>
         </div>
       </aside>
 

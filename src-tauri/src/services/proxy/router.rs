@@ -627,12 +627,7 @@ mod tests {
         group_rate_only.group_binding_id = Some("group-pro".to_string());
 
         let candidates = vec![
-            rich_candidate_with_economics(
-                "rate-only",
-                0,
-                capabilities(|_| {}),
-                group_rate_only,
-            ),
+            rich_candidate_with_economics("rate-only", 0, capabilities(|_| {}), group_rate_only),
             rich_candidate_with_economics(
                 "complete-price",
                 0,
@@ -643,7 +638,10 @@ mod tests {
 
         let selected = select_route_candidates(&request, candidates, &[]).expect("selection");
 
-        assert_eq!(selected.accepted[0].candidate.station_key_id, "complete-price");
+        assert_eq!(
+            selected.accepted[0].candidate.station_key_id,
+            "complete-price"
+        );
         assert!(selected.explanations.iter().any(|item| {
             item.station_key_id == "rate-only"
                 && item.normalization_status.as_deref() == Some("group_rate_only")
@@ -680,9 +678,8 @@ mod tests {
 
         let mut allowed_request = request.clone();
         allowed_request.allow_depleted_fallback = true;
-        let selected =
-            select_route_candidates(&allowed_request, selected_candidate_fixture(), &[])
-                .expect("selection");
+        let selected = select_route_candidates(&allowed_request, selected_candidate_fixture(), &[])
+            .expect("selection");
         assert_eq!(selected.accepted[0].candidate.station_key_id, "empty");
     }
 

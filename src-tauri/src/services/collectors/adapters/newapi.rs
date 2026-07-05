@@ -1,14 +1,12 @@
 use serde_json::{json, Value};
 
-use crate::{
-    services::{
-        collectors::{
-            adapters::{AdapterOutput, CollectorTask},
-            facts::{CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts},
-            url::{collector_base_urls, join_url},
-        },
-        database::AppDatabase,
+use crate::services::{
+    collectors::{
+        adapters::{AdapterOutput, CollectorTask},
+        facts::{CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts},
+        url::{collector_base_urls, join_url},
     },
+    database::AppDatabase,
 };
 
 fn parse_newapi_balance(station_id: &str, payload: &Value) -> CollectedBalanceFact {
@@ -174,11 +172,9 @@ pub fn collect(
             "unsupported_task",
             "NewAPI adapter 暂不支持模型列表采集。",
         ),
-        CollectorTask::Full => unsupported_output(
-            task,
-            "internal_task",
-            "Full 采集由父任务拆分为子任务执行。",
-        ),
+        CollectorTask::Full => {
+            unsupported_output(task, "internal_task", "Full 采集由父任务拆分为子任务执行。")
+        }
     }
 }
 
@@ -242,7 +238,9 @@ pub fn collect_balance_and_groups(
     if matches!(task, CollectorTask::Balance | CollectorTask::Full) {
         let url = join_url(&urls.management_base_url, "/api/user/self");
         let payload = get_newapi_json(&url, &access_token, &user_id, &mut endpoint_results)?;
-        facts.balances.push(parse_newapi_balance(station_id, &payload));
+        facts
+            .balances
+            .push(parse_newapi_balance(station_id, &payload));
     }
     if matches!(task, CollectorTask::Groups | CollectorTask::Full) {
         let url = join_url(&urls.management_base_url, "/api/user/self/groups");
@@ -395,7 +393,10 @@ mod tests {
             }),
         );
 
-        assert!(facts.groups.iter().any(|group| group.group_name == "Default"));
+        assert!(facts
+            .groups
+            .iter()
+            .any(|group| group.group_name == "Default"));
         assert!(facts.rates.iter().any(|rate| {
             rate.group_name == "VIP" && rate.effective_rate_multiplier == Some(0.8)
         }));

@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Eye, RefreshCw, Search, XCircle } from "lucide-react";
+import { ArrowRight, CheckCheck, CheckCircle2, Eye, RefreshCw, Search, XCircle } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
-  DataTableLite,
   EmptyState,
   InspectorPanel,
   SegmentedControl,
@@ -11,7 +10,6 @@ import {
   StatusBadge,
   Toolbar,
   useToast,
-  type DataTableColumn,
 } from "@/components/ui";
 import {
   dismissChangeEvent,
@@ -21,9 +19,12 @@ import {
 } from "@/lib/api/changeEvents";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import {
+  buildChangeEventListItem,
+  type ChangeEventListDiff,
   eventTypeLabels,
   filterChangeEvents,
   formatChangeTime,
+  markUnreadChangeEventsRead,
   objectTypeLabels,
   parseJsonObject,
   severityLabels,
@@ -78,65 +79,42 @@ export function ChangeCenterPage() {
     }
   }
 
+  async function markAllRead() {
+    setSaving(true);
+    try {
+      const result = await markUnreadChangeEventsRead(events, markChangeEventRead);
+      setEvents(result.events);
+      toast.success(`已标记 ${result.changedCount} 条变更为已读`);
+    } catch (requestError) {
+      toast.error("批量标记已读失败", readError(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const filteredEvents = useMemo(() => filterChangeEvents(events, filter), [events, filter]);
   const selected = filteredEvents.find((event) => event.id === selectedId) ?? filteredEvents[0] ?? null;
+  const unreadCount = events.filter((event) => event.status === "unread").length;
   const riskCount = unreadRiskCount(events);
   const objectOptions = useMemo(() => {
     const values = Array.from(new Set(events.map((event) => event.objectType))).sort((a, b) => a.localeCompare(b));
     return values.map((value) => ({ value, label: objectTypeLabels[value] ?? value }));
   }, [events]);
 
-  const columns: DataTableColumn<ChangeEvent>[] = [
-    {
-      key: "severity",
-      header: "级别",
-      className: "w-20",
-      render: (event) => <StatusBadge tone={severityTone[event.severity]}>{severityLabels[event.severity]}</StatusBadge>,
-    },
-    {
-      key: "event",
-      header: "变更",
-      render: (event) => (
-        <div className="min-w-0">
-          <div className="truncate font-semibold text-slate-800">{event.title}</div>
-          <div className="max-w-[520px] truncate text-xs text-muted-foreground">{event.message}</div>
-        </div>
-      ),
-    },
-    {
-      key: "type",
-      header: "类型",
-      className: "w-28",
-      render: (event) => eventTypeLabels[event.eventType] ?? event.eventType,
-    },
-    {
-      key: "object",
-      header: "对象",
-      className: "w-24",
-      render: (event) => objectTypeLabels[event.objectType] ?? event.objectType,
-    },
-    {
-      key: "status",
-      header: "状态",
-      className: "w-24",
-      render: (event) => statusLabels[event.status] ?? event.status,
-    },
-    {
-      key: "time",
-      header: "时间",
-      className: "w-32",
-      render: (event) => formatChangeTime(event.detectedAt),
-    },
-  ];
-
   return (
     <PageScaffold
       title="变更中心"
       actions={
-        <Button variant="secondary" onClick={() => void refresh(true)} disabled={loading || saving}>
-          <RefreshCw className="h-4 w-4" />
-          刷新
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" onClick={() => void markAllRead()} disabled={loading || saving || unreadCount === 0}>
+            <CheckCheck className="h-4 w-4" />
+            一键已读
+          </Button>
+          <Button variant="secondary" onClick={() => void refresh(true)} disabled={loading || saving}>
+            <RefreshCw className="h-4 w-4" />
+            刷新
+          </Button>
+        </div>
       }
     >
       <div className="grid gap-[var(--shell-page-gap)]">
@@ -201,14 +179,16 @@ export function ChangeCenterPage() {
                 description="余额、密钥、采集、价格、倍率、模型和路由状态变化会在这里形成记录。"
               />
             ) : (
-              <DataTableLite
-                columns={columns}
-                rows={filteredEvents}
-                getRowKey={(event) => event.id}
-                selectedKey={selected?.id}
-                onRowClick={(event) => setSelectedId(event.id)}
-                className="rounded-none border-0 shadow-none"
-              />
+              <div className="divide-y divide-border bg-white">
+                {filteredEvents.map((event) => (
+                  <ChangeEventRow
+                    key={event.id}
+                    event={event}
+                    selected={selected?.id === event.id}
+                    onSelect={() => setSelectedId(event.id)}
+                  />
+                ))}
+              </div>
             )}
           </div>
 
@@ -253,6 +233,96 @@ export function ChangeCenterPage() {
         </div>
       </div>
     </PageScaffold>
+  );
+}
+
+function ChangeEventRow({
+  event,
+  selected,
+  onSelect,
+}: {
+  event: ChangeEvent;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const item = buildChangeEventListItem(event);
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onSelect}
+      className={`grid min-h-[72px] w-full grid-cols-[72px_minmax(0,1fr)_96px] gap-3 px-3 py-2.5 text-left transition-colors hover:bg-teal-50/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--accent)/0.35)] ${
+        selected ? "bg-teal-50/70" : "bg-white"
+      }`}
+    >
+      <div className="flex flex-col items-start gap-1">
+        <StatusBadge tone={severityTone[event.severity]}>{item.severityLabel}</StatusBadge>
+        {event.status === "unread" && (
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">未读</span>
+        )}
+      </div>
+      <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="truncate text-[13px] font-semibold text-slate-900">{item.title}</span>
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-500">
+            {item.kindLabel}
+          </span>
+        </div>
+        <div className="mt-1 truncate text-xs text-slate-500">{item.description}</div>
+        <ChangeDiff diff={item.diff} />
+      </div>
+      <div className="flex flex-col items-end gap-1 text-xs text-slate-500">
+        <span className="font-medium text-slate-700">{formatChangeTime(event.detectedAt)}</span>
+        <span>{item.sourceLabel}</span>
+        <span>{item.statusLabel}</span>
+      </div>
+    </button>
+  );
+}
+
+function ChangeDiff({ diff }: { diff: ChangeEventListDiff | null }) {
+  if (!diff || (!diff.before && !diff.after)) {
+    return null;
+  }
+
+  return (
+    <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+      <span className="text-slate-500">{diff.label}</span>
+      {diff.before && diff.after ? (
+        <>
+          <DiffValue tone="before">{diff.before}</DiffValue>
+          <ArrowRight className="h-3.5 w-3.5 text-slate-400" />
+          <DiffValue tone="after">{diff.after}</DiffValue>
+        </>
+      ) : diff.after ? (
+        <>
+          <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">新增</span>
+          <DiffValue tone="after">{diff.after}</DiffValue>
+        </>
+      ) : (
+        <>
+          <span className="rounded-full bg-rose-50 px-2 py-0.5 font-medium text-rose-700">移除</span>
+          <DiffValue tone="before">{diff.before}</DiffValue>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DiffValue({ children, tone }: { children: string | null; tone: "before" | "after" }) {
+  if (!children) {
+    return null;
+  }
+  return (
+    <span
+      className={
+        tone === "before"
+          ? "max-w-[220px] truncate rounded-[6px] border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-600"
+          : "max-w-[220px] truncate rounded-[6px] border border-teal-100 bg-teal-50 px-2 py-0.5 font-medium text-teal-800"
+      }
+    >
+      {children}
+    </span>
   );
 }
 

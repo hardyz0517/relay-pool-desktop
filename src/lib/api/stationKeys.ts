@@ -1,12 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listStations } from "@/lib/api/stations";
 import type {
   CreateStationKeyInput,
   KeyPoolItem,
+  StationKeyConnectivityTestResult,
   StationCredentials,
   StationKey,
   UpdateStationSessionInput,
   UpdateStationKeyInput,
 } from "@/lib/types/stationKeys";
+import type { Station } from "@/lib/types/stations";
 
 const memoryKeys = new Map<string, StationKey[]>();
 const memoryCredentials = new Map<string, StationCredentials>();
@@ -22,10 +25,15 @@ export function listStationKeys(stationId: string) {
 }
 
 export function createStationKey(input: CreateStationKeyInput) {
-  return invoke<StationKey>("create_station_key", { input }).catch((error) => {
+  return invoke<StationKey>("create_station_key", { input }).catch(async (error) => {
     if (isInvokeUnavailable(error)) {
       const key = memoryKeyFromInput(input);
       memoryKeys.set(input.stationId, [...(memoryKeys.get(input.stationId) ?? []), key]);
+      const station = (await listStations()).find((item) => item.id === input.stationId) ?? null;
+      memoryKeyPool = [
+        memoryPoolItemFromKey(key, station),
+        ...memoryKeyPool.filter((item) => item.id !== key.id),
+      ];
       return key;
     }
     throw error;
@@ -127,6 +135,22 @@ export function reorderKeyPool(keyIds: string[]) {
   });
 }
 
+export function testStationKeyConnectivity(stationKeyId: string) {
+  return invoke<StationKeyConnectivityTestResult>("test_station_key_connectivity", { stationKeyId }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return {
+        stationKeyId,
+        ok: true,
+        statusCode: 200,
+        durationMs: 0,
+        model: "mock",
+        message: "浏览器预览模式：跳过真实连通性测试",
+      };
+    }
+    throw error;
+  });
+}
+
 export function getStationCredentials(stationId: string) {
   return invoke<StationCredentials>("get_station_credentials", { stationId }).catch((error) => {
     if (isInvokeUnavailable(error)) {
@@ -144,10 +168,12 @@ export function updateStationCredentials(input: {
 }) {
   return invoke<StationCredentials>("update_station_credentials", { input }).catch((error) => {
     if (isInvokeUnavailable(error)) {
+      const existing = memoryCredentials.get(input.stationId) ?? emptyCredentials(input.stationId);
+      const hasNewPassword = Boolean(input.loginPassword?.trim());
       const next = {
-        ...emptyCredentials(input.stationId),
+        ...existing,
         loginUsername: input.loginUsername,
-        passwordPresent: Boolean(input.loginPassword && input.rememberPassword),
+        passwordPresent: input.rememberPassword ? hasNewPassword || existing.passwordPresent : false,
         rememberPassword: input.rememberPassword,
         loginStatus: "saved",
         updatedAt: new Date().toISOString(),
@@ -173,8 +199,9 @@ export function clearStationCredentials(stationId: string) {
 export function updateStationSession(input: UpdateStationSessionInput) {
   return invoke<StationCredentials>("update_station_session", { input }).catch((error) => {
     if (isInvokeUnavailable(error)) {
+      const existing = memoryCredentials.get(input.stationId) ?? emptyCredentials(input.stationId);
       const next = {
-        ...emptyCredentials(input.stationId),
+        ...existing,
         accessTokenPresent: Boolean(input.accessToken),
         refreshTokenPresent: Boolean(input.refreshToken),
         cookiePresent: Boolean(input.cookie),
@@ -237,6 +264,25 @@ function memoryKeyFromInput(input: CreateStationKeyInput): StationKey {
     note: input.note,
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+function memoryPoolItemFromKey(key: StationKey, station: Station | null): KeyPoolItem {
+  return {
+    ...key,
+    stationName: station?.name ?? "未命名中转站",
+    stationType: station?.stationType ?? "custom",
+    stationBaseUrl: station?.baseUrl ?? "",
+    capabilitySummary: [],
+    modelScopeSummary: "全部模型",
+    onlyUseAsBackup: false,
+    cooldownUntil: null,
+    successRate: null,
+    avgLatencyMs: null,
+    consecutiveFailures: 0,
+    lastErrorSummary: null,
+    bindingStatus: null,
+    priceState: null,
   };
 }
 
