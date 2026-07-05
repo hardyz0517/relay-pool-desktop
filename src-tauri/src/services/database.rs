@@ -2806,12 +2806,9 @@ fn validate_channel_monitor_run_input(input: &CreateChannelMonitorRunInput) -> R
 }
 
 fn parse_channel_monitor_run_time(value: &str, field_name: &str) -> Result<i64, String> {
-    let timestamp = value
-        .trim()
-        .parse::<i64>()
-        .map_err(|_| {
-            format!("Channel monitor run {field_name} must be a positive millisecond epoch")
-        })?;
+    let timestamp = value.trim().parse::<i64>().map_err(|_| {
+        format!("Channel monitor run {field_name} must be a positive millisecond epoch")
+    })?;
     if timestamp <= 0 {
         return Err(format!(
             "Channel monitor run {field_name} must be a positive millisecond epoch"
