@@ -1,13 +1,20 @@
 use serde_json::{json, Value};
 
+use crate::models::{
+    remote_keys::{CreateRemoteStationKeyInput, RemoteKeyCapability, RemoteStationKey},
+    stations::Station,
+};
 use crate::services::{
     collectors::{
-        adapters::{AdapterOutput, CollectorTask},
+        adapters::{AdapterOutput, CollectorTask, CreatedRemoteKey},
         facts::{CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts},
         url::{collector_base_urls, join_url},
     },
     database::AppDatabase,
 };
+
+const NEWAPI_REMOTE_KEY_UNSUPPORTED: &str =
+    "NewAPI 远端 Key 列表/创建接口尚未适配；当前仅支持读取账号分组信息。";
 
 fn parse_newapi_balance(station_id: &str, payload: &Value) -> CollectedBalanceFact {
     let quota = payload.get("quota").and_then(Value::as_f64);
@@ -136,6 +143,34 @@ fn rate_from_group_value(value: &Value) -> Option<f64> {
         .or_else(|| value.get("ratio").and_then(Value::as_f64))
         .or_else(|| value.get("rate").and_then(Value::as_f64))
         .or_else(|| value.as_f64())
+}
+
+pub fn remote_key_capability(station: &Station) -> Result<RemoteKeyCapability, String> {
+    Ok(RemoteKeyCapability {
+        station_id: station.id.clone(),
+        station_type: station.station_type.trim().to_string(),
+        can_list_remote_keys: false,
+        can_create_remote_key: false,
+        can_read_groups: true,
+        requires_manual_session: true,
+        unsupported_reason: Some(NEWAPI_REMOTE_KEY_UNSUPPORTED.to_string()),
+    })
+}
+
+pub fn scan_remote_keys(
+    _database: &AppDatabase,
+    _data_key: &[u8; 32],
+    _station_id: &str,
+) -> Result<Vec<RemoteStationKey>, String> {
+    Ok(Vec::new())
+}
+
+pub fn create_remote_key(
+    _database: &AppDatabase,
+    _data_key: &[u8; 32],
+    _input: CreateRemoteStationKeyInput,
+) -> Result<CreatedRemoteKey, String> {
+    Err(NEWAPI_REMOTE_KEY_UNSUPPORTED.to_string())
 }
 
 pub fn collect(

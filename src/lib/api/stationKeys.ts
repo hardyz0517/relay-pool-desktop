@@ -1,8 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listStations } from "@/lib/api/stations";
 import type {
+  CreateRemoteStationKeyInput,
+  CreateRemoteStationKeyResult,
   CreateStationKeyInput,
   KeyPoolItem,
+  RemoteKeyCapability,
+  RemoteKeyScanResult,
+  RemoteStationKey,
   StationKeyConnectivityTestResult,
   StationCredentials,
   StationKey,
@@ -12,13 +17,122 @@ import type {
 import type { Station } from "@/lib/types/stations";
 
 const memoryKeys = new Map<string, StationKey[]>();
+const memoryRemoteKeys = new Map<string, RemoteStationKey[]>();
 const memoryCredentials = new Map<string, StationCredentials>();
 let memoryKeyPool: KeyPoolItem[] = [];
+let memoryIdCounter = 0;
 
 export function listStationKeys(stationId: string) {
   return invoke<StationKey[]>("list_station_keys", { stationId }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       return memoryKeys.get(stationId) ?? [];
+    }
+    throw error;
+  });
+}
+
+export function getRemoteKeyCapability(stationId: string): Promise<RemoteKeyCapability> {
+  return invoke<RemoteKeyCapability>("get_remote_key_capability", { stationId }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return memoryRemoteKeyCapability(stationId);
+    }
+    throw error;
+  });
+}
+
+export function listRemoteStationKeys(stationId: string): Promise<RemoteStationKey[]> {
+  return invoke<RemoteStationKey[]>("list_remote_station_keys", { stationId }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return memoryRemoteKeys.get(stationId) ?? [];
+    }
+    throw error;
+  });
+}
+
+export function scanRemoteStationKeys(stationId: string): Promise<RemoteKeyScanResult> {
+  return invoke<RemoteKeyScanResult>("scan_remote_station_keys", { stationId }).catch(async (error) => {
+    if (isInvokeUnavailable(error)) {
+      const keys = memoryRemoteKeys.get(stationId) ?? [];
+      return {
+        stationId,
+        capability: await memoryRemoteKeyCapability(stationId),
+        keys,
+        syncedStationKeyIds: keys.flatMap((key) => key.matchedStationKeyId ? [key.matchedStationKeyId] : []),
+        message: "浏览器预览模式：使用本地临时远端密钥数据。",
+      };
+    }
+    throw error;
+  });
+}
+
+export function createRemoteStationKey(input: CreateRemoteStationKeyInput): Promise<CreateRemoteStationKeyResult> {
+  return invoke<CreateRemoteStationKeyResult>("create_remote_station_key", { input }).catch(async (error) => {
+    if (isInvokeUnavailable(error)) {
+      const fullKeyOnce = `sk-browser-preview-${nextMemoryId("secret")}`;
+      const stationKey = await createStationKey({
+        stationId: input.stationId,
+        name: input.name,
+        apiKey: fullKeyOnce,
+        enabled: true,
+        groupBindingId: null,
+        groupIdHash: input.groupIdHash,
+        groupName: input.groupName,
+        tierLabel: null,
+        rateMultiplier: null,
+        rateSource: null,
+        balanceScope: null,
+        note: "浏览器预览模式创建的远端密钥",
+      });
+      const remoteKey = memoryRemoteKeyFromStationKey(stationKey, input);
+      memoryRemoteKeys.set(input.stationId, [
+        remoteKey,
+        ...(memoryRemoteKeys.get(input.stationId) ?? []).filter((key) => key.id !== remoteKey.id),
+      ]);
+      return {
+        remoteKey,
+        stationKey,
+        fullKeyOnce,
+        message: "浏览器预览模式：已创建本地临时密钥，真实远端创建将在桌面端执行。",
+      };
+    }
+    throw error;
+  });
+}
+
+export function bindRemoteStationKey(remoteKeyId: string, stationKeyId: string): Promise<RemoteStationKey[]> {
+  return invoke<RemoteStationKey[]>("bind_remote_station_key", {
+    input: { remoteKeyId, stationKeyId },
+  }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      const now = new Date().toISOString();
+      const targetKey = Array.from(memoryKeys.values())
+        .flat()
+        .find((key) => key.id === stationKeyId);
+      if (!targetKey) {
+        throw new Error("浏览器预览模式：未找到要绑定的本地密钥。");
+      }
+
+      let matched = false;
+      const keys = memoryRemoteKeys.get(targetKey.stationId) ?? [];
+      const nextKeys = keys.map((key) => {
+        if (key.id !== remoteKeyId) {
+          return key;
+        }
+        matched = true;
+        return {
+          ...key,
+          matchStatus: "matched" as const,
+          matchedStationKeyId: stationKeyId,
+          matchConfidence: 1,
+          collectedAt: now,
+        };
+      });
+      if (!matched) {
+        throw new Error("浏览器预览模式：未找到同中转站的远端密钥。");
+      }
+
+      memoryRemoteKeys.set(targetKey.stationId, nextKeys);
+      return nextKeys;
     }
     throw error;
   });
@@ -240,10 +354,97 @@ function emptyCredentials(stationId: string): StationCredentials {
   };
 }
 
+async function memoryRemoteKeyCapability(stationId: string): Promise<RemoteKeyCapability> {
+  const station = await listStations()
+    .then((items) => items.find((item) => item.id === stationId) ?? null)
+    .catch(() => null);
+
+  if (!station) {
+    return unsupportedRemoteKeyCapability(
+      stationId,
+      "unknown",
+      "浏览器预览模式：未找到中转站，无法判断远端 Key 能力。",
+    );
+  }
+
+  if (station.stationType === "sub2api") {
+    return {
+      stationId,
+      stationType: station.stationType,
+      canListRemoteKeys: true,
+      canCreateRemoteKey: true,
+      canReadGroups: true,
+      requiresManualSession: true,
+      unsupportedReason: null,
+    };
+  }
+
+  if (station.stationType === "newapi") {
+    return {
+      stationId,
+      stationType: station.stationType,
+      canListRemoteKeys: false,
+      canCreateRemoteKey: false,
+      canReadGroups: true,
+      requiresManualSession: true,
+      unsupportedReason: "NewAPI 远端 Key 管理尚未适配。",
+    };
+  }
+
+  return unsupportedRemoteKeyCapability(
+    stationId,
+    station.stationType,
+    `暂不支持 ${station.stationType} 类型中转站的远端 Key 管理。`,
+  );
+}
+
+function unsupportedRemoteKeyCapability(
+  stationId: string,
+  stationType: string,
+  unsupportedReason: string,
+): RemoteKeyCapability {
+  return {
+    stationId,
+    stationType,
+    canListRemoteKeys: false,
+    canCreateRemoteKey: false,
+    canReadGroups: false,
+    requiresManualSession: false,
+    unsupportedReason,
+  };
+}
+
+function memoryRemoteKeyFromStationKey(
+  stationKey: StationKey,
+  input: CreateRemoteStationKeyInput,
+): RemoteStationKey {
+  const now = new Date().toISOString();
+  return {
+    id: nextMemoryId("remote-key"),
+    stationId: input.stationId,
+    remoteKeyIdHash: `preview-${stationKey.id}`,
+    remoteKeyName: input.name,
+    apiKeyMasked: stationKey.apiKeyMasked,
+    apiKeyFingerprint: null,
+    groupIdHash: input.groupIdHash,
+    groupName: input.groupName,
+    tierLabel: stationKey.tierLabel,
+    rateMultiplier: stationKey.rateMultiplier,
+    rateSource: stationKey.rateSource,
+    createdAt: stationKey.createdAt,
+    lastUsedAt: stationKey.lastUsedAt,
+    rawSource: "browser-preview",
+    matchStatus: "matched",
+    matchedStationKeyId: stationKey.id,
+    matchConfidence: 1,
+    collectedAt: now,
+  };
+}
+
 function memoryKeyFromInput(input: CreateStationKeyInput): StationKey {
   const now = new Date().toISOString();
   return {
-    id: `key-${Date.now()}`,
+    id: nextMemoryId("key"),
     stationId: input.stationId,
     name: input.name,
     apiKeyMasked: input.apiKey ? "sk-****" : "未设置",
@@ -265,6 +466,14 @@ function memoryKeyFromInput(input: CreateStationKeyInput): StationKey {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+function nextMemoryId(prefix: string) {
+  const randomId = globalThis.crypto?.randomUUID?.();
+  if (randomId) {
+    return `${prefix}-${randomId}`;
+  }
+  return `${prefix}-${Date.now()}-${++memoryIdCounter}`;
 }
 
 function memoryPoolItemFromKey(key: StationKey, station: Station | null): KeyPoolItem {

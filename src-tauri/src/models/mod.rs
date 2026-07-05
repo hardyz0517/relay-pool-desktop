@@ -7,6 +7,7 @@ pub mod credentials;
 pub mod group_facts;
 pub mod pricing;
 pub mod proxy;
+pub mod remote_keys;
 pub mod routing;
 pub mod secrets;
 pub mod settings;

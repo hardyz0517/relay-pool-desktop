@@ -2,6 +2,7 @@ pub mod newapi;
 pub mod openai_compatible;
 pub mod sub2api;
 
+use crate::models::remote_keys::RemoteStationKey;
 use crate::services::collectors::facts::CollectorFacts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,4 +37,11 @@ pub struct AdapterOutput {
     pub raw_json_redacted: Option<serde_json::Value>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreatedRemoteKey {
+    pub remote_key: RemoteStationKey,
+    pub full_key_once: Option<String>,
+    pub message: String,
 }

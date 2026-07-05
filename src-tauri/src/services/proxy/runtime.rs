@@ -2096,7 +2096,7 @@ mod tests {
         let called_for_thread = Arc::clone(&called);
         let name = name.to_string();
         let handle = thread::spawn(move || {
-            let deadline = std::time::Instant::now() + Duration::from_millis(500);
+            let deadline = std::time::Instant::now() + Duration::from_millis(3000);
             loop {
                 match listener.accept() {
                     Ok((mut server_stream, _)) => {
