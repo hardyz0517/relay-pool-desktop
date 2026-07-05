@@ -7,8 +7,8 @@ const SERVICE: &str = "relay-pool-desktop";
 const USERNAME: &str = "local-data-key-v1";
 
 pub fn load_or_create_data_key() -> Result<[u8; 32], String> {
-    let entry = Entry::new(SERVICE, USERNAME)
-        .map_err(|error| format!("打开系统凭据失败: {error}"))?;
+    let entry =
+        Entry::new(SERVICE, USERNAME).map_err(|error| format!("打开系统凭据失败: {error}"))?;
     match entry.get_password() {
         Ok(encoded) => decode_key(&encoded),
         Err(_) => {

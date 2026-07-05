@@ -25,8 +25,8 @@ pub fn encrypt_secret(
     plaintext: &str,
     aad: &str,
 ) -> Result<EncryptedPayload, String> {
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|error| format!("初始化加密器失败: {error}"))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|error| format!("初始化加密器失败: {error}"))?;
     let mut nonce_bytes = [0_u8; 12];
     OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
@@ -49,8 +49,8 @@ pub fn encrypt_secret(
 }
 
 pub fn decrypt_secret(key: &[u8; 32], payload: &EncryptedPayload) -> Result<String, String> {
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|error| format!("初始化解密器失败: {error}"))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|error| format!("初始化解密器失败: {error}"))?;
     let nonce_bytes = general_purpose::STANDARD
         .decode(&payload.nonce)
         .map_err(|error| format!("解析 nonce 失败: {error}"))?;
@@ -82,8 +82,12 @@ mod tests {
     #[test]
     fn encrypt_decrypt_round_trip() {
         let key = generate_data_key();
-        let payload = encrypt_secret(&key, "sk-p8-secret-plaintext-canary", "station_key:key-1:api_key")
-            .expect("encrypt");
+        let payload = encrypt_secret(
+            &key,
+            "sk-p8-secret-plaintext-canary",
+            "station_key:key-1:api_key",
+        )
+        .expect("encrypt");
 
         assert_ne!(payload.ciphertext, "sk-p8-secret-plaintext-canary");
         let decrypted = decrypt_secret(&key, &payload).expect("decrypt");
@@ -93,8 +97,12 @@ mod tests {
     #[test]
     fn decrypt_rejects_wrong_aad() {
         let key = generate_data_key();
-        let mut payload = encrypt_secret(&key, "p8-password-canary", "station:station-1:login_password")
-            .expect("encrypt");
+        let mut payload = encrypt_secret(
+            &key,
+            "p8-password-canary",
+            "station:station-1:login_password",
+        )
+        .expect("encrypt");
         payload.aad = "station:station-2:login_password".to_string();
 
         let result = decrypt_secret(&key, &payload);

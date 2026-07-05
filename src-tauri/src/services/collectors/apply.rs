@@ -8,7 +8,7 @@ use crate::{
     services::{
         collectors::{
             adapters::AdapterOutput,
-            facts::{CollectedModelFact, CollectorFacts},
+            facts::{CollectedBalanceFact, CollectedModelFact, CollectorFacts},
         },
         database::AppDatabase,
     },
@@ -93,7 +93,8 @@ pub fn apply_adapter_output(
             snapshot,
             events: vec![CollectorEvent {
                 event_type: task.as_str().to_string(),
-                message: finish_error_message.unwrap_or_else(|| format!("{adapter} {}", task.as_str())),
+                message: finish_error_message
+                    .unwrap_or_else(|| format!("{adapter} {}", task.as_str())),
                 status: finish_status,
             }],
         },
@@ -101,7 +102,12 @@ pub fn apply_adapter_output(
     })
 }
 
-pub fn apply_collector_facts(database: &AppDatabase, facts: CollectorFacts) -> Result<(), String> {
+pub fn apply_collector_facts(
+    database: &AppDatabase,
+    mut facts: CollectorFacts,
+) -> Result<(), String> {
+    append_station_balance_aggregates(&mut facts.balances);
+
     for balance in facts.balances {
         database.upsert_balance_snapshot(UpsertBalanceSnapshotInput {
             id: None,
@@ -192,6 +198,112 @@ pub fn apply_collector_facts(database: &AppDatabase, facts: CollectorFacts) -> R
     Ok(())
 }
 
+fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
+    let mut station_ids = Vec::new();
+    for balance in balances.iter() {
+        if balance.scope != "station_key" || balance.station_key_id.is_none() {
+            continue;
+        }
+        if !station_ids.contains(&balance.station_id) {
+            station_ids.push(balance.station_id.clone());
+        }
+    }
+
+    for station_id in station_ids {
+        if balances
+            .iter()
+            .any(|balance| balance.station_id == station_id && balance.scope == "station")
+        {
+            continue;
+        }
+
+        let Some((value, used_value, total_value, currency, credit_unit, confidence, collected_at)) =
+            ({
+                let key_balances = balances
+                    .iter()
+                    .filter(|balance| {
+                        balance.station_id == station_id && balance.scope == "station_key"
+                    })
+                    .collect::<Vec<_>>();
+                let value = sum_present_values(key_balances.iter().map(|balance| balance.value));
+                let used_value =
+                    sum_present_values(key_balances.iter().map(|balance| balance.used_value));
+                let total_value =
+                    sum_present_values(key_balances.iter().map(|balance| balance.total_value));
+                let currency =
+                    shared_text_value(key_balances.iter().map(|balance| balance.currency.as_str()))
+                        .unwrap_or("CNY")
+                        .to_string();
+                let credit_unit = shared_optional_text_value(
+                    key_balances
+                        .iter()
+                        .map(|balance| balance.credit_unit.as_deref()),
+                )
+                .map(ToString::to_string);
+                let confidence = key_balances
+                    .iter()
+                    .map(|balance| balance.confidence)
+                    .fold(1.0_f64, f64::min);
+                let collected_at = key_balances
+                    .iter()
+                    .filter_map(|balance| balance.collected_at.as_ref())
+                    .max()
+                    .cloned();
+                value.map(|value| {
+                    (
+                        value,
+                        used_value,
+                        total_value,
+                        currency,
+                        credit_unit,
+                        confidence,
+                        collected_at,
+                    )
+                })
+            })
+        else {
+            continue;
+        };
+
+        balances.push(CollectedBalanceFact {
+            station_id,
+            station_key_id: None,
+            scope: "station".to_string(),
+            value: Some(value),
+            used_value,
+            total_value,
+            currency,
+            credit_unit,
+            status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
+            source: "station_key_balance_aggregate".to_string(),
+            confidence,
+            collected_at,
+        });
+    }
+}
+
+fn sum_present_values(values: impl Iterator<Item = Option<f64>>) -> Option<f64> {
+    let mut total = 0.0;
+    let mut has_value = false;
+    for value in values.flatten() {
+        total += value;
+        has_value = true;
+    }
+    has_value.then_some(total)
+}
+
+fn shared_text_value<'a>(mut values: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    let first = values.next()?;
+    values.all(|value| value == first).then_some(first)
+}
+
+fn shared_optional_text_value<'a>(
+    mut values: impl Iterator<Item = Option<&'a str>>,
+) -> Option<&'a str> {
+    let first = values.next()??;
+    values.all(|value| value == Some(first)).then_some(first)
+}
+
 fn apply_model_facts(models: Vec<CollectedModelFact>) {
     // Models are persisted through adapter snapshots so existing model diff
     // events keep using collector_snapshots.normalized_json.models.
@@ -229,4 +341,96 @@ fn endpoint_counts_from_summary(summary: &serde_json::Value, status: &str) -> (i
         .count() as i64;
     let failure_count = endpoint_count.saturating_sub(success_count);
     (endpoint_count, success_count, failure_count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{station_keys::CreateStationKeyInput, stations::CreateStationInput};
+
+    fn create_test_station(database: &AppDatabase) -> crate::models::stations::Station {
+        database
+            .create_station(CreateStationInput {
+                name: "balance aggregate relay".to_string(),
+                station_type: "sub2api".to_string(),
+                base_url: "https://relay.example.test".to_string(),
+                api_key: "sk-test".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                note: None,
+            })
+            .expect("station")
+    }
+
+    fn create_test_key(
+        database: &AppDatabase,
+        station_id: &str,
+        name: &str,
+    ) -> crate::models::station_keys::StationKey {
+        database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station_id.to_string(),
+                name: name.to_string(),
+                api_key: format!("sk-{name}"),
+                enabled: true,
+                priority: None,
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                rate_source: None,
+                balance_scope: Some("station_key".to_string()),
+                note: None,
+            })
+            .expect("station key")
+    }
+
+    fn key_balance(
+        station_id: &str,
+        station_key_id: &str,
+        value: f64,
+    ) -> crate::services::collectors::facts::CollectedBalanceFact {
+        crate::services::collectors::facts::CollectedBalanceFact {
+            station_id: station_id.to_string(),
+            station_key_id: Some(station_key_id.to_string()),
+            scope: "station_key".to_string(),
+            value: Some(value),
+            used_value: None,
+            total_value: None,
+            currency: "CNY".to_string(),
+            credit_unit: None,
+            status: "normal".to_string(),
+            source: "sub2api_usage".to_string(),
+            confidence: 0.9,
+            collected_at: Some("1000".to_string()),
+        }
+    }
+
+    #[test]
+    fn key_balance_facts_create_station_scope_balance_snapshot() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = create_test_station(&database);
+        let first_key = create_test_key(&database, &station.id, "first");
+        let second_key = create_test_key(&database, &station.id, "second");
+
+        let mut facts = crate::services::collectors::facts::CollectorFacts::default();
+        facts
+            .balances
+            .push(key_balance(&station.id, &first_key.id, 4.25));
+        facts
+            .balances
+            .push(key_balance(&station.id, &second_key.id, 6.75));
+
+        apply_collector_facts(&database, facts).expect("apply facts");
+
+        let balances = database.list_balance_snapshots().expect("balances");
+        let station_balance = balances
+            .iter()
+            .find(|balance| balance.station_id == station.id && balance.scope == "station")
+            .expect("station balance");
+        assert_eq!(station_balance.value, Some(11.0));
+        assert_eq!(station_balance.source, "station_key_balance_aggregate");
+    }
 }

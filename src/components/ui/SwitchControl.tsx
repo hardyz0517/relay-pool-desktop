@@ -7,6 +7,7 @@ type SwitchControlProps = {
   onCheckedChange: () => void;
   onLabel?: string;
   offLabel?: string;
+  showLabel?: boolean;
   className?: string;
 };
 
@@ -17,6 +18,7 @@ export function SwitchControl({
   onCheckedChange,
   onLabel = "开启",
   offLabel = "关闭",
+  showLabel = true,
   className,
 }: SwitchControlProps) {
   return (
@@ -24,7 +26,8 @@ export function SwitchControl({
       aria-checked={checked}
       aria-label={ariaLabel}
       className={cn(
-        "inline-flex h-8 min-w-[96px] items-center justify-between gap-2 rounded-full border border-border bg-white px-2 text-xs font-medium text-slate-700 shadow-[var(--surface-shadow)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)] disabled:cursor-default disabled:opacity-60",
+        "inline-flex h-8 items-center justify-between gap-2 rounded-full border border-border bg-white px-2 text-xs font-medium text-slate-700 shadow-[var(--surface-shadow)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)] disabled:cursor-default disabled:opacity-60",
+        showLabel && "min-w-[96px]",
         className,
       )}
       disabled={disabled}
@@ -32,7 +35,7 @@ export function SwitchControl({
       type="button"
       onClick={onCheckedChange}
     >
-      <span className="min-w-7 text-left">{checked ? onLabel : offLabel}</span>
+      {showLabel && <span className="min-w-7 text-left">{checked ? onLabel : offLabel}</span>}
       <span
         className={cn(
           "relative h-5 w-10 shrink-0 rounded-full transition-colors",

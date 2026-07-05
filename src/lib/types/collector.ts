@@ -54,6 +54,19 @@ export type CollectorRunResult = {
   events: CollectorEvent[];
 };
 
+export type StationLoginTestInput = {
+  baseUrl: string;
+  loginUsername: string;
+  loginPassword: string;
+};
+
+export type StationLoginTestResult = {
+  status: "success" | "manual_required" | "missing_base_url" | "missing_credentials" | string;
+  message: string;
+  diagnosis: string | null;
+  tokenPresent: boolean;
+};
+
 export type CaptureSessionStatus = {
   stationId: string;
   status: "idle" | "capturing" | "failed" | string;

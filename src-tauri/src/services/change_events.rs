@@ -141,7 +141,9 @@ pub fn key_health_event(
             })
             .to_string(),
         ),
-        impact_json: Some(json!({ "routingRisk": "candidate_filtered_or_deprioritized" }).to_string()),
+        impact_json: Some(
+            json!({ "routingRisk": "candidate_filtered_or_deprioritized" }).to_string(),
+        ),
         dedupe_key: station_key_dedupe_key(station_key_id, "key_invalid"),
         source: "health".to_string(),
     })
@@ -172,7 +174,10 @@ pub fn collector_failed_event(
     }
 }
 
-pub fn collector_recovered_event(station_id: &str, collector_run_id: &str) -> UpsertChangeEventInput {
+pub fn collector_recovered_event(
+    station_id: &str,
+    collector_run_id: &str,
+) -> UpsertChangeEventInput {
     UpsertChangeEventInput {
         severity: SEVERITY_INFO.to_string(),
         event_type: "collector_recovered".to_string(),
@@ -368,7 +373,12 @@ pub fn price_changed_event(
         }
         .to_string(),
         event_type: "price_changed".to_string(),
-        title: if increased { "价格变贵" } else { "价格变化" }.to_string(),
+        title: if increased {
+            "价格变贵"
+        } else {
+            "价格变化"
+        }
+        .to_string(),
         message: format!("模型 {model} 输出价格发生变化"),
         object_type: "pricing_rule".to_string(),
         object_id: Some(pricing_rule_id.to_string()),
@@ -376,8 +386,12 @@ pub fn price_changed_event(
         station_key_id: None,
         pricing_rule_id: Some(pricing_rule_id.to_string()),
         request_log_id: None,
-        old_value_json: Some(json!({ "outputPrice": old_output_price, "currency": currency }).to_string()),
-        new_value_json: Some(json!({ "outputPrice": new_output_price, "currency": currency }).to_string()),
+        old_value_json: Some(
+            json!({ "outputPrice": old_output_price, "currency": currency }).to_string(),
+        ),
+        new_value_json: Some(
+            json!({ "outputPrice": new_output_price, "currency": currency }).to_string(),
+        ),
         impact_json: Some(json!({ "cheapFirstMayChange": true }).to_string()),
         dedupe_key: pricing_dedupe_key(station_id, group_name, model),
         source: "pricing".to_string(),
@@ -402,7 +416,12 @@ pub fn rate_changed_event(
         }
         .to_string(),
         event_type: "rate_changed".to_string(),
-        title: if increased { "倍率上涨" } else { "倍率下降" }.to_string(),
+        title: if increased {
+            "倍率上涨"
+        } else {
+            "倍率下降"
+        }
+        .to_string(),
         message: format!("分组 {group_name} 倍率发生变化"),
         object_type: "station".to_string(),
         object_id: Some(station_id.to_string()),
@@ -410,8 +429,12 @@ pub fn rate_changed_event(
         station_key_id: None,
         pricing_rule_id: None,
         request_log_id: None,
-        old_value_json: Some(json!({ "groupName": group_name, "multiplier": old_multiplier }).to_string()),
-        new_value_json: Some(json!({ "groupName": group_name, "multiplier": new_multiplier }).to_string()),
+        old_value_json: Some(
+            json!({ "groupName": group_name, "multiplier": old_multiplier }).to_string(),
+        ),
+        new_value_json: Some(
+            json!({ "groupName": group_name, "multiplier": new_multiplier }).to_string(),
+        ),
         impact_json: Some(json!({ "cheapFirstMayChange": true }).to_string()),
         dedupe_key: rate_dedupe_key(station_id, group_name),
         source: "collector".to_string(),

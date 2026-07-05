@@ -2,7 +2,7 @@ import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { BalanceSnapshot } from "@/lib/types/economics";
-import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
+import { isCollectedStationGroupBinding, type GroupRateRecord, type StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationKey } from "@/lib/types/stationKeys";
 import type { StationCredentials } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
@@ -19,12 +19,11 @@ export type StationDetailBalanceCard = {
 export type StationDetailGroupRow = {
   id: string;
   groupName: string;
-  groupId: string;
   effectiveRate: string;
   defaultRate: string;
   userRate: string;
   bindingStatus: string;
-  source: string;
+  sourceLabel: string;
   lastChecked: string;
   tone: DetailTone;
   warning: string | null;
@@ -59,11 +58,11 @@ const stationTypeLabels: Record<string, string> = {
 };
 
 const stationStatusLabels: Record<string, string> = {
-  healthy: "正常",
-  warning: "警告",
-  error: "错误",
+  healthy: "采集正常",
+  warning: "采集需关注",
+  error: "采集异常",
   disabled: "禁用",
-  unchecked: "未检测",
+  unchecked: "未采集",
 };
 
 const bindingStatusLabels: Record<string, string> = {
@@ -80,6 +79,24 @@ const collectorStatusLabels: Record<string, string> = {
   partial: "部分成功",
   failed: "失败",
   manual_required: "需要人工处理",
+};
+
+const rateSourceLabels: Record<string, string> = {
+  binding: "本地绑定",
+  collector: "采集结果",
+  manual: "手动维护",
+  manual_legacy: "旧版手动维护",
+  sub2api_groups_rates: "Sub2API 分组倍率接口",
+  newapi_groups_rates: "NewAPI 分组倍率接口",
+};
+
+const balanceSourceLabels: Record<string, string> = {
+  mock: "示例数据",
+  station_config: "站点配置",
+  station_balance: "站点余额接口",
+  station_key_balance: "站点 Key 余额",
+  station_key_balance_aggregate: "站点 Key 余额汇总",
+  collector_snapshot: "采集快照",
 };
 
 export function formatStationTypeLabel(station: Station) {
@@ -133,9 +150,9 @@ export function formatMoney(value: number | null | undefined, currency = "CNY") 
   return `${currency} ${value.toFixed(2)}`;
 }
 
-export function formatRate(value: number | null | undefined) {
+export function formatRate(value: number | null | undefined, fallback = "未采集") {
   if (value == null || !Number.isFinite(value)) {
-    return "未采集";
+    return fallback;
   }
   return `${trimFixed(value, 3)}x`;
 }
@@ -167,7 +184,7 @@ export function buildBalanceCards(station: Station, balances: BalanceSnapshot[])
     {
       label: "当前余额",
       value: formatMoney(currentValue, currency),
-      helper: latestBalance ? `来源：${latestBalance.source}` : "来自站点配置或尚未采集",
+      helper: latestBalance ? `来源：${formatBalanceSourceLabel(latestBalance.source)}` : "来自站点配置或尚未采集",
       tone: balanceTone,
     },
     {
@@ -191,7 +208,7 @@ export function buildGroupRows(
   bindings: StationGroupBinding[],
   rates: GroupRateRecord[],
 ): StationDetailGroupRow[] {
-  const stationGroupBindings = bindings.filter((binding) => binding.bindingKind === "station_group");
+  const stationGroupBindings = bindings.filter(isCollectedStationGroupBinding);
   const latestRateByBindingId = new Map<string, GroupRateRecord>();
 
   for (const rate of rates) {
@@ -210,16 +227,16 @@ export function buildGroupRows(
     const defaultRate = binding.defaultRateMultiplier ?? latestRate?.defaultRateMultiplier ?? null;
     const userRate = binding.userRateMultiplier ?? latestRate?.userRateMultiplier ?? null;
     const warning = groupWarningFor(binding, effectiveRate);
+    const rateSource = binding.rateSource ?? latestRate?.source ?? "binding";
 
     return {
       id: binding.id,
       groupName: binding.groupName || latestRate?.groupName || "未命名分组",
-      groupId: binding.groupIdHash ?? binding.groupKeyHash,
-      effectiveRate: formatRate(effectiveRate),
+      effectiveRate: formatRate(effectiveRate, "未确定"),
       defaultRate: formatRate(defaultRate),
-      userRate: formatRate(userRate),
+      userRate: formatRate(userRate, "未覆盖"),
       bindingStatus: formatBindingStatusLabel(binding.bindingStatus),
-      source: binding.rateSource ?? latestRate?.source ?? "binding",
+      sourceLabel: formatRateSourceLabel(rateSource),
       lastChecked: formatDetailDate(binding.lastCheckedAt ?? latestRate?.checkedAt ?? binding.updatedAt),
       tone: warning ? "warning" : binding.bindingStatus === "available" || binding.bindingStatus === "bound" ? "good" : "neutral",
       warning,
@@ -436,6 +453,14 @@ function snapshotTone(status: string | null | undefined): DetailTone {
 
 function formatCollectorStatus(status: string) {
   return collectorStatusLabels[status] ?? status;
+}
+
+function formatRateSourceLabel(source: string) {
+  return rateSourceLabels[source] ?? source.replace(/_/g, " ");
+}
+
+function formatBalanceSourceLabel(source: string) {
+  return balanceSourceLabels[source] ?? source.replace(/_/g, " ");
 }
 
 function formatCollectorTaskType(taskType: string) {

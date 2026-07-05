@@ -14,7 +14,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { Clock3, Edit3, GripVertical, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, type StatusTone, useToast } from "@/components/ui";
+import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, type StatusTone, useToast } from "@/components/ui";
 import { createStation, deleteStation, listStations, reorderStations, updateStation } from "@/lib/api/stations";
 import {
   clearStationCredentials,
@@ -115,7 +115,7 @@ const statusTone: Record<Station["status"], "healthy" | "warning" | "error" | "d
 type StationsPageProps = {
   onAddProvider?: () => void;
   onEditProvider?: (stationId: string) => void;
-  onOpenStation?: (stationId: string) => void;
+  onOpenStation?: (station: Station) => void;
 };
 
 export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: StationsPageProps) {
@@ -143,6 +143,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [drawerClosing, setDrawerClosing] = useState(false);
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
+  const [pendingDeleteKey, setPendingDeleteKey] = useState<StationKey | null>(null);
   const [keyForm, setKeyForm] = useState<StationKeyFormState>(emptyKeyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -380,7 +381,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
       setKeyDialogOpen(false);
       setKeyForm(emptyKeyForm);
       setError(null);
-      onOpenStation(station.id);
+      onOpenStation(station);
       return;
     }
 
@@ -421,6 +422,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     setDrawerVisible(false);
     setDrawerClosing(false);
     setKeyDialogOpen(false);
+    setPendingDeleteKey(null);
     setKeyForm(emptyKeyForm);
   }, []);
 
@@ -604,17 +606,21 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     }
   }
 
-  async function handleDeleteKey(key: StationKey) {
-    if (!activeDialogStation) {
-      return;
-    }
-    if (!window.confirm(`确认删除密钥「${key.name}」？`)) {
+  function handleDeleteKey(key: StationKey) {
+    setPendingDeleteKey(key);
+  }
+
+  async function handleConfirmDeleteKey() {
+    if (!pendingDeleteKey) {
       return;
     }
     setActionSaving(true);
     try {
-      await deleteStationKey(key.id);
-      await refreshExtras(activeDialogStation.id);
+      await deleteStationKey(pendingDeleteKey.id);
+      if (activeDialogStation) {
+        await refreshExtras(activeDialogStation.id);
+      }
+      setPendingDeleteKey(null);
       toast.success("密钥已删除");
     } catch (requestError) {
       toast.error("删除密钥失败", readError(requestError));
@@ -622,11 +628,25 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
       setActionSaving(false);
     }
   }
+
   const keyCountLabel = activeDialogStation ? `${activeDialogStation.keyCount} 把` : "0 把";
 
   return (
     <PageScaffold
       title="中转站资产"
+      status={
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5" aria-label="中转站资产状态">
+          <StatusBadge tone="info" className="bg-slate-50 text-slate-600">
+            {`${stations.length} 站点`}
+          </StatusBadge>
+          <StatusBadge tone={collectedBalanceCount > 0 ? "healthy" : "disabled"}>
+            {`${collectedBalanceCount} 已有余额`}
+          </StatusBadge>
+          <StatusBadge tone={attentionCount > 0 ? "warning" : "healthy"}>
+            {`${attentionCount} 需关注`}
+          </StatusBadge>
+        </div>
+      }
       actions={
         <Button onClick={onAddProvider ?? openCreate}>
           <Plus className="h-4 w-4" />
@@ -635,15 +655,6 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
       }
     >
       <div className="grid min-w-0 gap-3">
-        <div className="flex min-h-8 flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-slate-800">中转站列表</div>
-            <div className="text-xs text-muted-foreground">
-              {stations.length} 个站点，{collectedBalanceCount} 个已有余额，{attentionCount} 个需关注。
-            </div>
-          </div>
-        </div>
-
         <div>
           {loading ? (
             <div className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
@@ -801,6 +812,14 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
           snapshot={snapshot}
         />
       )}
+      <ConfirmDialog
+        open={pendingDeleteKey !== null}
+        title="删除密钥"
+        description={`确定要删除密钥 "${pendingDeleteKey?.name ?? ""}" 吗？此操作无法撤销。`}
+        confirming={actionSaving}
+        onCancel={() => setPendingDeleteKey(null)}
+        onConfirm={() => void handleConfirmDeleteKey()}
+      />
     </PageScaffold>
   );
 }
@@ -1007,7 +1026,7 @@ function StationDialogs({
   keyForm: StationKeyFormState;
   onChange: (nextForm: StationFormState) => void;
   onClose: () => void;
-  onDeleteKey: (key: StationKey) => Promise<void>;
+  onDeleteKey: (key: StationKey) => void;
   onEdit?: () => void;
   onKeyDialogOpenChange: (next: boolean) => void;
   onKeyFormChange: (next: StationKeyFormState) => void;
@@ -1158,7 +1177,7 @@ function DetailBody({
   groupBindings: StationGroupBinding[];
   rateRecords: GroupRateRecord[];
   collectorRuns: CollectorRun[];
-  onDeleteKey: (key: StationKey) => Promise<void>;
+  onDeleteKey: (key: StationKey) => void;
   onEditKey: (key: StationKey) => void;
 }) {
   return (
@@ -1211,7 +1230,7 @@ function DetailBody({
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={() => onEditKey(key)}>编辑</Button>
-                  <Button variant="danger" onClick={() => void onDeleteKey(key)}>删除</Button>
+                  <Button variant="danger" onClick={() => onDeleteKey(key)}>删除</Button>
                 </div>
               </div>
             ))

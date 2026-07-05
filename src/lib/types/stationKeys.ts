@@ -103,6 +103,15 @@ export type UpdateStationKeyInput = {
   note: string | null;
 };
 
+export type StationKeyConnectivityTestResult = {
+  stationKeyId: string;
+  ok: boolean;
+  statusCode: number;
+  durationMs: number;
+  model: string;
+  message: string;
+};
+
 export const stationKeyStatusLabels: Record<StationKeyStatus, string> = {
   unchecked: "未检测",
   healthy: "正常",

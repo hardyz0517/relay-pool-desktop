@@ -9,7 +9,9 @@ use serde_json::{json, Value};
 
 use crate::{
     models::{
-        collector::{CollectorEvent, CollectorRunResult},
+        collector::{
+            CollectorEvent, CollectorRunResult, StationLoginTestInput, StationLoginTestResult,
+        },
         collector_runs::{CreateCollectorRunInput, FinishCollectorRunInput},
     },
     services::database::AppDatabase,
@@ -549,6 +551,53 @@ pub fn test_station_login(
             message: message.clone(),
             status: status.to_string(),
         }],
+    })
+}
+
+pub fn test_station_login_input(
+    input: StationLoginTestInput,
+) -> Result<StationLoginTestResult, String> {
+    let base_url = input.base_url.trim();
+    let login_username = input.login_username.trim();
+    let login_password = input.login_password.trim();
+
+    if base_url.is_empty() {
+        return Ok(StationLoginTestResult {
+            status: "missing_base_url".to_string(),
+            message: "请先填写基础地址。".to_string(),
+            diagnosis: None,
+            token_present: false,
+        });
+    }
+    if login_username.is_empty() || login_password.is_empty() {
+        return Ok(StationLoginTestResult {
+            status: "missing_credentials".to_string(),
+            message: "请先填写登录用户名和密码。".to_string(),
+            diagnosis: None,
+            token_present: false,
+        });
+    }
+
+    let login_attempt = sub2api::test_login_credentials(base_url, login_username, login_password)?;
+    let token_present = login_attempt.token_present;
+    Ok(StationLoginTestResult {
+        status: if token_present {
+            "success"
+        } else {
+            "manual_required"
+        }
+        .to_string(),
+        message: login_attempt
+            .login_message
+            .unwrap_or_else(|| "连通性测试已完成。".to_string()),
+        diagnosis: login_attempt.manual_required.or_else(|| {
+            if token_present {
+                Some("登录接口返回可用 token。".to_string())
+            } else {
+                None
+            }
+        }),
+        token_present,
     })
 }
 

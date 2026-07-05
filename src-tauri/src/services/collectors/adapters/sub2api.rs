@@ -18,6 +18,7 @@ pub fn parse_usage_balance(
     station_id: &str,
     station_key_id: Option<String>,
     payload: &Value,
+    credit_per_cny: f64,
 ) -> CollectedBalanceFact {
     let remaining = payload
         .pointer("/quota/remaining")
@@ -42,9 +43,9 @@ pub fn parse_usage_balance(
         station_id: station_id.to_string(),
         station_key_id,
         scope: "station_key".to_string(),
-        value: remaining,
-        used_value: used,
-        total_value: total,
+        value: normalize_credit_value(remaining, credit_per_cny),
+        used_value: normalize_credit_value(used, credit_per_cny),
+        total_value: normalize_credit_value(total, credit_per_cny),
         currency: "CNY".to_string(),
         credit_unit: payload
             .pointer("/quota/unit")
@@ -70,6 +71,7 @@ pub fn parse_group_rate_facts(
     station_id: &str,
     available: &Value,
     rates: &Value,
+    credit_per_cny: f64,
 ) -> CollectorFacts {
     let mut facts = CollectorFacts::default();
     let groups = collect_available_groups(available);
@@ -102,9 +104,12 @@ pub fn parse_group_rate_facts(
             group_id,
             group_key_hash,
             group_name: group.group_name,
-            default_rate_multiplier: group.default_rate_multiplier,
-            user_rate_multiplier: user_rate,
-            effective_rate_multiplier: effective,
+            default_rate_multiplier: normalize_credit_value(
+                group.default_rate_multiplier,
+                credit_per_cny,
+            ),
+            user_rate_multiplier: normalize_credit_value(user_rate, credit_per_cny),
+            effective_rate_multiplier: normalize_credit_value(effective, credit_per_cny),
             source: "sub2api_groups_rates".to_string(),
             confidence: if effective.is_some() { 0.9 } else { 0.6 },
             checked_at: None,
@@ -115,13 +120,33 @@ pub fn parse_group_rate_facts(
     facts
 }
 
+fn normalize_credit_value(value: Option<f64>, credit_per_cny: f64) -> Option<f64> {
+    let divisor = if credit_per_cny.is_finite() && credit_per_cny > 0.0 {
+        credit_per_cny
+    } else {
+        1.0
+    };
+    value.map(|value| value / divisor)
+}
+
 fn collect_available_groups(payload: &Value) -> Vec<AvailableGroup> {
     group_items(payload)
         .into_iter()
         .filter_map(|value| {
+            if let Some(group_name) = scalar_text(value) {
+                return Some(AvailableGroup {
+                    group_id: Some(group_name.clone()),
+                    group_name,
+                    default_rate_multiplier: None,
+                    raw_json_redacted: Some(crate::services::secrets::mask::redact_value(value)),
+                });
+            }
             let group_id = string_field(value, &["id", "group_id", "groupId", "key"]);
-            let group_name = string_field(value, &["name", "group_name", "groupName", "label"])
-                .or_else(|| group_id.clone())?;
+            let group_name = string_field(
+                value,
+                &["name", "group_name", "groupName", "group", "label"],
+            )
+            .or_else(|| group_id.clone())?;
             Some(AvailableGroup {
                 group_id,
                 group_name,
@@ -175,7 +200,7 @@ fn collect_rates_from_value(value: &Value, rates: &mut HashMap<String, f64>) {
                 return;
             }
 
-            for key in ["data", "rates", "groups", "items", "list"] {
+            for key in ["data", "rates", "group_ratio", "groups", "items", "list"] {
                 if let Some(child) = map.get(key) {
                     collect_rates_from_value(child, rates);
                 }
@@ -191,35 +216,47 @@ fn collect_rates_from_value(value: &Value, rates: &mut HashMap<String, f64>) {
 }
 
 fn group_items(payload: &Value) -> Vec<&Value> {
-    if let Some(items) = payload.as_array() {
-        return items.iter().collect();
-    }
+    let mut items = Vec::new();
+    collect_group_items(payload, &mut items);
+    items
+}
 
-    for key in [
-        "data",
-        "groups",
-        "available_groups",
-        "availableGroups",
-        "items",
-        "list",
-    ] {
-        if let Some(value) = payload.get(key) {
-            if let Some(items) = value.as_array() {
-                return items.iter().collect();
+fn collect_group_items<'a>(value: &'a Value, items: &mut Vec<&'a Value>) {
+    match value {
+        Value::Array(values) => items.extend(values.iter()),
+        Value::Object(map) => {
+            for key in [
+                "data",
+                "groups",
+                "available_groups",
+                "availableGroups",
+                "items",
+                "list",
+            ] {
+                if let Some(child) = map.get(key) {
+                    collect_group_items(child, items);
+                }
             }
         }
+        _ => {}
     }
-
-    Vec::new()
 }
 
 fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .filter_map(|key| value.get(*key))
-        .find_map(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .find_map(scalar_text)
+}
+
+fn scalar_text(value: &Value) -> Option<String> {
+    value
+        .as_str()
         .map(ToString::to_string)
+        .or_else(|| value.as_i64().map(|item| item.to_string()))
+        .or_else(|| value.as_u64().map(|item| item.to_string()))
+        .or_else(|| value.as_f64().map(|item| item.to_string()))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn numeric_field(value: &Value, keys: &[&str]) -> Option<f64> {
@@ -352,11 +389,22 @@ pub fn collect_groups(
     let urls = collector_base_urls(&station.base_url);
     let available_url = join_url(&urls.management_base_url, "/api/v1/groups/available");
     let rates_url = join_url(&urls.management_base_url, "/api/v1/groups/rates");
-    let available_result = fetch_json_with_bearer(&available_url, &access_token);
-    let rates_result = fetch_json_with_bearer(&rates_url, &access_token);
+    let mut available_result = fetch_json_with_bearer(&available_url, &access_token);
+    let mut rates_result = fetch_json_with_bearer(&rates_url, &access_token);
+    if available_result.is_auth_failure() || rates_result.is_auth_failure() {
+        if let Some(access_token) = login_and_store_access_token(database, data_key, &station)? {
+            available_result = fetch_json_with_bearer(&available_url, &access_token);
+            rates_result = fetch_json_with_bearer(&rates_url, &access_token);
+        }
+    }
     let available_payload = available_result.payload.clone().unwrap_or(Value::Null);
     let rates_payload = rates_result.payload.clone().unwrap_or(Value::Null);
-    let mut facts = parse_group_rate_facts(&station.id, &available_payload, &rates_payload);
+    let mut facts = parse_group_rate_facts(
+        &station.id,
+        &available_payload,
+        &rates_payload,
+        station.credit_per_cny,
+    );
     let keys = routeable_keys_for_station(database, station_id)?;
     add_single_group_key_bindings(&mut facts, &keys);
 
@@ -487,6 +535,10 @@ impl EndpointJsonResult {
             "errorMessage": self.error_message,
         })
     }
+
+    fn is_auth_failure(&self) -> bool {
+        matches!(self.status, Some(401 | 403))
+    }
 }
 
 fn fetch_json_with_bearer(url: &str, access_token: &str) -> EndpointJsonResult {
@@ -613,9 +665,12 @@ pub fn collect_balance(
             "ok": (200..400).contains(&status),
         }));
         if (200..400).contains(&status) {
-            facts
-                .balances
-                .push(parse_usage_balance(&station.id, Some(key.id), &parsed));
+            facts.balances.push(parse_usage_balance(
+                &station.id,
+                Some(key.id),
+                &parsed,
+                station.credit_per_cny,
+            ));
         }
     }
     if facts.balances.is_empty() {
@@ -686,7 +741,8 @@ fn collect_account_balance_fallback(
         if !result.ok {
             continue;
         }
-        if let Some(balance) = parse_account_balance(&station.id, &payload) {
+        if let Some(balance) = parse_account_balance(&station.id, &payload, station.credit_per_cny)
+        {
             return Ok(Some(balance));
         }
     }
@@ -694,12 +750,20 @@ fn collect_account_balance_fallback(
     Ok(None)
 }
 
-fn parse_account_balance(station_id: &str, payload: &Value) -> Option<CollectedBalanceFact> {
+fn parse_account_balance(
+    station_id: &str,
+    payload: &Value,
+    credit_per_cny: f64,
+) -> Option<CollectedBalanceFact> {
     let value = payload
         .pointer("/data/balance")
         .and_then(Value::as_f64)
         .or_else(|| payload.get("balance").and_then(Value::as_f64))
-        .or_else(|| payload.pointer("/data/quota/remaining").and_then(Value::as_f64))
+        .or_else(|| {
+            payload
+                .pointer("/data/quota/remaining")
+                .and_then(Value::as_f64)
+        })
         .or_else(|| payload.pointer("/quota/remaining").and_then(Value::as_f64))?;
     let used = payload
         .pointer("/data/used")
@@ -722,9 +786,9 @@ fn parse_account_balance(station_id: &str, payload: &Value) -> Option<CollectedB
         station_id: station_id.to_string(),
         station_key_id: None,
         scope: "station".to_string(),
-        value: Some(value),
-        used_value: used,
-        total_value: total,
+        value: normalize_credit_value(Some(value), credit_per_cny),
+        used_value: normalize_credit_value(used, credit_per_cny),
+        total_value: normalize_credit_value(total, credit_per_cny),
         currency,
         credit_unit: None,
         status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
@@ -761,6 +825,7 @@ mod tests {
                 },
                 "planName": "pro"
             }),
+            1.0,
         );
 
         assert_eq!(fact.station_id, "station-1");
@@ -773,8 +838,29 @@ mod tests {
 
     #[test]
     fn sub2api_usage_marks_zero_balance_depleted() {
-        let fact = parse_usage_balance("station-1", None, &json!({ "remaining": 0.0 }));
+        let fact = parse_usage_balance("station-1", None, &json!({ "remaining": 0.0 }), 1.0);
         assert_eq!(fact.status, "depleted");
+    }
+
+    #[test]
+    fn sub2api_usage_normalizes_credit_balance_to_cny() {
+        let fact = parse_usage_balance(
+            "station-1",
+            Some("key-1".to_string()),
+            &json!({
+                "quota": {
+                    "remaining": 100.0,
+                    "used": 25.0,
+                    "total": 125.0
+                }
+            }),
+            10.0,
+        );
+
+        assert_eq!(fact.value, Some(10.0));
+        assert_eq!(fact.used_value, Some(2.5));
+        assert_eq!(fact.total_value, Some(12.5));
+        assert_eq!(fact.currency, "CNY");
     }
 
     #[test]
@@ -792,7 +878,7 @@ mod tests {
             }
         });
 
-        let facts = parse_group_rate_facts("station-1", &available, &rates);
+        let facts = parse_group_rate_facts("station-1", &available, &rates, 1.0);
 
         assert!(facts
             .groups
@@ -801,6 +887,58 @@ mod tests {
         assert!(facts.rates.iter().any(|rate| {
             rate.group_name == "Pro" && rate.effective_rate_multiplier == Some(1.2)
         }));
+    }
+
+    #[test]
+    fn sub2api_group_rates_normalize_credit_multiplier_to_cny() {
+        let available = json!({
+            "data": [
+                { "id": "default", "name": "Default", "rate_multiplier": 1.0 }
+            ]
+        });
+        let rates = json!({
+            "data": {
+                "default": 1.0
+            }
+        });
+
+        let facts = parse_group_rate_facts("station-1", &available, &rates, 10.0);
+        let rate = facts.rates.first().expect("rate");
+
+        assert_eq!(rate.default_rate_multiplier, Some(0.1));
+        assert_eq!(rate.user_rate_multiplier, Some(0.1));
+        assert_eq!(rate.effective_rate_multiplier, Some(0.1));
+    }
+
+    #[test]
+    fn sub2api_group_rates_parse_group_name_lists_and_group_ratio_maps() {
+        let available = json!({
+            "data": {
+                "groups": ["default", "vip"]
+            }
+        });
+        let rates = json!({
+            "data": {
+                "group_ratio": {
+                    "default": 1.0,
+                    "vip": 1.5
+                },
+                "model_ratio": {
+                    "gpt-4o-mini": 0.7
+                }
+            }
+        });
+
+        let facts = parse_group_rate_facts("station-1", &available, &rates, 1.0);
+
+        assert_eq!(facts.groups.len(), 2);
+        assert!(facts.rates.iter().any(|rate| {
+            rate.group_name == "vip" && rate.effective_rate_multiplier == Some(1.5)
+        }));
+        assert!(!facts
+            .rates
+            .iter()
+            .any(|rate| rate.group_name == "gpt-4o-mini"));
     }
 
     #[test]
@@ -842,6 +980,61 @@ mod tests {
         assert!(output.facts.rates.iter().any(|rate| {
             rate.group_name == "Pro" && rate.effective_rate_multiplier == Some(1.2)
         }));
+        assert_eq!(
+            session.access_token.as_deref(),
+            Some("collector-token-secret")
+        );
+    }
+
+    #[test]
+    fn sub2api_groups_relogs_in_when_saved_access_token_is_rejected() {
+        let server = TestGroupServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station(CreateStationInput {
+                name: "stale token station".to_string(),
+                station_type: "sub2api".to_string(),
+                base_url: server.base_url,
+                api_key: "sk-station".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                note: None,
+            })
+            .expect("station");
+        database
+            .update_station_credentials_with_data_key(
+                UpdateStationCredentialsInput {
+                    station_id: station.id.clone(),
+                    login_username: Some("user@example.test".to_string()),
+                    login_password: Some("correct-password".to_string()),
+                    remember_password: true,
+                },
+                &data_key,
+            )
+            .expect("credentials");
+        database
+            .update_station_session_with_data_key(
+                UpdateStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: Some("stale-token".to_string()),
+                    refresh_token: None,
+                    cookie: None,
+                    newapi_user_id: None,
+                    token_expires_at: None,
+                },
+                &data_key,
+            )
+            .expect("stale session");
+
+        let output = collect_groups(&database, &data_key, &station.id).expect("groups");
+        let session = database
+            .resolve_station_session_with_data_key(station.id, &data_key, 100000)
+            .expect("session");
+
+        assert_eq!(output.status, "success");
+        assert_eq!(output.facts.groups.len(), 2);
         assert_eq!(
             session.access_token.as_deref(),
             Some("collector-token-secret")
@@ -905,7 +1098,7 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
             let base_url = format!("http://{}", listener.local_addr().expect("addr"));
             thread::spawn(move || {
-                for stream in listener.incoming().take(4).flatten() {
+                for stream in listener.incoming().take(5).flatten() {
                     handle_group_test_request(stream);
                 }
             });

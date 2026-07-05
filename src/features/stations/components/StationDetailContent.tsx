@@ -66,40 +66,19 @@ export function StationDetailContent({
 
   return (
     <div className="space-y-4">
-      <header className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-3 shadow-[var(--surface-shadow)]">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 space-y-2">
-            <button
-              type="button"
-              onClick={onBack}
-              className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.35)]"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              返回中转站资产
-            </button>
+      <div className="sticky top-[calc(var(--shell-page-gap)*-1)] z-20 -mx-[var(--shell-page-gap)] -mt-[var(--shell-page-gap)] border-b border-border bg-background/95 px-[var(--shell-page-gap)] py-3 backdrop-blur">
+        <div className="flex min-h-9 flex-wrap items-center justify-between gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBack}
+            className="-ml-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            返回中转站资产
+          </Button>
 
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h1 className="min-w-0 truncate text-xl font-semibold tracking-normal text-slate-900">
-                {station.name}
-              </h1>
-              <StatusBadge tone={statusToneByDetailTone[viewModel.statusTone]}>
-                {viewModel.statusLabel}
-              </StatusBadge>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span>{viewModel.stationTypeLabel}</span>
-              <span className="max-w-full truncate font-mono text-[11px] text-slate-600">
-                {station.baseUrl}
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <Clock3 className="h-3.5 w-3.5" />
-                最近活动 {viewModel.lastActivityLabel}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex shrink-0 flex-wrap gap-2">
+          <div className="flex w-full min-w-0 flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
             <Button
               variant="secondary"
               size="sm"
@@ -131,6 +110,32 @@ export function StationDetailContent({
               <Edit3 className="h-3.5 w-3.5" />
               编辑供应商
             </Button>
+          </div>
+        </div>
+      </div>
+
+      <header className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-3 shadow-[var(--surface-shadow)]">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 space-y-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h1 className="min-w-0 truncate text-xl font-semibold tracking-normal text-slate-900">
+                {station.name}
+              </h1>
+              <StatusBadge tone={statusToneByDetailTone[viewModel.statusTone]}>
+                {viewModel.statusLabel}
+              </StatusBadge>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <span>{viewModel.stationTypeLabel}</span>
+              <span className="max-w-full truncate font-mono text-[11px] text-slate-600">
+                {station.baseUrl}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Clock3 className="h-3.5 w-3.5" />
+                最近活动 {viewModel.lastActivityLabel}
+              </span>
+            </div>
           </div>
         </div>
       </header>
@@ -189,17 +194,22 @@ export function StationDetailContent({
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-[820px] w-full border-separate border-spacing-0 text-left text-xs">
+              <table className="min-w-[760px] w-full border-separate border-spacing-0 text-left text-xs">
                 <thead>
                   <tr className="text-muted-foreground">
                     <TableHead className="pl-0">分组</TableHead>
-                    <TableHead>生效倍率</TableHead>
-                    <TableHead>默认倍率</TableHead>
-                    <TableHead>用户倍率</TableHead>
+                    <TableHead>
+                      <RateHead title="生效倍率" helper="实际采用" />
+                    </TableHead>
+                    <TableHead>
+                      <RateHead title="默认倍率" helper="站点采集" />
+                    </TableHead>
+                    <TableHead>
+                      <RateHead title="用户倍率" helper="手动覆盖" />
+                    </TableHead>
                     <TableHead>绑定状态</TableHead>
-                    <TableHead>来源</TableHead>
-                    <TableHead>最近检查</TableHead>
-                    <TableHead className="pr-0">提示</TableHead>
+                    <TableHead>采集来源</TableHead>
+                    <TableHead className="pr-0">最近检查</TableHead>
                   </tr>
                 </thead>
                 <tbody>
@@ -207,9 +217,12 @@ export function StationDetailContent({
                     <tr key={row.id} className="border-t border-border">
                       <TableCell className="max-w-[220px] pl-0">
                         <div className="truncate font-medium text-slate-800">{row.groupName}</div>
-                        <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                          {row.groupId}
-                        </div>
+                        {row.warning && (
+                          <div className="mt-1 inline-flex items-center gap-1 text-amber-700">
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                            {row.warning}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell>
                         <span className={cn("font-semibold", textToneClassName[row.tone])}>
@@ -221,18 +234,8 @@ export function StationDetailContent({
                       <TableCell>
                         <StatusBadge tone={statusToneByDetailTone[row.tone]}>{row.bindingStatus}</StatusBadge>
                       </TableCell>
-                      <TableCell>{row.source}</TableCell>
-                      <TableCell>{row.lastChecked}</TableCell>
-                      <TableCell className="pr-0">
-                        {row.warning ? (
-                          <span className="inline-flex items-center gap-1 text-amber-700">
-                            <AlertTriangle className="h-3.5 w-3.5" />
-                            {row.warning}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">无</span>
-                        )}
-                      </TableCell>
+                      <TableCell>{row.sourceLabel}</TableCell>
+                      <TableCell className="pr-0">{row.lastChecked}</TableCell>
                     </tr>
                   ))}
                 </tbody>
@@ -242,7 +245,7 @@ export function StationDetailContent({
         </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-4">
         <DiagnosticSection icon={KeyRound} title="登录与密钥" items={viewModel.loginItems} />
         <DiagnosticSection icon={RefreshCw} title="采集任务" items={viewModel.collectorItems} />
         <DiagnosticSection icon={Database} title="最新快照" items={viewModel.snapshotItems} />
@@ -277,6 +280,15 @@ function TableCell({
     <td className={cn("border-b border-border px-3 py-2.5 align-top text-slate-700", className)}>
       {children}
     </td>
+  );
+}
+
+function RateHead({ title, helper }: { title: string; helper: string }) {
+  return (
+    <span className="block leading-tight">
+      <span className="block text-slate-600">{title}</span>
+      <span className="mt-0.5 block text-[11px] font-normal text-muted-foreground">{helper}</span>
+    </span>
   );
 }
 
