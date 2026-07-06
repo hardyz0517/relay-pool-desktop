@@ -169,14 +169,32 @@ export function buildPricingComparisonViewModel(
     void unfilteredRowCount;
     return section;
   });
+  const hasComparableGroups = baseSections.some((section) => section.unfilteredRowCount > 0);
+  const hasVisibleRows = sections.some((section) => section.rows.length > 0);
+
+  if (!hasComparableGroups) {
+    return {
+      filters,
+      sections,
+      metrics: buildMetrics(sections),
+      emptyReason: "no_group_rates",
+    };
+  }
+
+  if (!hasVisibleRows) {
+    return {
+      filters,
+      sections: [],
+      metrics: emptyMetrics(),
+      emptyReason: "filtered_empty",
+    };
+  }
 
   return {
     filters,
     sections,
     metrics: buildMetrics(sections),
-    emptyReason: baseSections.some((section) => section.unfilteredRowCount > 0)
-      ? null
-      : "no_group_rates",
+    emptyReason: null,
   };
 }
 
