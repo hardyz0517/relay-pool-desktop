@@ -527,4 +527,3 @@ function toTime(value: string) {
   const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
   return date.getTime();
 }
-
