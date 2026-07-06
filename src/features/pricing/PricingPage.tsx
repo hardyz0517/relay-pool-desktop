@@ -20,7 +20,7 @@ import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupF
 import { listStations } from "@/lib/api/stations";
 import type { PricingRule } from "@/lib/types/economics";
 import type { Station } from "@/lib/types/stations";
-import { buildPriceMatrix, buildRateMatrix, type PriceMatrixCell } from "./pricingMatrix";
+import { buildGroupRateOnlyPricingRules, buildPriceMatrix, buildRateMatrix, type PriceMatrixCell } from "./pricingMatrix";
 import { rateRowsFromGroupFacts, type RateMultiplierRow } from "./rateSnapshotParser";
 
 type MatrixTone = "good" | "warning" | "neutral" | "muted";
@@ -73,8 +73,16 @@ export function PricingPage() {
     [selectedStationId, stations],
   );
 
+  const comparisonRows = useMemo(
+    () => [
+      ...pricingRules,
+      ...buildGroupRateOnlyPricingRules(rateRows, stations, pricingRules),
+    ],
+    [pricingRules, rateRows, stations],
+  );
+
   const filteredRows = useMemo(() => {
-    return pricingRules.filter((row) => {
+    return comparisonRows.filter((row) => {
       if (selectedStationId !== "all" && row.stationId !== selectedStationId) {
         return false;
       }
@@ -89,7 +97,7 @@ export function PricingPage() {
       }
       return true;
     });
-  }, [pricingRules, query, selectedSource, selectedStationId, stationById]);
+  }, [comparisonRows, query, selectedSource, selectedStationId, stationById]);
   const filteredRateRows = useMemo(() => {
     return rateRows.filter((row) => {
       if (selectedStationId !== "all" && row.stationId !== selectedStationId) {
@@ -110,10 +118,10 @@ export function PricingPage() {
 
   const sourceOptions = useMemo(() => {
     const values = new Set<string>();
-    pricingRules.forEach((rule) => values.add(rule.source));
+    comparisonRows.forEach((rule) => values.add(rule.source));
     rateRows.forEach((row) => values.add(row.source));
     return Array.from(values).filter(Boolean).sort((a, b) => a.localeCompare(b));
-  }, [pricingRules, rateRows]);
+  }, [comparisonRows, rateRows]);
 
   const selected = filteredRows.find((row) => row.model === selectedModel) ?? filteredRows[0] ?? null;
   const cheapest = filteredRows.filter((row) => row.normalizationStatus === "complete").reduce<PricingRule | null>((min, row) => {

@@ -37,6 +37,57 @@ export type RateMatrixRow = {
   }>;
 };
 
+export function buildGroupRateOnlyPricingRules(
+  rates: RateMultiplierRow[],
+  stations: Station[],
+  existingRules: PricingRule[],
+): PricingRule[] {
+  const stationIds = new Set(stations.map((station) => station.id));
+  const enabledModelNames = Array.from(new Set(existingRules.filter((rule) => rule.enabled).map((rule) => rule.model)));
+  const generated: PricingRule[] = [];
+
+  for (const rate of newestRatesByStationGroup(rates)) {
+    if (!stationIds.has(rate.stationId) || rate.multiplier == null || rate.modelPrefixes.length === 0) {
+      continue;
+    }
+    const models = matchingModels(enabledModelNames, rate.modelPrefixes, fallbackModelsForProvider(rate.modelProvider));
+    for (const model of models) {
+      if (hasRuleForStationModel(existingRules, rate.stationId, model)) {
+        continue;
+      }
+      generated.push({
+        id: `group-rate-only:${rate.stationId}:${rate.groupBindingId ?? rate.groupName}:${model}`,
+        stationId: rate.stationId,
+        stationKeyId: null,
+        groupBindingId: rate.groupBindingId,
+        groupName: rate.groupName,
+        tierLabel: rate.modelProvider,
+        model,
+        inputPrice: null,
+        outputPrice: null,
+        fixedPrice: null,
+        rateMultiplier: rate.multiplier,
+        currency: "CNY",
+        unit: "rate_multiplier",
+        priceType: "group_rate",
+        basePriceSource: null,
+        normalizationStatus: "group_rate_only",
+        source: `${rate.source}:model_family`,
+        confidence: Math.min(rate.confidence, 0.75),
+        enabled: true,
+        note: rate.modelFamilies.length > 0 ? rate.modelFamilies.join(", ") : null,
+        collectedAt: rate.updatedAt,
+        validFrom: null,
+        validUntil: null,
+        createdAt: rate.updatedAt,
+        updatedAt: rate.updatedAt,
+      });
+    }
+  }
+
+  return generated;
+}
+
 export function buildPriceMatrix(rules: PricingRule[], stations: Station[]): PriceMatrixRow[] {
   const enabledRules = rules.filter((rule) => rule.enabled);
   const models = Array.from(new Set(enabledRules.map((rule) => rule.model))).sort((a, b) => a.localeCompare(b));
@@ -110,6 +161,39 @@ function newestRule(rules: PricingRule[]) {
 
 function newestRate(rates: RateMultiplierRow[]) {
   return [...rates].sort((a, b) => toTime(b.updatedAt) - toTime(a.updatedAt))[0] ?? null;
+}
+
+function newestRatesByStationGroup(rates: RateMultiplierRow[]) {
+  const latest = new Map<string, RateMultiplierRow>();
+  for (const rate of rates) {
+    const key = `${rate.stationId}:${rate.groupBindingId ?? rate.groupName}`;
+    const previous = latest.get(key);
+    if (!previous || toTime(rate.updatedAt) > toTime(previous.updatedAt)) {
+      latest.set(key, rate);
+    }
+  }
+  return Array.from(latest.values());
+}
+
+function matchingModels(modelNames: string[], prefixes: string[], fallbacks: string[]) {
+  const matches = modelNames.filter((model) =>
+    prefixes.some((prefix) => model.toLowerCase().startsWith(prefix.toLowerCase())),
+  );
+  return matches.length > 0 ? matches : fallbacks;
+}
+
+function fallbackModelsForProvider(provider: string | null) {
+  if (provider === "openai") {
+    return ["gpt-*"];
+  }
+  if (provider === "anthropic") {
+    return ["claude-*"];
+  }
+  return [];
+}
+
+function hasRuleForStationModel(rules: PricingRule[], stationId: string, model: string) {
+  return rules.some((rule) => rule.enabled && rule.stationId === stationId && rule.model === model);
 }
 
 function toTime(value: string) {
