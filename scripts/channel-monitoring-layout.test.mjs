@@ -15,8 +15,34 @@ assert.ok(
 
 assert.match(
   source,
-  /grid-cols-\[minmax\(0,0\.9fr\)_minmax\(0,1\.1fr\)_minmax\(0,1\.15fr\)_minmax\(0,0\.75fr\)_minmax\(0,1fr\)_minmax\(0,0\.5fr\)\]/,
+  /grid-cols-\[minmax\(0,0\.9fr\)_minmax\(0,1\.15fr\)_minmax\(0,1\.15fr\)_minmax\(0,0\.75fr\)_minmax\(0,0\.75fr\)\]/,
   "monitor header and rows should share compact responsive zero-min grid columns",
+);
+
+assert.ok(
+  !source.includes("<TableHeadCell>测试模板</TableHeadCell>") && !source.includes('label="测试模板"'),
+  "monitor list should not expose request templates as a visible column or card field",
+);
+
+assert.ok(
+  source.includes("<TableHeadCell>主模型</TableHeadCell>") && source.includes('label="主模型"'),
+  "monitor list should show the primary detection model instead of the request template",
+);
+
+assert.ok(
+  !source.includes("<TableHeadCell>最近检测</TableHeadCell>") && !source.includes('label="最近检测"'),
+  "monitor list should not expose a latest detection time column or card field",
+);
+
+assert.ok(
+  source.includes("立即检测"),
+  "monitor actions should expose an immediate detection action through labels or tooltips",
+);
+
+assert.ok(
+  !source.includes('{running ? "检测中" : "立即检测"}') &&
+    !source.includes('{running ? "运行中" : "立即检测"}'),
+  "immediate detection should be an icon action, not visible button text",
 );
 
 assert.ok(

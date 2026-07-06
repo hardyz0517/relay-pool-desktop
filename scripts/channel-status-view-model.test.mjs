@@ -74,15 +74,15 @@ assert.deepEqual(
 );
 
 assert.deepEqual(
-  resolveChannelLatencyMetrics({ requestLatencyMs: null, healthLatencyMs: 5422 }),
-  { conversationLatencyMs: 5422, endpointPingMs: null },
-  "health probe latency should fill conversation latency instead of endpoint PING when request logs are empty",
+  resolveChannelLatencyMetrics({ requestLatencyMs: null, healthLatencyMs: 5422, endpointPingMs: 38 }),
+  { conversationLatencyMs: 5422, endpointPingMs: 38 },
+  "endpoint PING should display the independent station endpoint latency",
 );
 
 assert.deepEqual(
-  resolveChannelLatencyMetrics({ requestLatencyMs: 1280, healthLatencyMs: 5422 }),
+  resolveChannelLatencyMetrics({ requestLatencyMs: 1280, healthLatencyMs: 5422, endpointPingMs: null }),
   { conversationLatencyMs: 1280, endpointPingMs: null },
-  "real proxy request logs should stay the preferred conversation latency source",
+  "real proxy request logs should stay the preferred conversation latency source without inventing endpoint PING",
 );
 
 const enabledMonitorByKey = enabledStationKeyMonitorsByKey([

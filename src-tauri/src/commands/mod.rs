@@ -2,7 +2,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::process::Command;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tauri::{Manager, State};
 
 use crate::{
@@ -42,12 +42,16 @@ use crate::{
         settings::{AppSettings, UpdateSettingsInput},
         station_keys::KeyPoolItem,
         station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
-        stations::{CreateStationInput, Station, UpdateStationInput},
+        stations::{
+            CreateStationInput, EndpointPingResult, Station, StationEndpointHealth,
+            UpdateStationInput,
+        },
         AppStatus,
     },
     services::{
         capture, collectors,
         database::{now_millis_for_services, AppDatabase},
+        endpoint_ping::ping_station_endpoint as probe_station_endpoint,
         proxy::{
             build_upstream_url, redact_error_message, runtime::ProxyRuntimeState, should_fallback,
         },
@@ -420,6 +424,13 @@ pub fn list_station_key_health(
 }
 
 #[tauri::command]
+pub fn list_station_endpoint_health(
+    database: State<'_, AppDatabase>,
+) -> Result<Vec<StationEndpointHealth>, String> {
+    database.list_station_endpoint_health()
+}
+
+#[tauri::command]
 pub fn list_channel_monitors(
     database: State<'_, AppDatabase>,
 ) -> Result<Vec<ChannelMonitor>, String> {
@@ -519,6 +530,46 @@ pub fn get_station_key_health(
     station_key_id: String,
 ) -> Result<StationKeyHealth, String> {
     database.get_station_key_health(station_key_id)
+}
+
+#[tauri::command]
+pub fn ping_station_endpoint(
+    database: State<'_, AppDatabase>,
+    station_id: String,
+) -> Result<EndpointPingResult, String> {
+    ping_station_endpoint_for_tests(&database, station_id, 5)
+}
+
+fn ping_station_endpoint_for_tests(
+    database: &AppDatabase,
+    station_id: String,
+    timeout_seconds: u64,
+) -> Result<EndpointPingResult, String> {
+    let station = database
+        .list_stations()?
+        .into_iter()
+        .find(|station| station.id == station_id)
+        .ok_or_else(|| "未找到要 PING 的中转站".to_string())?;
+    let checked_at = now_millis_for_services().to_string();
+    let probe = probe_station_endpoint(
+        &station.base_url,
+        Duration::from_secs(timeout_seconds.max(1)),
+    );
+    let health = database.upsert_station_endpoint_health(
+        &station.id,
+        &probe.status,
+        probe.latency_ms,
+        &checked_at,
+        probe.error_summary.as_deref(),
+    )?;
+    Ok(EndpointPingResult {
+        station_id: health.station_id,
+        ok: probe.ok,
+        status: health.status,
+        latency_ms: health.latency_ms,
+        checked_at: health.checked_at.unwrap_or(checked_at),
+        error_summary: health.error_summary,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -665,6 +716,11 @@ pub fn list_collector_runs(
 #[tauri::command]
 pub fn list_change_events(database: State<'_, AppDatabase>) -> Result<Vec<ChangeEvent>, String> {
     database.list_change_events()
+}
+
+#[tauri::command]
+pub fn clear_change_events(database: State<'_, AppDatabase>) -> Result<(), String> {
+    database.clear_change_events()
 }
 
 #[tauri::command]
@@ -1369,7 +1425,9 @@ fn station_key_connectivity_model_candidates(
             );
         }
     }
-    for model in discovered_models {
+    let mut discovered_models = discovered_models.iter().enumerate().collect::<Vec<_>>();
+    discovered_models.sort_by_key(|(index, model)| (connectivity_model_priority(model), *index));
+    for (_, model) in discovered_models {
         push_station_key_connectivity_model_candidate(
             &mut candidates,
             Some(model.as_str()),
@@ -1747,6 +1805,20 @@ mod tests {
             station_key_connectivity_model_candidates(None, None, discovered.as_slice());
 
         assert_eq!(candidates, vec!["codex-auto-review", "gpt-5.4", "gpt-5.5"]);
+    }
+
+    #[test]
+    fn station_key_connectivity_candidates_sort_discovered_models_by_lowest_cost() {
+        let discovered = vec![
+            "gpt-4.1".to_string(),
+            "gpt-4.1-mini".to_string(),
+            "gpt-4.1-nano".to_string(),
+        ];
+
+        let candidates =
+            station_key_connectivity_model_candidates(None, None, discovered.as_slice());
+
+        assert_eq!(candidates, vec!["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"]);
     }
 
     #[test]

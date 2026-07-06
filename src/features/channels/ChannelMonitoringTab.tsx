@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Copy, Edit3, LayoutTemplate, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { Button, EmptyState, IconButton, StatusBadge, useToast } from "@/components/ui";
+import { Button, ConfirmDialog, EmptyState, IconButton, StatusBadge, useToast } from "@/components/ui";
 import {
   createChannelMonitor,
   deleteChannelMonitor,
@@ -19,10 +19,7 @@ import { ChannelMonitorForm } from "./ChannelMonitorForm";
 import { ChannelMonitorTemplateManager } from "./ChannelMonitorTemplateManager";
 import {
   formatInterval,
-  formatRunTimestamp,
   formatTargetLabel,
-  formatTemplateLabel,
-  getRunStatusView,
   monitorToDraft,
   monitorToCreateInput,
   validateMonitorDraft,
@@ -38,7 +35,7 @@ type ActionState = {
 } | null;
 
 const monitorGridClassName =
-  "w-full grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)_minmax(0,1.15fr)_minmax(0,0.75fr)_minmax(0,1fr)_minmax(0,0.5fr)] items-center gap-3";
+  "w-full grid-cols-[minmax(0,0.9fr)_minmax(0,1.15fr)_minmax(0,1.15fr)_minmax(0,0.75fr)_minmax(0,0.75fr)] items-center gap-3";
 
 export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabProps) {
   const toast = useToast();
@@ -47,7 +44,6 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
   const [keys, setKeys] = useState<KeyPoolItem[]>([]);
   const [templates, setTemplates] = useState<ChannelMonitorRequestTemplate[]>([]);
   const [runsByMonitor, setRunsByMonitor] = useState(new Map<string, ChannelMonitorRun[]>());
-  const [runLoadFailedIds, setRunLoadFailedIds] = useState(new Set<string>());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actionState, setActionState] = useState<ActionState>(null);
@@ -55,15 +51,12 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
   const [formOpen, setFormOpen] = useState(false);
   const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
   const [editingMonitor, setEditingMonitor] = useState<ChannelMonitor | null>(null);
+  const [pendingDeleteMonitor, setPendingDeleteMonitor] = useState<ChannelMonitor | null>(null);
 
   useEffect(() => {
     void refresh();
   }, []);
 
-  const templateById = useMemo(
-    () => new Map(templates.map((template) => [template.id, template] as const)),
-    [templates],
-  );
   const summary = useMemo(() => {
     const enabledCount = monitors.filter((monitor) => monitor.enabled).length;
     const stationTargetCount = monitors.filter((monitor) => monitor.targetType === "station").length;
@@ -92,9 +85,9 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
       const runEntries = await Promise.all(
         nextMonitors.map(async (monitor) => {
           try {
-            return { monitorId: monitor.id, runs: await listChannelMonitorRuns(monitor.id), failed: false };
+            return { monitorId: monitor.id, runs: await listChannelMonitorRuns(monitor.id) };
           } catch {
-            return { monitorId: monitor.id, runs: [] as ChannelMonitorRun[], failed: true };
+            return { monitorId: monitor.id, runs: [] as ChannelMonitorRun[] };
           }
         }),
       );
@@ -103,7 +96,6 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
       setKeys(nextKeys);
       setTemplates(nextTemplates);
       setRunsByMonitor(new Map(runEntries.map((entry) => [entry.monitorId, entry.runs] as const)));
-      setRunLoadFailedIds(new Set(runEntries.filter((entry) => entry.failed).map((entry) => entry.monitorId)));
       if (showSuccess) {
         toast.success("渠道监控已刷新");
       }
@@ -189,14 +181,19 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
     }
   }
 
-  async function handleDelete(monitor: ChannelMonitor) {
-    if (!window.confirm(`确认删除监控「${monitor.name}」？`)) {
+  function handleDelete(monitor: ChannelMonitor) {
+    setPendingDeleteMonitor(monitor);
+  }
+
+  async function handleConfirmDelete() {
+    if (!pendingDeleteMonitor) {
       return;
     }
-    setActionState({ monitorId: monitor.id, kind: "delete" });
+    setActionState({ monitorId: pendingDeleteMonitor.id, kind: "delete" });
     setError(null);
     try {
-      await deleteChannelMonitor(monitor.id);
+      await deleteChannelMonitor(pendingDeleteMonitor.id);
+      setPendingDeleteMonitor(null);
       await refresh();
       toast.success("监控已删除");
     } catch (requestError) {
@@ -251,10 +248,8 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
           actionState={actionState}
           keys={keys}
           monitors={monitors}
-          runLoadFailedIds={runLoadFailedIds}
           runsByMonitor={runsByMonitor}
           stations={stations}
-          templateById={templateById}
           onDelete={handleDelete}
           onDuplicate={handleDuplicate}
           onEdit={openEdit}
@@ -278,6 +273,15 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
         onClose={() => setTemplateManagerOpen(false)}
         onChanged={() => refresh()}
       />
+      <ConfirmDialog
+        open={pendingDeleteMonitor !== null}
+        title="删除渠道监控"
+        description={`确定要删除监控 "${pendingDeleteMonitor?.name ?? ""}" 吗？此操作无法撤销。`}
+        confirmLabel="删除"
+        confirming={actionState?.kind === "delete"}
+        onCancel={() => setPendingDeleteMonitor(null)}
+        onConfirm={() => void handleConfirmDelete()}
+      />
     </>
   );
 }
@@ -286,10 +290,8 @@ function MonitorList({
   actionState,
   keys,
   monitors,
-  runLoadFailedIds,
   runsByMonitor,
   stations,
-  templateById,
   onDelete,
   onDuplicate,
   onEdit,
@@ -298,10 +300,8 @@ function MonitorList({
   actionState: ActionState;
   keys: KeyPoolItem[];
   monitors: ChannelMonitor[];
-  runLoadFailedIds: Set<string>;
   runsByMonitor: Map<string, ChannelMonitorRun[]>;
   stations: Station[];
-  templateById: Map<string, ChannelMonitorRequestTemplate>;
   onDelete: (monitor: ChannelMonitor) => void;
   onDuplicate: (monitor: ChannelMonitor) => void | Promise<void>;
   onEdit: (monitor: ChannelMonitor) => void;
@@ -312,9 +312,8 @@ function MonitorList({
       <div className={`hidden lg:grid ${monitorGridClassName} border-b border-slate-200 px-3 pb-2 text-[11px] font-medium text-slate-500`}>
         <TableHeadCell>监控</TableHeadCell>
         <TableHeadCell>目标</TableHeadCell>
-        <TableHeadCell>测试模板</TableHeadCell>
+        <TableHeadCell>主模型</TableHeadCell>
         <TableHeadCell align="center">调度</TableHeadCell>
-        <TableHeadCell>健康</TableHeadCell>
         <div className="min-w-0 truncate text-right">操作</div>
       </div>
       <div className="space-y-2 lg:space-y-0 lg:divide-y lg:divide-slate-100">
@@ -324,10 +323,8 @@ function MonitorList({
             actionState={actionState}
             keys={keys}
             monitor={monitor}
-            runLoadFailed={runLoadFailedIds.has(monitor.id)}
             runs={runsByMonitor.get(monitor.id) ?? []}
             stations={stations}
-            template={templateById.get(monitor.templateId)}
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
@@ -343,10 +340,8 @@ function MonitorRow({
   actionState,
   keys,
   monitor,
-  runLoadFailed,
   runs,
   stations,
-  template,
   onDelete,
   onDuplicate,
   onEdit,
@@ -355,10 +350,8 @@ function MonitorRow({
   actionState: ActionState;
   keys: KeyPoolItem[];
   monitor: ChannelMonitor;
-  runLoadFailed: boolean;
   runs: ChannelMonitorRun[];
   stations: Station[];
-  template?: ChannelMonitorRequestTemplate;
   onDelete: (monitor: ChannelMonitor) => void;
   onDuplicate: (monitor: ChannelMonitor) => void | Promise<void>;
   onEdit: (monitor: ChannelMonitor) => void;
@@ -367,11 +360,11 @@ function MonitorRow({
   const running = actionState?.monitorId === monitor.id && actionState.kind === "run";
   const duplicating = actionState?.monitorId === monitor.id && actionState.kind === "duplicate";
   const deleting = actionState?.monitorId === monitor.id && actionState.kind === "delete";
-  const modelLabel = monitor.fallbackModels[0] ?? "";
+  const modelLabel = monitor.fallbackModels[0]?.trim() || "未设置";
   const targetLabel = formatTargetLabel(monitor.targetType, monitor.stationId, monitor.stationKeyId, stations, keys);
-  const templateLabel = formatTemplateLabel(template);
   const intervalLabel = formatInterval(monitor.intervalSeconds, monitor.jitterSeconds);
   const latestRun = getLatestRun(runs);
+  const primaryModelStatus = getPrimaryModelStatusView(latestRun, modelLabel);
   return (
     <>
       <div className={`hidden lg:grid ${monitorGridClassName} group min-h-[62px] px-3 py-2.5 text-left text-[13px] text-slate-700 transition-colors hover:bg-slate-50/45`}>
@@ -384,10 +377,7 @@ function MonitorRow({
           {targetLabel}
         </div>
 
-        <div className="min-w-0">
-          <div className="truncate text-slate-800">{templateLabel}</div>
-          {modelLabel && <div className="mt-0.5 truncate text-xs text-muted-foreground">{modelLabel}</div>}
-        </div>
+        <PrimaryModelCell modelLabel={modelLabel} status={primaryModelStatus} />
 
         <div className="flex min-w-0 flex-col items-center gap-1">
           <StatusBadge tone={monitor.enabled ? "healthy" : "disabled"}>
@@ -397,8 +387,6 @@ function MonitorRow({
             {intervalLabel}
           </div>
         </div>
-
-        <LatestRunCell run={latestRun} historyFailed={runLoadFailed} />
 
         <MonitorDesktopActions
           actionState={actionState}
@@ -417,24 +405,27 @@ function MonitorRow({
         <div className="space-y-3">
           <MonitorCardField label="监控" value={monitor.name} strong />
           <MonitorCardField label="目标" value={targetLabel} />
-          <MonitorCardField label="测试模板" value={templateLabel}>
-            {modelLabel && <span className="ml-2 text-xs text-muted-foreground">{modelLabel}</span>}
+          <MonitorCardField label="主模型" value={modelLabel}>
+            <StatusBadge tone={primaryModelStatus.tone} className="ml-2">
+              {primaryModelStatus.label}
+            </StatusBadge>
           </MonitorCardField>
           <MonitorCardField label="调度" value={intervalLabel}>
             <StatusBadge tone={monitor.enabled ? "healthy" : "disabled"} className="ml-2">
               {monitor.enabled ? "启用" : "停用"}
             </StatusBadge>
           </MonitorCardField>
-          <MonitorCardField label="健康">
-            <LatestRunCell run={latestRun} historyFailed={runLoadFailed} align="end" />
-          </MonitorCardField>
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
-          <Button size="sm" variant="ghost" disabled={Boolean(actionState)} onClick={() => void onRunNow(monitor)}>
-            <Play className="h-3.5 w-3.5" />
-            {running ? "运行中" : "立即检测"}
-          </Button>
+          <IconButton
+            className={running ? "h-8 w-8 animate-pulse rounded-[7px] text-teal-700" : "h-8 w-8 rounded-[7px] text-slate-500 hover:bg-teal-50 hover:text-teal-700"}
+            disabled={Boolean(actionState)}
+            label={running ? `检测中 ${monitor.name}` : `立即检测 ${monitor.name}`}
+            onClick={() => void onRunNow(monitor)}
+          >
+            <Play className="h-4 w-4" />
+          </IconButton>
           <Button size="sm" variant="ghost" disabled={Boolean(actionState)} onClick={() => onEdit(monitor)}>
             <Edit3 className="h-3.5 w-3.5" />
             编辑
@@ -476,14 +467,14 @@ function MonitorDesktopActions({
 }) {
   return (
     <div
-      className="flex min-w-0 items-center justify-end gap-1 overflow-hidden lg:opacity-0 lg:transition-opacity lg:group-hover:opacity-100 lg:group-focus-within:opacity-100"
+      className="flex min-w-0 items-center justify-end gap-1 overflow-hidden"
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
     >
       <IconButton
         className={running ? "h-7 w-7 shrink-0 animate-pulse rounded-[7px] text-teal-700" : "h-7 w-7 shrink-0 rounded-[7px] text-slate-500 hover:bg-teal-50 hover:text-teal-700"}
         disabled={Boolean(actionState)}
-        label={running ? `运行中 ${monitor.name}` : `运行 ${monitor.name}`}
+        label={running ? `检测中 ${monitor.name}` : `立即检测 ${monitor.name}`}
         onClick={() => void onRunNow(monitor)}
       >
         <Play className="h-4 w-4" />
@@ -497,6 +488,21 @@ function MonitorDesktopActions({
       <IconButton className="h-7 w-7 shrink-0 rounded-[7px] text-slate-500 hover:bg-rose-50 hover:text-rose-600" disabled={Boolean(actionState)} label={deleting ? `删除中 ${monitor.name}` : `删除 ${monitor.name}`} onClick={() => void onDelete(monitor)}>
         <Trash2 className="h-4 w-4" />
       </IconButton>
+    </div>
+  );
+}
+
+function PrimaryModelCell({
+  modelLabel,
+  status,
+}: {
+  modelLabel: string;
+  status: PrimaryModelStatusView;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <span className="min-w-0 truncate text-slate-800">{modelLabel}</span>
+      <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
     </div>
   );
 }
@@ -537,40 +543,31 @@ function TableHeadCell({
   );
 }
 
-function LatestRunCell({
-  align = "start",
-  run,
-  historyFailed,
-}: {
-  align?: "end" | "start";
-  run: ChannelMonitorRun | null;
-  historyFailed: boolean;
-}) {
-  const alignClassName = align === "end" ? "justify-end text-right" : "";
-  if (historyFailed) {
-    return (
-      <div className={`flex min-w-0 items-center gap-2 ${alignClassName}`}>
-        <StatusBadge tone="warning">未读取</StatusBadge>
-        <span className="truncate text-xs text-muted-foreground">运行历史读取失败</span>
-      </div>
-    );
-  }
+type PrimaryModelStatusView = {
+  label: "正常" | "降级" | "失败" | "未运行";
+  tone: "healthy" | "warning" | "error" | "info";
+};
 
-  const statusView = getRunStatusView(run?.status ?? null);
-  const durationLabel = formatRunDuration(run);
-  return (
-    <div className={`flex min-w-0 items-center gap-2 ${alignClassName}`}>
-      <StatusBadge tone={statusView.tone}>{statusView.label}</StatusBadge>
-      <span className="truncate text-xs text-muted-foreground">
-        {run ? `${formatRunTimestamp(run.startedAt)} · ${durationLabel}` : "未运行"}
-      </span>
-    </div>
-  );
+function getPrimaryModelStatusView(run: ChannelMonitorRun | null, primaryModel: string): PrimaryModelStatusView {
+  if (!run) {
+    return { label: "未运行", tone: "info" };
+  }
+  if (run.status === "failed" || run.status === "skipped") {
+    return { label: "失败", tone: "error" };
+  }
+  if (run.status === "warning") {
+    return { label: "降级", tone: "warning" };
+  }
+  const normalizedPrimary = normalizeModelName(primaryModel);
+  const responseModel = normalizeModelName(run.responseModel);
+  const fallbackModel = normalizeModelName(run.fallbackModel);
+  const usedDifferentModel = Boolean(fallbackModel && fallbackModel !== normalizedPrimary) ||
+    Boolean(responseModel && responseModel !== normalizedPrimary);
+  return usedDifferentModel ? { label: "降级", tone: "warning" } : { label: "正常", tone: "healthy" };
 }
 
-function formatRunDuration(run: ChannelMonitorRun | null) {
-  const durationMs = run?.latencyMs ?? run?.durationMs;
-  return typeof durationMs === "number" ? `${durationMs}ms` : "--";
+function normalizeModelName(model: string | null) {
+  return (model ?? "").trim().toLowerCase();
 }
 
 function SummaryPill({

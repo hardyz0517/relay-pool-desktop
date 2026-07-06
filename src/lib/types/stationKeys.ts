@@ -28,6 +28,7 @@ export type KeyPoolItem = StationKey & {
   stationName: string;
   stationType: string;
   stationBaseUrl: string;
+  stationUpstreamApiFormat: "auto" | "openai_chat_completions" | "openai_responses" | "custom_openai_compatible";
   capabilitySummary: string[];
   modelScopeSummary: string;
   onlyUseAsBackup: boolean;
@@ -36,6 +37,10 @@ export type KeyPoolItem = StationKey & {
   avgLatencyMs: number | null;
   consecutiveFailures: number;
   lastErrorSummary: string | null;
+  endpointPingStatus: "unchecked" | "success" | "failed";
+  endpointPingMs: number | null;
+  endpointPingCheckedAt: string | null;
+  endpointPingError: string | null;
   bindingStatus?: string | null;
   priceState?: string | null;
 };

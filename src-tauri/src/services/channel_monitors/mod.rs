@@ -27,6 +27,7 @@ use crate::{
             templates::{render_monitor_request, MonitorTemplateContext},
         },
         database::{now_millis_for_services, AppDatabase},
+        endpoint_ping::ping_station_endpoint,
     },
 };
 
@@ -87,6 +88,8 @@ fn run_monitor_once(
         return Ok(vec![run]);
     }
 
+    update_station_endpoint_pings(database, &monitor, &targets)?;
+
     let max_concurrency = if monitor.target_type == "station" {
         monitor.max_concurrency.clamp(1, 16) as usize
     } else {
@@ -131,6 +134,44 @@ fn run_monitor_once(
         }
     }
     Ok(runs)
+}
+
+fn update_station_endpoint_pings(
+    database: &AppDatabase,
+    monitor: &ChannelMonitor,
+    targets: &[KeyPoolItem],
+) -> Result<(), String> {
+    let mut seen_station_ids = HashSet::new();
+    for target in targets {
+        if seen_station_ids.insert(target.station_id.clone()) {
+            update_station_endpoint_ping(
+                database,
+                &target.station_id,
+                &target.station_base_url,
+                monitor.timeout_seconds,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn update_station_endpoint_ping(
+    database: &AppDatabase,
+    station_id: &str,
+    station_base_url: &str,
+    timeout_seconds: i64,
+) -> Result<(), String> {
+    let timeout = Duration::from_secs(timeout_seconds.max(1) as u64);
+    let result = ping_station_endpoint(station_base_url, timeout);
+    let checked_at = now_string();
+    database.upsert_station_endpoint_health(
+        station_id,
+        &result.status,
+        result.latency_ms,
+        &checked_at,
+        result.error_summary.as_deref(),
+    )?;
+    Ok(())
 }
 
 fn schedule_after_started_monitor<T>(

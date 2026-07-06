@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -44,11 +44,11 @@ const capabilities = {
 
 assert.equal(
   preferredStationKeyMonitorTemplate([
-    { id: "builtin-openai-chat-low-token", enabled: true },
-    { id: "builtin-openai-responses-low-token", enabled: true },
+    { id: "builtin-openai-chat-low-token", enabled: true, endpointKind: "chat_completions" },
+    { id: "builtin-openai-responses-low-token", enabled: true, endpointKind: "responses" },
   ])?.id,
-  "builtin-openai-chat-low-token",
-  "key-pool monitor switch should prefer the most compatible Chat low-token template",
+  "builtin-openai-responses-low-token",
+  "key-pool monitor switch should prefer the built-in Responses low-token template by default",
 );
 
 assert.equal(
@@ -85,6 +85,24 @@ assert.deepEqual(
     note: "由密钥池监控开关创建",
   },
   "key-pool monitor switch should create a scheduled station-key monitor",
+);
+
+assert.deepEqual(
+  createStationKeyMonitorInput(key, template, capabilities, "codex-auto-review").fallbackModels,
+  ["codex-auto-review"],
+  "first key-pool monitor creation should use the connectivity-tested available model",
+);
+
+const keyPoolPageSource = await readFile("src/features/key-pool/KeyPoolPage.tsx", "utf8");
+
+assert.ok(
+  keyPoolPageSource.includes("const connectivityResult = await testStationKeyConnectivity(item.id);"),
+  "key-pool monitor creation should identify an actually callable model before creating the monitor",
+);
+
+assert.ok(
+  /createStationKeyMonitorInput\([^)]*connectivityResult\.model/s.test(keyPoolPageSource),
+  "key-pool monitor creation should pass the connectivity-tested model into the default monitor config",
 );
 
 const existingMonitor = {

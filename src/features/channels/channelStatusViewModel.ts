@@ -17,6 +17,7 @@ export type OrderedChannel = {
 export type ChannelLatencyMetricInput = {
   requestLatencyMs: number | null;
   healthLatencyMs: number | null;
+  endpointPingMs: number | null;
 };
 
 export type ChannelLatencyMetrics = {
@@ -116,11 +117,11 @@ export function orderChannelsBySavedOrder<TChannel extends OrderedChannel>(
 export function resolveChannelLatencyMetrics({
   requestLatencyMs,
   healthLatencyMs,
+  endpointPingMs,
 }: ChannelLatencyMetricInput): ChannelLatencyMetrics {
   return {
     conversationLatencyMs: requestLatencyMs ?? healthLatencyMs,
-    // Health latency is a model probe/request duration, not a separate endpoint ping measurement.
-    endpointPingMs: null,
+    endpointPingMs,
   };
 }
 

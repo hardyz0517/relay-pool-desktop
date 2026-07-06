@@ -287,7 +287,16 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
           throw new Error("暂无启用的监控请求模板，请先在渠道状态的监控页启用模板。");
         }
         const capabilities = await getStationKeyCapabilities(item.id);
-        await createChannelMonitor(createStationKeyMonitorInput(item, template, capabilities));
+        const preferredTemplate = preferredStationKeyMonitorTemplate(monitorTemplates, {
+          stationType: item.stationType,
+          stationUpstreamApiFormat: item.stationUpstreamApiFormat,
+          capabilities,
+        }) ?? template;
+        const connectivityResult = await testStationKeyConnectivity(item.id);
+        if (!connectivityResult.ok) {
+          throw new Error(`连通性测试未通过，未创建监控：${connectivityResult.message}`);
+        }
+        await createChannelMonitor(createStationKeyMonitorInput(item, preferredTemplate, capabilities, connectivityResult.model));
       }
       await refresh();
       toast.success(nextEnabled ? "监控已开启" : "监控已停用");

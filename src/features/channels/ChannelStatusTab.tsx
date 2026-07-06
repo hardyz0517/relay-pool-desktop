@@ -22,6 +22,7 @@ import { Button, EmptyState, SegmentedControl, StatusBadge, useToast } from "@/c
 import { listChannelMonitorRuns, listChannelMonitors } from "@/lib/api/channelMonitors";
 import { listRequestLogs } from "@/lib/api/proxy";
 import { listStationKeyHealth } from "@/lib/api/routing";
+import { pingStationEndpoint } from "@/lib/api/stations";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import type { ChannelMonitor, ChannelMonitorRun } from "@/lib/types/channelMonitors";
 import type { RequestLog } from "@/lib/types/proxy";
@@ -95,6 +96,7 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
   const [channelOrder, setChannelOrder] = useState<string[]>([]);
   const [timeWindow, setTimeWindow] = useState<ChannelWindow>("recent");
   const [loading, setLoading] = useState(true);
+  const [pinging, setPinging] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -166,6 +168,27 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
     }
   }
 
+  async function pingAllVisibleStations() {
+    const stationIds = Array.from(new Set(keys.map((key) => key.stationId)));
+    if (stationIds.length === 0) {
+      toast.info("暂无可 PING 的中转站");
+      return;
+    }
+
+    setPinging(true);
+    try {
+      await Promise.all(stationIds.map((stationId) => pingStationEndpoint(stationId)));
+      await refresh(false);
+      toast.success("端点 PING 已完成");
+    } catch (pingError) {
+      const message = readError(pingError);
+      toast.error("端点 PING 失败", message);
+      await refresh(false);
+    } finally {
+      setPinging(false);
+    }
+  }
+
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -179,10 +202,16 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
           ]}
           onChange={setTimeWindow}
         />
-        <Button variant="secondary" onClick={() => void refresh(true)}>
-          <RefreshCw className="h-4 w-4" />
-          刷新
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" disabled={pinging || loading} onClick={() => void pingAllVisibleStations()}>
+            <Radio className="h-4 w-4" />
+            {pinging ? "PING 中" : "PING"}
+          </Button>
+          <Button variant="secondary" disabled={loading} onClick={() => void refresh(true)}>
+            <RefreshCw className="h-4 w-4" />
+            刷新
+          </Button>
+        </div>
       </div>
 
       {error && <div className="rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
@@ -405,6 +434,7 @@ function buildChannels(
     const { conversationLatencyMs, endpointPingMs } = resolveChannelLatencyMetrics({
       requestLatencyMs: monitorLatencyMs ?? requestLatencyMs,
       healthLatencyMs,
+      endpointPingMs: key.endpointPingMs,
     });
     const recentOutcomes = monitorRuns.length > 0
       ? buildMonitorRecentOutcomes(monitorRuns)

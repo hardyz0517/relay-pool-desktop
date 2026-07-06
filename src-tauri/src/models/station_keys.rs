@@ -34,6 +34,7 @@ pub struct KeyPoolItem {
     pub station_name: String,
     pub station_type: String,
     pub station_base_url: String,
+    pub station_upstream_api_format: String,
     pub name: String,
     pub api_key_masked: String,
     pub api_key_present: bool,
@@ -59,6 +60,10 @@ pub struct KeyPoolItem {
     pub avg_latency_ms: Option<i64>,
     pub consecutive_failures: i64,
     pub last_error_summary: Option<String>,
+    pub endpoint_ping_status: String,
+    pub endpoint_ping_ms: Option<i64>,
+    pub endpoint_ping_checked_at: Option<String>,
+    pub endpoint_ping_error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

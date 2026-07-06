@@ -39,7 +39,7 @@ use crate::models::{
     secrets::{SecretMigrationReport, SecretScanFinding},
     settings::{AppSettings, UpdateSettingsInput},
     station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
-    stations::{CreateStationInput, Station, UpdateStationInput},
+    stations::{CreateStationInput, Station, StationEndpointHealth, UpdateStationInput},
 };
 use crate::services::change_events::{
     STATUS_DISMISSED, STATUS_READ, STATUS_RESOLVED, STATUS_UNREAD,
@@ -1084,6 +1084,14 @@ impl AppDatabase {
         list_change_events_from_connection(&connection)
     }
 
+    pub fn clear_change_events(&self) -> Result<(), String> {
+        let connection = self.connection()?;
+        connection
+            .execute("DELETE FROM change_events", [])
+            .map_err(|error| format!("清除变更事件失败: {error}"))?;
+        Ok(())
+    }
+
     pub fn list_change_events_for_station(
         &self,
         station_id: String,
@@ -1177,6 +1185,38 @@ impl AppDatabase {
     ) -> Result<StationKeyHealth, String> {
         let connection = self.connection()?;
         station_key_health_by_id(&connection, &station_key_id)
+    }
+
+    pub fn list_station_endpoint_health(&self) -> Result<Vec<StationEndpointHealth>, String> {
+        let connection = self.connection()?;
+        list_station_endpoint_health_from_connection(&connection)
+    }
+
+    pub fn get_station_endpoint_health(
+        &self,
+        station_id: String,
+    ) -> Result<StationEndpointHealth, String> {
+        let connection = self.connection()?;
+        station_endpoint_health_by_id(&connection, &station_id)
+    }
+
+    pub fn upsert_station_endpoint_health(
+        &self,
+        station_id: &str,
+        status: &str,
+        latency_ms: Option<i64>,
+        checked_at: &str,
+        error_summary: Option<&str>,
+    ) -> Result<StationEndpointHealth, String> {
+        let connection = self.connection()?;
+        upsert_station_endpoint_health_in_connection(
+            &connection,
+            station_id,
+            status,
+            latency_ms,
+            checked_at,
+            error_summary,
+        )
     }
 
     pub fn record_station_key_success(
@@ -1530,6 +1570,16 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             cooldown_until TEXT,
             updated_at TEXT NOT NULL,
             FOREIGN KEY(station_key_id) REFERENCES station_keys(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS station_endpoint_health (
+            station_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL CHECK(status IN ('unchecked', 'success', 'failed')),
+            latency_ms INTEGER CHECK(latency_ms IS NULL OR latency_ms >= 0),
+            checked_at TEXT,
+            error_summary TEXT,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS change_events (
@@ -4127,11 +4177,17 @@ fn list_key_pool_items_from_connection(
                 h.failure_count,
                 h.avg_latency_ms,
                 COALESCE(h.consecutive_failures, 0),
-                h.last_error_summary
+                h.last_error_summary,
+                s.upstream_api_format,
+                COALESCE(eh.status, 'unchecked') AS endpoint_ping_status,
+                eh.latency_ms AS endpoint_ping_ms,
+                eh.checked_at AS endpoint_ping_checked_at,
+                eh.error_summary AS endpoint_ping_error
              FROM station_keys k
              INNER JOIN stations s ON s.id = k.station_id
              LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
              LEFT JOIN station_key_health h ON h.station_key_id = k.id
+             LEFT JOIN station_endpoint_health eh ON eh.station_id = s.id
              ORDER BY k.priority ASC, k.created_at ASC",
         )
         .map_err(|error| format!("读取 Key 池失败: {error}"))?;
@@ -4161,6 +4217,7 @@ fn list_key_pool_items_from_connection(
                 station_name: row.get(2)?,
                 station_type: row.get(3)?,
                 station_base_url: row.get(4)?,
+                station_upstream_api_format: row.get(42)?,
                 name: row.get(5)?,
                 api_key_masked,
                 api_key_present,
@@ -4198,6 +4255,10 @@ fn list_key_pool_items_from_connection(
                 avg_latency_ms: row.get(39)?,
                 consecutive_failures: row.get(40)?,
                 last_error_summary: row.get(41)?,
+                endpoint_ping_status: row.get(43)?,
+                endpoint_ping_ms: row.get(44)?,
+                endpoint_ping_checked_at: row.get(45)?,
+                endpoint_ping_error: row.get(46)?,
                 created_at: row.get(23)?,
                 updated_at: row.get(24)?,
             })
@@ -4486,6 +4547,107 @@ fn default_station_key_health(station_key_id: &str) -> StationKeyHealth {
         cooldown_until: None,
         updated_at: now_string(),
     }
+}
+
+fn list_station_endpoint_health_from_connection(
+    connection: &Connection,
+) -> Result<Vec<StationEndpointHealth>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT station_id, status, latency_ms, checked_at, error_summary, updated_at
+               FROM station_endpoint_health
+              ORDER BY updated_at DESC",
+        )
+        .map_err(|error| format!("读取端点 PING 状态失败: {error}"))?;
+    let rows = statement
+        .query_map([], row_to_station_endpoint_health)
+        .map_err(|error| format!("查询端点 PING 状态失败: {error}"))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| format!("解析端点 PING 状态失败: {error}"))?;
+    Ok(rows)
+}
+
+fn station_endpoint_health_by_id(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<StationEndpointHealth, String> {
+    validate_station_exists(connection, station_id)?;
+    let row = connection
+        .query_row(
+            "SELECT station_id, status, latency_ms, checked_at, error_summary, updated_at
+               FROM station_endpoint_health
+              WHERE station_id = ?1",
+            params![station_id],
+            row_to_station_endpoint_health,
+        )
+        .optional()
+        .map_err(|error| format!("读取端点 PING 状态失败: {error}"))?;
+    Ok(row.unwrap_or_else(|| default_station_endpoint_health(station_id)))
+}
+
+fn row_to_station_endpoint_health(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<StationEndpointHealth> {
+    Ok(StationEndpointHealth {
+        station_id: row.get(0)?,
+        status: row.get(1)?,
+        latency_ms: row.get(2)?,
+        checked_at: row.get(3)?,
+        error_summary: row.get(4)?,
+        updated_at: row.get(5)?,
+    })
+}
+
+fn default_station_endpoint_health(station_id: &str) -> StationEndpointHealth {
+    StationEndpointHealth {
+        station_id: station_id.to_string(),
+        status: "unchecked".to_string(),
+        latency_ms: None,
+        checked_at: None,
+        error_summary: None,
+        updated_at: now_string(),
+    }
+}
+
+fn upsert_station_endpoint_health_in_connection(
+    connection: &Connection,
+    station_id: &str,
+    status: &str,
+    latency_ms: Option<i64>,
+    checked_at: &str,
+    error_summary: Option<&str>,
+) -> Result<StationEndpointHealth, String> {
+    validate_station_exists(connection, station_id)?;
+    if !matches!(status, "unchecked" | "success" | "failed") {
+        return Err("端点 PING 状态无效".to_string());
+    }
+    if latency_ms.is_some_and(|value| value < 0) {
+        return Err("端点 PING 延迟不能为负数".to_string());
+    }
+
+    let updated_at = now_string();
+    connection
+        .execute(
+            "INSERT INTO station_endpoint_health (
+                station_id, status, latency_ms, checked_at, error_summary, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(station_id) DO UPDATE SET
+                status = excluded.status,
+                latency_ms = excluded.latency_ms,
+                checked_at = excluded.checked_at,
+                error_summary = excluded.error_summary,
+                updated_at = excluded.updated_at",
+            params![
+                station_id,
+                status,
+                latency_ms,
+                checked_at,
+                error_summary,
+                updated_at,
+            ],
+        )
+        .map_err(|error| format!("写入端点 PING 状态失败: {error}"))?;
+    station_endpoint_health_by_id(connection, station_id)
 }
 
 fn station_id_for_key(
@@ -8066,6 +8228,33 @@ mod tests {
     }
 
     #[test]
+    fn station_endpoint_health_flows_into_key_pool_items() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "endpoint-health-relay");
+
+        let default_health = database
+            .get_station_endpoint_health(station.id.clone())
+            .expect("default endpoint health");
+        assert_eq!(default_health.status, "unchecked");
+        assert_eq!(default_health.latency_ms, None);
+
+        database
+            .upsert_station_endpoint_health(&station.id, "success", Some(38), "1000", None)
+            .expect("endpoint health");
+
+        let key_pool_item = database
+            .list_key_pool_items()
+            .expect("key pool")
+            .into_iter()
+            .find(|item| item.station_id == station.id)
+            .expect("station key pool item");
+        assert_eq!(key_pool_item.endpoint_ping_status, "success");
+        assert_eq!(key_pool_item.endpoint_ping_ms, Some(38));
+        assert_eq!(key_pool_item.endpoint_ping_checked_at.as_deref(), Some("1000"));
+        assert_eq!(key_pool_item.endpoint_ping_error, None);
+    }
+
+    #[test]
     fn create_station_without_api_key_creates_station_without_default_key() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let data_key = [7_u8; 32];
@@ -9071,6 +9260,37 @@ mod tests {
         assert_eq!(item.group_binding_id.as_deref(), Some(binding.id.as_str()));
         assert_eq!(item.rate_multiplier, Some(0.72));
         assert_eq!(item.balance_scope.as_deref(), Some("station"));
+    }
+
+    #[test]
+    fn key_pool_items_include_station_upstream_api_format() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = database
+            .create_station(CreateStationInput {
+                name: "responses station".to_string(),
+                station_type: "openai-compatible".to_string(),
+                base_url: "https://responses.example".to_string(),
+                api_key: "sk-responses".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+        {
+            let connection = database.connection().expect("connection");
+            connection
+                .execute(
+                    "UPDATE stations SET upstream_api_format = 'openai_responses' WHERE id = ?1",
+                    params![station.id],
+                )
+                .expect("set upstream format");
+        }
+
+        let item = database.list_key_pool_items().expect("key pool").remove(0);
+
+        assert_eq!(item.station_upstream_api_format, "openai_responses");
     }
 
     #[test]

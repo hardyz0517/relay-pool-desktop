@@ -48,6 +48,24 @@ export type StationUpdateInput = Omit<StationInput, "apiKey"> & {
   apiKey: string | null;
 };
 
+export type StationEndpointHealth = {
+  stationId: string;
+  status: "unchecked" | "success" | "failed";
+  latencyMs: number | null;
+  checkedAt: string | null;
+  errorSummary: string | null;
+  updatedAt: string;
+};
+
+export type EndpointPingResult = {
+  stationId: string;
+  ok: boolean;
+  status: "success" | "failed";
+  latencyMs: number | null;
+  checkedAt: string;
+  errorSummary: string | null;
+};
+
 export const stationTypeLabels: Record<StationType, string> = {
   sub2api: "Sub2API",
   newapi: "NewAPI",

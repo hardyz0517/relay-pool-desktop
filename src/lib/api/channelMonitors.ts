@@ -222,6 +222,30 @@ function ensureMemoryTemplates() {
       createdAt: now,
       updatedAt: now,
     },
+    {
+      id: "preview-openai-responses-default",
+      name: "Preview OpenAI Responses Probe",
+      endpointKind: "responses",
+      method: "POST",
+      path: "/v1/responses",
+      requestBodyJson: JSON.stringify(
+        {
+          model: "{{model}}",
+          instructions: "Reply with OK only.",
+          input: "{{challenge}}",
+          max_output_tokens: 1,
+          store: false,
+          stream: false,
+        },
+        null,
+        2,
+      ),
+      enabled: true,
+      builtIn: true,
+      note: "Browser preview template; real templates are stored by the Tauri backend.",
+      createdAt: now,
+      updatedAt: now,
+    },
   ];
   return memoryTemplates;
 }

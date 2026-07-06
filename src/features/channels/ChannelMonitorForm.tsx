@@ -9,9 +9,12 @@ import {
   createEmptyMonitorDraft,
   draftToMonitorInput,
   formatTemplateLabel,
+  monitorTemplateOptionsForProtocol,
   monitorToDraft,
+  protocolForMonitorTemplate,
   targetTypeOptions,
   validateMonitorDraft,
+  type ChannelMonitorProtocol,
   type ChannelMonitorDraft,
 } from "./channelMonitorViewModel";
 
@@ -28,6 +31,23 @@ type ChannelMonitorFormProps = {
 
 const inputClassName =
   "h-8 rounded-[8px] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:ring-2 focus:ring-teal-100";
+
+const protocolOptions: Array<{
+  value: ChannelMonitorProtocol;
+  title: string;
+  description: string;
+}> = [
+  {
+    value: "chat_completions",
+    title: "OpenAI Compatible",
+    description: "使用 /v1/chat/completions，发送 messages；适合大多数兼容站。",
+  },
+  {
+    value: "responses",
+    title: "Responses API",
+    description: "使用 /v1/responses，默认带 instructions + input；适合本站自检/Codex。",
+  },
+];
 
 export function ChannelMonitorForm({
   open,
@@ -66,15 +86,20 @@ export function ChannelMonitorForm({
       })),
     [stationKeys],
   );
+  const selectedProtocol = protocolForMonitorTemplate(draft.templateId, templates);
+  const protocolTemplates = useMemo(
+    () => monitorTemplateOptionsForProtocol(templates, selectedProtocol),
+    [selectedProtocol, templates],
+  );
   const templateOptions = useMemo(
     () =>
-      templates.map((template) => ({
+      protocolTemplates.map((template) => ({
         value: template.id,
         label: template.name,
         description: formatTemplateLabel(template),
         disabled: !template.enabled,
       })),
-    [templates],
+    [protocolTemplates],
   );
   const validationError = validateMonitorDraft(draft, { templates, keys });
   const canSubmit = !validationError && !saving;
@@ -97,6 +122,15 @@ export function ChannelMonitorForm({
       targetType,
       stationKeyId: targetType === "station_key" ? stationKeys.find((key) => key.enabled)?.id ?? "" : "",
     });
+  }
+
+  function handleProtocolChange(protocol: ChannelMonitorProtocol) {
+    const nextTemplate = monitorTemplateOptionsForProtocol(templates, protocol)
+      .find((template) => template.enabled);
+    if (!nextTemplate) {
+      return;
+    }
+    updateDraft({ templateId: nextTemplate.id });
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -195,6 +229,31 @@ export function ChannelMonitorForm({
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
+          <Field label="OpenAI 协议" className="md:col-span-2">
+            <div className="grid gap-2 rounded-[8px] border border-sky-100 bg-sky-50/35 p-2 md:grid-cols-2">
+              {protocolOptions.map((option) => {
+                const active = selectedProtocol === option.value;
+                const disabled = !monitorTemplateOptionsForProtocol(templates, option.value).some((template) => template.enabled);
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`min-h-[64px] rounded-[8px] border bg-white px-3 py-2 text-left transition ${
+                      active
+                        ? "border-teal-500 text-teal-700 shadow-[0_0_0_1px_rgba(20,184,166,0.16)]"
+                        : "border-border text-slate-600 hover:border-teal-200 hover:bg-teal-50/25"
+                    } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+                    disabled={disabled}
+                    onClick={() => handleProtocolChange(option.value)}
+                  >
+                    <div className="text-sm font-semibold">{option.title}</div>
+                    <div className="mt-1 text-xs leading-5 text-muted-foreground">{option.description}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+
           <Field label="请求模板">
             <SelectControl
               ariaLabel="请求模板"
@@ -275,9 +334,9 @@ function NumberInput({
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children, className = "" }: { label: string; children: ReactNode; className?: string }) {
   return (
-    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+    <label className={`grid gap-1.5 text-xs font-medium text-muted-foreground ${className}`}>
       {label}
       {children}
     </label>

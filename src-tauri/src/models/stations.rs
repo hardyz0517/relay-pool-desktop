@@ -26,6 +26,28 @@ pub struct Station {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StationEndpointHealth {
+    pub station_id: String,
+    pub status: String,
+    pub latency_ms: Option<i64>,
+    pub checked_at: Option<String>,
+    pub error_summary: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndpointPingResult {
+    pub station_id: String,
+    pub ok: bool,
+    pub status: String,
+    pub latency_ms: Option<i64>,
+    pub checked_at: String,
+    pub error_summary: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateStationInput {

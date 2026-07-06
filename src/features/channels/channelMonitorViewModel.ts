@@ -37,6 +37,14 @@ type MonitorValidationContext = {
   keys: KeyPoolItem[];
 };
 
+type StationKeyMonitorTemplatePreference = {
+  stationType?: string | null;
+  stationUpstreamApiFormat?: string | null;
+  capabilities?: Pick<StationKeyCapabilities, "supportsChatCompletions" | "supportsResponses"> | null;
+};
+
+export type ChannelMonitorProtocol = "chat_completions" | "responses";
+
 export const DEFAULT_STATION_KEY_MONITOR_MODEL = "gpt-4o-mini";
 export const DEFAULT_STATION_KEY_MONITOR_TEMPLATE_ID = "builtin-openai-responses-low-token";
 export const STATION_KEY_MONITOR_NOTE = "由密钥池监控开关创建";
@@ -57,13 +65,49 @@ export function findStationKeyMonitor(
 
 export function preferredStationKeyMonitorTemplate(
   templates: Array<Pick<ChannelMonitorRequestTemplate, "id" | "enabled" | "endpointKind">>,
+  preference: StationKeyMonitorTemplatePreference = {},
 ) {
-  return templates.find((template) => template.enabled && template.id === "builtin-openai-chat-low-token") ??
+  const chatTemplate = templates.find((template) => template.enabled && template.id === "builtin-openai-chat-low-token") ??
     templates.find((template) => template.enabled && template.endpointKind === "chat_completions") ??
-    templates.find((template) => template.enabled && template.id === DEFAULT_STATION_KEY_MONITOR_TEMPLATE_ID) ??
+    null;
+  const responsesTemplate = templates.find((template) => template.enabled && template.id === DEFAULT_STATION_KEY_MONITOR_TEMPLATE_ID) ??
     templates.find((template) => template.enabled && template.endpointKind === "responses") ??
+    null;
+  const supportsChat = preference.capabilities?.supportsChatCompletions !== false;
+  const supportsResponses = preference.capabilities?.supportsResponses !== false;
+
+  if (preference.stationUpstreamApiFormat === "openai_chat_completions" && supportsChat) {
+    return chatTemplate ?? responsesTemplate ?? templates.find((template) => template.enabled) ?? null;
+  }
+  if (preference.stationUpstreamApiFormat === "openai_responses" && supportsResponses) {
+    return responsesTemplate ?? chatTemplate ?? templates.find((template) => template.enabled) ?? null;
+  }
+  if (!supportsResponses && supportsChat) {
+    return chatTemplate ?? templates.find((template) => template.enabled) ?? null;
+  }
+  if (!supportsChat && supportsResponses) {
+    return responsesTemplate ?? templates.find((template) => template.enabled) ?? null;
+  }
+
+  return responsesTemplate ??
+    chatTemplate ??
     templates.find((template) => template.enabled) ??
     null;
+}
+
+export function protocolForMonitorTemplate(
+  templateId: string,
+  templates: Array<Pick<ChannelMonitorRequestTemplate, "id" | "endpointKind">>,
+): ChannelMonitorProtocol {
+  const endpointKind = templates.find((template) => template.id === templateId)?.endpointKind;
+  return endpointKind === "responses" ? "responses" : "chat_completions";
+}
+
+export function monitorTemplateOptionsForProtocol<T extends Pick<ChannelMonitorRequestTemplate, "endpointKind">>(
+  templates: T[],
+  protocol: ChannelMonitorProtocol,
+) {
+  return templates.filter((template) => template.endpointKind === protocol);
 }
 
 export function selectStationKeyMonitorModel(
@@ -84,7 +128,9 @@ export function createStationKeyMonitorInput(
   key: Pick<KeyPoolItem, "id" | "stationId" | "name">,
   template: Pick<ChannelMonitorRequestTemplate, "id">,
   capabilities?: Pick<StationKeyCapabilities, "modelAllowlist" | "modelBlocklist" | "preferredModels"> | null,
+  testedModel?: string | null,
 ): CreateChannelMonitorInput {
+  const fallbackModel = testedModel?.trim() || selectStationKeyMonitorModel(capabilities);
   return {
     name: `${key.name} 监控`,
     targetType: "station_key",
@@ -97,7 +143,7 @@ export function createStationKeyMonitorInput(
     timeoutSeconds: 30,
     maxConcurrency: 1,
     consecutiveFailureThreshold: 3,
-    fallbackModels: [selectStationKeyMonitorModel(capabilities)],
+    fallbackModels: [fallbackModel],
     note: STATION_KEY_MONITOR_NOTE,
   };
 }

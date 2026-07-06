@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { mockStations } from "@/lib/mock";
-import type { Station, StationInput, StationUpdateInput } from "@/lib/types/stations";
+import type { EndpointPingResult, Station, StationEndpointHealth, StationInput, StationUpdateInput } from "@/lib/types/stations";
 
 let memoryStations: Station[] | null = null;
+const memoryEndpointHealth = new Map<string, StationEndpointHealth>();
 
 function isInvokeUnavailable(error: unknown) {
   return error instanceof Error && /invoke/i.test(error.message);
@@ -146,6 +147,41 @@ export function reorderStations(stationIds: string[]) {
         .filter((station): station is Station => Boolean(station));
       memoryStations = nextStations;
       return nextStations;
+    }
+    throw error;
+  });
+}
+
+export function listStationEndpointHealth() {
+  return invoke<StationEndpointHealth[]>("list_station_endpoint_health").catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return Array.from(memoryEndpointHealth.values());
+    }
+    throw error;
+  });
+}
+
+export function pingStationEndpoint(stationId: string) {
+  return invoke<EndpointPingResult>("ping_station_endpoint", { stationId }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      const now = new Date().toISOString();
+      const result: EndpointPingResult = {
+        stationId,
+        ok: false,
+        status: "failed",
+        latencyMs: null,
+        checkedAt: now,
+        errorSummary: "浏览器预览环境没有 Tauri 后端，无法执行真实端点 PING。",
+      };
+      memoryEndpointHealth.set(stationId, {
+        stationId,
+        status: result.status,
+        latencyMs: result.latencyMs,
+        checkedAt: result.checkedAt,
+        errorSummary: result.errorSummary,
+        updatedAt: now,
+      });
+      return result;
     }
     throw error;
   });

@@ -521,6 +521,7 @@ function memoryPoolItemFromKey(key: StationKey, station: Station | null): KeyPoo
     stationName: station?.name ?? "未命名中转站",
     stationType: station?.stationType ?? "custom",
     stationBaseUrl: station?.baseUrl ?? "",
+    stationUpstreamApiFormat: "auto",
     capabilitySummary: [],
     modelScopeSummary: "全部模型",
     onlyUseAsBackup: false,
@@ -529,6 +530,10 @@ function memoryPoolItemFromKey(key: StationKey, station: Station | null): KeyPoo
     avgLatencyMs: null,
     consecutiveFailures: 0,
     lastErrorSummary: null,
+    endpointPingStatus: "unchecked",
+    endpointPingMs: null,
+    endpointPingCheckedAt: null,
+    endpointPingError: null,
     bindingStatus: null,
     priceState: null,
   };

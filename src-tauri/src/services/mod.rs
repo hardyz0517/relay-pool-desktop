@@ -3,6 +3,7 @@ pub mod change_events;
 pub mod channel_monitors;
 pub mod collectors;
 pub mod database;
+pub mod endpoint_ping;
 pub mod health;
 pub mod logs;
 pub mod pricing;
