@@ -96,7 +96,6 @@ type GroupCandidate = {
   groupMultiplier: number | null;
   source: string;
   checkedAt: string | null;
-  searchableText: string;
 };
 
 const evidenceLabels: Record<PricingEvidenceStatus, string> = {
@@ -327,16 +326,6 @@ function bindingCandidate(
     ),
     source: rate?.source ?? binding.rateSource ?? "station_group_binding",
     checkedAt: rate?.checkedAt ?? binding.lastCheckedAt ?? binding.updatedAt,
-    searchableText: [
-      binding.groupName,
-      binding.bindingStatus,
-      binding.rateSource,
-      searchableJsonText(binding.rawJsonRedacted),
-      rate?.groupName,
-      rate?.source,
-      searchableJsonText(rate?.rawJsonRedacted ?? null),
-      station.name,
-    ].join(" "),
   };
 }
 
@@ -354,12 +343,6 @@ function rateCandidate(rate: GroupRateRecord, station: Station): GroupCandidate 
     ),
     source: rate.source,
     checkedAt: rate.checkedAt,
-    searchableText: [
-      rate.groupName,
-      rate.source,
-      searchableJsonText(rate.rawJsonRedacted),
-      station.name,
-    ].join(" "),
   };
 }
 
