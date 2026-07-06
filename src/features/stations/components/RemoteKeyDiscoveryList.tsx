@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link2 } from "lucide-react";
-import { Button, SelectControl, StatusBadge, type StatusTone } from "@/components/ui";
+import { Button, SelectControl, StatusBadge, SwitchControl, type StatusTone } from "@/components/ui";
 import type { RemoteKeyMatchStatus, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
 
@@ -8,7 +8,9 @@ type RemoteKeyDiscoveryListProps = {
   keys: RemoteStationKey[];
   localKeys: StationKey[];
   loading?: boolean;
+  localKeyIdsCreatedByRemote?: Record<string, string>;
   onBind: (remoteKeyId: string, stationKeyId: string) => void;
+  onLocalKeyToggle: (remoteKey: RemoteStationKey, checked: boolean) => void;
 };
 
 const matchStatusLabel: Record<RemoteKeyMatchStatus, string> = {
@@ -30,7 +32,9 @@ export function RemoteKeyDiscoveryList({
   keys,
   localKeys,
   loading = false,
+  localKeyIdsCreatedByRemote = {},
   onBind,
+  onLocalKeyToggle,
 }: RemoteKeyDiscoveryListProps) {
   const [selectedLocalKeyIds, setSelectedLocalKeyIds] = useState<Record<string, string>>({});
 
@@ -73,14 +77,15 @@ export function RemoteKeyDiscoveryList({
   return (
     <div className="grid gap-2">
       <div className="overflow-x-auto">
-        <div className="min-w-[860px]">
-          <div className="grid h-7 grid-cols-[minmax(8rem,1fr)_5.5rem_minmax(8rem,1fr)_minmax(7rem,0.8fr)_5rem_minmax(8rem,1fr)_minmax(13rem,1.1fr)] items-center gap-2 border-b border-border px-1 text-[11px] font-medium text-muted-foreground">
+        <div className="min-w-[960px]">
+          <div className="grid h-7 grid-cols-[minmax(8rem,1fr)_5.5rem_minmax(8rem,1fr)_minmax(7rem,0.8fr)_5rem_minmax(8rem,1fr)_6.5rem_minmax(13rem,1.1fr)] items-center gap-2 border-b border-border px-1 text-[11px] font-medium text-muted-foreground">
             <span>远端名称</span>
             <span>状态</span>
             <span>密钥</span>
             <span>分组</span>
             <span>倍率</span>
             <span>本地匹配</span>
+            <span>作为本地秘钥</span>
             <span className="text-right">绑定</span>
           </div>
 
@@ -89,6 +94,8 @@ export function RemoteKeyDiscoveryList({
               const matchedLocalKey = key.matchedStationKeyId
                 ? localKeyById.get(key.matchedStationKeyId) ?? null
                 : null;
+              const remoteCreatedLocalKeyId = localKeyIdsCreatedByRemote[key.id] ?? null;
+              const hasLocalKey = Boolean(remoteCreatedLocalKeyId || matchedLocalKey);
               const selectedLocalKeyId = selectedLocalKeyIds[key.id];
               const effectiveSelectedLocalKeyId =
                 selectedLocalKeyId && localKeyById.has(selectedLocalKeyId)
@@ -104,7 +111,7 @@ export function RemoteKeyDiscoveryList({
               return (
                 <div
                   key={key.id}
-                  className="grid min-h-9 grid-cols-[minmax(8rem,1fr)_5.5rem_minmax(8rem,1fr)_minmax(7rem,0.8fr)_5rem_minmax(8rem,1fr)_minmax(13rem,1.1fr)] items-center gap-2 rounded-[var(--surface-radius)] px-1 text-xs text-slate-700"
+                  className="grid min-h-9 grid-cols-[minmax(8rem,1fr)_5.5rem_minmax(8rem,1fr)_minmax(7rem,0.8fr)_5rem_minmax(8rem,1fr)_6.5rem_minmax(13rem,1.1fr)] items-center gap-2 rounded-[var(--surface-radius)] px-1 text-xs text-slate-700"
                 >
                   <span className="min-w-0 truncate font-medium text-slate-900">
                     {key.remoteKeyName?.trim() || key.remoteKeyIdHash || "未命名 Key"}
@@ -127,6 +134,14 @@ export function RemoteKeyDiscoveryList({
                   >
                     {matchedLocalKey ? matchedLocalKey.name : key.matchStatus === "possible" ? "待确认" : "未绑定"}
                   </span>
+                  <SwitchControl
+                    ariaLabel={`${key.remoteKeyName ?? "远端 Key"} 作为本地秘钥`}
+                    checked={hasLocalKey}
+                    className="h-7 w-11 border-0 bg-transparent p-0 shadow-none"
+                    disabled={loading}
+                    showLabel={false}
+                    onCheckedChange={() => onLocalKeyToggle(key, !hasLocalKey)}
+                  />
                   <div className="flex min-w-0 justify-end gap-2">
                     {canBind ? (
                       localKeys.length > 0 ? (

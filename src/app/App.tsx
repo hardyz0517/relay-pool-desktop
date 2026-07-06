@@ -10,6 +10,7 @@ import { SettingsPage } from "@/features/settings/SettingsPage";
 import { ChannelStatusPage } from "@/features/channels/ChannelStatusPage";
 import { ChangeCenterPage } from "@/features/changes/ChangeCenterPage";
 import { AddKeyPage } from "@/features/key-pool/AddKeyPage";
+import { EditKeyPage } from "@/features/key-pool/EditKeyPage";
 import { AddProviderPage } from "@/features/stations/AddProviderPage";
 import { StationDetailPage } from "@/features/stations/StationDetailPage";
 import { StationsPage } from "@/features/stations/StationsPage";
@@ -23,6 +24,7 @@ export function App() {
   const [detailStationId, setDetailStationId] = useState<string | null>(null);
   const [detailStationPreview, setDetailStationPreview] = useState<Station | null>(null);
   const [initialKeyStationId, setInitialKeyStationId] = useState<string | null>(null);
+  const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
   const activeShellRouteId = getShellRouteId(activeRouteId);
 
   function returnToStations() {
@@ -34,6 +36,7 @@ export function App() {
 
   function returnToKeyPool() {
     setInitialKeyStationId(null);
+    setEditingKeyId(null);
     setActiveRouteId("keyPool");
   }
 
@@ -50,7 +53,14 @@ export function App() {
 
   function openAddKey(stationId: string | null) {
     setInitialKeyStationId(stationId);
+    setEditingKeyId(null);
     setActiveRouteId("addKey");
+  }
+
+  function openEditKey(stationKeyId: string) {
+    setEditingKeyId(stationKeyId);
+    setInitialKeyStationId(null);
+    setActiveRouteId("editKey");
   }
 
   const page = useMemo(() => {
@@ -87,6 +97,14 @@ export function App() {
             onCreated={returnToKeyPool}
           />
         );
+      case "editKey":
+        return (
+          <EditKeyPage
+            stationKeyId={editingKeyId}
+            onBack={returnToKeyPool}
+            onUpdated={returnToKeyPool}
+          />
+        );
       case "stations":
         return (
           <StationsPage
@@ -96,7 +114,7 @@ export function App() {
           />
         );
       case "keyPool":
-        return <KeyPoolPage onAddKey={openAddKey} />;
+        return <KeyPoolPage onAddKey={openAddKey} onEditKey={openEditKey} />;
       case "channels":
         return <ChannelStatusPage />;
       case "collectors":
@@ -115,7 +133,7 @@ export function App() {
       default:
         return <DashboardPage />;
     }
-  }, [activeRouteId, editingStationId, detailStationId, detailStationPreview, initialKeyStationId]);
+  }, [activeRouteId, editingStationId, detailStationId, detailStationPreview, initialKeyStationId, editingKeyId]);
 
   return (
     <AppShell activeRouteId={activeShellRouteId} onRouteChange={(routeId) => setActiveRouteId(routeId)}>
@@ -128,7 +146,7 @@ function getShellRouteId(pageId: AppPageId): AppRouteId {
   if (pageId === "addProvider" || pageId === "editProvider" || pageId === "stationDetail") {
     return "stations";
   }
-  if (pageId === "addKey") {
+  if (pageId === "addKey" || pageId === "editKey") {
     return "keyPool";
   }
   return pageId;

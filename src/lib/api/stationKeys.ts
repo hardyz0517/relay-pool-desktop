@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listStations } from "@/lib/api/stations";
 import type {
+  CreateLocalStationKeyFromRemoteResult,
   CreateRemoteStationKeyInput,
   CreateRemoteStationKeyResult,
   CreateStationKeyInput,
@@ -74,7 +75,7 @@ export function createRemoteStationKey(input: CreateRemoteStationKeyInput): Prom
         name: input.name,
         apiKey: fullKeyOnce,
         enabled: true,
-        groupBindingId: null,
+        groupBindingId: input.groupBindingId,
         groupIdHash: input.groupIdHash,
         groupName: input.groupName,
         tierLabel: null,
@@ -94,6 +95,21 @@ export function createRemoteStationKey(input: CreateRemoteStationKeyInput): Prom
         fullKeyOnce,
         message: "浏览器预览模式：已创建本地临时密钥，真实远端创建将在桌面端执行。",
       };
+    }
+    throw error;
+  });
+}
+
+export function createLocalStationKeyFromRemote(
+  remoteKeyId: string,
+  stationId: string,
+): Promise<CreateLocalStationKeyFromRemoteResult> {
+  return invoke<CreateLocalStationKeyFromRemoteResult>("create_local_station_key_from_remote", {
+    remoteKeyId,
+    stationId,
+  }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      throw new Error("浏览器预览模式无法读取远端完整 Key，请在桌面端同步或手动补全。");
     }
     throw error;
   });
@@ -132,6 +148,29 @@ export function bindRemoteStationKey(remoteKeyId: string, stationKeyId: string):
       }
 
       memoryRemoteKeys.set(targetKey.stationId, nextKeys);
+      return nextKeys;
+    }
+    throw error;
+  });
+}
+
+export function unbindRemoteStationKey(remoteKeyId: string, stationId: string): Promise<RemoteStationKey[]> {
+  return invoke<RemoteStationKey[]>("unbind_remote_station_key", { remoteKeyId, stationId }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      const now = new Date().toISOString();
+      const keys = memoryRemoteKeys.get(stationId) ?? [];
+      const nextKeys = keys.map((key) =>
+        key.id === remoteKeyId
+          ? {
+              ...key,
+              matchStatus: "unbound" as const,
+              matchedStationKeyId: null,
+              matchConfidence: 0,
+              collectedAt: now,
+            }
+          : key,
+      );
+      memoryRemoteKeys.set(stationId, nextKeys);
       return nextKeys;
     }
     throw error;

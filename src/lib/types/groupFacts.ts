@@ -49,9 +49,28 @@ export type GroupRateRecord = {
   createdAt: string;
 };
 
+export type UpsertStationGroupBindingInput = {
+  stationId: string;
+  stationKeyId: string | null;
+  bindingKind: "station_group" | "key_binding";
+  parentGroupBindingId: string | null;
+  groupKeyHash: string;
+  groupIdHash: string | null;
+  groupName: string;
+  bindingStatus: "available" | "bound" | "missing" | "disabled" | "manual_legacy";
+  defaultRateMultiplier: number | null;
+  userRateMultiplier: number | null;
+  effectiveRateMultiplier: number | null;
+  rateSource: string | null;
+  confidence: number;
+  lastSeenAt: string | null;
+  rawJsonRedacted: Record<string, unknown> | null;
+};
+
 export function isCollectedStationGroupBinding(binding: StationGroupBinding) {
   return (
     binding.bindingKind === "station_group" &&
+    binding.bindingStatus !== "disabled" &&
     binding.bindingStatus !== "manual_legacy" &&
     binding.rateSource !== "legacy_key_group"
   );

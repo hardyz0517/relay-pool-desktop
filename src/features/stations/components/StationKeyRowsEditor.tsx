@@ -1,5 +1,5 @@
-import { Plus, Trash2 } from "lucide-react";
-import { Button, SwitchControl } from "@/components/ui";
+import { Trash2 } from "lucide-react";
+import { Button, SelectControl, SwitchControl } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 export type StationKeyDraft = {
@@ -7,6 +7,8 @@ export type StationKeyDraft = {
   id: string | null;
   name: string;
   apiKey: string;
+  groupBindingId: string | null;
+  groupIdHash: string | null;
   groupName: string;
   rateMultiplier: string;
   enabled: boolean;
@@ -14,14 +16,26 @@ export type StationKeyDraft = {
   deleteRequested: boolean;
 };
 
+export type StationKeyGroupOption = {
+  groupBindingId: string | null;
+  groupIdHash: string | null;
+  groupName: string;
+  rateMultiplier: number | null;
+};
+
 type StationKeyRowsEditorProps = {
   rows: StationKeyDraft[];
   disabled?: boolean;
+  groupOptions?: StationKeyGroupOption[];
   onRowsChange: (rows: StationKeyDraft[]) => void;
 };
 
 const inputClassName =
   "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-2.5 text-xs text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.16)] disabled:bg-slate-50 disabled:text-slate-500";
+const selectClassName =
+  "h-8 w-full min-w-0 px-2.5 text-xs shadow-none";
+const keyRowsGridTemplate = "minmax(7rem,1fr) minmax(11rem,1.35fr) minmax(8rem,0.9fr) 6rem 3.75rem 2.5rem";
+const noGroupValue = "__none__";
 
 export function createEmptyStationKeyDraft(index: number): StationKeyDraft {
   return {
@@ -29,6 +43,8 @@ export function createEmptyStationKeyDraft(index: number): StationKeyDraft {
     id: null,
     name: "",
     apiKey: "",
+    groupBindingId: null,
+    groupIdHash: null,
     groupName: "",
     rateMultiplier: "",
     enabled: true,
@@ -37,11 +53,56 @@ export function createEmptyStationKeyDraft(index: number): StationKeyDraft {
   };
 }
 
-export function StationKeyRowsEditor({ rows, disabled, onRowsChange }: StationKeyRowsEditorProps) {
+export function StationKeyRowsEditor({
+  rows,
+  disabled,
+  groupOptions = [],
+  onRowsChange,
+}: StationKeyRowsEditorProps) {
   const visibleRows = rows.filter((row) => !row.deleteRequested);
+  const normalizedGroupOptions = normalizeGroupOptions([
+    ...groupOptions,
+    ...visibleRows
+      .filter((row) => row.groupBindingId || row.groupIdHash || row.groupName.trim())
+      .map((row) => ({
+        groupBindingId: row.groupBindingId,
+        groupIdHash: row.groupIdHash,
+        groupName: row.groupName,
+        rateMultiplier: parseDraftMultiplier(row.rateMultiplier),
+      })),
+  ]);
+  const selectOptions = [
+    { value: noGroupValue, label: "无", description: "不绑定分组，手动填写倍率" },
+    ...normalizedGroupOptions.map((group) => ({
+      value: groupOptionValue(group),
+      label: group.groupName,
+      description:
+        group.rateMultiplier === null ? "未采集倍率" : `${formatMultiplier(group.rateMultiplier)}x`,
+    })),
+  ];
 
   function updateRow(clientId: string, patch: Partial<StationKeyDraft>) {
     onRowsChange(rows.map((row) => (row.clientId === clientId ? { ...row, ...patch } : row)));
+  }
+
+  function selectGroup(row: StationKeyDraft, value: string) {
+    if (value === noGroupValue) {
+      updateRow(row.clientId, { groupBindingId: null, groupIdHash: null, groupName: "" });
+      return;
+    }
+    const selectedGroup = normalizedGroupOptions.find((group) => groupOptionValue(group) === value);
+    if (!selectedGroup) {
+      return;
+    }
+    updateRow(row.clientId, {
+      groupBindingId: selectedGroup.groupBindingId,
+      groupIdHash: selectedGroup.groupIdHash,
+      groupName: selectedGroup.groupName,
+      rateMultiplier:
+        selectedGroup.rateMultiplier === null
+          ? row.rateMultiplier
+          : formatMultiplier(selectedGroup.rateMultiplier),
+    });
   }
 
   function deleteRow(target: StationKeyDraft) {
@@ -56,7 +117,10 @@ export function StationKeyRowsEditor({ rows, disabled, onRowsChange }: StationKe
     <div className="grid gap-2">
       <div className="overflow-x-auto">
         <div className="min-w-[760px]">
-          <div className="grid h-7 grid-cols-[minmax(7rem,1fr)_minmax(11rem,1.35fr)_minmax(7rem,0.85fr)_6rem_5.5rem_2.5rem] items-center gap-2 border-b border-border px-1 text-[11px] font-medium text-muted-foreground">
+          <div
+            className="grid h-7 items-center gap-2 border-b border-border px-1 text-[11px] font-medium text-muted-foreground"
+            style={{ gridTemplateColumns: keyRowsGridTemplate }}
+          >
             <span>名称</span>
             <span>密钥</span>
             <span>分组</span>
@@ -69,7 +133,8 @@ export function StationKeyRowsEditor({ rows, disabled, onRowsChange }: StationKe
             {visibleRows.map((row, index) => (
               <div
                 key={row.clientId}
-                className="grid min-h-9 grid-cols-[minmax(7rem,1fr)_minmax(11rem,1.35fr)_minmax(7rem,0.85fr)_6rem_5.5rem_2.5rem] items-center gap-2"
+                className="grid min-h-9 items-center gap-2"
+                style={{ gridTemplateColumns: keyRowsGridTemplate }}
               >
                 <input
                   className={inputClassName}
@@ -86,16 +151,18 @@ export function StationKeyRowsEditor({ rows, disabled, onRowsChange }: StationKe
                   onChange={(event) => updateRow(row.clientId, { apiKey: event.target.value })}
                   placeholder={row.id ? "留空保留旧密钥" : "sk-..."}
                 />
-                <input
-                  className={inputClassName}
+                <SelectControl
+                  ariaLabel={`选择密钥 ${index + 1} 分组`}
+                  className={selectClassName}
                   disabled={disabled}
-                  value={row.groupName}
-                  onChange={(event) => updateRow(row.clientId, { groupName: event.target.value })}
-                  placeholder="默认分组"
+                  menuClassName="text-xs"
+                  options={selectOptions}
+                  value={resolveSelectedGroupValue(row, normalizedGroupOptions)}
+                  onChange={(value) => selectGroup(row, value)}
                 />
                 <input
                   className={inputClassName}
-                  disabled={disabled}
+                  disabled={disabled || resolveSelectedGroupValue(row, normalizedGroupOptions) !== noGroupValue}
                   inputMode="decimal"
                   value={row.rateMultiplier}
                   onChange={(event) => updateRow(row.clientId, { rateMultiplier: event.target.value })}
@@ -104,7 +171,7 @@ export function StationKeyRowsEditor({ rows, disabled, onRowsChange }: StationKe
                 <SwitchControl
                   ariaLabel={`切换密钥 ${index + 1}`}
                   checked={row.enabled}
-                  className="h-8 min-w-0 justify-center px-1"
+                  className="h-6 justify-center border-0 bg-transparent px-0 shadow-none"
                   disabled={disabled}
                   offLabel="停用"
                   onCheckedChange={() => updateRow(row.clientId, { enabled: !row.enabled })}
@@ -132,18 +199,51 @@ export function StationKeyRowsEditor({ rows, disabled, onRowsChange }: StationKe
           暂无本地密钥，点击添加后录入。
         </div>
       )}
-
-      <div className="flex justify-start">
-        <Button
-          disabled={disabled}
-          size="sm"
-          variant="outline"
-          onClick={() => onRowsChange([...rows, createEmptyStationKeyDraft(rows.length)])}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          添加密钥
-        </Button>
-      </div>
     </div>
   );
+}
+
+function normalizeGroupOptions(options: StationKeyGroupOption[]) {
+  const seen = new Set<string>();
+  return options.filter((group) => {
+    const groupName = group.groupName.trim();
+    if (!groupName && !group.groupIdHash && !group.groupBindingId) {
+      return false;
+    }
+    const key = `${group.groupBindingId ?? ""}|${group.groupIdHash ?? ""}|${groupName}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function groupOptionValue(group: StationKeyGroupOption) {
+  return `${group.groupBindingId ?? ""}|${group.groupIdHash ?? ""}|${group.groupName.trim()}`;
+}
+
+function resolveSelectedGroupValue(row: StationKeyDraft, groupOptions: StationKeyGroupOption[]) {
+  if (!row.groupBindingId && !row.groupName.trim() && !row.groupIdHash) {
+    return noGroupValue;
+  }
+  const selectedGroup = groupOptions.find(
+    (group) =>
+      (row.groupBindingId && group.groupBindingId === row.groupBindingId) ||
+      (row.groupIdHash && group.groupIdHash === row.groupIdHash) ||
+      (!row.groupIdHash && group.groupName.trim() === row.groupName.trim()),
+  );
+  return selectedGroup ? groupOptionValue(selectedGroup) : noGroupValue;
+}
+
+function formatMultiplier(value: number) {
+  return Number.isInteger(value) ? String(value) : Number(value.toFixed(6)).toString();
+}
+
+function parseDraftMultiplier(value: string) {
+  if (!value.trim()) {
+    return null;
+  }
+  const multiplier = Number(value);
+  return Number.isFinite(multiplier) ? multiplier : null;
 }

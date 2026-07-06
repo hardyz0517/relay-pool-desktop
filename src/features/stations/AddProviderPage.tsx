@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ArrowLeft, Check, KeyRound, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
-import { testStationLoginInput } from "@/lib/api/collector";
+import { collectStationTask, testStationLoginInput } from "@/lib/api/collector";
+import { listGroupRateRecords, listStationGroupBindings, upsertStationGroupBinding } from "@/lib/api/groupFacts";
 import {
   bindRemoteStationKey,
+  createLocalStationKeyFromRemote,
   createStationKey,
   createRemoteStationKey,
   deleteStationKey,
@@ -13,18 +15,31 @@ import {
   listStationKeys,
   listRemoteStationKeys,
   scanRemoteStationKeys,
+  unbindRemoteStationKey,
   updateStationCredentials,
   updateStationKey,
 } from "@/lib/api/stationKeys";
 import { createStation, listStations, updateStation } from "@/lib/api/stations";
+import {
+  isCollectedStationGroupBinding,
+  type GroupRateRecord,
+  type StationGroupBinding,
+  type UpsertStationGroupBindingInput,
+} from "@/lib/types/groupFacts";
 import type { RemoteKeyCapability, RemoteStationKey, StationCredentials, StationKey } from "@/lib/types/stationKeys";
-import { stationTypeLabels, type Station, type StationType } from "@/lib/types/stations";
+import { stationTypeOptions, type Station, type StationType } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import {
   createEmptyStationKeyDraft,
   StationKeyRowsEditor,
   type StationKeyDraft,
+  type StationKeyGroupOption,
 } from "./components/StationKeyRowsEditor";
+import {
+  createEmptyStationGroupDraft,
+  StationGroupRowsEditor,
+  type StationGroupDraft,
+} from "./components/StationGroupRowsEditor";
 import { CreateRemoteKeyDialog } from "./components/CreateRemoteKeyDialog";
 import { RemoteKeyDiscoveryList } from "./components/RemoteKeyDiscoveryList";
 import { providerPresets, type ProviderPresetId } from "./providerPresets";
@@ -48,6 +63,7 @@ type AddProviderFormState = {
   loginPassword: string;
   rememberPassword: boolean;
   lowBalanceThresholdCny: string;
+  collectionIntervalMinutes: string;
   note: string;
 };
 
@@ -56,10 +72,38 @@ type ConnectionTestState = {
   message: string | null;
 };
 
-const defaultPreset = providerPresets[1];
+const defaultPreset = providerPresets[0];
 
 const inputClassName =
   "h-8 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";
+const remoteLocalKeyNotePrefix = "由远端发现开关自动创建";
+
+function getPresetDefaultStationName(preset: (typeof providerPresets)[number]) {
+  return preset.id === "custom" ? "" : preset.name;
+}
+
+function draftRemoteCapability(stationType: StationType): RemoteKeyCapability {
+  if (stationType === "sub2api") {
+    return {
+      stationId: "",
+      stationType,
+      canListRemoteKeys: true,
+      canCreateRemoteKey: false,
+      canReadGroups: true,
+      requiresManualSession: true,
+      unsupportedReason: null,
+    };
+  }
+  return {
+    stationId: "",
+    stationType,
+    canListRemoteKeys: false,
+    canCreateRemoteKey: false,
+    canReadGroups: false,
+    requiresManualSession: false,
+    unsupportedReason: `当前仅 Sub2API 支持获取远端 Key`,
+  };
+}
 
 function formFromStation(station: Station, credentials: StationCredentials): AddProviderFormState {
   const preset = providerPresets.find((item) => item.stationType === station.stationType) ?? defaultPreset;
@@ -76,6 +120,7 @@ function formFromStation(station: Station, credentials: StationCredentials): Add
     rememberPassword: credentials.rememberPassword,
     lowBalanceThresholdCny:
       station.lowBalanceThresholdCny === null ? "" : String(station.lowBalanceThresholdCny),
+    collectionIntervalMinutes: String(station.collectionIntervalMinutes),
     note: station.note ?? "",
   };
 }
@@ -86,6 +131,8 @@ function keyToDraft(key: StationKey): StationKeyDraft {
     id: key.id,
     name: key.name,
     apiKey: "",
+    groupBindingId: key.groupBindingId,
+    groupIdHash: key.groupIdHash,
     groupName: key.groupName ?? "",
     rateMultiplier: key.rateMultiplier === null ? "" : String(key.rateMultiplier),
     enabled: key.enabled,
@@ -94,14 +141,198 @@ function keyToDraft(key: StationKey): StationKeyDraft {
   };
 }
 
+function groupBindingsToDrafts(
+  bindings: StationGroupBinding[],
+  rates: GroupRateRecord[],
+): StationGroupDraft[] {
+  const latestRates = latestStationGroupRatesByBindingId(rates);
+  return bindings
+    .filter(isCollectedStationGroupBinding)
+    .map((binding) => groupBindingToDraft(binding, latestRates.get(binding.id) ?? null));
+}
+
+function latestStationGroupRatesByBindingId(rates: GroupRateRecord[]) {
+  const latestRates = new Map<string, GroupRateRecord>();
+  rates.forEach((rate) => {
+    if (rate.bindingKind !== "station_group" || !rate.groupBindingId) {
+      return;
+    }
+    const current = latestRates.get(rate.groupBindingId);
+    if (!current || Date.parse(rate.checkedAt) > Date.parse(current.checkedAt)) {
+      latestRates.set(rate.groupBindingId, rate);
+    }
+  });
+  return latestRates;
+}
+
+function groupBindingToDraft(
+  binding: StationGroupBinding,
+  latestRate: GroupRateRecord | null = null,
+): StationGroupDraft {
+  const rateMultiplier =
+    binding.userRateMultiplier ??
+    binding.effectiveRateMultiplier ??
+    binding.defaultRateMultiplier ??
+    latestRate?.userRateMultiplier ??
+    latestRate?.effectiveRateMultiplier ??
+    latestRate?.defaultRateMultiplier;
+  return {
+    clientId: binding.id,
+    groupBindingId: binding.id,
+    groupKeyHash: binding.groupKeyHash,
+    groupIdHash: binding.groupIdHash,
+    groupName: binding.groupName || latestRate?.groupName || "",
+    rateMultiplier: rateMultiplier == null ? "" : String(rateMultiplier),
+    source: isRemoteGroupSource(binding.rateSource ?? latestRate?.source ?? null) ? "remote" : "manual",
+    deleteRequested: false,
+  };
+}
+
+function isRemoteGroupSource(source: string | null) {
+  if (!source) {
+    return false;
+  }
+  return source !== "manual" && source !== "manual_legacy" && source !== "legacy_key_group";
+}
+
 function rowHasMeaningfulContent(row: StationKeyDraft) {
   return Boolean(
-    row.id ||
+      row.id ||
       row.name.trim() ||
       row.apiKey.trim() ||
+      row.groupBindingId ||
+      row.groupIdHash ||
       row.groupName.trim() ||
       row.rateMultiplier.trim() ||
       row.note.trim(),
+  );
+}
+
+function groupRowHasMeaningfulContent(row: StationGroupDraft) {
+  return Boolean(
+    row.groupBindingId ||
+      row.groupKeyHash.trim() ||
+      row.groupIdHash ||
+      row.groupName.trim() ||
+      row.rateMultiplier.trim(),
+  );
+}
+
+function groupDraftToOption(row: StationGroupDraft): StationKeyGroupOption | null {
+  if (row.deleteRequested || !row.groupName.trim()) {
+    return null;
+  }
+  return {
+    groupBindingId: row.groupBindingId,
+    groupIdHash: row.groupIdHash,
+    groupName: row.groupName.trim(),
+    rateMultiplier: parseDraftRateMultiplier(row.rateMultiplier),
+  };
+}
+
+function mergeKeyRowsWithSavedGroupOptions(
+  rows: StationKeyDraft[],
+  groups: StationKeyGroupOption[],
+): StationKeyDraft[] {
+  return rows.map((row) => {
+    if (row.deleteRequested || (!row.groupBindingId && !row.groupIdHash && !row.groupName.trim())) {
+      return row;
+    }
+    const group = findMatchingGroupOption(row, groups);
+    if (!group) {
+      return row;
+    }
+    return {
+      ...row,
+      groupBindingId: group.groupBindingId,
+      groupIdHash: group.groupIdHash,
+      groupName: group.groupName,
+      rateMultiplier: group.rateMultiplier === null ? row.rateMultiplier : formatMultiplier(group.rateMultiplier),
+    };
+  });
+}
+
+function mergeGroupRowsWithSavedOptions(
+  rows: StationGroupDraft[],
+  groups: StationKeyGroupOption[],
+): StationGroupDraft[] {
+  return dedupeGroupRows(rows.map((row) => {
+    if (row.deleteRequested) {
+      return row;
+    }
+    const group = groups.find((item) => groupsMatch(row, item));
+    if (!group) {
+      return row;
+    }
+    return {
+      ...row,
+      groupBindingId: group.groupBindingId,
+      groupIdHash: group.groupIdHash,
+      groupName: group.groupName,
+      rateMultiplier: group.rateMultiplier === null ? row.rateMultiplier : formatMultiplier(group.rateMultiplier),
+    };
+  }));
+}
+
+function dedupeGroupRows(rows: StationGroupDraft[]): StationGroupDraft[] {
+  const mergedRows: StationGroupDraft[] = [];
+  rows.forEach((row) => {
+    const matchIndex = mergedRows.findIndex((item) => groupRowsRepresentSameGroup(item, row));
+    if (matchIndex < 0) {
+      mergedRows.push(row);
+      return;
+    }
+    mergedRows[matchIndex] = mergeDuplicateGroupRow(mergedRows[matchIndex], row);
+  });
+  return mergedRows;
+}
+
+function groupRowsRepresentSameGroup(left: StationGroupDraft, right: StationGroupDraft) {
+  return Boolean(
+    (left.groupBindingId && right.groupBindingId && left.groupBindingId === right.groupBindingId) ||
+      (left.groupIdHash && right.groupIdHash && left.groupIdHash === right.groupIdHash) ||
+      (left.groupName.trim() &&
+        right.groupName.trim() &&
+        left.groupName.trim() === right.groupName.trim()),
+  );
+}
+
+function mergeDuplicateGroupRow(existing: StationGroupDraft, incoming: StationGroupDraft): StationGroupDraft {
+  const preferred = preferGroupRow(existing, incoming);
+  const fallback = preferred === existing ? incoming : existing;
+  return {
+    ...preferred,
+    clientId: existing.clientId,
+    groupBindingId: existing.groupBindingId ?? incoming.groupBindingId,
+    groupKeyHash: existing.groupKeyHash || incoming.groupKeyHash,
+    groupIdHash: incoming.groupIdHash ?? existing.groupIdHash,
+    groupName: incoming.groupName.trim() || existing.groupName,
+    rateMultiplier: incoming.rateMultiplier.trim() || existing.rateMultiplier || fallback.rateMultiplier,
+    source: incoming.source === "remote" ? "remote" : existing.source,
+    deleteRequested: existing.deleteRequested && incoming.deleteRequested,
+  };
+}
+
+function preferGroupRow(existing: StationGroupDraft, incoming: StationGroupDraft) {
+  if (existing.groupBindingId && !incoming.groupBindingId) {
+    return existing;
+  }
+  if (incoming.groupBindingId && !existing.groupBindingId) {
+    return incoming;
+  }
+  if (incoming.source === "remote" && existing.source !== "remote") {
+    return incoming;
+  }
+  return existing;
+}
+
+function findMatchingGroupOption(row: StationKeyDraft, groups: StationKeyGroupOption[]) {
+  return groups.find(
+    (group) =>
+      (row.groupBindingId && group.groupBindingId === row.groupBindingId) ||
+      (row.groupIdHash && group.groupIdHash === row.groupIdHash) ||
+      (!row.groupIdHash && group.groupName.trim() === row.groupName.trim()) ||
+      (row.groupName.trim() && group.groupName.trim() === row.groupName.trim()),
   );
 }
 
@@ -123,6 +354,14 @@ function parseOptionalRateMultiplier(value: string) {
     throw new Error("密钥倍率必须大于 0");
   }
   return rate;
+}
+
+function parseDraftRateMultiplier(value: string) {
+  if (!value.trim()) {
+    return null;
+  }
+  const rate = Number(value);
+  return Number.isFinite(rate) && rate > 0 ? rate : null;
 }
 
 function validateKeyRows(rows: StationKeyDraft[]) {
@@ -171,8 +410,8 @@ async function saveKeyRows(targetStationId: string, rows: StationKeyDraft[]) {
       name: row.name.trim(),
       enabled: row.enabled,
       priority,
-      groupBindingId: null,
-      groupIdHash: null,
+      groupBindingId: row.groupBindingId,
+      groupIdHash: row.groupIdHash,
       groupName: row.groupName.trim() ? row.groupName.trim() : null,
       tierLabel: null,
       balanceScope: "station_key",
@@ -201,12 +440,227 @@ async function saveKeyRows(targetStationId: string, rows: StationKeyDraft[]) {
   }
 }
 
+function validateGroupRows(rows: StationGroupDraft[]) {
+  rows
+    .filter((row) => !row.deleteRequested)
+    .filter(groupRowHasMeaningfulContent)
+    .forEach((row) => {
+      if (!row.groupName.trim()) {
+        throw new Error("请填写分组名称");
+      }
+      parseOptionalRateMultiplier(row.rateMultiplier);
+    });
+}
+
+async function saveGroupRows(targetStationId: string, rows: StationGroupDraft[]) {
+  validateGroupRows(rows);
+  const savedOptions: StationKeyGroupOption[] = [];
+  const existingBindings = await listStationGroupBindings(targetStationId);
+
+  for (const row of rows) {
+    if (!groupRowHasMeaningfulContent(row)) {
+      continue;
+    }
+
+    if (row.deleteRequested) {
+      await disableMatchingGroupBindings(targetStationId, row, existingBindings);
+      continue;
+    }
+
+    const groupName = row.groupName.trim();
+    const groupKeyHash = resolveGroupKeyHash(row);
+    const rateMultiplier = parseOptionalRateMultiplier(row.rateMultiplier);
+    if (!groupName && !row.groupBindingId) {
+      continue;
+    }
+
+    const input: UpsertStationGroupBindingInput = {
+      stationId: targetStationId,
+      stationKeyId: null,
+      bindingKind: "station_group",
+      parentGroupBindingId: null,
+      groupKeyHash,
+      groupIdHash: row.groupIdHash,
+      groupName: groupName || row.groupName,
+      bindingStatus: "available",
+      defaultRateMultiplier: row.source === "remote" ? rateMultiplier : null,
+      userRateMultiplier: row.source === "manual" ? rateMultiplier : null,
+      effectiveRateMultiplier: rateMultiplier,
+      rateSource: row.source === "remote" ? "remote_scan" : "manual",
+      confidence: row.source === "remote" ? 0.95 : 1,
+      lastSeenAt: row.source === "remote" ? new Date().toISOString() : null,
+      rawJsonRedacted: null,
+    };
+    const saved = await upsertStationGroupBinding(input);
+    savedOptions.push({
+      groupBindingId: saved.id,
+      groupIdHash: saved.groupIdHash,
+      groupName: saved.groupName,
+      rateMultiplier:
+        saved.userRateMultiplier ?? saved.effectiveRateMultiplier ?? saved.defaultRateMultiplier,
+    });
+  }
+
+  return savedOptions;
+}
+
+async function disableMatchingGroupBindings(
+  targetStationId: string,
+  row: StationGroupDraft,
+  existingBindings: StationGroupBinding[],
+) {
+  const bindingsToDisable = existingBindings
+    .filter(isCollectedStationGroupBinding)
+    .filter((binding) => groupBindingMatchesDraft(binding, row));
+  for (const binding of bindingsToDisable) {
+    await upsertStationGroupBinding({
+      stationId: targetStationId,
+      stationKeyId: null,
+      bindingKind: "station_group",
+      parentGroupBindingId: binding.parentGroupBindingId,
+      groupKeyHash: binding.groupKeyHash,
+      groupIdHash: binding.groupIdHash,
+      groupName: binding.groupName,
+      bindingStatus: "disabled",
+      defaultRateMultiplier: null,
+      userRateMultiplier: null,
+      effectiveRateMultiplier: null,
+      rateSource: binding.rateSource,
+      confidence: binding.confidence,
+      lastSeenAt: binding.lastSeenAt,
+      rawJsonRedacted: binding.rawJsonRedacted,
+    });
+  }
+}
+
+function groupBindingMatchesDraft(binding: StationGroupBinding, row: StationGroupDraft) {
+  const rowName = row.groupName.trim();
+  return Boolean(
+    (row.groupBindingId && binding.id === row.groupBindingId) ||
+      (row.groupIdHash && binding.groupIdHash === row.groupIdHash) ||
+      (rowName && binding.groupName.trim() === rowName),
+  );
+}
+
+function resolveGroupKeyHash(row: StationGroupDraft) {
+  if (row.groupKeyHash.trim()) {
+    return row.groupKeyHash.trim();
+  }
+  if (row.groupIdHash) {
+    return `remote:${row.groupIdHash}`;
+  }
+  return buildManualGroupKeyHash(row.groupName);
+}
+
+function buildManualGroupKeyHash(groupName: string) {
+  const normalizedName = groupName.trim().toLowerCase();
+  return `manual:${encodeURIComponent(normalizedName || "unnamed")}`;
+}
+
+function collectRemoteGroupOptions(remoteKeys: RemoteStationKey[]) {
+  const seen = new Set<string>();
+  const groups: Array<{
+    groupBindingId: string | null;
+    groupIdHash: string | null;
+    groupName: string;
+    rateMultiplier: number | null;
+  }> = [];
+  remoteKeys.forEach((key) => {
+    if (!key.groupIdHash && !key.groupName) {
+      return;
+    }
+    const groupName = key.groupName?.trim() || "未命名分组";
+    const groupKey = `${key.groupIdHash ?? ""}|${groupName}`;
+    if (seen.has(groupKey)) {
+      return;
+    }
+    seen.add(groupKey);
+    groups.push({
+      groupBindingId: null,
+      groupIdHash: key.groupIdHash,
+      groupName,
+      rateMultiplier: key.rateMultiplier,
+    });
+  });
+  return groups;
+}
+
+function mergeRemoteGroupOptions(
+  editableGroups: StationKeyGroupOption[],
+  remoteGroups: ReturnType<typeof collectRemoteGroupOptions>,
+) {
+  const seen = new Set<string>();
+  const groups: ReturnType<typeof collectRemoteGroupOptions> = [];
+
+  function appendGroup(group: {
+    groupBindingId: string | null;
+    groupIdHash: string | null;
+    groupName: string;
+    rateMultiplier: number | null;
+  }) {
+    if (!group.groupIdHash && !group.groupName.trim()) {
+      return;
+    }
+    const groupName = group.groupName.trim() || "未命名分组";
+    const groupKey = `${group.groupIdHash ?? ""}|${groupName}`;
+    if (seen.has(groupKey)) {
+      return;
+    }
+    seen.add(groupKey);
+    groups.push({
+      groupBindingId: group.groupBindingId,
+      groupIdHash: group.groupIdHash,
+      groupName,
+      rateMultiplier: group.rateMultiplier,
+    });
+  }
+
+  editableGroups.forEach(appendGroup);
+  remoteGroups.forEach(appendGroup);
+  return groups;
+}
+
+function remoteLocalKeyNote(remoteKey: RemoteStationKey) {
+  return `${remoteLocalKeyNotePrefix}：${remoteKey.id}`;
+}
+
+function resolveRemoteCreatedLocalKeyIds(
+  remoteKeys: RemoteStationKey[],
+  localKeys: StationKey[],
+) {
+  const localKeysByNote = new Map(
+    localKeys
+      .filter((key) => key.note?.startsWith(remoteLocalKeyNotePrefix))
+      .map((key) => [key.note, key.id] as const),
+  );
+
+  return Object.fromEntries(
+    remoteKeys.flatMap((remoteKey) => {
+      const localKeyId = localKeysByNote.get(remoteLocalKeyNote(remoteKey));
+      return localKeyId ? [[remoteKey.id, localKeyId] as const] : [];
+    }),
+  );
+}
+
+function remoteKeyDisplayName(remoteKey: RemoteStationKey) {
+  return remoteKey.remoteKeyName?.trim() || remoteKey.apiKeyMasked || remoteKey.remoteKeyIdHash || "远端 Key";
+}
+
+function groupsMatch(row: StationGroupDraft, group: StationKeyGroupOption) {
+  return Boolean(
+    (row.groupBindingId && group.groupBindingId === row.groupBindingId) ||
+      (row.groupIdHash && group.groupIdHash === row.groupIdHash) ||
+      (row.groupName.trim() && group.groupName.trim() === row.groupName.trim()),
+  );
+}
+
 export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: AddProviderPageProps) {
   const toast = useToast();
   const editing = Boolean(stationId);
+  const [activeStationId, setActiveStationId] = useState<string | null>(stationId ?? null);
   const [form, setForm] = useState<AddProviderFormState>({
     presetId: defaultPreset.id,
-    name: defaultPreset.name,
+    name: getPresetDefaultStationName(defaultPreset),
     stationType: defaultPreset.stationType,
     baseUrl: defaultPreset.baseUrl,
     apiKey: "",
@@ -216,6 +670,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     loginPassword: "",
     rememberPassword: false,
     lowBalanceThresholdCny: "",
+    collectionIntervalMinutes: "5",
     note: "",
   });
   const [loading, setLoading] = useState(Boolean(stationId));
@@ -225,36 +680,33 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     status: "idle",
     message: null,
   });
+  const [groupRows, setGroupRows] = useState<StationGroupDraft[]>([]);
   const [keyRows, setKeyRows] = useState<StationKeyDraft[]>([createEmptyStationKeyDraft(0)]);
-  const [remoteCapability, setRemoteCapability] = useState<RemoteKeyCapability | null>(null);
+  const [remoteCapability, setRemoteCapability] = useState<RemoteKeyCapability | null>(
+    stationId ? null : draftRemoteCapability(defaultPreset.stationType),
+  );
   const [remoteCapabilityError, setRemoteCapabilityError] = useState<string | null>(null);
   const [remoteListError, setRemoteListError] = useState<string | null>(null);
   const [remoteKeys, setRemoteKeys] = useState<RemoteStationKey[]>([]);
   const [localStationKeys, setLocalStationKeys] = useState<StationKey[]>([]);
+  const [remoteCreatedLocalKeyIds, setRemoteCreatedLocalKeyIds] = useState<Record<string, string>>({});
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [createRemoteOpen, setCreateRemoteOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const remoteGroupOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const groups: Array<{ groupIdHash: string | null; groupName: string }> = [];
-    remoteKeys.forEach((key) => {
-      if (!key.groupIdHash && !key.groupName) {
-        return;
-      }
-      const groupName = key.groupName?.trim() || "未命名分组";
-      const groupKey = `${key.groupIdHash ?? ""}|${groupName}`;
-      if (seen.has(groupKey)) {
-        return;
-      }
-      seen.add(groupKey);
-      groups.push({
-        groupIdHash: key.groupIdHash,
-        groupName,
-      });
-    });
-    return groups;
-  }, [remoteKeys]);
+  const editableGroupOptions = useMemo(
+    () =>
+      groupRows.flatMap((row) => {
+        const option = groupDraftToOption(row);
+        return option ? [option] : [];
+      }),
+    [groupRows],
+  );
+
+  const remoteGroupOptions = useMemo(
+    () => mergeRemoteGroupOptions(editableGroupOptions, collectRemoteGroupOptions(remoteKeys)),
+    [editableGroupOptions, remoteKeys],
+  );
 
   const remoteUnsupportedReason = remoteCapability?.unsupportedReason ?? null;
   const remoteCapabilityUnavailableReason = remoteCapabilityError
@@ -263,22 +715,25 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   const remoteDiscoveryReason =
     remoteCapabilityUnavailableReason ??
     (remoteListError ? `远端 Key 列表读取失败：${remoteListError}` : null);
+  const createPageRemoteDraftReady =
+    Boolean(form.baseUrl.trim()) && Boolean(form.loginUsername.trim()) && Boolean(form.loginPassword.trim());
   const scanRemoteDisabled =
-    !editing ||
     remoteLoading ||
     Boolean(remoteCapabilityError) ||
-    remoteCapability?.canListRemoteKeys !== true;
+    (activeStationId ? remoteCapability?.canListRemoteKeys !== true : !createPageRemoteDraftReady);
   const createRemoteDisabled =
-    !editing ||
     remoteLoading ||
     Boolean(remoteCapabilityError) ||
-    remoteCapability?.canCreateRemoteKey !== true;
+    (activeStationId ? remoteCapability?.canCreateRemoteKey !== true : !createPageRemoteDraftReady);
 
   useEffect(() => {
+    setActiveStationId(stationId ?? null);
     if (!stationId) {
+      setGroupRows([]);
       setKeyRows([createEmptyStationKeyDraft(0)]);
       setLocalStationKeys([]);
-      setRemoteCapability(null);
+      setRemoteCreatedLocalKeyIds({});
+      setRemoteCapability(draftRemoteCapability(defaultPreset.stationType));
       setRemoteCapabilityError(null);
       setRemoteListError(null);
       setRemoteKeys([]);
@@ -294,6 +749,8 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       listStations(),
       getStationCredentials(stationId),
       listStationKeys(stationId),
+      listStationGroupBindings(stationId),
+      listGroupRateRecords(stationId),
       getRemoteKeyCapability(stationId)
         .then((capability) => ({ capability, error: null }))
         .catch((requestError) => ({ capability: null, error: readError(requestError) })),
@@ -301,7 +758,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         .then((keys) => ({ keys, error: null }))
         .catch((requestError) => ({ keys: [], error: readError(requestError) })),
     ])
-      .then(([stations, credentials, keys, capabilityResult, discoveredRemoteKeysResult]) => {
+      .then(([stations, credentials, keys, groupBindings, groupRates, capabilityResult, discoveredRemoteKeysResult]) => {
         if (!alive) {
           return;
         }
@@ -311,6 +768,8 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         }
         setForm(formFromStation(station, credentials));
         setLocalStationKeys(keys);
+        setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(discoveredRemoteKeysResult.keys, keys));
+        setGroupRows(dedupeGroupRows(groupBindingsToDrafts(groupBindings, groupRates)));
         setKeyRows(keys.length ? keys.map(keyToDraft) : []);
         setRemoteCapability(capabilityResult.capability);
         setRemoteCapabilityError(capabilityResult.error);
@@ -337,15 +796,24 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     };
   }, [stationId, toast]);
 
+  useEffect(() => {
+    setKeyRows((currentRows) => syncRowsWithGroupRateOptions(currentRows, editableGroupOptions));
+  }, [editableGroupOptions]);
+
   function applyPreset(presetId: ProviderPresetId) {
     const preset = providerPresets.find((item) => item.id === presetId) ?? defaultPreset;
     setForm((current) => ({
       ...current,
       presetId: preset.id,
-      name: preset.name,
+      name: getPresetDefaultStationName(preset),
       stationType: preset.stationType,
       baseUrl: preset.baseUrl,
     }));
+    if (!activeStationId) {
+      setRemoteCapability(draftRemoteCapability(preset.stationType));
+      setRemoteCapabilityError(null);
+      setRemoteListError(null);
+    }
     setError(null);
     setConnectionTest({ status: "idle", message: null });
   }
@@ -353,8 +821,76 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   async function refreshLocalStationKeyState(targetStationId: string) {
     const keys = await listStationKeys(targetStationId);
     setLocalStationKeys(keys);
+    setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(remoteKeys, keys));
     setKeyRows(keys.length ? keys.map(keyToDraft) : []);
     return keys;
+  }
+
+  async function ensureStationForRemoteKeyActions() {
+    if (activeStationId) {
+      return activeStationId;
+    }
+    if (!form.name.trim()) {
+      throw new Error("请填写供应商名称");
+    }
+    if (!form.baseUrl.trim()) {
+      throw new Error("请填写基础地址");
+    }
+    const remoteActionStationType: StationType =
+      form.stationType === "custom" || form.stationType === "openai-compatible"
+        ? "sub2api"
+        : form.stationType;
+
+    const firstKeyDraft = keyRows.find((row) => !row.deleteRequested && row.apiKey.trim());
+    const stationApiKey = form.apiKey.trim() || firstKeyDraft?.apiKey.trim() || "";
+    const station = await createStation({
+      name: form.name.trim(),
+      stationType: remoteActionStationType,
+      baseUrl: form.baseUrl.trim(),
+      apiKey: stationApiKey,
+      enabled: form.enabled,
+      creditPerCny: Number(form.creditPerCny),
+      lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim()
+        ? Number(form.lowBalanceThresholdCny)
+        : null,
+      collectionIntervalMinutes: normalizeCollectionIntervalMinutes(form.collectionIntervalMinutes),
+      note: form.note.trim() ? form.note.trim() : null,
+    });
+    if (remoteActionStationType !== form.stationType) {
+      setForm((current) => ({ ...current, stationType: remoteActionStationType }));
+    }
+
+    let rowsToSave = keyRows;
+    if (!form.apiKey.trim() && firstKeyDraft) {
+      const createdKeys = await listStationKeys(station.id);
+      const defaultKey = findReusableDefaultKey(createdKeys);
+      if (defaultKey) {
+        rowsToSave = keyRows.map((row) =>
+          row.clientId === firstKeyDraft.clientId
+            ? { ...row, id: defaultKey.id, apiKey: "" }
+            : row,
+        );
+      }
+    }
+    const savedGroupOptions = await saveGroupRows(station.id, groupRows);
+    if (savedGroupOptions.length) {
+      setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
+      rowsToSave = mergeKeyRowsWithSavedGroupOptions(rowsToSave, savedGroupOptions);
+    }
+    await saveKeyRows(station.id, rowsToSave);
+    if (form.loginUsername.trim() || form.loginPassword.trim()) {
+      await updateStationCredentials({
+        stationId: station.id,
+        loginUsername: form.loginUsername.trim() ? form.loginUsername.trim() : null,
+        loginPassword: form.loginPassword.trim() ? form.loginPassword.trim() : null,
+        rememberPassword: Boolean(form.loginPassword.trim()),
+      });
+    }
+
+    setActiveStationId(station.id);
+    setLocalStationKeys(await refreshLocalStationKeyState(station.id));
+    toast.success("供应商已保存，正在获取远端 Key");
+    return station.id;
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -367,15 +903,9 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       toast.info("请填写基础地址");
       return;
     }
-    if (!editing && !form.apiKey.trim()) {
-      const firstDraftKey = keyRows.find((row) => !row.deleteRequested && row.apiKey.trim());
-      if (!firstDraftKey) {
-        toast.info("请填写默认密钥或本地密钥");
-        return;
-      }
-    }
 
     try {
+      validateGroupRows(groupRows);
       validateKeyRows(keyRows);
     } catch (validationError) {
       toast.info(readError(validationError));
@@ -386,9 +916,9 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     setError(null);
     let createdStationId: string | null = null;
     try {
-      if (stationId) {
+      if (activeStationId) {
         await updateStation({
-          id: stationId,
+          id: activeStationId,
           name: form.name.trim(),
           stationType: form.stationType,
           baseUrl: form.baseUrl.trim(),
@@ -398,20 +928,29 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim()
             ? Number(form.lowBalanceThresholdCny)
             : null,
+          collectionIntervalMinutes: normalizeCollectionIntervalMinutes(form.collectionIntervalMinutes),
           note: form.note.trim() ? form.note.trim() : null,
         });
-        await saveKeyRows(stationId, keyRows);
-        await refreshLocalStationKeyState(stationId);
+        const savedGroupOptions = await saveGroupRows(activeStationId, groupRows);
+        const rowsToSave = mergeKeyRowsWithSavedGroupOptions(keyRows, savedGroupOptions);
+        setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
+        setKeyRows(rowsToSave);
+        await saveKeyRows(activeStationId, rowsToSave);
+        await refreshLocalStationKeyState(activeStationId);
         if (form.loginUsername.trim() || form.loginPassword.trim() || form.rememberPassword) {
           await updateStationCredentials({
-            stationId,
+            stationId: activeStationId,
             loginUsername: form.loginUsername.trim() ? form.loginUsername.trim() : null,
             loginPassword: form.loginPassword.trim() ? form.loginPassword.trim() : null,
             rememberPassword: form.rememberPassword,
           });
         }
-        toast.success("供应商已更新");
-        onUpdated?.();
+        toast.success(editing ? "供应商已更新" : "供应商已添加");
+        if (editing) {
+          onUpdated?.();
+        } else {
+          onCreated?.();
+        }
         return;
       }
 
@@ -427,9 +966,11 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim()
           ? Number(form.lowBalanceThresholdCny)
           : null,
+        collectionIntervalMinutes: normalizeCollectionIntervalMinutes(form.collectionIntervalMinutes),
         note: form.note.trim() ? form.note.trim() : null,
       });
       createdStationId = station.id;
+      setActiveStationId(station.id);
       let rowsToSave = keyRows;
       if (!form.apiKey.trim() && firstKeyDraft) {
         const createdKeys = await listStationKeys(station.id);
@@ -442,6 +983,10 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           );
         }
       }
+      const savedGroupOptions = await saveGroupRows(station.id, groupRows);
+      rowsToSave = mergeKeyRowsWithSavedGroupOptions(rowsToSave, savedGroupOptions);
+      setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
+      setKeyRows(rowsToSave);
       await saveKeyRows(station.id, rowsToSave);
       if (form.loginUsername.trim() || form.loginPassword.trim()) {
         await updateStationCredentials({
@@ -508,20 +1053,17 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   }
 
   async function handleScanRemoteKeys() {
-    if (!stationId) {
-      toast.info("请先保存供应商后再获取远端 Key");
-      return;
-    }
-
     setRemoteLoading(true);
     setError(null);
     setRemoteListError(null);
     try {
-      const result = await scanRemoteStationKeys(stationId);
+      const targetStationId = await ensureStationForRemoteKeyActions();
+      const result = await scanRemoteStationKeys(targetStationId);
       setRemoteCapability(result.capability);
       setRemoteCapabilityError(null);
       setRemoteKeys(result.keys);
-      await refreshLocalStationKeyState(stationId);
+      const keys = await refreshLocalStationKeyState(targetStationId);
+      setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(result.keys, keys));
       toast.success("远端 Key 已更新", result.message || `发现 ${result.keys.length} 个远端 Key`);
     } catch (requestError) {
       const message = readError(requestError);
@@ -533,13 +1075,36 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     }
   }
 
-  async function handleCreateRemoteKey(input: {
-    name: string;
-    groupIdHash: string | null;
-    groupName: string | null;
-  }) {
-    if (!stationId) {
-      toast.info("请先保存供应商后再新建远端 Key");
+  async function handleSyncRemoteGroups() {
+    setRemoteLoading(true);
+    setError(null);
+    setRemoteListError(null);
+    try {
+      const targetStationId = await ensureStationForRemoteKeyActions();
+      await collectStationTask(targetStationId, "groups");
+      const [groupBindings, groupRates, capability] = await Promise.all([
+        listStationGroupBindings(targetStationId),
+        listGroupRateRecords(targetStationId),
+        getRemoteKeyCapability(targetStationId).catch(() => null),
+      ]);
+      const syncedGroupRows = dedupeGroupRows(groupBindingsToDrafts(groupBindings, groupRates));
+      setRemoteCapability(capability);
+      setRemoteCapabilityError(null);
+      setGroupRows(syncedGroupRows);
+      toast.success("远端分组已同步", `发现 ${syncedGroupRows.length} 个分组，已用远端采集结果覆盖本地编辑区`);
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      setRemoteListError(message);
+      toast.error("同步远端分组失败", message);
+    } finally {
+      setRemoteLoading(false);
+    }
+  }
+
+  async function handleOpenCreateRemoteKey() {
+    if (activeStationId) {
+      setCreateRemoteOpen(true);
       return;
     }
 
@@ -547,8 +1112,40 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     setError(null);
     setRemoteListError(null);
     try {
+      const targetStationId = await ensureStationForRemoteKeyActions();
+      const capability = await getRemoteKeyCapability(targetStationId);
+      setRemoteCapability(capability);
+      setRemoteCapabilityError(null);
+      if (capability.canCreateRemoteKey !== true) {
+        const reason = capability.unsupportedReason ?? "当前中转站暂不支持新建远端 Key";
+        setRemoteListError(reason);
+        toast.info(reason);
+        return;
+      }
+      setCreateRemoteOpen(true);
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      setRemoteListError(message);
+      toast.error("准备新建远端 Key 失败", message);
+    } finally {
+      setRemoteLoading(false);
+    }
+  }
+
+  async function handleCreateRemoteKey(input: {
+    name: string;
+    groupBindingId: string | null;
+    groupIdHash: string | null;
+    groupName: string | null;
+  }) {
+    setRemoteLoading(true);
+    setError(null);
+    setRemoteListError(null);
+    try {
+      const targetStationId = await ensureStationForRemoteKeyActions();
       const result = await createRemoteStationKey({
-        stationId,
+        stationId: targetStationId,
         ...input,
       });
       setRemoteKeys((current) => [
@@ -559,7 +1156,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
             key.remoteKeyIdHash !== result.remoteKey.remoteKeyIdHash,
         ),
       ]);
-      await refreshLocalStationKeyState(stationId);
+      await refreshLocalStationKeyState(targetStationId);
       setCreateRemoteOpen(false);
       toast.success("远端 Key 已创建", result.message || "已同步保存为本地 Key");
     } catch (requestError) {
@@ -576,7 +1173,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     setError(null);
     try {
       const keys = await bindRemoteStationKey(remoteKeyId, stationKeyId);
-      setRemoteKeys(keys.filter((key) => key.stationId === stationId));
+      setRemoteKeys(keys.filter((key) => key.stationId === activeStationId));
       toast.success("远端 Key 已绑定");
     } catch (requestError) {
       const message = readError(requestError);
@@ -585,6 +1182,82 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     } finally {
       setRemoteLoading(false);
     }
+  }
+
+  async function handleRemoteLocalKeyToggle(
+    remoteKey: RemoteStationKey,
+    checked: boolean,
+  ) {
+    setRemoteLoading(true);
+    setError(null);
+    try {
+      if (checked) {
+        await createLocalKeyFromRemote(remoteKey);
+      } else {
+        const createdLocalKeyId = remoteCreatedLocalKeyIds[remoteKey.id];
+        if (!createdLocalKeyId) {
+          toast.info("这条远端 Key 不是由开关创建的本地 Key，未删除");
+          return;
+        }
+        await deleteRemoteCreatedLocalKey(
+          remoteKey,
+          createdLocalKeyId,
+        );
+      }
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      toast.error(checked ? "创建本地 Key 失败" : "删除本地 Key 失败", message);
+    } finally {
+      setRemoteLoading(false);
+    }
+  }
+
+  async function createLocalKeyFromRemote(remoteKey: RemoteStationKey) {
+    const targetStationId = await ensureStationForRemoteKeyActions();
+    const result = await createLocalStationKeyFromRemote(remoteKey.id, targetStationId);
+    await updateStationKey({
+      ...result.stationKey,
+      apiKey: null,
+      note: remoteLocalKeyNote(remoteKey),
+    });
+    const nextRemoteKeys = (await bindRemoteStationKey(remoteKey.id, result.stationKey.id)).filter(
+      (key) => key.stationId === targetStationId,
+    );
+    const nextLocalKeys = await refreshLocalStationKeyState(targetStationId);
+    setRemoteKeys(nextRemoteKeys);
+    setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(nextRemoteKeys, nextLocalKeys));
+    toast.success("已创建本地 Key", result.message || `${remoteKeyDisplayName(remoteKey)} 已保存为本地 Key。`);
+  }
+
+  async function deleteRemoteCreatedLocalKey(
+    remoteKey: RemoteStationKey,
+    expectedStationKeyId: string,
+  ) {
+    if (remoteKey.matchedStationKeyId && remoteKey.matchedStationKeyId !== expectedStationKeyId) {
+      throw new Error("远端 Key 已匹配到其他本地 Key，未删除。");
+    }
+
+    const expectedLocalKey = localStationKeys.find((key) => key.id === expectedStationKeyId);
+    if (expectedLocalKey?.note !== remoteLocalKeyNote(remoteKey)) {
+      throw new Error("这把本地 Key 不是开关自动创建的，未删除。");
+    }
+
+    const nextRemoteKeys = (await unbindRemoteStationKey(remoteKey.id, remoteKey.stationId)).filter(
+      (key) => key.stationId === remoteKey.stationId,
+    );
+    await deleteStationKey(expectedStationKeyId);
+    const nextLocalKeys = await refreshLocalStationKeyState(remoteKey.stationId);
+    setRemoteKeys(nextRemoteKeys);
+    setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(nextRemoteKeys, nextLocalKeys));
+    toast.success("已删除自动创建的本地 Key");
+  }
+
+  function handleAddLocalKey() {
+    setKeyRows((currentRows) => [
+      ...currentRows,
+      createEmptyStationKeyDraft(currentRows.length),
+    ]);
   }
 
   return (
@@ -664,11 +1337,15 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                     ariaLabel="站点类型"
                     className={inputClassName}
                     value={form.stationType}
-                    options={Object.entries(stationTypeLabels).map(([value, label]) => ({
-                      value: value as StationType,
-                      label,
-                    }))}
-                    onChange={(stationType) => setForm({ ...form, stationType })}
+                    options={stationTypeOptions}
+                    onChange={(stationType) => {
+                      setForm({ ...form, stationType });
+                      if (!activeStationId) {
+                        setRemoteCapability(draftRemoteCapability(stationType));
+                        setRemoteCapabilityError(null);
+                        setRemoteListError(null);
+                      }
+                    }}
                   />
                 </Field>
               </div>
@@ -682,15 +1359,6 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                       setConnectionTest({ status: "idle", message: null });
                     }}
                     placeholder="https://api.example.com/v1"
-                  />
-                </Field>
-                <Field label={editing ? "密钥" : "默认密钥"}>
-                  <input
-                    className={inputClassName}
-                    type="password"
-                    value={form.apiKey}
-                    onChange={(event) => setForm({ ...form, apiKey: event.target.value })}
-                    placeholder={editing ? "留空保留旧密钥" : "创建供应商时同步保存为默认密钥"}
                   />
                 </Field>
               </div>
@@ -752,6 +1420,46 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
             </SectionCard>
 
             <SectionCard
+              title="分组"
+              action={
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    disabled={scanRemoteDisabled}
+                    size="sm"
+                    title={remoteCapabilityUnavailableReason ?? undefined}
+                    variant="outline"
+                    onClick={() => void handleSyncRemoteGroups()}
+                  >
+                    <RefreshCw className={cn("h-3.5 w-3.5", remoteLoading && "animate-spin")} />
+                    同步远端分组
+                  </Button>
+                  <Button
+                    disabled={saving || loading}
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setGroupRows((currentRows) =>
+                        dedupeGroupRows([
+                          ...currentRows,
+                          createEmptyStationGroupDraft(currentRows.length),
+                        ]),
+                      )
+                    }
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    添加分组
+                  </Button>
+                </div>
+              }
+            >
+              <StationGroupRowsEditor
+                disabled={saving || loading}
+                rows={groupRows}
+                onRowsChange={(rows) => setGroupRows(dedupeGroupRows(rows))}
+              />
+            </SectionCard>
+
+            <SectionCard
               title="密钥"
               action={
                 <div className="flex flex-wrap justify-end gap-2">
@@ -770,20 +1478,30 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                     size="sm"
                     title={remoteCapabilityUnavailableReason ?? undefined}
                     variant="secondary"
-                    onClick={() => setCreateRemoteOpen(true)}
+                    onClick={() => void handleOpenCreateRemoteKey()}
                   >
                     <Plus className="h-3.5 w-3.5" />
                     新建远端 Key
+                  </Button>
+                  <Button
+                    disabled={saving || loading}
+                    size="sm"
+                    variant="outline"
+                    onClick={handleAddLocalKey}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    添加密钥
                   </Button>
                 </div>
               }
             >
               <StationKeyRowsEditor
                 disabled={saving || loading}
+                groupOptions={editableGroupOptions}
                 rows={keyRows}
                 onRowsChange={setKeyRows}
               />
-              {editing && (
+              {activeStationId && (
                 <div className="mt-3 grid gap-2 border-t border-border pt-3">
                   <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
                     <KeyRound className="h-3.5 w-3.5" />
@@ -798,9 +1516,13 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                       <RemoteKeyDiscoveryList
                         keys={remoteKeys}
                         loading={remoteLoading}
+                        localKeyIdsCreatedByRemote={remoteCreatedLocalKeyIds}
                         localKeys={localStationKeys}
                         onBind={(remoteKeyId, stationKeyId) =>
                           void handleBindRemoteKey(remoteKeyId, stationKeyId)
+                        }
+                        onLocalKeyToggle={(remoteKey, checked) =>
+                          void handleRemoteLocalKeyToggle(remoteKey, checked)
                         }
                       />
                       {remoteListError && (
@@ -839,6 +1561,17 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                     onChange={(event) => setForm({ ...form, creditPerCny: event.target.value })}
                   />
                 </Field>
+                <Field label="采集频率 分钟">
+                  <input
+                    className={inputClassName}
+                    min="1"
+                    step="1"
+                    type="number"
+                    value={form.collectionIntervalMinutes}
+                    onChange={(event) => setForm({ ...form, collectionIntervalMinutes: event.target.value })}
+                    placeholder="5"
+                  />
+                </Field>
                 <Field label="备注">
                   <textarea
                     className={`${inputClassName} min-h-24 resize-none py-2`}
@@ -870,6 +1603,49 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </label>
   );
+}
+
+function normalizeCollectionIntervalMinutes(value: string) {
+  const interval = Number(value.trim() || "5");
+  return Number.isInteger(interval) && interval > 0 ? interval : 5;
+}
+
+function syncRowsWithGroupRateOptions(
+  rows: StationKeyDraft[],
+  groups: StationKeyGroupOption[],
+): StationKeyDraft[] {
+  let changed = false;
+  const nextRows = rows.map((row) => {
+    if (row.deleteRequested || (!row.groupBindingId && !row.groupIdHash && !row.groupName.trim())) {
+      return row;
+    }
+    const group = groups.find(
+      (item) =>
+        (row.groupBindingId && item.groupBindingId === row.groupBindingId) ||
+        (row.groupIdHash && item.groupIdHash === row.groupIdHash) ||
+        (!row.groupIdHash && item.groupName.trim() === row.groupName.trim()),
+    );
+    if (!group || group.rateMultiplier === null) {
+      return row;
+    }
+    const nextRateMultiplier = formatMultiplier(group.rateMultiplier);
+    if (row.rateMultiplier === nextRateMultiplier && row.groupName === group.groupName) {
+      return row;
+    }
+    changed = true;
+    return {
+      ...row,
+      groupBindingId: group.groupBindingId,
+      groupIdHash: group.groupIdHash,
+      groupName: group.groupName,
+      rateMultiplier: nextRateMultiplier,
+    };
+  });
+  return changed ? nextRows : rows;
+}
+
+function formatMultiplier(value: number) {
+  return Number.isInteger(value) ? String(value) : Number(value.toFixed(6)).toString();
 }
 
 function readError(error: unknown) {

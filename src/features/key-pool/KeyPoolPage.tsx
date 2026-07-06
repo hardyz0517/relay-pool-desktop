@@ -15,20 +15,29 @@ import { CSS } from "@dnd-kit/utilities";
 import { Activity, Edit3, GripVertical, KeyRound, Loader2, Plus, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, SelectControl, StatusBadge, SwitchControl, type StatusTone, useToast } from "@/components/ui";
+import { createChannelMonitor, listChannelMonitorTemplates, listChannelMonitors, updateChannelMonitor } from "@/lib/api/channelMonitors";
 import { listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getStationKeyCapabilities, updateStationKeyCapabilities } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
 import { createStationKey, deleteStationKey, listKeyPoolItems, reorderKeyPool, testStationKeyConnectivity, updateStationKey, updateStationKeyGroupBinding } from "@/lib/api/stationKeys";
+import type { ChannelMonitor, ChannelMonitorRequestTemplate } from "@/lib/types/channelMonitors";
 import { isCollectedStationGroupBinding, type StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { Station } from "@/lib/types/stations";
 import type { CreateStationKeyInput, KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
+import {
+  createStationKeyMonitorInput,
+  findStationKeyMonitor,
+  preferredStationKeyMonitorTemplate,
+  updateStationKeyMonitorEnabledInput,
+} from "@/features/channels/channelMonitorViewModel";
 
 type FilterMode = "all" | "enabled" | "disabled";
 
 type KeyPoolPageProps = {
   onAddKey?: (stationId: string | null) => void;
+  onEditKey?: (stationKeyId: string) => void;
 };
 
 const statusTone: Record<StationKeyStatus, StatusTone> = {
@@ -48,12 +57,14 @@ const statusLabels: Record<StationKeyStatus, string> = {
 };
 
 const keyPoolGridClassName =
-  "grid min-w-[720px] grid-cols-[2rem_minmax(18rem,1fr)_7rem_5rem_12rem_5.5rem] items-center gap-3";
+  "grid min-w-[780px] grid-cols-[2rem_minmax(18rem,1fr)_7rem_5rem_5rem_12rem_5.5rem] items-center gap-3";
 
-export function KeyPoolPage({ onAddKey }: KeyPoolPageProps) {
+export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const toast = useToast();
   const [stations, setStations] = useState<Station[]>([]);
   const [items, setItems] = useState<KeyPoolItem[]>([]);
+  const [monitors, setMonitors] = useState<ChannelMonitor[]>([]);
+  const [monitorTemplates, setMonitorTemplates] = useState<ChannelMonitorRequestTemplate[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<string>("all");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [query, setQuery] = useState("");
@@ -66,6 +77,7 @@ export function KeyPoolPage({ onAddKey }: KeyPoolPageProps) {
   const [editForm, setEditForm] = useState<KeyPoolEditForm>(emptyEditForm);
   const [bindingsForEdit, setBindingsForEdit] = useState<StationGroupBinding[]>([]);
   const [testingKeyId, setTestingKeyId] = useState<string | null>(null);
+  const [monitoringKeyId, setMonitoringKeyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
@@ -100,6 +112,13 @@ export function KeyPoolPage({ onAddKey }: KeyPoolPageProps) {
   }, [filterMode, items, query, selectedStationId]);
   const dragEnabled = filteredItems.length === items.length;
   const filteredEnabledCount = filteredItems.filter((item) => item.enabled).length;
+  const monitorByKey = useMemo(() => {
+    const entries = items.flatMap((item) => {
+      const monitor = findStationKeyMonitor(monitors, item.id);
+      return monitor ? [[item.id, monitor] as const] : [];
+    });
+    return new Map(entries);
+  }, [items, monitors]);
 
   const stationOptions = useMemo(
     () => stations.map((station) => ({ id: station.id, label: station.name })),
@@ -110,9 +129,16 @@ export function KeyPoolPage({ onAddKey }: KeyPoolPageProps) {
     setLoading(true);
     setError(null);
     try {
-      const [nextStations, nextItems] = await Promise.all([listStations(), listKeyPoolItems()]);
+      const [nextStations, nextItems, nextMonitors, nextTemplates] = await Promise.all([
+        listStations(),
+        listKeyPoolItems(),
+        listChannelMonitors(),
+        listChannelMonitorTemplates(),
+      ]);
       setStations(nextStations);
       setItems(nextItems);
+      setMonitors(nextMonitors);
+      setMonitorTemplates(nextTemplates);
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
@@ -247,7 +273,36 @@ export function KeyPoolPage({ onAddKey }: KeyPoolPageProps) {
     }
   }
 
+  async function handleToggleMonitoring(item: KeyPoolItem) {
+    const existingMonitor = findStationKeyMonitor(monitors, item.id);
+    const nextEnabled = !existingMonitor?.enabled;
+    setMonitoringKeyId(item.id);
+    setError(null);
+    try {
+      if (existingMonitor) {
+        await updateChannelMonitor(updateStationKeyMonitorEnabledInput(existingMonitor, nextEnabled));
+      } else {
+        const template = preferredStationKeyMonitorTemplate(monitorTemplates);
+        if (!template) {
+          throw new Error("暂无启用的监控请求模板，请先在渠道状态的监控页启用模板。");
+        }
+        const capabilities = await getStationKeyCapabilities(item.id);
+        await createChannelMonitor(createStationKeyMonitorInput(item, template, capabilities));
+      }
+      await refresh();
+      toast.success(nextEnabled ? "监控已开启" : "监控已停用");
+    } catch (requestError) {
+      toast.error("更新监控开关失败", readError(requestError));
+    } finally {
+      setMonitoringKeyId(null);
+    }
+  }
+
   async function handleEdit(item: KeyPoolItem) {
+    if (onEditKey) {
+      onEditKey(item.id);
+      return;
+    }
     setCreatingKey(false);
     setEditingItem(item);
     setEditForm(formFromItem(item));
@@ -517,6 +572,7 @@ export function KeyPoolPage({ onAddKey }: KeyPoolPageProps) {
                   <TableHeadCell>名称</TableHeadCell>
                   <TableHeadCell align="center">状态</TableHeadCell>
                   <TableHeadCell align="center">调度</TableHeadCell>
+                  <TableHeadCell align="center">监控</TableHeadCell>
                   <TableHeadCell align="center">分组</TableHeadCell>
                   <div className="text-right">操作</div>
                 </div>
@@ -531,6 +587,9 @@ export function KeyPoolPage({ onAddKey }: KeyPoolPageProps) {
                       onTestConnectivity={handleTestConnectivity}
                       testing={testingKeyId === item.id}
                       onToggleEnabled={handleToggleEnabled}
+                      monitor={monitorByKey.get(item.id) ?? null}
+                      monitoring={monitoringKeyId === item.id}
+                      onToggleMonitoring={handleToggleMonitoring}
                     />
                   ))}
                 </div>
@@ -576,23 +635,29 @@ function SortableKeyRow({
   item,
   dragEnabled,
   testing,
+  monitor,
+  monitoring,
   onEdit,
   onTestConnectivity,
   onToggleEnabled,
+  onToggleMonitoring,
   onDelete,
 }: {
   item: KeyPoolItem;
   dragEnabled: boolean;
   testing: boolean;
+  monitor: ChannelMonitor | null;
+  monitoring: boolean;
   onEdit: (item: KeyPoolItem) => void;
   onTestConnectivity: (item: KeyPoolItem) => void;
   onToggleEnabled: (item: KeyPoolItem) => void;
+  onToggleMonitoring: (item: KeyPoolItem) => void;
   onDelete: (item: KeyPoolItem) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id, disabled: !dragEnabled });
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={cn("will-change-transform", isDragging && "opacity-35")}>
-      <KeyRowContent item={item} testing={testing} dragAttributes={dragEnabled ? attributes : undefined} dragListeners={dragEnabled ? listeners : undefined} dragDisabled={!dragEnabled} onEdit={onEdit} onTestConnectivity={onTestConnectivity} onToggleEnabled={onToggleEnabled} onDelete={onDelete} />
+      <KeyRowContent item={item} testing={testing} monitor={monitor} monitoring={monitoring} dragAttributes={dragEnabled ? attributes : undefined} dragListeners={dragEnabled ? listeners : undefined} dragDisabled={!dragEnabled} onEdit={onEdit} onTestConnectivity={onTestConnectivity} onToggleEnabled={onToggleEnabled} onToggleMonitoring={onToggleMonitoring} onDelete={onDelete} />
     </div>
   );
 }
@@ -601,23 +666,29 @@ function KeyRowContent({
   item,
   overlay = false,
   testing = false,
+  monitor,
+  monitoring = false,
   dragDisabled = false,
   dragAttributes,
   dragListeners,
   onEdit,
   onTestConnectivity,
   onToggleEnabled,
+  onToggleMonitoring,
   onDelete,
 }: {
   item: KeyPoolItem;
   overlay?: boolean;
   testing?: boolean;
+  monitor?: ChannelMonitor | null;
+  monitoring?: boolean;
   dragDisabled?: boolean;
   dragAttributes?: DraggableAttributes;
   dragListeners?: ReturnType<typeof useSortable>["listeners"];
   onEdit?: (item: KeyPoolItem) => void;
   onTestConnectivity?: (item: KeyPoolItem) => void;
   onToggleEnabled?: (item: KeyPoolItem) => void;
+  onToggleMonitoring?: (item: KeyPoolItem) => void;
   onDelete?: (item: KeyPoolItem) => void;
 }) {
   const cooldownActive = isFutureTime(item.cooldownUntil);
@@ -679,6 +750,20 @@ function KeyRowContent({
           className="h-7 w-10 justify-center border-transparent bg-transparent px-0 shadow-none"
           disabled={overlay}
           onCheckedChange={() => onToggleEnabled?.(item)}
+          showLabel={false}
+        />
+      </div>
+
+      <div className="flex min-w-0 items-center justify-center">
+        <SwitchControl
+          checked={Boolean(monitor?.enabled)}
+          ariaLabel={monitor?.enabled ? `关闭监控 ${item.name}` : `打开监控 ${item.name}`}
+          className={cn(
+            "h-7 w-10 justify-center border-transparent bg-transparent px-0 shadow-none",
+            monitoring && "animate-pulse",
+          )}
+          disabled={overlay || monitoring}
+          onCheckedChange={() => onToggleMonitoring?.(item)}
           showLabel={false}
         />
       </div>

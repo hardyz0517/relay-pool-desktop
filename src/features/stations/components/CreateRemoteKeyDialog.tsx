@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Button, Dialog, SelectControl } from "@/components/ui";
 
 type RemoteKeyGroupOption = {
+  groupBindingId: string | null;
   groupIdHash: string | null;
   groupName: string;
+  rateMultiplier: number | null;
 };
 
 type CreateRemoteKeyDialogProps = {
@@ -11,7 +13,12 @@ type CreateRemoteKeyDialogProps = {
   groups: RemoteKeyGroupOption[];
   saving?: boolean;
   onClose: () => void;
-  onSubmit: (input: { name: string; groupIdHash: string | null; groupName: string | null }) => void;
+  onSubmit: (input: {
+    name: string;
+    groupBindingId: string | null;
+    groupIdHash: string | null;
+    groupName: string | null;
+  }) => void;
 };
 
 const noGroupValue = "__none__";
@@ -46,8 +53,12 @@ export function CreateRemoteKeyDialog({
       { value: noGroupValue, label: "不指定分组", description: "按远端默认策略创建" },
       ...normalizedGroups.map((group, index) => ({
         value: groupOptionValue(index),
-        label: group.groupName,
-        description: group.groupIdHash ? `ID ${group.groupIdHash.slice(0, 8)}` : "无分组 ID",
+        label: (
+          <span className="inline-flex min-w-0 max-w-full items-center gap-2">
+            <span className="min-w-0 truncate">{group.groupName}</span>
+            <RemoteGroupRateTag value={group.rateMultiplier} />
+          </span>
+        ),
       })),
     ],
     [normalizedGroups],
@@ -76,6 +87,7 @@ export function CreateRemoteKeyDialog({
     const selectedGroup = groupIndex >= 0 ? normalizedGroups[groupIndex] ?? null : null;
     onSubmit({
       name: trimmedName,
+      groupBindingId: selectedGroup?.groupBindingId ?? null,
       groupIdHash: selectedGroup?.groupIdHash ?? null,
       groupName: selectedGroup?.groupName ?? null,
     });
@@ -136,6 +148,18 @@ export function CreateRemoteKeyDialog({
   );
 }
 
+function RemoteGroupRateTag({ value }: { value: number | null }) {
+  return (
+    <span className="shrink-0 rounded-[calc(var(--surface-radius)-3px)] border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium leading-none text-slate-600">
+      {value === null ? "倍率未采集" : `${formatMultiplier(value)}x`}
+    </span>
+  );
+}
+
 function groupOptionValue(index: number) {
   return `group-${index}`;
+}
+
+function formatMultiplier(value: number) {
+  return Number.isInteger(value) ? String(value) : Number(value.toFixed(6)).toString();
 }

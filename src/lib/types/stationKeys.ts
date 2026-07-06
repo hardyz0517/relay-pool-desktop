@@ -156,6 +156,7 @@ export type RemoteKeyScanResult = {
 export type CreateRemoteStationKeyInput = {
   stationId: string;
   name: string;
+  groupBindingId: string | null;
   groupIdHash: string | null;
   groupName: string | null;
 };
@@ -164,6 +165,12 @@ export type CreateRemoteStationKeyResult = {
   remoteKey: RemoteStationKey;
   stationKey: StationKey;
   fullKeyOnce: string | null;
+  message: string;
+};
+
+export type CreateLocalStationKeyFromRemoteResult = {
+  remoteKey: RemoteStationKey;
+  stationKey: StationKey;
   message: string;
 };
 

@@ -10,7 +10,8 @@ import {
   RotateCw,
   WalletCards,
 } from "lucide-react";
-import { Button, StatusBadge, type StatusTone } from "@/components/ui";
+import { PageScaffold } from "@/components/shell/PageScaffold";
+import { Button, IconButton, StatusBadge, type StatusTone } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import type {
   DetailTone,
@@ -65,62 +66,58 @@ export function StationDetailContent({
   const actionBusy = loadingAction !== null;
 
   return (
-    <div className="space-y-4">
-      <div className="sticky top-[calc(var(--shell-page-gap)*-1)] z-20 -mx-[var(--shell-page-gap)] -mt-[var(--shell-page-gap)] border-b border-border bg-background/95 px-[var(--shell-page-gap)] py-3 backdrop-blur">
-        <div className="flex min-h-9 flex-wrap items-center justify-between gap-3">
+    <PageScaffold
+      title="中转站详情"
+      stickyHeader
+      backAction={
+        <IconButton label="返回中转站资产" onClick={onBack}>
+          <ArrowLeft className="h-4 w-4" />
+        </IconButton>
+      }
+      actions={
+        <>
           <Button
-            variant="ghost"
+            variant="secondary"
             size="sm"
-            onClick={onBack}
-            className="-ml-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+            disabled={actionBusy}
+            onClick={() => onRefresh("balance")}
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            返回中转站资产
+            <RefreshCw className={cn("h-3.5 w-3.5", loadingAction === "balance" && "animate-spin")} />
+            刷新余额
           </Button>
-
-          <div className="flex w-full min-w-0 flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={actionBusy}
-              onClick={() => onRefresh("balance")}
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", loadingAction === "balance" && "animate-spin")} />
-              刷新余额
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={actionBusy}
-              onClick={() => onRefresh("groups")}
-            >
-              <Layers3 className={cn("h-3.5 w-3.5", loadingAction === "groups" && "animate-pulse")} />
-              采集分组倍率
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={actionBusy}
-              onClick={() => onRefresh("full")}
-            >
-              <RotateCw className={cn("h-3.5 w-3.5", loadingAction === "full" && "animate-spin")} />
-              重新采集
-            </Button>
-            <Button variant="ghost" size="sm" onClick={onEdit}>
-              <Edit3 className="h-3.5 w-3.5" />
-              编辑供应商
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <header className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-3 shadow-[var(--surface-shadow)]">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={actionBusy}
+            onClick={() => onRefresh("groups")}
+          >
+            <Layers3 className={cn("h-3.5 w-3.5", loadingAction === "groups" && "animate-pulse")} />
+            采集分组倍率
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={actionBusy}
+            onClick={() => onRefresh("full")}
+          >
+            <RotateCw className={cn("h-3.5 w-3.5", loadingAction === "full" && "animate-spin")} />
+            重新采集
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onEdit}>
+            <Edit3 className="h-3.5 w-3.5" />
+            编辑供应商
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <header className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-3 shadow-[var(--surface-shadow)]">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 space-y-2">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h1 className="min-w-0 truncate text-xl font-semibold tracking-normal text-slate-900">
+              <h2 className="min-w-0 truncate text-xl font-semibold tracking-normal text-slate-900">
                 {station.name}
-              </h1>
+              </h2>
               <StatusBadge tone={statusToneByDetailTone[viewModel.statusTone]}>
                 {viewModel.statusLabel}
               </StatusBadge>
@@ -138,16 +135,16 @@ export function StationDetailContent({
             </div>
           </div>
         </div>
-      </header>
+        </header>
 
-      {sectionError && (
-        <div className="flex items-start gap-2 rounded-[var(--surface-radius)] border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>{sectionError}</span>
-        </div>
-      )}
+        {sectionError && (
+          <div className="flex items-start gap-2 rounded-[var(--surface-radius)] border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{sectionError}</span>
+          </div>
+        )}
 
-      <section className="rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+        <section className="rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <WalletCards className="h-4 w-4 text-slate-500" />
           <h2 className="text-sm font-semibold text-slate-900">余额</h2>
@@ -251,7 +248,8 @@ export function StationDetailContent({
         <DiagnosticSection icon={Database} title="最新快照" items={viewModel.snapshotItems} />
         <DiagnosticSection icon={AlertTriangle} title="相关变化" items={viewModel.changeItems} />
       </div>
-    </div>
+      </div>
+    </PageScaffold>
   );
 }
 

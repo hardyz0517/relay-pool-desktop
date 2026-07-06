@@ -27,6 +27,7 @@ function ensureMemoryStations() {
     balanceRaw: null,
     balanceCny: station.balanceCny,
     lowBalanceThresholdCny: 15,
+    collectionIntervalMinutes: 5,
     status: station.status,
     latencyMs: station.latencyMs,
     lastCheckedAt: station.lastCheckedAt,
@@ -71,6 +72,7 @@ export function createStation(input: StationInput) {
         balanceRaw: null,
         balanceCny: null,
         lowBalanceThresholdCny: input.lowBalanceThresholdCny,
+        collectionIntervalMinutes: input.collectionIntervalMinutes,
         status: input.enabled ? "unchecked" : "disabled",
         latencyMs: null,
         lastCheckedAt: null,
@@ -105,6 +107,7 @@ export function updateStation(input: StationUpdateInput) {
                 enabled: input.enabled,
                 creditPerCny: input.creditPerCny,
                 lowBalanceThresholdCny: input.lowBalanceThresholdCny,
+                collectionIntervalMinutes: input.collectionIntervalMinutes,
                 note: input.note,
                 updatedAt: now,
               }

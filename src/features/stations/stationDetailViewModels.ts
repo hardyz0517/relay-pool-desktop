@@ -53,8 +53,8 @@ export type StationDetailViewModel = {
 const stationTypeLabels: Record<string, string> = {
   sub2api: "Sub2API",
   newapi: "NewAPI",
-  "openai-compatible": "兼容 OpenAI",
-  custom: "自定义",
+  "openai-compatible": "自定义接口",
+  custom: "自定义接口",
 };
 
 const stationStatusLabels: Record<string, string> = {
@@ -208,7 +208,7 @@ export function buildGroupRows(
   bindings: StationGroupBinding[],
   rates: GroupRateRecord[],
 ): StationDetailGroupRow[] {
-  const stationGroupBindings = bindings.filter(isCollectedStationGroupBinding);
+  const stationGroupBindings = dedupeStationGroupBindings(bindings.filter(isCollectedStationGroupBinding), rates);
   const latestRateByBindingId = new Map<string, GroupRateRecord>();
 
   for (const rate of rates) {
@@ -242,6 +242,84 @@ export function buildGroupRows(
       warning,
     };
   });
+}
+
+function dedupeStationGroupBindings(
+  bindings: StationGroupBinding[],
+  rates: GroupRateRecord[],
+): StationGroupBinding[] {
+  const latestRateByBindingId = new Map<string, GroupRateRecord>();
+  for (const rate of rates) {
+    if (rate.bindingKind !== "station_group" || !rate.groupBindingId) {
+      continue;
+    }
+    const current = latestRateByBindingId.get(rate.groupBindingId);
+    if (!current || toTime(rate.checkedAt) > toTime(current.checkedAt)) {
+      latestRateByBindingId.set(rate.groupBindingId, rate);
+    }
+  }
+
+  const byGroupName = new Map<string, StationGroupBinding>();
+  for (const binding of bindings) {
+    const key = normalizeGroupName(binding.groupName);
+    const existing = byGroupName.get(key);
+    if (!existing) {
+      byGroupName.set(key, binding);
+      continue;
+    }
+    byGroupName.set(
+      key,
+      preferStationGroupBinding(
+        existing,
+        binding,
+        latestRateByBindingId.get(existing.id) ?? null,
+        latestRateByBindingId.get(binding.id) ?? null,
+      ),
+    );
+  }
+  return Array.from(byGroupName.values());
+}
+
+function preferStationGroupBinding(
+  left: StationGroupBinding,
+  right: StationGroupBinding,
+  leftRate: GroupRateRecord | null,
+  rightRate: GroupRateRecord | null,
+) {
+  const leftScore = stationGroupBindingScore(left, leftRate);
+  const rightScore = stationGroupBindingScore(right, rightRate);
+  if (rightScore !== leftScore) {
+    return rightScore > leftScore ? right : left;
+  }
+  return toTime(right.lastCheckedAt ?? right.updatedAt) > toTime(left.lastCheckedAt ?? left.updatedAt)
+    ? right
+    : left;
+}
+
+function stationGroupBindingScore(binding: StationGroupBinding, latestRate: GroupRateRecord | null) {
+  let score = 0;
+  const source = binding.rateSource ?? latestRate?.source ?? "";
+  if (source !== "remote_scan") {
+    score += 10;
+  }
+  if (source.includes("groups_rates")) {
+    score += 5;
+  }
+  if (
+    binding.effectiveRateMultiplier != null ||
+    binding.defaultRateMultiplier != null ||
+    binding.userRateMultiplier != null ||
+    latestRate?.effectiveRateMultiplier != null ||
+    latestRate?.defaultRateMultiplier != null ||
+    latestRate?.userRateMultiplier != null
+  ) {
+    score += 3;
+  }
+  return score;
+}
+
+function normalizeGroupName(value: string) {
+  return value.trim().toLowerCase();
 }
 
 export function buildStationDetailViewModel({

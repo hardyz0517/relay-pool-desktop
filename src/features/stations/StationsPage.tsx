@@ -41,7 +41,14 @@ import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
-import { stationStatusLabels, stationTypeLabels, type Station, type StationInput, type StationType } from "@/lib/types/stations";
+import {
+  stationStatusLabels,
+  stationTypeLabels,
+  stationTypeOptions,
+  type Station,
+  type StationInput,
+  type StationType,
+} from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import {
   buildStationAssetRows,
@@ -57,6 +64,7 @@ type StationFormState = {
   enabled: boolean;
   creditPerCny: string;
   lowBalanceThresholdCny: string;
+  collectionIntervalMinutes: string;
   note: string;
   loginUsername: string;
   loginPassword: string;
@@ -86,6 +94,7 @@ const emptyForm: StationFormState = {
   enabled: true,
   creditPerCny: "1",
   lowBalanceThresholdCny: "",
+  collectionIntervalMinutes: "5",
   note: "",
   loginUsername: "",
   loginPassword: "",
@@ -111,6 +120,7 @@ const statusTone: Record<Station["status"], "healthy" | "warning" | "error" | "d
   disabled: "disabled",
   unchecked: "info",
 };
+const STATION_ASSET_REFRESH_INTERVAL_MS = 30_000;
 
 type StationsPageProps = {
   onAddProvider?: () => void;
@@ -161,6 +171,13 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   }, []);
 
   useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void refreshStations({ silent: true });
+    }, STATION_ASSET_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
     if (!drawerStationId) {
       setDrawerVisible(false);
       return;
@@ -187,7 +204,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
 
   const stationIds = useMemo(() => stations.map((station) => station.id), [stations]);
   const selectedStation = useMemo(
-    () => stations.find((station) => station.id === selectedStationId) ?? stations[0] ?? null,
+    () => stations.find((station) => station.id === selectedStationId) ?? null,
     [selectedStationId, stations],
   );
   const detailStation = useMemo(
@@ -249,8 +266,10 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     void refreshExtras(activeDialogStation.id);
   }, [activeDialogStation?.id]);
 
-  async function refreshStations() {
-    setLoading(true);
+  async function refreshStations(options: { silent?: boolean } = {}) {
+    if (!options.silent) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const [nextStations, nextBalances, nextChanges] = await Promise.all([
@@ -275,14 +294,16 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
         if (current && nextStations.some((station) => station.id === current)) {
           return current;
         }
-        return nextStations[0]?.id ?? null;
+        return null;
       });
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
       toast.error("读取中转站失败", message);
     } finally {
-      setLoading(false);
+      if (!options.silent) {
+        setLoading(false);
+      }
     }
   }
 
@@ -362,6 +383,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
       enabled: station.enabled,
       creditPerCny: String(station.creditPerCny),
       lowBalanceThresholdCny: station.lowBalanceThresholdCny === null ? "" : String(station.lowBalanceThresholdCny),
+      collectionIntervalMinutes: String(station.collectionIntervalMinutes),
       note: station.note ?? "",
       loginUsername: "",
       loginPassword: "",
@@ -680,7 +702,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
                     <SortableStationAssetListRow
                       key={row.station.id}
                       actionDisabled={stationAction !== null}
-                      active={row.station.id === selectedStation?.id}
+                      active={row.station.id === selectedStationId}
                       loadingAction={stationAction?.stationId === row.station.id ? stationAction.action : null}
                       row={row}
                       onCollect={(station) => void handleRunCollect(station)}
@@ -1083,10 +1105,7 @@ function StationDialogs({
                 ariaLabel="站点类型"
                 className={inputClassName}
                 value={form.stationType}
-                options={Object.entries(stationTypeLabels).map(([value, label]) => ({
-                  value: value as StationType,
-                  label,
-                }))}
+                options={stationTypeOptions}
                 onChange={(stationType) => onChange({ ...form, stationType })}
               />
             </Field>
@@ -1104,6 +1123,11 @@ function StationDialogs({
             <Field label="低余额阈值">
               <input className={inputClassName} min="0" step="0.01" type="number" value={form.lowBalanceThresholdCny} onChange={(event) => onChange({ ...form, lowBalanceThresholdCny: event.target.value })} placeholder="使用全局设置" />
             </Field>
+            <Field label="采集频率 分钟">
+              <input className={inputClassName} min="1" step="1" type="number" value={form.collectionIntervalMinutes} onChange={(event) => onChange({ ...form, collectionIntervalMinutes: event.target.value })} placeholder="5" />
+            </Field>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
             <label className="flex items-end gap-2 pb-2 text-sm text-slate-700">
               <input checked={form.enabled} className="h-4 w-4 accent-teal-600" type="checkbox" onChange={(event) => onChange({ ...form, enabled: event.target.checked })} />
               启用站点
@@ -1447,8 +1471,14 @@ function formToInput(form: StationFormState): StationInput {
     enabled: form.enabled,
     creditPerCny: Number(form.creditPerCny),
     lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim() ? Number(form.lowBalanceThresholdCny) : null,
+    collectionIntervalMinutes: normalizeCollectionIntervalMinutes(form.collectionIntervalMinutes),
     note: form.note.trim() ? form.note.trim() : null,
   };
+}
+
+function normalizeCollectionIntervalMinutes(value: string) {
+  const interval = Number(value.trim() || "5");
+  return Number.isInteger(interval) && interval > 0 ? interval : 5;
 }
 
 function toCreateKeyInput(form: StationKeyFormState, stationId: string): CreateStationKeyInput {

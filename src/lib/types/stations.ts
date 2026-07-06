@@ -21,6 +21,7 @@ export type Station = {
   balanceRaw: number | null;
   balanceCny: number | null;
   lowBalanceThresholdCny: number | null;
+  collectionIntervalMinutes: number;
   status: StationStatus;
   latencyMs: number | null;
   lastCheckedAt: string | null;
@@ -38,6 +39,7 @@ export type StationInput = {
   enabled: boolean;
   creditPerCny: number;
   lowBalanceThresholdCny: number | null;
+  collectionIntervalMinutes: number;
   note: string | null;
 };
 
@@ -49,9 +51,15 @@ export type StationUpdateInput = Omit<StationInput, "apiKey"> & {
 export const stationTypeLabels: Record<StationType, string> = {
   sub2api: "Sub2API",
   newapi: "NewAPI",
-  "openai-compatible": "兼容 OpenAI",
-  custom: "自定义",
+  "openai-compatible": "自定义接口",
+  custom: "自定义接口",
 };
+
+export const stationTypeOptions: Array<{ value: StationType; label: string }> = [
+  { value: "sub2api", label: stationTypeLabels.sub2api },
+  { value: "newapi", label: stationTypeLabels.newapi },
+  { value: "custom", label: stationTypeLabels.custom },
+];
 
 export const stationStatusLabels: Record<StationStatus, string> = {
   healthy: "采集正常",

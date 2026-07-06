@@ -6,6 +6,7 @@ import type {
   ChannelMonitorTargetType,
   CreateChannelMonitorInput,
 } from "@/lib/types/channelMonitors";
+import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
 
@@ -36,10 +37,92 @@ type MonitorValidationContext = {
   keys: KeyPoolItem[];
 };
 
+export const DEFAULT_STATION_KEY_MONITOR_MODEL = "gpt-4o-mini";
+export const DEFAULT_STATION_KEY_MONITOR_TEMPLATE_ID = "builtin-openai-responses-low-token";
+export const STATION_KEY_MONITOR_NOTE = "由密钥池监控开关创建";
+
 export const targetTypeOptions: Array<{ value: ChannelMonitorTargetType; label: string }> = [
   { value: "station_key", label: "单个密钥" },
   { value: "station", label: "中转站全部启用密钥" },
 ];
+
+export function findStationKeyMonitor(
+  monitors: ChannelMonitor[],
+  stationKeyId: string,
+) {
+  return monitors
+    .filter((monitor) => monitor.targetType === "station_key" && monitor.stationKeyId === stationKeyId)
+    .sort((a, b) => toTime(b.updatedAt) - toTime(a.updatedAt))[0] ?? null;
+}
+
+export function preferredStationKeyMonitorTemplate(
+  templates: Array<Pick<ChannelMonitorRequestTemplate, "id" | "enabled" | "endpointKind">>,
+) {
+  return templates.find((template) => template.enabled && template.id === "builtin-openai-chat-low-token") ??
+    templates.find((template) => template.enabled && template.endpointKind === "chat_completions") ??
+    templates.find((template) => template.enabled && template.id === DEFAULT_STATION_KEY_MONITOR_TEMPLATE_ID) ??
+    templates.find((template) => template.enabled && template.endpointKind === "responses") ??
+    templates.find((template) => template.enabled) ??
+    null;
+}
+
+export function selectStationKeyMonitorModel(
+  capabilities?: Pick<StationKeyCapabilities, "modelAllowlist" | "modelBlocklist" | "preferredModels"> | null,
+) {
+  const blockedModels = new Set((capabilities?.modelBlocklist ?? []).map(normalizeModelName));
+  const explicitModels = capabilities?.modelAllowlist?.length
+    ? capabilities.modelAllowlist
+    : capabilities?.preferredModels ?? [];
+  const candidates = uniqueModels(explicitModels).filter((model) => !blockedModels.has(normalizeModelName(model)));
+  const selected = candidates.sort(compareMonitorModelPriority)[0];
+  return selected ?? (blockedModels.has(normalizeModelName(DEFAULT_STATION_KEY_MONITOR_MODEL))
+    ? candidates[0] ?? DEFAULT_STATION_KEY_MONITOR_MODEL
+    : DEFAULT_STATION_KEY_MONITOR_MODEL);
+}
+
+export function createStationKeyMonitorInput(
+  key: Pick<KeyPoolItem, "id" | "stationId" | "name">,
+  template: Pick<ChannelMonitorRequestTemplate, "id">,
+  capabilities?: Pick<StationKeyCapabilities, "modelAllowlist" | "modelBlocklist" | "preferredModels"> | null,
+): CreateChannelMonitorInput {
+  return {
+    name: `${key.name} 监控`,
+    targetType: "station_key",
+    stationId: key.stationId,
+    stationKeyId: key.id,
+    templateId: template.id,
+    enabled: true,
+    intervalSeconds: 300,
+    jitterSeconds: 15,
+    timeoutSeconds: 30,
+    maxConcurrency: 1,
+    consecutiveFailureThreshold: 3,
+    fallbackModels: [selectStationKeyMonitorModel(capabilities)],
+    note: STATION_KEY_MONITOR_NOTE,
+  };
+}
+
+export function updateStationKeyMonitorEnabledInput(
+  monitor: ChannelMonitor,
+  enabled: boolean,
+) {
+  return {
+    id: monitor.id,
+    name: monitor.name,
+    targetType: monitor.targetType,
+    stationId: monitor.stationId,
+    stationKeyId: monitor.stationKeyId,
+    templateId: monitor.templateId,
+    enabled,
+    intervalSeconds: monitor.intervalSeconds,
+    jitterSeconds: monitor.jitterSeconds,
+    timeoutSeconds: monitor.timeoutSeconds,
+    maxConcurrency: monitor.maxConcurrency,
+    consecutiveFailureThreshold: monitor.consecutiveFailureThreshold,
+    fallbackModels: [...monitor.fallbackModels],
+    note: monitor.note,
+  };
+}
 
 export function createEmptyMonitorDraft(stations: Station[] = [], templates: ChannelMonitorRequestTemplate[] = []): ChannelMonitorDraft {
   const stationId = stations[0]?.id ?? "";
@@ -275,4 +358,48 @@ function toInteger(value: string) {
 
 function isInRange(value: number | null, min: number, max: number) {
   return value !== null && value >= min && value <= max;
+}
+
+function toTime(value: string) {
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  return date.getTime();
+}
+
+function uniqueModels(models: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const model of models) {
+    const trimmed = model.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const normalized = normalizeModelName(trimmed);
+    if (seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+function compareMonitorModelPriority(left: string, right: string) {
+  return monitorModelPriority(left) - monitorModelPriority(right);
+}
+
+function monitorModelPriority(model: string) {
+  const normalized = normalizeModelName(model);
+  if (normalized.includes("nano")) return 0;
+  if (normalized.includes("mini")) return 1;
+  if (normalized.includes("lite")) return 2;
+  if (normalized.includes("flash")) return 3;
+  if (normalized.includes("haiku")) return 4;
+  if (normalized.includes("turbo")) return 5;
+  if (normalized === "deepseek-chat" || normalized.endsWith("-chat")) return 6;
+  return 20;
+}
+
+function normalizeModelName(model: string) {
+  return model.trim().toLowerCase();
 }
