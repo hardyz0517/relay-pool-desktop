@@ -21,10 +21,12 @@ import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFact
 import type { Station } from "@/lib/types/stations";
 import {
   enabledOfficialModelCatalog,
+  normalizeCatalogText,
   type OfficialModelProvider,
 } from "./officialModelCatalog";
 import {
   buildPricingComparisonViewModel,
+  type PricingModelEvidence,
   type PricingComparisonRow,
   type PricingComparisonViewModel,
   type PricingModelSection,
@@ -80,15 +82,48 @@ export function PricingPage() {
     }
   }
 
+  const catalogModels = useMemo(() => enabledOfficialModelCatalog(), []);
+  const modelEvidence = useMemo<PricingModelEvidence[]>(() => {
+    const modelIdByNormalizedName = new Map<string, string>();
+    for (const model of catalogModels) {
+      for (const name of [model.modelId, ...model.aliases]) {
+        modelIdByNormalizedName.set(normalizeCatalogText(name), model.modelId);
+      }
+    }
+
+    const seen = new Set<string>();
+    const evidence: PricingModelEvidence[] = [];
+    for (const rule of pricingRules) {
+      if (!rule.enabled) {
+        continue;
+      }
+      const modelId = modelIdByNormalizedName.get(normalizeCatalogText(rule.model));
+      if (!modelId) {
+        continue;
+      }
+      const evidenceKey = `${rule.stationId}\u0000${modelId}`;
+      if (seen.has(evidenceKey)) {
+        continue;
+      }
+      seen.add(evidenceKey);
+      evidence.push({
+        stationId: rule.stationId,
+        modelId,
+        status: "discovered",
+      });
+    }
+    return evidence;
+  }, [catalogModels, pricingRules]);
+
   const viewModel = useMemo(
     () =>
       buildPricingComparisonViewModel({
-        models: enabledOfficialModelCatalog(),
+        models: catalogModels,
         stations,
         groupBindings,
         groupRates,
         pricingRules,
-        modelEvidence: [],
+        modelEvidence,
         filters: {
           provider: providerFilter,
           modelQuery,
@@ -97,8 +132,10 @@ export function PricingPage() {
         },
       }),
     [
+      catalogModels,
       groupBindings,
       groupRates,
+      modelEvidence,
       modelQuery,
       pricingRules,
       providerFilter,
