@@ -52,6 +52,8 @@ const requestTone = {
   failed: "error",
 } as const;
 
+const DASHBOARD_BALANCE_REFRESH_INTERVAL_MS = 30_000;
+
 const dashboardMetricToneClassName: Record<MetricTone, string> = {
   neutral: "text-slate-700",
   good: "text-emerald-700",
@@ -96,6 +98,15 @@ export function DashboardPage() {
       .catch((requestError) => {
         toast.error("工作台刷新失败", readError(requestError));
       });
+  }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void listBalanceSnapshots()
+        .then(setBalanceSnapshots)
+        .catch(() => {});
+    }, DASHBOARD_BALANCE_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
   }, []);
 
   async function copyText(value: string, label = "内容") {

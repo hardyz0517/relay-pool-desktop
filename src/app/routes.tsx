@@ -7,8 +7,8 @@ import {
   GitBranch,
   LayoutDashboard,
   KeyRound,
+  Radio,
   Settings,
-  Radar,
 } from "lucide-react";
 import type { AppRoute } from "@/lib/types/navigation";
 
@@ -47,7 +47,7 @@ export const appRoutes: AppRoute[] = [
     id: "channels",
     label: "渠道状态",
     description: "密钥延迟、成功率和最近状态",
-    icon: Radar,
+    icon: Radio,
   },
   {
     id: "collectors",

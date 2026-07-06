@@ -6,6 +6,15 @@ import {
 } from "@/lib/mock/changeEvents";
 import type { ChangeEvent, UpsertChangeEventInput } from "@/lib/types/changeEvents";
 
+export const CHANGE_EVENTS_UPDATED_EVENT = "relay-pool:change-events-updated";
+
+export function notifyChangeEventsUpdated() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent(CHANGE_EVENTS_UPDATED_EVENT));
+}
+
 function isInvokeUnavailable(error: unknown) {
   return /invoke/i.test(getErrorMessage(error));
 }

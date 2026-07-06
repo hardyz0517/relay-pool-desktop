@@ -88,15 +88,26 @@ export function SelectControl<T extends string>({
       }
       setOpen(false);
     };
-    const handleViewportChange = () => updatePosition();
+    const handleViewportResize = () => updatePosition();
+    const handleViewportScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && menuRef.current?.contains(target)) {
+        return;
+      }
+      setOpen(false);
+    };
 
     document.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("resize", handleViewportChange);
-    window.addEventListener("scroll", handleViewportChange, true);
+    window.addEventListener("resize", handleViewportResize);
+    window.addEventListener("scroll", handleViewportScroll, true);
+    window.addEventListener("wheel", handleViewportScroll, { capture: true, passive: true });
+    window.addEventListener("touchmove", handleViewportScroll, { capture: true, passive: true });
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("resize", handleViewportChange);
-      window.removeEventListener("scroll", handleViewportChange, true);
+      window.removeEventListener("resize", handleViewportResize);
+      window.removeEventListener("scroll", handleViewportScroll, true);
+      window.removeEventListener("wheel", handleViewportScroll, true);
+      window.removeEventListener("touchmove", handleViewportScroll, true);
     };
   }, [open]);
 
@@ -118,8 +129,9 @@ export function SelectControl<T extends string>({
     const spaceAbove = rect.top - viewportPadding;
     const maxHeight = Math.max(160, Math.min(280, Math.max(spaceBelow, spaceAbove) - gap));
     const openAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
+    const menuHeight = estimateMenuHeight(options, maxHeight);
     const top = openAbove
-      ? Math.max(viewportPadding, rect.top - maxHeight - gap)
+      ? Math.max(viewportPadding, rect.top - menuHeight - gap)
       : Math.min(window.innerHeight - viewportPadding, rect.bottom + gap);
 
     setPosition({
@@ -309,4 +321,11 @@ function nextEnabledIndex(options: SelectOption[], startIndex: number, direction
     }
   }
   return startIndex;
+}
+
+function estimateMenuHeight(options: SelectOption[], maxHeight: number) {
+  const menuPadding = 8;
+  const optionHeight = 40;
+  const estimatedContentHeight = options.length * optionHeight + menuPadding;
+  return Math.min(maxHeight, Math.max(optionHeight + menuPadding, estimatedContentHeight));
 }

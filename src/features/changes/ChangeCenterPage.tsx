@@ -15,6 +15,7 @@ import {
   dismissChangeEvent,
   listChangeEvents,
   markChangeEventRead,
+  notifyChangeEventsUpdated,
   resolveChangeEvent,
 } from "@/lib/api/changeEvents";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
@@ -71,6 +72,7 @@ export function ChangeCenterPage() {
     try {
       const updated = await action();
       setEvents((current) => current.map((event) => (event.id === updated.id ? updated : event)));
+      notifyChangeEventsUpdated();
       toast.success(successMessage);
     } catch (requestError) {
       toast.error("更新变更状态失败", readError(requestError));
@@ -84,6 +86,9 @@ export function ChangeCenterPage() {
     try {
       const result = await markUnreadChangeEventsRead(events, markChangeEventRead);
       setEvents(result.events);
+      if (result.changedCount > 0) {
+        notifyChangeEventsUpdated();
+      }
       toast.success(`已标记 ${result.changedCount} 条变更为已读`);
     } catch (requestError) {
       toast.error("批量标记已读失败", readError(requestError));
@@ -251,30 +256,25 @@ function ChangeEventRow({
       type="button"
       aria-pressed={selected}
       onClick={onSelect}
-      className={`grid min-h-[72px] w-full grid-cols-[72px_minmax(0,1fr)_96px] gap-3 px-3 py-2.5 text-left transition-colors hover:bg-teal-50/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--accent)/0.35)] ${
+      className={`grid min-h-[64px] w-full grid-cols-[56px_minmax(0,1fr)_88px] gap-3 px-3 py-2.5 text-left transition-colors hover:bg-teal-50/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--accent)/0.35)] ${
         selected ? "bg-teal-50/70" : "bg-white"
       }`}
     >
       <div className="flex flex-col items-start gap-1">
         <StatusBadge tone={severityTone[event.severity]}>{item.severityLabel}</StatusBadge>
-        {event.status === "unread" && (
-          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">未读</span>
-        )}
       </div>
       <div className="min-w-0">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="truncate text-[13px] font-semibold text-slate-900">{item.title}</span>
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-500">
-            {item.kindLabel}
-          </span>
+        <div className="truncate text-[13px] font-semibold text-slate-900">{item.title}</div>
+        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-slate-500">
+          <span className="truncate">{item.metaLabel}</span>
+          <span className="text-slate-300">/</span>
+          <span>{item.statusLabel}</span>
+          {item.diff && (item.diff.before || item.diff.after) && <span className="text-slate-300">/</span>}
+          <ChangeDiff diff={item.diff} />
         </div>
-        <div className="mt-1 truncate text-xs text-slate-500">{item.description}</div>
-        <ChangeDiff diff={item.diff} />
       </div>
-      <div className="flex flex-col items-end gap-1 text-xs text-slate-500">
+      <div className="flex flex-col items-end text-xs text-slate-500">
         <span className="font-medium text-slate-700">{formatChangeTime(event.detectedAt)}</span>
-        <span>{item.sourceLabel}</span>
-        <span>{item.statusLabel}</span>
       </div>
     </button>
   );
@@ -286,7 +286,7 @@ function ChangeDiff({ diff }: { diff: ChangeEventListDiff | null }) {
   }
 
   return (
-    <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+    <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
       <span className="text-slate-500">{diff.label}</span>
       {diff.before && diff.after ? (
         <>
@@ -305,7 +305,7 @@ function ChangeDiff({ diff }: { diff: ChangeEventListDiff | null }) {
           <DiffValue tone="before">{diff.before}</DiffValue>
         </>
       )}
-    </div>
+    </span>
   );
 }
 

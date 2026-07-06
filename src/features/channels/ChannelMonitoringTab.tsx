@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Copy, Edit3, LayoutTemplate, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { Button, DataTableLite, EmptyState, StatusBadge, useToast, type DataTableColumn } from "@/components/ui";
+import { Button, EmptyState, IconButton, StatusBadge, useToast } from "@/components/ui";
 import {
   createChannelMonitor,
   deleteChannelMonitor,
@@ -36,6 +36,9 @@ type ActionState = {
   monitorId: string;
   kind: "run" | "duplicate" | "delete";
 } | null;
+
+const monitorGridClassName =
+  "w-full grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)_minmax(0,1.15fr)_minmax(0,0.75fr)_minmax(0,1fr)_minmax(0,0.5fr)] items-center gap-3";
 
 export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabProps) {
   const toast = useToast();
@@ -203,100 +206,6 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
     }
   }
 
-  const columns: DataTableColumn<ChannelMonitor>[] = [
-    {
-      key: "name",
-      header: "监控",
-      className: "min-w-[180px]",
-      render: (monitor) => (
-        <div className="min-w-0">
-          <div className="truncate font-medium text-slate-800">{monitor.name}</div>
-          <div className="truncate text-[11px] text-muted-foreground">{monitor.note || "无备注"}</div>
-        </div>
-      ),
-    },
-    {
-      key: "target",
-      header: "目标",
-      className: "min-w-[190px]",
-      render: (monitor) => (
-        <span className="block max-w-[260px] truncate">
-          {formatTargetLabel(monitor.targetType, monitor.stationId, monitor.stationKeyId, stations, keys)}
-        </span>
-      ),
-    },
-    {
-      key: "template",
-      header: "模板",
-      className: "min-w-[160px]",
-      render: (monitor) => (
-        <span className="block max-w-[220px] truncate">{formatTemplateLabel(templateById.get(monitor.templateId))}</span>
-      ),
-    },
-    {
-      key: "model",
-      header: "模型",
-      className: "min-w-[130px]",
-      render: (monitor) => <span className="block max-w-[180px] truncate">{monitor.fallbackModels[0] ?? "-"}</span>,
-    },
-    {
-      key: "interval",
-      header: "频率",
-      className: "min-w-[130px]",
-      render: (monitor) => formatInterval(monitor.intervalSeconds, monitor.jitterSeconds),
-    },
-    {
-      key: "enabled",
-      header: "状态",
-      render: (monitor) => (
-        <StatusBadge tone={monitor.enabled ? "healthy" : "disabled"}>
-          {monitor.enabled ? "启用" : "停用"}
-        </StatusBadge>
-      ),
-    },
-    {
-      key: "latest",
-      header: "最近结果",
-      className: "min-w-[150px]",
-      render: (monitor) => (
-        <LatestRunCell
-          run={getLatestRun(runsByMonitor.get(monitor.id) ?? [])}
-          historyFailed={runLoadFailedIds.has(monitor.id)}
-        />
-      ),
-    },
-    {
-      key: "actions",
-      header: "操作",
-      className: "min-w-[230px] text-right",
-      render: (monitor) => {
-        const running = actionState?.monitorId === monitor.id && actionState.kind === "run";
-        const duplicating = actionState?.monitorId === monitor.id && actionState.kind === "duplicate";
-        const deleting = actionState?.monitorId === monitor.id && actionState.kind === "delete";
-        return (
-          <div className="flex justify-end gap-1.5">
-            <Button size="sm" variant="outline" disabled={Boolean(actionState)} onClick={() => void handleRunNow(monitor)}>
-              <Play className="h-3.5 w-3.5" />
-              {running ? "运行中" : "运行"}
-            </Button>
-            <Button size="sm" variant="ghost" disabled={Boolean(actionState)} onClick={() => openEdit(monitor)}>
-              <Edit3 className="h-3.5 w-3.5" />
-              编辑
-            </Button>
-            <Button size="sm" variant="ghost" disabled={Boolean(actionState)} onClick={() => void handleDuplicate(monitor)}>
-              <Copy className="h-3.5 w-3.5" />
-              {duplicating ? "复制中" : "复制"}
-            </Button>
-            <Button size="sm" variant="danger" disabled={Boolean(actionState)} onClick={() => void handleDelete(monitor)}>
-              <Trash2 className="h-3.5 w-3.5" />
-              {deleting ? "删除中" : "删除"}
-            </Button>
-          </div>
-        );
-      },
-    },
-  ];
-
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -338,7 +247,19 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
           }
         />
       ) : (
-        <DataTableLite rows={monitors} columns={columns} getRowKey={(monitor) => monitor.id} />
+        <MonitorList
+          actionState={actionState}
+          keys={keys}
+          monitors={monitors}
+          runLoadFailedIds={runLoadFailedIds}
+          runsByMonitor={runsByMonitor}
+          stations={stations}
+          templateById={templateById}
+          onDelete={handleDelete}
+          onDuplicate={handleDuplicate}
+          onEdit={openEdit}
+          onRunNow={handleRunNow}
+        />
       )}
 
       <ChannelMonitorForm
@@ -361,10 +282,274 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
   );
 }
 
-function LatestRunCell({ run, historyFailed }: { run: ChannelMonitorRun | null; historyFailed: boolean }) {
+function MonitorList({
+  actionState,
+  keys,
+  monitors,
+  runLoadFailedIds,
+  runsByMonitor,
+  stations,
+  templateById,
+  onDelete,
+  onDuplicate,
+  onEdit,
+  onRunNow,
+}: {
+  actionState: ActionState;
+  keys: KeyPoolItem[];
+  monitors: ChannelMonitor[];
+  runLoadFailedIds: Set<string>;
+  runsByMonitor: Map<string, ChannelMonitorRun[]>;
+  stations: Station[];
+  templateById: Map<string, ChannelMonitorRequestTemplate>;
+  onDelete: (monitor: ChannelMonitor) => void;
+  onDuplicate: (monitor: ChannelMonitor) => void | Promise<void>;
+  onEdit: (monitor: ChannelMonitor) => void;
+  onRunNow: (monitor: ChannelMonitor) => void | Promise<void>;
+}) {
+  return (
+    <div className="min-w-0 overflow-hidden">
+      <div className={`hidden lg:grid ${monitorGridClassName} border-b border-slate-200 px-3 pb-2 text-[11px] font-medium text-slate-500`}>
+        <TableHeadCell>监控</TableHeadCell>
+        <TableHeadCell>目标</TableHeadCell>
+        <TableHeadCell>测试模板</TableHeadCell>
+        <TableHeadCell align="center">调度</TableHeadCell>
+        <TableHeadCell>健康</TableHeadCell>
+        <div className="min-w-0 truncate text-right">操作</div>
+      </div>
+      <div className="space-y-2 lg:space-y-0 lg:divide-y lg:divide-slate-100">
+        {monitors.map((monitor) => (
+          <MonitorRow
+            key={monitor.id}
+            actionState={actionState}
+            keys={keys}
+            monitor={monitor}
+            runLoadFailed={runLoadFailedIds.has(monitor.id)}
+            runs={runsByMonitor.get(monitor.id) ?? []}
+            stations={stations}
+            template={templateById.get(monitor.templateId)}
+            onDelete={onDelete}
+            onDuplicate={onDuplicate}
+            onEdit={onEdit}
+            onRunNow={onRunNow}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MonitorRow({
+  actionState,
+  keys,
+  monitor,
+  runLoadFailed,
+  runs,
+  stations,
+  template,
+  onDelete,
+  onDuplicate,
+  onEdit,
+  onRunNow,
+}: {
+  actionState: ActionState;
+  keys: KeyPoolItem[];
+  monitor: ChannelMonitor;
+  runLoadFailed: boolean;
+  runs: ChannelMonitorRun[];
+  stations: Station[];
+  template?: ChannelMonitorRequestTemplate;
+  onDelete: (monitor: ChannelMonitor) => void;
+  onDuplicate: (monitor: ChannelMonitor) => void | Promise<void>;
+  onEdit: (monitor: ChannelMonitor) => void;
+  onRunNow: (monitor: ChannelMonitor) => void | Promise<void>;
+}) {
+  const running = actionState?.monitorId === monitor.id && actionState.kind === "run";
+  const duplicating = actionState?.monitorId === monitor.id && actionState.kind === "duplicate";
+  const deleting = actionState?.monitorId === monitor.id && actionState.kind === "delete";
+  const modelLabel = monitor.fallbackModels[0] ?? "";
+  const targetLabel = formatTargetLabel(monitor.targetType, monitor.stationId, monitor.stationKeyId, stations, keys);
+  const templateLabel = formatTemplateLabel(template);
+  const intervalLabel = formatInterval(monitor.intervalSeconds, monitor.jitterSeconds);
+  const latestRun = getLatestRun(runs);
+  return (
+    <>
+      <div className={`hidden lg:grid ${monitorGridClassName} group min-h-[62px] px-3 py-2.5 text-left text-[13px] text-slate-700 transition-colors hover:bg-slate-50/45`}>
+        <div className="min-w-0">
+          <div className="truncate font-semibold text-slate-900">{monitor.name}</div>
+          {monitor.note && <div className="mt-0.5 truncate text-xs text-muted-foreground">{monitor.note}</div>}
+        </div>
+
+        <div className="min-w-0 truncate text-slate-700">
+          {targetLabel}
+        </div>
+
+        <div className="min-w-0">
+          <div className="truncate text-slate-800">{templateLabel}</div>
+          {modelLabel && <div className="mt-0.5 truncate text-xs text-muted-foreground">{modelLabel}</div>}
+        </div>
+
+        <div className="flex min-w-0 flex-col items-center gap-1">
+          <StatusBadge tone={monitor.enabled ? "healthy" : "disabled"}>
+            {monitor.enabled ? "启用" : "停用"}
+          </StatusBadge>
+          <div className="max-w-full truncate text-xs text-muted-foreground">
+            {intervalLabel}
+          </div>
+        </div>
+
+        <LatestRunCell run={latestRun} historyFailed={runLoadFailed} />
+
+        <MonitorDesktopActions
+          actionState={actionState}
+          deleting={deleting}
+          duplicating={duplicating}
+          monitor={monitor}
+          running={running}
+          onDelete={onDelete}
+          onDuplicate={onDuplicate}
+          onEdit={onEdit}
+          onRunNow={onRunNow}
+        />
+      </div>
+
+      <section className="rounded-[var(--surface-radius)] border border-border bg-white p-3.5 text-[13px] shadow-[var(--surface-shadow)] lg:hidden">
+        <div className="space-y-3">
+          <MonitorCardField label="监控" value={monitor.name} strong />
+          <MonitorCardField label="目标" value={targetLabel} />
+          <MonitorCardField label="测试模板" value={templateLabel}>
+            {modelLabel && <span className="ml-2 text-xs text-muted-foreground">{modelLabel}</span>}
+          </MonitorCardField>
+          <MonitorCardField label="调度" value={intervalLabel}>
+            <StatusBadge tone={monitor.enabled ? "healthy" : "disabled"} className="ml-2">
+              {monitor.enabled ? "启用" : "停用"}
+            </StatusBadge>
+          </MonitorCardField>
+          <MonitorCardField label="健康">
+            <LatestRunCell run={latestRun} historyFailed={runLoadFailed} align="end" />
+          </MonitorCardField>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
+          <Button size="sm" variant="ghost" disabled={Boolean(actionState)} onClick={() => void onRunNow(monitor)}>
+            <Play className="h-3.5 w-3.5" />
+            {running ? "运行中" : "立即检测"}
+          </Button>
+          <Button size="sm" variant="ghost" disabled={Boolean(actionState)} onClick={() => onEdit(monitor)}>
+            <Edit3 className="h-3.5 w-3.5" />
+            编辑
+          </Button>
+          <Button size="sm" variant="ghost" disabled={Boolean(actionState)} onClick={() => void onDuplicate(monitor)}>
+            <Copy className="h-3.5 w-3.5" />
+            {duplicating ? "复制中" : "复制"}
+          </Button>
+          <Button size="sm" variant="ghost" className="text-rose-600 hover:bg-rose-50 hover:text-rose-600" disabled={Boolean(actionState)} onClick={() => void onDelete(monitor)}>
+            <Trash2 className="h-3.5 w-3.5" />
+            {deleting ? "删除中" : "删除"}
+          </Button>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function MonitorDesktopActions({
+  actionState,
+  deleting,
+  duplicating,
+  monitor,
+  running,
+  onDelete,
+  onDuplicate,
+  onEdit,
+  onRunNow,
+}: {
+  actionState: ActionState;
+  deleting: boolean;
+  duplicating: boolean;
+  monitor: ChannelMonitor;
+  running: boolean;
+  onDelete: (monitor: ChannelMonitor) => void;
+  onDuplicate: (monitor: ChannelMonitor) => void | Promise<void>;
+  onEdit: (monitor: ChannelMonitor) => void;
+  onRunNow: (monitor: ChannelMonitor) => void | Promise<void>;
+}) {
+  return (
+    <div
+      className="flex min-w-0 items-center justify-end gap-1 overflow-hidden lg:opacity-0 lg:transition-opacity lg:group-hover:opacity-100 lg:group-focus-within:opacity-100"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <IconButton
+        className={running ? "h-7 w-7 shrink-0 animate-pulse rounded-[7px] text-teal-700" : "h-7 w-7 shrink-0 rounded-[7px] text-slate-500 hover:bg-teal-50 hover:text-teal-700"}
+        disabled={Boolean(actionState)}
+        label={running ? `运行中 ${monitor.name}` : `运行 ${monitor.name}`}
+        onClick={() => void onRunNow(monitor)}
+      >
+        <Play className="h-4 w-4" />
+      </IconButton>
+      <IconButton className="h-7 w-7 shrink-0 rounded-[7px] text-slate-500 hover:bg-slate-100 hover:text-slate-800" disabled={Boolean(actionState)} label={`编辑 ${monitor.name}`} onClick={() => onEdit(monitor)}>
+        <Edit3 className="h-4 w-4" />
+      </IconButton>
+      <IconButton className="h-7 w-7 shrink-0 rounded-[7px] text-slate-500 hover:bg-slate-100 hover:text-slate-800" disabled={Boolean(actionState)} label={duplicating ? `复制中 ${monitor.name}` : `复制 ${monitor.name}`} onClick={() => void onDuplicate(monitor)}>
+        <Copy className="h-4 w-4" />
+      </IconButton>
+      <IconButton className="h-7 w-7 shrink-0 rounded-[7px] text-slate-500 hover:bg-rose-50 hover:text-rose-600" disabled={Boolean(actionState)} label={deleting ? `删除中 ${monitor.name}` : `删除 ${monitor.name}`} onClick={() => void onDelete(monitor)}>
+        <Trash2 className="h-4 w-4" />
+      </IconButton>
+    </div>
+  );
+}
+
+function MonitorCardField({
+  children,
+  label,
+  strong = false,
+  value,
+}: {
+  children?: ReactNode;
+  label: string;
+  strong?: boolean;
+  value?: string;
+}) {
+  return (
+    <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-start gap-3">
+      <div className="text-xs leading-5 text-slate-500">{label}</div>
+      <div className={`min-w-0 text-right leading-5 text-slate-800 ${strong ? "font-semibold text-slate-950" : ""}`}>
+        {value && <span className="break-words">{value}</span>}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function TableHeadCell({
+  align = "start",
+  children,
+}: {
+  align?: "start" | "center";
+  children: string;
+}) {
+  return (
+    <div className={`min-w-0 truncate ${align === "center" ? "text-center" : ""}`}>
+      {children}
+    </div>
+  );
+}
+
+function LatestRunCell({
+  align = "start",
+  run,
+  historyFailed,
+}: {
+  align?: "end" | "start";
+  run: ChannelMonitorRun | null;
+  historyFailed: boolean;
+}) {
+  const alignClassName = align === "end" ? "justify-end text-right" : "";
   if (historyFailed) {
     return (
-      <div className="flex min-w-0 items-center gap-2">
+      <div className={`flex min-w-0 items-center gap-2 ${alignClassName}`}>
         <StatusBadge tone="warning">未读取</StatusBadge>
         <span className="truncate text-xs text-muted-foreground">运行历史读取失败</span>
       </div>
@@ -374,7 +559,7 @@ function LatestRunCell({ run, historyFailed }: { run: ChannelMonitorRun | null; 
   const statusView = getRunStatusView(run?.status ?? null);
   const durationLabel = formatRunDuration(run);
   return (
-    <div className="flex min-w-0 items-center gap-2">
+    <div className={`flex min-w-0 items-center gap-2 ${alignClassName}`}>
       <StatusBadge tone={statusView.tone}>{statusView.label}</StatusBadge>
       <span className="truncate text-xs text-muted-foreground">
         {run ? `${formatRunTimestamp(run.startedAt)} · ${durationLabel}` : "未运行"}

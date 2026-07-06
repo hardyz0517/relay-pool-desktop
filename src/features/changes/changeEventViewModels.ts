@@ -77,6 +77,7 @@ export type ChangeEventListDiff = {
 export type ChangeEventListItem = {
   title: string;
   description: string;
+  metaLabel: string;
   kindLabel: string;
   objectLabel: string;
   sourceLabel: string;
@@ -105,7 +106,7 @@ export function filterChangeEvents(events: ChangeEvent[], filter: ChangeFilter) 
       return true;
     }
     const item = buildChangeEventListItem(event);
-    return `${event.title} ${event.message} ${event.eventType} ${event.source} ${event.objectType} ${item.title} ${item.diff?.before ?? ""} ${item.diff?.after ?? ""}`
+    return `${event.title} ${event.message} ${event.eventType} ${event.source} ${event.objectType} ${item.title} ${item.description} ${item.metaLabel} ${item.objectLabel} ${item.diff?.before ?? ""} ${item.diff?.after ?? ""}`
       .toLowerCase()
       .includes(query);
   });
@@ -115,6 +116,10 @@ export function unreadRiskCount(events: ChangeEvent[]) {
   return events.filter(
     (event) => event.status === "unread" && (event.severity === "critical" || event.severity === "warning"),
   ).length;
+}
+
+export function unreadChangeCount(events: ChangeEvent[]) {
+  return events.filter((event) => event.status === "unread").length;
 }
 
 export async function markUnreadChangeEventsRead(
@@ -137,6 +142,7 @@ export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListIte
   const baseItem: ChangeEventListItem = {
     title: event.title,
     description: event.message,
+    metaLabel: `${sourceLabels[event.source] ?? event.source} / ${objectTypeLabels[event.objectType] ?? event.objectType}`,
     kindLabel: eventTypeLabels[event.eventType] ?? event.eventType,
     objectLabel: objectTypeLabels[event.objectType] ?? event.objectType,
     sourceLabel: sourceLabels[event.source] ?? event.source,
@@ -147,11 +153,16 @@ export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListIte
 
   if (event.eventType === "rate_changed") {
     const groupName = readString(newValue, "groupName") ?? readString(oldValue, "groupName") ?? extractGroupName(event.message);
-    const before = readNumber(oldValue, "multiplier");
-    const after = readNumber(newValue, "multiplier");
+    const before = readMultiplier(oldValue);
+    const after = readMultiplier(newValue);
     return {
       ...baseItem,
-      title: groupName ? `分组 ${groupName} ${event.title}` : event.title,
+      title:
+        groupName && (before != null || after != null)
+          ? `分组 ${groupName} 倍率变化`
+          : groupName
+            ? `分组 ${groupName} 倍率未知`
+            : event.title,
       diff: {
         label: "倍率",
         before: before == null ? null : `${formatCompactNumber(before)} 倍`,
@@ -162,22 +173,25 @@ export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListIte
 
   if (event.eventType === "group_added") {
     const groupName = readString(newValue, "groupName") ?? extractGroupName(event.message);
+    const multiplier = readMultiplier(newValue);
     return {
       ...baseItem,
-      title: groupName ? `新增分组 ${groupName}` : event.title,
-      diff: {
-        label: "分组",
-        before: null,
-        after: groupName,
-      },
+      title: groupName
+        ? `新增可用分组 ${groupName}，倍率 ${formatMultiplierLabel(multiplier)}`
+        : `${event.title}，倍率 ${formatMultiplierLabel(multiplier)}`,
+      metaLabel: `${baseItem.sourceLabel} / 分组`,
+      diff: null,
     };
   }
 
   if (event.eventType === "group_missing") {
     const groupName = readString(newValue, "groupName") ?? readString(oldValue, "groupName") ?? extractGroupName(event.message);
+    const multiplier = readMultiplier(newValue) ?? readMultiplier(oldValue);
     return {
       ...baseItem,
-      title: groupName ? `分组 ${groupName} 不可见` : event.title,
+      title: groupName
+        ? `分组 ${groupName} 不可见，倍率 ${formatMultiplierLabel(multiplier)}`
+        : `${event.title}，倍率 ${formatMultiplierLabel(multiplier)}`,
       diff: {
         label: "状态",
         before: formatBindingStatus(readString(oldValue, "bindingStatus")),
@@ -228,8 +242,18 @@ export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListIte
 
   if (event.eventType === "key_invalid") {
     const failures = readNumber(newValue, "consecutiveFailures");
+    const stationKeyName = readString(newValue, "stationKeyName");
+    const apiKeyMasked = readString(newValue, "apiKeyMasked");
+    const stationKeyLabel =
+      stationKeyName ?? apiKeyMasked ?? shortenIdentifier(event.stationKeyId ?? event.objectId ?? null) ?? baseItem.objectLabel;
+    const descriptionLabel = apiKeyMasked ?? stationKeyLabel;
+    const description = event.message.replace(/^Key\s+/, `${descriptionLabel} `);
     return {
       ...baseItem,
+      title: `Key ${stationKeyLabel} 健康异常`,
+      description,
+      metaLabel: `${baseItem.sourceLabel} / ${stationKeyLabel}`,
+      objectLabel: stationKeyLabel,
       diff: {
         label: "失败次数",
         before: null,
@@ -287,8 +311,26 @@ function readNumber(value: Record<string, unknown> | null, key: string) {
   return typeof item === "number" && Number.isFinite(item) ? item : null;
 }
 
+function readMultiplier(value: Record<string, unknown> | null) {
+  return (
+    readNumber(value, "effectiveRateMultiplier") ??
+    readNumber(value, "effective_rate_multiplier") ??
+    readNumber(value, "multiplier") ??
+    readNumber(value, "rateMultiplier") ??
+    readNumber(value, "rate_multiplier") ??
+    readNumber(value, "userRateMultiplier") ??
+    readNumber(value, "user_rate_multiplier") ??
+    readNumber(value, "defaultRateMultiplier") ??
+    readNumber(value, "default_rate_multiplier")
+  );
+}
+
 function formatCompactNumber(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function formatMultiplierLabel(value: number | null) {
+  return value == null ? "未知" : `${formatCompactNumber(value)} 倍`;
 }
 
 function formatPrice(value: number | null, currency: string | null) {
@@ -318,6 +360,13 @@ function formatRecordSummary(value: Record<string, unknown> | null) {
   }
   const [, item] = firstEntry;
   return typeof item === "number" ? formatCompactNumber(item) : String(item);
+}
+
+function shortenIdentifier(value: string | null) {
+  if (!value) {
+    return null;
+  }
+  return value.length > 18 ? `${value.slice(0, 15)}...` : value;
 }
 
 function extractGroupName(message: string) {

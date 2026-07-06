@@ -1,5 +1,6 @@
 import type { RequestLog } from "@/lib/types/proxy";
 import type { StationKeyHealth } from "@/lib/types/routing";
+import type { ChannelMonitor, ChannelMonitorRun } from "@/lib/types/channelMonitors";
 import type { StationKeyStatus } from "@/lib/types/stationKeys";
 
 export type RecentOutcome = "success" | "warning" | "failed" | "unknown";
@@ -13,20 +14,70 @@ export type OrderedChannel = {
   id: string;
 };
 
+export type ChannelLatencyMetricInput = {
+  requestLatencyMs: number | null;
+  healthLatencyMs: number | null;
+};
+
+export type ChannelLatencyMetrics = {
+  conversationLatencyMs: number | null;
+  endpointPingMs: number | null;
+};
+
 type HealthOutcomeSummary = Pick<StationKeyHealth, "successCount" | "failureCount">;
+type StationKeyMonitorSummary = Pick<
+  ChannelMonitor,
+  "id" | "targetType" | "stationKeyId" | "enabled" | "updatedAt"
+>;
+type MonitorRunSummary = Pick<ChannelMonitorRun, "status" | "startedAt">;
+
+export function enabledStationKeyMonitorsByKey(monitors: StationKeyMonitorSummary[]) {
+  const monitorByKey = new Map<string, StationKeyMonitorSummary>();
+  for (const monitor of monitors) {
+    if (!monitor.enabled || monitor.targetType !== "station_key" || !monitor.stationKeyId) {
+      continue;
+    }
+    const existing = monitorByKey.get(monitor.stationKeyId);
+    if (!existing || toTime(monitor.updatedAt) >= toTime(existing.updatedAt)) {
+      monitorByKey.set(monitor.stationKeyId, monitor);
+    }
+  }
+  return monitorByKey;
+}
+
+export function monitorRunToStationKeyStatus(
+  run: Pick<ChannelMonitorRun, "status"> | null | undefined,
+): StationKeyStatus {
+  if (!run) {
+    return "unchecked";
+  }
+  if (run.status === "success") {
+    return "healthy";
+  }
+  if (run.status === "failed") {
+    return "error";
+  }
+  return "warning";
+}
+
+export function buildMonitorRecentOutcomes(runs: MonitorRunSummary[]) {
+  return padRecentOutcomes(
+    [...runs]
+      .sort((a, b) => toTime(a.startedAt) - toTime(b.startedAt))
+      .slice(-60)
+      .map(monitorRunToOutcome),
+  );
+}
 
 export function availabilityToneClassName(channel: ChannelAvailabilityState) {
   if (channel.status === "disabled" || channel.availabilityPercent === null) {
     return "text-slate-500";
   }
-  if (channel.availabilityPercent < 25) {
+  if (channel.availabilityPercent < 50) {
     return "text-rose-600";
   }
-  if (channel.availabilityPercent < 70) {
+  if (channel.availabilityPercent < 75) {
     return "text-orange-600";
-  }
-  if (channel.availabilityPercent < 95) {
-    return "text-amber-600";
   }
   return "text-emerald-600";
 }
@@ -62,6 +113,17 @@ export function orderChannelsBySavedOrder<TChannel extends OrderedChannel>(
   return orderedChannels.concat(newChannels);
 }
 
+export function resolveChannelLatencyMetrics({
+  requestLatencyMs,
+  healthLatencyMs,
+}: ChannelLatencyMetricInput): ChannelLatencyMetrics {
+  return {
+    conversationLatencyMs: requestLatencyMs ?? healthLatencyMs,
+    // Health latency is a model probe/request duration, not a separate endpoint ping measurement.
+    endpointPingMs: null,
+  };
+}
+
 export function logToOutcome(log: RequestLog): RecentOutcome {
   if (log.status === "success") {
     return "success";
@@ -70,6 +132,19 @@ export function logToOutcome(log: RequestLog): RecentOutcome {
     return "warning";
   }
   if (log.status === "failed") {
+    return "failed";
+  }
+  return "unknown";
+}
+
+function monitorRunToOutcome(run: Pick<ChannelMonitorRun, "status">): RecentOutcome {
+  if (run.status === "success") {
+    return "success";
+  }
+  if (run.status === "warning" || run.status === "skipped") {
+    return "warning";
+  }
+  if (run.status === "failed") {
     return "failed";
   }
   return "unknown";
@@ -108,4 +183,10 @@ function healthToRecentOutcomes(health: HealthOutcomeSummary | null | undefined)
     ...Array.from({ length: failureSlots }, () => "failed" as const),
     ...Array.from({ length: successSlots }, () => "success" as const),
   ];
+}
+
+function toTime(value: string) {
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  return date.getTime();
 }

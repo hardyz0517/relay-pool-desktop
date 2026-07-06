@@ -17,11 +17,13 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { LucideIcon } from "lucide-react";
-import { GripVertical, Radio, RefreshCw, Server, Timer } from "lucide-react";
+import { Radio, RefreshCw, Server, Timer } from "lucide-react";
 import { Button, EmptyState, SegmentedControl, StatusBadge, useToast } from "@/components/ui";
+import { listChannelMonitorRuns, listChannelMonitors } from "@/lib/api/channelMonitors";
 import { listRequestLogs } from "@/lib/api/proxy";
 import { listStationKeyHealth } from "@/lib/api/routing";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
+import type { ChannelMonitor, ChannelMonitorRun } from "@/lib/types/channelMonitors";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { StationKeyHealth } from "@/lib/types/routing";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
@@ -29,8 +31,12 @@ import { stationTypeLabels } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import {
   availabilityToneClassName,
+  buildMonitorRecentOutcomes,
   buildRecentOutcomes,
+  enabledStationKeyMonitorsByKey,
+  monitorRunToStationKeyStatus,
   orderChannelsBySavedOrder,
+  resolveChannelLatencyMetrics,
   type RecentOutcome,
 } from "./channelStatusViewModel";
 
@@ -84,6 +90,8 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
   const [keys, setKeys] = useState<KeyPoolItem[]>([]);
   const [logs, setLogs] = useState<RequestLog[]>([]);
   const [health, setHealth] = useState<StationKeyHealth[]>([]);
+  const [monitors, setMonitors] = useState<ChannelMonitor[]>([]);
+  const [runsByMonitor, setRunsByMonitor] = useState(new Map<string, ChannelMonitorRun[]>());
   const [channelOrder, setChannelOrder] = useState<string[]>([]);
   const [timeWindow, setTimeWindow] = useState<ChannelWindow>("recent");
   const [loading, setLoading] = useState(true);
@@ -95,8 +103,8 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
 
   const visibleLogs = useMemo(() => filterLogsByWindow(logs, timeWindow), [logs, timeWindow]);
   const channels = useMemo(
-    () => orderChannelsBySavedOrder(buildChannels(keys, visibleLogs, health), channelOrder),
-    [channelOrder, health, keys, visibleLogs],
+    () => orderChannelsBySavedOrder(buildChannels(keys, visibleLogs, health, monitors, runsByMonitor), channelOrder),
+    [channelOrder, health, keys, monitors, runsByMonitor, visibleLogs],
   );
   const channelIds = useMemo(() => channels.map((channel) => channel.id), [channels]);
   const sensors = useSensors(
@@ -126,14 +134,26 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
     setLoading(true);
     setError(null);
     try {
-      const [nextKeys, nextLogs, nextHealth] = await Promise.all([
+      const [nextKeys, nextLogs, nextHealth, nextMonitors] = await Promise.all([
         listKeyPoolItems(),
         listRequestLogs(),
         listStationKeyHealth(),
+        listChannelMonitors(),
       ]);
+      const runEntries = await Promise.all(
+        nextMonitors.map(async (monitor) => {
+          try {
+            return { monitorId: monitor.id, runs: await listChannelMonitorRuns(monitor.id) };
+          } catch {
+            return { monitorId: monitor.id, runs: [] as ChannelMonitorRun[] };
+          }
+        }),
+      );
       setKeys(nextKeys);
       setLogs(nextLogs);
       setHealth(nextHealth);
+      setMonitors(nextMonitors);
+      setRunsByMonitor(new Map(runEntries.map((entry) => [entry.monitorId, entry.runs] as const)));
       if (showSuccess) {
         toast.success("渠道状态已刷新");
       }
@@ -169,12 +189,12 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
       {channels.length === 0 ? (
         <EmptyState
           title={loading ? "正在读取渠道状态" : "暂无可展示的密钥"}
-          description="添加并启用密钥后，本地代理请求会在这里形成状态。"
+          description="在密钥池打开监控后，对应密钥会在这里同步显示。"
         />
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={channelIds} strategy={rectSortingStrategy}>
-            <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+            <div className="grid grid-cols-1 justify-start gap-3 sm:grid-cols-[repeat(auto-fill,minmax(320px,360px))]">
               {channels.map((channel) => (
                 <SortableChannelHealthCard key={channel.id} channel={channel} />
               ))}
@@ -229,10 +249,22 @@ function ChannelHealthCard({
   return (
     <section
       className={cn(
-        "rounded-[var(--surface-radius)] border border-border bg-white p-3.5 shadow-[var(--surface-shadow)] transition-shadow",
+        "relative rounded-[var(--surface-radius)] border border-border bg-white p-3.5 pt-6 shadow-[var(--surface-shadow)] transition-shadow",
         isDragging && "shadow-[var(--surface-shadow-hover)]",
       )}
     >
+      <button
+        type="button"
+        aria-label={`拖拽排序 ${channel.keyName}`}
+        title="拖拽排序"
+        className="absolute left-1/2 top-2 inline-flex h-5 w-12 -translate-x-1/2 cursor-grab flex-col items-center justify-center gap-[2px] rounded-[6px] text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)]"
+        {...dragAttributes}
+        {...dragListeners}
+      >
+        <span className="h-[2px] w-5 rounded-full bg-current" />
+        <span className="h-[2px] w-7 rounded-full bg-current" />
+        <span className="h-[2px] w-4 rounded-full bg-current" />
+      </button>
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-2.5">
           <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px]", iconTone(channel.status))}>
@@ -254,16 +286,6 @@ function ChannelHealthCard({
           <StatusBadge tone={statusTone[channel.status]} className="h-6 border-0 px-2.5">
             {cooldownActive ? "冷却中" : statusLabel[channel.status]}
           </StatusBadge>
-          <button
-            type="button"
-            aria-label={`拖拽排序 ${channel.keyName}`}
-            title="拖拽排序"
-            className="inline-flex h-6 w-5 cursor-grab items-center justify-center rounded-[6px] text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)]"
-            {...dragAttributes}
-            {...dragListeners}
-          >
-            <GripVertical className="h-4 w-4" />
-          </button>
         </div>
       </div>
 
@@ -306,12 +328,6 @@ function ChannelHealthCard({
         </div>
       </div>
 
-      {(cooldownActive || channel.lastError) && (
-        <div className="mt-2 truncate text-xs text-muted-foreground">
-          {cooldownActive ? `冷却至 ${formatCompactTime(channel.cooldownUntil)} · ` : ""}
-          {channel.lastError ?? ""}
-        </div>
-      )}
     </section>
   );
 }
@@ -353,47 +369,103 @@ function filterLogsByWindow(logs: RequestLog[], timeWindow: ChannelWindow) {
   return logs.filter((log) => toTime(log.startedAt) >= cutoff);
 }
 
-function buildChannels(keys: KeyPoolItem[], logs: RequestLog[], health: StationKeyHealth[]): ChannelHealth[] {
+function buildChannels(
+  keys: KeyPoolItem[],
+  logs: RequestLog[],
+  health: StationKeyHealth[],
+  monitors: ChannelMonitor[],
+  runsByMonitor: Map<string, ChannelMonitorRun[]>,
+): ChannelHealth[] {
   const healthByKey = new Map(health.map((item) => [item.stationKeyId, item] as const));
-  return keys.map((key) => {
+  const monitorByKey = enabledStationKeyMonitorsByKey(monitors);
+  return keys.flatMap((key) => {
+    const monitor = monitorByKey.get(key.id);
+    if (!monitor) {
+      return [];
+    }
     const keyHealth = healthByKey.get(key.id);
+    const monitorRuns = sortRunsAscending(runsByMonitor.get(monitor.id) ?? []);
+    const latestRun = monitorRuns.length > 0 ? monitorRuns[monitorRuns.length - 1] : null;
     const keyLogs = logs
       .filter((log) => log.stationKeyId === key.id)
       .sort((a, b) => toTime(a.startedAt) - toTime(b.startedAt));
     const totalHealthRequests = (keyHealth?.successCount ?? 0) + (keyHealth?.failureCount ?? 0);
+    const monitorAvailabilityPercent = availabilityFromMonitorRuns(monitorRuns);
     const availabilityPercent =
-      totalHealthRequests === 0
+      monitorAvailabilityPercent ??
+      (totalHealthRequests === 0
         ? key.successRate === null
           ? null
           : key.successRate * 100
-        : ((keyHealth?.successCount ?? 0) / totalHealthRequests) * 100;
+        : ((keyHealth?.successCount ?? 0) / totalHealthRequests) * 100);
     const recentLogs = keyLogs.slice(-60);
-    const latencyMs = averageDurationMs(recentLogs);
-    const endpointPingMs = keyHealth?.avgLatencyMs ?? key.avgLatencyMs;
-    const recentOutcomes = buildRecentOutcomes(recentLogs, keyHealth);
-    const lastError =
-      keyHealth?.lastErrorSummary ?? key.lastErrorSummary ?? [...keyLogs].reverse().find((log) => log.errorMessage)?.errorMessage ?? null;
+    const requestLatencyMs = averageDurationMs(recentLogs);
+    const monitorLatencyMs = latestRun?.latencyMs ?? latestRun?.durationMs ?? null;
+    const healthLatencyMs = monitorLatencyMs ?? keyHealth?.avgLatencyMs ?? key.avgLatencyMs;
+    const { conversationLatencyMs, endpointPingMs } = resolveChannelLatencyMetrics({
+      requestLatencyMs: monitorLatencyMs ?? requestLatencyMs,
+      healthLatencyMs,
+    });
+    const recentOutcomes = monitorRuns.length > 0
+      ? buildMonitorRecentOutcomes(monitorRuns)
+      : buildRecentOutcomes(recentLogs, keyHealth);
+    const lastError = latestRun
+      ? latestRun.errorMessage
+      : keyHealth?.lastErrorSummary ??
+        key.lastErrorSummary ??
+        [...keyLogs].reverse().find((log) => log.errorMessage)?.errorMessage ??
+        null;
+    const monitorCounts = countMonitorRuns(monitorRuns);
 
-    return {
+    return [{
       id: key.id,
       keyName: key.name,
       stationName: key.stationName,
       stationType: key.stationType,
       modelSummary: key.modelScopeSummary || key.groupName || key.tierLabel || "全部模型",
-      status: key.enabled ? cooldownStatus(key.status, keyHealth?.cooldownUntil ?? key.cooldownUntil) : "disabled",
-      latencyMs,
+      status: key.enabled
+        ? cooldownStatus(monitorRunToStationKeyStatus(latestRun), keyHealth?.cooldownUntil ?? key.cooldownUntil)
+        : "disabled",
+      latencyMs: conversationLatencyMs,
       endpointPingMs,
       availabilityPercent,
-      lastCheckedAt: keyHealth?.updatedAt ?? key.lastCheckedAt,
-      lastUsedAt: keyHealth?.lastSuccessAt ?? key.lastUsedAt,
+      lastCheckedAt: latestRun?.finishedAt ?? latestRun?.startedAt ?? keyHealth?.updatedAt ?? key.lastCheckedAt,
+      lastUsedAt: latestRun?.status === "success" ? latestRun.finishedAt ?? latestRun.startedAt : keyHealth?.lastSuccessAt ?? key.lastUsedAt,
       lastError,
-      successCount: keyHealth?.successCount ?? 0,
-      failureCount: keyHealth?.failureCount ?? 0,
-      consecutiveFailures: keyHealth?.consecutiveFailures ?? key.consecutiveFailures,
+      successCount: monitorRuns.length > 0 ? monitorCounts.successCount : keyHealth?.successCount ?? 0,
+      failureCount: monitorRuns.length > 0 ? monitorCounts.failureCount : keyHealth?.failureCount ?? 0,
+      consecutiveFailures: monitorRuns.length > 0 ? monitorCounts.consecutiveFailures : keyHealth?.consecutiveFailures ?? key.consecutiveFailures,
       cooldownUntil: keyHealth?.cooldownUntil ?? key.cooldownUntil,
       recentOutcomes,
-    };
+    }];
   });
+}
+
+function sortRunsAscending(runs: ChannelMonitorRun[]) {
+  return [...runs].sort((a, b) => toTime(a.startedAt) - toTime(b.startedAt));
+}
+
+function availabilityFromMonitorRuns(runs: ChannelMonitorRun[]) {
+  if (runs.length === 0) {
+    return null;
+  }
+  const successCount = runs.filter((run) => run.status === "success").length;
+  return (successCount / runs.length) * 100;
+}
+
+function countMonitorRuns(runs: ChannelMonitorRun[]) {
+  let consecutiveFailures = 0;
+  for (const run of [...runs].reverse()) {
+    if (run.status === "success") {
+      break;
+    }
+    consecutiveFailures += 1;
+  }
+  return {
+    successCount: runs.filter((run) => run.status === "success").length,
+    failureCount: runs.filter((run) => run.status === "failed" || run.status === "warning" || run.status === "skipped").length,
+    consecutiveFailures,
+  };
 }
 
 function averageDurationMs(logs: RequestLog[]) {

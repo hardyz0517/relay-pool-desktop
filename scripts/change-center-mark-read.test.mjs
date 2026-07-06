@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -19,7 +19,9 @@ await esbuild.build({
   external: ["react", "lucide-react", "@tauri-apps/api/core"],
 });
 
-const { buildChangeEventListItem, markUnreadChangeEventsRead } = await import(pathToFileURL(outFile).href);
+const { buildChangeEventListItem, markUnreadChangeEventsRead, unreadChangeCount, unreadRiskCount } = await import(
+  pathToFileURL(outFile).href
+);
 
 function changeEvent(id, status, overrides = {}) {
   return {
@@ -69,6 +71,17 @@ assert.deepEqual(
   "updated events should be merged without changing order or unrelated statuses",
 );
 
+const mixedUnreadEvents = [
+  changeEvent("risk-warning", "unread", { severity: "warning" }),
+  changeEvent("risk-critical", "unread", { severity: "critical" }),
+  changeEvent("info-a", "unread", { severity: "info" }),
+  changeEvent("info-b", "unread", { severity: "info" }),
+  changeEvent("read-info", "read", { severity: "info" }),
+];
+
+assert.equal(unreadRiskCount(mixedUnreadEvents), 2, "risk count should still only include unread warning and critical events");
+assert.equal(unreadChangeCount(mixedUnreadEvents), 4, "sidebar unread badge should count every unread change event");
+
 const rateChange = buildChangeEventListItem(
   changeEvent("rate-change", "unread", {
     severity: "warning",
@@ -79,7 +92,7 @@ const rateChange = buildChangeEventListItem(
     newValueJson: JSON.stringify({ groupName: "plus", multiplier: 1 }),
   }),
 );
-assert.equal(rateChange.title, "分组 plus 倍率上涨");
+assert.equal(rateChange.title, "分组 plus 倍率变化");
 assert.deepEqual(rateChange.diff, { label: "倍率", before: "0.7 倍", after: "1 倍" });
 
 const groupAdded = buildChangeEventListItem(
@@ -90,8 +103,8 @@ const groupAdded = buildChangeEventListItem(
     newValueJson: JSON.stringify({ groupName: "claude-aws" }),
   }),
 );
-assert.equal(groupAdded.title, "新增分组 claude-aws");
-assert.deepEqual(groupAdded.diff, { label: "分组", before: null, after: "claude-aws" });
+assert.equal(groupAdded.title, "新增可用分组 claude-aws，倍率 未知");
+assert.equal(groupAdded.diff, null);
 
 const groupMissing = buildChangeEventListItem(
   changeEvent("group-missing", "unread", {
@@ -103,5 +116,69 @@ const groupMissing = buildChangeEventListItem(
     newValueJson: JSON.stringify({ bindingStatus: "missing" }),
   }),
 );
-assert.equal(groupMissing.title, "分组 cmax-限制客户端-暂停供应 不可见");
+assert.equal(groupMissing.title, "分组 cmax-限制客户端-暂停供应 不可见，倍率 未知");
 assert.deepEqual(groupMissing.diff, { label: "状态", before: "可用", after: "不可见" });
+
+const keyInvalidWithName = buildChangeEventListItem(
+  changeEvent("key-invalid-named", "unread", {
+    severity: "critical",
+    eventType: "key_invalid",
+    title: "Key 健康异常",
+    message: "Key 连续失败 5 次：timeout",
+    objectType: "station_key",
+    objectId: "key-prod-1",
+    stationKeyId: "key-prod-1",
+    newValueJson: JSON.stringify({
+      stationKeyName: "生产 Key",
+      apiKeyMasked: "sk-****prod",
+      consecutiveFailures: 5,
+    }),
+    source: "health",
+  }),
+);
+assert.equal(keyInvalidWithName.title, "Key 生产 Key 健康异常");
+assert.equal(keyInvalidWithName.description, "sk-****prod 连续失败 5 次：timeout");
+assert.equal(keyInvalidWithName.metaLabel, "密钥 / 生产 Key");
+assert.deepEqual(keyInvalidWithName.diff, { label: "失败次数", before: null, after: "5 次" });
+
+const keyInvalidWithoutName = buildChangeEventListItem(
+  changeEvent("key-invalid-id-only", "unread", {
+    severity: "warning",
+    eventType: "key_invalid",
+    title: "Key 健康异常",
+    message: "Key 连续失败 2 次",
+    objectType: "station_key",
+    objectId: "station-key-abcdef123456",
+    stationKeyId: "station-key-abcdef123456",
+    newValueJson: JSON.stringify({ consecutiveFailures: 2 }),
+    source: "health",
+  }),
+);
+assert.equal(keyInvalidWithoutName.title, "Key station-key-abc... 健康异常");
+assert.equal(keyInvalidWithoutName.metaLabel, "密钥 / station-key-abc...");
+
+const changeEventsApiSource = await readFile("src/lib/api/changeEvents.ts", "utf8");
+const changeCenterSource = await readFile("src/features/changes/ChangeCenterPage.tsx", "utf8");
+const appShellSource = await readFile("src/components/shell/AppShell.tsx", "utf8");
+
+assert.ok(
+  changeEventsApiSource.includes("CHANGE_EVENTS_UPDATED_EVENT"),
+  "change events API should expose a shared browser event name for cross-page refreshes",
+);
+
+assert.ok(
+  changeCenterSource.includes("notifyChangeEventsUpdated"),
+  "change center status actions should notify other surfaces after event state changes",
+);
+
+assert.ok(
+  appShellSource.includes("CHANGE_EVENTS_UPDATED_EVENT") &&
+    appShellSource.includes("window.addEventListener(CHANGE_EVENTS_UPDATED_EVENT") &&
+    appShellSource.includes("window.removeEventListener(CHANGE_EVENTS_UPDATED_EVENT"),
+  "app shell should refresh the sidebar change badge when change events are updated in-place",
+);
+
+assert.ok(
+  appShellSource.includes("unreadChangeCount(changeEvents)") && !appShellSource.includes("unreadRiskCount(changeEvents)"),
+  "app shell badge should use the all-unread count, not the risk-only summary count",
+);

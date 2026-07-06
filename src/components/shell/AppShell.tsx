@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Circle } from "lucide-react";
 import { appRoutes } from "@/app/routes";
 import { shellLayout } from "@/components/ui/layout";
-import { listChangeEvents } from "@/lib/api/changeEvents";
+import { CHANGE_EVENTS_UPDATED_EVENT, listChangeEvents } from "@/lib/api/changeEvents";
 import { getSettings, SETTINGS_UPDATED_EVENT } from "@/lib/api/settings";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { AppSettings } from "@/lib/types/settings";
 import { cn } from "@/lib/utils";
-import { unreadRiskCount } from "@/features/changes/changeEventViewModels";
+import { unreadChangeCount } from "@/features/changes/changeEventViewModels";
 import type { AppRouteId } from "@/lib/types/navigation";
 
 type AppShellProps = {
@@ -25,9 +25,15 @@ export function AppShell({
   const [settings, setSettings] = useState<AppSettings | null>(null);
 
   useEffect(() => {
-    void listChangeEvents()
-      .then(setChangeEvents)
-      .catch(() => setChangeEvents([]));
+    function refreshChangeEvents() {
+      void listChangeEvents()
+        .then(setChangeEvents)
+        .catch(() => setChangeEvents([]));
+    }
+
+    refreshChangeEvents();
+    window.addEventListener(CHANGE_EVENTS_UPDATED_EVENT, refreshChangeEvents);
+    return () => window.removeEventListener(CHANGE_EVENTS_UPDATED_EVENT, refreshChangeEvents);
   }, [activeRouteId]);
 
   useEffect(() => {
@@ -63,7 +69,7 @@ export function AppShell({
     }
   }, [activeRouteId, onRouteChange, settings]);
 
-  const changeRiskCount = useMemo(() => unreadRiskCount(changeEvents), [changeEvents]);
+  const changeUnreadCount = useMemo(() => unreadChangeCount(changeEvents), [changeEvents]);
 
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background text-foreground">
@@ -91,9 +97,9 @@ export function AppShell({
                 )}
               >
                 <Icon className="h-4.5 w-4.5" />
-                {route.id === "changes" && changeRiskCount > 0 && (
+                {route.id === "changes" && changeUnreadCount > 0 && (
                   <span className="absolute right-1 top-1 min-w-4 rounded-full bg-rose-600 px-1 text-[10px] font-semibold leading-4 text-white">
-                    {changeRiskCount > 99 ? "99+" : changeRiskCount}
+                    {changeUnreadCount > 99 ? "99+" : changeUnreadCount}
                   </span>
                 )}
               </button>
