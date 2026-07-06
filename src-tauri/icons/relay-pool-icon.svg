@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Relay Pool Desktop icon">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EEF6F5"/>
+    </linearGradient>
+    <filter id="softShadow" x="-18%" y="-12%" width="136%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#16212C" flood-opacity="0.14"/>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="none"/>
+  <g filter="url(#softShadow)">
+    <rect x="22" y="22" width="468" height="468" rx="118" fill="url(#background)"/>
+    <rect x="25" y="25" width="462" height="462" rx="116" fill="none" stroke="#C7D4DC" stroke-width="6"/>
+
+    <ellipse cx="256" cy="258" rx="148" ry="154" fill="#182631"/>
+    <rect x="170" y="196" width="142" height="120" rx="46" fill="#F4FAFA"/>
+    <path d="M256 104 A154 154 0 0 1 410 258" fill="none" stroke="#26B8AE" stroke-width="58" stroke-linecap="round"/>
+  </g>
+</svg>
