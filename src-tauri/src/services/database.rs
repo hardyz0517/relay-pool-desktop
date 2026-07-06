@@ -38,6 +38,10 @@ use crate::models::{
     },
     secrets::{SecretMigrationReport, SecretScanFinding},
     settings::{AppSettings, UpdateSettingsInput},
+    shared_capabilities::{
+        ChannelMonitorSummary, SaveStationKeyWithDefaultsInput, SaveStationKeyWithDefaultsResult,
+        StationGroupOption,
+    },
     station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, UpdateStationInput},
 };
@@ -541,6 +545,27 @@ impl AppDatabase {
         update_station_key_in_connection_with_data_key(&connection, input, Some(data_key))
     }
 
+    pub fn save_station_key_with_defaults(
+        &self,
+        data_key: &[u8; 32],
+        input: SaveStationKeyWithDefaultsInput,
+    ) -> Result<SaveStationKeyWithDefaultsResult, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始保存 Station Key 默认配置事务失败: {error}"))?;
+        let result =
+            crate::services::shared_capabilities::save_station_key_with_defaults_in_connection(
+                &transaction,
+                data_key,
+                input,
+            )?;
+        transaction
+            .commit()
+            .map_err(|error| format!("提交保存 Station Key 默认配置事务失败: {error}"))?;
+        Ok(result)
+    }
+
     pub fn update_station_key_group_binding(
         &self,
         input: UpdateStationKeyGroupBindingInput,
@@ -921,6 +946,15 @@ impl AppDatabase {
         list_group_rate_records_from_connection(&connection, &station_id)
     }
 
+    pub fn list_station_group_options(
+        &self,
+        station_id: String,
+    ) -> Result<Vec<StationGroupOption>, String> {
+        let bindings = self.list_station_group_bindings(station_id.clone())?;
+        let rates = self.list_group_rate_records(station_id)?;
+        Ok(crate::services::shared_capabilities::station_group_options_from_facts(bindings, rates))
+    }
+
     pub fn upsert_group_rate_record_if_changed(
         &self,
         input: InsertGroupRateRecordInput,
@@ -987,6 +1021,15 @@ impl AppDatabase {
     pub fn list_channel_monitors(&self) -> Result<Vec<ChannelMonitor>, String> {
         let connection = self.connection()?;
         list_channel_monitors_from_connection(&connection)
+    }
+
+    pub fn list_channel_monitor_summaries(&self) -> Result<Vec<ChannelMonitorSummary>, String> {
+        let monitors = self.list_channel_monitors()?;
+        Ok(
+            crate::services::shared_capabilities::channel_monitor_summaries_from_database(
+                self, monitors,
+            ),
+        )
     }
 
     pub fn get_channel_monitor(&self, id: &str) -> Result<ChannelMonitor, String> {
@@ -4209,7 +4252,7 @@ fn list_key_pool_items_from_connection(
     Ok(rows)
 }
 
-fn station_key_capabilities_by_id(
+pub(super) fn station_key_capabilities_by_id(
     connection: &Connection,
     station_key_id: &str,
 ) -> Result<StationKeyCapabilities, String> {
@@ -4231,7 +4274,7 @@ fn station_key_capabilities_by_id(
     Ok(row.unwrap_or_else(|| default_station_key_capabilities(station_key_id)))
 }
 
-fn update_station_key_capabilities_in_connection(
+pub(super) fn update_station_key_capabilities_in_connection(
     connection: &Connection,
     input: UpdateStationKeyCapabilitiesInput,
 ) -> Result<StationKeyCapabilities, String> {
@@ -5885,7 +5928,7 @@ fn create_station_key_in_connection(
     create_station_key_in_connection_with_data_key(connection, input, None)
 }
 
-fn create_station_key_in_connection_with_data_key(
+pub(super) fn create_station_key_in_connection_with_data_key(
     connection: &Connection,
     input: CreateStationKeyInput,
     data_key: Option<&[u8; 32]>,
@@ -5964,7 +6007,7 @@ fn update_station_key_in_connection(
     update_station_key_in_connection_with_data_key(connection, input, None)
 }
 
-fn update_station_key_in_connection_with_data_key(
+pub(super) fn update_station_key_in_connection_with_data_key(
     connection: &Connection,
     input: UpdateStationKeyInput,
     data_key: Option<&[u8; 32]>,
@@ -6059,7 +6102,7 @@ fn update_station_key_in_connection_with_data_key(
     station_key_by_id(connection, &input.id)
 }
 
-fn update_station_key_group_binding_in_connection(
+pub(super) fn update_station_key_group_binding_in_connection(
     connection: &Connection,
     input: UpdateStationKeyGroupBindingInput,
 ) -> Result<StationKey, String> {
@@ -6110,6 +6153,30 @@ fn update_station_key_group_binding_in_connection(
     station_key_by_id(connection, &input.station_key_id)
 }
 
+pub(super) fn clear_station_key_group_binding_in_connection(
+    connection: &Connection,
+    station_key_id: &str,
+) -> Result<StationKey, String> {
+    validate_station_key_exists(connection, station_key_id)?;
+    let now = now_string();
+    connection
+        .execute(
+            "UPDATE station_keys
+                SET group_binding_id = NULL,
+                    group_id_hash = NULL,
+                    group_name = NULL,
+                    rate_multiplier = NULL,
+                    rate_source = NULL,
+                    rate_collected_at = NULL,
+                    updated_at = ?1
+              WHERE id = ?2",
+            params![now, station_key_id],
+        )
+        .map_err(|error| format!("清除 Key 分组绑定失败: {error}"))?;
+
+    station_key_by_id(connection, station_key_id)
+}
+
 fn touch_station_key_usage_in_connection(
     connection: &Connection,
     station_key_id: &str,
@@ -6137,7 +6204,7 @@ fn touch_station_key_usage_in_connection(
     Ok(())
 }
 
-fn station_key_by_id(connection: &Connection, id: &str) -> Result<StationKey, String> {
+pub(super) fn station_key_by_id(connection: &Connection, id: &str) -> Result<StationKey, String> {
     connection
         .query_row(
             "SELECT id, station_id, name, api_key, enabled, priority, group_name, tier_label,

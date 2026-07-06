@@ -11,6 +11,7 @@ pub mod remote_keys;
 pub mod routing;
 pub mod secrets;
 pub mod settings;
+pub mod shared_capabilities;
 pub mod station_keys;
 pub mod stations;
 
