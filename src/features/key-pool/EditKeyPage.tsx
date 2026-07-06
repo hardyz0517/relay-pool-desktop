@@ -2,10 +2,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, Check, KeyRound } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, EmptyState, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
-import { listStationGroupBindings } from "@/lib/api/groupFacts";
-import { updateStationKeyCapabilities } from "@/lib/api/routing";
-import { listKeyPoolItems, updateStationKey, updateStationKeyGroupBinding } from "@/lib/api/stationKeys";
-import { isCollectedStationGroupBinding, type StationGroupBinding } from "@/lib/types/groupFacts";
+import { listStationGroupOptions } from "@/lib/api/groupFacts";
+import { listKeyPoolItems, saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
+import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 
 type EditKeyPageProps = {
@@ -62,25 +61,28 @@ const inputClassName =
 export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProps) {
   const toast = useToast();
   const [sourceItem, setSourceItem] = useState<KeyPoolItem | null>(null);
-  const [bindings, setBindings] = useState<StationGroupBinding[]>([]);
+  const [groupOptions, setGroupOptions] = useState<StationGroupOption[]>([]);
   const [form, setForm] = useState<EditKeyFormState>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const bindingOptions = bindings
-    .filter((binding) => isCollectedStationGroupBinding(binding) || binding.stationKeyId === form.id)
-    .map((binding) => ({
-      value: binding.id,
-      label: bindingOptionLabel(binding),
-    }));
+  const bindingOptions = [
+    ...groupOptions
+      .filter((option) => option.groupBindingId)
+      .map((option) => ({
+        value: option.groupBindingId ?? option.value,
+        label: groupOptionLabel(option),
+      })),
+    ...currentGroupOption(sourceItem, groupOptions),
+  ];
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setError(null);
     setSourceItem(null);
-    setBindings([]);
+    setGroupOptions([]);
     setForm(emptyForm);
 
     if (!stationKeyId) {
@@ -100,12 +102,12 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
         if (!item) {
           throw new Error("未找到要编辑的密钥。");
         }
-        const nextBindings = await listStationGroupBindings(item.stationId);
+        const nextGroupOptions = await listStationGroupOptions(item.stationId);
         if (!alive) {
           return;
         }
         setSourceItem(item);
-        setBindings(nextBindings);
+        setGroupOptions(nextGroupOptions);
         setForm(formFromItem(item));
       })
       .catch((requestError) => {
@@ -136,40 +138,34 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
     setSaving(true);
     setError(null);
     try {
-      await updateStationKey({
+      await saveStationKeyWithDefaults({
+        mode: "update",
         id: form.id,
         stationId: form.stationId,
         name: form.name.trim(),
         apiKey: form.apiKey.trim() ? form.apiKey.trim() : null,
         enabled: form.enabled,
         priority: Number(form.priority),
-        groupBindingId: sourceItem.groupBindingId,
-        groupIdHash: sourceItem.groupIdHash,
-        groupName: form.groupName.trim() ? form.groupName.trim() : null,
         tierLabel: form.tierLabel.trim() ? form.tierLabel.trim() : null,
-        rateMultiplier: sourceItem.rateMultiplier,
-        rateSource: sourceItem.rateSource,
         balanceScope: sourceItem.balanceScope,
         status: form.status,
         note: form.note.trim() ? form.note.trim() : null,
-      });
-      if (form.groupBindingId && form.groupBindingId !== sourceItem.groupBindingId) {
-        await updateStationKeyGroupBinding(form.id, form.groupBindingId);
-      }
-      await updateStationKeyCapabilities({
-        stationKeyId: form.id,
-        supportsChatCompletions: true,
-        supportsResponses: true,
-        supportsEmbeddings: true,
-        supportsStream: true,
-        supportsTools: true,
-        supportsVision: true,
-        supportsReasoning: true,
-        modelAllowlist: linesToList(form.modelAllowlist),
-        modelBlocklist: linesToList(form.modelBlocklist),
-        preferredModels: linesToList(form.preferredModels),
-        onlyUseAsBackup: form.onlyUseAsBackup,
-        routingTags: commaListToList(form.routingTags),
+        groupSelection: groupSelectionFromEditForm(form, sourceItem, groupOptions),
+        capabilities: {
+          stationKeyId: form.id,
+          supportsChatCompletions: true,
+          supportsResponses: true,
+          supportsEmbeddings: true,
+          supportsStream: true,
+          supportsTools: true,
+          supportsVision: true,
+          supportsReasoning: true,
+          modelAllowlist: linesToList(form.modelAllowlist),
+          modelBlocklist: linesToList(form.modelBlocklist),
+          preferredModels: linesToList(form.preferredModels),
+          onlyUseAsBackup: form.onlyUseAsBackup,
+          routingTags: commaListToList(form.routingTags),
+        },
       });
       toast.success("密钥已更新");
       onUpdated?.();
@@ -274,11 +270,11 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
                         ...bindingOptions,
                       ]}
                       onChange={(groupBindingId) => {
-                        const binding = bindings.find((item) => item.id === groupBindingId);
+                        const groupOption = selectedGroupOption(groupOptions, groupBindingId);
                         setForm({
                           ...form,
                           groupBindingId,
-                          groupName: binding?.groupName ?? form.groupName,
+                          groupName: groupOption?.groupName ?? form.groupName,
                         });
                       }}
                     />
@@ -397,10 +393,47 @@ function formFromItem(item: KeyPoolItem): EditKeyFormState {
   };
 }
 
-function bindingOptionLabel(binding: StationGroupBinding) {
-  const rate = formatRate(binding.effectiveRateMultiplier);
-  const status = binding.bindingStatus === "available" ? "可用" : binding.bindingStatus;
-  return `${binding.groupName} · ${rate} · ${status}`;
+function groupSelectionFromEditForm(
+  form: EditKeyFormState,
+  sourceItem: KeyPoolItem,
+  options: StationGroupOption[],
+) {
+  if (!form.groupBindingId) {
+    return sourceItem.groupBindingId ? { kind: "clear" as const } : { kind: "keep" as const };
+  }
+  if (form.groupBindingId === sourceItem.groupBindingId) {
+    return { kind: "keep" as const };
+  }
+  const groupOption = selectedGroupOption(options, form.groupBindingId);
+  return {
+    kind: "set" as const,
+    groupBindingId: groupOption?.groupBindingId ?? form.groupBindingId,
+    groupIdHash: groupOption?.groupIdHash ?? null,
+    groupName: form.groupName.trim() ? form.groupName.trim() : groupOption?.groupName ?? null,
+  };
+}
+
+function selectedGroupOption(options: StationGroupOption[], value: string) {
+  return options.find((option) => option.groupBindingId === value || option.value === value) ?? null;
+}
+
+function currentGroupOption(sourceItem: KeyPoolItem | null, options: StationGroupOption[]) {
+  if (
+    !sourceItem?.groupBindingId ||
+    options.some((option) => option.groupBindingId === sourceItem.groupBindingId || option.value === sourceItem.groupBindingId)
+  ) {
+    return [];
+  }
+  return [
+    {
+      value: sourceItem.groupBindingId,
+      label: `${sourceItem.groupName ?? "当前绑定"} · ${formatRate(sourceItem.rateMultiplier)} · 当前`,
+    },
+  ];
+}
+
+function groupOptionLabel(option: StationGroupOption) {
+  return `${option.groupName} · ${formatRate(option.rateMultiplier)} · ${option.rateSource ?? "可用"}`;
 }
 
 function formatRate(value: number | null) {

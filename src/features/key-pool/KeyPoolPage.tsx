@@ -16,15 +16,15 @@ import { Activity, Edit3, GripVertical, KeyRound, Loader2, Plus, Search, Trash2 
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, SelectControl, StatusBadge, SwitchControl, type StatusTone, useToast } from "@/components/ui";
 import { createChannelMonitor, listChannelMonitorTemplates, listChannelMonitors, updateChannelMonitor } from "@/lib/api/channelMonitors";
-import { listStationGroupBindings } from "@/lib/api/groupFacts";
-import { getStationKeyCapabilities, updateStationKeyCapabilities } from "@/lib/api/routing";
+import { listStationGroupOptions } from "@/lib/api/groupFacts";
+import { getStationKeyCapabilities } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
-import { createStationKey, deleteStationKey, listKeyPoolItems, reorderKeyPool, testStationKeyConnectivity, updateStationKey, updateStationKeyGroupBinding } from "@/lib/api/stationKeys";
+import { deleteStationKey, listKeyPoolItems, reorderKeyPool, saveStationKeyWithDefaults, testStationKeyConnectivity, updateStationKey } from "@/lib/api/stationKeys";
 import type { ChannelMonitor, ChannelMonitorRequestTemplate } from "@/lib/types/channelMonitors";
-import { isCollectedStationGroupBinding, type StationGroupBinding } from "@/lib/types/groupFacts";
+import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { Station } from "@/lib/types/stations";
-import type { CreateStationKeyInput, KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
+import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
 import {
   createStationKeyMonitorInput,
@@ -75,7 +75,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const [editingItem, setEditingItem] = useState<KeyPoolItem | null>(null);
   const [pendingDeleteItem, setPendingDeleteItem] = useState<KeyPoolItem | null>(null);
   const [editForm, setEditForm] = useState<KeyPoolEditForm>(emptyEditForm);
-  const [bindingsForEdit, setBindingsForEdit] = useState<StationGroupBinding[]>([]);
+  const [groupOptionsForEdit, setGroupOptionsForEdit] = useState<StationGroupOption[]>([]);
   const [testingKeyId, setTestingKeyId] = useState<string | null>(null);
   const [monitoringKeyId, setMonitoringKeyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -306,15 +306,15 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     setCreatingKey(false);
     setEditingItem(item);
     setEditForm(formFromItem(item));
-    setBindingsForEdit([]);
+    setGroupOptionsForEdit([]);
     setSaving(true);
     setError(null);
     try {
-      const [capabilities, bindings] = await Promise.all([
+      const [capabilities, groupOptions] = await Promise.all([
         getStationKeyCapabilities(item.id),
-        listStationGroupBindings(item.stationId),
+        listStationGroupOptions(item.stationId),
       ]);
-      setBindingsForEdit(bindings);
+      setGroupOptionsForEdit(groupOptions);
       setEditForm((current) => current.id === item.id ? mergeCapabilitiesIntoForm(current, capabilities) : current);
     } catch (requestError) {
       toast.error("读取密钥详情失败", readError(requestError));
@@ -334,12 +334,12 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     setEditingItem(null);
     setCreatingKey(true);
     setEditForm(createFormForStation(station, items));
-    setBindingsForEdit([]);
+    setGroupOptionsForEdit([]);
     setSaving(true);
     setError(null);
     try {
-      const bindings = await listStationGroupBindings(station.id);
-      setBindingsForEdit(bindings);
+      const groupOptions = await listStationGroupOptions(station.id);
+      setGroupOptionsForEdit(groupOptions);
     } catch (requestError) {
       toast.error("读取中转站分组失败", readError(requestError));
     } finally {
@@ -361,11 +361,11 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       groupName: "",
       tierLabel: "",
     }));
-    setBindingsForEdit([]);
+    setGroupOptionsForEdit([]);
     setSaving(true);
     try {
-      const bindings = await listStationGroupBindings(station.id);
-      setBindingsForEdit(bindings);
+      const groupOptions = await listStationGroupOptions(station.id);
+      setGroupOptionsForEdit(groupOptions);
     } catch (requestError) {
       toast.error("读取中转站分组失败", readError(requestError));
     } finally {
@@ -386,41 +386,18 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     setSaving(true);
     setError(null);
     try {
-      const input: CreateStationKeyInput = {
+      await saveStationKeyWithDefaults({
+        mode: "create",
         stationId: editForm.stationId,
         name: editForm.name.trim(),
         apiKey: editForm.apiKey.trim(),
         enabled: editForm.enabled,
         priority: Number(editForm.priority),
-        groupBindingId: editForm.groupBindingId || null,
-        groupName: editForm.groupName.trim() ? editForm.groupName.trim() : null,
         tierLabel: editForm.tierLabel.trim() ? editForm.tierLabel.trim() : null,
         note: editForm.note.trim() ? editForm.note.trim() : null,
-      };
-      const createdKey = await createStationKey(input);
-      if (editForm.groupBindingId) {
-        await updateStationKeyGroupBinding(createdKey.id, editForm.groupBindingId);
-      }
-      try {
-        await updateStationKeyCapabilities({
-          stationKeyId: createdKey.id,
-          supportsChatCompletions: editForm.supportsChatCompletions,
-          supportsResponses: editForm.supportsResponses,
-          supportsEmbeddings: editForm.supportsEmbeddings,
-          supportsStream: editForm.supportsStream,
-          supportsTools: editForm.supportsTools,
-          supportsVision: editForm.supportsVision,
-          supportsReasoning: editForm.supportsReasoning,
-          modelAllowlist: linesToList(editForm.modelAllowlist),
-          modelBlocklist: linesToList(editForm.modelBlocklist),
-          preferredModels: linesToList(editForm.preferredModels),
-          onlyUseAsBackup: editForm.onlyUseAsBackup,
-          routingTags: commaListToList(editForm.routingTags),
-        });
-      } catch (capabilityError) {
-        await refresh();
-        throw new Error(`密钥已创建，但路由能力保存失败：${readError(capabilityError)}`);
-      }
+        groupSelection: groupSelectionFromCreateForm(editForm, groupOptionsForEdit),
+        capabilities: capabilitiesFromEditForm(editForm),
+      });
       setCreatingKey(false);
       setEditForm(emptyEditForm);
       await refresh();
@@ -440,46 +417,21 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     setSaving(true);
     setError(null);
     try {
-      await updateStationKey({
+      await saveStationKeyWithDefaults({
+        mode: "update",
         id: editForm.id,
         stationId: editForm.stationId,
         name: editForm.name.trim(),
         apiKey: editForm.apiKey.trim() ? editForm.apiKey.trim() : null,
         enabled: editForm.enabled,
         priority: Number(editForm.priority),
-        groupName: editForm.groupName.trim() ? editForm.groupName.trim() : null,
         tierLabel: editForm.tierLabel.trim() ? editForm.tierLabel.trim() : null,
-        groupBindingId: editingItem.groupBindingId,
-        groupIdHash: editingItem.groupIdHash,
-        rateMultiplier: editingItem.rateMultiplier,
-        rateSource: editingItem.rateSource,
         balanceScope: editingItem.balanceScope,
         status: editForm.status,
         note: editForm.note.trim() ? editForm.note.trim() : null,
+        groupSelection: groupSelectionFromEditForm(editForm, editingItem, groupOptionsForEdit),
+        capabilities: capabilitiesFromEditForm(editForm),
       });
-      if (editForm.groupBindingId && editForm.groupBindingId !== editingItem.groupBindingId) {
-        await updateStationKeyGroupBinding(editForm.id, editForm.groupBindingId);
-      }
-      try {
-        await updateStationKeyCapabilities({
-          stationKeyId: editForm.id,
-          supportsChatCompletions: editForm.supportsChatCompletions,
-          supportsResponses: editForm.supportsResponses,
-          supportsEmbeddings: editForm.supportsEmbeddings,
-          supportsStream: editForm.supportsStream,
-          supportsTools: editForm.supportsTools,
-          supportsVision: editForm.supportsVision,
-          supportsReasoning: editForm.supportsReasoning,
-          modelAllowlist: linesToList(editForm.modelAllowlist),
-          modelBlocklist: linesToList(editForm.modelBlocklist),
-          preferredModels: linesToList(editForm.preferredModels),
-          onlyUseAsBackup: editForm.onlyUseAsBackup,
-          routingTags: commaListToList(editForm.routingTags),
-        });
-      } catch (capabilityError) {
-        await refresh();
-        throw new Error(`密钥基础信息已保存，但路由能力保存失败：${readError(capabilityError)}`);
-      }
       setEditingItem(null);
       await refresh();
       toast.success("密钥已更新");
@@ -605,7 +557,8 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       {(creatingKey || editingItem) && (
         <KeyEditDialog
           actionSaving={saving}
-          bindings={bindingsForEdit}
+          groupOptions={groupOptionsForEdit}
+          sourceItem={editingItem}
           mode={creatingKey ? "create" : "edit"}
           form={editForm}
           stations={stations}
@@ -913,32 +866,37 @@ const emptyEditForm: KeyPoolEditForm = {
 
 function KeyEditDialog({
   actionSaving,
-  bindings,
   form,
+  groupOptions,
   mode,
   onClose,
   onFormChange,
   onSave,
   onStationChange,
+  sourceItem,
   stations,
 }: {
   actionSaving: boolean;
-  bindings: StationGroupBinding[];
   form: KeyPoolEditForm;
+  groupOptions: StationGroupOption[];
   mode: "create" | "edit";
   onClose: () => void;
   onFormChange: (next: KeyPoolEditForm) => void;
   onSave: (event: FormEvent<HTMLFormElement>) => void;
   onStationChange?: (stationId: string) => void;
+  sourceItem: KeyPoolItem | null;
   stations: Station[];
 }) {
   const creating = mode === "create";
-  const bindingOptions = bindings
-    .filter((binding) => isCollectedStationGroupBinding(binding) || binding.stationKeyId === form.id)
-    .map((binding) => ({
-      value: binding.id,
-      label: bindingOptionLabel(binding),
-    }));
+  const bindingOptions = [
+    ...groupOptions
+      .filter((option) => option.groupBindingId)
+      .map((option) => ({
+        value: option.groupBindingId ?? option.value,
+        label: groupOptionLabel(option),
+      })),
+    ...currentGroupOption(sourceItem, groupOptions),
+  ];
   return (
     <Dialog
       open
@@ -997,11 +955,11 @@ function KeyEditDialog({
                 ...bindingOptions,
               ]}
               onChange={(groupBindingId) => {
-                const binding = bindings.find((item) => item.id === groupBindingId);
+                const groupOption = selectedGroupOption(groupOptions, groupBindingId);
                 onFormChange({
                   ...form,
                   groupBindingId,
-                  groupName: binding?.groupName ?? form.groupName,
+                  groupName: groupOption?.groupName ?? form.groupName,
                 });
               }}
             />
@@ -1092,10 +1050,78 @@ function formatStationBaseUrl(value: string) {
   }
 }
 
-function bindingOptionLabel(binding: StationGroupBinding) {
-  const rate = formatRate(binding.effectiveRateMultiplier);
-  const status = binding.bindingStatus === "available" ? "可用" : binding.bindingStatus;
-  return `${binding.groupName} · ${rate} · ${status}`;
+function groupSelectionFromCreateForm(form: KeyPoolEditForm, options: StationGroupOption[]) {
+  const groupOption = selectedGroupOption(options, form.groupBindingId);
+  if (!groupOption?.groupBindingId) {
+    return { kind: "clear" as const };
+  }
+  return {
+    kind: "set" as const,
+    groupBindingId: groupOption.groupBindingId,
+    groupIdHash: groupOption.groupIdHash,
+    groupName: form.groupName.trim() ? form.groupName.trim() : groupOption.groupName,
+  };
+}
+
+function groupSelectionFromEditForm(
+  form: KeyPoolEditForm,
+  sourceItem: KeyPoolItem,
+  options: StationGroupOption[],
+) {
+  if (!form.groupBindingId) {
+    return sourceItem.groupBindingId ? { kind: "clear" as const } : { kind: "keep" as const };
+  }
+  if (form.groupBindingId === sourceItem.groupBindingId) {
+    return { kind: "keep" as const };
+  }
+  const groupOption = selectedGroupOption(options, form.groupBindingId);
+  return {
+    kind: "set" as const,
+    groupBindingId: groupOption?.groupBindingId ?? form.groupBindingId,
+    groupIdHash: groupOption?.groupIdHash ?? null,
+    groupName: form.groupName.trim() ? form.groupName.trim() : groupOption?.groupName ?? null,
+  };
+}
+
+function capabilitiesFromEditForm(form: KeyPoolEditForm) {
+  return {
+    stationKeyId: form.id,
+    supportsChatCompletions: form.supportsChatCompletions,
+    supportsResponses: form.supportsResponses,
+    supportsEmbeddings: form.supportsEmbeddings,
+    supportsStream: form.supportsStream,
+    supportsTools: form.supportsTools,
+    supportsVision: form.supportsVision,
+    supportsReasoning: form.supportsReasoning,
+    modelAllowlist: linesToList(form.modelAllowlist),
+    modelBlocklist: linesToList(form.modelBlocklist),
+    preferredModels: linesToList(form.preferredModels),
+    onlyUseAsBackup: form.onlyUseAsBackup,
+    routingTags: commaListToList(form.routingTags),
+  };
+}
+
+function selectedGroupOption(options: StationGroupOption[], value: string) {
+  return options.find((option) => option.groupBindingId === value || option.value === value) ?? null;
+}
+
+function currentGroupOption(sourceItem: KeyPoolItem | null, options: StationGroupOption[]) {
+  if (
+    !sourceItem?.groupBindingId ||
+    options.some((option) => option.groupBindingId === sourceItem.groupBindingId || option.value === sourceItem.groupBindingId)
+  ) {
+    return [];
+  }
+  return [
+    {
+      value: sourceItem.groupBindingId,
+      label: `${sourceItem.groupName ?? "当前绑定"} · ${formatRate(sourceItem.rateMultiplier)} · 当前`,
+    },
+  ];
+}
+
+function groupOptionLabel(option: StationGroupOption) {
+  return `${option.groupName} · ${formatRate(option.rateMultiplier)} · ${option.rateSource ?? "可用"}`;
 }
 
 const selectClassName =
