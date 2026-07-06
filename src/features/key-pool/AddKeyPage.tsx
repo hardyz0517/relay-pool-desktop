@@ -6,6 +6,7 @@ import { listStationGroupOptions } from "@/lib/api/groupFacts";
 import { listStations } from "@/lib/api/stations";
 import { saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
+import { formatRate } from "@/lib/formatters";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { Station } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
@@ -386,11 +387,3 @@ function selectedGroupOption(options: StationGroupOption[], value: string) {
 function groupOptionLabel(option: StationGroupOption) {
   return `${option.groupName} · ${formatRate(option.rateMultiplier)} · ${option.rateSource ?? "可用"}`;
 }
-
-function formatRate(value: number | null) {
-  if (value === null || !Number.isFinite(value)) {
-    return "未知";
-  }
-  return `${value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}x`;
-}
-

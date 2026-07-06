@@ -5,6 +5,7 @@ import { Button, EmptyState, IconButton, PageForm, SectionCard, SelectControl, u
 import { listStationGroupOptions } from "@/lib/api/groupFacts";
 import { listKeyPoolItems, saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
+import { formatRate } from "@/lib/formatters";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 
@@ -465,13 +466,6 @@ function groupNameForEditSelection(
 
 function groupOptionLabel(option: StationGroupOption) {
   return `${option.groupName} · ${formatRate(option.rateMultiplier)} · ${option.rateSource ?? "可用"}`;
-}
-
-function formatRate(value: number | null) {
-  if (value === null || !Number.isFinite(value)) {
-    return "未知";
-  }
-  return `${value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}x`;
 }
 
 function linesToList(value: string) {

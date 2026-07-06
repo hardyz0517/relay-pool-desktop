@@ -21,6 +21,7 @@ import { getStationKeyCapabilities } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
 import { deleteStationKey, listKeyPoolItems, reorderKeyPool, saveStationKeyWithDefaults, testStationKeyConnectivity, updateStationKey } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
+import { formatRate } from "@/lib/formatters";
 import type { ChannelMonitor, ChannelMonitorRequestTemplate } from "@/lib/types/channelMonitors";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
@@ -1041,13 +1042,6 @@ function KeyEditDialog({
       </form>
     </Dialog>
   );
-}
-
-function formatRate(value: number | null) {
-  if (value === null || !Number.isFinite(value)) {
-    return "未知";
-  }
-  return `${value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}x`;
 }
 
 function formatStationBaseUrl(value: string) {
