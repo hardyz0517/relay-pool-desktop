@@ -20,15 +20,21 @@ export function findMatchingGroupOption(
   row: { groupBindingId: string | null; groupIdHash: string | null; groupName: string },
   options: StationGroupOption[],
 ) {
-  return (
-    options.find((option) =>
-      Boolean(
-        (row.groupBindingId && option.groupBindingId === row.groupBindingId) ||
-          (row.groupIdHash && option.groupIdHash === row.groupIdHash) ||
-          (row.groupName.trim() && option.groupName.trim() === row.groupName.trim()),
-      ),
-    ) ?? null
-  );
+  const groupBindingId = row.groupBindingId?.trim() ?? "";
+  if (groupBindingId) {
+    return options.find((option) => option.groupBindingId === groupBindingId) ?? null;
+  }
+
+  const groupIdHash = row.groupIdHash?.trim() ?? "";
+  if (groupIdHash) {
+    return options.find((option) => option.groupIdHash === groupIdHash) ?? null;
+  }
+
+  const groupName = row.groupName.trim();
+  if (!groupName) {
+    return null;
+  }
+  return options.find((option) => option.groupName.trim() === groupName) ?? null;
 }
 
 export function normalizeStationGroupOptions(options: StationGroupOption[]) {

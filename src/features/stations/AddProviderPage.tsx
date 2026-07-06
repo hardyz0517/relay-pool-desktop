@@ -46,7 +46,6 @@ import { RemoteKeyDiscoveryList } from "./components/RemoteKeyDiscoveryList";
 import {
   findMatchingGroupOption,
   formatMultiplier,
-  stationGroupSelectValue,
 } from "./groupOptionViewModels";
 import { providerPresets, type ProviderPresetId } from "./providerPresets";
 
@@ -601,17 +600,17 @@ function mergeRemoteGroupOptions(
   const groups: ReturnType<typeof collectRemoteGroupOptions> = [];
 
   function appendGroup(group: StationGroupOption) {
-    if (!group.groupIdHash && !group.groupName.trim()) {
+    if (!group.groupIdHash && !group.groupBindingId && !group.groupName.trim()) {
       return;
     }
     const groupName = group.groupName.trim() || "未命名分组";
-    const groupKey = stationGroupSelectValue({ ...group, groupName });
+    const groupKey = groupOptionMergeKey(group, groupName);
     if (seen.has(groupKey)) {
       return;
     }
     seen.add(groupKey);
     groups.push({
-      value: groupKey,
+      value: group.value || groupKey,
       groupBindingId: group.groupBindingId,
       groupIdHash: group.groupIdHash,
       groupName,
@@ -624,6 +623,23 @@ function mergeRemoteGroupOptions(
   editableGroups.forEach(appendGroup);
   remoteGroups.forEach(appendGroup);
   return groups;
+}
+
+function groupOptionMergeKey(
+  group: Pick<StationGroupOption, "groupBindingId" | "groupIdHash">,
+  groupName: string,
+) {
+  const groupIdHash = group.groupIdHash?.trim() ?? "";
+  if (groupIdHash) {
+    return `remote:${groupIdHash}:${groupName}`;
+  }
+
+  const groupBindingId = group.groupBindingId?.trim() ?? "";
+  if (groupBindingId) {
+    return `binding:${groupBindingId}`;
+  }
+
+  return `name:${groupName}`;
 }
 
 function remoteLocalKeyNote(remoteKey: RemoteStationKey) {
