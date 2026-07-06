@@ -5,6 +5,7 @@ import { Button, IconButton, PageForm, SectionCard, SelectControl, useToast } fr
 import { listStationGroupOptions } from "@/lib/api/groupFacts";
 import { listStations } from "@/lib/api/stations";
 import { saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
+import { readError } from "@/lib/errors";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { Station } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
@@ -393,6 +394,3 @@ function formatRate(value: number | null) {
   return `${value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}x`;
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}

@@ -23,6 +23,7 @@ import { listChannelMonitorSummaries } from "@/lib/api/channelMonitors";
 import { listRequestLogs } from "@/lib/api/proxy";
 import { listStationKeyHealth } from "@/lib/api/routing";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
+import { readError } from "@/lib/errors";
 import type { ChannelMonitor, ChannelMonitorRun } from "@/lib/types/channelMonitors";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { StationKeyHealth } from "@/lib/types/routing";
@@ -527,6 +528,3 @@ function toTime(value: string) {
   return date.getTime();
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}

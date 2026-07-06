@@ -4,6 +4,7 @@ import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, EmptyState, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
 import { listStationGroupOptions } from "@/lib/api/groupFacts";
 import { listKeyPoolItems, saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
+import { readError } from "@/lib/errors";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 
@@ -495,6 +496,3 @@ function commaListToList(value: string) {
   );
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}

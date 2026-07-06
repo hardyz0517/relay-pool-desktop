@@ -1,3 +1,4 @@
+import { formatCompactMultiplier } from "@/lib/formatters";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 
 export const noGroupOptionValue = "__none__";
@@ -12,8 +13,7 @@ export function stationGroupSelectValue(
 }
 
 export function formatMultiplier(value: number | null | undefined, fallback = "未采集倍率") {
-  if (value === null || value === undefined) return fallback;
-  return Number.isInteger(value) ? String(value) : Number(value.toFixed(6)).toString();
+  return formatCompactMultiplier(value, fallback);
 }
 
 export function findMatchingGroupOption(

@@ -9,6 +9,7 @@ import {
   runChannelMonitorNow,
   updateChannelMonitor,
 } from "@/lib/api/channelMonitors";
+import { readError } from "@/lib/errors";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
 import type { ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun, CreateChannelMonitorInput } from "@/lib/types/channelMonitors";
@@ -595,6 +596,3 @@ function toTime(value: string) {
   return date.getTime();
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}

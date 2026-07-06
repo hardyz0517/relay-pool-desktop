@@ -20,6 +20,7 @@ import { listStationGroupOptions } from "@/lib/api/groupFacts";
 import { getStationKeyCapabilities } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
 import { deleteStationKey, listKeyPoolItems, reorderKeyPool, saveStationKeyWithDefaults, testStationKeyConnectivity, updateStationKey } from "@/lib/api/stationKeys";
+import { readError } from "@/lib/errors";
 import type { ChannelMonitor, ChannelMonitorRequestTemplate } from "@/lib/types/channelMonitors";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
@@ -1040,10 +1041,6 @@ function KeyEditDialog({
       </form>
     </Dialog>
   );
-}
-
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function formatRate(value: number | null) {
