@@ -154,6 +154,136 @@ assert.equal(gemini.rows.length, 1);
 assert.equal(gemini.rows[0].groupName, "gemini");
 assert.equal(gemini.rows[0].evidenceStatus, "unverified");
 
+const historicalRateView = buildPricingComparisonViewModel({
+  models: [
+    {
+      provider: "openai",
+      modelId: "gpt-5-mini",
+      displayName: "GPT-5 mini",
+      officialInputPrice: 0.25,
+      officialOutputPrice: 2,
+      currency: "USD",
+      unit: "per_1m_tokens",
+      aliases: ["gpt-5-mini"],
+      groupMatchers: ["openai", "gpt", "default", "green"],
+      enabledByDefault: true,
+    },
+  ],
+  stations: [station("station-history", "History Hub", 10)],
+  groupBindings: [
+    group(
+      "station-history",
+      "group-history-default",
+      "default",
+      0.8,
+      "OpenAI green default",
+      "2026-07-06T01:00:00.000Z",
+    ),
+  ],
+  groupRates: [
+    rate(
+      "station-history",
+      "rate-history-newer",
+      "group-history-default",
+      "default",
+      0.8,
+      "OpenAI green default",
+      "2026-07-06T03:00:00.000Z",
+    ),
+    rate(
+      "station-history",
+      "rate-history-older",
+      "group-history-default",
+      "default",
+      0.05,
+      "OpenAI green default",
+      "2026-07-06T02:00:00.000Z",
+    ),
+  ],
+  pricingRules,
+  modelEvidence: [],
+  filters: {
+    provider: "all",
+    modelQuery: "",
+    stationId: "all",
+    verifiedOnly: false,
+  },
+});
+const historicalGpt = historicalRateView.sections.find((section) => section.modelId === "gpt-5-mini");
+assert.ok(historicalGpt, "historical GPT section should exist");
+assert.deepEqual(
+  historicalGpt.rows.map((row) => ({
+    groupRateRecordId: row.groupRateRecordId,
+    groupMultiplier: row.groupMultiplier,
+    isCheapest: row.isCheapest,
+  })),
+  [{ groupRateRecordId: "rate-history-newer", groupMultiplier: 0.8, isCheapest: true }],
+  "bound groups should consume all related historical rates and keep the latest checkedAt row",
+);
+
+const stationNameLeakView = buildPricingComparisonViewModel({
+  models: [
+    {
+      provider: "openai",
+      modelId: "gpt-5-mini",
+      displayName: "GPT-5 mini",
+      officialInputPrice: 0.25,
+      officialOutputPrice: 2,
+      currency: "USD",
+      unit: "per_1m_tokens",
+      aliases: ["gpt-5-mini"],
+      groupMatchers: ["openai", "gpt", "default", "green"],
+      enabledByDefault: true,
+    },
+    {
+      provider: "anthropic",
+      modelId: "claude-sonnet-5",
+      displayName: "Claude Sonnet 5",
+      officialInputPrice: 2,
+      officialOutputPrice: 10,
+      currency: "USD",
+      unit: "per_1m_tokens",
+      aliases: ["claude-sonnet-5"],
+      groupMatchers: ["anthropic", "claude", "yellow"],
+      enabledByDefault: true,
+    },
+  ],
+  stations: [station("station-openai-name", "OpenAI Hub", 1)],
+  groupBindings: [
+    group(
+      "station-openai-name",
+      "group-openai-name-claude",
+      "claude",
+      1,
+      "yellow",
+      "2026-07-06T01:00:00.000Z",
+    ),
+  ],
+  groupRates,
+  pricingRules,
+  modelEvidence: [],
+  filters: {
+    provider: "all",
+    modelQuery: "",
+    stationId: "all",
+    verifiedOnly: false,
+  },
+});
+const stationNameLeakGpt = stationNameLeakView.sections.find((section) => section.modelId === "gpt-5-mini");
+const stationNameLeakClaude = stationNameLeakView.sections.find((section) => section.modelId === "claude-sonnet-5");
+assert.ok(stationNameLeakGpt, "station-name leak GPT section should exist");
+assert.ok(stationNameLeakClaude, "station-name leak Claude section should exist");
+assert.equal(
+  stationNameLeakGpt.rows.length,
+  0,
+  "OpenAI in the station name must not make a Claude-only group appear in the GPT section",
+);
+assert.equal(
+  stationNameLeakClaude.rows.length,
+  1,
+  "Claude/yellow group facts should still match the Claude section",
+);
+
 const openaiOnly = buildPricingComparisonViewModel({
   models: view.sections.map((section) => ({
     provider: section.provider,
@@ -285,5 +415,25 @@ function group(stationId, id, groupName, multiplier, rawText, updatedAt) {
     rawJsonRedacted: { label: rawText },
     createdAt: updatedAt,
     updatedAt,
+  };
+}
+
+function rate(stationId, id, groupBindingId, groupName, multiplier, rawText, checkedAt) {
+  return {
+    id,
+    stationId,
+    stationKeyId: null,
+    groupBindingId,
+    bindingKind: "station_group",
+    groupKeyHash: `${stationId}-${groupBindingId}`,
+    groupName,
+    defaultRateMultiplier: multiplier,
+    userRateMultiplier: null,
+    effectiveRateMultiplier: multiplier,
+    source: "sub2api_groups_rates",
+    confidence: 0.9,
+    rawJsonRedacted: { label: rawText },
+    checkedAt,
+    createdAt: checkedAt,
   };
 }

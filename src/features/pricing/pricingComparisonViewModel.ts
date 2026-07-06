@@ -231,25 +231,29 @@ function buildRowsForModel(
     const relatedRates = groupRates
       .filter((rate) => isRateForBinding(rate, binding))
       .sort(compareRatesByFreshness);
-    const matchingRate = relatedRates.find((rate) => groupRateMatchesModel(rate, station, model));
-    const bindingMatches = groupBindingMatchesModel(binding, station, model);
+    const matchingRate = relatedRates.find((rate) => groupRateMatchesModel(rate, model));
+    const bindingMatches = groupBindingMatchesModel(binding, model);
     if (!bindingMatches && !matchingRate) {
       continue;
     }
 
     const rate = matchingRate ?? relatedRates[0] ?? null;
-    if (rate) {
-      consumedRateIds.add(rate.id);
+    for (const relatedRate of relatedRates) {
+      consumedRateIds.add(relatedRate.id);
     }
     rows.push(createRowFromCandidate(model, bindingCandidate(binding, station, rate), evidenceByStationModel));
   }
 
-  for (const rate of groupRates) {
+  const latestStandaloneRates = latestRatesByStationGroup(
+    groupRates.filter((rate) => !consumedRateIds.has(rate.id)),
+  );
+
+  for (const rate of latestStandaloneRates) {
     if (consumedRateIds.has(rate.id)) {
       continue;
     }
     const station = stationsById.get(rate.stationId);
-    if (!station || !isStationGroupRate(rate) || !groupRateMatchesModel(rate, station, model)) {
+    if (!station || !isStationGroupRate(rate) || !groupRateMatchesModel(rate, model)) {
       continue;
     }
 
@@ -376,7 +380,6 @@ function rowMatchesFilters(row: PricingComparisonRow, filters: Required<PricingC
 
 function groupBindingMatchesModel(
   binding: StationGroupBinding,
-  station: Station,
   model: PricingComparisonCatalogEntry,
 ) {
   return textMatchesAnyMatcher(
@@ -385,7 +388,6 @@ function groupBindingMatchesModel(
       binding.bindingStatus,
       binding.rateSource,
       searchableJsonText(binding.rawJsonRedacted),
-      station.name,
     ].join(" "),
     model.groupMatchers,
   );
@@ -393,11 +395,10 @@ function groupBindingMatchesModel(
 
 function groupRateMatchesModel(
   rate: GroupRateRecord,
-  station: Station,
   model: PricingComparisonCatalogEntry,
 ) {
   return textMatchesAnyMatcher(
-    [rate.groupName, rate.source, searchableJsonText(rate.rawJsonRedacted), station.name].join(" "),
+    [rate.groupName, rate.source, searchableJsonText(rate.rawJsonRedacted)].join(" "),
     model.groupMatchers,
   );
 }
@@ -454,6 +455,24 @@ function isRateForBinding(rate: GroupRateRecord, binding: StationGroupBinding) {
       rate.groupKeyHash === binding.groupKeyHash ||
       normalizeText(rate.groupName) === normalizeText(binding.groupName))
   );
+}
+
+function latestRatesByStationGroup(rates: GroupRateRecord[]) {
+  const latestByKey = new Map<string, GroupRateRecord>();
+
+  for (const rate of rates) {
+    if (!isStationGroupRate(rate)) {
+      continue;
+    }
+
+    const key = [rate.stationId, rate.groupKeyHash || normalizeText(rate.groupName)].join("\u0000");
+    const current = latestByKey.get(key);
+    if (!current || compareRatesByFreshness(rate, current) < 0) {
+      latestByKey.set(key, rate);
+    }
+  }
+
+  return Array.from(latestByKey.values()).sort(compareRatesByFreshness);
 }
 
 function firstFiniteNumber(...values: Array<number | null | undefined>) {
