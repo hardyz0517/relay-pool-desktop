@@ -333,7 +333,7 @@ fn is_selectable_station_group_binding(binding: &StationGroupBinding) -> bool {
     binding.binding_kind == BINDING_KIND_STATION_GROUP
         && binding.binding_status != BINDING_STATUS_DISABLED
         && binding.binding_status != BINDING_STATUS_MANUAL_LEGACY
-        && binding.binding_kind != "legacy_key_group"
+        && binding.rate_source.as_deref() != Some("legacy_key_group")
 }
 
 fn rate_key_for_binding_id(id: &str) -> String {
@@ -387,6 +387,16 @@ mod tests {
         assert_eq!(options[0].rate_multiplier, Some(0.8));
         assert_eq!(options[0].rate_source.as_deref(), Some("binding_api"));
         assert!(options[0].selectable_for_remote_key);
+    }
+
+    #[test]
+    fn station_group_options_omit_legacy_key_group_rate_source() {
+        let mut legacy_binding = binding("binding-legacy", "hash-legacy", Some("remote-legacy"));
+        legacy_binding.rate_source = Some("legacy_key_group".to_string());
+
+        let options = station_group_options_from_facts(vec![legacy_binding], Vec::new());
+
+        assert!(options.is_empty());
     }
 
     fn binding(id: &str, group_key_hash: &str, group_id_hash: Option<&str>) -> StationGroupBinding {
