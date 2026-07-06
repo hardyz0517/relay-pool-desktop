@@ -19,7 +19,7 @@ await esbuild.build({
   external: ["react", "lucide-react", "@tauri-apps/api/core"],
 });
 
-const { buildChangeEventListItem, markUnreadChangeEventsRead, unreadChangeCount, unreadRiskCount } = await import(
+const { buildChangeEventListItem, markUnreadChangeEventsRead, paginateChangeEvents, unreadChangeCount, unreadRiskCount } = await import(
   pathToFileURL(outFile).href
 );
 
@@ -81,6 +81,26 @@ const mixedUnreadEvents = [
 
 assert.equal(unreadRiskCount(mixedUnreadEvents), 2, "risk count should still only include unread warning and critical events");
 assert.equal(unreadChangeCount(mixedUnreadEvents), 4, "sidebar unread badge should count every unread change event");
+
+const pagedEvents = Array.from({ length: 27 }, (_, index) => changeEvent(`event-${index + 1}`, "unread"));
+const firstPage = paginateChangeEvents(pagedEvents, 1, 10);
+assert.equal(firstPage.page, 1);
+assert.equal(firstPage.totalPages, 3);
+assert.equal(firstPage.startIndex, 1);
+assert.equal(firstPage.endIndex, 10);
+assert.deepEqual(
+  firstPage.events.map((event) => event.id),
+  pagedEvents.slice(0, 10).map((event) => event.id),
+  "page one should show only the first page of filtered change events",
+);
+const lastPage = paginateChangeEvents(pagedEvents, 99, 10);
+assert.equal(lastPage.page, 3, "pagination should clamp out-of-range pages after filtering");
+assert.equal(lastPage.startIndex, 21);
+assert.equal(lastPage.endIndex, 27);
+assert.deepEqual(
+  lastPage.events.map((event) => event.id),
+  pagedEvents.slice(20).map((event) => event.id),
+);
 
 const rateChange = buildChangeEventListItem(
   changeEvent("rate-change", "unread", {
@@ -160,6 +180,10 @@ assert.equal(keyInvalidWithoutName.metaLabel, "密钥 / station-key-abc...");
 const changeEventsApiSource = await readFile("src/lib/api/changeEvents.ts", "utf8");
 const changeCenterSource = await readFile("src/features/changes/ChangeCenterPage.tsx", "utf8");
 const appShellSource = await readFile("src/components/shell/AppShell.tsx", "utf8");
+const mockChangeEventsSource = await readFile("src/lib/mock/changeEvents.ts", "utf8");
+const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
+const tauriLibSource = await readFile("src-tauri/src/lib.rs", "utf8");
+const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
 
 assert.ok(
   changeEventsApiSource.includes("CHANGE_EVENTS_UPDATED_EVENT"),
@@ -181,4 +205,33 @@ assert.ok(
 assert.ok(
   appShellSource.includes("unreadChangeCount(changeEvents)") && !appShellSource.includes("unreadRiskCount(changeEvents)"),
   "app shell badge should use the all-unread count, not the risk-only summary count",
+);
+
+assert.ok(
+  changeEventsApiSource.includes("clearChangeEvents") &&
+    changeEventsApiSource.includes('invoke<void>("clear_change_events"') &&
+    changeEventsApiSource.includes("clearMockChangeEvents"),
+  "change events API should expose a clear-history command with a mock fallback",
+);
+
+assert.ok(
+  mockChangeEventsSource.includes("clearMockChangeEvents") && mockChangeEventsSource.includes("memoryChangeEvents = []"),
+  "mock change events should support clearing history for browser-only development",
+);
+
+assert.ok(
+  changeCenterSource.includes("clearChangeHistory") &&
+    changeCenterSource.includes("清除记录") &&
+    changeCenterSource.includes("pageInfo.events.map") &&
+    changeCenterSource.includes("上一页") &&
+    changeCenterSource.includes("下一页"),
+  "change center page should render a clear-history action and paginate the filtered event list",
+);
+
+assert.ok(
+  tauriCommandsSource.includes("pub fn clear_change_events") &&
+    tauriLibSource.includes("commands::clear_change_events") &&
+    databaseSource.includes("pub fn clear_change_events") &&
+    databaseSource.includes("DELETE FROM change_events"),
+  "Tauri should register a clear_change_events command that deletes persisted change-event history",
 );

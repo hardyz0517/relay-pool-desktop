@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, CheckCheck, CheckCircle2, Eye, RefreshCw, Search, XCircle } from "lucide-react";
+import { ArrowRight, CheckCheck, CheckCircle2, ChevronLeft, ChevronRight, Eye, RefreshCw, Search, Trash2, XCircle } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
+  ConfirmDialog,
   EmptyState,
   InspectorPanel,
   SegmentedControl,
@@ -12,6 +13,7 @@ import {
   useToast,
 } from "@/components/ui";
 import {
+  clearChangeEvents,
   dismissChangeEvent,
   listChangeEvents,
   markChangeEventRead,
@@ -27,6 +29,7 @@ import {
   formatChangeTime,
   markUnreadChangeEventsRead,
   objectTypeLabels,
+  paginateChangeEvents,
   parseJsonObject,
   severityLabels,
   severityTone,
@@ -40,6 +43,8 @@ export function ChangeCenterPage() {
   const [events, setEvents] = useState<ChangeEvent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<ChangeFilter>({ severity: "all", status: "active", objectType: "all", query: "" });
+  const [page, setPage] = useState(1);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +59,7 @@ export function ChangeCenterPage() {
     try {
       const nextEvents = await listChangeEvents();
       setEvents(nextEvents);
-      setSelectedId((current) => current ?? nextEvents[0]?.id ?? null);
+      setSelectedId((current) => (current && nextEvents.some((event) => event.id === current) ? current : nextEvents[0]?.id ?? null));
       if (showSuccess) {
         toast.success("变更中心已刷新");
       }
@@ -97,8 +102,26 @@ export function ChangeCenterPage() {
     }
   }
 
+  async function clearChangeHistory() {
+    setSaving(true);
+    try {
+      await clearChangeEvents();
+      setEvents([]);
+      setSelectedId(null);
+      setPage(1);
+      notifyChangeEventsUpdated();
+      toast.success("变更记录已清除");
+      setClearConfirmOpen(false);
+    } catch (requestError) {
+      toast.error("清除变更记录失败", readError(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const filteredEvents = useMemo(() => filterChangeEvents(events, filter), [events, filter]);
-  const selected = filteredEvents.find((event) => event.id === selectedId) ?? filteredEvents[0] ?? null;
+  const pageInfo = useMemo(() => paginateChangeEvents(filteredEvents, page, CHANGE_EVENTS_PAGE_SIZE), [filteredEvents, page]);
+  const selected = pageInfo.events.find((event) => event.id === selectedId) ?? pageInfo.events[0] ?? null;
   const unreadCount = events.filter((event) => event.status === "unread").length;
   const riskCount = unreadRiskCount(events);
   const objectOptions = useMemo(() => {
@@ -111,6 +134,10 @@ export function ChangeCenterPage() {
       title="变更中心"
       actions={
         <div className="flex items-center gap-2">
+          <Button variant="danger" onClick={() => setClearConfirmOpen(true)} disabled={loading || saving || events.length === 0}>
+            <Trash2 className="h-4 w-4" />
+            清除记录
+          </Button>
           <Button variant="secondary" onClick={() => void markAllRead()} disabled={loading || saving || unreadCount === 0}>
             <CheckCheck className="h-4 w-4" />
             一键已读
@@ -142,7 +169,10 @@ export function ChangeCenterPage() {
                     { value: "resolved", label: "已解决" },
                     { value: "all", label: "全部" },
                   ]}
-                  onChange={(status) => setFilter((current) => ({ ...current, status }))}
+                  onChange={(status) => {
+                    setPage(1);
+                    setFilter((current) => ({ ...current, status }));
+                  }}
                 />
                 <SelectControl
                   ariaLabel="变更级别"
@@ -154,7 +184,10 @@ export function ChangeCenterPage() {
                     { value: "warning", label: "警告" },
                     { value: "info", label: "信息" },
                   ]}
-                  onChange={(severity) => setFilter((current) => ({ ...current, severity }))}
+                  onChange={(severity) => {
+                    setPage(1);
+                    setFilter((current) => ({ ...current, severity }));
+                  }}
                 />
                 <SelectControl
                   ariaLabel="对象类型"
@@ -164,7 +197,10 @@ export function ChangeCenterPage() {
                     { value: "all", label: "全部对象" },
                     ...objectOptions,
                   ]}
-                  onChange={(objectType) => setFilter((current) => ({ ...current, objectType }))}
+                  onChange={(objectType) => {
+                    setPage(1);
+                    setFilter((current) => ({ ...current, objectType }));
+                  }}
                 />
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
@@ -172,7 +208,10 @@ export function ChangeCenterPage() {
                     className={`${inputClassName} pl-8`}
                     value={filter.query}
                     placeholder="搜索变更 / 对象 / 来源"
-                    onChange={(event) => setFilter((current) => ({ ...current, query: event.target.value }))}
+                    onChange={(event) => {
+                      setPage(1);
+                      setFilter((current) => ({ ...current, query: event.target.value }));
+                    }}
                   />
                 </div>
               </div>
@@ -184,16 +223,46 @@ export function ChangeCenterPage() {
                 description="余额、密钥、采集、价格、倍率、模型和路由状态变化会在这里形成记录。"
               />
             ) : (
-              <div className="divide-y divide-border bg-white">
-                {filteredEvents.map((event) => (
-                  <ChangeEventRow
-                    key={event.id}
-                    event={event}
-                    selected={selected?.id === event.id}
-                    onSelect={() => setSelectedId(event.id)}
-                  />
-                ))}
-              </div>
+              <>
+                <div className="divide-y divide-border bg-white">
+                  {pageInfo.events.map((event) => (
+                    <ChangeEventRow
+                      key={event.id}
+                      event={event}
+                      selected={selected?.id === event.id}
+                      onSelect={() => setSelectedId(event.id)}
+                    />
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                  <span>
+                    第 {pageInfo.startIndex}-{pageInfo.endIndex} 条 / 共 {pageInfo.totalCount} 条
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setPage((current) => Math.max(1, current - 1))}
+                      disabled={loading || saving || pageInfo.page <= 1}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      上一页
+                    </Button>
+                    <span className="min-w-[64px] text-center font-medium text-slate-700">
+                      {pageInfo.page} / {pageInfo.totalPages}
+                    </span>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setPage((current) => Math.min(pageInfo.totalPages, current + 1))}
+                      disabled={loading || saving || pageInfo.page >= pageInfo.totalPages}
+                    >
+                      下一页
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </>
             )}
           </div>
 
@@ -236,6 +305,15 @@ export function ChangeCenterPage() {
             )}
           </InspectorPanel>
         </div>
+        <ConfirmDialog
+          open={clearConfirmOpen}
+          title="清除变更记录"
+          description="确定要清除全部变更记录吗？此操作不会删除中转站、密钥或价格配置，但记录本身无法恢复。"
+          confirmLabel="清除"
+          confirming={saving}
+          onCancel={() => setClearConfirmOpen(false)}
+          onConfirm={() => void clearChangeHistory()}
+        />
       </div>
     </PageScaffold>
   );
@@ -355,3 +433,5 @@ function readError(error: unknown) {
 
 const inputClassName =
   "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
+
+const CHANGE_EVENTS_PAGE_SIZE = 20;

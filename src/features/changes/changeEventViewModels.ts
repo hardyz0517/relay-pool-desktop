@@ -112,6 +112,24 @@ export function filterChangeEvents(events: ChangeEvent[], filter: ChangeFilter) 
   });
 }
 
+export function paginateChangeEvents(events: ChangeEvent[], page: number, pageSize: number) {
+  const safePageSize = Math.max(1, pageSize);
+  const totalPages = Math.max(1, Math.ceil(events.length / safePageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const startOffset = (safePage - 1) * safePageSize;
+  const pageEvents = events.slice(startOffset, startOffset + safePageSize);
+
+  return {
+    events: pageEvents,
+    page: safePage,
+    pageSize: safePageSize,
+    totalPages,
+    startIndex: pageEvents.length === 0 ? 0 : startOffset + 1,
+    endIndex: startOffset + pageEvents.length,
+    totalCount: events.length,
+  };
+}
+
 export function unreadRiskCount(events: ChangeEvent[]) {
   return events.filter(
     (event) => event.status === "unread" && (event.severity === "critical" || event.severity === "warning"),

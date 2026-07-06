@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
+  clearMockChangeEvents,
   listMockChangeEvents,
   updateMockChangeEventStatus,
   upsertMockChangeEvent,
@@ -31,6 +32,15 @@ export function listChangeEvents() {
   return invoke<ChangeEvent[]>("list_change_events").catch((error) => {
     if (isInvokeUnavailable(error)) {
       return listMockChangeEvents();
+    }
+    throw error;
+  });
+}
+
+export function clearChangeEvents() {
+  return invoke<void>("clear_change_events").catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return clearMockChangeEvents();
     }
     throw error;
   });

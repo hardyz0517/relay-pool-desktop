@@ -53,6 +53,11 @@ export function listMockChangeEvents() {
   return Promise.resolve([...memoryChangeEvents]);
 }
 
+export function clearMockChangeEvents() {
+  memoryChangeEvents = [];
+  return Promise.resolve();
+}
+
 export function upsertMockChangeEvent(input: UpsertChangeEventInput) {
   const now = new Date().toISOString();
   const existingIndex = memoryChangeEvents.findIndex((event) => event.dedupeKey === input.dedupeKey);
