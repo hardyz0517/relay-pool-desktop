@@ -3,6 +3,7 @@ import type {
   ChannelMonitor,
   ChannelMonitorRequestTemplate,
   ChannelMonitorRun,
+  ChannelMonitorSummary,
   CreateChannelMonitorInput,
   CreateChannelMonitorTemplateInput,
   UpdateChannelMonitorInput,
@@ -17,6 +18,26 @@ export function listChannelMonitors() {
   return invoke<ChannelMonitor[]>("list_channel_monitors").catch((error) => {
     if (isInvokeUnavailable(error)) {
       return memoryMonitors.map(copyMonitor);
+    }
+    throw error;
+  });
+}
+
+export function listChannelMonitorSummaries() {
+  return invoke<ChannelMonitorSummary[]>("list_channel_monitor_summaries").catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return memoryMonitors.map((monitor) => {
+        const recentRuns = (memoryRuns.get(monitor.id) ?? [])
+          .map(copyRun)
+          .sort((left, right) => toTime(right.startedAt) - toTime(left.startedAt))
+          .slice(0, 60);
+        return {
+          monitor: copyMonitor(monitor),
+          recentRuns,
+          runsLoadStatus: "ok" as const,
+          latestRun: recentRuns[0] ?? null,
+        };
+      });
     }
     throw error;
   });
@@ -243,6 +264,11 @@ function copyTemplate(template: ChannelMonitorRequestTemplate): ChannelMonitorRe
 
 function copyRun(run: ChannelMonitorRun): ChannelMonitorRun {
   return { ...run };
+}
+
+function toTime(value: string) {
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? 0 : time;
 }
 
 function isInvokeUnavailable(error: unknown) {

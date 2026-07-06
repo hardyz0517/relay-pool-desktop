@@ -103,6 +103,39 @@ export type UpdateStationKeyInput = {
   note: string | null;
 };
 
+export type SaveStationKeyMode = "create" | "update";
+
+export type StationKeyGroupSelection =
+  | { kind: "keep" }
+  | { kind: "clear" }
+  | {
+      kind: "set";
+      groupBindingId: string;
+      groupIdHash?: string | null;
+      groupName?: string | null;
+    };
+
+export type SaveStationKeyWithDefaultsInput = {
+  mode: SaveStationKeyMode;
+  id?: string | null;
+  stationId: string;
+  name: string;
+  apiKey?: string | null;
+  enabled: boolean;
+  priority?: number | null;
+  tierLabel?: string | null;
+  balanceScope?: string | null;
+  status?: StationKeyStatus | null;
+  note?: string | null;
+  groupSelection: StationKeyGroupSelection;
+};
+
+export type SaveStationKeyWithDefaultsResult = {
+  stationKey: StationKey;
+  capabilities: import("@/lib/types/routing").StationKeyCapabilities;
+  message: string;
+};
+
 export type StationKeyConnectivityTestResult = {
   stationKeyId: string;
   ok: boolean;

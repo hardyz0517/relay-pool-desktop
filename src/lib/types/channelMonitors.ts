@@ -86,3 +86,12 @@ export type ChannelMonitorRun = {
   errorMessage: string | null;
   createdAt: string;
 };
+
+export type ChannelMonitorRunsLoadStatus = "ok" | "failed";
+
+export type ChannelMonitorSummary = {
+  monitor: ChannelMonitor;
+  recentRuns: ChannelMonitorRun[];
+  runsLoadStatus: ChannelMonitorRunsLoadStatus;
+  latestRun: ChannelMonitorRun | null;
+};
