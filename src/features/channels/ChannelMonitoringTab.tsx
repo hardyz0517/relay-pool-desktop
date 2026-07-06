@@ -4,9 +4,8 @@ import { Button, EmptyState, IconButton, StatusBadge, useToast } from "@/compone
 import {
   createChannelMonitor,
   deleteChannelMonitor,
-  listChannelMonitorRuns,
+  listChannelMonitorSummaries,
   listChannelMonitorTemplates,
-  listChannelMonitors,
   runChannelMonitorNow,
   updateChannelMonitor,
 } from "@/lib/api/channelMonitors";
@@ -83,27 +82,19 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
     setLoading(true);
     setError(null);
     try {
-      const [nextMonitors, nextStations, nextKeys, nextTemplates] = await Promise.all([
-        listChannelMonitors(),
+      const [summaries, nextStations, nextKeys, nextTemplates] = await Promise.all([
+        listChannelMonitorSummaries(),
         listStations(),
         listKeyPoolItems(),
         listChannelMonitorTemplates(),
       ]);
-      const runEntries = await Promise.all(
-        nextMonitors.map(async (monitor) => {
-          try {
-            return { monitorId: monitor.id, runs: await listChannelMonitorRuns(monitor.id), failed: false };
-          } catch {
-            return { monitorId: monitor.id, runs: [] as ChannelMonitorRun[], failed: true };
-          }
-        }),
-      );
+      const nextMonitors = summaries.map((summary) => summary.monitor);
       setMonitors(nextMonitors);
       setStations(nextStations);
       setKeys(nextKeys);
       setTemplates(nextTemplates);
-      setRunsByMonitor(new Map(runEntries.map((entry) => [entry.monitorId, entry.runs] as const)));
-      setRunLoadFailedIds(new Set(runEntries.filter((entry) => entry.failed).map((entry) => entry.monitorId)));
+      setRunsByMonitor(new Map(summaries.map((summary) => [summary.monitor.id, summary.recentRuns] as const)));
+      setRunLoadFailedIds(new Set(summaries.filter((summary) => summary.runsLoadStatus === "failed").map((summary) => summary.monitor.id)));
       if (showSuccess) {
         toast.success("渠道监控已刷新");
       }
