@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::process::Command;
@@ -29,8 +30,9 @@ use crate::{
         },
         proxy::{ProxyStatus, RequestLog, UpstreamApiFormat},
         remote_keys::{
-            BindRemoteStationKeyInput, CreateRemoteStationKeyInput, CreateRemoteStationKeyResult,
-            RemoteKeyCapability, RemoteKeyScanResult, RemoteStationKey,
+            BindRemoteStationKeyInput, CreateLocalStationKeyFromRemoteResult,
+            CreateRemoteStationKeyInput, CreateRemoteStationKeyResult, RemoteKeyCapability,
+            RemoteKeyScanResult, RemoteStationKey,
         },
         routing::{
             ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyCapabilities,
@@ -116,6 +118,7 @@ pub struct CcswitchImportResult {
 #[tauri::command]
 pub fn import_relay_pool_to_ccswitch(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<CcswitchImportResult, String> {
     let settings = database.get_settings()?;
@@ -124,7 +127,12 @@ pub fn import_relay_pool_to_ccswitch(
         return Err("本地访问密钥为空，无法导入 CCSwitch。".to_string());
     }
 
-    let proxy_status = proxy.status(settings.local_proxy_port);
+    database.migrate_plaintext_secrets(secrets.data_key())?;
+    let proxy_status = proxy.start(
+        database.inner().clone(),
+        *secrets.data_key(),
+        settings.local_proxy_port,
+    )?;
     let endpoint = format!("http://{}:{}/v1", proxy_status.bind_addr, proxy_status.port);
     let homepage = format!("http://{}:{}", proxy_status.bind_addr, proxy_status.port);
     let provider_name = "Relay Pool Desktop".to_string();
@@ -320,11 +328,41 @@ pub async fn create_remote_station_key(
 }
 
 #[tauri::command]
+pub async fn create_local_station_key_from_remote(
+    database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
+    remote_key_id: String,
+    station_id: String,
+) -> Result<CreateLocalStationKeyFromRemoteResult, String> {
+    let database = database.inner().clone();
+    let data_key = *secrets.data_key();
+    tauri::async_runtime::spawn_blocking(move || {
+        remote_keys::create_local_key_from_remote_key(
+            &database,
+            &data_key,
+            station_id,
+            remote_key_id,
+        )
+    })
+    .await
+    .map_err(|error| format!("远端 Key 同步本地任务执行失败: {error}"))?
+}
+
+#[tauri::command]
 pub fn bind_remote_station_key(
     database: State<'_, AppDatabase>,
     input: BindRemoteStationKeyInput,
 ) -> Result<Vec<RemoteStationKey>, String> {
     remote_keys::bind_remote_key(&database, input)
+}
+
+#[tauri::command]
+pub fn unbind_remote_station_key(
+    database: State<'_, AppDatabase>,
+    remote_key_id: String,
+    station_id: String,
+) -> Result<Vec<RemoteStationKey>, String> {
+    database.unbind_remote_station_key(remote_key_id, station_id)
 }
 
 #[tauri::command]
@@ -1075,14 +1113,50 @@ fn build_ccswitch_provider_deeplink(
     endpoint: &str,
     api_key: &str,
 ) -> String {
-    format!(
-        "ccswitch://v1/import?resource=provider&app={}&name={}&homepage={}&endpoint={}&apiKey={}&enabled=true",
-        encode_query_param(app),
-        encode_query_param(provider_name),
-        encode_query_param(homepage),
-        encode_query_param(endpoint),
-        encode_query_param(api_key),
-    )
+    let usage_script = general_purpose::STANDARD.encode(build_ccswitch_usage_script());
+    let mut entries = vec![
+        ("resource", "provider".to_string()),
+        ("app", app.to_string()),
+        ("name", provider_name.to_string()),
+        ("homepage", homepage.to_string()),
+        ("endpoint", endpoint.to_string()),
+        ("apiKey", api_key.to_string()),
+        ("configFormat", "json".to_string()),
+        ("usageEnabled", "true".to_string()),
+        ("usageScript", usage_script),
+        ("usageAutoInterval", "30".to_string()),
+        ("enabled", "true".to_string()),
+    ];
+    if app == "codex" {
+        entries.insert(2, ("model", "gpt-5.4".to_string()));
+    }
+
+    let query = entries
+        .into_iter()
+        .map(|(key, value)| format!("{}={}", encode_query_param(key), encode_query_param(&value)))
+        .collect::<Vec<_>>()
+        .join("&");
+
+    format!("ccswitch://v1/import?{query}")
+}
+
+fn build_ccswitch_usage_script() -> &'static str {
+    r#"({
+    request: {
+      url: "{{baseUrl}}/usage",
+      method: "GET",
+      headers: { "Authorization": "Bearer {{apiKey}}" }
+    },
+    extractor: function(response) {
+      const remaining = response?.remaining ?? response?.quota?.remaining ?? response?.balance;
+      const unit = response?.unit ?? response?.quota?.unit ?? "USD";
+      return {
+        isValid: response?.is_active ?? response?.isValid ?? true,
+        remaining,
+        unit
+      };
+    }
+  })"#
 }
 
 fn encode_query_param(value: &str) -> String {
@@ -1092,21 +1166,47 @@ fn encode_query_param(value: &str) -> String {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 output.push(byte as char);
             }
+            b' ' => output.push('+'),
             _ => output.push_str(&format!("%{byte:02X}")),
         }
     }
     output
 }
 
-fn open_url_with_system(url: &str) -> Result<(), String> {
+struct SystemUrlLauncher {
+    program: &'static str,
+    args: Vec<String>,
+}
+
+fn system_url_launcher(url: &str) -> SystemUrlLauncher {
     #[cfg(target_os = "windows")]
-    let result = Command::new("explorer.exe").arg(url).spawn();
+    {
+        return SystemUrlLauncher {
+            program: "rundll32.exe",
+            args: vec!["url.dll,FileProtocolHandler".to_string(), url.to_string()],
+        };
+    }
 
     #[cfg(target_os = "macos")]
-    let result = Command::new("open").arg(url).spawn();
+    {
+        return SystemUrlLauncher {
+            program: "open",
+            args: vec![url.to_string()],
+        };
+    }
 
     #[cfg(all(unix, not(target_os = "macos")))]
-    let result = Command::new("xdg-open").arg(url).spawn();
+    {
+        return SystemUrlLauncher {
+            program: "xdg-open",
+            args: vec![url.to_string()],
+        };
+    }
+}
+
+fn open_url_with_system(url: &str) -> Result<(), String> {
+    let launcher = system_url_launcher(url);
+    let result = Command::new(launcher.program).args(launcher.args).spawn();
 
     result
         .map(|_| ())
@@ -1199,7 +1299,7 @@ fn build_station_key_connectivity_probe_body(
             "model": model,
             "input": "ping",
             "store": false,
-            "max_output_tokens": 16,
+            "max_output_tokens": 1,
         }),
         StationKeyConnectivityProbeKind::ChatCompletions => json!({
             "model": model,
@@ -1239,18 +1339,42 @@ fn station_key_connectivity_model_candidates(
     discovered_models: &[String],
 ) -> Vec<String> {
     let mut candidates = Vec::new();
-    push_station_key_connectivity_model_candidate(&mut candidates, configured_model);
+    let blocked_models = capabilities
+        .map(|capabilities| {
+            capabilities
+                .model_blocklist
+                .iter()
+                .map(|model| normalize_connectivity_model(model))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    push_station_key_connectivity_model_candidate(
+        &mut candidates,
+        configured_model,
+        &blocked_models,
+    );
     if let Some(capabilities) = capabilities {
-        for model in capabilities
-            .preferred_models
-            .iter()
-            .chain(capabilities.model_allowlist.iter())
-        {
-            push_station_key_connectivity_model_candidate(&mut candidates, Some(model.as_str()));
+        let explicit_models = if capabilities.model_allowlist.is_empty() {
+            capabilities.preferred_models.as_slice()
+        } else {
+            capabilities.model_allowlist.as_slice()
+        };
+        let mut explicit_models = explicit_models.to_vec();
+        explicit_models.sort_by_key(|model| connectivity_model_priority(model));
+        for model in &explicit_models {
+            push_station_key_connectivity_model_candidate(
+                &mut candidates,
+                Some(model.as_str()),
+                &blocked_models,
+            );
         }
     }
     for model in discovered_models {
-        push_station_key_connectivity_model_candidate(&mut candidates, Some(model.as_str()));
+        push_station_key_connectivity_model_candidate(
+            &mut candidates,
+            Some(model.as_str()),
+            &blocked_models,
+        );
     }
     if candidates.is_empty() {
         candidates.push("gpt-4o-mini".to_string());
@@ -1262,13 +1386,51 @@ fn station_key_connectivity_model_candidates(
 fn push_station_key_connectivity_model_candidate(
     candidates: &mut Vec<String>,
     model: Option<&str>,
+    blocked_models: &[String],
 ) {
     let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) else {
         return;
     };
-    if !candidates.iter().any(|candidate| candidate == model) {
+    let normalized = normalize_connectivity_model(model);
+    if blocked_models.iter().any(|blocked| blocked == &normalized) {
+        return;
+    }
+    if !candidates
+        .iter()
+        .any(|candidate| normalize_connectivity_model(candidate) == normalized)
+    {
         candidates.push(model.to_string());
     }
+}
+
+fn connectivity_model_priority(model: &str) -> i32 {
+    let normalized = normalize_connectivity_model(model);
+    if normalized.contains("nano") {
+        return 0;
+    }
+    if normalized.contains("mini") {
+        return 1;
+    }
+    if normalized.contains("lite") {
+        return 2;
+    }
+    if normalized.contains("flash") {
+        return 3;
+    }
+    if normalized.contains("haiku") {
+        return 4;
+    }
+    if normalized.contains("turbo") {
+        return 5;
+    }
+    if normalized == "deepseek-chat" || normalized.ends_with("-chat") {
+        return 6;
+    }
+    20
+}
+
+fn normalize_connectivity_model(model: &str) -> String {
+    model.trim().to_ascii_lowercase()
 }
 
 fn run_station_key_connectivity_model_attempts<F>(
@@ -1474,6 +1636,45 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(target_os = "windows")]
+    fn ccswitch_protocol_urls_use_windows_file_protocol_handler() {
+        let launcher = system_url_launcher("ccswitch://v1/import?resource=provider");
+
+        assert_eq!(launcher.program, "rundll32.exe");
+        assert_eq!(
+            launcher.args,
+            vec![
+                "url.dll,FileProtocolHandler",
+                "ccswitch://v1/import?resource=provider"
+            ]
+        );
+    }
+
+    #[test]
+    fn ccswitch_deeplink_matches_sub2api_codex_import_shape() {
+        let deeplink = build_ccswitch_provider_deeplink(
+            "codex",
+            "Relay Pool Desktop",
+            "http://127.0.0.1:8787",
+            "http://127.0.0.1:8787/v1",
+            "sk test",
+        );
+
+        assert!(deeplink.starts_with("ccswitch://v1/import?"));
+        assert!(deeplink.contains("resource=provider"));
+        assert!(deeplink.contains("app=codex"));
+        assert!(deeplink.contains("model=gpt-5.4"));
+        assert!(deeplink.contains("name=Relay+Pool+Desktop"));
+        assert!(deeplink.contains("homepage=http%3A%2F%2F127.0.0.1%3A8787"));
+        assert!(deeplink.contains("endpoint=http%3A%2F%2F127.0.0.1%3A8787%2Fv1"));
+        assert!(deeplink.contains("apiKey=sk+test"));
+        assert!(deeplink.contains("configFormat=json"));
+        assert!(deeplink.contains("usageEnabled=true"));
+        assert!(deeplink.contains("usageAutoInterval=30"));
+        assert!(deeplink.contains("usageScript="));
+    }
+
+    #[test]
     fn station_key_connectivity_probe_uses_low_token_responses_request() {
         let body = build_station_key_connectivity_probe_body(
             "gpt-test",
@@ -1483,7 +1684,36 @@ mod tests {
         assert_eq!(body["model"], "gpt-test");
         assert_eq!(body["input"], "ping");
         assert_eq!(body["store"], false);
-        assert_eq!(body["max_output_tokens"], 16);
+        assert_eq!(body["max_output_tokens"], 1);
+    }
+
+    #[test]
+    fn station_key_connectivity_candidates_choose_lowest_allowed_model() {
+        let capabilities = StationKeyCapabilities {
+            station_key_id: "key-lowest".to_string(),
+            supports_chat_completions: true,
+            supports_responses: true,
+            supports_embeddings: false,
+            supports_stream: true,
+            supports_tools: false,
+            supports_vision: false,
+            supports_reasoning: false,
+            model_allowlist: vec![
+                "gpt-4.1".to_string(),
+                "gpt-4.1-mini".to_string(),
+                "claude-sonnet-4".to_string(),
+            ],
+            model_blocklist: Vec::new(),
+            preferred_models: vec!["gpt-4.1".to_string()],
+            only_use_as_backup: false,
+            routing_tags: Vec::new(),
+            updated_at: "0".to_string(),
+        };
+
+        let candidates = station_key_connectivity_model_candidates(Some(&capabilities), None, &[]);
+
+        assert_eq!(candidates[0], "gpt-4.1-mini");
+        assert!(!candidates.contains(&"gpt-4o-mini".to_string()));
     }
 
     #[test]

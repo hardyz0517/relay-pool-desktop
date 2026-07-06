@@ -15,6 +15,11 @@ pub fn run() {
                     database.clone(),
                     data_key,
                 );
+            let station_collector_runner =
+                services::station_collectors::StationCollectorRunnerState::start(
+                    database.clone(),
+                    data_key,
+                );
             println!(
                 "Relay Pool Desktop database initialized at {}",
                 database.db_path().display()
@@ -22,6 +27,7 @@ pub fn run() {
             app.manage(secret_manager);
             app.manage(database);
             app.manage(channel_monitor_runner);
+            app.manage(station_collector_runner);
             app.manage(services::capture::session::CaptureSessionStore::default());
             app.manage(services::proxy::runtime::ProxyRuntimeState::default());
             Ok(())
@@ -55,7 +61,9 @@ pub fn run() {
             commands::list_remote_station_keys,
             commands::scan_remote_station_keys,
             commands::create_remote_station_key,
+            commands::create_local_station_key_from_remote,
             commands::bind_remote_station_key,
+            commands::unbind_remote_station_key,
             commands::list_key_pool_items,
             commands::reorder_key_pool,
             commands::get_station_key_capabilities,

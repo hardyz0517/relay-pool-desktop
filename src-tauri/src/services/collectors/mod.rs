@@ -717,6 +717,7 @@ mod tests {
                 enabled: true,
                 credit_per_cny: 1.0,
                 low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
                 note: None,
             })
             .expect("station");
@@ -765,6 +766,7 @@ mod tests {
                     enabled: true,
                     credit_per_cny: 1.0,
                     low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
                     note: None,
                 },
                 Some(&data_key),

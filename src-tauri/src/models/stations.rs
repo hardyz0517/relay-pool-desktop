@@ -16,6 +16,7 @@ pub struct Station {
     pub balance_raw: Option<f64>,
     pub balance_cny: Option<f64>,
     pub low_balance_threshold_cny: Option<f64>,
+    pub collection_interval_minutes: u16,
     pub status: String,
     pub latency_ms: Option<i64>,
     pub last_checked_at: Option<String>,
@@ -35,6 +36,7 @@ pub struct CreateStationInput {
     pub enabled: bool,
     pub credit_per_cny: f64,
     pub low_balance_threshold_cny: Option<f64>,
+    pub collection_interval_minutes: u16,
     pub note: Option<String>,
 }
 
@@ -49,5 +51,6 @@ pub struct UpdateStationInput {
     pub enabled: bool,
     pub credit_per_cny: f64,
     pub low_balance_threshold_cny: Option<f64>,
+    pub collection_interval_minutes: u16,
     pub note: Option<String>,
 }

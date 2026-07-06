@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use crate::{
     models::{
-        pricing::RequestCostEstimate,
+        pricing::{BalanceSnapshot, RequestCostEstimate},
         proxy::{CreateRequestLogInput, ProxyStatus},
         routing::{RouteCandidateExplanation, RouteEndpointKind, RoutingPolicy},
     },
@@ -347,6 +347,7 @@ fn handle_proxy_request(context: &ProxyServerContext, request: &ParsedRequest) -
     }
 
     match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/usage") | ("GET", "/v1/usage") => local_usage_response(context),
         ("GET", "/v1/models") => forward_models_request(context, request),
         ("POST", "/v1/chat/completions") => forward_chat_request(context, request),
         ("POST", "/v1/responses") => forward_responses_request(context, request),
@@ -356,6 +357,98 @@ fn handle_proxy_request(context: &ProxyServerContext, request: &ParsedRequest) -
             "Relay Pool Desktop P5 只支持 /v1/models、/v1/chat/completions 和 /v1/responses。",
         ),
     }
+}
+
+fn local_usage_response(context: &ProxyServerContext) -> ProxyResponse {
+    let snapshots = match context.database.list_balance_snapshots() {
+        Ok(snapshots) => snapshots,
+        Err(error) => return ProxyResponse::json_error(500, "database_error", &error),
+    };
+    let mut latest_by_station = HashMap::new();
+    for snapshot in snapshots {
+        let should_replace = latest_by_station
+            .get(&snapshot.station_id)
+            .map(|current| balance_snapshot_rank(&snapshot) > balance_snapshot_rank(current))
+            .unwrap_or(true);
+        if snapshot.scope == "station" && should_replace {
+            latest_by_station.insert(snapshot.station_id.clone(), snapshot);
+        }
+    }
+
+    let latest_station_balances = latest_by_station.values().collect::<Vec<_>>();
+    let total_balance = latest_station_balances
+        .iter()
+        .filter_map(|snapshot| snapshot.value)
+        .sum::<f64>();
+    let currency = latest_station_balances
+        .iter()
+        .find_map(|snapshot| {
+            let currency = snapshot.currency.trim();
+            (!currency.is_empty()).then(|| currency.to_string())
+        })
+        .unwrap_or_else(|| "CNY".to_string());
+    let low_balance_stations = latest_station_balances
+        .iter()
+        .filter(|snapshot| snapshot.status == "low" || snapshot.status == "depleted")
+        .count();
+    let updated_at = latest_station_balances
+        .iter()
+        .map(|snapshot| snapshot.updated_at.as_str())
+        .max()
+        .map(str::to_string);
+    let body = serde_json::to_vec(&json!({
+        "is_active": true,
+        "remaining": total_balance,
+        "balance": total_balance,
+        "unit": currency,
+        "quota": {
+            "remaining": total_balance,
+            "unit": currency,
+        },
+        "source": "relay_pool_desktop_balance_snapshots",
+        "stations": latest_station_balances.len(),
+        "low_balance_stations": low_balance_stations,
+        "updated_at": updated_at,
+    }))
+    .unwrap_or_else(|_| b"{}".to_vec());
+
+    ProxyResponse {
+        status_code: 200,
+        content_type: "application/json".to_string(),
+        body: ProxyResponseBody::Buffered(body),
+        model: None,
+        stream: false,
+        station_key_id: None,
+        station_id: None,
+        upstream_base_url: None,
+        fallback_count: 0,
+        status_label: "success".to_string(),
+        error_message: None,
+        route_policy: None,
+        route_reason: None,
+        rejected_candidates_json: None,
+        group_binding_id: None,
+        normalization_status: None,
+        balance_scope: Some("station".to_string()),
+        economic_context_json: None,
+        request_cost: crate::services::pricing::request_cost_unknown(),
+    }
+}
+
+fn balance_snapshot_rank(snapshot: &BalanceSnapshot) -> (i128, i128, i128) {
+    (
+        parse_balance_time(&snapshot.updated_at),
+        parse_balance_time(&snapshot.created_at),
+        snapshot
+            .collected_at
+            .as_deref()
+            .map(parse_balance_time)
+            .unwrap_or(0),
+    )
+}
+
+fn parse_balance_time(value: &str) -> i128 {
+    value.trim().parse::<i128>().unwrap_or(0)
 }
 
 fn forward_models_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
@@ -1532,6 +1625,7 @@ fn now_string() -> String {
 mod tests {
     use super::*;
     use crate::models::{
+        pricing::UpsertBalanceSnapshotInput,
         routing::{UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
         station_keys::StationKey,
         stations::CreateStationInput,
@@ -1683,6 +1777,7 @@ mod tests {
                 enabled: true,
                 credit_per_cny: 1.0,
                 low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
                 note: None,
             })
             .expect("station");
@@ -1789,6 +1884,7 @@ mod tests {
                 enabled: true,
                 credit_per_cny: 1.0,
                 low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
                 note: None,
             })
             .expect("station");
@@ -2003,6 +2099,7 @@ mod tests {
                 enabled: true,
                 credit_per_cny: 1.0,
                 low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
                 note: None,
             })
             .expect("first station");
@@ -2016,6 +2113,7 @@ mod tests {
                 enabled: true,
                 credit_per_cny: 1.0,
                 low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
                 note: None,
             })
             .expect("second station");
@@ -2176,6 +2274,7 @@ mod tests {
                 enabled: true,
                 credit_per_cny: 1.0,
                 low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
                 note: None,
             })
             .expect("station");
@@ -2238,6 +2337,105 @@ mod tests {
             }))
             .expect("body"),
         }
+    }
+
+    #[test]
+    fn local_usage_endpoint_returns_latest_station_balance_summary() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key_a = create_test_station_key(&database, "usage-alpha", "https://alpha.example");
+        let key_b = create_test_station_key(&database, "usage-beta", "https://beta.example");
+        database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: Some("usage-alpha-old".to_string()),
+                station_id: key_a.station_id.clone(),
+                station_key_id: None,
+                scope: "station".to_string(),
+                value: Some(10.0),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                low_balance_threshold: None,
+                status: "normal".to_string(),
+                source: "test".to_string(),
+                confidence: 0.9,
+                collected_at: Some("1000".to_string()),
+            })
+            .expect("old alpha balance");
+        database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: Some("usage-alpha-new".to_string()),
+                station_id: key_a.station_id.clone(),
+                station_key_id: None,
+                scope: "station".to_string(),
+                value: Some(12.5),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                low_balance_threshold: None,
+                status: "normal".to_string(),
+                source: "test".to_string(),
+                confidence: 0.9,
+                collected_at: Some("2000".to_string()),
+            })
+            .expect("new alpha balance");
+        database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: Some("usage-beta".to_string()),
+                station_id: key_b.station_id.clone(),
+                station_key_id: None,
+                scope: "station".to_string(),
+                value: Some(7.5),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                low_balance_threshold: None,
+                status: "low".to_string(),
+                source: "test".to_string(),
+                confidence: 0.9,
+                collected_at: Some("1500".to_string()),
+            })
+            .expect("beta balance");
+        database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: Some("usage-key-scope-ignored".to_string()),
+                station_id: key_b.station_id.clone(),
+                station_key_id: Some(key_b.id.clone()),
+                scope: "station_key".to_string(),
+                value: Some(99.0),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                low_balance_threshold: None,
+                status: "normal".to_string(),
+                source: "test".to_string(),
+                confidence: 0.9,
+                collected_at: Some("2500".to_string()),
+            })
+            .expect("key balance");
+        let context = proxy_context(database);
+        let request = ParsedRequest {
+            method: "GET".to_string(),
+            path: "/v1/usage".to_string(),
+            headers: HashMap::new(),
+            body: Vec::new(),
+        };
+
+        let response = handle_proxy_request(&context, &request);
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.status_label, "success");
+        let value: Value =
+            serde_json::from_slice(response.body_bytes().expect("body")).expect("usage json");
+        assert_eq!(value["is_active"], true);
+        assert_eq!(value["remaining"], 20.0);
+        assert_eq!(value["balance"], 20.0);
+        assert_eq!(value["unit"], "CNY");
+        assert_eq!(value["stations"], 2);
+        assert_eq!(value["low_balance_stations"], 1);
     }
 
     #[test]

@@ -333,6 +333,44 @@ pub fn scan_remote_keys(
     Ok(parse_remote_key_payload(&station.id, &payload))
 }
 
+pub fn scan_remote_key_full_secret(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station_id: &str,
+    remote_key_id: &str,
+) -> Result<(RemoteStationKey, String), String> {
+    let station = database.station_for_collector(station_id)?;
+    let access_token = resolve_sub2api_access_token(database, data_key, &station)?;
+    let urls = collector_base_urls(&station.base_url);
+    let url = join_url(
+        &urls.management_base_url,
+        "/api/v1/keys?page=1&page_size=100",
+    );
+    let result = fetch_json_with_bearer(&url, &access_token);
+    let payload = result.payload.unwrap_or(Value::Null);
+    if !result.ok {
+        return Err(result.error_message.unwrap_or_else(|| {
+            format!("Sub2API 远端 Key 读取失败，HTTP 状态 {:?}。", result.status)
+        }));
+    }
+
+    for (index, value) in remote_key_items(&payload).into_iter().enumerate() {
+        let Some(remote_key) = remote_key_from_value(&station.id, value, index) else {
+            continue;
+        };
+        if remote_key.id != remote_key_id {
+            continue;
+        }
+        let full_key = full_key_from_key_value(value).ok_or_else(|| {
+            "远端 Key 列表没有返回完整 Key，无法自动保存到本地。请到网站复制后手动补全。"
+                .to_string()
+        })?;
+        return Ok((remote_key, full_key));
+    }
+
+    Err("远端 Key 已不存在，无法创建本地 Key。".to_string())
+}
+
 pub fn create_remote_key(
     database: &AppDatabase,
     data_key: &[u8; 32],
@@ -352,6 +390,9 @@ pub fn create_remote_key(
         .filter(|value| !value.is_empty())
     {
         body["group"] = json!(group_name);
+    }
+    if let Some(group_id) = remote_group_id_for_create(database, &input)? {
+        body["group_id"] = json!(group_id);
     }
 
     let result = post_json_with_bearer(&url, &access_token, &body);
@@ -541,6 +582,32 @@ fn remote_key_identity<'a>(
         .or_else(|| full_key.map(|value| ("full_key", value, false)))
         .or_else(|| masked.map(|value| ("masked_key", value, false)))
         .or_else(|| name.map(|value| ("name", value, true)))
+}
+
+fn remote_group_id_for_create(
+    database: &AppDatabase,
+    input: &CreateRemoteStationKeyInput,
+) -> Result<Option<String>, String> {
+    let Some(group_binding_id) = input
+        .group_binding_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    let bindings = database.list_station_group_bindings(input.station_id.clone())?;
+    Ok(bindings
+        .into_iter()
+        .find(|binding| {
+            binding.id == group_binding_id
+                && binding.binding_kind == "station_group"
+                && binding.binding_status != "disabled"
+        })
+        .and_then(|binding| binding.group_id_hash)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty()))
 }
 
 fn remote_key_from_create_input(
@@ -1180,7 +1247,9 @@ mod tests {
     use std::{
         io::{Read, Write},
         net::{TcpListener, TcpStream},
+        sync::mpsc,
         thread,
+        time::Duration,
     };
 
     #[test]
@@ -1431,6 +1500,84 @@ mod tests {
     }
 
     #[test]
+    fn create_remote_key_posts_selected_group_id_from_binding() {
+        let server = TestCreateKeyServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station(CreateStationInput {
+                name: "create remote key station".to_string(),
+                station_type: "sub2api".to_string(),
+                base_url: server.base_url.clone(),
+                api_key: "sk-station".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+        database
+            .update_station_session_with_data_key(
+                UpdateStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: Some("remote-key-token".to_string()),
+                    refresh_token: None,
+                    cookie: None,
+                    newapi_user_id: None,
+                    token_expires_at: None,
+                },
+                &data_key,
+            )
+            .expect("session");
+        let group = database
+            .upsert_station_group_binding(
+                crate::models::group_facts::UpsertStationGroupBindingInput {
+                    station_id: station.id.clone(),
+                    station_key_id: None,
+                    binding_kind: crate::models::group_facts::BINDING_KIND_STATION_GROUP
+                        .to_string(),
+                    parent_group_binding_id: None,
+                    group_key_hash: "collector-sub2api-pro".to_string(),
+                    group_id_hash: Some("pro".to_string()),
+                    group_name: "Pro".to_string(),
+                    binding_status: crate::models::group_facts::BINDING_STATUS_AVAILABLE
+                        .to_string(),
+                    default_rate_multiplier: Some(1.2),
+                    user_rate_multiplier: None,
+                    effective_rate_multiplier: Some(1.2),
+                    rate_source: Some("sub2api_groups_rates".to_string()),
+                    confidence: 0.95,
+                    last_seen_at: Some("1000".to_string()),
+                    raw_json_redacted: None,
+                },
+            )
+            .expect("group");
+
+        let result = create_remote_key(
+            &database,
+            &data_key,
+            CreateRemoteStationKeyInput {
+                station_id: station.id,
+                name: "Grouped remote key".to_string(),
+                group_binding_id: Some(group.id),
+                group_id_hash: Some("collector-sub2api-pro".to_string()),
+                group_name: Some("Pro".to_string()),
+            },
+        )
+        .expect("create remote key");
+        let request = server.request_body();
+
+        assert_eq!(
+            result.full_key_once.as_deref(),
+            Some("sk-created-secret-pro")
+        );
+        assert_eq!(request["name"], "Grouped remote key");
+        assert_eq!(request["group"], "Pro");
+        assert_eq!(request["group_id"], "pro");
+    }
+
+    #[test]
     fn sub2api_group_rates_normalize_credit_multiplier_to_cny() {
         let available = json!({
             "data": [
@@ -1496,6 +1643,7 @@ mod tests {
                 enabled: true,
                 credit_per_cny: 1.0,
                 low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
                 note: None,
             })
             .expect("station");
@@ -1541,6 +1689,7 @@ mod tests {
                 enabled: true,
                 credit_per_cny: 1.0,
                 low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
                 note: None,
             })
             .expect("station");
@@ -1597,6 +1746,7 @@ mod tests {
                     enabled: true,
                     credit_per_cny: 1.0,
                     low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
                     note: None,
                 },
                 Some(&data_key),
@@ -1630,6 +1780,11 @@ mod tests {
         base_url: String,
     }
 
+    struct TestCreateKeyServer {
+        base_url: String,
+        request_rx: mpsc::Receiver<Value>,
+    }
+
     struct TestBalanceFallbackServer {
         base_url: String,
     }
@@ -1647,6 +1802,29 @@ mod tests {
         }
     }
 
+    impl TestCreateKeyServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            let (request_tx, request_rx) = mpsc::channel();
+            thread::spawn(move || {
+                if let Some(stream) = listener.incoming().take(1).flatten().next() {
+                    handle_create_key_test_request(stream, request_tx);
+                }
+            });
+            Self {
+                base_url,
+                request_rx,
+            }
+        }
+
+        fn request_body(&self) -> Value {
+            self.request_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("create request body")
+        }
+    }
+
     impl TestBalanceFallbackServer {
         fn start() -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
@@ -1658,6 +1836,46 @@ mod tests {
             });
             Self { base_url }
         }
+    }
+
+    fn handle_create_key_test_request(mut stream: TcpStream, request_tx: mpsc::Sender<Value>) {
+        let request = read_http_request(&mut stream);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
+        let authorized = request
+            .to_lowercase()
+            .contains("authorization: bearer remote-key-token");
+
+        let (status, response) = if path == "/api/v1/keys" && authorized {
+            let parsed = serde_json::from_str::<Value>(body).expect("create key json");
+            request_tx.send(parsed).expect("send request body");
+            (
+                "200 OK",
+                json!({
+                    "data": {
+                        "id": "created-remote-pro",
+                        "name": "Grouped remote key",
+                        "key": "sk-created-secret-pro",
+                        "group_id": "pro",
+                        "group_name": "Pro"
+                    }
+                }),
+            )
+        } else {
+            ("401 Unauthorized", json!({ "message": "unauthorized" }))
+        };
+        let text = response.to_string();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
     }
 
     fn handle_group_test_request(mut stream: TcpStream) {

@@ -76,6 +76,8 @@ pub struct RemoteKeyScanResult {
 pub struct CreateRemoteStationKeyInput {
     pub station_id: String,
     pub name: String,
+    #[serde(default)]
+    pub group_binding_id: Option<String>,
     pub group_id_hash: Option<String>,
     pub group_name: Option<String>,
 }
@@ -86,6 +88,14 @@ pub struct CreateRemoteStationKeyResult {
     pub remote_key: RemoteStationKey,
     pub station_key: crate::models::station_keys::StationKey,
     pub full_key_once: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateLocalStationKeyFromRemoteResult {
+    pub remote_key: RemoteStationKey,
+    pub station_key: crate::models::station_keys::StationKey,
     pub message: String,
 }
 

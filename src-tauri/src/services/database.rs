@@ -241,11 +241,8 @@ impl AppDatabase {
             &input.station_type,
             &input.base_url,
             input.credit_per_cny,
+            input.collection_interval_minutes,
         )?;
-
-        if input.api_key.trim().is_empty() {
-            return Err("API Key 不能为空".to_string());
-        }
 
         let connection = self.connection()?;
         create_station_in_connection(&connection, input, data_key)
@@ -265,6 +262,7 @@ impl AppDatabase {
             &input.station_type,
             &input.base_url,
             input.credit_per_cny,
+            input.collection_interval_minutes,
         )?;
 
         let connection = self.connection()?;
@@ -478,6 +476,36 @@ impl AppDatabase {
             .map_err(|error| format!("绑定远端 Key 失败: {error}"))?;
         if updated == 0 {
             return Err("远端 Key 不存在，无法绑定".to_string());
+        }
+
+        list_remote_station_keys_from_connection(&connection, &station_id)
+    }
+
+    pub fn unbind_remote_station_key(
+        &self,
+        remote_key_id: String,
+        station_id: String,
+    ) -> Result<Vec<RemoteStationKey>, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, &station_id)?;
+        let updated = connection
+            .execute(
+                "UPDATE remote_station_keys
+                    SET match_status = ?1,
+                        matched_station_key_id = NULL,
+                        match_confidence = 0.0,
+                        updated_at = ?2
+                  WHERE id = ?3 AND station_id = ?4",
+                params![
+                    RemoteKeyMatchStatus::Unbound.as_str(),
+                    now_string(),
+                    remote_key_id,
+                    station_id,
+                ],
+            )
+            .map_err(|error| format!("解绑远端 Key 失败: {error}"))?;
+        if updated == 0 {
+            return Err("远端 Key 不存在，无法解绑".to_string());
         }
 
         list_remote_station_keys_from_connection(&connection, &station_id)
@@ -1030,6 +1058,11 @@ impl AppDatabase {
         due_channel_monitors_from_connection(&connection, now)
     }
 
+    pub fn due_station_collectors(&self, now: &str) -> Result<Vec<Station>, String> {
+        let connection = self.connection()?;
+        due_station_collectors_from_connection(&connection, now)
+    }
+
     pub fn create_collector_run(
         &self,
         input: CreateCollectorRunInput,
@@ -1211,6 +1244,7 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             balance_raw REAL,
             balance_cny REAL,
             low_balance_threshold_cny REAL,
+            collection_interval_minutes INTEGER NOT NULL DEFAULT 5,
             status TEXT NOT NULL DEFAULT 'unchecked',
             latency_ms INTEGER,
             last_checked_at TEXT,
@@ -2325,7 +2359,10 @@ fn seed_builtin_channel_monitor_templates_in_connection(
             "/v1/responses",
             json!({
                 "model": "{{model}}",
+                "instructions": "Reply with OK only.",
                 "input": "{{challenge}}",
+                "store": false,
+                "stream": false,
                 "temperature": 0
             }),
         ),
@@ -2336,8 +2373,11 @@ fn seed_builtin_channel_monitor_templates_in_connection(
             "/v1/responses",
             json!({
                 "model": "{{model}}",
+                "instructions": "Reply with OK only.",
                 "input": "{{challenge}}",
                 "max_output_tokens": 1,
+                "store": false,
+                "stream": false,
                 "temperature": 0
             }),
         ),
@@ -3167,8 +3207,8 @@ fn channel_monitor_next_run_at(
 
 fn row_to_station(row: &rusqlite::Row<'_>) -> rusqlite::Result<Station> {
     let api_key: String = row.get(4)?;
-    let secret_masked: Option<String> = row.get(21)?;
-    let api_key_secret_id: Option<String> = row.get(22)?;
+    let secret_masked: Option<String> = row.get(22)?;
+    let api_key_secret_id: Option<String> = row.get(23)?;
     let api_key_masked = secret_masked.unwrap_or_else(|| mask_secret(&api_key));
     let api_key_present = api_key_secret_id.is_some() || !api_key.trim().is_empty();
 
@@ -3186,13 +3226,14 @@ fn row_to_station(row: &rusqlite::Row<'_>) -> rusqlite::Result<Station> {
         balance_raw: row.get(11)?,
         balance_cny: row.get(12)?,
         low_balance_threshold_cny: row.get(13)?,
-        status: row.get(14)?,
-        latency_ms: row.get(15)?,
-        last_checked_at: row.get(16)?,
-        last_pricing_fetched_at: row.get(17)?,
-        note: row.get(18)?,
-        created_at: row.get(19)?,
-        updated_at: row.get(20)?,
+        collection_interval_minutes: row.get(14)?,
+        status: row.get(15)?,
+        latency_ms: row.get(16)?,
+        last_checked_at: row.get(17)?,
+        last_pricing_fetched_at: row.get(18)?,
+        note: row.get(19)?,
+        created_at: row.get(20)?,
+        updated_at: row.get(21)?,
     })
 }
 
@@ -3204,6 +3245,7 @@ fn list_stations_from_connection(connection: &Connection) -> Result<Vec<Station>
                     (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                     enabled, priority,
                     credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
+                    collection_interval_minutes,
                     status, latency_ms, last_checked_at, last_pricing_fetched_at,
                     note, created_at, updated_at,
                     (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id),
@@ -3230,6 +3272,7 @@ fn station_by_id(connection: &Connection, id: &str) -> Result<Station, String> {
                     (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                     enabled, priority,
                     credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
+                    collection_interval_minutes,
                     status, latency_ms, last_checked_at, last_pricing_fetched_at,
                     note, created_at, updated_at,
                     (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id),
@@ -3242,6 +3285,44 @@ fn station_by_id(connection: &Connection, id: &str) -> Result<Station, String> {
         .optional()
         .map_err(|error| format!("读取站点失败: {error}"))?
         .ok_or_else(|| "站点不存在".to_string())
+}
+
+fn due_station_collectors_from_connection(
+    connection: &Connection,
+    now: &str,
+) -> Result<Vec<Station>, String> {
+    let now_ms = parse_channel_monitor_run_time(now, "now")?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id, name, station_type, base_url, api_key, upstream_api_format,
+                    upstream_api_base_path,
+                    (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
+                    enabled, priority,
+                    credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
+                    collection_interval_minutes,
+                    status, latency_ms, last_checked_at, last_pricing_fetched_at,
+                    note, created_at, updated_at,
+                    (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id),
+                    api_key_secret_id
+               FROM stations
+              WHERE enabled = 1
+                AND (
+                  COALESCE(last_pricing_fetched_at, last_checked_at) IS NULL
+                  OR CAST(COALESCE(last_pricing_fetched_at, last_checked_at) AS INTEGER)
+                    + CAST(collection_interval_minutes AS INTEGER) * 60000 <= ?1
+                )
+              ORDER BY
+                COALESCE(CAST(last_pricing_fetched_at AS INTEGER), CAST(last_checked_at AS INTEGER), 0) ASC,
+                priority ASC,
+                created_at ASC",
+        )
+        .map_err(|error| format!("Read due station collectors failed: {error}"))?;
+    let stations = statement
+        .query_map(params![now_ms], row_to_station)
+        .map_err(|error| format!("Query due station collectors failed: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Parse due station collectors failed: {error}"))?;
+    Ok(stations)
 }
 
 fn create_station_in_connection(
@@ -3264,10 +3345,11 @@ fn create_station_in_connection(
             "INSERT INTO stations (
                 id, name, station_type, base_url, api_key, api_key_secret_id, enabled, priority,
                 credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
+                collection_interval_minutes,
                 status, latency_ms, last_checked_at, last_pricing_fetched_at,
                 note, created_at, updated_at
              ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, NULL, NULL, ?9,
-                ?10, NULL, NULL, NULL, ?11, ?12, ?13)",
+                ?10, ?11, NULL, NULL, NULL, ?12, ?13, ?14)",
             params![
                 id,
                 input.name.trim(),
@@ -3278,6 +3360,7 @@ fn create_station_in_connection(
                 next_priority,
                 input.credit_per_cny,
                 input.low_balance_threshold_cny,
+                input.collection_interval_minutes,
                 if input.enabled {
                     "unchecked"
                 } else {
@@ -3290,7 +3373,7 @@ fn create_station_in_connection(
         )
         .map_err(|error| format!("创建站点失败: {error}"))?;
 
-    if let Some(data_key) = data_key {
+    if let Some(data_key) = data_key.filter(|_| !plaintext_api_key.is_empty()) {
         let secret_id = upsert_secret_in_connection(
             connection,
             data_key,
@@ -3307,25 +3390,27 @@ fn create_station_in_connection(
             .map_err(|error| format!("保存站点加密 API Key 失败: {error}"))?;
     }
 
-    create_station_key_in_connection_with_data_key(
-        connection,
-        CreateStationKeyInput {
-            station_id: id.clone(),
-            name: "Default Key".to_string(),
-            api_key: input.api_key,
-            enabled: input.enabled,
-            priority: Some(0),
-            group_name: None,
-            tier_label: None,
-            group_binding_id: None,
-            group_id_hash: None,
-            rate_multiplier: None,
-            rate_source: None,
-            balance_scope: None,
-            note: Some("由站点默认 API Key 创建。".to_string()),
-        },
-        data_key,
-    )?;
+    if !plaintext_api_key.is_empty() {
+        create_station_key_in_connection_with_data_key(
+            connection,
+            CreateStationKeyInput {
+                station_id: id.clone(),
+                name: "Default Key".to_string(),
+                api_key: input.api_key,
+                enabled: input.enabled,
+                priority: Some(0),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: Some("由站点默认 API Key 创建。".to_string()),
+            },
+            data_key,
+        )?;
+    }
 
     station_by_id(connection, &id)
 }
@@ -3382,12 +3467,13 @@ fn update_station_in_connection(
                     enabled = ?6,
                     credit_per_cny = ?7,
                     low_balance_threshold_cny = ?8,
+                    collection_interval_minutes = ?9,
                     status = CASE WHEN ?6 = 0 THEN 'disabled'
                                   WHEN status = 'disabled' THEN 'unchecked'
                                   ELSE status END,
-                    note = ?9,
-                    updated_at = ?10
-              WHERE id = ?11",
+                    note = ?10,
+                    updated_at = ?11
+              WHERE id = ?12",
             params![
                 input.name.trim(),
                 input.station_type,
@@ -3397,6 +3483,7 @@ fn update_station_in_connection(
                 bool_to_i64(input.enabled),
                 input.credit_per_cny,
                 input.low_balance_threshold_cny,
+                input.collection_interval_minutes,
                 normalize_optional_string(input.note),
                 now,
                 input.id,
@@ -3439,6 +3526,15 @@ fn migrate_station_proxy_columns(connection: &Connection) -> rusqlite::Result<()
     if !rows.iter().any(|column| column == "upstream_api_base_path") {
         connection.execute(
             "ALTER TABLE stations ADD COLUMN upstream_api_base_path TEXT NOT NULL DEFAULT '/v1'",
+            [],
+        )?;
+    }
+    if !rows
+        .iter()
+        .any(|column| column == "collection_interval_minutes")
+    {
+        connection.execute(
+            "ALTER TABLE stations ADD COLUMN collection_interval_minutes INTEGER NOT NULL DEFAULT 5",
             [],
         )?;
     }
@@ -4509,9 +4605,12 @@ fn record_station_key_failure_in_connection(
         .map_err(|error| format!("记录 Key 失败状态失败: {error}"))?;
 
     if let Some(station_id) = station_id_for_key(connection, station_key_id)? {
+        let station_key = station_key_by_id(connection, station_key_id).ok();
         if let Some(event) = crate::services::change_events::key_health_event(
             station_key_id,
             &station_id,
+            station_key.as_ref().map(|key| key.name.as_str()),
+            station_key.as_ref().map(|key| key.api_key_masked.as_str()),
             consecutive_failures,
             Some(&trim_error_summary(error_summary)),
             cooldown_until.as_deref(),
@@ -6901,7 +7000,7 @@ fn upsert_station_group_binding_in_connection(
                 group_id_hash = excluded.group_id_hash,
                 group_name = excluded.group_name,
                 binding_status = CASE
-                    WHEN station_group_bindings.binding_status = 'bound' AND excluded.binding_status != 'missing'
+                    WHEN station_group_bindings.binding_status = 'bound' AND excluded.binding_status NOT IN ('missing', 'disabled')
                     THEN station_group_bindings.binding_status
                     ELSE excluded.binding_status
                 END,
@@ -6941,6 +7040,7 @@ fn upsert_station_group_binding_in_connection(
         .map_err(|error| format!("保存分组绑定失败: {error}"))?;
 
     let saved = station_group_binding_by_id(connection, &id)?;
+    disable_shadow_station_group_bindings(connection, &saved)?;
     emit_group_binding_change_events(connection, previous_binding.as_ref(), &saved);
     if was_new && saved.binding_kind == "station_group" && saved.binding_status == "available" {
         let event = crate::services::change_events::group_added_event(
@@ -6952,6 +7052,35 @@ fn upsert_station_group_binding_in_connection(
     }
 
     Ok(saved)
+}
+
+fn disable_shadow_station_group_bindings(
+    connection: &Connection,
+    saved: &StationGroupBinding,
+) -> Result<(), String> {
+    if saved.binding_kind != "station_group"
+        || saved.binding_status != "available"
+        || saved.rate_source.as_deref() == Some("remote_scan")
+    {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "UPDATE station_group_bindings
+                SET binding_status = 'disabled',
+                    updated_at = ?1
+              WHERE station_id = ?2
+                AND binding_kind = 'station_group'
+                AND id != ?3
+                AND binding_status != 'disabled'
+                AND rate_source = 'remote_scan'
+                AND lower(trim(group_name)) = lower(trim(?4))",
+            params![now_string(), saved.station_id, saved.id, saved.group_name],
+        )
+        .map_err(|error| format!("禁用重复分组绑定失败: {error}"))?;
+
+    Ok(())
 }
 
 fn emit_group_binding_change_events(
@@ -7761,6 +7890,7 @@ fn validate_station_fields(
     station_type: &str,
     base_url: &str,
     credit_per_cny: f64,
+    collection_interval_minutes: u16,
 ) -> Result<(), String> {
     if name.trim().is_empty() {
         return Err("站点名称不能为空".to_string());
@@ -7776,6 +7906,9 @@ fn validate_station_fields(
     }
     if credit_per_cny <= 0.0 {
         return Err("充值兑换比例必须大于 0".to_string());
+    }
+    if collection_interval_minutes == 0 {
+        return Err("Collection interval must be greater than 0 minutes".to_string());
     }
 
     Ok(())
@@ -7905,6 +8038,7 @@ mod tests {
                 enabled: true,
                 credit_per_cny: 1.0,
                 low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
                 note: None,
             })
             .expect("station")
@@ -7929,6 +8063,73 @@ mod tests {
                 note: None,
             })
             .expect("monitor")
+    }
+
+    #[test]
+    fn create_station_without_api_key_creates_station_without_default_key() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = [7_u8; 32];
+
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "login only station".to_string(),
+                    station_type: "sub2api".to_string(),
+                    base_url: "https://relay.example.test".to_string(),
+                    api_key: "".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station without api key");
+        let keys = database
+            .list_station_keys(station.id.clone())
+            .expect("station keys");
+
+        assert!(!station.api_key_present);
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn due_station_collectors_use_station_collection_interval() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let fresh = test_station(&database, "fresh station");
+        let stale = test_station(&database, "stale station");
+        let never_collected = test_station(&database, "never collected station");
+        let now = now_millis_for_services() as i64;
+        let fresh_checked_at = (now - 4 * 60 * 1000).to_string();
+        let stale_checked_at = (now - 6 * 60 * 1000).to_string();
+        {
+            let connection = database.connection().expect("connection");
+            connection
+                .execute(
+                    "UPDATE stations SET last_pricing_fetched_at = ?1 WHERE id = ?2",
+                    params![fresh_checked_at, fresh.id],
+                )
+                .expect("fresh station timestamp");
+            connection
+                .execute(
+                    "UPDATE stations SET last_pricing_fetched_at = ?1 WHERE id = ?2",
+                    params![stale_checked_at, stale.id],
+                )
+                .expect("stale station timestamp");
+        }
+
+        let due = database
+            .due_station_collectors(&now.to_string())
+            .expect("due station collectors");
+        let due_ids = due
+            .iter()
+            .map(|station| station.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(!due_ids.contains(&fresh.id.as_str()));
+        assert!(due_ids.contains(&stale.id.as_str()));
+        assert!(due_ids.contains(&never_collected.id.as_str()));
     }
 
     #[test]
@@ -7959,6 +8160,17 @@ mod tests {
                 "{expected_id} should be seeded"
             );
         }
+        let responses_low_token = templates
+            .iter()
+            .find(|template| template.id == "builtin-openai-responses-low-token")
+            .expect("responses low token template");
+        let responses_body: Value =
+            serde_json::from_str(&responses_low_token.request_body_json).expect("responses body");
+        assert_eq!(responses_body["instructions"], "Reply with OK only.");
+        assert_eq!(responses_body["input"], "{{challenge}}");
+        assert_eq!(responses_body["max_output_tokens"], 1);
+        assert_eq!(responses_body["store"], false);
+        assert_eq!(responses_body["stream"], false);
     }
 
     #[test]
@@ -9050,6 +9262,67 @@ mod tests {
     }
 
     #[test]
+    fn collector_group_upsert_disables_same_name_remote_scan_shadow_binding() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "group-shadow-relay");
+
+        let shadow = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "frontend-remote-scan-plus".to_string(),
+                group_id_hash: Some("frontend-plus".to_string()),
+                group_name: "plus".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(0.1),
+                user_rate_multiplier: None,
+                effective_rate_multiplier: Some(0.1),
+                rate_source: Some("remote_scan".to_string()),
+                confidence: 0.95,
+                last_seen_at: Some("1000".to_string()),
+                raw_json_redacted: None,
+            })
+            .expect("shadow binding");
+
+        let canonical = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "collector-sub2api-plus".to_string(),
+                group_id_hash: Some("plus".to_string()),
+                group_name: "plus".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(0.1),
+                user_rate_multiplier: None,
+                effective_rate_multiplier: Some(0.1),
+                rate_source: Some("sub2api_groups_rates".to_string()),
+                confidence: 0.9,
+                last_seen_at: Some("2000".to_string()),
+                raw_json_redacted: None,
+            })
+            .expect("canonical binding");
+
+        let bindings = database
+            .list_station_group_bindings(station.id)
+            .expect("bindings");
+        let shadow = bindings
+            .iter()
+            .find(|binding| binding.id == shadow.id)
+            .expect("stored shadow binding");
+        let canonical = bindings
+            .iter()
+            .find(|binding| binding.id == canonical.id)
+            .expect("stored canonical binding");
+
+        assert_eq!(shadow.binding_status, "disabled");
+        assert_eq!(canonical.binding_status, BINDING_STATUS_AVAILABLE);
+    }
+
+    #[test]
     fn group_missing_event_is_emitted_when_available_group_disappears() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let station = test_station(&database, "missing-group-relay");
@@ -9636,6 +9909,18 @@ mod tests {
         assert_eq!(health.consecutive_failures, 3);
         assert_eq!(health.last_error_summary.as_deref(), Some("timeout"));
         assert_eq!(health.cooldown_until.as_deref(), Some("123000"));
+
+        let events = database.list_change_events().expect("events");
+        let key_event = events
+            .iter()
+            .find(|event| event.event_type == "key_invalid")
+            .expect("key health event");
+        let payload: serde_json::Value =
+            serde_json::from_str(key_event.new_value_json.as_deref().expect("payload"))
+                .expect("valid key health payload");
+
+        assert_eq!(payload["stationKeyName"], key.name);
+        assert_eq!(payload["apiKeyMasked"], key.api_key_masked);
     }
 
     #[test]

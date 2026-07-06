@@ -14,7 +14,10 @@ use std::{
 
 use crate::{
     models::{
-        channel_monitors::{ChannelMonitor, ChannelMonitorRun, CreateChannelMonitorRunInput},
+        channel_monitors::{
+            ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
+            CreateChannelMonitorRunInput,
+        },
         station_keys::KeyPoolItem,
     },
     services::{
@@ -30,7 +33,7 @@ use crate::{
 const RUNNER_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const RUNNER_STOP_SLICE: Duration = Duration::from_millis(250);
 const DEFAULT_MONITOR_MODEL: &str = "gpt-4o-mini";
-const DEFAULT_MONITOR_CHALLENGE: &str = "relay-pool-monitor-ping";
+const DEFAULT_MONITOR_CHALLENGE: &str = "ping";
 const MONITOR_ALREADY_RUNNING_ERROR: &str = "Channel monitor is already running";
 static ACTIVE_MONITOR_RUNS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
@@ -209,7 +212,7 @@ fn run_monitor_for_key(
     database: &AppDatabase,
     data_key: &[u8; 32],
     monitor: &ChannelMonitor,
-    template: &crate::models::channel_monitors::ChannelMonitorRequestTemplate,
+    template: &ChannelMonitorRequestTemplate,
     target: &KeyPoolItem,
 ) -> Result<ChannelMonitorRun, String> {
     let started_at = now_string();
@@ -493,6 +496,7 @@ mod tests {
                     enabled: true,
                     credit_per_cny: 1.0,
                     low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
                     note: None,
                 },
                 Some(&data_key),
@@ -577,6 +581,7 @@ mod tests {
                     enabled: true,
                     credit_per_cny: 1.0,
                     low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
                     note: None,
                 },
                 Some(&data_key),
@@ -655,6 +660,7 @@ mod tests {
                     enabled: true,
                     credit_per_cny: 1.0,
                     low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
                     note: None,
                 },
                 Some(&data_key),
@@ -778,6 +784,7 @@ mod tests {
                     enabled: true,
                     credit_per_cny: 1.0,
                     low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
                     note: None,
                 },
                 Some(&data_key),
@@ -823,6 +830,123 @@ mod tests {
     }
 
     #[test]
+    fn built_in_responses_low_token_template_uses_compact_non_stored_request() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = [6_u8; 32];
+        let (base_url, received) = spawn_upstream(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 28\r\n\r\n{\"id\":\"resp-test\",\"ok\":true}",
+        );
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "responses low token station".to_string(),
+                    station_type: "openai-compatible".to_string(),
+                    base_url,
+                    api_key: "sk-responses-low-token".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        let monitor = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "Responses low token monitor".to_string(),
+                target_type: "station_key".to_string(),
+                station_id: station.id,
+                station_key_id: Some(key.id),
+                template_id: "builtin-openai-responses-low-token".to_string(),
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 5,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 3,
+                fallback_models: vec!["gpt-test".to_string()],
+                note: None,
+            })
+            .expect("monitor");
+
+        let runs = run_channel_monitor_now(&database, &data_key, &monitor.id).expect("manual run");
+        let raw_request = received
+            .recv_timeout(Duration::from_secs(2))
+            .expect("upstream request");
+
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, "success");
+        assert!(raw_request.contains(r#""input":"ping""#));
+        assert!(raw_request.contains(r#""instructions":"Reply with OK only.""#));
+        assert!(raw_request.contains(r#""max_output_tokens":1"#));
+        assert!(raw_request.contains(r#""store":false"#));
+        assert!(raw_request.contains(r#""stream":false"#));
+    }
+
+    #[test]
+    fn built_in_responses_monitor_does_not_fall_back_to_chat_when_endpoint_is_unsupported() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = [12_u8; 32];
+        let (base_url, received) = spawn_path_aware_upstream();
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "responses fallback station".to_string(),
+                    station_type: "openai-compatible".to_string(),
+                    base_url,
+                    api_key: "sk-responses-fallback".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        let monitor = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "Responses fallback monitor".to_string(),
+                target_type: "station_key".to_string(),
+                station_id: station.id,
+                station_key_id: Some(key.id),
+                template_id: "builtin-openai-responses-low-token".to_string(),
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 5,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 3,
+                fallback_models: vec!["gpt-test".to_string()],
+                note: None,
+            })
+            .expect("monitor");
+
+        let runs = run_channel_monitor_now(&database, &data_key, &monitor.id).expect("manual run");
+        let first_request = received
+            .recv_timeout(Duration::from_secs(2))
+            .expect("responses request");
+
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, "failed");
+        assert_eq!(runs[0].http_status, Some(404));
+        assert!(first_request.starts_with("POST /v1/responses HTTP/1.1"));
+        assert!(
+            received.recv_timeout(Duration::from_millis(200)).is_err(),
+            "selected Responses monitor must not issue a Chat Completions fallback request"
+        );
+    }
+
+    #[test]
     fn station_monitor_applies_max_concurrency_to_key_probes() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let data_key = [6_u8; 32];
@@ -838,6 +962,7 @@ mod tests {
                     enabled: true,
                     credit_per_cny: 1.0,
                     low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
                     note: None,
                 },
                 Some(&data_key),
@@ -908,6 +1033,7 @@ mod tests {
                     enabled: true,
                     credit_per_cny: 1.0,
                     low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
                     note: None,
                 },
                 Some(&data_key),
@@ -1023,6 +1149,7 @@ mod tests {
                 enabled: true,
                 credit_per_cny: 1.0,
                 low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
                 note: None,
             })
             .expect("station");
@@ -1090,6 +1217,7 @@ mod tests {
                 enabled: true,
                 credit_per_cny: 1.0,
                 low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
                 note: None,
             })
             .expect("station");
@@ -1139,6 +1267,43 @@ mod tests {
             stream
                 .write_all(response.as_bytes())
                 .expect("write response");
+        });
+        (format!("http://{address}"), receiver)
+    }
+
+    fn spawn_path_aware_upstream() -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        let address = listener.local_addr().expect("local addr");
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .expect("read timeout");
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    let size = stream.read(&mut buffer).expect("read request");
+                    if size == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..size]);
+                    if request_is_complete(&request) {
+                        break;
+                    }
+                }
+                let raw_request = String::from_utf8_lossy(&request).to_string();
+                let response = if raw_request.starts_with("POST /v1/responses ") {
+                    "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: 56\r\n\r\n{\"error\":{\"message\":\"responses endpoint unsupported\"}}"
+                } else {
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"ok\":true}"
+                };
+                sender.send(raw_request).expect("send request");
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write response");
+            }
         });
         (format!("http://{address}"), receiver)
     }

@@ -104,6 +104,8 @@ pub fn station_balance_event(
 pub fn key_health_event(
     station_key_id: &str,
     station_id: &str,
+    station_key_name: Option<&str>,
+    api_key_masked: Option<&str>,
     consecutive_failures: i64,
     last_error: Option<&str>,
     cooldown_until: Option<&str>,
@@ -136,6 +138,8 @@ pub fn key_health_event(
         old_value_json: None,
         new_value_json: Some(
             json!({
+                "stationKeyName": station_key_name,
+                "apiKeyMasked": api_key_masked,
                 "consecutiveFailures": consecutive_failures,
                 "cooldownUntil": cooldown_until
             })

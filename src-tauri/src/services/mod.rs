@@ -10,4 +10,5 @@ pub mod proxy;
 pub mod remote_keys;
 pub mod routing;
 pub mod secrets;
+pub mod station_collectors;
 pub mod stations;
