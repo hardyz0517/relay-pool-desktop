@@ -20,6 +20,7 @@ import {
   updateStationKey,
 } from "@/lib/api/stationKeys";
 import { createStation, listStations, updateStation } from "@/lib/api/stations";
+import { readError } from "@/lib/errors";
 import {
   isCollectedStationGroupBinding,
   type GroupRateRecord,
@@ -1659,8 +1660,4 @@ function syncRowsWithGroupRateOptions(
     };
   });
   return changed ? nextRows : rows;
-}
-
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }
