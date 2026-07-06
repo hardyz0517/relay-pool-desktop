@@ -157,7 +157,7 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
               kind: "set",
               groupBindingId: groupOption.groupBindingId,
               groupIdHash: groupOption.groupIdHash,
-              groupName: form.groupName.trim() ? form.groupName.trim() : groupOption.groupName,
+              groupName: groupOption.groupName,
             }
           : { kind: "clear" },
       });
@@ -290,7 +290,7 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
                       setForm({
                         ...form,
                         groupBindingId,
-                        groupName: groupOption?.groupName ?? form.groupName,
+                        groupName: groupOption?.groupName ?? "",
                       });
                     }}
                   />
@@ -299,8 +299,13 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
                   <Field label="优先级">
                     <input className={inputClassName} type="number" value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })} />
                   </Field>
-                  <Field label="分组">
-                    <input className={inputClassName} value={form.groupName} onChange={(event) => setForm({ ...form, groupName: event.target.value })} />
+                  <Field label="分组（随绑定同步）">
+                    <input
+                      className={`${inputClassName} bg-slate-50 text-slate-500`}
+                      value={form.groupName}
+                      placeholder="选择分组绑定后自动填充"
+                      readOnly
+                    />
                   </Field>
                 </div>
                 <Field label="档位">

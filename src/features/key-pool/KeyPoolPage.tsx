@@ -59,6 +59,9 @@ const statusLabels: Record<StationKeyStatus, string> = {
 const keyPoolGridClassName =
   "grid min-w-[780px] grid-cols-[2rem_minmax(18rem,1fr)_7rem_5rem_5rem_12rem_5.5rem] items-center gap-3";
 
+const KEEP_GROUP_BINDING_VALUE = "__keep__";
+const CLEAR_GROUP_BINDING_VALUE = "__clear__";
+
 export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const toast = useToast();
   const [stations, setStations] = useState<Station[]>([]);
@@ -951,21 +954,30 @@ function KeyEditDialog({
               className={inputClassName}
               value={form.groupBindingId}
               options={[
-                { value: "", label: bindingOptions.length ? "不调整绑定" : "暂无可用分组" },
+                ...(creating
+                  ? [{ value: "", label: bindingOptions.length ? "不绑定分组" : "暂无可用分组" }]
+                  : [
+                      { value: KEEP_GROUP_BINDING_VALUE, label: "不调整绑定" },
+                      ...(sourceItem?.groupBindingId ? [{ value: CLEAR_GROUP_BINDING_VALUE, label: "清除绑定" }] : []),
+                    ]),
                 ...bindingOptions,
               ]}
               onChange={(groupBindingId) => {
-                const groupOption = selectedGroupOption(groupOptions, groupBindingId);
                 onFormChange({
                   ...form,
                   groupBindingId,
-                  groupName: groupOption?.groupName ?? form.groupName,
+                  groupName: groupNameForDialogSelection(groupBindingId, sourceItem, groupOptions, form.groupName),
                 });
               }}
             />
           </Field>
-          <Field label="分组">
-            <input className={inputClassName} value={form.groupName} onChange={(event) => onFormChange({ ...form, groupName: event.target.value })} />
+          <Field label="分组（随绑定同步）">
+            <input
+              className={`${inputClassName} bg-slate-50 text-slate-500`}
+              value={form.groupName}
+              placeholder="选择分组绑定后自动填充"
+              readOnly
+            />
           </Field>
           <Field label="档位">
             <input className={inputClassName} value={form.tierLabel} onChange={(event) => onFormChange({ ...form, tierLabel: event.target.value })} />
@@ -1059,7 +1071,7 @@ function groupSelectionFromCreateForm(form: KeyPoolEditForm, options: StationGro
     kind: "set" as const,
     groupBindingId: groupOption.groupBindingId,
     groupIdHash: groupOption.groupIdHash,
-    groupName: form.groupName.trim() ? form.groupName.trim() : groupOption.groupName,
+    groupName: groupOption.groupName,
   };
 }
 
@@ -1068,18 +1080,22 @@ function groupSelectionFromEditForm(
   sourceItem: KeyPoolItem,
   options: StationGroupOption[],
 ) {
-  if (!form.groupBindingId) {
-    return sourceItem.groupBindingId ? { kind: "clear" as const } : { kind: "keep" as const };
-  }
-  if (form.groupBindingId === sourceItem.groupBindingId) {
+  if (
+    !form.groupBindingId ||
+    form.groupBindingId === KEEP_GROUP_BINDING_VALUE ||
+    form.groupBindingId === sourceItem.groupBindingId
+  ) {
     return { kind: "keep" as const };
+  }
+  if (form.groupBindingId === CLEAR_GROUP_BINDING_VALUE) {
+    return { kind: "clear" as const };
   }
   const groupOption = selectedGroupOption(options, form.groupBindingId);
   return {
     kind: "set" as const,
     groupBindingId: groupOption?.groupBindingId ?? form.groupBindingId,
     groupIdHash: groupOption?.groupIdHash ?? null,
-    groupName: form.groupName.trim() ? form.groupName.trim() : groupOption?.groupName ?? null,
+    groupName: groupOption?.groupName ?? null,
   };
 }
 
@@ -1118,6 +1134,27 @@ function currentGroupOption(sourceItem: KeyPoolItem | null, options: StationGrou
       label: `${sourceItem.groupName ?? "当前绑定"} · ${formatRate(sourceItem.rateMultiplier)} · 当前`,
     },
   ];
+}
+
+function groupNameForDialogSelection(
+  value: string,
+  sourceItem: KeyPoolItem | null,
+  options: StationGroupOption[],
+  fallback: string,
+) {
+  if (!value) {
+    return "";
+  }
+  if (value === KEEP_GROUP_BINDING_VALUE) {
+    return sourceItem?.groupName ?? fallback;
+  }
+  if (value === CLEAR_GROUP_BINDING_VALUE) {
+    return "";
+  }
+  if (value === sourceItem?.groupBindingId) {
+    return sourceItem.groupName ?? fallback;
+  }
+  return selectedGroupOption(options, value)?.groupName ?? fallback;
 }
 
 function groupOptionLabel(option: StationGroupOption) {
@@ -1167,7 +1204,7 @@ function formFromItem(item: KeyPoolItem): KeyPoolEditForm {
     apiKey: "",
     enabled: item.enabled,
     priority: String(item.priority),
-    groupBindingId: item.groupBindingId ?? "",
+    groupBindingId: KEEP_GROUP_BINDING_VALUE,
     groupName: item.groupName ?? "",
     tierLabel: item.tierLabel ?? "",
     status: item.status,
