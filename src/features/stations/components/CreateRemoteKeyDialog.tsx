@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Button, Dialog, SelectControl } from "@/components/ui";
-
-type RemoteKeyGroupOption = {
-  groupBindingId: string | null;
-  groupIdHash: string | null;
-  groupName: string;
-  rateMultiplier: number | null;
-};
+import type { StationGroupOption } from "@/lib/types/groupFacts";
+import {
+  formatMultiplier,
+  noGroupOptionValue,
+  normalizeStationGroupOptions,
+  stationGroupSelectValue,
+} from "../groupOptionViewModels";
 
 type CreateRemoteKeyDialogProps = {
   open: boolean;
-  groups: RemoteKeyGroupOption[];
+  groups: StationGroupOption[];
   saving?: boolean;
   onClose: () => void;
   onSubmit: (input: {
@@ -21,7 +21,6 @@ type CreateRemoteKeyDialogProps = {
   }) => void;
 };
 
-const noGroupValue = "__none__";
 const inputClassName =
   "h-8 w-full rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";
 
@@ -33,30 +32,20 @@ export function CreateRemoteKeyDialog({
   onSubmit,
 }: CreateRemoteKeyDialogProps) {
   const [name, setName] = useState("");
-  const [groupValue, setGroupValue] = useState(noGroupValue);
+  const [groupValue, setGroupValue] = useState(noGroupOptionValue);
   const [error, setError] = useState<string | null>(null);
 
-  const normalizedGroups = useMemo(() => {
-    const seen = new Set<string>();
-    return groups.filter((group) => {
-      const key = `${group.groupIdHash ?? ""}|${group.groupName}`;
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
-  }, [groups]);
+  const normalizedGroups = useMemo(() => normalizeStationGroupOptions(groups), [groups]);
 
   const groupOptions = useMemo(
     () => [
-      { value: noGroupValue, label: "不指定分组", description: "按远端默认策略创建" },
-      ...normalizedGroups.map((group, index) => ({
-        value: groupOptionValue(index),
+      { value: noGroupOptionValue, label: "不指定分组", description: "按远端默认策略创建" },
+      ...normalizedGroups.map((group) => ({
+        value: stationGroupSelectValue(group),
         label: (
           <span className="inline-flex min-w-0 max-w-full items-center gap-2">
             <span className="min-w-0 truncate">{group.groupName}</span>
-            <RemoteGroupRateTag value={group.rateMultiplier} />
+            <RemoteGroupRateTag rateMultiplier={group.rateMultiplier} />
           </span>
         ),
       })),
@@ -70,7 +59,11 @@ export function CreateRemoteKeyDialog({
     }
     setName("");
     setError(null);
-    setGroupValue(normalizedGroups.length > 0 ? groupOptionValue(0) : noGroupValue);
+    setGroupValue(
+      normalizedGroups.length > 0
+        ? stationGroupSelectValue(normalizedGroups[0])
+        : noGroupOptionValue,
+    );
   }, [open, normalizedGroups]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -81,10 +74,8 @@ export function CreateRemoteKeyDialog({
       return;
     }
 
-    const groupIndex = groupValue.startsWith("group-")
-      ? Number(groupValue.replace("group-", ""))
-      : -1;
-    const selectedGroup = groupIndex >= 0 ? normalizedGroups[groupIndex] ?? null : null;
+    const selectedGroup =
+      normalizedGroups.find((group) => stationGroupSelectValue(group) === groupValue) ?? null;
     onSubmit({
       name: trimmedName,
       groupBindingId: selectedGroup?.groupBindingId ?? null,
@@ -148,18 +139,10 @@ export function CreateRemoteKeyDialog({
   );
 }
 
-function RemoteGroupRateTag({ value }: { value: number | null }) {
+function RemoteGroupRateTag({ rateMultiplier }: { rateMultiplier: number | null }) {
   return (
     <span className="shrink-0 rounded-[calc(var(--surface-radius)-3px)] border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium leading-none text-slate-600">
-      {value === null ? "倍率未采集" : `${formatMultiplier(value)}x`}
+      {rateMultiplier === null ? "倍率未采集" : `${formatMultiplier(rateMultiplier)}x`}
     </span>
   );
-}
-
-function groupOptionValue(index: number) {
-  return `group-${index}`;
-}
-
-function formatMultiplier(value: number) {
-  return Number.isInteger(value) ? String(value) : Number(value.toFixed(6)).toString();
 }

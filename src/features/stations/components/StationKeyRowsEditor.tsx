@@ -1,6 +1,14 @@
 import { Trash2 } from "lucide-react";
 import { Button, SelectControl, SwitchControl } from "@/components/ui";
+import type { StationGroupOption } from "@/lib/types/groupFacts";
 import { cn } from "@/lib/utils";
+import {
+  findMatchingGroupOption,
+  formatMultiplier,
+  noGroupOptionValue,
+  normalizeStationGroupOptions,
+  stationGroupSelectValue,
+} from "../groupOptionViewModels";
 
 export type StationKeyDraft = {
   clientId: string;
@@ -16,12 +24,7 @@ export type StationKeyDraft = {
   deleteRequested: boolean;
 };
 
-export type StationKeyGroupOption = {
-  groupBindingId: string | null;
-  groupIdHash: string | null;
-  groupName: string;
-  rateMultiplier: number | null;
-};
+export type StationKeyGroupOption = StationGroupOption;
 
 type StationKeyRowsEditorProps = {
   rows: StationKeyDraft[];
@@ -35,7 +38,7 @@ const inputClassName =
 const selectClassName =
   "h-8 w-full min-w-0 px-2.5 text-xs shadow-none";
 const keyRowsGridTemplate = "minmax(7rem,1fr) minmax(11rem,1.35fr) minmax(8rem,0.9fr) 6rem 3.75rem 2.5rem";
-const noGroupValue = "__none__";
+const noGroupValue = noGroupOptionValue;
 
 export function createEmptyStationKeyDraft(index: number): StationKeyDraft {
   return {
@@ -60,21 +63,27 @@ export function StationKeyRowsEditor({
   onRowsChange,
 }: StationKeyRowsEditorProps) {
   const visibleRows = rows.filter((row) => !row.deleteRequested);
-  const normalizedGroupOptions = normalizeGroupOptions([
+  const normalizedGroupOptions = normalizeStationGroupOptions([
     ...groupOptions,
     ...visibleRows
       .filter((row) => row.groupBindingId || row.groupIdHash || row.groupName.trim())
-      .map((row) => ({
-        groupBindingId: row.groupBindingId,
-        groupIdHash: row.groupIdHash,
-        groupName: row.groupName,
-        rateMultiplier: parseDraftMultiplier(row.rateMultiplier),
-      })),
+      .map((row) => {
+        const option = {
+          value: "",
+          groupBindingId: row.groupBindingId,
+          groupIdHash: row.groupIdHash,
+          groupName: row.groupName,
+          rateMultiplier: parseDraftMultiplier(row.rateMultiplier),
+          rateSource: null,
+          selectableForRemoteKey: Boolean(row.groupBindingId || row.groupIdHash),
+        };
+        return { ...option, value: stationGroupSelectValue(option) };
+      }),
   ]);
   const selectOptions = [
     { value: noGroupValue, label: "无", description: "不绑定分组，手动填写倍率" },
     ...normalizedGroupOptions.map((group) => ({
-      value: groupOptionValue(group),
+      value: stationGroupSelectValue(group),
       label: group.groupName,
       description:
         group.rateMultiplier === null ? "未采集倍率" : `${formatMultiplier(group.rateMultiplier)}x`,
@@ -90,7 +99,8 @@ export function StationKeyRowsEditor({
       updateRow(row.clientId, { groupBindingId: null, groupIdHash: null, groupName: "" });
       return;
     }
-    const selectedGroup = normalizedGroupOptions.find((group) => groupOptionValue(group) === value);
+    const selectedGroup =
+      normalizedGroupOptions.find((group) => stationGroupSelectValue(group) === value) ?? null;
     if (!selectedGroup) {
       return;
     }
@@ -203,41 +213,12 @@ export function StationKeyRowsEditor({
   );
 }
 
-function normalizeGroupOptions(options: StationKeyGroupOption[]) {
-  const seen = new Set<string>();
-  return options.filter((group) => {
-    const groupName = group.groupName.trim();
-    if (!groupName && !group.groupIdHash && !group.groupBindingId) {
-      return false;
-    }
-    const key = `${group.groupBindingId ?? ""}|${group.groupIdHash ?? ""}|${groupName}`;
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
-}
-
-function groupOptionValue(group: StationKeyGroupOption) {
-  return `${group.groupBindingId ?? ""}|${group.groupIdHash ?? ""}|${group.groupName.trim()}`;
-}
-
 function resolveSelectedGroupValue(row: StationKeyDraft, groupOptions: StationKeyGroupOption[]) {
   if (!row.groupBindingId && !row.groupName.trim() && !row.groupIdHash) {
     return noGroupValue;
   }
-  const selectedGroup = groupOptions.find(
-    (group) =>
-      (row.groupBindingId && group.groupBindingId === row.groupBindingId) ||
-      (row.groupIdHash && group.groupIdHash === row.groupIdHash) ||
-      (!row.groupIdHash && group.groupName.trim() === row.groupName.trim()),
-  );
-  return selectedGroup ? groupOptionValue(selectedGroup) : noGroupValue;
-}
-
-function formatMultiplier(value: number) {
-  return Number.isInteger(value) ? String(value) : Number(value.toFixed(6)).toString();
+  const selectedGroup = findMatchingGroupOption(row, groupOptions);
+  return selectedGroup ? stationGroupSelectValue(selectedGroup) : noGroupValue;
 }
 
 function parseDraftMultiplier(value: string) {
