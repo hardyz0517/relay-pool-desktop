@@ -154,6 +154,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   const [drawerClosing, setDrawerClosing] = useState(false);
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
   const [pendingDeleteKey, setPendingDeleteKey] = useState<StationKey | null>(null);
+  const [pendingDeleteStation, setPendingDeleteStation] = useState<Station | null>(null);
   const [keyForm, setKeyForm] = useState<StationKeyFormState>(emptyKeyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -445,22 +446,31 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     setDrawerClosing(false);
     setKeyDialogOpen(false);
     setPendingDeleteKey(null);
+    setPendingDeleteStation(null);
     setKeyForm(emptyKeyForm);
   }, []);
 
-  const handleDelete = useCallback(async (station: Station) => {
-    if (!window.confirm(`确认删除站点「${station.name}」？`)) {
+  const handleDelete = useCallback((station: Station) => {
+    setPendingDeleteStation(station);
+  }, []);
+
+  async function handleConfirmDeleteStation() {
+    if (!pendingDeleteStation) {
       return;
     }
+    setActionSaving(true);
     setError(null);
     try {
-      await deleteStation(station.id);
+      await deleteStation(pendingDeleteStation.id);
+      setPendingDeleteStation(null);
       await refreshStations();
       toast.success("站点已删除");
     } catch (requestError) {
       toast.error("删除站点失败", readError(requestError));
+    } finally {
+      setActionSaving(false);
     }
-  }, []);
+  }
 
   function handleDragStart(event: DragStartEvent) {
     setActiveDragId(String(event.active.id));
@@ -527,7 +537,21 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
             rememberPassword: form.rememberPassword,
           });
         }
-        toast.success("站点已创建");
+        try {
+          const result = await collectStationTask(nextStation.id, "balance");
+          if (result.snapshot.status === "success") {
+            toast.success("站点已创建，余额已刷新");
+          } else {
+            toast.success("站点已创建");
+            toast.error(
+              "余额未采集到",
+              result.snapshot.errorMessage ?? "采集任务已结束，但没有写入可显示的余额。",
+            );
+          }
+        } catch (balanceError) {
+          toast.success("站点已创建");
+          toast.error("刷新余额失败", readError(balanceError));
+        }
       }
       await refreshStations();
       closeDialog();
@@ -834,6 +858,15 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
           snapshot={snapshot}
         />
       )}
+      <ConfirmDialog
+        open={pendingDeleteStation !== null}
+        title="删除中转站"
+        description={`确定要删除站点 "${pendingDeleteStation?.name ?? ""}" 吗？此操作无法撤销。`}
+        confirmLabel="删除"
+        confirming={actionSaving}
+        onCancel={() => setPendingDeleteStation(null)}
+        onConfirm={() => void handleConfirmDeleteStation()}
+      />
       <ConfirmDialog
         open={pendingDeleteKey !== null}
         title="删除密钥"

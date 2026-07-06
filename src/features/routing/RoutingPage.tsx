@@ -3,6 +3,7 @@ import { GitBranch, Play, Plus, RefreshCcw, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
+  ConfirmDialog,
   EmptyState,
   InspectorPanel,
   IconButton,
@@ -85,6 +86,7 @@ export function RoutingPage() {
   const [result, setResult] = useState<RouteSimulationResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [pendingDeleteAlias, setPendingDeleteAlias] = useState<ModelAlias | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -188,15 +190,20 @@ export function RoutingPage() {
     }
   }
 
-  async function handleDeleteAlias(alias: ModelAlias) {
-    if (!window.confirm(`确认删除模型映射「${alias.clientModel}」？`)) {
+  function handleDeleteAlias(alias: ModelAlias) {
+    setPendingDeleteAlias(alias);
+  }
+
+  async function handleConfirmDeleteAlias() {
+    if (!pendingDeleteAlias) {
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      await deleteModelAlias(alias.id);
+      await deleteModelAlias(pendingDeleteAlias.id);
       setAliases(await listModelAliases());
+      setPendingDeleteAlias(null);
       toast.success("模型映射已删除");
     } catch (requestError) {
       toast.error("删除模型映射失败", readError(requestError));
@@ -305,7 +312,7 @@ export function RoutingPage() {
                           <Button className="h-8" disabled={saving} variant="outline" onClick={() => void handleToggleAlias(alias)}>
                             {alias.enabled ? "停用" : "启用"}
                           </Button>
-                          <IconButton label={`删除 ${alias.clientModel}`} disabled={saving} variant="danger" onClick={() => void handleDeleteAlias(alias)}>
+                          <IconButton label={`删除 ${alias.clientModel}`} disabled={saving} variant="danger" onClick={() => handleDeleteAlias(alias)}>
                           <Trash2 className="h-4 w-4" />
                           </IconButton>
                         </>
@@ -374,6 +381,15 @@ export function RoutingPage() {
           )}
         </InspectorPanel>
       </div>
+      <ConfirmDialog
+        open={pendingDeleteAlias !== null}
+        title="删除模型映射"
+        description={`确定要删除模型映射 "${pendingDeleteAlias?.clientModel ?? ""}" 吗？此操作无法撤销。`}
+        confirmLabel="删除"
+        confirming={saving}
+        onCancel={() => setPendingDeleteAlias(null)}
+        onConfirm={() => void handleConfirmDeleteAlias()}
+      />
 
     </PageScaffold>
   );

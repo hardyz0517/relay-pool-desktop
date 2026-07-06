@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Copy, Edit3, Plus, Trash2 } from "lucide-react";
-import { Button, Dialog, StatusBadge, SwitchControl, useToast } from "@/components/ui";
+import { Button, ConfirmDialog, Dialog, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import {
   createChannelMonitorTemplate,
   deleteChannelMonitorTemplate,
@@ -63,12 +63,14 @@ export function ChannelMonitorTemplateManager({
   const [endpointKindFilter, setEndpointKindFilter] = useState(allEndpointKindFilter);
   const [busyState, setBusyState] = useState<BusyState>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDeleteTemplate, setPendingDeleteTemplate] = useState<ChannelMonitorRequestTemplate | null>(null);
 
   useEffect(() => {
     if (open) {
       setDraft(createEmptyDraft());
       setError(null);
       setBusyState(null);
+      setPendingDeleteTemplate(null);
     }
   }, [open]);
 
@@ -238,18 +240,26 @@ export function ChannelMonitorTemplateManager({
     }
   }
 
-  async function handleDelete(template: ChannelMonitorRequestTemplate) {
-    if (template.builtIn || !window.confirm(`确认删除模板「${template.name}」？`)) {
+  function handleDelete(template: ChannelMonitorRequestTemplate) {
+    if (template.builtIn) {
       return;
     }
-    setBusyState({ id: template.id, kind: "delete" });
+    setPendingDeleteTemplate(template);
+  }
+
+  async function handleConfirmDelete() {
+    if (!pendingDeleteTemplate) {
+      return;
+    }
+    setBusyState({ id: pendingDeleteTemplate.id, kind: "delete" });
     setError(null);
     try {
-      await deleteChannelMonitorTemplate(template.id);
+      await deleteChannelMonitorTemplate(pendingDeleteTemplate.id);
       toast.success("模板已删除");
-      if (draft.id === template.id) {
+      if (draft.id === pendingDeleteTemplate.id) {
         createTemplate();
       }
+      setPendingDeleteTemplate(null);
       await onChanged();
     } catch (requestError) {
       const message = readError(requestError);
@@ -261,26 +271,27 @@ export function ChannelMonitorTemplateManager({
   }
 
   return (
-    <Dialog
-      open={open}
-      title="监控请求模板"
-      description="管理本地探测请求"
-      onClose={onClose}
-      className="max-w-[1040px]"
-      footer={
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0 truncate text-xs text-rose-600">{error ?? validationError ?? ""}</div>
-          <div className="flex shrink-0 justify-end gap-2">
-            <Button variant="outline" onClick={onClose} disabled={busyState !== null}>
-              关闭
-            </Button>
-            <Button type="submit" form="channel-monitor-template-form" disabled={!canSave}>
-              {isSaving ? "保存中" : "保存模板"}
-            </Button>
+    <>
+      <Dialog
+        open={open}
+        title="监控请求模板"
+        description="管理本地探测请求"
+        onClose={onClose}
+        className="max-w-[1040px]"
+        footer={
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0 truncate text-xs text-rose-600">{error ?? validationError ?? ""}</div>
+            <div className="flex shrink-0 justify-end gap-2">
+              <Button variant="outline" onClick={onClose} disabled={busyState !== null}>
+                关闭
+              </Button>
+              <Button type="submit" form="channel-monitor-template-form" disabled={!canSave}>
+                {isSaving ? "保存中" : "保存模板"}
+              </Button>
+            </div>
           </div>
-        </div>
-      }
-    >
+        }
+      >
       <div className="grid gap-0 md:grid-cols-[minmax(0,0.95fr)_minmax(360px,1.05fr)]">
         <div className="border-b border-border md:border-b-0 md:border-r">
           <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
@@ -492,7 +503,17 @@ export function ChannelMonitorTemplateManager({
           </Field>
         </form>
       </div>
-    </Dialog>
+      </Dialog>
+      <ConfirmDialog
+        open={pendingDeleteTemplate !== null}
+        title="删除监控模板"
+        description={`确定要删除模板 "${pendingDeleteTemplate?.name ?? ""}" 吗？此操作无法撤销。`}
+        confirmLabel="删除"
+        confirming={busyState?.kind === "delete"}
+        onCancel={() => setPendingDeleteTemplate(null)}
+        onConfirm={() => void handleConfirmDelete()}
+      />
+    </>
   );
 }
 

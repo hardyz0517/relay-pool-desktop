@@ -9,6 +9,7 @@ import {
   Gauge,
   KeyRound,
   type LucideIcon,
+  Power,
   Route,
   Server,
   Upload,
@@ -26,7 +27,7 @@ import {
 } from "@/components/ui";
 import { listChangeEvents } from "@/lib/api/changeEvents";
 import { listBalanceSnapshots } from "@/lib/api/economics";
-import { getProxyStatus, listRequestLogs } from "@/lib/api/proxy";
+import { getProxyStatus, listRequestLogs, startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
 import { getLocalAccessKey, getSettings, importRelayPoolToCCSwitch } from "@/lib/api/settings";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
@@ -76,6 +77,8 @@ export function DashboardPage() {
   const [balanceSnapshots, setBalanceSnapshots] = useState<BalanceSnapshot[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
+  const [startingLocalProxy, setStartingLocalProxy] = useState(false);
+  const [stoppingLocalProxy, setStoppingLocalProxy] = useState(false);
   const [importingCCSwitch, setImportingCCSwitch] = useState(false);
 
   useEffect(() => {
@@ -129,6 +132,32 @@ export function DashboardPage() {
       toast.success("本地访问密钥已复制");
     } catch (copyError) {
       toast.error("复制失败", readError(copyError));
+    }
+  }
+
+  async function handleStartLocalProxy() {
+    setStartingLocalProxy(true);
+    try {
+      const nextStatus = await startLocalProxy();
+      setProxyStatus(nextStatus);
+      toast.success("本地路由已启动", `监听 ${nextStatus.bindAddr}:${nextStatus.port}`);
+    } catch (startError) {
+      toast.error("启动本地路由失败", readError(startError));
+    } finally {
+      setStartingLocalProxy(false);
+    }
+  }
+
+  async function handleStopLocalProxy() {
+    setStoppingLocalProxy(true);
+    try {
+      const nextStatus = await stopLocalProxy();
+      setProxyStatus(nextStatus);
+      toast.success("本地路由已关闭");
+    } catch (stopError) {
+      toast.error("关闭本地路由失败", readError(stopError));
+    } finally {
+      setStoppingLocalProxy(false);
     }
   }
 
@@ -206,7 +235,7 @@ export function DashboardPage() {
           }
           contentClassName="p-3"
         >
-          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_64px] sm:items-center">
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_136px] sm:items-center">
             <div className="grid min-w-0 gap-2 md:grid-cols-[minmax(220px,1.35fr)_minmax(170px,0.85fr)] md:items-center">
               <div className="grid min-h-9 min-w-0 grid-cols-[56px_minmax(0,1fr)_28px] items-center gap-2 rounded-[8px] bg-slate-50/70 px-2">
                 <span className="text-xs font-medium text-slate-500">地址</span>
@@ -239,7 +268,32 @@ export function DashboardPage() {
                 </Button>
               </div>
             </div>
-            <div className="flex items-center sm:justify-end">
+            <div className="flex items-center gap-2 sm:justify-end">
+              <button
+                type="button"
+                onClick={() => void (proxyRunning ? handleStopLocalProxy() : handleStartLocalProxy())}
+                disabled={startingLocalProxy || stoppingLocalProxy}
+                className={`flex h-16 w-16 shrink-0 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[8px] border px-2 py-2 text-[12px] font-medium leading-[14px] shadow-[0_1px_2px_rgba(15,23,42,0.08)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.35)] disabled:pointer-events-none disabled:cursor-default disabled:opacity-60 ${
+                  proxyRunning
+                    ? "border-[#EFF0F3] bg-[#EFF0F3] text-slate-700 hover:bg-slate-200"
+                    : "border-[#0060DF] bg-[#0060DF] text-white hover:bg-[#0052bf]"
+                }`}
+                aria-label={proxyRunning ? "关闭本地路由" : "启动本地路由"}
+              >
+                <Power className="h-4 w-4 shrink-0" />
+                {startingLocalProxy ? (
+                  <span>启动中</span>
+                ) : stoppingLocalProxy ? (
+                  <span>关闭中</span>
+                ) : proxyRunning ? (
+                  <span>关闭</span>
+                ) : (
+                  <span className="grid gap-0 text-center">
+                    <span>启动</span>
+                    <span>路由</span>
+                  </span>
+                )}
+              </button>
               <button
                 type="button"
                 onClick={() => void handleImportToCCSwitch()}

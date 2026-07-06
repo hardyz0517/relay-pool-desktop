@@ -3,6 +3,7 @@ import { RefreshCw, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
+  ConfirmDialog,
   DataTableLite,
   EmptyState,
   InspectorPanel,
@@ -40,6 +41,8 @@ export function LogsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<LogFilter>("all");
   const [loading, setLoading] = useState(true);
+  const [clearing, setClearing] = useState(false);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -100,20 +103,25 @@ export function LogsPage() {
     }
   }
 
-  async function handleClear() {
-    if (!window.confirm("确认清空本地请求日志？")) {
-      return;
-    }
+  function handleClear() {
+    setClearConfirmOpen(true);
+  }
+
+  async function handleConfirmClear() {
+    setClearing(true);
     setError(null);
     try {
       await clearRequestLogs();
       setLogs([]);
       setSelectedId(null);
+      setClearConfirmOpen(false);
       toast.success("请求日志已清空");
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
       toast.error("清空请求日志失败", message);
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -136,7 +144,7 @@ export function LogsPage() {
                 <RefreshCw className="h-4 w-4" />
                 刷新
               </Button>
-              <Button variant="danger" onClick={() => void handleClear()}>
+              <Button variant="danger" onClick={handleClear}>
                 <Trash2 className="h-4 w-4" />
                 清空
               </Button>
@@ -195,6 +203,15 @@ export function LogsPage() {
             <EmptyState title="暂无详情" description="选择一条请求日志查看路由解释和成本元数据。" />
           )}
         </InspectorPanel>
+        <ConfirmDialog
+          open={clearConfirmOpen}
+          title="清空请求日志"
+          description="确定要清空本地请求日志吗？此操作无法撤销。"
+          confirmLabel="清空"
+          confirming={clearing}
+          onCancel={() => setClearConfirmOpen(false)}
+          onConfirm={() => void handleConfirmClear()}
+        />
       </div>
     </PageScaffold>
   );
