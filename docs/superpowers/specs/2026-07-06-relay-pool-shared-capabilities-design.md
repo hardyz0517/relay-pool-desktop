@@ -80,15 +80,20 @@ Input shape:
 - `id`: required for update
 - `station_id`
 - key metadata: name, api key, enabled, priority, status, tier label, note
-- group selection: `group_binding_id`, `group_id_hash`, `group_name`
-- routing metadata already supported by the existing model: model allowlist, model blocklist, preferred models, backup flag, routing tags, and balance scope
+- group selection action:
+  - `keep`: keep the existing group binding and group-derived fields, only valid for update
+  - `clear`: remove the existing group binding, group id hash, group name, multiplier, and group-derived rate source
+  - `set`: apply the selected `group_binding_id`; `group_id_hash` and `group_name` may be included only as display or fallback context
+- station-key metadata already supported by the existing station key model, including `balance_scope`
+- nested `capabilities` object is accepted only when the caller is intentionally editing routing capability fields; routine create/edit flows should omit it and let the backend apply defaults
 
 Rules:
 
 - Create and update use the same public command.
-- `group_binding_id: null` is an explicit clear-binding request.
+- Group binding changes must use the explicit group selection action. Do not rely on plain `Option<String>` null handling, because Rust/Tauri deserialization cannot distinguish omitted fields from `null` without an explicit action or patch type.
 - Default routing capability is written in one backend place.
-- The capability defaults match the current product decision: all supported flags default to true.
+- Routine key create/edit flows write default routing capability from one backend helper. The defaults match the current product decision: all supported flags default to true, model allow/block/preferred lists default to empty, `only_use_as_backup` defaults to false, and routing tags default to empty.
+- Advanced routing edits remain a separate capability concern. If a future caller passes the nested `capabilities` object, the backend should update `station_key_capabilities` explicitly; otherwise it should preserve existing capabilities on update and create defaults on create.
 - If base key save succeeds but follow-up persistence fails, return a clear error that names the failed part.
 - Existing lower-level commands remain available during migration. After all named consumers migrate, each lower-level command must be classified as either still-public API or internal-only support API before any removal.
 
@@ -177,11 +182,10 @@ Before changing behavior, add or tighten focused tests that describe the current
 
 - Creating a key applies default capabilities.
 - Editing a key preserves or changes group identity correctly.
-- Clearing group binding is explicit.
 - Remote key creation preserves group binding identity.
 - Channel monitor run load failure is visible and consistent.
 
-This stage should not change production behavior.
+This stage should not change production behavior. If clearing an existing group binding is not currently supported, Stage 0 should document that as the known defect and add a pending or expected-failure test case. Stage 1 turns that case green through the new explicit group selection action.
 
 ### Stage 1: Backend Station Key Save Capability
 
