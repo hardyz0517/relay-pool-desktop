@@ -1,3 +1,8 @@
+import type {
+  StationKeyCapabilities,
+  UpdateStationKeyCapabilitiesInput,
+} from "@/lib/types/routing";
+
 export type StationKeyStatus = "unchecked" | "healthy" | "warning" | "error" | "disabled";
 
 export type StationKey = {
@@ -128,11 +133,12 @@ export type SaveStationKeyWithDefaultsInput = {
   status?: StationKeyStatus | null;
   note?: string | null;
   groupSelection: StationKeyGroupSelection;
+  capabilities?: UpdateStationKeyCapabilitiesInput | null;
 };
 
 export type SaveStationKeyWithDefaultsResult = {
   stationKey: StationKey;
-  capabilities: import("@/lib/types/routing").StationKeyCapabilities;
+  capabilities: StationKeyCapabilities;
   message: string;
 };
 

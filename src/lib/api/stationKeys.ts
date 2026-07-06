@@ -1,4 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  getStationKeyCapabilities,
+  updateStationKeyCapabilities,
+} from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
 import type {
   CreateLocalStationKeyFromRemoteResult,
@@ -18,7 +22,10 @@ import type {
   UpdateStationKeyInput,
 } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
-import type { StationKeyCapabilities } from "@/lib/types/routing";
+import type {
+  StationKeyCapabilities,
+  UpdateStationKeyCapabilitiesInput,
+} from "@/lib/types/routing";
 
 const memoryKeys = new Map<string, StationKey[]>();
 const memoryRemoteKeys = new Map<string, RemoteStationKey[]>();
@@ -524,17 +531,25 @@ function memoryKeyFromInput(input: CreateStationKeyInput): StationKey {
 async function saveStationKeyWithDefaultsInMemory(
   input: SaveStationKeyWithDefaultsInput,
 ): Promise<SaveStationKeyWithDefaultsResult> {
+  validateSaveStationKeyWithDefaultsInput(input);
+
   const stationKey =
     input.mode === "create"
       ? await createStationKey(memoryCreateInputFromDefaults(input))
       : await updateStationKey(memoryUpdateInputFromDefaults(input));
-  const capabilities = defaultStationKeyCapabilities(stationKey.id);
+  const capabilities = await memoryCapabilitiesForSavedKey(input, stationKey.id);
 
   return {
     stationKey,
     capabilities,
     message: "Browser preview fallback: station key saved with default capabilities.",
   };
+}
+
+function validateSaveStationKeyWithDefaultsInput(input: SaveStationKeyWithDefaultsInput) {
+  if (input.mode === "create" && input.groupSelection.kind === "keep") {
+    throw new Error("Browser preview fallback: create mode cannot keep an existing group selection.");
+  }
 }
 
 function memoryCreateInputFromDefaults(input: SaveStationKeyWithDefaultsInput): CreateStationKeyInput {
@@ -564,7 +579,7 @@ function memoryUpdateInputFromDefaults(input: SaveStationKeyWithDefaultsInput): 
   const existing = (memoryKeys.get(input.stationId) ?? []).find((key) => key.id === input.id);
   const groupFields = memoryGroupFieldsFromSelection(input, existing ?? null);
 
-  return {
+  const updateInput: UpdateStationKeyInput = {
     id: input.id,
     stationId: input.stationId,
     name: input.name,
@@ -575,10 +590,15 @@ function memoryUpdateInputFromDefaults(input: SaveStationKeyWithDefaultsInput): 
     tierLabel: input.tierLabel ?? null,
     rateMultiplier: groupFields.groupBindingId === existing?.groupBindingId ? existing?.rateMultiplier ?? null : null,
     rateSource: groupFields.groupBindingId === existing?.groupBindingId ? existing?.rateSource ?? null : null,
-    balanceScope: input.balanceScope ?? null,
     status: input.status ?? existing?.status ?? "unchecked",
     note: input.note ?? null,
   };
+
+  if (input.balanceScope != null) {
+    updateInput.balanceScope = input.balanceScope;
+  }
+
+  return updateInput;
 }
 
 function memoryGroupFieldsFromSelection(
@@ -625,6 +645,29 @@ function defaultStationKeyCapabilities(stationKeyId: string): StationKeyCapabili
     routingTags: [],
     updatedAt: new Date().toISOString(),
   };
+}
+
+async function memoryCapabilitiesForSavedKey(
+  input: SaveStationKeyWithDefaultsInput,
+  stationKeyId: string,
+): Promise<StationKeyCapabilities> {
+  if (input.capabilities) {
+    return updateStationKeyCapabilities({
+      ...input.capabilities,
+      stationKeyId,
+    });
+  }
+
+  if (input.mode === "update") {
+    return getStationKeyCapabilities(stationKeyId);
+  }
+
+  return updateStationKeyCapabilities(defaultStationKeyCapabilitiesInput(stationKeyId));
+}
+
+function defaultStationKeyCapabilitiesInput(stationKeyId: string): UpdateStationKeyCapabilitiesInput {
+  const { updatedAt: _updatedAt, ...input } = defaultStationKeyCapabilities(stationKeyId);
+  return input;
 }
 
 function nextMemoryId(prefix: string) {
