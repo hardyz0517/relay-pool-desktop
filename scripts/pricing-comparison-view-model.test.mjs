@@ -662,6 +662,156 @@ assert.ok(
   "verified-only filter should hide unverified rows",
 );
 
+const duplicateCurrentGroupView = buildPricingComparisonViewModel({
+  models: [
+    {
+      provider: "openai",
+      modelId: "gpt-5-mini",
+      displayName: "GPT-5 mini",
+      officialInputPrice: 0.25,
+      officialOutputPrice: 2,
+      currency: "USD",
+      unit: "per_1m_tokens",
+      aliases: ["gpt-5-mini"],
+      groupMatchers: ["openai", "gpt", "default", "green"],
+      enabledByDefault: true,
+    },
+  ],
+  stations: [station("station-current-dedup", "Current Dedup Hub", 1)],
+  stationKeys: [],
+  groupBindings: [
+    {
+      ...group(
+        "station-current-dedup",
+        "binding-current",
+        "default",
+        0.8,
+        "OpenAI green default",
+        "2026-07-06T01:00:00.000Z",
+      ),
+      groupKeyHash: "stable-local-group",
+      groupIdHash: "remote-group-default",
+    },
+  ],
+  groupRates: [
+    {
+      ...rate(
+        "station-current-dedup",
+        "rate-current",
+        "binding-current",
+        "default",
+        0.7,
+        "OpenAI green default latest",
+        "2026-07-06T03:00:00.000Z",
+      ),
+      groupKeyHash: "stable-local-group",
+    },
+    {
+      ...rate(
+        "station-current-dedup",
+        "rate-shadow",
+        null,
+        "default",
+        0.7,
+        "OpenAI green default shadow",
+        "2026-07-06T03:30:00.000Z",
+      ),
+      groupKeyHash: "stable-local-group",
+    },
+  ],
+  pricingRules,
+  modelEvidence: [],
+  filters: {
+    provider: "openai",
+    modelQuery: "",
+    stationId: "all",
+    verifiedOnly: false,
+  },
+});
+const duplicateCurrentGroupGpt = duplicateCurrentGroupView.sections.find(
+  (section) => section.modelId === "gpt-5-mini",
+);
+assert.ok(duplicateCurrentGroupGpt, "duplicate-current-group GPT section should exist");
+assert.deepEqual(
+  duplicateCurrentGroupGpt.rows.map((row) => ({
+    groupBindingId: row.groupBindingId,
+    groupRateRecordId: row.groupRateRecordId,
+    groupName: row.groupName,
+  })),
+  [{ groupBindingId: "binding-current", groupRateRecordId: "rate-current", groupName: "default" }],
+  "same current group identity must not appear twice when binding and standalone rate share groupKeyHash",
+);
+
+const distinctIdentityView = buildPricingComparisonViewModel({
+  models: [
+    {
+      provider: "openai",
+      modelId: "gpt-5-mini",
+      displayName: "GPT-5 mini",
+      officialInputPrice: 0.25,
+      officialOutputPrice: 2,
+      currency: "USD",
+      unit: "per_1m_tokens",
+      aliases: ["gpt-5-mini"],
+      groupMatchers: ["openai", "gpt", "default", "green"],
+      enabledByDefault: true,
+    },
+  ],
+  stations: [station("station-distinct-identity", "Distinct Identity Hub", 1)],
+  stationKeys: [],
+  groupBindings: [
+    {
+      ...group(
+        "station-distinct-identity",
+        "binding-a",
+        "default",
+        0.8,
+        "same remote id first local group",
+        "2026-07-06T01:00:00.000Z",
+      ),
+      groupKeyHash: "local-group-a",
+      groupIdHash: "gpt",
+    },
+    {
+      ...group(
+        "station-distinct-identity",
+        "binding-b",
+        "default",
+        0.6,
+        "same remote id second local group",
+        "2026-07-06T02:00:00.000Z",
+      ),
+      groupKeyHash: "local-group-b",
+      groupIdHash: "gpt",
+    },
+  ],
+  groupRates: [],
+  pricingRules,
+  modelEvidence: [],
+  filters: {
+    provider: "openai",
+    modelQuery: "",
+    stationId: "all",
+    verifiedOnly: false,
+  },
+});
+const distinctIdentityGpt = distinctIdentityView.sections.find(
+  (section) => section.modelId === "gpt-5-mini",
+);
+assert.ok(distinctIdentityGpt, "distinct-identity GPT section should exist");
+assert.deepEqual(
+  distinctIdentityGpt.rows.map((row) => ({
+    groupBindingId: row.groupBindingId,
+    groupName: row.groupName,
+    groupMultiplier: row.groupMultiplier,
+  })),
+  [
+    { groupBindingId: "binding-b", groupName: "default", groupMultiplier: 0.6 },
+    { groupBindingId: "binding-a", groupName: "default", groupMultiplier: 0.8 },
+  ],
+  "group_key_hash and group_id_hash must not be treated as interchangeable identities",
+);
+
 const pageSource = await readFile("src/features/pricing/PricingPage.tsx", "utf8");
 assert.ok(
   pageSource.includes("buildPricingComparisonViewModel"),

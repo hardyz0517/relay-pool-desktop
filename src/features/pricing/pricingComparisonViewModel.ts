@@ -248,13 +248,16 @@ function buildRowsForModel(
     const relatedRates = groupRates
       .filter((rate) => isRateForBinding(rate, binding))
       .sort(compareRatesByFreshness);
-    const matchingRate = relatedRates.find((rate) => groupRateMatchesModel(rate, model));
+    const matchingRate = selectRateForBinding(
+      relatedRates.filter((rate) => groupRateMatchesModel(rate, model)),
+      binding,
+    );
     const bindingMatches = groupBindingMatchesModel(binding, model);
     if (!bindingMatches && !matchingRate) {
       continue;
     }
 
-    const rate = matchingRate ?? relatedRates[0] ?? null;
+    const rate = matchingRate ?? selectRateForBinding(relatedRates, binding);
     for (const relatedRate of relatedRates) {
       consumedRateIds.add(relatedRate.id);
     }
@@ -573,6 +576,10 @@ function isRateForBinding(rate: GroupRateRecord, binding: StationGroupBinding) {
       rate.groupKeyHash === binding.groupKeyHash ||
       normalizeText(rate.groupName) === normalizeText(binding.groupName))
   );
+}
+
+function selectRateForBinding(rates: GroupRateRecord[], binding: StationGroupBinding) {
+  return rates.find((rate) => rate.groupBindingId === binding.id) ?? rates[0] ?? null;
 }
 
 function latestRatesByStationGroup(rates: GroupRateRecord[]) {
