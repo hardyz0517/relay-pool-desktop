@@ -113,8 +113,8 @@ assert.equal(
 );
 assert.equal(
   rows[0].effectiveRate,
-  "0.22x",
-  "station detail should show the latest collected effective rate instead of stale remote_scan rate",
+  "0.8x",
+  "station detail should show the shared current fact effective rate instead of page-local rate precedence",
 );
 assert.equal(
   rows[0].defaultRate,
