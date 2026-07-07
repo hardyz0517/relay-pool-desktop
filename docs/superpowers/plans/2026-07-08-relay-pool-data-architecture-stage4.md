@@ -108,11 +108,16 @@ Create `scripts/pricing-facts-projection.test.mjs`:
 
 ```js
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import ts from "typescript";
 
-async function importTsModule(path) {
-  const source = await readFile(path, "utf8");
+async function transpileTsFile(sourcePath, outputPath, replacements = []) {
+  let source = await readFile(sourcePath, "utf8");
+  for (const [from, to] of replacements) {
+    source = source.replaceAll(from, to);
+  }
   const output = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.ESNext,
@@ -120,10 +125,21 @@ async function importTsModule(path) {
       verbatimModuleSyntax: true,
     },
   }).outputText;
-  return import(`data:text/javascript;base64,${Buffer.from(output, "utf8").toString("base64")}`);
+  await writeFile(outputPath, output, "utf8");
 }
 
-const { buildPricingGroupCandidates } = await importTsModule("src/lib/projections/pricingFacts.ts");
+async function importPricingProjection() {
+  const tempRoot = await mkdtemp(join(tmpdir(), "relay-pricing-projection-"));
+  const groupFactsPath = join(tempRoot, "groupFacts.mjs");
+  const pricingFactsPath = join(tempRoot, "pricingFacts.mjs");
+  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath);
+  await transpileTsFile("src/lib/projections/pricingFacts.ts", pricingFactsPath, [
+    ['@/lib/projections/groupFacts', './groupFacts.mjs'],
+  ]);
+  return import(`file://${pricingFactsPath.replaceAll("\\", "/")}`);
+}
+
+const { buildPricingGroupCandidates } = await importPricingProjection();
 
 const candidates = buildPricingGroupCandidates({
   stations: [station("station-a", "Station A", 10)],
