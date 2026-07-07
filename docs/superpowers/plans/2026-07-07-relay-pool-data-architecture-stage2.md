@@ -138,6 +138,38 @@ node scripts/channel-monitor-usage-request-log.test.mjs
 pnpm.cmd build
 ```
 
+### Slice 2D：Routing raw facts query service
+
+仅当主 checkout 仍未提交高重叠 pricing / station / group facts 改动时，作为低重叠切片执行。
+
+新增：
+- `src/lib/queries/routingQueries.ts`
+- `scripts/routing-query-service.test.mjs`
+
+候选函数：
+
+- `loadRoutingWorkspace()`
+
+返回 raw facts：
+- `settings`
+- `modelAliases`
+
+边界：
+- Query service 只加载 `getSettings()` 和 `listModelAliases()`。
+- 路由模拟、候选过滤、策略变更、模型映射增删改仍留在页面/API 动作层。
+- Query service 不得调用 `simulateRoute()`。
+- Query service 不得调用 `updateSettings()`、`upsertModelAlias()`、`deleteModelAlias()` 等写动作。
+- 不接触 runtime route decision，也不解释模型映射业务语义。
+
+验证：
+```powershell
+node scripts/routing-query-service.test.mjs
+node scripts/query-services-boundary.test.mjs
+node scripts/delete-confirmation-dialogs.test.mjs
+node scripts/data-architecture-field-ownership.test.mjs
+pnpm.cmd build
+```
+
 ## 后续切片需等待或重新 intake
 
 以下切片与主 checkout dirty 路径重叠，执行前必须重新 drift intake：
