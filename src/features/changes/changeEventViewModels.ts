@@ -1,5 +1,6 @@
 import type { ChangeEvent, ChangeEventStatus, ChangeSeverity } from "@/lib/types/changeEvents";
 import type { StatusTone } from "@/components/ui";
+import { parseTimestampLikeDate } from "@/lib/time";
 
 export type ChangeFilter = {
   severity: "all" | ChangeSeverity;
@@ -347,8 +348,7 @@ export function buildChangeEventListItem(
 }
 
 export function formatChangeTime(value: string) {
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  const date = parseTimestampLikeDate(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }

@@ -26,6 +26,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
+import { parseTimestampLikeDate } from "@/lib/time";
 import { listChangeEvents } from "@/lib/api/changeEvents";
 import { listBalanceSnapshots } from "@/lib/api/economics";
 import { getProxyStatus, listRequestLogs, startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
@@ -575,8 +576,7 @@ function DashboardMetricTile({
 }
 
 function parseLogDate(value: string) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  return parseTimestampLikeDate(value);
 }
 
 function formatTime(value: string) {

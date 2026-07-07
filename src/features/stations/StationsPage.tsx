@@ -16,6 +16,7 @@ import { Clock3, Edit3, GripVertical, KeyRound, Plus, RefreshCw, ShieldCheck, Tr
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, type StatusTone, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
+import { parseTimestampLikeDate } from "@/lib/time";
 import { createStation, deleteStation, listStations, reorderStations, updateStation } from "@/lib/api/stations";
 import {
   clearStationCredentials,
@@ -1643,8 +1644,7 @@ function formatRelativeTime(value: string | null) {
   if (!value) {
     return "未采集";
   }
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  const date = parseTimestampLikeDate(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
@@ -1676,8 +1676,7 @@ function formatNullableTime(value: string | null) {
   if (!value) {
     return "未记录";
   }
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  const date = parseTimestampLikeDate(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }

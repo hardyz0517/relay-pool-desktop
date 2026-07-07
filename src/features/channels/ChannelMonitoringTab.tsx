@@ -10,6 +10,7 @@ import {
   updateChannelMonitor,
 } from "@/lib/api/channelMonitors";
 import { readError } from "@/lib/errors";
+import { toTimestampMillis } from "@/lib/time";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
 import type { ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun, CreateChannelMonitorInput } from "@/lib/types/channelMonitors";
@@ -590,7 +591,5 @@ function getLatestRun(runs: ChannelMonitorRun[]) {
 }
 
 function toTime(value: string) {
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
-  return date.getTime();
+  return toTimestampMillis(value);
 }

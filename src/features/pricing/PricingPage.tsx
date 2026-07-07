@@ -14,6 +14,7 @@ import {
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { formatTrimmedDecimal } from "@/lib/formatters";
+import { parseTimestampLikeDate } from "@/lib/time";
 import { listPricingRules } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { listStationKeys } from "@/lib/api/stationKeys";
@@ -389,8 +390,7 @@ function formatTime(value: string | null) {
   if (!value) {
     return "未记录";
   }
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  const date = parseTimestampLikeDate(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }

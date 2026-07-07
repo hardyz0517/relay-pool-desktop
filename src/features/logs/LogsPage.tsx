@@ -17,6 +17,7 @@ import {
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { formatRate } from "@/lib/formatters";
+import { parseTimestampLikeDate } from "@/lib/time";
 import { clearRequestLogs, listRequestLogs } from "@/lib/api/proxy";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import type { RequestLog } from "@/lib/types/proxy";
@@ -293,8 +294,7 @@ function parseRejectedCandidates(json: string | null): RejectedCandidateLog[] {
 }
 
 function formatTime(value: string) {
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  const date = parseTimestampLikeDate(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
