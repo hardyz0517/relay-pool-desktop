@@ -1,10 +1,16 @@
 import { formatTrimmedDecimal } from "@/lib/formatters";
+import { currentStationBalanceFor } from "@/lib/projections/balanceFacts";
+import {
+  buildCurrentStationGroupFacts,
+  isDisplayableStationGroupCurrentFact,
+  type StationGroupCurrentFact,
+} from "@/lib/projections/groupFacts";
 import { toTimestampMillis } from "@/lib/time";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { BalanceSnapshot } from "@/lib/types/economics";
-import { isCollectedStationGroupBinding, type GroupRateRecord, type StationGroupBinding } from "@/lib/types/groupFacts";
+import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationKey } from "@/lib/types/stationKeys";
 import type { StationCredentials } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
@@ -174,20 +180,17 @@ export function latestByTime<T>(items: T[], selectTime: (item: T) => string | nu
 }
 
 export function buildBalanceCards(station: Station, balances: BalanceSnapshot[]): StationDetailBalanceCard[] {
-  const latestBalance = latestByTime(
-    balances.filter((balance) => balance.stationId === station.id && balance.scope === "station"),
-    (balance) => balance.updatedAt,
-  );
-  const currency = latestBalance?.currency ?? "CNY";
-  const currentValue = latestBalance?.value ?? station.balanceCny;
-  const threshold = latestBalance?.lowBalanceThreshold ?? station.lowBalanceThresholdCny;
-  const balanceTone = balanceToneFor(currentValue, threshold, latestBalance?.status);
+  const currentBalance = currentStationBalanceFor({ station, balances });
+  const currency = currentBalance.currency;
+  const currentValue = currentBalance.value;
+  const threshold = currentBalance.lowBalanceThreshold;
+  const balanceTone = balanceToneFor(currentValue, threshold, currentBalance.status);
 
   return [
     {
       label: "当前余额",
       value: formatMoney(currentValue, currency),
-      helper: latestBalance ? `来源：${formatBalanceSourceLabel(latestBalance.source)}` : "来自站点配置或尚未采集",
+      helper: currentBalance.source !== "missing" ? `来源：${formatBalanceSourceLabel(currentBalance.sourceLabel)}` : "来自站点配置或尚未采集",
       tone: balanceTone,
     },
     {
@@ -198,11 +201,11 @@ export function buildBalanceCards(station: Station, balances: BalanceSnapshot[])
     },
     {
       label: "余额更新时间",
-      value: formatDetailDate(latestBalance?.updatedAt ?? station.lastCheckedAt),
-      helper: latestBalance?.collectedAt
-        ? `采集时间：${formatDetailDate(latestBalance.collectedAt)}`
+      value: formatDetailDate(currentBalance.updatedAt),
+      helper: currentBalance.collectedAt
+        ? `采集时间：${formatDetailDate(currentBalance.collectedAt)}`
         : "等待采集器写入余额快照",
-      tone: latestBalance ? "neutral" : "muted",
+      tone: currentBalance.source !== "missing" ? "neutral" : "muted",
     },
   ];
 }
@@ -211,122 +214,28 @@ export function buildGroupRows(
   bindings: StationGroupBinding[],
   rates: GroupRateRecord[],
 ): StationDetailGroupRow[] {
-  const stationGroupBindings = dedupeStationGroupBindings(
-    bindings.filter((binding) => isCollectedStationGroupBinding(binding) && binding.bindingStatus !== "missing"),
-    rates,
-  );
-  const latestRateByBindingId = new Map<string, GroupRateRecord>();
-
-  for (const rate of rates) {
-    if (rate.bindingKind !== "station_group" || !rate.groupBindingId) {
-      continue;
-    }
-    const current = latestRateByBindingId.get(rate.groupBindingId);
-    if (!current || toTime(rate.checkedAt) > toTime(current.checkedAt)) {
-      latestRateByBindingId.set(rate.groupBindingId, rate);
-    }
-  }
-
-  return stationGroupBindings.map((binding) => {
-    const latestRate = latestRateByBindingId.get(binding.id) ?? null;
-    const effectiveRate = latestRate?.effectiveRateMultiplier ?? binding.effectiveRateMultiplier ?? null;
-    const defaultRate = latestRate?.defaultRateMultiplier ?? binding.defaultRateMultiplier ?? null;
-    const userRate = latestRate?.userRateMultiplier ?? binding.userRateMultiplier ?? null;
-    const warning = groupWarningFor(binding, effectiveRate);
-    const rateSource = latestRate?.source ?? binding.rateSource ?? "binding";
-
-    return {
-      id: binding.id,
-      groupName: binding.groupName || latestRate?.groupName || "未命名分组",
-      rawJsonRedacted: latestRate?.rawJsonRedacted ?? binding.rawJsonRedacted ?? null,
-      effectiveRate: formatRate(effectiveRate, "未确定"),
-      defaultRate: formatRate(defaultRate),
-      userRate: formatRate(userRate, "未覆盖"),
-      bindingStatus: formatBindingStatusLabel(binding.bindingStatus),
-      sourceLabel: formatRateSourceLabel(rateSource),
-      lastChecked: formatDetailDate(latestRate?.checkedAt ?? binding.lastCheckedAt ?? binding.updatedAt),
-      tone: warning ? "warning" : binding.bindingStatus === "available" || binding.bindingStatus === "bound" ? "good" : "neutral",
-      warning,
-    };
-  });
+  return buildCurrentStationGroupFacts({ bindings, rates })
+    .filter(isDisplayableStationGroupCurrentFact)
+    .map(groupRowFromCurrentFact);
 }
 
-function dedupeStationGroupBindings(
-  bindings: StationGroupBinding[],
-  rates: GroupRateRecord[],
-): StationGroupBinding[] {
-  const latestRateByBindingId = new Map<string, GroupRateRecord>();
-  for (const rate of rates) {
-    if (rate.bindingKind !== "station_group" || !rate.groupBindingId) {
-      continue;
-    }
-    const current = latestRateByBindingId.get(rate.groupBindingId);
-    if (!current || toTime(rate.checkedAt) > toTime(current.checkedAt)) {
-      latestRateByBindingId.set(rate.groupBindingId, rate);
-    }
-  }
-
-  const byGroupName = new Map<string, StationGroupBinding>();
-  for (const binding of bindings) {
-    const key = normalizeGroupName(binding.groupName);
-    const existing = byGroupName.get(key);
-    if (!existing) {
-      byGroupName.set(key, binding);
-      continue;
-    }
-    byGroupName.set(
-      key,
-      preferStationGroupBinding(
-        existing,
-        binding,
-        latestRateByBindingId.get(existing.id) ?? null,
-        latestRateByBindingId.get(binding.id) ?? null,
-      ),
-    );
-  }
-  return Array.from(byGroupName.values());
-}
-
-function preferStationGroupBinding(
-  left: StationGroupBinding,
-  right: StationGroupBinding,
-  leftRate: GroupRateRecord | null,
-  rightRate: GroupRateRecord | null,
-) {
-  const leftScore = stationGroupBindingScore(left, leftRate);
-  const rightScore = stationGroupBindingScore(right, rightRate);
-  if (rightScore !== leftScore) {
-    return rightScore > leftScore ? right : left;
-  }
-  return toTime(right.lastCheckedAt ?? right.updatedAt) > toTime(left.lastCheckedAt ?? left.updatedAt)
-    ? right
-    : left;
-}
-
-function stationGroupBindingScore(binding: StationGroupBinding, latestRate: GroupRateRecord | null) {
-  let score = 0;
-  const source = latestRate?.source ?? binding.rateSource ?? "";
-  if (source !== "remote_scan") {
-    score += 10;
-  }
-  if (source.includes("groups_rates")) {
-    score += 5;
-  }
-  if (
-    binding.effectiveRateMultiplier != null ||
-    binding.defaultRateMultiplier != null ||
-    binding.userRateMultiplier != null ||
-    latestRate?.effectiveRateMultiplier != null ||
-    latestRate?.defaultRateMultiplier != null ||
-    latestRate?.userRateMultiplier != null
-  ) {
-    score += 3;
-  }
-  return score;
-}
-
-function normalizeGroupName(value: string) {
-  return value.trim().toLowerCase();
+function groupRowFromCurrentFact(fact: StationGroupCurrentFact): StationDetailGroupRow {
+  const defaultRate = fact.sourceRate?.defaultRateMultiplier ?? fact.sourceBinding?.defaultRateMultiplier ?? null;
+  const userRate = fact.sourceRate?.userRateMultiplier ?? fact.sourceBinding?.userRateMultiplier ?? null;
+  const warning = groupWarningForFact(fact);
+  return {
+    id: fact.groupBindingId ?? fact.identityKey,
+    groupName: fact.groupName || "未命名分组",
+    rawJsonRedacted: fact.sourceRate?.rawJsonRedacted ?? fact.sourceBinding?.rawJsonRedacted ?? null,
+    effectiveRate: formatRate(fact.rateMultiplier, "未确定"),
+    defaultRate: formatRate(defaultRate),
+    userRate: formatRate(userRate, "未覆盖"),
+    bindingStatus: formatBindingStatusLabel(fact.bindingStatus),
+    sourceLabel: formatRateSourceLabel(fact.rateSource ?? "binding"),
+    lastChecked: formatDetailDate(fact.rateCheckedAt ?? fact.sourceBinding?.updatedAt ?? null),
+    tone: warning ? "warning" : "good",
+    warning,
+  };
 }
 
 export function buildStationDetailViewModel({
@@ -491,14 +400,11 @@ function balanceToneFor(
   return "good";
 }
 
-function groupWarningFor(binding: StationGroupBinding, effectiveRate: number | null) {
-  if (binding.bindingStatus === "missing") {
-    return "分组缺失";
-  }
-  if (effectiveRate == null || !Number.isFinite(effectiveRate)) {
+function groupWarningForFact(fact: StationGroupCurrentFact) {
+  if (fact.rateMultiplier == null || !Number.isFinite(fact.rateMultiplier)) {
     return "缺少倍率";
   }
-  if (effectiveRate === 0) {
+  if (fact.rateMultiplier === 0) {
     return "倍率为 0";
   }
   return null;

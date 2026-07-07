@@ -143,7 +143,7 @@ function factFromBinding(
       binding.defaultRateMultiplier,
       latestRate?.defaultRateMultiplier,
     ),
-    rateSource: binding.rateSource ?? latestRate?.source ?? null,
+    rateSource: latestRate?.source ?? binding.rateSource ?? null,
     rateEvidenceId: latestRate?.id ?? null,
     rateCheckedAt: latestRate?.checkedAt ?? binding.lastCheckedAt,
     sourceBinding: binding,
