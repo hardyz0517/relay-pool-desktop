@@ -171,6 +171,12 @@ Relay Pool 应该被视为一个本地 AI 网关：
 
 这些字段在现阶段视为兼容/缓存字段。新代码应该通过 current projection 读取，而不是直接把它们当权威事实。
 
+兼容字段的新增读取必须经过白名单：
+
+- 允许读取：projection service、migration/backfill、旧页面尚未迁移的兼容路径、明确的调试/诊断展示。
+- 禁止读取：新页面 view model、runtime snapshot 编译以外的运行时路径、价格/余额/分组的新业务判断。
+- 每迁移一个消费者时，要把对应兼容字段读取从“旧页面临时允许”移动到“禁止新增消费”清单。
+
 ## 字段所有权决策
 
 ### Station
@@ -230,6 +236,7 @@ binding 行可以保存当前倍率字段，因为它是当前投影锚点。这
 - `src/lib/queries/pricingQueries.ts`
 - `src/lib/queries/dashboardQueries.ts`
 - `src/lib/queries/keyPoolQueries.ts`
+- `src/lib/queries/providerEditQueries.ts`
 
 初始函数：
 
@@ -342,7 +349,7 @@ binding 行可以保存当前倍率字段，因为它是当前投影锚点。这
 - Add Provider 远端分组同步保留 `group_binding_id` 和上游 group identity。
 - 本地 proxy route candidate 仍然暴露 group binding、multiplier、pricing status、health facts。
 
-再加字段所有权检查：如果新代码在未批准模块里直接读取兼容字段，测试应失败。
+再加字段所有权检查：如果新代码在未批准模块里直接读取兼容字段，测试应失败。第一版可以用源码扫描脚本实现，白名单只允许 `src/lib/projections/**`、明确的 migration/backfill 文件、以及尚未迁移的旧消费者路径。每迁走一个旧消费者，白名单必须同步收窄。
 
 ### Stage 1：低风险工具去重
 
@@ -354,6 +361,8 @@ binding 行可以保存当前倍率字段，因为它是当前投影锚点。这
 - 共享 status label/tone 放到 `src/lib/statusLabels.ts`。
 
 这一阶段不应改变行为。除非文件本身已有中文文案且明显 mojibake，否则不顺手改文案。
+
+工具去重的验收不是“编译通过”，而是“输出保持一致”。每个被替换的 formatter、status label、`readError` 都要有小样例或源码负证明，确认页面显示文本、fallback 文案、数字精度和空值展示没有被顺手改掉。
 
 ### Stage 2：查询服务层
 
@@ -372,10 +381,12 @@ binding 行可以保存当前倍率字段，因为它是当前投影锚点。这
 
 身份 fallback 顺序：
 
-1. `group_binding_id`
+1. 当前 binding row id，也就是消费者看到的 `group_binding_id`
 2. `group_key_hash`
 3. `group_id_hash`
 4. normalized `group_name`，仅作为 legacy fallback
+
+`group_key_hash` 和 `group_id_hash` 不能互相替代：前者是本地稳定身份，后者是上游 group id 的脱敏身份。只有 projection 输出可以同时携带两者，页面不得自己决定二者等价。
 
 倍率 fallback 顺序：
 
@@ -413,6 +424,8 @@ binding 行可以保存当前倍率字段，因为它是当前投影锚点。这
 2. `PricingPage` 用 candidates 渲染现有 UI。
 3. 测试通过后移除页面本地 group/rate matching。
 
+这一阶段不得同时重排价格页 UI。先迁数据来源和去重规则，视觉结构保持原样，避免把架构回归和 UI 回归混在一起。
+
 ### Stage 5：站点详情和资产页迁移
 
 站点详情 group rows 和站点资产 chips 都改用 current projections。
@@ -422,6 +435,8 @@ binding 行可以保存当前倍率字段，因为它是当前投影锚点。这
 - 站点详情和资产列表对当前分组数量、missing 状态、倍率展示必须一致。
 - snapshot 解析只作为老数据库没有 fact rows 时的 fallback。
 - missing group 警告必须继续可见。
+
+站点详情迁移时要特别保护现有刷新动作：余额刷新、分组采集、完整采集都必须保持旧数据可见，失败时只显示局部错误和 toast，不能因为 projection 迁移重新引入整页闪烁。
 
 ### Stage 6：Key Pool 和 Add Provider 迁移
 
@@ -502,6 +517,7 @@ binding 行可以保存当前倍率字段，因为它是当前投影锚点。这
 - 先加 additive module，再迁移读者。
 - schema constraint 不在早期阶段改。
 - 如果某个页面迁移出问题，可以只回滚该页面迁移；独立测试通过的 projection module 可以保留。
+- 单个提交不要同时做“新增投影”“迁多个页面”“改 UI 文案”“清理旧代码”。如果必须触碰多个层，先提交 additive module，再提交单个消费者迁移，再提交旧逻辑删除。
 
 ## 非目标
 
@@ -524,4 +540,3 @@ binding 行可以保存当前倍率字段，因为它是当前投影锚点。这
 - 兼容字段有清晰读写所有权，新代码不会随意直接消费。
 - 陈旧页面本地重复逻辑和过期测试被删除或隔离。
 - 验证覆盖前端 focused tests、必要 Rust tests，以及被触及层对应的 build/check。
-
