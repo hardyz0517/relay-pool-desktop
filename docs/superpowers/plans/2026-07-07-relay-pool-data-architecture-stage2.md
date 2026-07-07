@@ -170,6 +170,50 @@ node scripts/data-architecture-field-ownership.test.mjs
 pnpm.cmd build
 ```
 
+### Slice 2E：Channels raw facts query service
+
+仅当主 checkout 仍未提交高重叠 pricing / station detail / group facts 改动时，作为低重叠切片执行。
+
+新增：
+- `src/lib/queries/channelQueries.ts`
+- `scripts/channel-query-service.test.mjs`
+
+候选函数：
+
+- `loadChannelMonitoringWorkspace()`
+- `loadChannelStatusWorkspace()`
+
+返回 raw facts：
+- `monitorSummaries`
+- `stations`
+- `keyPoolItems`
+- `templates`
+- `requestLogs`
+- `stationKeyHealth`
+
+边界：
+- Query service 只加载 channel tabs 初始刷新需要的 raw facts。
+- Channel Monitoring 的新建、更新、删除、立即运行等写动作仍留在页面/API 动作层。
+- Channel Status 的日志窗口过滤、健康卡片构建、排序和拖拽状态仍留在页面/view-model 层。
+- Query service 不得调用 `runChannelMonitorNow()`、`createChannelMonitor()`、`updateChannelMonitor()`、`deleteChannelMonitor()`。
+- Query service 不得调用 `filterLogsByWindow()`、`buildChannels()`、`orderChannelsBySavedOrder()` 等展示逻辑。
+- 不解释 key 分组、健康状态或 runtime route decision。
+
+验证：
+```powershell
+node scripts/channel-query-service.test.mjs
+node scripts/query-services-boundary.test.mjs
+node scripts/shared-capabilities-contract.test.mjs
+node scripts/channel-monitoring-layout.test.mjs
+node scripts/channel-status-drag-transform.test.mjs
+node scripts/channel-status-card-layout.test.mjs
+node scripts/data-architecture-field-ownership.test.mjs
+node scripts/shared-utils-dedup.test.mjs
+node scripts/delete-confirmation-dialogs.test.mjs
+node scripts/channel-monitor-usage-request-log.test.mjs
+pnpm.cmd build
+```
+
 ## 后续切片需等待或重新 intake
 
 以下切片与主 checkout dirty 路径重叠，执行前必须重新 drift intake：

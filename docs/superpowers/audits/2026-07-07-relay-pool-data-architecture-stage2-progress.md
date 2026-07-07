@@ -12,6 +12,7 @@ Stage 2 目标是把页面里的重复加载编排收敛到 query services。Que
 - Slice 2B：Change Center raw facts query service
 - Slice 2C：Request Logs raw facts query service
 - Slice 2D：Routing raw facts query service
+- Slice 2E：Channels raw facts query service
 - Stage 2 query service boundary guard
 
 ## 已提交切片
@@ -21,6 +22,7 @@ Stage 2 目标是把页面里的重复加载编排收敛到 query services。Que
 - `e457101 test: guard query service boundaries`
 - `dbc291f refactor: add request log query service`
 - `3721802 refactor: add routing query service`
+- `6ad29db refactor: add channel query service`
 
 ## 新增 query services
 
@@ -107,9 +109,35 @@ Stage 2 目标是把页面里的重复加载编排收敛到 query services。Que
 - 不解释 runtime route decision
 - 不接触 secret 或 group binding
 
+### `src/lib/queries/channelQueries.ts`
+
+导出：
+
+- `ChannelMonitoringWorkspace`
+- `ChannelStatusWorkspace`
+- `loadChannelMonitoringWorkspace()`
+- `loadChannelStatusWorkspace()`
+
+职责：
+
+- 加载 `monitorSummaries`
+- 加载 `stations`
+- 加载 `keyPoolItems`
+- 加载 `templates`
+- 加载 `requestLogs`
+- 加载 `stationKeyHealth`
+
+明确不做：
+
+- 不创建、更新、删除或立即运行 channel monitor
+- 不过滤日志时间窗口
+- 不构建 channel health cards
+- 不处理拖拽排序
+- 不解释 key 分组、健康状态或 runtime route decision
+
 ## 验证
 
-Slice 2A / 2B / 2C / 2D 已运行：
+Slice 2A / 2B / 2C / 2D / 2E 已运行：
 
 ```powershell
 node scripts/query-services-boundary.test.mjs
@@ -124,6 +152,11 @@ node scripts/log-query-service.test.mjs
 node scripts/channel-monitor-usage-request-log.test.mjs
 node scripts/routing-query-service.test.mjs
 node scripts/delete-confirmation-dialogs.test.mjs
+node scripts/channel-query-service.test.mjs
+node scripts/shared-capabilities-contract.test.mjs
+node scripts/channel-monitoring-layout.test.mjs
+node scripts/channel-status-drag-transform.test.mjs
+node scripts/channel-status-card-layout.test.mjs
 node scripts/data-architecture-field-ownership.test.mjs
 node scripts/shared-utils-dedup.test.mjs
 pnpm.cmd build
@@ -138,7 +171,7 @@ pnpm.cmd build
 
 工作树 HEAD：
 
-- `3721802`
+- `6ad29db`
 
 主 checkout HEAD：
 
@@ -163,8 +196,8 @@ pnpm.cmd build
 
 结论：
 
-- Dashboard、Change Center、Request Logs 和 Routing 的 query service 切片未接入主 checkout dirty 改动。
-- Query service boundary guard 已显式锁定当前 query service inventory：`changeQueries.ts`、`dashboardQueries.ts`、`logQueries.ts`、`routingQueries.ts`。
+- Dashboard、Change Center、Request Logs、Routing 和 Channels 的 query service 切片未接入主 checkout dirty 改动。
+- Query service boundary guard 已显式锁定当前 query service inventory：`changeQueries.ts`、`channelQueries.ts`、`dashboardQueries.ts`、`logQueries.ts`、`routingQueries.ts`。
 - 后续 pricing / station detail / station asset / key pool / provider edit query service 都可能和主 checkout 的价格、站点、分组事实改动重叠。
 - 继续这些切片前必须重新 drift intake。
 - 如果 dirty 改动仍未提交，应等待主 checkout 提交，或由用户明确指定 patch 接入；不得通过 `git merge master` 声称接入未提交改动。
