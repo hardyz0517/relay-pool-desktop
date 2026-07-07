@@ -1,28 +1,69 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import ts from "typescript";
 
-async function importStationDetailViewModels() {
-  const source = await readFile("src/features/stations/stationDetailViewModels.ts", "utf8");
-  const testableSource = source.replace(
-    /import \{ isCollectedStationGroupBinding,[^\n]+from "@\/lib\/types\/groupFacts";/,
-    `function isCollectedStationGroupBinding(binding) {
-      return (
-        binding.bindingKind === "station_group" &&
-        binding.bindingStatus !== "disabled" &&
-        binding.bindingStatus !== "manual_legacy" &&
-        binding.rateSource !== "legacy_key_group"
-      );
-    }`,
-  );
-  const output = ts.transpileModule(testableSource, {
+async function transpileTsFile(sourcePath, outputPath, replacements = []) {
+  let source = await readFile(sourcePath, "utf8");
+  for (const [from, to] of replacements) {
+    source = source.replaceAll(from, to);
+  }
+  const output = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.ESNext,
       target: ts.ScriptTarget.ES2022,
       verbatimModuleSyntax: true,
     },
   }).outputText;
-  return import(`data:text/javascript;base64,${Buffer.from(output, "utf8").toString("base64")}`);
+  await writeFile(outputPath, output, "utf8");
+}
+
+async function importStationDetailViewModels() {
+  const tempRoot = await mkdtemp(join(tmpdir(), "relay-station-detail-"));
+  const detailPath = join(tempRoot, "stationDetailViewModels.mjs");
+  const groupFactsPath = join(tempRoot, "groupFacts.mjs");
+  const balanceFactsPath = join(tempRoot, "balanceFacts.mjs");
+  const timePath = join(tempRoot, "time.mjs");
+  const formattersPath = join(tempRoot, "formatters.mjs");
+  const groupTypesPath = join(tempRoot, "groupTypes.mjs");
+
+  await writeFile(
+    timePath,
+    "export function toTimestampMillis(value) { return Date.parse(value); }",
+    "utf8",
+  );
+  await writeFile(
+    formattersPath,
+    "export function formatTrimmedDecimal(value, digits) { return Number(value).toFixed(digits).replace(/\\.0+$/, '').replace(/(\\.\\d*?)0+$/, '$1'); }",
+    "utf8",
+  );
+  await writeFile(
+    groupTypesPath,
+    `export function isCollectedStationGroupBinding(binding) {
+      return (
+        binding.bindingKind === "station_group" &&
+        binding.bindingStatus !== "disabled" &&
+        binding.bindingStatus !== "missing" &&
+        binding.bindingStatus !== "manual_legacy" &&
+        binding.rateSource !== "legacy_key_group"
+      );
+    }`,
+    "utf8",
+  );
+
+  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath);
+  await transpileTsFile("src/lib/projections/balanceFacts.ts", balanceFactsPath, [
+    ['@/lib/time', "./time.mjs"],
+  ]);
+  await transpileTsFile("src/features/stations/stationDetailViewModels.ts", detailPath, [
+    ['@/lib/formatters', "./formatters.mjs"],
+    ['@/lib/time', "./time.mjs"],
+    ['@/lib/types/groupFacts', "./groupTypes.mjs"],
+    ['@/lib/projections/groupFacts', "./groupFacts.mjs"],
+    ['@/lib/projections/balanceFacts', "./balanceFacts.mjs"],
+  ]);
+  return import(`file://${detailPath.replaceAll("\\", "/")}`);
 }
 
 const { buildGroupRows } = await importStationDetailViewModels();
@@ -81,6 +122,19 @@ assert.equal(
   "station detail should show the latest collected default rate instead of stale remote_scan rate",
 );
 assert.match(rows[0].lastChecked, /07\/07/, "station detail should use the latest collected check time");
+
+const detailSource = await readFile("src/features/stations/stationDetailViewModels.ts", "utf8");
+assert.ok(
+  detailSource.includes("buildCurrentStationGroupFacts") &&
+    detailSource.includes("isDisplayableStationGroupCurrentFact"),
+  "station detail group rows should consume shared current group projection facts",
+);
+assert.ok(
+  !detailSource.includes("function dedupeStationGroupBindings(") &&
+    !detailSource.includes("function preferStationGroupBinding(") &&
+    !detailSource.includes("function stationGroupBindingScore("),
+  "station detail should not keep page-local station group de-duplication after Stage 5",
+);
 
 function groupBinding(overrides = {}) {
   const timestamp = "2026-07-05T15:29:00.000Z";
