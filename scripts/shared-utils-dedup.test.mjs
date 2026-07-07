@@ -8,6 +8,7 @@ await collectSourceFiles(path.join(root, "src", "features"), sourceFiles);
 
 const localReadErrorDefinitions = [];
 const localFormatRateDefinitions = [];
+const localChannelToTimeDefinitions = [];
 for (const absolutePath of sourceFiles) {
   const source = await readFile(absolutePath, "utf8");
   const relativePath = normalizePath(path.relative(root, absolutePath));
@@ -19,6 +20,14 @@ for (const absolutePath of sourceFiles) {
     /function\s+formatRate\s*\(/.test(source)
   ) {
     localFormatRateDefinitions.push(relativePath);
+  }
+  if (
+    /^src\/features\/channels\/(?:ChannelStatusTab|channelMonitorViewModel|channelStatusViewModel)\.tsx?$/.test(
+      relativePath,
+    ) &&
+    /function\s+toTime\s*\([^)]*\)\s*\{\s*const\s+numeric\s*=\s*Number\(value\);/.test(source)
+  ) {
+    localChannelToTimeDefinitions.push(relativePath);
   }
 }
 
@@ -44,6 +53,22 @@ const sharedFormattersSource = await readFile(path.join(root, "src", "lib", "for
 assert.ok(
   sharedFormattersSource.includes("export function formatRate(value: number | null | undefined"),
   "shared formatRate helper should remain exported from src/lib/formatters.ts",
+);
+
+assert.deepEqual(
+  localChannelToTimeDefinitions,
+  [],
+  `channel views should import timestamp parsing from src/lib/time.ts instead of redefining it:\n${localChannelToTimeDefinitions.join("\n")}`,
+);
+
+const sharedTimeSource = await readFile(path.join(root, "src", "lib", "time.ts"), "utf8");
+assert.ok(
+  sharedTimeSource.includes("export function parseTimestampLikeDate(value: string)"),
+  "shared parseTimestampLikeDate helper should remain exported from src/lib/time.ts",
+);
+assert.ok(
+  sharedTimeSource.includes("export function toTimestampMillis(value: string)"),
+  "shared toTimestampMillis helper should remain exported from src/lib/time.ts",
 );
 
 async function collectSourceFiles(directory, files) {

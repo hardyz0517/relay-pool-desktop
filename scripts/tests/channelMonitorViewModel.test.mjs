@@ -3,6 +3,16 @@ import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import ts from "typescript";
 
+const timeSource = await readFile(new URL("../../src/lib/time.ts", import.meta.url), "utf8");
+const compiledTime = ts.transpileModule(timeSource, {
+  compilerOptions: {
+    jsx: ts.JsxEmit.ReactJSX,
+    module: ts.ModuleKind.ES2022,
+    target: ts.ScriptTarget.ES2022,
+  },
+}).outputText;
+const timeModuleUrl = `data:text/javascript;base64,${Buffer.from(compiledTime).toString("base64")}`;
+
 const source = await readFile(new URL("../../src/features/channels/channelMonitorViewModel.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: {
@@ -10,7 +20,7 @@ const compiled = ts.transpileModule(source, {
     module: ts.ModuleKind.ES2022,
     target: ts.ScriptTarget.ES2022,
   },
-}).outputText;
+}).outputText.replace('from "@/lib/time";', `from "${timeModuleUrl}";`);
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
 const viewModel = await import(moduleUrl);
 

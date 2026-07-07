@@ -9,6 +9,7 @@ import type {
 import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
+import { toTimestampMillis } from "@/lib/time";
 
 export type ChannelMonitorDraft = {
   name: string;
@@ -407,9 +408,7 @@ function isInRange(value: number | null, min: number, max: number) {
 }
 
 function toTime(value: string) {
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
-  return date.getTime();
+  return toTimestampMillis(value);
 }
 
 function uniqueModels(models: string[]) {

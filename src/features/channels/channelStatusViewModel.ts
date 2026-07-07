@@ -2,6 +2,7 @@ import type { RequestLog } from "@/lib/types/proxy";
 import type { StationKeyHealth } from "@/lib/types/routing";
 import type { ChannelMonitor, ChannelMonitorRun } from "@/lib/types/channelMonitors";
 import type { StationKeyStatus } from "@/lib/types/stationKeys";
+import { toTimestampMillis } from "@/lib/time";
 
 export type RecentOutcome = "success" | "warning" | "failed" | "unknown";
 
@@ -187,7 +188,5 @@ function healthToRecentOutcomes(health: HealthOutcomeSummary | null | undefined)
 }
 
 function toTime(value: string) {
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
-  return date.getTime();
+  return toTimestampMillis(value);
 }

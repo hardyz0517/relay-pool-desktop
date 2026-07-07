@@ -24,6 +24,7 @@ import { listRequestLogs } from "@/lib/api/proxy";
 import { listStationKeyHealth } from "@/lib/api/routing";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
+import { parseTimestampLikeDate, toTimestampMillis } from "@/lib/time";
 import type { ChannelMonitor, ChannelMonitorRun } from "@/lib/types/channelMonitors";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { StationKeyHealth } from "@/lib/types/routing";
@@ -503,8 +504,7 @@ function formatCompactTime(value: string | null) {
   if (!value) {
     return "--";
   }
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  const date = parseTimestampLikeDate(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
@@ -520,13 +520,10 @@ function isFutureTime(value: string | null) {
   if (!value) {
     return false;
   }
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  const date = parseTimestampLikeDate(value);
   return !Number.isNaN(date.getTime()) && date.getTime() > Date.now();
 }
 
 function toTime(value: string) {
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
-  return date.getTime();
+  return toTimestampMillis(value);
 }
