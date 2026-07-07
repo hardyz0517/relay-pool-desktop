@@ -13,6 +13,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
+import { formatTrimmedDecimal } from "@/lib/formatters";
 import { listPricingRules } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { listStationKeys } from "@/lib/api/stationKeys";
@@ -403,7 +404,7 @@ function formatTime(value: string | null) {
 
 
 function formatDecimal(value: number, fractionDigits: number) {
-  return value.toFixed(fractionDigits).replace(/0+$/, "").replace(/\.$/, "");
+  return formatTrimmedDecimal(value, fractionDigits);
 }
 
 function providerLabel(provider: OfficialModelProvider) {

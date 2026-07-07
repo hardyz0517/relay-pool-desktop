@@ -1,3 +1,4 @@
+import { formatTrimmedDecimal } from "@/lib/formatters";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
@@ -553,7 +554,7 @@ function formatCollectorTaskType(taskType: string) {
 }
 
 function trimFixed(value: number, digits: number) {
-  return value.toFixed(digits).replace(/0+$/, "").replace(/\.$/, "");
+  return formatTrimmedDecimal(value, digits);
 }
 
 function latestTime(values: Array<string | null | undefined>) {

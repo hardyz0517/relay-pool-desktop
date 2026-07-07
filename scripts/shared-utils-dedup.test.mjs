@@ -9,6 +9,7 @@ await collectSourceFiles(path.join(root, "src", "features"), sourceFiles);
 const localReadErrorDefinitions = [];
 const localFormatRateDefinitions = [];
 const localChannelToTimeDefinitions = [];
+const localTrimmedDecimalDefinitions = [];
 for (const absolutePath of sourceFiles) {
   const source = await readFile(absolutePath, "utf8");
   const relativePath = normalizePath(path.relative(root, absolutePath));
@@ -28,6 +29,12 @@ for (const absolutePath of sourceFiles) {
     /function\s+toTime\s*\([^)]*\)\s*\{\s*const\s+numeric\s*=\s*Number\(value\);/.test(source)
   ) {
     localChannelToTimeDefinitions.push(relativePath);
+  }
+  if (
+    /^src\/features\/(?:pricing\/PricingPage|stations\/stationDetailViewModels)\.tsx?$/.test(relativePath) &&
+    /\.toFixed\([^)]*\)\.replace\(\/0\+\$\/,\s*""\)\.replace\(\/\\\.\$\/,\s*""\)/.test(source)
+  ) {
+    localTrimmedDecimalDefinitions.push(relativePath);
   }
 }
 
@@ -53,6 +60,16 @@ const sharedFormattersSource = await readFile(path.join(root, "src", "lib", "for
 assert.ok(
   sharedFormattersSource.includes("export function formatRate(value: number | null | undefined"),
   "shared formatRate helper should remain exported from src/lib/formatters.ts",
+);
+assert.ok(
+  sharedFormattersSource.includes("export function formatTrimmedDecimal(value: number, fractionDigits: number)"),
+  "shared formatTrimmedDecimal helper should remain exported from src/lib/formatters.ts",
+);
+
+assert.deepEqual(
+  localTrimmedDecimalDefinitions,
+  [],
+  `pricing and station detail should use formatTrimmedDecimal from src/lib/formatters.ts instead of redefining trailing-zero trimming:\n${localTrimmedDecimalDefinitions.join("\n")}`,
 );
 
 assert.deepEqual(
