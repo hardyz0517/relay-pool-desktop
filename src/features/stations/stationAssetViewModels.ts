@@ -1,8 +1,15 @@
-import { toTimestampMillis } from "@/lib/time";
+import {
+  buildCurrentStationBalanceFacts,
+  type StationBalanceCurrentFact,
+} from "@/lib/projections/balanceFacts";
+import {
+  buildCurrentStationGroupFacts,
+  isDisplayableStationGroupCurrentFact,
+} from "@/lib/projections/groupFacts";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { BalanceSnapshot } from "@/lib/types/economics";
-import type { StationGroupBinding } from "@/lib/types/groupFacts";
+import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationKey } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
 import type { StatusTone } from "@/components/ui";
@@ -18,6 +25,7 @@ export type StationAssetRow = {
   enabledKeyCount: number;
   warningKeyCount: number;
   latestBalance: BalanceSnapshot | null;
+  currentBalance: StationBalanceCurrentFact;
   latestSnapshot: CollectorSnapshot | null;
   riskEvents: ChangeEvent[];
   rateChips: RateChip[];
@@ -30,6 +38,7 @@ export function buildStationAssetRows({
   balances,
   snapshotsByStation,
   groupBindingsByStation,
+  groupRatesByStation,
   changes,
 }: {
   stations: Station[];
@@ -37,11 +46,15 @@ export function buildStationAssetRows({
   balances: BalanceSnapshot[];
   snapshotsByStation: Map<string, CollectorSnapshot | null>;
   groupBindingsByStation: Map<string, StationGroupBinding[]>;
+  groupRatesByStation?: Map<string, GroupRateRecord[]>;
   changes: ChangeEvent[];
 }): StationAssetRow[] {
-  const latestBalanceByStation = latestBalanceMap(balances);
+  const currentBalancesByStation = buildCurrentStationBalanceFacts({ stations, balances });
   return stations.map((station) => {
     const keys = keysByStation.get(station.id) ?? [];
+    const currentBalance = currentBalancesByStation.get(station.id);
+    const groupBindings = groupBindingsByStation.get(station.id) ?? [];
+    const groupRates = groupRatesByStation?.get(station.id) ?? [];
     const riskEvents = changes.filter(
       (event) =>
         event.stationId === station.id &&
@@ -54,11 +67,13 @@ export function buildStationAssetRows({
       station,
       enabledKeyCount,
       warningKeyCount: keys.filter((key) => key.status === "warning" || key.status === "error").length,
-      latestBalance: latestBalanceByStation.get(station.id) ?? null,
+      latestBalance: currentBalance?.sourceSnapshot ?? null,
+      currentBalance: currentBalance ?? buildCurrentStationBalanceFacts({ stations: [station], balances: [] }).get(station.id)!,
       latestSnapshot: snapshotsByStation.get(station.id) ?? null,
       riskEvents,
       rateChips: rateChipsForStation(
-        groupBindingsByStation.get(station.id) ?? [],
+        groupBindings,
+        groupRates,
         snapshotsByStation.get(station.id) ?? null,
       ),
       participatesInRouting: station.enabled && enabledKeyCount > 0,
@@ -68,24 +83,25 @@ export function buildStationAssetRows({
 
 function rateChipsForStation(
   bindings: StationGroupBinding[],
+  rates: GroupRateRecord[],
   snapshot: CollectorSnapshot | null,
 ): RateChip[] {
-  const durableChips = rateChipsFromBindings(bindings);
-  return durableChips.length > 0 ? durableChips : extractRateChips(snapshot);
+  const currentFactChips = rateChipsFromCurrentFacts(bindings, rates);
+  return currentFactChips.length > 0 ? currentFactChips : extractRateChips(snapshot);
 }
 
-export function rateChipsFromBindings(bindings: StationGroupBinding[]): RateChip[] {
-  return bindings
-    .filter((binding) => binding.bindingKind === "station_group")
+export function rateChipsFromCurrentFacts(
+  bindings: StationGroupBinding[],
+  rates: GroupRateRecord[],
+): RateChip[] {
+  return buildCurrentStationGroupFacts({ bindings, rates })
+    .filter(isDisplayableStationGroupCurrentFact)
     .slice(0, 3)
-    .map((binding) => {
-      const multiplier = binding.effectiveRateMultiplier ?? binding.defaultRateMultiplier;
-      return {
-        label: binding.groupName,
-        value: typeof multiplier === "number" ? `${multiplier.toFixed(2)}x` : "-",
-        tone: binding.bindingStatus === "missing" ? "warning" : "neutral",
-      };
-    });
+    .map((fact) => ({
+      label: fact.groupName,
+      value: typeof fact.rateMultiplier === "number" ? `${fact.rateMultiplier.toFixed(2)}x` : "-",
+      tone: fact.rateMultiplier == null ? "warning" : fact.rateMultiplier < 1 ? "good" : "neutral",
+    }));
 }
 
 export function extractRateChips(snapshot: CollectorSnapshot | null): RateChip[] {
@@ -104,12 +120,11 @@ export function extractRateChips(snapshot: CollectorSnapshot | null): RateChip[]
 }
 
 export function formatStationBalance(row: StationAssetRow) {
-  const value = row.latestBalance?.value ?? row.station.balanceCny;
+  const value = row.currentBalance.value;
   if (value == null) {
     return "未采集";
   }
-  const currency = row.latestBalance?.currency ?? "CNY";
-  return `${currency} ${value.toFixed(2)}`;
+  return `${row.currentBalance.currency} ${value.toFixed(2)}`;
 }
 
 export function stationRiskTone(row: StationAssetRow): StatusTone {
@@ -134,24 +149,3 @@ export function stationRiskTone(row: StationAssetRow): StatusTone {
   return "info";
 }
 
-function latestBalanceMap(balances: BalanceSnapshot[]) {
-  const map = new Map<string, BalanceSnapshot>();
-  for (const balance of balances) {
-    if (balance.scope !== "station") {
-      continue;
-    }
-    const current = map.get(balance.stationId);
-    if (!current || toTime(balance.updatedAt) > toTime(current.updatedAt)) {
-      map.set(balance.stationId, balance);
-    }
-  }
-  return map;
-}
-
-function toTime(value: string | null) {
-  if (!value) {
-    return 0;
-  }
-  const time = toTimestampMillis(value);
-  return Number.isNaN(time) ? 0 : time;
-}
