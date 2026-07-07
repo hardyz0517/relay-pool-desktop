@@ -10,6 +10,7 @@ Stage 2 目标是把页面里的重复加载编排收敛到 query services。Que
 
 - Slice 2A：Dashboard raw facts query service
 - Slice 2B：Change Center raw facts query service
+- Slice 2C：Request Logs raw facts query service
 - Stage 2 query service boundary guard
 
 ## 已提交切片
@@ -17,6 +18,7 @@ Stage 2 目标是把页面里的重复加载编排收敛到 query services。Que
 - `f605115 refactor: add dashboard query service`
 - `c081e65 refactor: add change center query service`
 - `e457101 test: guard query service boundaries`
+- `dbc291f refactor: add request log query service`
 
 ## 新增 query services
 
@@ -63,6 +65,26 @@ Stage 2 目标是把页面里的重复加载编排收敛到 query services。Que
 - 不处理已读写回
 - 不构建事件展示文案
 
+### `src/lib/queries/logQueries.ts`
+
+导出：
+
+- `RequestLogWorkspace`
+- `loadRequestLogWorkspace()`
+
+职责：
+
+- 加载 `requestLogs`
+- 加载 `keyPoolItems`
+
+明确不做：
+
+- 不过滤日志
+- 不格式化日志
+- 不解析 rejected candidates
+- 不计算成本展示
+- 不清空日志
+
 ## 验证
 
 Slice 2A / 2B 已运行：
@@ -76,6 +98,8 @@ node scripts/test-dashboard-balance-summary.mjs
 node scripts/change-query-service.test.mjs
 node scripts/change-center-mark-read.test.mjs
 node scripts/change-center-collector-task-label.test.mjs
+node scripts/log-query-service.test.mjs
+node scripts/channel-monitor-usage-request-log.test.mjs
 node scripts/data-architecture-field-ownership.test.mjs
 node scripts/shared-utils-dedup.test.mjs
 pnpm.cmd build
@@ -90,7 +114,7 @@ pnpm.cmd build
 
 工作树 HEAD：
 
-- `e457101`
+- `dbc291f`
 
 主 checkout HEAD：
 
@@ -116,7 +140,7 @@ pnpm.cmd build
 结论：
 
 - Dashboard 和 Change Center 的 query service 切片未接入主 checkout dirty 改动。
-- Query service boundary guard 已显式锁定当前 query service inventory：`changeQueries.ts`、`dashboardQueries.ts`。
+- Query service boundary guard 已显式锁定当前 query service inventory：`changeQueries.ts`、`dashboardQueries.ts`、`logQueries.ts`。
 - 后续 pricing / station detail / station asset / key pool / provider edit query service 都可能和主 checkout 的价格、站点、分组事实改动重叠。
 - 继续这些切片前必须重新 drift intake。
 - 如果 dirty 改动仍未提交，应等待主 checkout 提交，或由用户明确指定 patch 接入；不得通过 `git merge master` 声称接入未提交改动。
