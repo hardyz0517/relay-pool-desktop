@@ -125,6 +125,7 @@ pnpm.cmd build
 ## 完成标准
 
 - 每个 query service 都有 focused shape/source guard。
+- `scripts/query-services-boundary.test.mjs` 必须随着新增 query service 更新显式 inventory，并防止 query service 调用 feature view-model、projection、secret 读取或写动作。
 - 每迁移一个页面消费者，都保留原 loading/toast/partial failure 行为。
 - `scripts/data-architecture-field-ownership.test.mjs` 继续通过。
 - `pnpm.cmd build` 通过。
