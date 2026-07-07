@@ -12,6 +12,7 @@ import {
   Toolbar,
   useToast,
 } from "@/components/ui";
+import { readError } from "@/lib/errors";
 import { listPricingRules } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { listStationKeys } from "@/lib/api/stationKeys";
@@ -400,9 +401,6 @@ function formatTime(value: string | null) {
   });
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function formatDecimal(value: number, fractionDigits: number) {
   return value.toFixed(fractionDigits).replace(/0+$/, "").replace(/\.$/, "");

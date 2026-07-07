@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Copy, Edit3, Plus, Trash2 } from "lucide-react";
 import { Button, ConfirmDialog, Dialog, StatusBadge, SwitchControl, useToast } from "@/components/ui";
+import { readError } from "@/lib/errors";
 import {
   createChannelMonitorTemplate,
   deleteChannelMonitorTemplate,
@@ -584,6 +585,3 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}

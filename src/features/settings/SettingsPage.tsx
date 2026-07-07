@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Play, RotateCcw, Save, Square } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, MaskedSecret, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
+import { readError } from "@/lib/errors";
 import {
   getProxyStatus,
   restartLocalProxy,
@@ -498,9 +499,6 @@ function formToInput(form: SettingsFormState): UpdateSettingsInput {
   };
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 const inputClassName =
   "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:bg-white focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";

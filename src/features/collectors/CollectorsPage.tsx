@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, EmptyState, InspectorPanel, ObjectRow, SectionCard, SelectControl, StatusBadge, useToast } from "@/components/ui";
+import { readError } from "@/lib/errors";
 import {
   collectStationTask,
   clearCaptureSession,
@@ -912,9 +913,6 @@ function shortError(error: string) {
   return error.length > 120 ? `${error.slice(0, 120)}...` : error;
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 const selectClassName =
   "h-8 rounded-xl border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";

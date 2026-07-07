@@ -25,6 +25,7 @@ import {
   StatusBadge,
   useToast,
 } from "@/components/ui";
+import { readError } from "@/lib/errors";
 import { listChangeEvents } from "@/lib/api/changeEvents";
 import { listBalanceSnapshots } from "@/lib/api/economics";
 import { getProxyStatus, listRequestLogs, startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
@@ -693,9 +694,6 @@ function balanceStatusTone(status: string) {
   return "info";
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function isMaskedDisplayValue(value: string) {
   return /\*{2,}|\[REDACTED\]/i.test(value);

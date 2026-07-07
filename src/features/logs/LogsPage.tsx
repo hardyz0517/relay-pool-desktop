@@ -15,6 +15,7 @@ import {
   useToast,
   type DataTableColumn,
 } from "@/components/ui";
+import { readError } from "@/lib/errors";
 import { clearRequestLogs, listRequestLogs } from "@/lib/api/proxy";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import type { RequestLog } from "@/lib/types/proxy";
@@ -357,6 +358,3 @@ function formatJson(value: string) {
   }
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}

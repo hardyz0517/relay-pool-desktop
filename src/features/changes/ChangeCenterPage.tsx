@@ -11,6 +11,7 @@ import {
   Toolbar,
   useToast,
 } from "@/components/ui";
+import { readError } from "@/lib/errors";
 import {
   clearChangeEvents,
   listChangeEvents,
@@ -292,9 +293,6 @@ function SummaryTile({ label, value, tone = "text-slate-800" }: { label: string;
   );
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 const inputClassName =
   "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";

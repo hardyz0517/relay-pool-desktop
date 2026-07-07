@@ -14,6 +14,7 @@ import {
   StatusBadge,
   useToast,
 } from "@/components/ui";
+import { readError } from "@/lib/errors";
 import {
   deleteModelAlias,
   listModelAliases,
@@ -483,9 +484,6 @@ function CheckField({
   );
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 const inputClassName =
   "h-8 w-full rounded-xl border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";

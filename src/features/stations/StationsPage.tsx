@@ -15,6 +15,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Clock3, Edit3, GripVertical, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, type StatusTone, useToast } from "@/components/ui";
+import { readError } from "@/lib/errors";
 import { createStation, deleteStation, listStations, reorderStations, updateStation } from "@/lib/api/stations";
 import {
   clearStationCredentials,
@@ -1598,9 +1599,6 @@ function keyToForm(key: StationKey): StationKeyFormState {
   };
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function withStationAssetTimeout<T>(promise: Promise<T>, label: string, timeoutMs: number): Promise<T> {
   let timeoutId: number | null = null;

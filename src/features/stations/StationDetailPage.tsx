@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Button, EmptyState, useToast } from "@/components/ui";
+import { readError } from "@/lib/errors";
 import { listChangeEventsForStation } from "@/lib/api/changeEvents";
 import { collectStationTask, getLatestCollectorSnapshot } from "@/lib/api/collector";
 import { listCollectorRuns } from "@/lib/api/collectorRuns";
@@ -279,9 +280,6 @@ export function StationDetailPage({
   );
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function createDetailDataSeed(station: Station): DetailData {
   return {
