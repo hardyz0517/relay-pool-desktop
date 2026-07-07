@@ -14,6 +14,7 @@ const files = {
   channelStatus: await readFile("src/features/channels/ChannelStatusTab.tsx", "utf8"),
   rustCommands: await readFile("src-tauri/src/commands/mod.rs", "utf8"),
   rustLib: await readFile("src-tauri/src/lib.rs", "utf8"),
+  rustSharedCapabilities: await readFile("src-tauri/src/services/shared_capabilities.rs", "utf8"),
 };
 
 assert.ok(
@@ -91,4 +92,19 @@ assert.ok(
   !files.channelMonitoring.includes("listChannelMonitorRuns(monitor.id)") &&
     !files.channelStatus.includes("listChannelMonitorRuns(monitor.id)"),
   "channel tabs should not issue page-local per-monitor run loading",
+);
+
+assert.ok(
+  files.rustSharedCapabilities.includes("group_binding_id"),
+  "shared capabilities must persist the selected local group binding id",
+);
+
+assert.ok(
+  files.rustSharedCapabilities.includes("group_id_hash"),
+  "shared capabilities must preserve remote group identity hash as separate metadata",
+);
+
+assert.ok(
+  files.rustSharedCapabilities.includes("group_name"),
+  "shared capabilities must preserve group display name without using it as the primary identity",
 );

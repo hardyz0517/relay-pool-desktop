@@ -27,13 +27,13 @@ const { summarizeDashboardBalances } = module.exports;
 
 const summary = summarizeDashboardBalances([
   {
-    id: "key-raw-old",
+    id: "key-raw-newer",
     stationId: "station-a",
     scope: "station_key",
     value: 100,
     currency: "CNY",
     status: "normal",
-    updatedAt: "3000",
+    updatedAt: "5000",
   },
   {
     id: "station-normalized",
@@ -45,7 +45,7 @@ const summary = summarizeDashboardBalances([
     updatedAt: "2000",
   },
   {
-    id: "station-b",
+    id: "station-b-old-low",
     stationId: "station-b",
     scope: "station",
     value: 5,
@@ -54,7 +54,7 @@ const summary = summarizeDashboardBalances([
     updatedAt: "1000",
   },
   {
-    id: "station-b-newer",
+    id: "station-b-newer-normal",
     stationId: "station-b",
     scope: "station",
     value: 6,
@@ -62,12 +62,21 @@ const summary = summarizeDashboardBalances([
     status: "normal",
     updatedAt: "4000",
   },
+  {
+    id: "station-c-usd",
+    stationId: "station-c",
+    scope: "station",
+    value: 2,
+    currency: "USD",
+    status: "depleted",
+    updatedAt: "3000",
+  },
 ]);
 
-assert.equal(summary.totalBalance, 16);
-assert.equal(summary.lowBalanceStations, 0);
+assert.equal(summary.totalBalance, 18);
+assert.equal(summary.lowBalanceStations, 1);
 assert.equal(summary.primaryBalanceCurrency, "CNY");
 assert.equal(
   summary.latestStationBalances.map((balance) => balance.id).join(","),
-  "station-normalized,station-b-newer",
+  "station-normalized,station-b-newer-normal,station-c-usd",
 );

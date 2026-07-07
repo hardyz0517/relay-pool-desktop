@@ -84,3 +84,15 @@ assert.ok(
   /supportsChatCompletions:\s*true[\s\S]*supportsResponses:\s*true[\s\S]*supportsEmbeddings:\s*true[\s\S]*supportsStream:\s*true[\s\S]*supportsTools:\s*true[\s\S]*supportsVision:\s*true[\s\S]*supportsReasoning:\s*true/.test(editKeySource),
   "edit-key save should persist all protocol capabilities as supported by default",
 );
+
+assert.ok(
+  editKeySource.includes("KEEP_GROUP_BINDING_VALUE") &&
+    editKeySource.includes('return { kind: "keep" as const }'),
+  "edit-key page must preserve current group binding when unrelated fields are edited",
+);
+
+assert.ok(
+  editKeySource.includes("CLEAR_GROUP_BINDING_VALUE") &&
+    editKeySource.includes('return { kind: "clear" as const }'),
+  "edit-key page must only clear group binding through an explicit clear action",
+);
