@@ -16,13 +16,14 @@ import {
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { formatRate } from "@/lib/formatters";
+import { loadRoutingWorkspace } from "@/lib/queries/routingQueries";
 import {
   deleteModelAlias,
   listModelAliases,
   simulateRoute,
   upsertModelAlias,
 } from "@/lib/api/routing";
-import { getSettings, updateSettings } from "@/lib/api/settings";
+import { updateSettings } from "@/lib/api/settings";
 import type {
   ModelAlias,
   RouteEndpointKind,
@@ -108,9 +109,9 @@ export function RoutingPage() {
     setLoading(true);
     setError(null);
     try {
-      const [nextSettings, nextAliases] = await Promise.all([getSettings(), listModelAliases()]);
-      setSettings(nextSettings);
-      setAliases(nextAliases);
+      const workspace = await loadRoutingWorkspace();
+      setSettings(workspace.settings);
+      setAliases(workspace.modelAliases);
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
