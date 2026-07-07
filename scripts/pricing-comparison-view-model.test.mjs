@@ -479,6 +479,50 @@ assert.equal(
   "structured discount group types should participate in the lowest effective multiplier metric",
 );
 
+const sub2apiPlatformEvidenceView = buildPricingComparisonViewModel({
+  models: [
+    {
+      provider: "openai",
+      modelId: "gpt-5-mini",
+      displayName: "GPT-5 mini",
+      officialInputPrice: 0.25,
+      officialOutputPrice: 2,
+      currency: "USD",
+      unit: "per_1m_tokens",
+      aliases: ["gpt-5-mini"],
+      groupMatchers: ["openai", "gpt", "default", "green"],
+      enabledByDefault: true,
+    },
+  ],
+  stations: [station("station-sub2-platform", "Sub2API Hub", 1)],
+  groupBindings: [
+    group(
+      "station-sub2-platform",
+      "42",
+      "codex-0号池",
+      0.02,
+      { id: 42, name: "codex-0号池", platform: "openai" },
+      "2026-07-07T01:00:00.000Z",
+    ),
+  ],
+  groupRates: [],
+  pricingRules,
+  modelEvidence: [],
+  filters: {
+    provider: "openai",
+    modelQuery: "",
+    stationId: "all",
+    verifiedOnly: false,
+  },
+});
+const sub2apiPlatformGpt = sub2apiPlatformEvidenceView.sections.find((section) => section.modelId === "gpt-5-mini");
+assert.ok(sub2apiPlatformGpt, "Sub2API platform evidence GPT section should exist");
+assert.deepEqual(
+  sub2apiPlatformGpt.rows.map((row) => ({ groupName: row.groupName, effectiveMultiplier: row.effectiveMultiplier })),
+  [{ groupName: "codex-0号池", effectiveMultiplier: 0.02 }],
+  "Sub2API raw platform=openai should classify codex groups without relying on their names or station-id maps",
+);
+
 const imageNamedGptGroupView = buildPricingComparisonViewModel({
   models: [
     {
@@ -570,7 +614,17 @@ const missingGroupView = buildPricingComparisonViewModel({
       "missing",
     ),
   ],
-  groupRates: [],
+  groupRates: [
+    rate(
+      "station-missing-group",
+      "rate-gpt-stale",
+      "gpt",
+      "gpt_stale",
+      0.03,
+      { platform: "openai" },
+      "2026-07-06T02:00:00.000Z",
+    ),
+  ],
   pricingRules,
   modelEvidence: [],
   filters: {
@@ -893,6 +947,18 @@ assert.ok(
   pageSource.includes("搜索模型 / 中转站 / Key / 分组"),
   "PricingPage search placeholder should explain that station, key, and group names are searchable",
 );
+assert.ok(
+  pageSource.includes('import { groupVisualMetaFor } from "@/features/stations/groupVisualMeta"'),
+  "PricingPage should reuse the shared station group visual metadata for group badges",
+);
+assert.ok(
+  pageSource.includes('import { Sub2ApiPlatformIcon } from "@/features/stations/components/Sub2ApiPlatformIcon"'),
+  "PricingPage should reuse the Sub2API platform icon marks for group badges",
+);
+assert.ok(
+  pageSource.includes("<PricingGroupBadge row={row} />"),
+  "PricingPage group cells should render the shared platform icon badge instead of plain text",
+);
 
 function station(id, name, creditPerCny) {
   return {
@@ -948,7 +1014,7 @@ function group(
     lastSeenAt: updatedAt,
     lastCheckedAt: updatedAt,
     lastRateChangedAt: updatedAt,
-    rawJsonRedacted: { label: rawText },
+    rawJsonRedacted: typeof rawText === "object" && rawText !== null ? rawText : { label: rawText },
     createdAt: updatedAt,
     updatedAt,
   };

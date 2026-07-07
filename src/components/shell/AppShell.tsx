@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
 import { unreadChangeCount } from "@/features/changes/changeEventViewModels";
 import type { AppRouteId } from "@/lib/types/navigation";
 
+const CHANGE_EVENTS_REFRESH_INTERVAL_MS = 10_000;
+
 type AppShellProps = {
   activeRouteId: AppRouteId;
   children: ReactNode;
@@ -32,9 +34,13 @@ export function AppShell({
     }
 
     refreshChangeEvents();
+    const refreshInterval = window.setInterval(refreshChangeEvents, CHANGE_EVENTS_REFRESH_INTERVAL_MS);
     window.addEventListener(CHANGE_EVENTS_UPDATED_EVENT, refreshChangeEvents);
-    return () => window.removeEventListener(CHANGE_EVENTS_UPDATED_EVENT, refreshChangeEvents);
-  }, [activeRouteId]);
+    return () => {
+      window.clearInterval(refreshInterval);
+      window.removeEventListener(CHANGE_EVENTS_UPDATED_EVENT, refreshChangeEvents);
+    };
+  }, []);
 
   useEffect(() => {
     function refreshSettings() {

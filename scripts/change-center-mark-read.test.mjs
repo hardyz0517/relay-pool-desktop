@@ -263,6 +263,13 @@ assert.ok(
 );
 
 assert.ok(
+  appShellSource.includes("setInterval(refreshChangeEvents") &&
+    appShellSource.includes("clearInterval") &&
+    !appShellSource.includes("}, [activeRouteId]);"),
+  "app shell should poll change events independently from route changes so backend-created unread events update the badge before opening change center",
+);
+
+assert.ok(
   appShellSource.includes("unreadChangeCount(changeEvents)") && !appShellSource.includes("unreadRiskCount(changeEvents)"),
   "app shell badge should use the all-unread count, not the risk-only summary count",
 );

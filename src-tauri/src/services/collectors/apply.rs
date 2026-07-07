@@ -224,7 +224,7 @@ fn station_group_collection_scopes(
             continue;
         }
         let scope = scopes.entry(group.station_id.clone()).or_default();
-        scope.sources.insert(source.to_string());
+        add_station_group_scope_source(scope, source);
         scope.group_key_hashes.insert(group.group_key_hash.clone());
     }
     for rate in &facts.rates {
@@ -236,10 +236,24 @@ fn station_group_collection_scopes(
             continue;
         }
         let scope = scopes.entry(rate.station_id.clone()).or_default();
-        scope.sources.insert(source.to_string());
+        add_station_group_scope_source(scope, source);
         scope.group_key_hashes.insert(rate.group_key_hash.clone());
     }
     scopes
+}
+
+fn add_station_group_scope_source(scope: &mut StationGroupCollectionScope, source: &str) {
+    scope.sources.insert(source.to_string());
+    if source.starts_with("sub2api_groups_") {
+        scope.sources.extend(
+            [
+                "sub2api_groups_available",
+                "sub2api_groups_rates",
+                "remote_scan",
+            ]
+            .map(String::from),
+        );
+    }
 }
 
 fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
@@ -545,5 +559,60 @@ mod tests {
             .iter()
             .any(|event| event.event_type == "group_missing"
                 && event.object_id.as_deref() == Some(stale.id.as_str())));
+    }
+
+    #[test]
+    fn sub2api_group_facts_mark_remote_scan_groups_missing_when_absent_from_latest_collection() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = create_test_station(&database);
+        let stale = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "remote-scan-claude-aws".to_string(),
+                group_id_hash: Some("claude-aws".to_string()),
+                group_name: "claude-aws".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(0.22),
+                user_rate_multiplier: None,
+                effective_rate_multiplier: Some(0.22),
+                rate_source: Some("remote_scan".to_string()),
+                confidence: 0.9,
+                last_seen_at: Some("1000".to_string()),
+                raw_json_redacted: None,
+            })
+            .expect("remote scan binding");
+
+        let mut facts = crate::services::collectors::facts::CollectorFacts::default();
+        facts
+            .groups
+            .push(crate::services::collectors::facts::CollectedGroupFact {
+                station_id: station.id.clone(),
+                group_id: Some("codex-0".to_string()),
+                group_key_hash: "latest-codex-0".to_string(),
+                group_name: "codex-0号池".to_string(),
+                visibility: "available".to_string(),
+                source: "sub2api_groups_available".to_string(),
+                confidence: 0.9,
+                raw_json_redacted: Some(serde_json::json!({
+                    "id": 42,
+                    "name": "codex-0号池",
+                    "platform": "openai"
+                })),
+            });
+
+        apply_collector_facts(&database, facts).expect("apply group facts");
+
+        let bindings = database
+            .list_station_group_bindings(station.id.clone())
+            .expect("bindings");
+        let stale = bindings
+            .iter()
+            .find(|binding| binding.id == stale.id)
+            .expect("stale binding remains for history");
+
+        assert_eq!(stale.binding_status, "missing");
     }
 }
