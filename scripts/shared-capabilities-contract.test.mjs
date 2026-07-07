@@ -10,6 +10,7 @@ const files = {
   keyPool: await readFile("src/features/key-pool/KeyPoolPage.tsx", "utf8"),
   createRemoteKeyDialog: await readFile("src/features/stations/components/CreateRemoteKeyDialog.tsx", "utf8"),
   stationKeyRowsEditor: await readFile("src/features/stations/components/StationKeyRowsEditor.tsx", "utf8"),
+  channelQueries: await readFile("src/lib/queries/channelQueries.ts", "utf8"),
   channelMonitoring: await readFile("src/features/channels/ChannelMonitoringTab.tsx", "utf8"),
   channelStatus: await readFile("src/features/channels/ChannelStatusTab.tsx", "utf8"),
   rustCommands: await readFile("src-tauri/src/commands/mod.rs", "utf8"),
@@ -81,12 +82,14 @@ assert.ok(
 );
 
 assert.ok(
-  files.channelMonitoring.includes("listChannelMonitorSummaries"),
-  "ChannelMonitoringTab should load monitor summaries from shared API",
+  files.channelQueries.includes("listChannelMonitorSummaries") &&
+    files.channelMonitoring.includes("loadChannelMonitoringWorkspace"),
+  "ChannelMonitoringTab should load monitor summaries through the shared query service",
 );
 assert.ok(
-  files.channelStatus.includes("listChannelMonitorSummaries"),
-  "ChannelStatusTab should load monitor summaries from shared API",
+  files.channelQueries.includes("listChannelMonitorSummaries") &&
+    files.channelStatus.includes("loadChannelStatusWorkspace"),
+  "ChannelStatusTab should load monitor summaries through the shared query service",
 );
 assert.ok(
   !files.channelMonitoring.includes("listChannelMonitorRuns(monitor.id)") &&

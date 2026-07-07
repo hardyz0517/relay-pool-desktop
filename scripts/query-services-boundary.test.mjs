@@ -10,7 +10,7 @@ const queryFiles = (await readdir(queriesDir))
 
 assert.deepEqual(
   queryFiles,
-  ["changeQueries.ts", "dashboardQueries.ts", "logQueries.ts", "routingQueries.ts"],
+  ["changeQueries.ts", "channelQueries.ts", "dashboardQueries.ts", "logQueries.ts", "routingQueries.ts"],
   "Stage 2 query service inventory should be explicit until the next slice adds another reviewed query module",
 );
 
@@ -42,6 +42,10 @@ const forbiddenPatterns = [
   {
     pattern: /\b(simulateRoute|upsertModelAlias|deleteModelAlias|updateSettings)\b/,
     reason: "query services must not perform routing decisions or write actions",
+  },
+  {
+    pattern: /\b(filterLogsByWindow|buildChannels|orderChannelsBySavedOrder|runChannelMonitorNow|createChannelMonitor|updateChannelMonitor|deleteChannelMonitor)\b/,
+    reason: "query services must not define channel view behavior or channel write actions",
   },
 ];
 

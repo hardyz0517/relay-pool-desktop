@@ -19,11 +19,8 @@ import { CSS } from "@dnd-kit/utilities";
 import type { LucideIcon } from "lucide-react";
 import { Radio, RefreshCw, Server, Timer } from "lucide-react";
 import { Button, EmptyState, SegmentedControl, StatusBadge, useToast } from "@/components/ui";
-import { listChannelMonitorSummaries } from "@/lib/api/channelMonitors";
-import { listRequestLogs } from "@/lib/api/proxy";
-import { listStationKeyHealth } from "@/lib/api/routing";
-import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
+import { loadChannelStatusWorkspace } from "@/lib/queries/channelQueries";
 import { parseTimestampLikeDate, toTimestampMillis } from "@/lib/time";
 import type { ChannelMonitor, ChannelMonitorRun } from "@/lib/types/channelMonitors";
 import type { RequestLog } from "@/lib/types/proxy";
@@ -136,18 +133,13 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
     setLoading(true);
     setError(null);
     try {
-      const [nextKeys, nextLogs, nextHealth, summaries] = await Promise.all([
-        listKeyPoolItems(),
-        listRequestLogs(),
-        listStationKeyHealth(),
-        listChannelMonitorSummaries(),
-      ]);
-      const nextMonitors = summaries.map((summary) => summary.monitor);
-      setKeys(nextKeys);
-      setLogs(nextLogs);
-      setHealth(nextHealth);
+      const workspace = await loadChannelStatusWorkspace();
+      const nextMonitors = workspace.monitorSummaries.map((summary) => summary.monitor);
+      setKeys(workspace.keyPoolItems);
+      setLogs(workspace.requestLogs);
+      setHealth(workspace.stationKeyHealth);
       setMonitors(nextMonitors);
-      setRunsByMonitor(new Map(summaries.map((summary) => [summary.monitor.id, summary.recentRuns] as const)));
+      setRunsByMonitor(new Map(workspace.monitorSummaries.map((summary) => [summary.monitor.id, summary.recentRuns] as const)));
       if (showSuccess) {
         toast.success("渠道状态已刷新");
       }

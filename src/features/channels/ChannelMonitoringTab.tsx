@@ -4,15 +4,12 @@ import { Button, ConfirmDialog, EmptyState, IconButton, StatusBadge, useToast } 
 import {
   createChannelMonitor,
   deleteChannelMonitor,
-  listChannelMonitorSummaries,
-  listChannelMonitorTemplates,
   runChannelMonitorNow,
   updateChannelMonitor,
 } from "@/lib/api/channelMonitors";
 import { readError } from "@/lib/errors";
+import { loadChannelMonitoringWorkspace } from "@/lib/queries/channelQueries";
 import { toTimestampMillis } from "@/lib/time";
-import { listKeyPoolItems } from "@/lib/api/stationKeys";
-import { listStations } from "@/lib/api/stations";
 import type { ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun, CreateChannelMonitorInput } from "@/lib/types/channelMonitors";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
@@ -78,19 +75,14 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
     setLoading(true);
     setError(null);
     try {
-      const [summaries, nextStations, nextKeys, nextTemplates] = await Promise.all([
-        listChannelMonitorSummaries(),
-        listStations(),
-        listKeyPoolItems(),
-        listChannelMonitorTemplates(),
-      ]);
-      const nextMonitors = summaries.map((summary) => summary.monitor);
+      const workspace = await loadChannelMonitoringWorkspace();
+      const nextMonitors = workspace.monitorSummaries.map((summary) => summary.monitor);
       setMonitors(nextMonitors);
-      setStations(nextStations);
-      setKeys(nextKeys);
-      setTemplates(nextTemplates);
-      setRunsByMonitor(new Map(summaries.map((summary) => [summary.monitor.id, summary.recentRuns] as const)));
-      setRunLoadFailedIds(new Set(summaries.filter((summary) => summary.runsLoadStatus === "failed").map((summary) => summary.monitor.id)));
+      setStations(workspace.stations);
+      setKeys(workspace.keyPoolItems);
+      setTemplates(workspace.templates);
+      setRunsByMonitor(new Map(workspace.monitorSummaries.map((summary) => [summary.monitor.id, summary.recentRuns] as const)));
+      setRunLoadFailedIds(new Set(workspace.monitorSummaries.filter((summary) => summary.runsLoadStatus === "failed").map((summary) => summary.monitor.id)));
       if (showSuccess) {
         toast.success("渠道监控已刷新");
       }
