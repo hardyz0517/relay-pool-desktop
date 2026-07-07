@@ -15,6 +15,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
+import { formatRate } from "@/lib/formatters";
 import {
   deleteModelAlias,
   listModelAliases,
@@ -505,10 +506,6 @@ function formatCandidateBalance(candidate: RouteSimulationResult["candidates"][n
     return candidate.balanceStatus ?? "-";
   }
   return `${candidate.balanceValue.toFixed(2)}${candidate.balanceStatus ? ` / ${candidate.balanceStatus}` : ""}`;
-}
-
-function formatRate(value: number) {
-  return `${value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}x`;
 }
 
 function normalizationLabel(value: string | null | undefined) {

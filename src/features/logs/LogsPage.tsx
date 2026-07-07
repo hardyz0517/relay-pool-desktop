@@ -16,6 +16,7 @@ import {
   type DataTableColumn,
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
+import { formatRate } from "@/lib/formatters";
 import { clearRequestLogs, listRequestLogs } from "@/lib/api/proxy";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import type { RequestLog } from "@/lib/types/proxy";
@@ -333,10 +334,6 @@ function formatCost(log: RequestLog) {
   return `${currency} ${log.estimatedTotalCost.toFixed(6)}`;
 }
 
-function formatRate(value: number) {
-  return `${value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}x`;
-}
-
 function statusFallback(value: string | null | undefined) {
   return value ?? "未知";
 }
@@ -357,4 +354,3 @@ function formatJson(value: string) {
     return value;
   }
 }
-

@@ -7,10 +7,18 @@ const sourceFiles = [];
 await collectSourceFiles(path.join(root, "src", "features"), sourceFiles);
 
 const localReadErrorDefinitions = [];
+const localFormatRateDefinitions = [];
 for (const absolutePath of sourceFiles) {
   const source = await readFile(absolutePath, "utf8");
+  const relativePath = normalizePath(path.relative(root, absolutePath));
   if (/function\s+readError\s*\(/.test(source)) {
-    localReadErrorDefinitions.push(normalizePath(path.relative(root, absolutePath)));
+    localReadErrorDefinitions.push(relativePath);
+  }
+  if (
+    /^src\/features\/(?:logs\/LogsPage|routing\/RoutingPage)\.tsx$/.test(relativePath) &&
+    /function\s+formatRate\s*\(/.test(source)
+  ) {
+    localFormatRateDefinitions.push(relativePath);
   }
 }
 
@@ -24,6 +32,18 @@ const sharedErrorsSource = await readFile(path.join(root, "src", "lib", "errors.
 assert.ok(
   sharedErrorsSource.includes("export function readError(error: unknown)"),
   "shared readError helper should remain exported from src/lib/errors.ts",
+);
+
+assert.deepEqual(
+  localFormatRateDefinitions,
+  [],
+  `logs and routing pages should import formatRate from src/lib/formatters.ts instead of redefining it:\n${localFormatRateDefinitions.join("\n")}`,
+);
+
+const sharedFormattersSource = await readFile(path.join(root, "src", "lib", "formatters.ts"), "utf8");
+assert.ok(
+  sharedFormattersSource.includes("export function formatRate(value: number | null | undefined"),
+  "shared formatRate helper should remain exported from src/lib/formatters.ts",
 );
 
 async function collectSourceFiles(directory, files) {
