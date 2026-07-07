@@ -57,6 +57,22 @@
 - 当前状态：已建立核心字段初始登记。
 - 新增字段策略：默认进入 `unknown pending audit`，补测试后再改分类。
 
+## 兼容字段白名单
+
+Stage 0 新增 `scripts/data-architecture-field-ownership.test.mjs`，用于阻止新增页面或 runtime 路径直接消费兼容字段。当前白名单代表尚未迁移的旧消费者，不代表推荐架构。
+
+允许直接消费兼容字段的路径包括：
+
+- 类型定义、API 边界、mock 数据、未来 query/projection 边界。
+- 旧页面消费者：价格页、站点详情、站点资产、Stations、Key Pool、Add Provider、变更中心、监控、采集、日志、路由。
+- Rust 持久化/采集/远端 Key/proxy runtime 等当前事实写入和 runtime 兼容路径。
+
+收窄规则：
+
+- 每迁走一个消费者，必须从白名单移除对应路径。
+- 新增路径命中兼容字段时，默认失败；只有登记到字段归属清单并写明迁移理由后才允许临时白名单。
+- Query service 可以搬运 raw facts，但不能把兼容字段解释为权威事实。
+
 ## 保护对象
 
 - 价格页同一个当前分组不能因为 binding 和 rate record 同时存在而显示两次。
