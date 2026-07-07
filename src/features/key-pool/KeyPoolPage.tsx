@@ -22,6 +22,7 @@ import { listStations } from "@/lib/api/stations";
 import { deleteStationKey, listKeyPoolItems, reorderKeyPool, saveStationKeyWithDefaults, testStationKeyConnectivity, updateStationKey } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
 import { formatRate } from "@/lib/formatters";
+import { parseTimestampLikeDate } from "@/lib/time";
 import type { ChannelMonitor, ChannelMonitorRequestTemplate } from "@/lib/types/channelMonitors";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
@@ -1282,8 +1283,7 @@ function isFutureTime(value: string | null) {
   if (!value) {
     return false;
   }
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  const date = parseTimestampLikeDate(value);
   return !Number.isNaN(date.getTime()) && date.getTime() > Date.now();
 }
 

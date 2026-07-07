@@ -9,7 +9,7 @@ import type {
 import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
-import { toTimestampMillis } from "@/lib/time";
+import { parseTimestampLikeDate, toTimestampMillis } from "@/lib/time";
 
 export type ChannelMonitorDraft = {
   name: string;
@@ -354,8 +354,7 @@ export function formatRunTimestamp(value: string | null) {
   if (!value) {
     return "未运行";
   }
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
+  const date = parseTimestampLikeDate(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }

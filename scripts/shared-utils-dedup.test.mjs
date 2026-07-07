@@ -38,7 +38,7 @@ for (const absolutePath of sourceFiles) {
     localTrimmedDecimalDefinitions.push(relativePath);
   }
   if (
-    /^src\/features\/(?:logs\/LogsPage|dashboard\/DashboardPage|pricing\/PricingPage|changes\/changeEventViewModels|channels\/ChannelMonitoringTab|stations\/StationsPage)\.tsx?$/.test(
+    /^src\/features\/(?:logs\/LogsPage|dashboard\/DashboardPage|pricing\/PricingPage|changes\/changeEventViewModels|channels\/(?:ChannelMonitoringTab|channelMonitorViewModel)|key-pool\/KeyPoolPage|stations\/(?:StationsPage|stationAssetViewModels|stationDetailViewModels))\.tsx?$/.test(
       relativePath,
     ) &&
     /const\s+numeric\s*=\s*Number\(value\);\s*const\s+date\s*=\s*Number\.isFinite\(numeric\)\s*&&\s*numeric\s*>\s*1000000000000\s*\?\s*new\s+Date\(numeric\)\s*:\s*new\s+Date\(value\);/.test(

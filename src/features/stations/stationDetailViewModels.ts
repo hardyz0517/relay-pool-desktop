@@ -1,4 +1,5 @@
 import { formatTrimmedDecimal } from "@/lib/formatters";
+import { toTimestampMillis } from "@/lib/time";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
@@ -574,7 +575,6 @@ function toTime(value: string | null) {
   if (!value) {
     return 0;
   }
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
-  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+  const time = toTimestampMillis(value);
+  return Number.isNaN(time) ? 0 : time;
 }
