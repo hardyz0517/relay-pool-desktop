@@ -207,3 +207,24 @@ pnpm.cmd build
 1. 若主 checkout 的价格/站点/分组改动已经提交，先 merge 主线提交并重新跑 Stage 0/1/2 guard。
 2. 若主 checkout 仍 dirty，暂停高重叠 query-service 迁移，继续只做不触碰这些路径的 docs/test 审计。
 3. 进入 pricing / station / key / provider query service 前，先补对应 query service shape test，再迁单页消费者。
+
+## 剩余 query-service 候选审计
+
+当前剩余页面级加载编排主要集中在：
+
+- `src/features/collectors/CollectorsPage.tsx`
+- `src/features/key-pool/KeyPoolPage.tsx`
+- `src/features/stations/AddProviderPage.tsx`
+- `src/features/stations/StationsPage.tsx`
+- `src/features/stations/StationDetailPage.tsx`
+- `src/features/pricing/PricingPage.tsx`
+- `src/features/settings/SettingsPage.tsx`
+- `src/features/changes/changeEventViewModels.ts`
+
+处理结论：
+
+- `PricingPage`、`StationDetailPage`、`StationsPage`、`AddProviderPage`、`KeyPoolPage` 与主 checkout 的 pricing / station detail / group facts dirty 改动高重叠，暂不迁移。
+- `CollectorsPage` 与主 checkout 的 Rust collector dirty 改动高重叠，暂不迁移。
+- `SettingsPage` 的加载包含 secret migration / scan 状态，不作为当前低风险 raw facts query service 切片。
+- `changeEventViewModels.ts` 中的 `Promise.all` 是已读写动作批处理，不属于 Stage 2 raw facts 初始加载迁移目标。
+- 在主 checkout dirty 改动提交、或用户明确批准 patch 接入前，Stage 2 不应继续迁移上述高重叠路径。
