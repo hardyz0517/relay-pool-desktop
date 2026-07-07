@@ -110,6 +110,15 @@ export function buildStationGroupOptionsFromCurrentFacts(
     }));
 }
 
+export function isDisplayableStationGroupCurrentFact(fact: StationGroupCurrentFact) {
+  return (
+    fact.bindingKind === "station_group" &&
+    fact.available &&
+    fact.bindingStatus !== "manual_legacy" &&
+    fact.sourceBinding?.rateSource !== "legacy_key_group"
+  );
+}
+
 function factFromBinding(
   binding: StationGroupBinding,
   latestRate: GroupRateRecord | null,
