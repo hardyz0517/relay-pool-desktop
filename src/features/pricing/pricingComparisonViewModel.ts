@@ -51,6 +51,7 @@ export type PricingComparisonRow = {
   groupBindingId: string | null;
   groupRateRecordId: string | null;
   groupName: string;
+  groupRawJsonRedacted: Record<string, unknown> | null;
   groupMultiplier: number | null;
   creditPerCny: number;
   effectiveMultiplier: number | null;
@@ -99,6 +100,7 @@ type GroupCandidate = {
   groupRateRecordId: string | null;
   groupKeyHash: string;
   groupName: string;
+  groupRawJsonRedacted: Record<string, unknown> | null;
   groupMultiplier: number | null;
   source: string;
   checkedAt: string | null;
@@ -238,6 +240,15 @@ function buildRowsForModel(
 ) {
   const rows: PricingComparisonRow[] = [];
   const consumedRateIds = new Set<string>();
+  const activeGroupBindingIds = new Set(groupBindings.filter(isStationGroupBinding).map((binding) => binding.id));
+  const activeGroupKeys = new Set(
+    groupBindings.filter(isStationGroupBinding).map((binding) => binding.groupKeyHash),
+  );
+  const inactiveGroupKeys = new Set(
+    groupBindings
+      .filter((binding) => binding.bindingKind === "station_group" && !isStationGroupBinding(binding))
+      .map((binding) => binding.groupKeyHash),
+  );
 
   for (const binding of groupBindings) {
     const station = stationsById.get(binding.stationId);
@@ -268,7 +279,11 @@ function buildRowsForModel(
   }
 
   const latestStandaloneRates = latestRatesByStationGroup(
-    groupRates.filter((rate) => !consumedRateIds.has(rate.id)),
+    groupRates.filter(
+      (rate) =>
+        !consumedRateIds.has(rate.id) &&
+        isRateBackedByActiveGroup(rate, activeGroupBindingIds, activeGroupKeys, inactiveGroupKeys),
+    ),
   );
 
   for (const rate of latestStandaloneRates) {
@@ -325,6 +340,7 @@ function createRowFromCandidate(
     groupBindingId: candidate.groupBindingId,
     groupRateRecordId: candidate.groupRateRecordId,
     groupName: candidate.groupName,
+    groupRawJsonRedacted: candidate.groupRawJsonRedacted,
     groupMultiplier: candidate.groupMultiplier,
     creditPerCny,
     effectiveMultiplier,
@@ -355,6 +371,7 @@ function bindingCandidate(
     groupRateRecordId: rate?.id ?? null,
     groupKeyHash: binding.groupKeyHash,
     groupName: binding.groupName,
+    groupRawJsonRedacted: rate?.rawJsonRedacted ?? binding.rawJsonRedacted,
     groupMultiplier: firstFiniteNumber(
       rate?.effectiveRateMultiplier,
       binding.effectiveRateMultiplier,
@@ -382,6 +399,7 @@ function rateCandidate(
     groupRateRecordId: rate.id,
     groupKeyHash: rate.groupKeyHash,
     groupName: rate.groupName,
+    groupRawJsonRedacted: rate.rawJsonRedacted,
     groupMultiplier: firstFiniteNumber(
       rate.effectiveRateMultiplier,
       rate.userRateMultiplier,
@@ -438,6 +456,10 @@ function groupBindingMatchesModel(
   binding: StationGroupBinding,
   model: PricingComparisonCatalogEntry,
 ) {
+  const platform = groupPlatformFromRawJson(binding.rawJsonRedacted);
+  if (platform) {
+    return platformMatchesProvider(platform, model.provider);
+  }
   const groupType = binding.groupIdHash?.trim() ?? "";
   if (groupType) {
     return groupTypeMatchesModel(binding.stationId, groupType, binding.groupName, model);
@@ -452,10 +474,31 @@ function groupRateMatchesModel(
   rate: GroupRateRecord,
   model: PricingComparisonCatalogEntry,
 ) {
+  const platform = groupPlatformFromRawJson(rate.rawJsonRedacted);
+  if (platform) {
+    return platformMatchesProvider(platform, model.provider);
+  }
   return legacyGroupTextMatchesModel(
     [rate.groupName, rate.source, searchableJsonText(rate.rawJsonRedacted)].join(" "),
     model.groupMatchers,
   );
+}
+
+function groupPlatformFromRawJson(value: Record<string, unknown> | null) {
+  const platform = stringFieldFromRecord(value, [
+    "platform",
+    "provider",
+    "model_provider",
+    "modelProvider",
+  ]);
+  return platform?.trim().toLowerCase() ?? null;
+}
+
+function platformMatchesProvider(platform: string, provider: OfficialModelProvider) {
+  if (platform === provider) {
+    return true;
+  }
+  return platform === "gemini" && provider === "google";
 }
 
 function groupTypeMatchesModel(
@@ -561,6 +604,19 @@ function isStationGroupBinding(binding: StationGroupBinding) {
   );
 }
 
+function stringFieldFromRecord(value: Record<string, unknown> | null, keys: string[]) {
+  if (!value) {
+    return null;
+  }
+  for (const key of keys) {
+    const fieldValue = value[key];
+    if (typeof fieldValue === "string" && fieldValue.trim()) {
+      return fieldValue;
+    }
+  }
+  return null;
+}
+
 function isStationGroupRate(rate: GroupRateRecord) {
   return rate.bindingKind === "station_group";
 }
@@ -573,6 +629,24 @@ function isRateForBinding(rate: GroupRateRecord, binding: StationGroupBinding) {
       rate.groupKeyHash === binding.groupKeyHash ||
       normalizeText(rate.groupName) === normalizeText(binding.groupName))
   );
+}
+
+function isRateBackedByActiveGroup(
+  rate: GroupRateRecord,
+  activeGroupBindingIds: Set<string>,
+  activeGroupKeys: Set<string>,
+  inactiveGroupKeys: Set<string>,
+) {
+  if (!isStationGroupRate(rate)) {
+    return false;
+  }
+  if (rate.groupBindingId) {
+    return activeGroupBindingIds.has(rate.groupBindingId);
+  }
+  if (inactiveGroupKeys.has(rate.groupKeyHash) && !activeGroupKeys.has(rate.groupKeyHash)) {
+    return false;
+  }
+  return true;
 }
 
 function latestRatesByStationGroup(rates: GroupRateRecord[]) {

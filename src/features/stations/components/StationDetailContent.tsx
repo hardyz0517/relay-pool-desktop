@@ -18,6 +18,8 @@ import type {
   StationDetailDiagnosticItem,
   StationDetailViewModel,
 } from "../stationDetailViewModels";
+import { groupVisualMetaFor } from "../groupVisualMeta";
+import { Sub2ApiPlatformIcon } from "./Sub2ApiPlatformIcon";
 
 export type StationDetailRefreshAction = "balance" | "groups" | "full";
 
@@ -211,9 +213,9 @@ export function StationDetailContent({
                 </thead>
                 <tbody>
                   {viewModel.groupRows.map((row) => (
-                    <tr key={row.id} className="border-t border-border">
+                    <tr key={row.id} className="border-t border-border transition-colors hover:bg-slate-50/70">
                       <TableCell className="max-w-[220px] pl-0">
-                        <div className="truncate font-medium text-slate-800">{row.groupName}</div>
+                        <GroupNameBadge groupName={row.groupName} rawJsonRedacted={row.rawJsonRedacted} />
                         {row.warning && (
                           <div className="mt-1 inline-flex items-center gap-1 text-amber-700">
                             <AlertTriangle className="h-3.5 w-3.5" />
@@ -222,7 +224,7 @@ export function StationDetailContent({
                         )}
                       </TableCell>
                       <TableCell>
-                        <span className={cn("font-semibold", textToneClassName[row.tone])}>
+                        <span className={cn("inline-flex h-6 items-center rounded-full px-2.5 font-semibold", groupVisualMetaFor(row.groupName, row.rawJsonRedacted).rateBadgeClassName)}>
                           {row.effectiveRate}
                         </span>
                       </TableCell>
@@ -250,6 +252,29 @@ export function StationDetailContent({
       </div>
       </div>
     </PageScaffold>
+  );
+}
+
+function GroupNameBadge({
+  groupName,
+  rawJsonRedacted,
+}: {
+  groupName: string;
+  rawJsonRedacted: Record<string, unknown> | null;
+}) {
+  const visualMeta = groupVisualMetaFor(groupName, rawJsonRedacted);
+
+  return (
+    <span
+      className={cn(
+        "inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border px-2 text-xs font-semibold",
+        visualMeta.badgeClassName,
+      )}
+      title={`${visualMeta.label} · ${groupName}`}
+    >
+      <Sub2ApiPlatformIcon platform={visualMeta.platform} className={visualMeta.iconClassName} />
+      <span className="truncate">{groupName}</span>
+    </span>
   );
 }
 

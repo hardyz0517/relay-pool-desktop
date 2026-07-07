@@ -16,6 +16,9 @@ import { listPricingRules } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { listStationKeys } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
+import { Sub2ApiPlatformIcon } from "@/features/stations/components/Sub2ApiPlatformIcon";
+import { groupVisualMetaFor } from "@/features/stations/groupVisualMeta";
+import { cn } from "@/lib/utils";
 import type { PricingRule } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationKey } from "@/lib/types/stationKeys";
@@ -306,7 +309,7 @@ function PricingRowsTable({ rows }: { rows: PricingComparisonRow[] }) {
                 <div className="font-medium text-slate-800">{row.stationName}</div>
               </td>
               <td className={tableCellClassName}>
-                <div className="font-medium text-slate-800">{row.groupName}</div>
+                <PricingGroupBadge row={row} />
                 {row.isCheapest && (
                   <div className="mt-0.5 text-xs font-medium text-emerald-700">当前最低</div>
                 )}
@@ -328,6 +331,23 @@ function PricingRowsTable({ rows }: { rows: PricingComparisonRow[] }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function PricingGroupBadge({ row }: { row: PricingComparisonRow }) {
+  const visualMeta = groupVisualMetaFor(row.groupName, row.groupRawJsonRedacted);
+
+  return (
+    <span
+      className={cn(
+        "inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border px-2 text-xs font-semibold",
+        visualMeta.badgeClassName,
+      )}
+      title={`${visualMeta.label} · ${row.groupName}`}
+    >
+      <Sub2ApiPlatformIcon platform={visualMeta.platform} className={visualMeta.iconClassName} />
+      <span className="truncate">{row.groupName}</span>
+    </span>
   );
 }
 

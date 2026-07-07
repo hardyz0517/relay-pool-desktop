@@ -19,6 +19,7 @@ export type StationDetailBalanceCard = {
 export type StationDetailGroupRow = {
   id: string;
   groupName: string;
+  rawJsonRedacted: Record<string, unknown> | null;
   effectiveRate: string;
   defaultRate: string;
   userRate: string;
@@ -208,7 +209,10 @@ export function buildGroupRows(
   bindings: StationGroupBinding[],
   rates: GroupRateRecord[],
 ): StationDetailGroupRow[] {
-  const stationGroupBindings = dedupeStationGroupBindings(bindings.filter(isCollectedStationGroupBinding), rates);
+  const stationGroupBindings = dedupeStationGroupBindings(
+    bindings.filter((binding) => isCollectedStationGroupBinding(binding) && binding.bindingStatus !== "missing"),
+    rates,
+  );
   const latestRateByBindingId = new Map<string, GroupRateRecord>();
 
   for (const rate of rates) {
@@ -223,21 +227,22 @@ export function buildGroupRows(
 
   return stationGroupBindings.map((binding) => {
     const latestRate = latestRateByBindingId.get(binding.id) ?? null;
-    const effectiveRate = binding.effectiveRateMultiplier ?? latestRate?.effectiveRateMultiplier ?? null;
-    const defaultRate = binding.defaultRateMultiplier ?? latestRate?.defaultRateMultiplier ?? null;
-    const userRate = binding.userRateMultiplier ?? latestRate?.userRateMultiplier ?? null;
+    const effectiveRate = latestRate?.effectiveRateMultiplier ?? binding.effectiveRateMultiplier ?? null;
+    const defaultRate = latestRate?.defaultRateMultiplier ?? binding.defaultRateMultiplier ?? null;
+    const userRate = latestRate?.userRateMultiplier ?? binding.userRateMultiplier ?? null;
     const warning = groupWarningFor(binding, effectiveRate);
-    const rateSource = binding.rateSource ?? latestRate?.source ?? "binding";
+    const rateSource = latestRate?.source ?? binding.rateSource ?? "binding";
 
     return {
       id: binding.id,
       groupName: binding.groupName || latestRate?.groupName || "未命名分组",
+      rawJsonRedacted: latestRate?.rawJsonRedacted ?? binding.rawJsonRedacted ?? null,
       effectiveRate: formatRate(effectiveRate, "未确定"),
       defaultRate: formatRate(defaultRate),
       userRate: formatRate(userRate, "未覆盖"),
       bindingStatus: formatBindingStatusLabel(binding.bindingStatus),
       sourceLabel: formatRateSourceLabel(rateSource),
-      lastChecked: formatDetailDate(binding.lastCheckedAt ?? latestRate?.checkedAt ?? binding.updatedAt),
+      lastChecked: formatDetailDate(latestRate?.checkedAt ?? binding.lastCheckedAt ?? binding.updatedAt),
       tone: warning ? "warning" : binding.bindingStatus === "available" || binding.bindingStatus === "bound" ? "good" : "neutral",
       warning,
     };
@@ -298,7 +303,7 @@ function preferStationGroupBinding(
 
 function stationGroupBindingScore(binding: StationGroupBinding, latestRate: GroupRateRecord | null) {
   let score = 0;
-  const source = binding.rateSource ?? latestRate?.source ?? "";
+  const source = latestRate?.source ?? binding.rateSource ?? "";
   if (source !== "remote_scan") {
     score += 10;
   }

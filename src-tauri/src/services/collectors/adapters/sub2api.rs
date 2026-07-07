@@ -123,7 +123,7 @@ pub fn parse_group_rate_facts(
             source: "sub2api_groups_rates".to_string(),
             confidence: if effective.is_some() { 0.9 } else { 0.6 },
             checked_at: None,
-            raw_json_redacted: None,
+            raw_json_redacted: group.raw_json_redacted,
         });
     }
 
@@ -1313,8 +1313,8 @@ mod tests {
     fn sub2api_groups_rates_join_by_group_id() {
         let available = json!({
             "data": [
-                { "id": "default", "name": "Default", "rate_multiplier": 1.0 },
-                { "id": "pro", "name": "Pro", "rate_multiplier": 1.5 }
+                { "id": "default", "name": "Default", "platform": "anthropic", "rate_multiplier": 1.0 },
+                { "id": "pro", "name": "Pro", "platform": "openai", "rate_multiplier": 1.5 }
             ]
         });
         let rates = json!({
@@ -1333,6 +1333,19 @@ mod tests {
         assert!(facts.rates.iter().any(|rate| {
             rate.group_name == "Pro" && rate.effective_rate_multiplier == Some(1.2)
         }));
+        let pro_rate = facts
+            .rates
+            .iter()
+            .find(|rate| rate.group_name == "Pro")
+            .expect("pro rate");
+        assert_eq!(
+            pro_rate
+                .raw_json_redacted
+                .as_ref()
+                .and_then(|value| value.get("platform"))
+                .and_then(|value| value.as_str()),
+            Some("openai")
+        );
     }
 
     #[test]
