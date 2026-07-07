@@ -271,7 +271,9 @@ assert.ok(
 );
 
 assert.ok(
-  stationDetailViewModelSource.includes("dedupeStationGroupBindings") &&
-    stationDetailViewModelSource.includes("preferStationGroupBinding"),
-  "station detail group rows should merge same-name duplicate bindings before rendering",
+  stationDetailViewModelSource.includes("buildCurrentStationGroupFacts") &&
+    stationDetailViewModelSource.includes("isDisplayableStationGroupCurrentFact") &&
+    !stationDetailViewModelSource.includes("dedupeStationGroupBindings") &&
+    !stationDetailViewModelSource.includes("preferStationGroupBinding"),
+  "station detail group rows should consume shared current group facts instead of page-local duplicate binding merge logic",
 );
