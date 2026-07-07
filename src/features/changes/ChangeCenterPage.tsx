@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, CheckCheck, CheckCircle2, ChevronLeft, ChevronRight, Eye, RefreshCw, Search, Trash2, XCircle } from "lucide-react";
+import { CheckCheck, CheckCircle2, ChevronLeft, ChevronRight, Eye, RefreshCw, Search, Trash2, XCircle } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
@@ -20,10 +20,12 @@ import {
   notifyChangeEventsUpdated,
   resolveChangeEvent,
 } from "@/lib/api/changeEvents";
+import { getSettings, SETTINGS_UPDATED_EVENT } from "@/lib/api/settings";
+import { listStations } from "@/lib/api/stations";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
+import type { AppSettings } from "@/lib/types/settings";
 import {
   buildChangeEventListItem,
-  type ChangeEventListDiff,
   eventTypeLabels,
   filterChangeEvents,
   formatChangeTime,
@@ -41,7 +43,9 @@ import {
 export function ChangeCenterPage() {
   const toast = useToast();
   const [events, setEvents] = useState<ChangeEvent[]>([]);
+  const [stationNamesById, setStationNamesById] = useState<Map<string, string>>(new Map());
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
   const [filter, setFilter] = useState<ChangeFilter>({ severity: "all", status: "active", objectType: "all", query: "" });
   const [page, setPage] = useState(1);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
@@ -53,11 +57,33 @@ export function ChangeCenterPage() {
     void refresh();
   }, []);
 
+  useEffect(() => {
+    function refreshDeveloperMode() {
+      void getSettings()
+        .then((settings) => setDeveloperModeEnabled(settings.developerModeEnabled))
+        .catch(() => setDeveloperModeEnabled(false));
+    }
+
+    function handleSettingsUpdated(event: Event) {
+      const settings = (event as CustomEvent<AppSettings>).detail;
+      if (settings) {
+        setDeveloperModeEnabled(settings.developerModeEnabled);
+        return;
+      }
+      refreshDeveloperMode();
+    }
+
+    refreshDeveloperMode();
+    window.addEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
+    return () => window.removeEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
+  }, []);
+
   async function refresh(showSuccess = false) {
     setLoading(true);
     setError(null);
     try {
-      const nextEvents = await listChangeEvents();
+      const [nextEvents, stations] = await Promise.all([listChangeEvents(), listStations()]);
+      setStationNamesById(new Map(stations.map((station) => [station.id, station.name])));
       setEvents(nextEvents);
       setSelectedId((current) => (current && nextEvents.some((event) => event.id === current) ? current : nextEvents[0]?.id ?? null));
       if (showSuccess) {
@@ -119,9 +145,13 @@ export function ChangeCenterPage() {
     }
   }
 
-  const filteredEvents = useMemo(() => filterChangeEvents(events, filter), [events, filter]);
+  const filteredEvents = useMemo(
+    () => filterChangeEvents(events, filter, { stationNamesById }),
+    [events, filter, stationNamesById],
+  );
   const pageInfo = useMemo(() => paginateChangeEvents(filteredEvents, page, CHANGE_EVENTS_PAGE_SIZE), [filteredEvents, page]);
   const selected = pageInfo.events.find((event) => event.id === selectedId) ?? pageInfo.events[0] ?? null;
+  const selectedItem = selected ? buildChangeEventListItem(selected, { stationNamesById }) : null;
   const unreadCount = events.filter((event) => event.status === "unread").length;
   const riskCount = unreadRiskCount(events);
   const objectOptions = useMemo(() => {
@@ -229,6 +259,7 @@ export function ChangeCenterPage() {
                     <ChangeEventRow
                       key={event.id}
                       event={event}
+                      stationNamesById={stationNamesById}
                       selected={selected?.id === event.id}
                       onSelect={() => setSelectedId(event.id)}
                     />
@@ -266,7 +297,7 @@ export function ChangeCenterPage() {
             )}
           </div>
 
-          <InspectorPanel title={selected ? selected.title : "变更详情"} description={selected ? eventTypeLabels[selected.eventType] ?? selected.eventType : "选择一条变更"}>
+          <InspectorPanel title={selectedItem ? selectedItem.title : "变更详情"} description={selected ? eventTypeLabels[selected.eventType] ?? selected.eventType : "选择一条变更"}>
             {selected ? (
               <div className="space-y-4 p-4">
                 <div className="flex flex-wrap items-center gap-2">
@@ -277,14 +308,18 @@ export function ChangeCenterPage() {
                 <div className="rounded-[var(--surface-radius)] border border-border bg-slate-50 p-3 text-sm leading-6 text-slate-700">
                   {selected.message}
                 </div>
-                <JsonBlock title="旧值" value={parseJsonObject(selected.oldValueJson)} />
-                <JsonBlock title="新值" value={parseJsonObject(selected.newValueJson)} />
-                <JsonBlock title="影响" value={parseJsonObject(selected.impactJson)} />
-                <div className="grid gap-2 text-xs text-muted-foreground">
-                  <div>对象：{objectTypeLabels[selected.objectType] ?? selected.objectType} / {selected.objectId ?? "-"}</div>
-                  <div>来源：{selected.source}</div>
-                  <div>去重键：{selected.dedupeKey}</div>
-                </div>
+                {developerModeEnabled ? (
+                  <>
+                    <JsonBlock title="旧值" value={parseJsonObject(selected.oldValueJson)} />
+                    <JsonBlock title="新值" value={parseJsonObject(selected.newValueJson)} />
+                    <JsonBlock title="影响" value={parseJsonObject(selected.impactJson)} />
+                    <div className="grid gap-2 text-xs text-muted-foreground">
+                      <div>对象：{objectTypeLabels[selected.objectType] ?? selected.objectType} / {selected.objectId ?? "-"}</div>
+                      <div>来源：{selected.source}</div>
+                      <div>去重键：{selected.dedupeKey}</div>
+                    </div>
+                  </>
+                ) : null}
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button variant="outline" disabled={saving || selected.status === "read"} onClick={() => void runAction(() => markChangeEventRead(selected.id), "已标记为已读")}>
                     <Eye className="h-4 w-4" />
@@ -301,7 +336,7 @@ export function ChangeCenterPage() {
                 </div>
               </div>
             ) : (
-              <EmptyState title="暂无详情" description="选择一条变更查看变化值和影响范围。" />
+              <EmptyState title="暂无详情" description="选择一条变更查看摘要和处理状态。" />
             )}
           </InspectorPanel>
         </div>
@@ -321,20 +356,22 @@ export function ChangeCenterPage() {
 
 function ChangeEventRow({
   event,
+  stationNamesById,
   selected,
   onSelect,
 }: {
   event: ChangeEvent;
+  stationNamesById: Map<string, string>;
   selected: boolean;
   onSelect: () => void;
 }) {
-  const item = buildChangeEventListItem(event);
+  const item = buildChangeEventListItem(event, { stationNamesById });
   return (
     <button
       type="button"
       aria-pressed={selected}
       onClick={onSelect}
-      className={`grid min-h-[64px] w-full grid-cols-[56px_minmax(0,1fr)_88px] gap-3 px-3 py-2.5 text-left transition-colors hover:bg-teal-50/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--accent)/0.35)] ${
+      className={`grid min-h-[48px] w-full grid-cols-[56px_minmax(0,1fr)_88px] items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-teal-50/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--accent)/0.35)] ${
         selected ? "bg-teal-50/70" : "bg-white"
       }`}
     >
@@ -343,64 +380,11 @@ function ChangeEventRow({
       </div>
       <div className="min-w-0">
         <div className="truncate text-[13px] font-semibold text-slate-900">{item.title}</div>
-        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-slate-500">
-          <span className="truncate">{item.metaLabel}</span>
-          <span className="text-slate-300">/</span>
-          <span>{item.statusLabel}</span>
-          {item.diff && (item.diff.before || item.diff.after) && <span className="text-slate-300">/</span>}
-          <ChangeDiff diff={item.diff} />
-        </div>
       </div>
       <div className="flex flex-col items-end text-xs text-slate-500">
         <span className="font-medium text-slate-700">{formatChangeTime(event.detectedAt)}</span>
       </div>
     </button>
-  );
-}
-
-function ChangeDiff({ diff }: { diff: ChangeEventListDiff | null }) {
-  if (!diff || (!diff.before && !diff.after)) {
-    return null;
-  }
-
-  return (
-    <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
-      <span className="text-slate-500">{diff.label}</span>
-      {diff.before && diff.after ? (
-        <>
-          <DiffValue tone="before">{diff.before}</DiffValue>
-          <ArrowRight className="h-3.5 w-3.5 text-slate-400" />
-          <DiffValue tone="after">{diff.after}</DiffValue>
-        </>
-      ) : diff.after ? (
-        <>
-          <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">新增</span>
-          <DiffValue tone="after">{diff.after}</DiffValue>
-        </>
-      ) : (
-        <>
-          <span className="rounded-full bg-rose-50 px-2 py-0.5 font-medium text-rose-700">移除</span>
-          <DiffValue tone="before">{diff.before}</DiffValue>
-        </>
-      )}
-    </span>
-  );
-}
-
-function DiffValue({ children, tone }: { children: string | null; tone: "before" | "after" }) {
-  if (!children) {
-    return null;
-  }
-  return (
-    <span
-      className={
-        tone === "before"
-          ? "max-w-[220px] truncate rounded-[6px] border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-600"
-          : "max-w-[220px] truncate rounded-[6px] border border-teal-100 bg-teal-50 px-2 py-0.5 font-medium text-teal-800"
-      }
-    >
-      {children}
-    </span>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   closestCenter,
   type DraggableAttributes,
@@ -121,6 +121,8 @@ const statusTone: Record<Station["status"], "healthy" | "warning" | "error" | "d
   unchecked: "info",
 };
 const STATION_ASSET_REFRESH_INTERVAL_MS = 30_000;
+const STATION_ASSET_PRIMARY_TIMEOUT_MS = 8_000;
+const STATION_ASSET_ENRICHMENT_TIMEOUT_MS = 6_000;
 
 type StationsPageProps = {
   onAddProvider?: () => void;
@@ -164,6 +166,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     action: StationAction;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const stationAssetRefreshSequence = useRef(0);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
@@ -268,43 +271,80 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   }, [activeDialogStation?.id]);
 
   async function refreshStations(options: { silent?: boolean } = {}) {
+    const refreshId = ++stationAssetRefreshSequence.current;
     if (!options.silent) {
       setLoading(true);
     }
     setError(null);
     try {
-      const [nextStations, nextBalances, nextChanges] = await Promise.all([
+      const nextStations = await withStationAssetTimeout(
         listStations(),
-        listBalanceSnapshots(),
-        listChangeEvents(),
-      ]);
-      const nextSnapshotEntries = await Promise.all(
-        nextStations.map(async (station) => {
-          try {
-            return [station.id, await getLatestCollectorSnapshot(station.id)] as const;
-          } catch {
-            return [station.id, null] as const;
-          }
-        }),
+        "station asset list",
+        STATION_ASSET_PRIMARY_TIMEOUT_MS,
       );
+      if (stationAssetRefreshSequence.current !== refreshId) {
+        return;
+      }
       setStations(nextStations);
-      setBalanceSnapshots(nextBalances);
-      setChangeEvents(nextChanges);
-      setAssetSnapshotsByStation(new Map(nextSnapshotEntries));
       setSelectedStationId((current) => {
         if (current && nextStations.some((station) => station.id === current)) {
           return current;
         }
         return null;
       });
+      if (!options.silent) {
+        setLoading(false);
+      }
+      void refreshStationAssetEnrichment(nextStations, refreshId);
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
       toast.error("读取中转站失败", message);
     } finally {
-      if (!options.silent) {
+      if (!options.silent && stationAssetRefreshSequence.current === refreshId) {
         setLoading(false);
       }
+    }
+  }
+
+  async function refreshStationAssetEnrichment(nextStations: Station[], refreshId: number) {
+    const [balancesResult, changesResult, snapshotsResult] = await Promise.allSettled([
+      withStationAssetTimeout(
+        listBalanceSnapshots(),
+        "station asset balances",
+        STATION_ASSET_ENRICHMENT_TIMEOUT_MS,
+      ),
+      withStationAssetTimeout(
+        listChangeEvents(),
+        "station asset changes",
+        STATION_ASSET_ENRICHMENT_TIMEOUT_MS,
+      ),
+      Promise.allSettled(
+        nextStations.map(async (station) => {
+          const snapshot = await withStationAssetTimeout(
+            getLatestCollectorSnapshot(station.id),
+            `station asset snapshot ${station.id}`,
+            STATION_ASSET_ENRICHMENT_TIMEOUT_MS,
+          );
+          return [station.id, snapshot] as const;
+        }),
+      ),
+    ]);
+
+    if (stationAssetRefreshSequence.current !== refreshId) {
+      return;
+    }
+    if (balancesResult.status === "fulfilled") {
+      setBalanceSnapshots(balancesResult.value);
+    }
+    if (changesResult.status === "fulfilled") {
+      setChangeEvents(changesResult.value);
+    }
+    if (snapshotsResult.status === "fulfilled") {
+      const nextSnapshotEntries = snapshotsResult.value.map((result, index) =>
+        result.status === "fulfilled" ? result.value : [nextStations[index].id, null] as const,
+      );
+      setAssetSnapshotsByStation(new Map(nextSnapshotEntries));
     }
   }
 
@@ -931,7 +971,9 @@ function StationAssetListRow({
   const station = row.station;
   const statusToneValue = stationRiskTone(row);
   const balance = formatStationBalanceParts(row);
-  const lastCollectText = formatRelativeTime(station.lastPricingFetchedAt ?? station.updatedAt);
+  const lastCollectText = formatRelativeTime(
+    row.latestBalance?.updatedAt ?? row.latestBalance?.collectedAt ?? station.lastCheckedAt ?? station.updatedAt,
+  );
 
   return (
     <div
@@ -1558,6 +1600,20 @@ function keyToForm(key: StationKey): StationKeyFormState {
 
 function readError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function withStationAssetTimeout<T>(promise: Promise<T>, label: string, timeoutMs: number): Promise<T> {
+  let timeoutId: number | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  });
 }
 
 function stationAvatarLabel(name: string) {

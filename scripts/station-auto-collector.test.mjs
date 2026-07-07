@@ -7,6 +7,12 @@ const stationCollectorSource = await readFile("src-tauri/src/services/station_co
   () => "",
 );
 const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
+const sub2apiAdapterSource = await readFile("src-tauri/src/services/collectors/adapters/sub2api.rs", "utf8");
+const newapiAdapterSource = await readFile("src-tauri/src/services/collectors/adapters/newapi.rs", "utf8");
+const openaiCompatibleAdapterSource = await readFile(
+  "src-tauri/src/services/collectors/adapters/openai_compatible.rs",
+  "utf8",
+);
 const stationsPageSource = await readFile("src/features/stations/StationsPage.tsx", "utf8");
 
 assert.ok(
@@ -46,4 +52,20 @@ assert.ok(
   stationsPageSource.includes("window.setInterval") &&
     stationsPageSource.includes("refreshStations"),
   "station asset polling should refresh the station list and balance snapshots",
+);
+
+assert.ok(
+  sub2apiAdapterSource.includes("COLLECTOR_HTTP_TIMEOUT") &&
+    sub2apiAdapterSource.includes(".timeout(COLLECTOR_HTTP_TIMEOUT)") &&
+    newapiAdapterSource.includes("COLLECTOR_HTTP_TIMEOUT") &&
+    newapiAdapterSource.includes(".timeout(COLLECTOR_HTTP_TIMEOUT)") &&
+    openaiCompatibleAdapterSource.includes("COLLECTOR_HTTP_TIMEOUT") &&
+    openaiCompatibleAdapterSource.includes(".timeout(COLLECTOR_HTTP_TIMEOUT)"),
+  "collector HTTP requests should have a bounded timeout so one station cannot block the scheduled runner",
+);
+
+assert.ok(
+  stationsPageSource.includes("row.latestBalance?.updatedAt ?? row.latestBalance?.collectedAt") &&
+    !stationsPageSource.includes("const lastCollectText = formatRelativeTime(station.lastPricingFetchedAt ?? station.updatedAt);"),
+  "station asset balance timestamp should use the latest balance snapshot time, not the pricing collection timestamp",
 );

@@ -22,6 +22,8 @@ use crate::{
     },
 };
 
+const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 pub fn parse_usage_balance(
     station_id: &str,
     station_key_id: Option<String>,
@@ -942,6 +944,7 @@ impl EndpointJsonResult {
 fn fetch_json_with_bearer(url: &str, access_token: &str) -> EndpointJsonResult {
     let started = std::time::Instant::now();
     let response = match ureq::get(url)
+        .timeout(COLLECTOR_HTTP_TIMEOUT)
         .set("Authorization", &format!("Bearer {access_token}"))
         .call()
     {
@@ -977,6 +980,7 @@ fn fetch_json_with_bearer(url: &str, access_token: &str) -> EndpointJsonResult {
 fn post_json_with_bearer(url: &str, access_token: &str, body: &Value) -> EndpointJsonResult {
     let started = std::time::Instant::now();
     let response = match ureq::post(url)
+        .timeout(COLLECTOR_HTTP_TIMEOUT)
         .set("Authorization", &format!("Bearer {access_token}"))
         .set("Content-Type", "application/json")
         .send_string(&body.to_string())
@@ -1077,6 +1081,7 @@ pub fn collect_balance(
         };
         let started = std::time::Instant::now();
         let response = match ureq::get(&url)
+            .timeout(COLLECTOR_HTTP_TIMEOUT)
             .set("Authorization", &format!("Bearer {api_key}"))
             .call()
         {

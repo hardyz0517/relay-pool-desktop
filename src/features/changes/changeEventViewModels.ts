@@ -86,7 +86,11 @@ export type ChangeEventListItem = {
   diff: ChangeEventListDiff | null;
 };
 
-export function filterChangeEvents(events: ChangeEvent[], filter: ChangeFilter) {
+export type ChangeEventListOptions = {
+  stationNamesById?: Map<string, string> | Record<string, string>;
+};
+
+export function filterChangeEvents(events: ChangeEvent[], filter: ChangeFilter, options: ChangeEventListOptions = {}) {
   const query = filter.query.trim().toLowerCase();
   return events.filter((event) => {
     if (filter.severity !== "all" && event.severity !== filter.severity) {
@@ -105,7 +109,7 @@ export function filterChangeEvents(events: ChangeEvent[], filter: ChangeFilter) 
     if (!query) {
       return true;
     }
-    const item = buildChangeEventListItem(event);
+    const item = buildChangeEventListItem(event, options);
     return `${event.title} ${event.message} ${event.eventType} ${event.source} ${event.objectType} ${item.title} ${item.description} ${item.metaLabel} ${item.objectLabel} ${item.diff?.before ?? ""} ${item.diff?.after ?? ""}`
       .toLowerCase()
       .includes(query);
@@ -154,9 +158,14 @@ export async function markUnreadChangeEventsRead(
   };
 }
 
-export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListItem {
+export function buildChangeEventListItem(
+  event: ChangeEvent,
+  options: ChangeEventListOptions = {},
+): ChangeEventListItem {
   const oldValue = parseJsonRecord(event.oldValueJson);
   const newValue = parseJsonRecord(event.newValueJson);
+  const impact = parseJsonRecord(event.impactJson);
+  const stationSubject = formatStationSubject(event, oldValue, newValue, impact, options);
   const baseItem: ChangeEventListItem = {
     title: event.title,
     description: event.message,
@@ -177,10 +186,13 @@ export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListIte
       ...baseItem,
       title:
         groupName && (before != null || after != null)
-          ? `分组 ${groupName} 倍率变化`
+          ? `${stationSubject} 的分组 ${groupName} 倍率${formatValueChange(
+              before == null ? null : formatMultiplierLabel(before),
+              after == null ? null : formatMultiplierLabel(after),
+            )}`
           : groupName
-            ? `分组 ${groupName} 倍率未知`
-            : event.title,
+            ? `${stationSubject} 的分组 ${groupName} 倍率未知`
+            : `${stationSubject} 的分组倍率发生变化`,
       diff: {
         label: "倍率",
         before: before == null ? null : `${formatCompactNumber(before)} 倍`,
@@ -194,9 +206,7 @@ export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListIte
     const multiplier = readMultiplier(newValue);
     return {
       ...baseItem,
-      title: groupName
-        ? `新增可用分组 ${groupName}，倍率 ${formatMultiplierLabel(multiplier)}`
-        : `${event.title}，倍率 ${formatMultiplierLabel(multiplier)}`,
+      title: `${stationSubject} 新增分组 ${groupName ?? "未知分组"}，倍率${formatMultiplierLabel(multiplier)}`,
       metaLabel: `${baseItem.sourceLabel} / 分组`,
       diff: null,
     };
@@ -207,9 +217,7 @@ export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListIte
     const multiplier = readMultiplier(newValue) ?? readMultiplier(oldValue);
     return {
       ...baseItem,
-      title: groupName
-        ? `分组 ${groupName} 不可见，倍率 ${formatMultiplierLabel(multiplier)}`
-        : `${event.title}，倍率 ${formatMultiplierLabel(multiplier)}`,
+      title: `${stationSubject} 的分组 ${groupName ?? "未知分组"} 不可见，倍率${formatMultiplierLabel(multiplier)}`,
       diff: {
         label: "状态",
         before: formatBindingStatus(readString(oldValue, "bindingStatus")),
@@ -221,13 +229,17 @@ export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListIte
   if (event.eventType === "price_changed") {
     const model = extractModelName(event.message);
     const currency = readString(newValue, "currency") ?? readString(oldValue, "currency");
+    const before = formatPrice(readNumber(oldValue, "outputPrice"), currency);
+    const after = formatPrice(readNumber(newValue, "outputPrice"), currency);
     return {
       ...baseItem,
-      title: model ? `模型 ${model} 价格变化` : event.title,
+      title: model
+        ? `${stationSubject} 的模型 ${model} 输出价格${formatValueChange(before, after)}`
+        : `${stationSubject} 的模型输出价格发生变化`,
       diff: {
         label: "输出价格",
-        before: formatPrice(readNumber(oldValue, "outputPrice"), currency),
-        after: formatPrice(readNumber(newValue, "outputPrice"), currency),
+        before,
+        after,
       },
     };
   }
@@ -236,7 +248,9 @@ export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListIte
     const model = readString(newValue, "model") ?? readString(oldValue, "model") ?? extractModelName(event.message);
     return {
       ...baseItem,
-      title: model ? `${event.eventType === "model_added" ? "新增模型" : "下架模型"} ${model}` : event.title,
+      title: model
+        ? `${stationSubject} ${event.eventType === "model_added" ? "新增模型" : "下架模型"} ${model}`
+        : `${stationSubject} ${event.eventType === "model_added" ? "新增模型" : "下架模型"}`,
       diff: {
         label: "模型",
         before: event.eventType === "model_removed" ? model : null,
@@ -248,8 +262,14 @@ export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListIte
   if (event.eventType === "balance_low" || event.eventType === "balance_depleted") {
     const value = readNumber(newValue, "value");
     const threshold = readNumber(newValue, "threshold");
+    const statusLabel = event.eventType === "balance_depleted" ? "余额耗尽" : "余额偏低";
+    const valueLabel = value == null ? "未知" : formatCompactNumber(value);
+    const thresholdLabel = threshold == null ? null : formatCompactNumber(threshold);
     return {
       ...baseItem,
+      title: thresholdLabel
+        ? `${stationSubject} ${statusLabel}：当前 ${valueLabel}，阈值 ${thresholdLabel}`
+        : `${stationSubject} ${statusLabel}：当前 ${valueLabel}`,
       diff: {
         label: "余额",
         before: threshold == null ? null : `阈值 ${formatCompactNumber(threshold)}`,
@@ -268,7 +288,7 @@ export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListIte
     const description = event.message.replace(/^Key\s+/, `${descriptionLabel} `);
     return {
       ...baseItem,
-      title: `Key ${stationKeyLabel} 健康异常`,
+      title: `${stationSubject} 的 Key ${stationKeyLabel} 健康异常${failures == null ? "" : `：连续失败 ${formatCompactNumber(failures)} 次`}`,
       description,
       metaLabel: `${baseItem.sourceLabel} / ${stationKeyLabel}`,
       objectLabel: stationKeyLabel,
@@ -280,7 +300,44 @@ export function buildChangeEventListItem(event: ChangeEvent): ChangeEventListIte
     };
   }
 
-  return baseItem;
+  if (event.eventType === "key_group_bound" || event.eventType === "key_group_unresolved") {
+    const groupName = readString(newValue, "groupName") ?? readString(oldValue, "groupName") ?? extractGroupName(event.message);
+    const stationKeyLabel = shortenIdentifier(event.stationKeyId ?? event.objectId ?? null) ?? baseItem.objectLabel;
+    return {
+      ...baseItem,
+      title:
+        event.eventType === "key_group_bound"
+          ? `${stationSubject} 的 Key ${stationKeyLabel} 已绑定分组 ${groupName ?? "未知分组"}`
+          : `${stationSubject} 的 Key ${stationKeyLabel} 分组无法识别`,
+    };
+  }
+
+  if (event.eventType === "collector_failed" || event.eventType === "collector_recovered") {
+    return {
+      ...baseItem,
+      title: `${stationSubject} ${event.eventType === "collector_failed" ? "采集失败" : "采集恢复"}`,
+    };
+  }
+
+  if (event.eventType === "route_impacted") {
+    const scope = event.objectId ?? readString(newValue, "routeScope") ?? "默认路由";
+    return {
+      ...baseItem,
+      title: `${stationSubject} 的${scope}路由受影响`,
+    };
+  }
+
+  if (event.eventType === "station_down" || event.eventType === "station_recovered") {
+    return {
+      ...baseItem,
+      title: `${stationSubject} ${event.eventType === "station_down" ? "状态异常" : "状态恢复"}`,
+    };
+  }
+
+  return {
+    ...baseItem,
+    title: `${stationSubject} 的${baseItem.objectLabel}${baseItem.kindLabel}`,
+  };
 }
 
 export function formatChangeTime(value: string) {
@@ -351,6 +408,19 @@ function formatMultiplierLabel(value: number | null) {
   return value == null ? "未知" : `${formatCompactNumber(value)} 倍`;
 }
 
+function formatValueChange(before: string | null, after: string | null) {
+  if (before && after) {
+    return `从 ${before}变为 ${after}`;
+  }
+  if (after) {
+    return `变为 ${after}`;
+  }
+  if (before) {
+    return `从 ${before} 变为未知`;
+  }
+  return "发生变化";
+}
+
 function formatPrice(value: number | null, currency: string | null) {
   if (value == null) {
     return null;
@@ -385,6 +455,61 @@ function shortenIdentifier(value: string | null) {
     return null;
   }
   return value.length > 18 ? `${value.slice(0, 15)}...` : value;
+}
+
+function formatStationSubject(
+  event: ChangeEvent,
+  oldValue: Record<string, unknown> | null,
+  newValue: Record<string, unknown> | null,
+  impact: Record<string, unknown> | null,
+  options: ChangeEventListOptions,
+) {
+  return `中转站 ${resolveStationLabel(event, oldValue, newValue, impact, options)}`;
+}
+
+function resolveStationLabel(
+  event: ChangeEvent,
+  oldValue: Record<string, unknown> | null,
+  newValue: Record<string, unknown> | null,
+  impact: Record<string, unknown> | null,
+  options: ChangeEventListOptions,
+) {
+  return (
+    readStationNameById(options.stationNamesById, event.stationId) ??
+    readStationName(newValue) ??
+    readStationName(oldValue) ??
+    readStationName(impact) ??
+    extractStationName(event.message) ??
+    shortenIdentifier(event.stationId ?? (event.objectType === "station" ? event.objectId : null)) ??
+    "未知"
+  );
+}
+
+function readStationNameById(
+  stationNamesById: ChangeEventListOptions["stationNamesById"],
+  stationId: string | null,
+) {
+  if (!stationNamesById || !stationId) {
+    return null;
+  }
+  if (stationNamesById instanceof Map) {
+    return stationNamesById.get(stationId) ?? null;
+  }
+  return stationNamesById[stationId] ?? null;
+}
+
+function readStationName(value: Record<string, unknown> | null) {
+  return (
+    readString(value, "stationName") ??
+    readString(value, "station_name") ??
+    readString(value, "stationLabel") ??
+    readString(value, "station_label")
+  );
+}
+
+function extractStationName(message: string) {
+  const match = message.match(/^(.+?)\s+(?:余额低于阈值|余额已耗尽|新增模型|下架模型)/);
+  return match?.[1]?.trim() ?? null;
 }
 
 function extractGroupName(message: string) {

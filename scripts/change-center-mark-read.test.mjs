@@ -108,11 +108,13 @@ const rateChange = buildChangeEventListItem(
     eventType: "rate_changed",
     title: "倍率上涨",
     message: "分组 plus 倍率发生变化",
+    stationId: "station-rate",
     oldValueJson: JSON.stringify({ groupName: "plus", multiplier: 0.7 }),
     newValueJson: JSON.stringify({ groupName: "plus", multiplier: 1 }),
   }),
+  { stationNamesById: new Map([["station-rate", "倍率站"]]) },
 );
-assert.equal(rateChange.title, "分组 plus 倍率变化");
+assert.equal(rateChange.title, "中转站 倍率站 的分组 plus 倍率从 0.7 倍变为 1 倍");
 assert.deepEqual(rateChange.diff, { label: "倍率", before: "0.7 倍", after: "1 倍" });
 
 const groupAdded = buildChangeEventListItem(
@@ -120,10 +122,12 @@ const groupAdded = buildChangeEventListItem(
     eventType: "group_added",
     title: "分组新增",
     message: "站点新增可用分组 claude-aws",
+    stationId: "station-blue",
     newValueJson: JSON.stringify({ groupName: "claude-aws" }),
   }),
+  { stationNamesById: new Map([["station-blue", "蓝池"]]) },
 );
-assert.equal(groupAdded.title, "新增可用分组 claude-aws，倍率 未知");
+assert.equal(groupAdded.title, "中转站 蓝池 新增分组 claude-aws，倍率未知");
 assert.equal(groupAdded.diff, null);
 
 const groupMissing = buildChangeEventListItem(
@@ -132,12 +136,38 @@ const groupMissing = buildChangeEventListItem(
     eventType: "group_missing",
     title: "分组不可见",
     message: "分组 cmax-限制客户端-暂停供应 在最新采集中不可见",
+    stationId: "station-cmax",
     oldValueJson: JSON.stringify({ bindingStatus: "available" }),
     newValueJson: JSON.stringify({ bindingStatus: "missing" }),
   }),
+  { stationNamesById: new Map([["station-cmax", "CMax"]]) },
 );
-assert.equal(groupMissing.title, "分组 cmax-限制客户端-暂停供应 不可见，倍率 未知");
+assert.equal(groupMissing.title, "中转站 CMax 的分组 cmax-限制客户端-暂停供应 不可见，倍率未知");
 assert.deepEqual(groupMissing.diff, { label: "状态", before: "可用", after: "不可见" });
+
+const balanceLow = buildChangeEventListItem(
+  changeEvent("balance-low", "unread", {
+    severity: "warning",
+    eventType: "balance_low",
+    title: "余额偏低",
+    message: "Orchid Relay 余额低于阈值，可能影响 cheap_first 路由。",
+    stationId: "station-orchid",
+    newValueJson: JSON.stringify({ value: 4.2, threshold: 10 }),
+    source: "balance",
+  }),
+);
+assert.equal(balanceLow.title, "中转站 Orchid Relay 余额偏低：当前 4.2，阈值 10");
+
+const modelAdded = buildChangeEventListItem(
+  changeEvent("model-added", "unread", {
+    eventType: "model_added",
+    title: "模型新增",
+    message: "Blue Pool 新增模型 gpt-5-mini。",
+    stationId: "station-blue",
+    newValueJson: JSON.stringify({ model: "gpt-5-mini" }),
+  }),
+);
+assert.equal(modelAdded.title, "中转站 Blue Pool 新增模型 gpt-5-mini");
 
 const keyInvalidWithName = buildChangeEventListItem(
   changeEvent("key-invalid-named", "unread", {
@@ -147,6 +177,7 @@ const keyInvalidWithName = buildChangeEventListItem(
     message: "Key 连续失败 5 次：timeout",
     objectType: "station_key",
     objectId: "key-prod-1",
+    stationId: "station-prod",
     stationKeyId: "key-prod-1",
     newValueJson: JSON.stringify({
       stationKeyName: "生产 Key",
@@ -155,8 +186,9 @@ const keyInvalidWithName = buildChangeEventListItem(
     }),
     source: "health",
   }),
+  { stationNamesById: new Map([["station-prod", "生产站"]]) },
 );
-assert.equal(keyInvalidWithName.title, "Key 生产 Key 健康异常");
+assert.equal(keyInvalidWithName.title, "中转站 生产站 的 Key 生产 Key 健康异常：连续失败 5 次");
 assert.equal(keyInvalidWithName.description, "sk-****prod 连续失败 5 次：timeout");
 assert.equal(keyInvalidWithName.metaLabel, "密钥 / 生产 Key");
 assert.deepEqual(keyInvalidWithName.diff, { label: "失败次数", before: null, after: "5 次" });
@@ -169,12 +201,14 @@ const keyInvalidWithoutName = buildChangeEventListItem(
     message: "Key 连续失败 2 次",
     objectType: "station_key",
     objectId: "station-key-abcdef123456",
+    stationId: "station-prod",
     stationKeyId: "station-key-abcdef123456",
     newValueJson: JSON.stringify({ consecutiveFailures: 2 }),
     source: "health",
   }),
+  { stationNamesById: new Map([["station-prod", "生产站"]]) },
 );
-assert.equal(keyInvalidWithoutName.title, "Key station-key-abc... 健康异常");
+assert.equal(keyInvalidWithoutName.title, "中转站 生产站 的 Key station-key-abc... 健康异常：连续失败 2 次");
 assert.equal(keyInvalidWithoutName.metaLabel, "密钥 / station-key-abc...");
 
 const changeEventsApiSource = await readFile("src/lib/api/changeEvents.ts", "utf8");
@@ -193,6 +227,13 @@ assert.ok(
 assert.ok(
   changeCenterSource.includes("notifyChangeEventsUpdated"),
   "change center status actions should notify other surfaces after event state changes",
+);
+
+assert.ok(
+  changeCenterSource.includes('import { listStations } from "@/lib/api/stations"') &&
+    changeCenterSource.includes("stationNamesById") &&
+    changeCenterSource.includes("buildChangeEventListItem(event, { stationNamesById })"),
+  "change center page should resolve station IDs to station names before rendering event copy",
 );
 
 assert.ok(
@@ -223,9 +264,20 @@ assert.ok(
   changeCenterSource.includes("clearChangeHistory") &&
     changeCenterSource.includes("清除记录") &&
     changeCenterSource.includes("pageInfo.events.map") &&
+    changeCenterSource.includes("grid-cols-[56px_minmax(0,1fr)_88px]") &&
+    !changeCenterSource.includes("function ChangeDiff") &&
     changeCenterSource.includes("上一页") &&
     changeCenterSource.includes("下一页"),
-  "change center page should render a clear-history action and paginate the filtered event list",
+  "change center page should render one-line event rows, a clear-history action, and paginate the filtered event list",
+);
+
+assert.ok(
+  changeCenterSource.includes("developerModeEnabled") &&
+    changeCenterSource.includes("getSettings") &&
+    changeCenterSource.includes("{developerModeEnabled ? (") &&
+    changeCenterSource.indexOf('<JsonBlock title="旧值"') > changeCenterSource.indexOf("{developerModeEnabled ? (") &&
+    changeCenterSource.indexOf("去重键：") > changeCenterSource.indexOf("{developerModeEnabled ? ("),
+  "change center inspector should show raw collection/debug details only in developer mode",
 );
 
 assert.ok(

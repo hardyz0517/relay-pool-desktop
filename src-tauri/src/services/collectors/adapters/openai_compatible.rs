@@ -9,6 +9,8 @@ use crate::services::{
     database::AppDatabase,
 };
 
+const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 fn parse_openai_models(station_id: &str, payload: &Value) -> Vec<CollectedModelFact> {
     payload
         .get("data")
@@ -83,6 +85,7 @@ pub fn collect_models(
     let url = join_url(&urls.upstream_api_base_url, "/models");
     let started = std::time::Instant::now();
     let response = match ureq::get(&url)
+        .timeout(COLLECTOR_HTTP_TIMEOUT)
         .set("Authorization", &format!("Bearer {api_key}"))
         .call()
     {

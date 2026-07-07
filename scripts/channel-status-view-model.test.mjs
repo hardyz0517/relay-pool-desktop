@@ -76,7 +76,7 @@ assert.deepEqual(
 assert.deepEqual(
   resolveChannelLatencyMetrics({ requestLatencyMs: null, healthLatencyMs: 5422, endpointPingMs: 38 }),
   { conversationLatencyMs: 5422, endpointPingMs: 38 },
-  "endpoint PING should display the independent station endpoint latency",
+  "endpoint PING should display the station endpoint latency synced during monitor runs",
 );
 
 assert.deepEqual(

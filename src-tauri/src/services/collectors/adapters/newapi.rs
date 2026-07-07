@@ -15,6 +15,7 @@ use crate::services::{
 
 const NEWAPI_REMOTE_KEY_UNSUPPORTED: &str =
     "NewAPI 远端 Key 列表/创建接口尚未适配；当前仅支持读取账号分组信息。";
+const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 fn parse_newapi_balance(station_id: &str, payload: &Value) -> CollectedBalanceFact {
     let quota = payload.get("quota").and_then(Value::as_f64);
@@ -314,6 +315,7 @@ fn get_newapi_json(
 ) -> Result<Value, String> {
     let started = std::time::Instant::now();
     let response = match ureq::get(url)
+        .timeout(COLLECTOR_HTTP_TIMEOUT)
         .set("Authorization", &format!("Bearer {access_token}"))
         .set("New-Api-User", user_id)
         .set("Content-Type", "application/json")

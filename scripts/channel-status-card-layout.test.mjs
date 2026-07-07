@@ -27,3 +27,23 @@ assert.ok(
   !source.includes('{channel.lastError ?? ""}'),
   "channel status cards should not render the last error summary as a bottom line because it changes card height",
 );
+
+assert.ok(
+  !source.includes('runChannelMonitorNow'),
+  "channel status page should not expose a separate model-detection action; scheduled monitors own detection",
+);
+
+assert.ok(
+  !source.includes('pingStationEndpoint'),
+  "channel status page should not expose a separate endpoint PING action",
+);
+
+assert.ok(
+  !source.includes('检测模型') && !source.includes('PING 中'),
+  "channel status toolbar should not contain manual model detection or PING controls",
+);
+
+assert.ok(
+  source.includes('label="端点 PING"'),
+  "channel status card should show endpoint PING that is refreshed by monitor runs",
+);
