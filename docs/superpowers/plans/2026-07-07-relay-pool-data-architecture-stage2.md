@@ -90,6 +90,7 @@ pnpm.cmd build
 新增：
 
 - `src/lib/queries/changeQueries.ts`
+- `scripts/change-query-service.test.mjs`
 
 候选函数：
 
@@ -103,6 +104,7 @@ pnpm.cmd build
 验证：
 
 ```powershell
+node scripts/change-query-service.test.mjs
 node scripts/change-center-mark-read.test.mjs
 node scripts/change-center-collector-task-label.test.mjs
 pnpm.cmd build

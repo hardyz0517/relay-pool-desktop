@@ -14,11 +14,10 @@ import {
 import { readError } from "@/lib/errors";
 import {
   clearChangeEvents,
-  listChangeEvents,
   markChangeEventRead,
   notifyChangeEventsUpdated,
 } from "@/lib/api/changeEvents";
-import { listStations } from "@/lib/api/stations";
+import { loadChangeCenterWorkspace } from "@/lib/queries/changeQueries";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import {
   activeSeverityCount,
@@ -52,9 +51,9 @@ export function ChangeCenterPage() {
     setLoading(true);
     setError(null);
     try {
-      const [nextEvents, stations] = await Promise.all([listChangeEvents(), listStations()]);
-      setStationNamesById(new Map(stations.map((station) => [station.id, station.name])));
-      setEvents(nextEvents);
+      const workspace = await loadChangeCenterWorkspace();
+      setStationNamesById(new Map(workspace.stations.map((station) => [station.id, station.name])));
+      setEvents(workspace.changeEvents);
       if (showSuccess) {
         toast.success("变更中心已刷新");
       }

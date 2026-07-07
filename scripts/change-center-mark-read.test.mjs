@@ -248,7 +248,8 @@ assert.ok(
 );
 
 assert.ok(
-  changeCenterSource.includes('import { listStations } from "@/lib/api/stations"') &&
+  changeCenterSource.includes('import { loadChangeCenterWorkspace } from "@/lib/queries/changeQueries"') &&
+    changeCenterSource.includes("workspace.stations.map((station) => [station.id, station.name])") &&
     changeCenterSource.includes("stationNamesById") &&
     changeCenterSource.includes("buildChangeEventListItem(event, { stationNamesById })"),
   "change center page should resolve station IDs to station names before rendering event copy",
