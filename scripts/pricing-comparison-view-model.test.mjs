@@ -1,6 +1,23 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import ts from "typescript";
+
+async function transpileTsFile(sourcePath, outputPath, replacements = []) {
+  let source = await readFile(sourcePath, "utf8");
+  for (const [from, to] of replacements) {
+    source = source.replaceAll(from, to);
+  }
+  const output = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+      verbatimModuleSyntax: true,
+    },
+  }).outputText;
+  await writeFile(outputPath, output, "utf8");
+}
 
 async function importTsModule(path) {
   const source = await readFile(path, "utf8");
@@ -14,12 +31,25 @@ async function importTsModule(path) {
   return import(`data:text/javascript;base64,${Buffer.from(output, "utf8").toString("base64")}`);
 }
 
+async function importPricingComparisonViewModel() {
+  const tempRoot = await mkdtemp(join(tmpdir(), "relay-pricing-view-model-"));
+  const groupFactsPath = join(tempRoot, "groupFacts.mjs");
+  const pricingFactsPath = join(tempRoot, "pricingFacts.mjs");
+  const viewModelPath = join(tempRoot, "pricingComparisonViewModel.mjs");
+  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath);
+  await transpileTsFile("src/lib/projections/pricingFacts.ts", pricingFactsPath, [
+    ['@/lib/projections/groupFacts', "./groupFacts.mjs"],
+  ]);
+  await transpileTsFile("src/features/pricing/pricingComparisonViewModel.ts", viewModelPath, [
+    ["../../lib/projections/pricingFacts", "./pricingFacts.mjs"],
+  ]);
+  return import(`file://${viewModelPath.replaceAll("\\", "/")}`);
+}
+
 const { officialModelCatalog, enabledOfficialModelCatalog } = await importTsModule(
   "src/features/pricing/officialModelCatalog.ts",
 );
-const { buildPricingComparisonViewModel } = await importTsModule(
-  "src/features/pricing/pricingComparisonViewModel.ts",
-);
+const { buildPricingComparisonViewModel } = await importPricingComparisonViewModel();
 
 assert.ok(
   officialModelCatalog.length >= 4,
@@ -867,6 +897,22 @@ assert.deepEqual(
 );
 
 const pageSource = await readFile("src/features/pricing/PricingPage.tsx", "utf8");
+const viewModelSource = await readFile("src/features/pricing/pricingComparisonViewModel.ts", "utf8");
+assert.ok(
+  viewModelSource.includes("buildPricingGroupCandidates"),
+  "pricing comparison view model should consume shared pricing projection candidates",
+);
+assert.ok(
+  !viewModelSource.includes("void input.pricingRules"),
+  "pricing comparison view model must pass pricingRules into the shared projection instead of ignoring them",
+);
+assert.ok(
+  !viewModelSource.includes("function bindingCandidate(") &&
+    !viewModelSource.includes("function rateCandidate(") &&
+    !viewModelSource.includes("function isRateForBinding(") &&
+    !viewModelSource.includes("function latestRatesByStationGroup("),
+  "pricing comparison view model should not keep page-local group/rate projection helpers after Stage 4",
+);
 assert.ok(
   pageSource.includes("buildPricingComparisonViewModel"),
   "PricingPage should delegate comparison construction to the helper",

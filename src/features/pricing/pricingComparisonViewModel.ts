@@ -2,6 +2,10 @@ import type {
   OfficialModelCatalogEntry,
   OfficialModelProvider,
 } from "./officialModelCatalog";
+import {
+  buildPricingGroupCandidates,
+  type PricingGroupCandidate,
+} from "../../lib/projections/pricingFacts";
 import type { GroupRateRecord, StationGroupBinding } from "../../lib/types/groupFacts";
 import type { PricingRule } from "../../lib/types/economics";
 import type { StationKey } from "../../lib/types/stationKeys";
@@ -92,20 +96,6 @@ export type PricingComparisonViewModel = {
   emptyReason: "no_catalog_models" | "no_group_rates" | "filtered_empty" | null;
 };
 
-type GroupCandidate = {
-  station: Station;
-  stationKeyId: string | null;
-  stationKeyName: string | null;
-  groupBindingId: string | null;
-  groupRateRecordId: string | null;
-  groupKeyHash: string;
-  groupName: string;
-  groupRawJsonRedacted: Record<string, unknown> | null;
-  groupMultiplier: number | null;
-  source: string;
-  checkedAt: string | null;
-};
-
 const evidenceLabels: Record<PricingEvidenceStatus, string> = {
   discovered: "已发现",
   unverified: "未验证",
@@ -115,12 +105,15 @@ const evidenceLabels: Record<PricingEvidenceStatus, string> = {
 export function buildPricingComparisonViewModel(
   input: PricingComparisonInput,
 ): PricingComparisonViewModel {
-  void input.pricingRules;
-
   const filters = normalizeFilters(input.filters);
-  const stationsById = new Map(input.stations.map((station) => [station.id, station]));
-  const stationKeyNameById = new Map((input.stationKeys ?? []).map((key) => [key.id, key.name]));
   const evidenceByStationModel = buildEvidenceIndex(input.modelEvidence ?? []);
+  const pricingCandidates = buildPricingGroupCandidates({
+    stations: input.stations,
+    stationKeys: input.stationKeys,
+    groupBindings: input.groupBindings,
+    groupRates: input.groupRates,
+    pricingRules: input.pricingRules,
+  });
   const enabledModels = input.models
     .filter((model) => model.enabledByDefault)
     .map((model, index) => ({ model, index }))
@@ -149,10 +142,7 @@ export function buildPricingComparisonViewModel(
     const modelQueryMatches = modelMatchesQuery(model, filters.modelQuery);
     const unfilteredRows = buildRowsForModel(
       model,
-      input.groupBindings,
-      input.groupRates,
-      stationsById,
-      stationKeyNameById,
+      pricingCandidates,
       evidenceByStationModel,
     );
     const rows = markCheapestRows(
@@ -232,87 +222,18 @@ function buildEvidenceIndex(modelEvidence: PricingModelEvidence[]) {
 
 function buildRowsForModel(
   model: PricingComparisonCatalogEntry,
-  groupBindings: StationGroupBinding[],
-  groupRates: GroupRateRecord[],
-  stationsById: Map<string, Station>,
-  stationKeyNameById: Map<string, string>,
+  pricingCandidates: PricingGroupCandidate[],
   evidenceByStationModel: Map<string, PricingEvidenceStatus>,
 ) {
-  const rows: PricingComparisonRow[] = [];
-  const consumedRateIds = new Set<string>();
-  const activeGroupBindingIds = new Set(groupBindings.filter(isStationGroupBinding).map((binding) => binding.id));
-  const activeGroupKeys = new Set(
-    groupBindings.filter(isStationGroupBinding).map((binding) => binding.groupKeyHash),
-  );
-  const inactiveGroupKeys = new Set(
-    groupBindings
-      .filter((binding) => binding.bindingKind === "station_group" && !isStationGroupBinding(binding))
-      .map((binding) => binding.groupKeyHash),
-  );
-
-  for (const binding of groupBindings) {
-    const station = stationsById.get(binding.stationId);
-    if (!station || !isStationGroupBinding(binding)) {
-      continue;
-    }
-
-    const relatedRates = groupRates
-      .filter((rate) => isRateForBinding(rate, binding))
-      .sort(compareRatesByFreshness);
-    const matchingRate = selectRateForBinding(
-      relatedRates.filter((rate) => groupRateMatchesModel(rate, model)),
-      binding,
-    );
-    const bindingMatches = groupBindingMatchesModel(binding, model);
-    if (!bindingMatches && !matchingRate) {
-      continue;
-    }
-
-    const rate = matchingRate ?? selectRateForBinding(relatedRates, binding);
-    for (const relatedRate of relatedRates) {
-      consumedRateIds.add(relatedRate.id);
-    }
-    rows.push(
-      createRowFromCandidate(
-        model,
-        bindingCandidate(binding, station, rate, stationKeyNameById),
-        evidenceByStationModel,
-      ),
-    );
-  }
-
-  const latestStandaloneRates = latestRatesByStationGroup(
-    groupRates.filter(
-      (rate) =>
-        !consumedRateIds.has(rate.id) &&
-        isRateBackedByActiveGroup(rate, activeGroupBindingIds, activeGroupKeys, inactiveGroupKeys),
-    ),
-  );
-
-  for (const rate of latestStandaloneRates) {
-    if (consumedRateIds.has(rate.id)) {
-      continue;
-    }
-    const station = stationsById.get(rate.stationId);
-    if (!station || !isStationGroupRate(rate) || !groupRateMatchesModel(rate, model)) {
-      continue;
-    }
-
-    rows.push(
-      createRowFromCandidate(
-        model,
-        rateCandidate(rate, station, stationKeyNameById),
-        evidenceByStationModel,
-      ),
-    );
-  }
-
-  return rows.sort(compareRows);
+  return pricingCandidates
+    .filter((candidate) => groupCandidateMatchesModel(candidate, model))
+    .map((candidate) => createRowFromCandidate(model, candidate, evidenceByStationModel))
+    .sort(compareRows);
 }
 
 function createRowFromCandidate(
   model: PricingComparisonCatalogEntry,
-  candidate: GroupCandidate,
+  candidate: PricingGroupCandidate,
   evidenceByStationModel: Map<string, PricingEvidenceStatus>,
 ): PricingComparisonRow {
   const creditPerCny = safeCreditPerCny(candidate.station.creditPerCny);
@@ -359,58 +280,22 @@ function createRowFromCandidate(
   };
 }
 
-function bindingCandidate(
-  binding: StationGroupBinding,
-  station: Station,
-  rate: GroupRateRecord | null,
-  stationKeyNameById: Map<string, string>,
-): GroupCandidate {
-  const stationKeyId = binding.stationKeyId ?? rate?.stationKeyId ?? null;
-  return {
-    station,
-    stationKeyId,
-    stationKeyName: stationKeyId ? stationKeyNameById.get(stationKeyId) ?? null : null,
-    groupBindingId: binding.id,
-    groupRateRecordId: rate?.id ?? null,
-    groupKeyHash: binding.groupKeyHash,
-    groupName: binding.groupName,
-    groupRawJsonRedacted: rate?.rawJsonRedacted ?? binding.rawJsonRedacted,
-    groupMultiplier: firstFiniteNumber(
-      rate?.effectiveRateMultiplier,
-      binding.effectiveRateMultiplier,
-      rate?.userRateMultiplier,
-      binding.userRateMultiplier,
-      rate?.defaultRateMultiplier,
-      binding.defaultRateMultiplier,
-    ),
-    source: rate?.source ?? binding.rateSource ?? "station_group_binding",
-    checkedAt: rate?.checkedAt ?? binding.lastCheckedAt ?? binding.updatedAt,
-  };
-}
-
-function rateCandidate(
-  rate: GroupRateRecord,
-  station: Station,
-  stationKeyNameById: Map<string, string>,
-): GroupCandidate {
-  const stationKeyId = rate.stationKeyId ?? null;
-  return {
-    station,
-    stationKeyId,
-    stationKeyName: stationKeyId ? stationKeyNameById.get(stationKeyId) ?? null : null,
-    groupBindingId: rate.groupBindingId,
-    groupRateRecordId: rate.id,
-    groupKeyHash: rate.groupKeyHash,
-    groupName: rate.groupName,
-    groupRawJsonRedacted: rate.rawJsonRedacted,
-    groupMultiplier: firstFiniteNumber(
-      rate.effectiveRateMultiplier,
-      rate.userRateMultiplier,
-      rate.defaultRateMultiplier,
-    ),
-    source: rate.source,
-    checkedAt: rate.checkedAt,
-  };
+function groupCandidateMatchesModel(
+  candidate: PricingGroupCandidate,
+  model: PricingComparisonCatalogEntry,
+) {
+  const platform = groupPlatformFromRawJson(candidate.groupRawJsonRedacted);
+  if (platform) {
+    return platformMatchesProvider(platform, model.provider);
+  }
+  const groupType = candidate.groupIdHash?.trim() ?? "";
+  if (groupType) {
+    return groupTypeMatchesModel(candidate.station.id, groupType, candidate.groupName, model);
+  }
+  return legacyGroupTextMatchesModel(
+    [candidate.groupName, candidate.source, searchableJsonText(candidate.groupRawJsonRedacted)].join(" "),
+    model.groupMatchers,
+  );
 }
 
 function modelMatchesProviderFilter(
@@ -453,38 +338,6 @@ function rowMatchesQuery(row: PricingComparisonRow, query: string) {
   return [row.stationName, row.stationKeyName ?? "", row.groupName]
     .map(normalizeText)
     .some((value) => value.includes(query));
-}
-
-function groupBindingMatchesModel(
-  binding: StationGroupBinding,
-  model: PricingComparisonCatalogEntry,
-) {
-  const platform = groupPlatformFromRawJson(binding.rawJsonRedacted);
-  if (platform) {
-    return platformMatchesProvider(platform, model.provider);
-  }
-  const groupType = binding.groupIdHash?.trim() ?? "";
-  if (groupType) {
-    return groupTypeMatchesModel(binding.stationId, groupType, binding.groupName, model);
-  }
-  return legacyGroupTextMatchesModel(
-    [binding.groupName, binding.bindingStatus, binding.rateSource, searchableJsonText(binding.rawJsonRedacted)].join(" "),
-    model.groupMatchers,
-  );
-}
-
-function groupRateMatchesModel(
-  rate: GroupRateRecord,
-  model: PricingComparisonCatalogEntry,
-) {
-  const platform = groupPlatformFromRawJson(rate.rawJsonRedacted);
-  if (platform) {
-    return platformMatchesProvider(platform, model.provider);
-  }
-  return legacyGroupTextMatchesModel(
-    [rate.groupName, rate.source, searchableJsonText(rate.rawJsonRedacted)].join(" "),
-    model.groupMatchers,
-  );
 }
 
 function groupPlatformFromRawJson(value: Record<string, unknown> | null) {
@@ -598,15 +451,6 @@ function collectJsonText(value: unknown): string[] {
   return [];
 }
 
-function isStationGroupBinding(binding: StationGroupBinding) {
-  return (
-    binding.bindingKind === "station_group" &&
-    binding.bindingStatus !== "disabled" &&
-    binding.bindingStatus !== "missing" &&
-    binding.bindingStatus !== "manual_legacy"
-  );
-}
-
 function stringFieldFromRecord(value: Record<string, unknown> | null, keys: string[]) {
   if (!value) {
     return null;
@@ -615,69 +459,6 @@ function stringFieldFromRecord(value: Record<string, unknown> | null, keys: stri
     const fieldValue = value[key];
     if (typeof fieldValue === "string" && fieldValue.trim()) {
       return fieldValue;
-    }
-  }
-  return null;
-}
-
-function isStationGroupRate(rate: GroupRateRecord) {
-  return rate.bindingKind === "station_group";
-}
-
-function isRateForBinding(rate: GroupRateRecord, binding: StationGroupBinding) {
-  return (
-    rate.stationId === binding.stationId &&
-    isStationGroupRate(rate) &&
-    (rate.groupBindingId === binding.id ||
-      rate.groupKeyHash === binding.groupKeyHash ||
-      normalizeText(rate.groupName) === normalizeText(binding.groupName))
-  );
-}
-
-function selectRateForBinding(rates: GroupRateRecord[], binding: StationGroupBinding) {
-  return rates.find((rate) => rate.groupBindingId === binding.id) ?? rates[0] ?? null;
-}
-
-function isRateBackedByActiveGroup(
-  rate: GroupRateRecord,
-  activeGroupBindingIds: Set<string>,
-  activeGroupKeys: Set<string>,
-  inactiveGroupKeys: Set<string>,
-) {
-  if (!isStationGroupRate(rate)) {
-    return false;
-  }
-  if (rate.groupBindingId) {
-    return activeGroupBindingIds.has(rate.groupBindingId);
-  }
-  if (inactiveGroupKeys.has(rate.groupKeyHash) && !activeGroupKeys.has(rate.groupKeyHash)) {
-    return false;
-  }
-  return true;
-}
-
-function latestRatesByStationGroup(rates: GroupRateRecord[]) {
-  const latestByKey = new Map<string, GroupRateRecord>();
-
-  for (const rate of rates) {
-    if (!isStationGroupRate(rate)) {
-      continue;
-    }
-
-    const key = [rate.stationId, rate.groupKeyHash || normalizeText(rate.groupName)].join("\u0000");
-    const current = latestByKey.get(key);
-    if (!current || compareRatesByFreshness(rate, current) < 0) {
-      latestByKey.set(key, rate);
-    }
-  }
-
-  return Array.from(latestByKey.values()).sort(compareRatesByFreshness);
-}
-
-function firstFiniteNumber(...values: Array<number | null | undefined>) {
-  for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
     }
   }
   return null;
@@ -739,10 +520,6 @@ function compareRows(left: PricingComparisonRow, right: PricingComparisonRow) {
     compareText(left.groupName, right.groupName) ||
     compareText(left.id, right.id)
   );
-}
-
-function compareRatesByFreshness(left: GroupRateRecord, right: GroupRateRecord) {
-  return dateTimeValue(right.checkedAt) - dateTimeValue(left.checkedAt) || compareText(left.id, right.id);
 }
 
 function compareNullableNumbers(left: number | null, right: number | null) {
