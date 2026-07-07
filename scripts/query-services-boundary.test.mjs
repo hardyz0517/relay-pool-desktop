@@ -10,7 +10,7 @@ const queryFiles = (await readdir(queriesDir))
 
 assert.deepEqual(
   queryFiles,
-  ["changeQueries.ts", "dashboardQueries.ts"],
+  ["changeQueries.ts", "dashboardQueries.ts", "logQueries.ts"],
   "Stage 2 query service inventory should be explicit until the next slice adds another reviewed query module",
 );
 
@@ -34,6 +34,10 @@ const forbiddenPatterns = [
   {
     pattern: /\b(getLocalAccessKey|markChangeEventRead|markUnreadChangeEventsRead|clearChangeEvents)\b/,
     reason: "query services must not eagerly read secrets or perform write actions",
+  },
+  {
+    pattern: /\b(clearRequestLogs)\b/,
+    reason: "query services must not perform request-log write actions",
   },
 ];
 

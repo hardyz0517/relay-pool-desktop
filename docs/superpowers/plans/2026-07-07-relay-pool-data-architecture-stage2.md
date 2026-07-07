@@ -110,6 +110,34 @@ node scripts/change-center-collector-task-label.test.mjs
 pnpm.cmd build
 ```
 
+### Slice 2C：Request logs raw facts query service
+
+仅当主 checkout 仍未提交高重叠 pricing / station / group facts 改动时，作为低重叠切片执行。
+
+新增：
+
+- `src/lib/queries/logQueries.ts`
+- `scripts/log-query-service.test.mjs`
+
+候选函数：
+
+- `loadRequestLogWorkspace()`
+
+边界：
+
+- Query service 只加载 `requestLogs` 和 `keyPoolItems`。
+- 日志过滤、格式化、成本展示、候选拒绝解析仍由 `LogsPage.tsx` 负责。
+- 清空日志仍由页面动作调用 `clearRequestLogs()`，不得放进 query service。
+
+验证：
+
+```powershell
+node scripts/log-query-service.test.mjs
+node scripts/query-services-boundary.test.mjs
+node scripts/channel-monitor-usage-request-log.test.mjs
+pnpm.cmd build
+```
+
 ## 后续切片需等待或重新 intake
 
 以下切片与主 checkout dirty 路径重叠，执行前必须重新 drift intake：

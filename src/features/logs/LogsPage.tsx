@@ -18,8 +18,8 @@ import {
 import { readError } from "@/lib/errors";
 import { formatRate } from "@/lib/formatters";
 import { parseTimestampLikeDate } from "@/lib/time";
-import { clearRequestLogs, listRequestLogs } from "@/lib/api/proxy";
-import { listKeyPoolItems } from "@/lib/api/stationKeys";
+import { clearRequestLogs } from "@/lib/api/proxy";
+import { loadRequestLogWorkspace } from "@/lib/queries/logQueries";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 
@@ -90,10 +90,10 @@ export function LogsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [nextLogs, nextKeys] = await Promise.all([listRequestLogs(), listKeyPoolItems()]);
-      setLogs(nextLogs);
-      setKeys(nextKeys);
-      setSelectedId((current) => current ?? nextLogs[0]?.id ?? null);
+      const workspace = await loadRequestLogWorkspace();
+      setLogs(workspace.requestLogs);
+      setKeys(workspace.keyPoolItems);
+      setSelectedId((current) => current ?? workspace.requestLogs[0]?.id ?? null);
       if (showSuccess) {
         toast.success("请求日志已刷新");
       }
