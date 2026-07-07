@@ -236,3 +236,21 @@ function rate(overrides) {
     ...overrides,
   };
 }
+
+const projectionSource = await readFile("src/lib/projections/groupFacts.ts", "utf8");
+assert.ok(
+  !projectionSource.includes("from \"@/features/") &&
+    !projectionSource.includes("invoke<") &&
+    !projectionSource.includes("getLocalAccessKey") &&
+    !projectionSource.includes("upsertStationGroupBinding"),
+  "group projection should stay pure and must not import feature modules, call Tauri, read secrets, or write bindings",
+);
+assert.ok(
+  projectionSource.includes("binding.userRateMultiplier") &&
+    projectionSource.includes("binding.effectiveRateMultiplier") &&
+    projectionSource.includes("latestRate?.userRateMultiplier") &&
+    projectionSource.includes("latestRate?.effectiveRateMultiplier") &&
+    projectionSource.includes("binding.defaultRateMultiplier") &&
+    projectionSource.includes("latestRate?.defaultRateMultiplier"),
+  "group projection should encode the documented rate fallback order",
+);
