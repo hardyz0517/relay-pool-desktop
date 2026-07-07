@@ -59,7 +59,6 @@ Stage 1 收口时主 checkout 有未提交 dirty 改动，且包含：
 返回 raw facts：
 
 - `settings`
-- `localAccessKey`
 - `proxyStatus`
 - `changeEvents`
 - `balances`
@@ -71,6 +70,7 @@ Stage 1 收口时主 checkout 有未提交 dirty 改动，且包含：
 - Query service 不调用 `summarizeDashboardBalances`。
 - Query service 不计算 request metrics。
 - Query service 不决定 health tone。
+- Query service 不主动读取完整 `localAccessKey`；Dashboard 只在用户点击复制时沿用既有 `getLocalAccessKey()` 行为。
 - Dashboard 原页面继续负责 view-model 或已有本地展示计算。
 
 验证：

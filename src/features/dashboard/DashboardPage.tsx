@@ -27,11 +27,10 @@ import {
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
-import { listChangeEvents } from "@/lib/api/changeEvents";
 import { listBalanceSnapshots } from "@/lib/api/economics";
-import { getProxyStatus, listRequestLogs, startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
-import { getLocalAccessKey, getSettings, importRelayPoolToCCSwitch } from "@/lib/api/settings";
-import { listKeyPoolItems } from "@/lib/api/stationKeys";
+import { startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
+import { getLocalAccessKey, importRelayPoolToCCSwitch } from "@/lib/api/settings";
+import { loadDashboardWorkspace } from "@/lib/queries/dashboardQueries";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
@@ -84,21 +83,14 @@ export function DashboardPage() {
   const [importingCCSwitch, setImportingCCSwitch] = useState(false);
 
   useEffect(() => {
-    void Promise.all([
-      getProxyStatus(),
-      listRequestLogs(),
-      listKeyPoolItems(),
-      listBalanceSnapshots(),
-      getSettings(),
-      listChangeEvents(),
-    ])
-      .then(([status, logs, keys, balances, nextSettings, changes]) => {
-        setProxyStatus(status);
-        setRequestLogs(logs);
-        setKeyPoolItems(keys);
-        setBalanceSnapshots(balances);
-        setSettings(nextSettings);
-        setChangeEvents(changes);
+    void loadDashboardWorkspace()
+      .then((workspace) => {
+        setProxyStatus(workspace.proxyStatus);
+        setRequestLogs(workspace.requestLogs);
+        setKeyPoolItems(workspace.keyPoolItems);
+        setBalanceSnapshots(workspace.balanceSnapshots);
+        setSettings(workspace.settings);
+        setChangeEvents(workspace.changeEvents);
       })
       .catch((requestError) => {
         toast.error("工作台刷新失败", readError(requestError));

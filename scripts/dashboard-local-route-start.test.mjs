@@ -5,8 +5,13 @@ const dashboardSource = await readFile("src/features/dashboard/DashboardPage.tsx
 
 assert.match(
   dashboardSource,
-  /import\s+\{\s*getProxyStatus,\s*listRequestLogs,\s*startLocalProxy,\s*stopLocalProxy\s*\}\s+from\s+"@\/lib\/api\/proxy"/,
+  /import\s+\{\s*startLocalProxy,\s*stopLocalProxy\s*\}\s+from\s+"@\/lib\/api\/proxy"/,
   "dashboard should use the typed proxy API boundary when starting and stopping the local route",
+);
+
+assert.ok(
+  dashboardSource.includes('import { loadDashboardWorkspace } from "@/lib/queries/dashboardQueries";'),
+  "dashboard initial raw facts should load through the dashboard query service",
 );
 
 assert.ok(
