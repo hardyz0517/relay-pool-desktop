@@ -20,10 +20,12 @@ import {
   updateStationKey,
 } from "@/lib/api/stationKeys";
 import { createStation, listStations, updateStation } from "@/lib/api/stations";
+import { readError } from "@/lib/errors";
 import {
   isCollectedStationGroupBinding,
   type GroupRateRecord,
   type StationGroupBinding,
+  type StationGroupOption,
   type UpsertStationGroupBindingInput,
 } from "@/lib/types/groupFacts";
 import type { RemoteKeyCapability, RemoteStationKey, StationCredentials, StationKey } from "@/lib/types/stationKeys";
@@ -42,6 +44,10 @@ import {
 } from "./components/StationGroupRowsEditor";
 import { CreateRemoteKeyDialog } from "./components/CreateRemoteKeyDialog";
 import { RemoteKeyDiscoveryList } from "./components/RemoteKeyDiscoveryList";
+import {
+  findMatchingGroupOption,
+  formatMultiplier,
+} from "./groupOptionViewModels";
 import { providerPresets, type ProviderPresetId } from "./providerPresets";
 
 type AddProviderPageProps = {
@@ -223,10 +229,17 @@ function groupDraftToOption(row: StationGroupDraft): StationKeyGroupOption | nul
     return null;
   }
   return {
+    value: row.groupBindingId
+      ? `binding:${row.groupBindingId}`
+      : row.groupIdHash
+        ? `remote:${row.groupIdHash}`
+        : `name:${row.groupName.trim()}`,
     groupBindingId: row.groupBindingId,
     groupIdHash: row.groupIdHash,
     groupName: row.groupName.trim(),
     rateMultiplier: parseDraftRateMultiplier(row.rateMultiplier),
+    rateSource: null,
+    selectableForRemoteKey: Boolean(row.groupBindingId || row.groupIdHash),
   };
 }
 
@@ -324,16 +337,6 @@ function preferGroupRow(existing: StationGroupDraft, incoming: StationGroupDraft
     return incoming;
   }
   return existing;
-}
-
-function findMatchingGroupOption(row: StationKeyDraft, groups: StationKeyGroupOption[]) {
-  return groups.find(
-    (group) =>
-      (row.groupBindingId && group.groupBindingId === row.groupBindingId) ||
-      (row.groupIdHash && group.groupIdHash === row.groupIdHash) ||
-      (!row.groupIdHash && group.groupName.trim() === row.groupName.trim()) ||
-      (row.groupName.trim() && group.groupName.trim() === row.groupName.trim()),
-  );
 }
 
 function rowHasMeaningfulNonSecretContent(row: StationKeyDraft) {
@@ -493,11 +496,18 @@ async function saveGroupRows(targetStationId: string, rows: StationGroupDraft[])
     };
     const saved = await upsertStationGroupBinding(input);
     savedOptions.push({
+      value: saved.id
+        ? `binding:${saved.id}`
+        : saved.groupIdHash
+          ? `remote:${saved.groupIdHash}`
+          : `name:${saved.groupName.trim()}`,
       groupBindingId: saved.id,
       groupIdHash: saved.groupIdHash,
       groupName: saved.groupName,
       rateMultiplier:
         saved.userRateMultiplier ?? saved.effectiveRateMultiplier ?? saved.defaultRateMultiplier,
+      rateSource: saved.rateSource,
+      selectableForRemoteKey: Boolean(saved.id || saved.groupIdHash),
     });
   }
 
@@ -559,12 +569,7 @@ function buildManualGroupKeyHash(groupName: string) {
 
 function collectRemoteGroupOptions(remoteKeys: RemoteStationKey[]) {
   const seen = new Set<string>();
-  const groups: Array<{
-    groupBindingId: string | null;
-    groupIdHash: string | null;
-    groupName: string;
-    rateMultiplier: number | null;
-  }> = [];
+  const groups: StationGroupOption[] = [];
   remoteKeys.forEach((key) => {
     if (!key.groupIdHash && !key.groupName) {
       return;
@@ -576,10 +581,13 @@ function collectRemoteGroupOptions(remoteKeys: RemoteStationKey[]) {
     }
     seen.add(groupKey);
     groups.push({
+      value: key.groupIdHash ? `remote:${key.groupIdHash}` : `name:${groupName.trim()}`,
       groupBindingId: null,
       groupIdHash: key.groupIdHash,
       groupName,
       rateMultiplier: key.rateMultiplier,
+      rateSource: null,
+      selectableForRemoteKey: Boolean(key.groupIdHash),
     });
   });
   return groups;
@@ -592,32 +600,47 @@ function mergeRemoteGroupOptions(
   const seen = new Set<string>();
   const groups: ReturnType<typeof collectRemoteGroupOptions> = [];
 
-  function appendGroup(group: {
-    groupBindingId: string | null;
-    groupIdHash: string | null;
-    groupName: string;
-    rateMultiplier: number | null;
-  }) {
-    if (!group.groupIdHash && !group.groupName.trim()) {
+  function appendGroup(group: StationGroupOption) {
+    if (!group.groupIdHash && !group.groupBindingId && !group.groupName.trim()) {
       return;
     }
     const groupName = group.groupName.trim() || "未命名分组";
-    const groupKey = `${group.groupIdHash ?? ""}|${groupName}`;
+    const groupKey = groupOptionMergeKey(group, groupName);
     if (seen.has(groupKey)) {
       return;
     }
     seen.add(groupKey);
     groups.push({
+      value: group.value || groupKey,
       groupBindingId: group.groupBindingId,
       groupIdHash: group.groupIdHash,
       groupName,
       rateMultiplier: group.rateMultiplier,
+      rateSource: group.rateSource,
+      selectableForRemoteKey: group.selectableForRemoteKey,
     });
   }
 
   editableGroups.forEach(appendGroup);
   remoteGroups.forEach(appendGroup);
   return groups;
+}
+
+function groupOptionMergeKey(
+  group: Pick<StationGroupOption, "groupBindingId" | "groupIdHash">,
+  groupName: string,
+) {
+  const groupIdHash = group.groupIdHash?.trim() ?? "";
+  if (groupIdHash) {
+    return `remote:${groupIdHash}:${groupName}`;
+  }
+
+  const groupBindingId = group.groupBindingId?.trim() ?? "";
+  if (groupBindingId) {
+    return `binding:${groupBindingId}`;
+  }
+
+  return `name:${groupName}`;
 }
 
 function remoteLocalKeyNote(remoteKey: RemoteStationKey) {
@@ -1619,12 +1642,7 @@ function syncRowsWithGroupRateOptions(
     if (row.deleteRequested || (!row.groupBindingId && !row.groupIdHash && !row.groupName.trim())) {
       return row;
     }
-    const group = groups.find(
-      (item) =>
-        (row.groupBindingId && item.groupBindingId === row.groupBindingId) ||
-        (row.groupIdHash && item.groupIdHash === row.groupIdHash) ||
-        (!row.groupIdHash && item.groupName.trim() === row.groupName.trim()),
-    );
+    const group = findMatchingGroupOption(row, groups);
     if (!group || group.rateMultiplier === null) {
       return row;
     }
@@ -1642,12 +1660,4 @@ function syncRowsWithGroupRateOptions(
     };
   });
   return changed ? nextRows : rows;
-}
-
-function formatMultiplier(value: number) {
-  return Number.isInteger(value) ? String(value) : Number(value.toFixed(6)).toString();
-}
-
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }

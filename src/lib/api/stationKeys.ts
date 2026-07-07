@@ -1,4 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  getStationKeyCapabilities,
+  updateStationKeyCapabilities,
+} from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
 import type {
   CreateLocalStationKeyFromRemoteResult,
@@ -12,10 +16,16 @@ import type {
   StationKeyConnectivityTestResult,
   StationCredentials,
   StationKey,
+  SaveStationKeyWithDefaultsInput,
+  SaveStationKeyWithDefaultsResult,
   UpdateStationSessionInput,
   UpdateStationKeyInput,
 } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
+import type {
+  StationKeyCapabilities,
+  UpdateStationKeyCapabilitiesInput,
+} from "@/lib/types/routing";
 
 const memoryKeys = new Map<string, StationKey[]>();
 const memoryRemoteKeys = new Map<string, RemoteStationKey[]>();
@@ -200,6 +210,17 @@ export function updateStationKey(input: UpdateStationKeyInput) {
       const nextKeys = keys.map((key) => key.id === input.id ? { ...key, ...input, apiKeyPresent: input.apiKey ? true : key.apiKeyPresent } : key);
       memoryKeys.set(input.stationId, nextKeys);
       return nextKeys.find((key) => key.id === input.id) ?? keys[0];
+    }
+    throw error;
+  });
+}
+
+export function saveStationKeyWithDefaults(
+  input: SaveStationKeyWithDefaultsInput,
+): Promise<SaveStationKeyWithDefaultsResult> {
+  return invoke<SaveStationKeyWithDefaultsResult>("save_station_key_with_defaults", { input }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return saveStationKeyWithDefaultsInMemory(input);
     }
     throw error;
   });
@@ -505,6 +526,148 @@ function memoryKeyFromInput(input: CreateStationKeyInput): StationKey {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+async function saveStationKeyWithDefaultsInMemory(
+  input: SaveStationKeyWithDefaultsInput,
+): Promise<SaveStationKeyWithDefaultsResult> {
+  validateSaveStationKeyWithDefaultsInput(input);
+
+  const stationKey =
+    input.mode === "create"
+      ? await createStationKey(memoryCreateInputFromDefaults(input))
+      : await updateStationKey(memoryUpdateInputFromDefaults(input));
+  const capabilities = await memoryCapabilitiesForSavedKey(input, stationKey.id);
+
+  return {
+    stationKey,
+    capabilities,
+    message: "Browser preview fallback: station key saved with default capabilities.",
+  };
+}
+
+function validateSaveStationKeyWithDefaultsInput(input: SaveStationKeyWithDefaultsInput) {
+  if (input.mode === "create" && input.groupSelection.kind === "keep") {
+    throw new Error("Browser preview fallback: create mode cannot keep an existing group selection.");
+  }
+}
+
+function memoryCreateInputFromDefaults(input: SaveStationKeyWithDefaultsInput): CreateStationKeyInput {
+  const groupSelection = input.groupSelection.kind === "set" ? input.groupSelection : null;
+  return {
+    stationId: input.stationId,
+    name: input.name,
+    apiKey: input.apiKey ?? "",
+    enabled: input.enabled,
+    priority: input.priority ?? null,
+    groupBindingId: groupSelection?.groupBindingId ?? null,
+    groupIdHash: groupSelection?.groupIdHash ?? null,
+    groupName: groupSelection?.groupName ?? null,
+    tierLabel: input.tierLabel ?? null,
+    rateMultiplier: null,
+    rateSource: null,
+    balanceScope: input.balanceScope ?? null,
+    note: input.note ?? null,
+  };
+}
+
+function memoryUpdateInputFromDefaults(input: SaveStationKeyWithDefaultsInput): UpdateStationKeyInput {
+  if (!input.id) {
+    throw new Error("Browser preview fallback: station key id is required for update.");
+  }
+
+  const existing = (memoryKeys.get(input.stationId) ?? []).find((key) => key.id === input.id);
+  const groupFields = memoryGroupFieldsFromSelection(input, existing ?? null);
+
+  const updateInput: UpdateStationKeyInput = {
+    id: input.id,
+    stationId: input.stationId,
+    name: input.name,
+    apiKey: input.apiKey ?? null,
+    enabled: input.enabled,
+    priority: input.priority ?? existing?.priority ?? 0,
+    ...groupFields,
+    tierLabel: input.tierLabel ?? null,
+    rateMultiplier: groupFields.groupBindingId === existing?.groupBindingId ? existing?.rateMultiplier ?? null : null,
+    rateSource: groupFields.groupBindingId === existing?.groupBindingId ? existing?.rateSource ?? null : null,
+    status: input.status ?? existing?.status ?? "unchecked",
+    note: input.note ?? null,
+  };
+
+  if (input.balanceScope != null) {
+    updateInput.balanceScope = input.balanceScope;
+  }
+
+  return updateInput;
+}
+
+function memoryGroupFieldsFromSelection(
+  input: SaveStationKeyWithDefaultsInput,
+  existing: StationKey | null,
+): Pick<UpdateStationKeyInput, "groupBindingId" | "groupIdHash" | "groupName"> {
+  if (input.groupSelection.kind === "keep") {
+    return {
+      groupBindingId: existing?.groupBindingId ?? null,
+      groupIdHash: existing?.groupIdHash ?? null,
+      groupName: existing?.groupName ?? null,
+    };
+  }
+
+  if (input.groupSelection.kind === "clear") {
+    return {
+      groupBindingId: null,
+      groupIdHash: null,
+      groupName: null,
+    };
+  }
+
+  return {
+    groupBindingId: input.groupSelection.groupBindingId,
+    groupIdHash: input.groupSelection.groupIdHash ?? null,
+    groupName: input.groupSelection.groupName ?? null,
+  };
+}
+
+function defaultStationKeyCapabilities(stationKeyId: string): StationKeyCapabilities {
+  return {
+    stationKeyId,
+    supportsChatCompletions: true,
+    supportsResponses: true,
+    supportsEmbeddings: true,
+    supportsStream: true,
+    supportsTools: true,
+    supportsVision: true,
+    supportsReasoning: true,
+    modelAllowlist: [],
+    modelBlocklist: [],
+    preferredModels: [],
+    onlyUseAsBackup: false,
+    routingTags: [],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function memoryCapabilitiesForSavedKey(
+  input: SaveStationKeyWithDefaultsInput,
+  stationKeyId: string,
+): Promise<StationKeyCapabilities> {
+  if (input.capabilities) {
+    return updateStationKeyCapabilities({
+      ...input.capabilities,
+      stationKeyId,
+    });
+  }
+
+  if (input.mode === "update") {
+    return getStationKeyCapabilities(stationKeyId);
+  }
+
+  return updateStationKeyCapabilities(defaultStationKeyCapabilitiesInput(stationKeyId));
+}
+
+function defaultStationKeyCapabilitiesInput(stationKeyId: string): UpdateStationKeyCapabilitiesInput {
+  const { updatedAt: _updatedAt, ...input } = defaultStationKeyCapabilities(stationKeyId);
+  return input;
 }
 
 function nextMemoryId(prefix: string) {

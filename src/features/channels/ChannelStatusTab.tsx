@@ -19,11 +19,12 @@ import { CSS } from "@dnd-kit/utilities";
 import type { LucideIcon } from "lucide-react";
 import { Radio, RefreshCw, Server, Timer } from "lucide-react";
 import { Button, EmptyState, SegmentedControl, StatusBadge, useToast } from "@/components/ui";
-import { listChannelMonitorRuns, listChannelMonitors } from "@/lib/api/channelMonitors";
+import { listChannelMonitorSummaries } from "@/lib/api/channelMonitors";
 import { listRequestLogs } from "@/lib/api/proxy";
 import { listStationKeyHealth } from "@/lib/api/routing";
 import { pingStationEndpoint } from "@/lib/api/stations";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
+import { readError } from "@/lib/errors";
 import type { ChannelMonitor, ChannelMonitorRun } from "@/lib/types/channelMonitors";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { StationKeyHealth } from "@/lib/types/routing";
@@ -136,26 +137,18 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
     setLoading(true);
     setError(null);
     try {
-      const [nextKeys, nextLogs, nextHealth, nextMonitors] = await Promise.all([
+      const [nextKeys, nextLogs, nextHealth, summaries] = await Promise.all([
         listKeyPoolItems(),
         listRequestLogs(),
         listStationKeyHealth(),
-        listChannelMonitors(),
+        listChannelMonitorSummaries(),
       ]);
-      const runEntries = await Promise.all(
-        nextMonitors.map(async (monitor) => {
-          try {
-            return { monitorId: monitor.id, runs: await listChannelMonitorRuns(monitor.id) };
-          } catch {
-            return { monitorId: monitor.id, runs: [] as ChannelMonitorRun[] };
-          }
-        }),
-      );
+      const nextMonitors = summaries.map((summary) => summary.monitor);
       setKeys(nextKeys);
       setLogs(nextLogs);
       setHealth(nextHealth);
       setMonitors(nextMonitors);
-      setRunsByMonitor(new Map(runEntries.map((entry) => [entry.monitorId, entry.runs] as const)));
+      setRunsByMonitor(new Map(summaries.map((summary) => [summary.monitor.id, summary.recentRuns] as const)));
       if (showSuccess) {
         toast.success("渠道状态已刷新");
       }
@@ -563,8 +556,4 @@ function toTime(value: string) {
   const numeric = Number(value);
   const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
   return date.getTime();
-}
-
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }

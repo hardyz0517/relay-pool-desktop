@@ -2,8 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   GroupRateRecord,
   StationGroupBinding,
+  StationGroupOption,
   UpsertStationGroupBindingInput,
 } from "@/lib/types/groupFacts";
+import { isCollectedStationGroupBinding } from "@/lib/types/groupFacts";
 
 const memoryBindings = new Map<string, StationGroupBinding[]>();
 const memoryRates = new Map<string, GroupRateRecord[]>();
@@ -12,6 +14,16 @@ export function listStationGroupBindings(stationId: string) {
   return invoke<StationGroupBinding[]>("list_station_group_bindings", { stationId }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       return memoryBindings.get(stationId) ?? [];
+    }
+    throw error;
+  });
+}
+
+export function listStationGroupOptions(stationId: string) {
+  return invoke<StationGroupOption[]>("list_station_group_options", { stationId }).catch(async (error) => {
+    if (isInvokeUnavailable(error)) {
+      const bindings = await listStationGroupBindings(stationId);
+      return bindings.filter(isCollectedStationGroupBinding).map(stationGroupOptionFromBinding);
     }
     throw error;
   });
@@ -70,6 +82,18 @@ export function upsertStationGroupBinding(input: UpsertStationGroupBindingInput)
     memoryBindings.set(input.stationId, nextBindings);
     return binding;
   });
+}
+
+function stationGroupOptionFromBinding(binding: StationGroupBinding): StationGroupOption {
+  return {
+    value: `binding:${binding.id}`,
+    groupBindingId: binding.id,
+    groupIdHash: binding.groupIdHash,
+    groupName: binding.groupName,
+    rateMultiplier: binding.effectiveRateMultiplier ?? binding.defaultRateMultiplier,
+    rateSource: binding.rateSource,
+    selectableForRemoteKey: Boolean(binding.groupIdHash),
+  };
 }
 
 function isInvokeUnavailable(error: unknown) {

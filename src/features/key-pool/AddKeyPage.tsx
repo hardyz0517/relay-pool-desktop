@@ -2,11 +2,12 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, Check } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
-import { listStationGroupBindings } from "@/lib/api/groupFacts";
-import { updateStationKeyCapabilities } from "@/lib/api/routing";
+import { listStationGroupOptions } from "@/lib/api/groupFacts";
 import { listStations } from "@/lib/api/stations";
-import { createStationKey, updateStationKeyGroupBinding } from "@/lib/api/stationKeys";
-import { isCollectedStationGroupBinding, type StationGroupBinding } from "@/lib/types/groupFacts";
+import { saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
+import { readError } from "@/lib/errors";
+import { formatRate } from "@/lib/formatters";
+import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { Station } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 
@@ -46,17 +47,17 @@ const inputClassName =
 export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPageProps) {
   const toast = useToast();
   const [stations, setStations] = useState<Station[]>([]);
-  const [bindings, setBindings] = useState<StationGroupBinding[]>([]);
+  const [groupOptions, setGroupOptions] = useState<StationGroupOption[]>([]);
   const [form, setForm] = useState<AddKeyFormState>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const bindingOptions = bindings
-    .filter(isCollectedStationGroupBinding)
-    .map((binding) => ({
-      value: binding.id,
-      label: bindingOptionLabel(binding),
+  const bindingOptions = groupOptions
+    .filter((option) => option.groupBindingId)
+    .map((option) => ({
+      value: option.groupBindingId ?? option.value,
+      label: groupOptionLabel(option),
     }));
 
   useEffect(() => {
@@ -72,10 +73,10 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
           : null;
         if (station) {
           setForm(createFormForStation(station));
-          void refreshBindings(station.id, alive);
+          void refreshGroupOptions(station.id, alive);
         } else {
           setForm(emptyForm);
-          setBindings([]);
+          setGroupOptions([]);
         }
       })
       .catch((requestError) => {
@@ -92,10 +93,10 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
     };
   }, [initialStationId, toast]);
 
-  async function refreshBindings(stationId: string, alive = true) {
+  async function refreshGroupOptions(stationId: string, alive = true) {
     try {
-      const nextBindings = await listStationGroupBindings(stationId);
-      if (alive) setBindings(nextBindings);
+      const nextOptions = await listStationGroupOptions(stationId);
+      if (alive) setGroupOptions(nextOptions);
     } catch (requestError) {
       if (alive) toast.error("读取中转站分组失败", readError(requestError));
     }
@@ -103,13 +104,13 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
 
   function selectStation(station: Station) {
     setForm(createFormForStation(station));
-    setBindings([]);
-    void refreshBindings(station.id);
+    setGroupOptions([]);
+    void refreshGroupOptions(station.id);
   }
 
   function selectCustomConfig() {
     setForm(emptyForm);
-    setBindings([]);
+    setGroupOptions([]);
   }
 
   function handleStationChange(stationId: string) {
@@ -123,9 +124,9 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
       groupName: "",
       tierLabel: "",
     }));
-    setBindings([]);
+    setGroupOptions([]);
     if (station) {
-      void refreshBindings(station.id);
+      void refreshGroupOptions(station.id);
     }
   }
 
@@ -143,34 +144,24 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
     setSaving(true);
     setError(null);
     try {
-      const key = await createStationKey({
+      const groupOption = selectedGroupOption(groupOptions, form.groupBindingId);
+      await saveStationKeyWithDefaults({
+        mode: "create",
         stationId: form.stationId,
         name: form.name.trim(),
         apiKey: form.apiKey.trim(),
         enabled: true,
         priority: Number(form.priority),
-        groupBindingId: form.groupBindingId || null,
-        groupName: form.groupName.trim() ? form.groupName.trim() : null,
         tierLabel: form.tierLabel.trim() ? form.tierLabel.trim() : null,
         note: form.note.trim() ? form.note.trim() : null,
-      });
-      if (form.groupBindingId) {
-        await updateStationKeyGroupBinding(key.id, form.groupBindingId);
-      }
-      await updateStationKeyCapabilities({
-        stationKeyId: key.id,
-        supportsChatCompletions: true,
-        supportsResponses: true,
-        supportsEmbeddings: true,
-        supportsStream: true,
-        supportsTools: true,
-        supportsVision: true,
-        supportsReasoning: true,
-        modelAllowlist: [],
-        modelBlocklist: [],
-        preferredModels: [],
-        onlyUseAsBackup: false,
-        routingTags: [],
+        groupSelection: groupOption?.groupBindingId
+          ? {
+              kind: "set",
+              groupBindingId: groupOption.groupBindingId,
+              groupIdHash: groupOption.groupIdHash,
+              groupName: groupOption.groupName,
+            }
+          : { kind: "clear" },
       });
       toast.success("密钥已添加");
       onCreated?.();
@@ -297,11 +288,11 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
                       ...bindingOptions,
                     ]}
                     onChange={(groupBindingId) => {
-                      const binding = bindings.find((item) => item.id === groupBindingId);
+                      const groupOption = selectedGroupOption(groupOptions, groupBindingId);
                       setForm({
                         ...form,
                         groupBindingId,
-                        groupName: binding?.groupName ?? form.groupName,
+                        groupName: groupOption?.groupName ?? "",
                       });
                     }}
                   />
@@ -310,8 +301,13 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
                   <Field label="优先级">
                     <input className={inputClassName} type="number" value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })} />
                   </Field>
-                  <Field label="分组">
-                    <input className={inputClassName} value={form.groupName} onChange={(event) => setForm({ ...form, groupName: event.target.value })} />
+                  <Field label="分组（随绑定同步）">
+                    <input
+                      className={`${inputClassName} bg-slate-50 text-slate-500`}
+                      value={form.groupName}
+                      placeholder="选择分组绑定后自动填充"
+                      readOnly
+                    />
                   </Field>
                 </div>
                 <Field label="档位">
@@ -384,14 +380,10 @@ function createFormForStation(station: Station): AddKeyFormState {
   };
 }
 
-function bindingOptionLabel(binding: StationGroupBinding) {
-  const rate = typeof binding.effectiveRateMultiplier === "number"
-    ? `${binding.effectiveRateMultiplier.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}x`
-    : "未知";
-  const status = binding.bindingStatus === "available" ? "可用" : binding.bindingStatus;
-  return `${binding.groupName} · ${rate} · ${status}`;
+function selectedGroupOption(options: StationGroupOption[], value: string) {
+  return options.find((option) => option.groupBindingId === value || option.value === value) ?? null;
 }
 
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+function groupOptionLabel(option: StationGroupOption) {
+  return `${option.groupName} · ${formatRate(option.rateMultiplier)} · ${option.rateSource ?? "可用"}`;
 }

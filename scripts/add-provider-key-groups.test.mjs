@@ -14,6 +14,10 @@ const createRemoteKeyDialogSource = await readFile(
   "src/features/stations/components/CreateRemoteKeyDialog.tsx",
   "utf8",
 );
+const groupOptionViewModelSource = await readFile(
+  "src/features/stations/groupOptionViewModels.ts",
+  "utf8",
+);
 const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
 const stationDetailViewModelSource = await readFile(
   "src/features/stations/stationDetailViewModels.ts",
@@ -111,6 +115,27 @@ assert.ok(
 assert.ok(
   addProviderSource.includes("mergeRemoteGroupOptions(editableGroupOptions, collectRemoteGroupOptions(remoteKeys))"),
   "create-remote-key group dropdown should include synced editable group rows, not only groups inferred from existing remote keys",
+);
+
+assert.ok(
+  groupOptionViewModelSource.includes("const groupBindingId = row.groupBindingId?.trim() ?? \"\";") &&
+    groupOptionViewModelSource.includes("if (groupBindingId) {") &&
+    groupOptionViewModelSource.includes("option.groupBindingId === groupBindingId") &&
+    groupOptionViewModelSource.includes("const groupIdHash = row.groupIdHash?.trim() ?? \"\";") &&
+    groupOptionViewModelSource.includes("if (groupIdHash) {") &&
+    groupOptionViewModelSource.includes("option.groupIdHash === groupIdHash") &&
+    groupOptionViewModelSource.includes("const groupName = row.groupName.trim();"),
+  "group option matching should prefer binding id, then remote group id hash, before falling back to group name",
+);
+
+assert.ok(
+  addProviderSource.includes("function groupOptionMergeKey(") &&
+    addProviderSource.includes("return `remote:${groupIdHash}:${groupName}`;") &&
+    addProviderSource.includes("return `binding:${groupBindingId}`;") &&
+    addProviderSource.includes("return `name:${groupName}`;") &&
+    addProviderSource.includes("const groupKey = groupOptionMergeKey(group, groupName);") &&
+    !addProviderSource.includes("const groupKey = stationGroupSelectValue({ ...group, groupName });"),
+  "remote group merge should dedupe saved bindings and discovered groups by structural remote identity",
 );
 
 assert.ok(

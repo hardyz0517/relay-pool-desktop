@@ -40,6 +40,10 @@ use crate::{
         },
         secrets::{SecretMigrationReport, SecretScanFinding},
         settings::{AppSettings, UpdateSettingsInput},
+        shared_capabilities::{
+            ChannelMonitorSummary, SaveStationKeyWithDefaultsInput,
+            SaveStationKeyWithDefaultsResult, StationGroupOption,
+        },
         station_keys::KeyPoolItem,
         station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
         stations::{
@@ -264,6 +268,15 @@ pub fn update_station_key(
 }
 
 #[tauri::command]
+pub fn save_station_key_with_defaults(
+    database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
+    input: SaveStationKeyWithDefaultsInput,
+) -> Result<SaveStationKeyWithDefaultsResult, String> {
+    database.save_station_key_with_defaults(secrets.data_key(), input)
+}
+
+#[tauri::command]
 pub fn update_station_key_group_binding(
     database: State<'_, AppDatabase>,
     input: UpdateStationKeyGroupBindingInput,
@@ -435,6 +448,13 @@ pub fn list_channel_monitors(
     database: State<'_, AppDatabase>,
 ) -> Result<Vec<ChannelMonitor>, String> {
     database.list_channel_monitors()
+}
+
+#[tauri::command]
+pub fn list_channel_monitor_summaries(
+    database: State<'_, AppDatabase>,
+) -> Result<Vec<ChannelMonitorSummary>, String> {
+    database.list_channel_monitor_summaries()
 }
 
 #[tauri::command]
@@ -687,6 +707,14 @@ pub fn list_station_group_bindings(
     station_id: String,
 ) -> Result<Vec<StationGroupBinding>, String> {
     database.list_station_group_bindings(station_id)
+}
+
+#[tauri::command]
+pub fn list_station_group_options(
+    database: State<'_, AppDatabase>,
+    station_id: String,
+) -> Result<Vec<StationGroupOption>, String> {
+    database.list_station_group_options(station_id)
 }
 
 #[tauri::command]

@@ -67,6 +67,16 @@ export type UpsertStationGroupBindingInput = {
   rawJsonRedacted: Record<string, unknown> | null;
 };
 
+export type StationGroupOption = {
+  value: string;
+  groupBindingId: string | null;
+  groupIdHash: string | null;
+  groupName: string;
+  rateMultiplier: number | null;
+  rateSource: string | null;
+  selectableForRemoteKey: boolean;
+};
+
 export function isCollectedStationGroupBinding(binding: StationGroupBinding) {
   return (
     binding.bindingKind === "station_group" &&

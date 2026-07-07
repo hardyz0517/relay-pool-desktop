@@ -4,12 +4,12 @@ import { Button, ConfirmDialog, EmptyState, IconButton, StatusBadge, useToast } 
 import {
   createChannelMonitor,
   deleteChannelMonitor,
-  listChannelMonitorRuns,
+  listChannelMonitorSummaries,
   listChannelMonitorTemplates,
-  listChannelMonitors,
   runChannelMonitorNow,
   updateChannelMonitor,
 } from "@/lib/api/channelMonitors";
+import { readError } from "@/lib/errors";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
 import type { ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun, CreateChannelMonitorInput } from "@/lib/types/channelMonitors";
@@ -44,6 +44,7 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
   const [keys, setKeys] = useState<KeyPoolItem[]>([]);
   const [templates, setTemplates] = useState<ChannelMonitorRequestTemplate[]>([]);
   const [runsByMonitor, setRunsByMonitor] = useState(new Map<string, ChannelMonitorRun[]>());
+  const [runLoadFailedIds, setRunLoadFailedIds] = useState(new Set<string>());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actionState, setActionState] = useState<ActionState>(null);
@@ -63,39 +64,32 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
     const latestRuns = monitors
       .map((monitor) => getLatestRun(runsByMonitor.get(monitor.id) ?? []))
       .filter((run): run is ChannelMonitorRun => Boolean(run));
-    const attentionCount = latestRuns.filter((run) => run.status === "warning" || run.status === "failed").length;
+    const attentionCount = latestRuns.filter((run) => run.status === "warning" || run.status === "failed").length + runLoadFailedIds.size;
     return {
       total: monitors.length,
       enabledCount,
       stationTargetCount,
       attentionCount,
     };
-  }, [monitors, runsByMonitor]);
+  }, [monitors, runLoadFailedIds, runsByMonitor]);
 
   async function refresh(showSuccess = false) {
     setLoading(true);
     setError(null);
     try {
-      const [nextMonitors, nextStations, nextKeys, nextTemplates] = await Promise.all([
-        listChannelMonitors(),
+      const [summaries, nextStations, nextKeys, nextTemplates] = await Promise.all([
+        listChannelMonitorSummaries(),
         listStations(),
         listKeyPoolItems(),
         listChannelMonitorTemplates(),
       ]);
-      const runEntries = await Promise.all(
-        nextMonitors.map(async (monitor) => {
-          try {
-            return { monitorId: monitor.id, runs: await listChannelMonitorRuns(monitor.id) };
-          } catch {
-            return { monitorId: monitor.id, runs: [] as ChannelMonitorRun[] };
-          }
-        }),
-      );
+      const nextMonitors = summaries.map((summary) => summary.monitor);
       setMonitors(nextMonitors);
       setStations(nextStations);
       setKeys(nextKeys);
       setTemplates(nextTemplates);
-      setRunsByMonitor(new Map(runEntries.map((entry) => [entry.monitorId, entry.runs] as const)));
+      setRunsByMonitor(new Map(summaries.map((summary) => [summary.monitor.id, summary.recentRuns] as const)));
+      setRunLoadFailedIds(new Set(summaries.filter((summary) => summary.runsLoadStatus === "failed").map((summary) => summary.monitor.id)));
       if (showSuccess) {
         toast.success("渠道监控已刷新");
       }
@@ -599,8 +593,4 @@ function toTime(value: string) {
   const numeric = Number(value);
   const date = Number.isFinite(numeric) && numeric > 1000000000000 ? new Date(numeric) : new Date(value);
   return date.getTime();
-}
-
-function readError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }
