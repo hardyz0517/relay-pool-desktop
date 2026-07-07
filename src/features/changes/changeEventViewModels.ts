@@ -144,6 +144,10 @@ export function unreadChangeCount(events: ChangeEvent[]) {
   return events.filter((event) => event.status === "unread").length;
 }
 
+export function activeSeverityCount(events: ChangeEvent[], severity: ChangeSeverity) {
+  return events.filter((event) => event.severity === severity && event.status !== "dismissed" && event.status !== "resolved").length;
+}
+
 export async function markUnreadChangeEventsRead(
   events: ChangeEvent[],
   markRead: (id: string) => Promise<ChangeEvent>,
@@ -284,12 +288,12 @@ export function buildChangeEventListItem(
     const apiKeyMasked = readString(newValue, "apiKeyMasked");
     const stationKeyLabel =
       stationKeyName ?? apiKeyMasked ?? shortenIdentifier(event.stationKeyId ?? event.objectId ?? null) ?? baseItem.objectLabel;
-    const descriptionLabel = apiKeyMasked ?? stationKeyLabel;
-    const description = event.message.replace(/^Key\s+/, `${descriptionLabel} `);
+    const title = `${stationSubject} 的 Key ${stationKeyLabel} 健康异常${failures == null ? "" : `：连续失败 ${formatCompactNumber(failures)} 次`}`;
+    const failureReason = extractKeyFailureReason(event.message);
     return {
       ...baseItem,
-      title: `${stationSubject} 的 Key ${stationKeyLabel} 健康异常${failures == null ? "" : `：连续失败 ${formatCompactNumber(failures)} 次`}`,
-      description,
+      title,
+      description: failureReason ? `${title}；${failureReason}` : title,
       metaLabel: `${baseItem.sourceLabel} / ${stationKeyLabel}`,
       objectLabel: stationKeyLabel,
       diff: {
@@ -313,9 +317,11 @@ export function buildChangeEventListItem(
   }
 
   if (event.eventType === "collector_failed" || event.eventType === "collector_recovered") {
+    const taskType = readString(newValue, "taskType") ?? readString(oldValue, "taskType");
+    const taskLabel = formatCollectorTaskLabel(taskType);
     return {
       ...baseItem,
-      title: `${stationSubject} ${event.eventType === "collector_failed" ? "采集失败" : "采集恢复"}`,
+      title: `${stationSubject} ${taskLabel}${event.eventType === "collector_failed" ? "失败" : "恢复"}`,
     };
   }
 
@@ -438,6 +444,14 @@ function formatBindingStatus(value: string | null) {
   return value;
 }
 
+function formatCollectorTaskLabel(value: string | null) {
+  if (value === "balance") return "余额采集";
+  if (value === "groups") return "分组采集";
+  if (value === "models") return "模型采集";
+  if (value === "full") return "完整采集";
+  return "采集";
+}
+
 function formatRecordSummary(value: Record<string, unknown> | null) {
   if (!value) {
     return null;
@@ -527,6 +541,11 @@ function extractGroupName(message: string) {
 
 function extractModelName(message: string) {
   const match = message.match(/^模型\s+(.+?)\s+(?:输出价格发生变化|的价格规则已过期|新增|下架)/);
+  return match?.[1]?.trim() ?? null;
+}
+
+function extractKeyFailureReason(message: string) {
+  const match = message.match(/^Key\s+连续失败\s+\d+\s+次[：:]?\s*(.+)?$/);
   return match?.[1]?.trim() ?? null;
 }
 

@@ -18,13 +18,15 @@ use crate::{
             ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
             CreateChannelMonitorRunInput,
         },
+        pricing::RequestCostEstimate,
+        proxy::CreateRequestLogInput,
         station_keys::KeyPoolItem,
     },
     services::{
         channel_monitors::{
-            probe::{run_monitor_probe, MonitorProbeResult},
+            probe::{run_monitor_probe, MonitorProbeResult, MonitorProbeUsage},
             redaction::redact_monitor_text,
-            templates::{render_monitor_request, MonitorTemplateContext},
+            templates::{render_monitor_request, MonitorTemplateContext, RenderedMonitorRequest},
         },
         database::{now_millis_for_services, AppDatabase},
         endpoint_ping::ping_station_endpoint,
@@ -299,24 +301,33 @@ fn run_monitor_for_key(
         &request,
         monitor.timeout_seconds,
     );
-    insert_probe_run(database, monitor, &target.id, &started_at, &model, result)
+    insert_probe_run(
+        database,
+        monitor,
+        target,
+        &started_at,
+        &model,
+        &request,
+        result,
+    )
 }
 
 fn insert_probe_run(
     database: &AppDatabase,
     monitor: &ChannelMonitor,
-    station_key_id: &str,
+    target: &KeyPoolItem,
     started_at: &str,
     model: &str,
+    request: &RenderedMonitorRequest,
     result: MonitorProbeResult,
 ) -> Result<ChannelMonitorRun, String> {
     let finished_at = now_string();
     let duration_ms = duration_between(started_at, &finished_at);
     if result.ok {
-        database.record_station_key_success(station_key_id, result.latency_ms, &finished_at)?;
+        database.record_station_key_success(&target.id, result.latency_ms, &finished_at)?;
     } else {
         database.record_station_key_failure_with_threshold(
-            station_key_id,
+            &target.id,
             &short_error(
                 result
                     .error_summary
@@ -327,21 +338,154 @@ fn insert_probe_run(
             monitor.consecutive_failure_threshold,
         )?;
     }
-    database.insert_channel_monitor_run(CreateChannelMonitorRunInput {
+    let error_message = result.error_summary.map(|error| short_error(&error));
+    let run = database.insert_channel_monitor_run(CreateChannelMonitorRunInput {
         monitor_id: monitor.id.clone(),
         template_id: monitor.template_id.clone(),
         station_id: monitor.station_id.clone(),
-        station_key_id: Some(station_key_id.to_string()),
+        station_key_id: Some(target.id.clone()),
         status: if result.ok { "success" } else { "failed" }.to_string(),
         started_at: started_at.to_string(),
-        finished_at: Some(finished_at),
+        finished_at: Some(finished_at.clone()),
         duration_ms,
         http_status: result.status_code.map(i64::from),
         latency_ms: Some(result.latency_ms),
         response_model: Some(model.to_string()),
         fallback_model: None,
-        error_message: result.error_summary.map(|error| short_error(&error)),
-    })
+        error_message: error_message.clone(),
+    })?;
+    insert_monitor_request_log(
+        database,
+        monitor,
+        target,
+        started_at,
+        &finished_at,
+        duration_ms,
+        model,
+        request,
+        result.status_code,
+        result.latency_ms,
+        error_message,
+        result.usage,
+    )?;
+    Ok(run)
+}
+
+fn insert_monitor_request_log(
+    database: &AppDatabase,
+    monitor: &ChannelMonitor,
+    target: &KeyPoolItem,
+    started_at: &str,
+    finished_at: &str,
+    duration_ms: Option<i64>,
+    model: &str,
+    request: &RenderedMonitorRequest,
+    status_code: Option<u16>,
+    latency_ms: i64,
+    error_message: Option<String>,
+    usage: Option<MonitorProbeUsage>,
+) -> Result<(), String> {
+    let request_cost = monitor_request_cost(database, &target.id, usage.as_ref());
+    database.insert_request_log(CreateRequestLogInput {
+        method: request.method.clone(),
+        path: request.path.clone(),
+        model: Some(model.to_string()),
+        stream: false,
+        status: if error_message.is_some() {
+            "failed".to_string()
+        } else {
+            "success".to_string()
+        },
+        station_key_id: Some(target.id.clone()),
+        station_id: Some(target.station_id.clone()),
+        upstream_base_url: Some(target.station_base_url.clone()),
+        fallback_count: 0,
+        error_message,
+        route_policy: Some("channel_monitor".to_string()),
+        route_reason: Some(format!("monitor {} probed {}", monitor.id, target.id)),
+        rejected_candidates_json: None,
+        prompt_tokens: request_cost.prompt_tokens,
+        completion_tokens: request_cost.completion_tokens,
+        total_tokens: request_cost.total_tokens,
+        estimated_input_cost: request_cost.estimated_input_cost,
+        estimated_output_cost: request_cost.estimated_output_cost,
+        estimated_total_cost: request_cost.estimated_total_cost,
+        cost_currency: request_cost.cost_currency,
+        pricing_rule_id: request_cost.pricing_rule_id,
+        pricing_source: request_cost.pricing_source,
+        cost_status: Some(request_cost.cost_status),
+        group_binding_id: database
+            .route_candidate_economics(target.id.clone())
+            .ok()
+            .flatten()
+            .and_then(|economics| economics.group_binding_id),
+        normalization_status: None,
+        balance_scope: None,
+        economic_context_json: Some(
+            serde_json::json!({
+                "source": "channel_monitor",
+                "monitorId": monitor.id,
+                "httpStatus": status_code,
+                "latencyMs": latency_ms
+            })
+            .to_string(),
+        ),
+        started_at: started_at.to_string(),
+        finished_at: Some(finished_at.to_string()),
+        duration_ms,
+    })?;
+    Ok(())
+}
+
+fn monitor_request_cost(
+    database: &AppDatabase,
+    station_key_id: &str,
+    usage: Option<&MonitorProbeUsage>,
+) -> RequestCostEstimate {
+    let Some(usage) = usage else {
+        return crate::services::pricing::request_cost_unknown();
+    };
+    let economics = database
+        .route_candidate_economics(station_key_id.to_string())
+        .ok()
+        .flatten();
+    let estimated_input_cost = economics
+        .as_ref()
+        .and_then(|economics| economics.estimated_input_price)
+        .map(|price| price * usage.prompt_tokens.unwrap_or(0) as f64 / 1_000_000.0);
+    let estimated_output_cost = economics
+        .as_ref()
+        .and_then(|economics| economics.estimated_output_price)
+        .map(|price| price * usage.completion_tokens.unwrap_or(0) as f64 / 1_000_000.0);
+    let estimated_total_cost = match (estimated_input_cost, estimated_output_cost) {
+        (Some(input), Some(output)) => Some(input + output),
+        (Some(input), None) => Some(input),
+        (None, Some(output)) => Some(output),
+        _ => None,
+    };
+
+    RequestCostEstimate {
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        total_tokens: usage.total_tokens,
+        estimated_input_cost,
+        estimated_output_cost,
+        estimated_total_cost,
+        cost_currency: economics
+            .as_ref()
+            .and_then(|economics| economics.price_currency.clone()),
+        pricing_rule_id: economics
+            .as_ref()
+            .and_then(|economics| economics.pricing_rule_id.clone()),
+        pricing_source: economics
+            .as_ref()
+            .and_then(|economics| economics.pricing_source.clone()),
+        cost_status: if estimated_total_cost.is_some() {
+            "estimated".to_string()
+        } else {
+            "usage_only".to_string()
+        },
+    }
 }
 
 fn insert_failed_key_run(
@@ -504,6 +648,7 @@ mod tests {
     use crate::{
         models::{
             channel_monitors::{CreateChannelMonitorInput, CreateChannelMonitorTemplateInput},
+            pricing::UpsertPricingRuleInput,
             station_keys::{CreateStationKeyInput, UpdateStationKeyInput},
             stations::CreateStationInput,
         },
@@ -606,6 +751,122 @@ mod tests {
         assert!(raw_request.contains(r#""model":"gpt-test""#));
         assert!(raw_request.contains(r#""max_tokens":1"#));
         assert!(raw_request.contains(r#""stream":false"#));
+    }
+
+    #[test]
+    fn successful_monitor_run_records_usage_in_request_logs() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = [7_u8; 32];
+        let (base_url, _received) = spawn_upstream(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 88\r\n\r\n{\"model\":\"gpt-test\",\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":6,\"total_tokens\":10}}",
+        );
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "usage monitor station".to_string(),
+                    station_type: "openai-compatible".to_string(),
+                    base_url: base_url.clone(),
+                    api_key: "sk-usage-monitor".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        let pricing_rule = database
+            .upsert_pricing_rule(UpsertPricingRuleInput {
+                id: None,
+                station_id: station.id.clone(),
+                station_key_id: Some(key.id.clone()),
+                group_binding_id: None,
+                group_name: None,
+                tier_label: None,
+                model: "gpt-test".to_string(),
+                input_price: Some(1.0),
+                output_price: Some(2.0),
+                fixed_price: None,
+                rate_multiplier: None,
+                currency: "USD".to_string(),
+                unit: "per_1m_tokens".to_string(),
+                price_type: "token".to_string(),
+                base_price_source: None,
+                normalization_status: Some("complete".to_string()),
+                source: "manual".to_string(),
+                confidence: 1.0,
+                enabled: true,
+                note: None,
+                collected_at: Some("1000".to_string()),
+                valid_from: None,
+                valid_until: None,
+            })
+            .expect("pricing rule");
+        let template = database
+            .create_channel_monitor_template(CreateChannelMonitorTemplateInput {
+                name: "Usage monitor template".to_string(),
+                endpoint_kind: "chat_completions".to_string(),
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                request_body_json: r#"{
+                    "model": "{{model}}",
+                    "max_tokens": "{{max_tokens}}",
+                    "stream": "{{stream}}",
+                    "messages": [{ "role": "user", "content": "{{challenge}}" }]
+                }"#
+                .to_string(),
+                enabled: true,
+                note: None,
+            })
+            .expect("template");
+        let monitor = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "Usage key monitor".to_string(),
+                target_type: "station_key".to_string(),
+                station_id: station.id.clone(),
+                station_key_id: Some(key.id.clone()),
+                template_id: template.id,
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 5,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 3,
+                fallback_models: vec!["gpt-test".to_string()],
+                note: None,
+            })
+            .expect("monitor");
+
+        run_channel_monitor_now(&database, &data_key, &monitor.id).expect("manual run");
+
+        let logs = database.list_request_logs().expect("request logs");
+        assert_eq!(logs.len(), 1);
+        let log = &logs[0];
+        assert_eq!(log.method, "POST");
+        assert_eq!(log.path, "/v1/chat/completions");
+        assert_eq!(log.model.as_deref(), Some("gpt-test"));
+        assert_eq!(log.status, "success");
+        assert_eq!(log.station_key_id.as_deref(), Some(key.id.as_str()));
+        assert_eq!(log.station_id.as_deref(), Some(station.id.as_str()));
+        assert_eq!(log.upstream_base_url.as_deref(), Some(base_url.as_str()));
+        assert_eq!(log.prompt_tokens, Some(4));
+        assert_eq!(log.completion_tokens, Some(6));
+        assert_eq!(log.total_tokens, Some(10));
+        assert_eq!(log.estimated_input_cost, Some(0.000004));
+        assert_eq!(log.estimated_output_cost, Some(0.000012));
+        assert_eq!(log.estimated_total_cost, Some(0.000016));
+        assert_eq!(log.cost_currency.as_deref(), Some("USD"));
+        assert_eq!(
+            log.pricing_rule_id.as_deref(),
+            Some(pricing_rule.id.as_str())
+        );
+        assert_eq!(log.pricing_source.as_deref(), Some("manual"));
+        assert_eq!(log.cost_status.as_deref(), Some("estimated"));
     }
 
     #[test]

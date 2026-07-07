@@ -13,6 +13,7 @@ use crate::{
         database::AppDatabase,
     },
 };
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct AppliedAdapterOutput {
@@ -107,6 +108,7 @@ pub fn apply_collector_facts(
     mut facts: CollectorFacts,
 ) -> Result<(), String> {
     append_station_balance_aggregates(&mut facts.balances);
+    let station_group_collection_scopes = station_group_collection_scopes(&facts);
 
     for balance in facts.balances {
         database.upsert_balance_snapshot(UpsertBalanceSnapshotInput {
@@ -193,9 +195,51 @@ pub fn apply_collector_facts(
         })?;
     }
 
+    for (station_id, scope) in station_group_collection_scopes {
+        database.mark_missing_station_group_bindings(
+            &station_id,
+            scope.sources.into_iter().collect(),
+            scope.group_key_hashes.into_iter().collect(),
+        )?;
+    }
+
     apply_model_facts(facts.models);
 
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct StationGroupCollectionScope {
+    sources: HashSet<String>,
+    group_key_hashes: HashSet<String>,
+}
+
+fn station_group_collection_scopes(
+    facts: &CollectorFacts,
+) -> HashMap<String, StationGroupCollectionScope> {
+    let mut scopes = HashMap::<String, StationGroupCollectionScope>::new();
+    for group in &facts.groups {
+        let source = group.source.trim();
+        if source.is_empty() {
+            continue;
+        }
+        let scope = scopes.entry(group.station_id.clone()).or_default();
+        scope.sources.insert(source.to_string());
+        scope.group_key_hashes.insert(group.group_key_hash.clone());
+    }
+    for rate in &facts.rates {
+        if rate.station_key_id.is_some() {
+            continue;
+        }
+        let source = rate.source.trim();
+        if source.is_empty() {
+            continue;
+        }
+        let scope = scopes.entry(rate.station_id.clone()).or_default();
+        scope.sources.insert(source.to_string());
+        scope.group_key_hashes.insert(rate.group_key_hash.clone());
+    }
+    scopes
 }
 
 fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
@@ -346,7 +390,13 @@ fn endpoint_counts_from_summary(summary: &serde_json::Value, status: &str) -> (i
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{station_keys::CreateStationKeyInput, stations::CreateStationInput};
+    use crate::models::{
+        group_facts::{
+            UpsertStationGroupBindingInput, BINDING_KIND_STATION_GROUP, BINDING_STATUS_AVAILABLE,
+        },
+        station_keys::CreateStationKeyInput,
+        stations::CreateStationInput,
+    };
 
     fn create_test_station(database: &AppDatabase) -> crate::models::stations::Station {
         database
@@ -433,5 +483,67 @@ mod tests {
             .expect("station balance");
         assert_eq!(station_balance.value, Some(11.0));
         assert_eq!(station_balance.source, "station_key_balance_aggregate");
+    }
+
+    #[test]
+    fn group_facts_mark_missing_station_groups_absent_from_latest_collection() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = create_test_station(&database);
+        let stale = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "stale-hash".to_string(),
+                group_id_hash: Some("stale".to_string()),
+                group_name: "stale".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(0.5),
+                user_rate_multiplier: None,
+                effective_rate_multiplier: Some(0.5),
+                rate_source: Some("sub2api_groups_rates".to_string()),
+                confidence: 0.9,
+                last_seen_at: Some("1000".to_string()),
+                raw_json_redacted: None,
+            })
+            .expect("stale binding");
+
+        let mut facts = crate::services::collectors::facts::CollectorFacts::default();
+        facts
+            .groups
+            .push(crate::services::collectors::facts::CollectedGroupFact {
+                station_id: station.id.clone(),
+                group_id: Some("fresh".to_string()),
+                group_key_hash: "fresh-hash".to_string(),
+                group_name: "fresh".to_string(),
+                visibility: "available".to_string(),
+                source: "sub2api_groups_rates".to_string(),
+                confidence: 0.9,
+                raw_json_redacted: None,
+            });
+
+        apply_collector_facts(&database, facts).expect("apply group facts");
+
+        let bindings = database
+            .list_station_group_bindings(station.id.clone())
+            .expect("bindings");
+        let stale = bindings
+            .iter()
+            .find(|binding| binding.id == stale.id)
+            .expect("stale binding remains for history");
+        let fresh = bindings
+            .iter()
+            .find(|binding| binding.group_key_hash == "fresh-hash")
+            .expect("fresh binding");
+
+        assert_eq!(fresh.binding_status, "available");
+        assert_eq!(stale.binding_status, "missing");
+        assert!(database
+            .list_change_events()
+            .expect("events")
+            .iter()
+            .any(|event| event.event_type == "group_missing"
+                && event.object_id.as_deref() == Some(stale.id.as_str())));
     }
 }

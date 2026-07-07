@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCheck, CheckCircle2, ChevronLeft, ChevronRight, Eye, RefreshCw, Search, Trash2, XCircle } from "lucide-react";
+import { CheckCheck, ChevronLeft, ChevronRight, RefreshCw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
   ConfirmDialog,
   EmptyState,
-  InspectorPanel,
   SegmentedControl,
   SelectControl,
   StatusBadge,
@@ -14,28 +13,21 @@ import {
 } from "@/components/ui";
 import {
   clearChangeEvents,
-  dismissChangeEvent,
   listChangeEvents,
   markChangeEventRead,
   notifyChangeEventsUpdated,
-  resolveChangeEvent,
 } from "@/lib/api/changeEvents";
-import { getSettings, SETTINGS_UPDATED_EVENT } from "@/lib/api/settings";
 import { listStations } from "@/lib/api/stations";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
-import type { AppSettings } from "@/lib/types/settings";
 import {
+  activeSeverityCount,
   buildChangeEventListItem,
-  eventTypeLabels,
   filterChangeEvents,
   formatChangeTime,
   markUnreadChangeEventsRead,
   objectTypeLabels,
   paginateChangeEvents,
-  parseJsonObject,
-  severityLabels,
   severityTone,
-  statusLabels,
   unreadRiskCount,
   type ChangeFilter,
 } from "./changeEventViewModels";
@@ -44,8 +36,6 @@ export function ChangeCenterPage() {
   const toast = useToast();
   const [events, setEvents] = useState<ChangeEvent[]>([]);
   const [stationNamesById, setStationNamesById] = useState<Map<string, string>>(new Map());
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
   const [filter, setFilter] = useState<ChangeFilter>({ severity: "all", status: "active", objectType: "all", query: "" });
   const [page, setPage] = useState(1);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
@@ -57,27 +47,6 @@ export function ChangeCenterPage() {
     void refresh();
   }, []);
 
-  useEffect(() => {
-    function refreshDeveloperMode() {
-      void getSettings()
-        .then((settings) => setDeveloperModeEnabled(settings.developerModeEnabled))
-        .catch(() => setDeveloperModeEnabled(false));
-    }
-
-    function handleSettingsUpdated(event: Event) {
-      const settings = (event as CustomEvent<AppSettings>).detail;
-      if (settings) {
-        setDeveloperModeEnabled(settings.developerModeEnabled);
-        return;
-      }
-      refreshDeveloperMode();
-    }
-
-    refreshDeveloperMode();
-    window.addEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
-    return () => window.removeEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
-  }, []);
-
   async function refresh(showSuccess = false) {
     setLoading(true);
     setError(null);
@@ -85,7 +54,6 @@ export function ChangeCenterPage() {
       const [nextEvents, stations] = await Promise.all([listChangeEvents(), listStations()]);
       setStationNamesById(new Map(stations.map((station) => [station.id, station.name])));
       setEvents(nextEvents);
-      setSelectedId((current) => (current && nextEvents.some((event) => event.id === current) ? current : nextEvents[0]?.id ?? null));
       if (showSuccess) {
         toast.success("变更中心已刷新");
       }
@@ -95,20 +63,6 @@ export function ChangeCenterPage() {
       toast.error("刷新变更中心失败", message);
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function runAction(action: () => Promise<ChangeEvent>, successMessage: string) {
-    setSaving(true);
-    try {
-      const updated = await action();
-      setEvents((current) => current.map((event) => (event.id === updated.id ? updated : event)));
-      notifyChangeEventsUpdated();
-      toast.success(successMessage);
-    } catch (requestError) {
-      toast.error("更新变更状态失败", readError(requestError));
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -133,7 +87,6 @@ export function ChangeCenterPage() {
     try {
       await clearChangeEvents();
       setEvents([]);
-      setSelectedId(null);
       setPage(1);
       notifyChangeEventsUpdated();
       toast.success("变更记录已清除");
@@ -150,8 +103,6 @@ export function ChangeCenterPage() {
     [events, filter, stationNamesById],
   );
   const pageInfo = useMemo(() => paginateChangeEvents(filteredEvents, page, CHANGE_EVENTS_PAGE_SIZE), [filteredEvents, page]);
-  const selected = pageInfo.events.find((event) => event.id === selectedId) ?? pageInfo.events[0] ?? null;
-  const selectedItem = selected ? buildChangeEventListItem(selected, { stationNamesById }) : null;
   const unreadCount = events.filter((event) => event.status === "unread").length;
   const riskCount = unreadRiskCount(events);
   const objectOptions = useMemo(() => {
@@ -182,12 +133,12 @@ export function ChangeCenterPage() {
       <div className="grid gap-[var(--shell-page-gap)]">
         <div className="grid gap-3 md:grid-cols-4">
           <SummaryTile label="未读风险" value={riskCount} tone={riskCount > 0 ? "text-rose-700" : "text-emerald-700"} />
-          <SummaryTile label="严重" value={events.filter((event) => event.severity === "critical" && event.status !== "resolved").length} />
-          <SummaryTile label="警告" value={events.filter((event) => event.severity === "warning" && event.status !== "resolved").length} />
-          <SummaryTile label="信息" value={events.filter((event) => event.severity === "info").length} />
+          <SummaryTile label="严重" value={activeSeverityCount(events, "critical")} />
+          <SummaryTile label="警告" value={activeSeverityCount(events, "warning")} />
+          <SummaryTile label="信息" value={activeSeverityCount(events, "info")} />
         </div>
 
-        <div className="grid gap-[var(--shell-page-gap)] xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="min-w-0">
           <div className="min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
             <Toolbar>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -260,8 +211,6 @@ export function ChangeCenterPage() {
                       key={event.id}
                       event={event}
                       stationNamesById={stationNamesById}
-                      selected={selected?.id === event.id}
-                      onSelect={() => setSelectedId(event.id)}
                     />
                   ))}
                 </div>
@@ -296,49 +245,6 @@ export function ChangeCenterPage() {
               </>
             )}
           </div>
-
-          <InspectorPanel title={selectedItem ? selectedItem.title : "变更详情"} description={selected ? eventTypeLabels[selected.eventType] ?? selected.eventType : "选择一条变更"}>
-            {selected ? (
-              <div className="space-y-4 p-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <StatusBadge tone={severityTone[selected.severity]}>{severityLabels[selected.severity]}</StatusBadge>
-                  <StatusBadge tone={selected.status === "unread" ? "warning" : "info"}>{statusLabels[selected.status]}</StatusBadge>
-                  <span className="text-xs text-muted-foreground">{formatChangeTime(selected.detectedAt)}</span>
-                </div>
-                <div className="rounded-[var(--surface-radius)] border border-border bg-slate-50 p-3 text-sm leading-6 text-slate-700">
-                  {selected.message}
-                </div>
-                {developerModeEnabled ? (
-                  <>
-                    <JsonBlock title="旧值" value={parseJsonObject(selected.oldValueJson)} />
-                    <JsonBlock title="新值" value={parseJsonObject(selected.newValueJson)} />
-                    <JsonBlock title="影响" value={parseJsonObject(selected.impactJson)} />
-                    <div className="grid gap-2 text-xs text-muted-foreground">
-                      <div>对象：{objectTypeLabels[selected.objectType] ?? selected.objectType} / {selected.objectId ?? "-"}</div>
-                      <div>来源：{selected.source}</div>
-                      <div>去重键：{selected.dedupeKey}</div>
-                    </div>
-                  </>
-                ) : null}
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Button variant="outline" disabled={saving || selected.status === "read"} onClick={() => void runAction(() => markChangeEventRead(selected.id), "已标记为已读")}>
-                    <Eye className="h-4 w-4" />
-                    标记已读
-                  </Button>
-                  <Button variant="outline" disabled={saving || selected.status === "resolved"} onClick={() => void runAction(() => resolveChangeEvent(selected.id), "已标记为已解决")}>
-                    <CheckCircle2 className="h-4 w-4" />
-                    解决
-                  </Button>
-                  <Button variant="danger" disabled={saving || selected.status === "dismissed"} onClick={() => void runAction(() => dismissChangeEvent(selected.id), "已忽略")}>
-                    <XCircle className="h-4 w-4" />
-                    忽略
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <EmptyState title="暂无详情" description="选择一条变更查看摘要和处理状态。" />
-            )}
-          </InspectorPanel>
         </div>
         <ConfirmDialog
           open={clearConfirmOpen}
@@ -357,24 +263,13 @@ export function ChangeCenterPage() {
 function ChangeEventRow({
   event,
   stationNamesById,
-  selected,
-  onSelect,
 }: {
   event: ChangeEvent;
   stationNamesById: Map<string, string>;
-  selected: boolean;
-  onSelect: () => void;
 }) {
   const item = buildChangeEventListItem(event, { stationNamesById });
   return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onSelect}
-      className={`grid min-h-[48px] w-full grid-cols-[56px_minmax(0,1fr)_88px] items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-teal-50/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--accent)/0.35)] ${
-        selected ? "bg-teal-50/70" : "bg-white"
-      }`}
-    >
+    <div className="grid min-h-[48px] w-full grid-cols-[56px_minmax(0,1fr)_88px] items-center gap-3 bg-white px-3 py-2 text-left">
       <div className="flex flex-col items-start gap-1">
         <StatusBadge tone={severityTone[event.severity]}>{item.severityLabel}</StatusBadge>
       </div>
@@ -384,7 +279,7 @@ function ChangeEventRow({
       <div className="flex flex-col items-end text-xs text-slate-500">
         <span className="font-medium text-slate-700">{formatChangeTime(event.detectedAt)}</span>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -393,20 +288,6 @@ function SummaryTile({ label, value, tone = "text-slate-800" }: { label: string;
     <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 shadow-[var(--surface-shadow)]">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className={`mt-1 text-2xl font-semibold ${tone}`}>{value}</div>
-    </div>
-  );
-}
-
-function JsonBlock({ title, value }: { title: string; value: unknown }) {
-  if (value == null) {
-    return null;
-  }
-  return (
-    <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3">
-      <div className="text-xs font-semibold text-slate-700">{title}</div>
-      <pre className="mt-2 max-h-40 overflow-auto rounded-[var(--surface-radius)] bg-slate-50 p-2 text-[11px] leading-5 text-slate-600">
-        {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
-      </pre>
     </div>
   );
 }

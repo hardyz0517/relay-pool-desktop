@@ -1,5 +1,5 @@
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{hash_map::DefaultHasher, HashSet},
     fs,
     hash::{Hash, Hasher},
     path::PathBuf,
@@ -936,6 +936,21 @@ impl AppDatabase {
     ) -> Result<StationGroupBinding, String> {
         let connection = self.connection()?;
         upsert_station_group_binding_in_connection(&connection, input)
+    }
+
+    pub fn mark_missing_station_group_bindings(
+        &self,
+        station_id: &str,
+        rate_sources: Vec<String>,
+        present_group_key_hashes: Vec<String>,
+    ) -> Result<(), String> {
+        let connection = self.connection()?;
+        mark_missing_station_group_bindings_in_connection(
+            &connection,
+            station_id,
+            rate_sources,
+            present_group_key_hashes,
+        )
     }
 
     pub fn list_group_rate_records(
@@ -6902,8 +6917,10 @@ fn insert_collector_snapshot_in_connection(
 
     let saved = collector_snapshot_by_id(connection, &id)?;
     if saved.status == "failed" {
+        let task_type = collector_task_type_from_snapshot_source(&saved.source);
         let event = crate::services::change_events::collector_failed_event(
             &saved.station_id,
+            &task_type,
             saved.error_message.as_deref(),
         );
         let _ = upsert_change_event_in_connection(connection, event);
@@ -7312,6 +7329,62 @@ fn disable_shadow_station_group_bindings(
     Ok(())
 }
 
+fn mark_missing_station_group_bindings_in_connection(
+    connection: &Connection,
+    station_id: &str,
+    rate_sources: Vec<String>,
+    present_group_key_hashes: Vec<String>,
+) -> Result<(), String> {
+    validate_station_exists(connection, station_id)?;
+    let rate_sources = rate_sources
+        .into_iter()
+        .map(|source| source.trim().to_string())
+        .filter(|source| !source.is_empty())
+        .collect::<HashSet<_>>();
+    if rate_sources.is_empty() {
+        return Ok(());
+    }
+    let present_group_key_hashes = present_group_key_hashes.into_iter().collect::<HashSet<_>>();
+    let bindings = list_station_group_bindings_from_connection(connection, station_id)?;
+
+    for binding in bindings {
+        if binding.binding_kind != "station_group"
+            || binding.binding_status != "available"
+            || !binding
+                .rate_source
+                .as_deref()
+                .map(|source| rate_sources.contains(source))
+                .unwrap_or(false)
+            || present_group_key_hashes.contains(&binding.group_key_hash)
+        {
+            continue;
+        }
+
+        upsert_station_group_binding_in_connection(
+            connection,
+            UpsertStationGroupBindingInput {
+                station_id: binding.station_id,
+                station_key_id: binding.station_key_id,
+                binding_kind: binding.binding_kind,
+                parent_group_binding_id: binding.parent_group_binding_id,
+                group_key_hash: binding.group_key_hash,
+                group_id_hash: binding.group_id_hash,
+                group_name: binding.group_name,
+                binding_status: "missing".to_string(),
+                default_rate_multiplier: binding.default_rate_multiplier,
+                user_rate_multiplier: binding.user_rate_multiplier,
+                effective_rate_multiplier: binding.effective_rate_multiplier,
+                rate_source: binding.rate_source,
+                confidence: binding.confidence,
+                last_seen_at: binding.last_seen_at,
+                raw_json_redacted: binding.raw_json_redacted,
+            },
+        )?;
+    }
+
+    Ok(())
+}
+
 fn emit_group_binding_change_events(
     connection: &Connection,
     previous: Option<&StationGroupBinding>,
@@ -7643,6 +7716,7 @@ fn finish_collector_run_in_connection(
     let previous_run_status = latest_finished_collector_run_status(
         connection,
         &existing.station_id,
+        &existing.task_type,
         Some(existing.id.as_str()),
     )?;
     let finished_at = now_string();
@@ -7687,8 +7761,11 @@ fn finish_collector_run_in_connection(
     if matches!(saved.status.as_str(), "success" | "partial")
         && previous_run_status.as_deref() == Some("failed")
     {
-        let event =
-            crate::services::change_events::collector_recovered_event(&saved.station_id, &saved.id);
+        let event = crate::services::change_events::collector_recovered_event(
+            &saved.station_id,
+            &saved.id,
+            &saved.task_type,
+        );
         let _ = upsert_change_event_in_connection(connection, event);
     }
     Ok(saved)
@@ -7731,6 +7808,7 @@ fn update_station_collector_summary(
 fn latest_finished_collector_run_status(
     connection: &Connection,
     station_id: &str,
+    task_type: &str,
     exclude_run_id: Option<&str>,
 ) -> Result<Option<String>, String> {
     connection
@@ -7738,11 +7816,12 @@ fn latest_finished_collector_run_status(
             "SELECT status
                FROM collector_runs
               WHERE station_id = ?1
+                AND task_type = ?2
                 AND status != 'running'
-                AND (?2 IS NULL OR id != ?2)
+                AND (?3 IS NULL OR id != ?3)
               ORDER BY COALESCE(finished_at, created_at) DESC, created_at DESC
               LIMIT 1",
-            params![station_id, exclude_run_id],
+            params![station_id, task_type, exclude_run_id],
             |row| row.get(0),
         )
         .optional()
@@ -7866,6 +7945,15 @@ fn latest_collector_snapshot_from_connection(
         )
         .optional()
         .map_err(|error| format!("读取最近采集快照失败: {error}"))
+}
+
+fn collector_task_type_from_snapshot_source(source: &str) -> String {
+    source
+        .rsplit_once('-')
+        .map(|(_, task_type)| task_type.trim())
+        .filter(|task_type| !task_type.is_empty())
+        .unwrap_or("unknown")
+        .to_string()
 }
 
 fn parse_json_value(value: &str) -> Value {
@@ -8317,7 +8405,10 @@ mod tests {
             .expect("station key pool item");
         assert_eq!(key_pool_item.endpoint_ping_status, "success");
         assert_eq!(key_pool_item.endpoint_ping_ms, Some(38));
-        assert_eq!(key_pool_item.endpoint_ping_checked_at.as_deref(), Some("1000"));
+        assert_eq!(
+            key_pool_item.endpoint_ping_checked_at.as_deref(),
+            Some("1000")
+        );
         assert_eq!(key_pool_item.endpoint_ping_error, None);
     }
 
@@ -10813,6 +10904,126 @@ mod tests {
 
         assert_eq!(updated.status, "healthy");
         assert!(updated.last_pricing_fetched_at.is_some());
+    }
+
+    #[test]
+    fn collector_recovery_is_scoped_to_the_same_task_type() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "collector-cross-task-recovery");
+
+        let groups_run = database
+            .create_collector_run(CreateCollectorRunInput {
+                station_id: station.id.clone(),
+                parent_run_id: None,
+                adapter: "sub2api".to_string(),
+                task_type: "groups".to_string(),
+            })
+            .expect("create failed groups run");
+        database
+            .finish_collector_run(FinishCollectorRunInput {
+                id: groups_run.id,
+                status: "failed".to_string(),
+                endpoint_count: 1,
+                success_count: 0,
+                failure_count: 1,
+                manual_action_required: false,
+                error_code: Some("groups_failed".to_string()),
+                error_message: Some("groups failed".to_string()),
+                snapshot_id: None,
+            })
+            .expect("finish failed groups run");
+
+        let balance_run = database
+            .create_collector_run(CreateCollectorRunInput {
+                station_id: station.id.clone(),
+                parent_run_id: None,
+                adapter: "sub2api".to_string(),
+                task_type: "balance".to_string(),
+            })
+            .expect("create successful balance run");
+        database
+            .finish_collector_run(FinishCollectorRunInput {
+                id: balance_run.id,
+                status: "success".to_string(),
+                endpoint_count: 1,
+                success_count: 1,
+                failure_count: 0,
+                manual_action_required: false,
+                error_code: None,
+                error_message: None,
+                snapshot_id: None,
+            })
+            .expect("finish successful balance run");
+
+        let events = database.list_change_events().expect("events");
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_type != "collector_recovered"),
+            "a successful balance task must not recover a previous groups failure"
+        );
+    }
+
+    #[test]
+    fn collector_recovery_event_records_the_recovered_task_type() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "collector-same-task-recovery");
+
+        let failed_run = database
+            .create_collector_run(CreateCollectorRunInput {
+                station_id: station.id.clone(),
+                parent_run_id: None,
+                adapter: "sub2api".to_string(),
+                task_type: "balance".to_string(),
+            })
+            .expect("create failed balance run");
+        database
+            .finish_collector_run(FinishCollectorRunInput {
+                id: failed_run.id,
+                status: "failed".to_string(),
+                endpoint_count: 1,
+                success_count: 0,
+                failure_count: 1,
+                manual_action_required: false,
+                error_code: Some("balance_failed".to_string()),
+                error_message: Some("balance failed".to_string()),
+                snapshot_id: None,
+            })
+            .expect("finish failed balance run");
+
+        let recovered_run = database
+            .create_collector_run(CreateCollectorRunInput {
+                station_id: station.id.clone(),
+                parent_run_id: None,
+                adapter: "sub2api".to_string(),
+                task_type: "balance".to_string(),
+            })
+            .expect("create recovered balance run");
+        database
+            .finish_collector_run(FinishCollectorRunInput {
+                id: recovered_run.id,
+                status: "success".to_string(),
+                endpoint_count: 1,
+                success_count: 1,
+                failure_count: 0,
+                manual_action_required: false,
+                error_code: None,
+                error_message: None,
+                snapshot_id: None,
+            })
+            .expect("finish recovered balance run");
+
+        let events = database.list_change_events().expect("events");
+        let recovered = events
+            .iter()
+            .find(|event| event.event_type == "collector_recovered")
+            .expect("collector recovered event");
+        assert!(recovered.dedupe_key.ends_with(":task:balance"));
+        assert!(recovered
+            .new_value_json
+            .as_deref()
+            .unwrap_or_default()
+            .contains("\"taskType\":\"balance\""));
     }
 
     #[test]

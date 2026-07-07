@@ -4,6 +4,7 @@ import type {
 } from "./officialModelCatalog";
 import type { GroupRateRecord, StationGroupBinding } from "../../lib/types/groupFacts";
 import type { PricingRule } from "../../lib/types/economics";
+import type { StationKey } from "../../lib/types/stationKeys";
 import type { Station } from "../../lib/types/stations";
 
 export type PricingEvidenceStatus = "discovered" | "unverified" | "unavailable";
@@ -30,6 +31,7 @@ type PricingComparisonCatalogEntry = Omit<
 export type PricingComparisonInput = {
   models: PricingComparisonCatalogEntry[];
   stations: Station[];
+  stationKeys?: StationKey[];
   groupBindings: StationGroupBinding[];
   groupRates: GroupRateRecord[];
   pricingRules: PricingRule[];
@@ -44,6 +46,8 @@ export type PricingComparisonRow = {
   displayName: string;
   stationId: string;
   stationName: string;
+  stationKeyId: string | null;
+  stationKeyName: string | null;
   groupBindingId: string | null;
   groupRateRecordId: string | null;
   groupName: string;
@@ -89,6 +93,8 @@ export type PricingComparisonViewModel = {
 
 type GroupCandidate = {
   station: Station;
+  stationKeyId: string | null;
+  stationKeyName: string | null;
   groupBindingId: string | null;
   groupRateRecordId: string | null;
   groupKeyHash: string;
@@ -111,6 +117,7 @@ export function buildPricingComparisonViewModel(
 
   const filters = normalizeFilters(input.filters);
   const stationsById = new Map(input.stations.map((station) => [station.id, station]));
+  const stationKeyNameById = new Map((input.stationKeys ?? []).map((key) => [key.id, key.name]));
   const evidenceByStationModel = buildEvidenceIndex(input.modelEvidence ?? []);
   const enabledModels = input.models
     .filter((model) => model.enabledByDefault)
@@ -126,7 +133,7 @@ export function buildPricingComparisonViewModel(
     };
   }
 
-  const visibleModels = enabledModels.filter(({ model }) => modelMatchesFilters(model, filters));
+  const visibleModels = enabledModels.filter(({ model }) => modelMatchesProviderFilter(model, filters));
   if (visibleModels.length === 0) {
     return {
       filters,
@@ -137,16 +144,18 @@ export function buildPricingComparisonViewModel(
   }
 
   const baseSections = visibleModels.map(({ model }) => {
+    const modelQueryMatches = modelMatchesQuery(model, filters.modelQuery);
     const unfilteredRows = buildRowsForModel(
       model,
       input.groupBindings,
       input.groupRates,
       stationsById,
+      stationKeyNameById,
       evidenceByStationModel,
     );
     const rows = markCheapestRows(
       unfilteredRows
-        .filter((row) => rowMatchesFilters(row, filters))
+        .filter((row) => rowMatchesFilters(row, filters, modelQueryMatches))
         .sort(compareRows),
     );
 
@@ -161,13 +170,20 @@ export function buildPricingComparisonViewModel(
       aliases: model.aliases,
       rows,
       unfilteredRowCount: unfilteredRows.length,
+      modelQueryMatches,
     };
   });
 
-  const sections: PricingModelSection[] = baseSections.map(({ unfilteredRowCount, ...section }) => {
-    void unfilteredRowCount;
-    return section;
-  });
+  const sections: PricingModelSection[] = baseSections
+    .filter((section) => {
+      const hasQuery = Boolean(normalizeText(filters.modelQuery));
+      return !hasQuery || section.modelQueryMatches || section.rows.length > 0;
+    })
+    .map(({ unfilteredRowCount, modelQueryMatches, ...section }) => {
+      void unfilteredRowCount;
+      void modelQueryMatches;
+      return section;
+    });
   const hasComparableGroups = baseSections.some((section) => section.unfilteredRowCount > 0);
   const hasVisibleRows = sections.some((section) => section.rows.length > 0);
 
@@ -217,6 +233,7 @@ function buildRowsForModel(
   groupBindings: StationGroupBinding[],
   groupRates: GroupRateRecord[],
   stationsById: Map<string, Station>,
+  stationKeyNameById: Map<string, string>,
   evidenceByStationModel: Map<string, PricingEvidenceStatus>,
 ) {
   const rows: PricingComparisonRow[] = [];
@@ -241,7 +258,13 @@ function buildRowsForModel(
     for (const relatedRate of relatedRates) {
       consumedRateIds.add(relatedRate.id);
     }
-    rows.push(createRowFromCandidate(model, bindingCandidate(binding, station, rate), evidenceByStationModel));
+    rows.push(
+      createRowFromCandidate(
+        model,
+        bindingCandidate(binding, station, rate, stationKeyNameById),
+        evidenceByStationModel,
+      ),
+    );
   }
 
   const latestStandaloneRates = latestRatesByStationGroup(
@@ -257,7 +280,13 @@ function buildRowsForModel(
       continue;
     }
 
-    rows.push(createRowFromCandidate(model, rateCandidate(rate, station), evidenceByStationModel));
+    rows.push(
+      createRowFromCandidate(
+        model,
+        rateCandidate(rate, station, stationKeyNameById),
+        evidenceByStationModel,
+      ),
+    );
   }
 
   return rows.sort(compareRows);
@@ -291,6 +320,8 @@ function createRowFromCandidate(
     displayName: model.displayName,
     stationId: candidate.station.id,
     stationName: candidate.station.name,
+    stationKeyId: candidate.stationKeyId,
+    stationKeyName: candidate.stationKeyName,
     groupBindingId: candidate.groupBindingId,
     groupRateRecordId: candidate.groupRateRecordId,
     groupName: candidate.groupName,
@@ -313,9 +344,13 @@ function bindingCandidate(
   binding: StationGroupBinding,
   station: Station,
   rate: GroupRateRecord | null,
+  stationKeyNameById: Map<string, string>,
 ): GroupCandidate {
+  const stationKeyId = binding.stationKeyId ?? rate?.stationKeyId ?? null;
   return {
     station,
+    stationKeyId,
+    stationKeyName: stationKeyId ? stationKeyNameById.get(stationKeyId) ?? null : null,
     groupBindingId: binding.id,
     groupRateRecordId: rate?.id ?? null,
     groupKeyHash: binding.groupKeyHash,
@@ -333,9 +368,16 @@ function bindingCandidate(
   };
 }
 
-function rateCandidate(rate: GroupRateRecord, station: Station): GroupCandidate {
+function rateCandidate(
+  rate: GroupRateRecord,
+  station: Station,
+  stationKeyNameById: Map<string, string>,
+): GroupCandidate {
+  const stationKeyId = rate.stationKeyId ?? null;
   return {
     station,
+    stationKeyId,
+    stationKeyName: stationKeyId ? stationKeyNameById.get(stationKeyId) ?? null : null,
     groupBindingId: rate.groupBindingId,
     groupRateRecordId: rate.id,
     groupKeyHash: rate.groupKeyHash,
@@ -350,15 +392,15 @@ function rateCandidate(rate: GroupRateRecord, station: Station): GroupCandidate 
   };
 }
 
-function modelMatchesFilters(
+function modelMatchesProviderFilter(
   model: PricingComparisonCatalogEntry,
   filters: Required<PricingComparisonFilters>,
 ) {
-  if (filters.provider !== "all" && model.provider !== filters.provider) {
-    return false;
-  }
+  return filters.provider === "all" || model.provider === filters.provider;
+}
 
-  const query = normalizeText(filters.modelQuery);
+function modelMatchesQuery(model: PricingComparisonCatalogEntry, modelQuery: string) {
+  const query = normalizeText(modelQuery);
   if (!query) {
     return true;
   }
@@ -368,27 +410,40 @@ function modelMatchesFilters(
     .some((value) => value.includes(query));
 }
 
-function rowMatchesFilters(row: PricingComparisonRow, filters: Required<PricingComparisonFilters>) {
+function rowMatchesFilters(
+  row: PricingComparisonRow,
+  filters: Required<PricingComparisonFilters>,
+  modelQueryMatches: boolean,
+) {
   if (filters.stationId !== "all" && row.stationId !== filters.stationId) {
     return false;
   }
   if (filters.verifiedOnly && row.evidenceStatus !== "discovered") {
     return false;
   }
+  const query = normalizeText(filters.modelQuery);
+  if (query && !modelQueryMatches && !rowMatchesQuery(row, query)) {
+    return false;
+  }
   return true;
+}
+
+function rowMatchesQuery(row: PricingComparisonRow, query: string) {
+  return [row.stationName, row.stationKeyName ?? "", row.groupName]
+    .map(normalizeText)
+    .some((value) => value.includes(query));
 }
 
 function groupBindingMatchesModel(
   binding: StationGroupBinding,
   model: PricingComparisonCatalogEntry,
 ) {
-  return textMatchesAnyMatcher(
-    [
-      binding.groupName,
-      binding.bindingStatus,
-      binding.rateSource,
-      searchableJsonText(binding.rawJsonRedacted),
-    ].join(" "),
+  const groupType = binding.groupIdHash?.trim() ?? "";
+  if (groupType) {
+    return groupTypeMatchesModel(binding.stationId, groupType, binding.groupName, model);
+  }
+  return legacyGroupTextMatchesModel(
+    [binding.groupName, binding.bindingStatus, binding.rateSource, searchableJsonText(binding.rawJsonRedacted)].join(" "),
     model.groupMatchers,
   );
 }
@@ -397,10 +452,72 @@ function groupRateMatchesModel(
   rate: GroupRateRecord,
   model: PricingComparisonCatalogEntry,
 ) {
-  return textMatchesAnyMatcher(
+  return legacyGroupTextMatchesModel(
     [rate.groupName, rate.source, searchableJsonText(rate.rawJsonRedacted)].join(" "),
     model.groupMatchers,
   );
+}
+
+function groupTypeMatchesModel(
+  stationId: string,
+  groupType: string,
+  groupName: string,
+  model: PricingComparisonCatalogEntry,
+) {
+  if (isImageNamedGptGroup(groupType, groupName)) {
+    return isImageGenerationModel(model);
+  }
+  if (textMatchesAnyMatcher(groupType, model.groupMatchers)) {
+    return true;
+  }
+  return structuredProviderGroupTypesByStation[stationId]?.[model.provider]?.includes(groupType) ?? false;
+}
+
+function isImageNamedGptGroup(groupType: string, groupName: string) {
+  return normalizeText(groupType) === "gpt" && textMatchesAnyMatcher(groupName, imageGenerationGroupMatchers);
+}
+
+function isImageGenerationModel(model: PricingComparisonCatalogEntry) {
+  return textMatchesAnyMatcher(
+    [model.modelId, model.displayName, ...model.aliases, ...model.groupMatchers].join(" "),
+    imageGenerationGroupMatchers,
+  );
+}
+
+const imageGenerationGroupMatchers = ["image", "images", "图片", "图像", "绘图", "画图", "生图"];
+
+const structuredProviderGroupTypesByStation: Record<
+  string,
+  Partial<Record<OfficialModelProvider, string[]>>
+> = {
+  "station-1783311325734-4639": {
+    openai: ["3", "23"],
+    anthropic: ["13", "17"],
+  },
+  "station-1783351745197-26": {
+    openai: ["2", "24", "59", "62", "75"],
+    anthropic: ["22", "57", "61"],
+    google: ["7"],
+  },
+  "station-1783237821989-3": {
+    openai: ["23", "25", "26", "27", "28", "29", "30", "32", "33", "34", "36"],
+  },
+  "station-1783042263655-1": {
+    openai: ["2", "4", "5", "12", "13"],
+    anthropic: ["7", "8", "11", "17"],
+  },
+  "station-1783351851692-74": {
+    openai: ["2", "7", "9", "10", "15"],
+    anthropic: ["4", "16", "17"],
+  },
+  "station-1782477763399": {
+    openai: ["8"],
+    anthropic: ["15"],
+  },
+};
+
+function legacyGroupTextMatchesModel(value: string, matchers: string[]) {
+  return textMatchesAnyMatcher(value, matchers);
 }
 
 function textMatchesAnyMatcher(value: string, matchers: string[]) {
@@ -439,6 +556,7 @@ function isStationGroupBinding(binding: StationGroupBinding) {
   return (
     binding.bindingKind === "station_group" &&
     binding.bindingStatus !== "disabled" &&
+    binding.bindingStatus !== "missing" &&
     binding.bindingStatus !== "manual_legacy"
   );
 }

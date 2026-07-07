@@ -16,12 +16,20 @@ use crate::services::{
 const MAX_RESPONSE_EXCERPT_BYTES: u64 = 4096;
 
 #[derive(Debug, Clone)]
+pub struct MonitorProbeUsage {
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
 pub struct MonitorProbeResult {
     pub ok: bool,
     pub status_code: Option<u16>,
     pub latency_ms: i64,
     pub error_summary: Option<String>,
     pub response_excerpt_redacted: Option<String>,
+    pub usage: Option<MonitorProbeUsage>,
 }
 
 pub fn run_monitor_probe(
@@ -129,7 +137,11 @@ fn probe_timeout(timeout_seconds: i64) -> Duration {
 
 fn response_result(started_at: Instant, response: ureq::Response) -> MonitorProbeResult {
     let status_code = response.status();
-    let excerpt = response_excerpt(response);
+    let body = response_body(response);
+    let response_json = body
+        .as_ref()
+        .and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok());
+    let excerpt = response_excerpt_from_body(body.as_deref(), response_json.as_ref());
     let ok = status_code < 400;
     let error_summary = if ok {
         None
@@ -145,24 +157,59 @@ fn response_result(started_at: Instant, response: ureq::Response) -> MonitorProb
         latency_ms: elapsed_ms(started_at),
         error_summary,
         response_excerpt_redacted: excerpt,
+        usage: response_json.as_ref().and_then(parse_monitor_probe_usage),
     }
 }
 
-fn response_excerpt(response: ureq::Response) -> Option<String> {
+fn response_body(response: ureq::Response) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
     response
         .into_reader()
         .take(MAX_RESPONSE_EXCERPT_BYTES)
         .read_to_end(&mut bytes)
         .ok()?;
+    Some(bytes)
+}
+
+fn response_excerpt_from_body(body: Option<&[u8]>, parsed_json: Option<&Value>) -> Option<String> {
+    let bytes = body?;
     if bytes.is_empty() {
         return None;
     }
-    let text = String::from_utf8_lossy(&bytes).to_string();
-    if let Ok(value) = serde_json::from_str::<Value>(&text) {
-        return serde_json::to_string(&redact_monitor_json(&value)).ok();
+    if let Some(value) = parsed_json {
+        return serde_json::to_string(&redact_monitor_json(value)).ok();
     }
-    Some(redact_monitor_text(&text))
+    Some(redact_monitor_text(&String::from_utf8_lossy(bytes)))
+}
+
+fn parse_monitor_probe_usage(value: &Value) -> Option<MonitorProbeUsage> {
+    let usage = value.get("usage")?;
+    let prompt_tokens = usage
+        .get("prompt_tokens")
+        .or_else(|| usage.get("input_tokens"))
+        .and_then(Value::as_i64);
+    let completion_tokens = usage
+        .get("completion_tokens")
+        .or_else(|| usage.get("output_tokens"))
+        .and_then(Value::as_i64);
+    let total_tokens = usage
+        .get("total_tokens")
+        .and_then(Value::as_i64)
+        .or_else(|| {
+            prompt_tokens
+                .zip(completion_tokens)
+                .map(|(prompt, completion)| prompt + completion)
+        });
+
+    if prompt_tokens.is_none() && completion_tokens.is_none() && total_tokens.is_none() {
+        return None;
+    }
+
+    Some(MonitorProbeUsage {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+    })
 }
 
 fn failed_result(
@@ -177,6 +224,7 @@ fn failed_result(
         latency_ms: elapsed_ms(started_at),
         error_summary: Some(redact_monitor_text(error_summary)),
         response_excerpt_redacted,
+        usage: None,
     }
 }
 

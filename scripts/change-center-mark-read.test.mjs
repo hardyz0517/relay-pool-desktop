@@ -19,9 +19,14 @@ await esbuild.build({
   external: ["react", "lucide-react", "@tauri-apps/api/core"],
 });
 
-const { buildChangeEventListItem, markUnreadChangeEventsRead, paginateChangeEvents, unreadChangeCount, unreadRiskCount } = await import(
-  pathToFileURL(outFile).href
-);
+const {
+  activeSeverityCount,
+  buildChangeEventListItem,
+  markUnreadChangeEventsRead,
+  paginateChangeEvents,
+  unreadChangeCount,
+  unreadRiskCount,
+} = await import(pathToFileURL(outFile).href);
 
 function changeEvent(id, status, overrides = {}) {
   return {
@@ -81,6 +86,19 @@ const mixedUnreadEvents = [
 
 assert.equal(unreadRiskCount(mixedUnreadEvents), 2, "risk count should still only include unread warning and critical events");
 assert.equal(unreadChangeCount(mixedUnreadEvents), 4, "sidebar unread badge should count every unread change event");
+
+const activeSeverityEvents = [
+  changeEvent("critical-unread", "unread", { severity: "critical" }),
+  changeEvent("critical-read", "read", { severity: "critical" }),
+  changeEvent("critical-dismissed", "dismissed", { severity: "critical" }),
+  changeEvent("critical-resolved", "resolved", { severity: "critical" }),
+  changeEvent("warning-unread", "unread", { severity: "warning" }),
+];
+
+assert.equal(typeof activeSeverityCount, "function", "view model should expose the same active severity count used by the page summary");
+assert.equal(activeSeverityCount(activeSeverityEvents, "critical"), 2, "active severity count should exclude dismissed and resolved events");
+assert.equal(activeSeverityCount(activeSeverityEvents, "warning"), 1);
+assert.equal(activeSeverityCount(activeSeverityEvents, "info"), 0);
 
 const pagedEvents = Array.from({ length: 27 }, (_, index) => changeEvent(`event-${index + 1}`, "unread"));
 const firstPage = paginateChangeEvents(pagedEvents, 1, 10);
@@ -189,7 +207,7 @@ const keyInvalidWithName = buildChangeEventListItem(
   { stationNamesById: new Map([["station-prod", "生产站"]]) },
 );
 assert.equal(keyInvalidWithName.title, "中转站 生产站 的 Key 生产 Key 健康异常：连续失败 5 次");
-assert.equal(keyInvalidWithName.description, "sk-****prod 连续失败 5 次：timeout");
+assert.equal(keyInvalidWithName.description, "中转站 生产站 的 Key 生产 Key 健康异常：连续失败 5 次；timeout");
 assert.equal(keyInvalidWithName.metaLabel, "密钥 / 生产 Key");
 assert.deepEqual(keyInvalidWithName.diff, { label: "失败次数", before: null, after: "5 次" });
 
@@ -272,12 +290,11 @@ assert.ok(
 );
 
 assert.ok(
-  changeCenterSource.includes("developerModeEnabled") &&
-    changeCenterSource.includes("getSettings") &&
-    changeCenterSource.includes("{developerModeEnabled ? (") &&
-    changeCenterSource.indexOf('<JsonBlock title="旧值"') > changeCenterSource.indexOf("{developerModeEnabled ? (") &&
-    changeCenterSource.indexOf("去重键：") > changeCenterSource.indexOf("{developerModeEnabled ? ("),
-  "change center inspector should show raw collection/debug details only in developer mode",
+  !changeCenterSource.includes("InspectorPanel") &&
+    !changeCenterSource.includes("变更详情") &&
+    !changeCenterSource.includes("JsonBlock") &&
+    !changeCenterSource.includes("buildChangeDetailDescription"),
+  "change center page should remove the separate change-detail card and its raw debug payload body",
 );
 
 assert.ok(

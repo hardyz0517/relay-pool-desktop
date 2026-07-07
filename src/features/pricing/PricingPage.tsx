@@ -11,13 +11,14 @@ import {
   StatusBadge,
   Toolbar,
   useToast,
-  type StatusTone,
 } from "@/components/ui";
 import { listPricingRules } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
+import { listStationKeys } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
 import type { PricingRule } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
+import type { StationKey } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
 import {
   enabledOfficialModelCatalog,
@@ -39,6 +40,7 @@ export function PricingPage() {
   const toast = useToast();
   const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
+  const [stationKeys, setStationKeys] = useState<StationKey[]>([]);
   const [groupBindings, setGroupBindings] = useState<StationGroupBinding[]>([]);
   const [groupRates, setGroupRates] = useState<GroupRateRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +48,6 @@ export function PricingPage() {
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
   const [modelQuery, setModelQuery] = useState("");
   const [selectedStationId, setSelectedStationId] = useState<string>("all");
-  const [verifiedOnly, setVerifiedOnly] = useState(false);
 
   useEffect(() => {
     void refresh();
@@ -60,13 +61,15 @@ export function PricingPage() {
         listPricingRules(),
         listStations(),
       ]);
-      const [bindingLists, rateRecordLists] = await Promise.all([
+      const [bindingLists, rateRecordLists, stationKeyLists] = await Promise.all([
         Promise.all(nextStations.map((station) => listStationGroupBindings(station.id))),
         Promise.all(nextStations.map((station) => listGroupRateRecords(station.id))),
+        Promise.all(nextStations.map((station) => listStationKeys(station.id))),
       ]);
 
       setPricingRules(nextPricingRules);
       setStations(nextStations);
+      setStationKeys(stationKeyLists.flat());
       setGroupBindings(bindingLists.flat());
       setGroupRates(rateRecordLists.flat());
 
@@ -120,6 +123,7 @@ export function PricingPage() {
       buildPricingComparisonViewModel({
         models: catalogModels,
         stations,
+        stationKeys,
         groupBindings,
         groupRates,
         pricingRules,
@@ -128,7 +132,6 @@ export function PricingPage() {
           provider: providerFilter,
           modelQuery,
           stationId: selectedStationId,
-          verifiedOnly,
         },
       }),
     [
@@ -140,8 +143,8 @@ export function PricingPage() {
       pricingRules,
       providerFilter,
       selectedStationId,
+      stationKeys,
       stations,
-      verifiedOnly,
     ],
   );
 
@@ -181,8 +184,11 @@ export function PricingPage() {
         />
       </div>
 
-      <SectionCard title="模型比价" contentClassName="p-0">
-        <Toolbar className="items-start">
+      <SectionCard
+        title="模型比价"
+        contentClassName="overflow-visible rounded-none border-0 bg-transparent p-0 shadow-none"
+      >
+        <Toolbar className="items-start border-x-0 border-t-0 bg-transparent px-0">
           <div className="flex w-full flex-wrap items-center gap-2">
             <SegmentedControl
               ariaLabel="按模型提供方筛选"
@@ -197,14 +203,14 @@ export function PricingPage() {
               className="w-full max-w-[360px] sm:w-auto"
             />
             <label className="sr-only" htmlFor="pricing-model-search">
-              搜索模型
+              搜索模型 / 中转站 / Key / 分组
             </label>
             <input
               id="pricing-model-search"
               className={inputClassName}
               value={modelQuery}
               onChange={(event) => setModelQuery(event.target.value)}
-              placeholder="搜索模型"
+              placeholder="搜索模型 / 中转站 / Key / 分组"
             />
             <SelectControl
               ariaLabel="按中转站筛选"
@@ -216,15 +222,6 @@ export function PricingPage() {
               ]}
               onChange={setSelectedStationId}
             />
-            <label className="inline-flex h-8 items-center gap-2 rounded-[var(--surface-radius)] border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700">
-              <input
-                type="checkbox"
-                className="h-3.5 w-3.5 rounded border-slate-300 text-[hsl(var(--accent))] focus:ring-[hsl(var(--accent)/0.25)]"
-                checked={verifiedOnly}
-                onChange={(event) => setVerifiedOnly(event.target.checked)}
-              />
-              仅已发现
-            </label>
           </div>
         </Toolbar>
 
@@ -266,18 +263,6 @@ function ModelPricingSection({ section }: { section: PricingModelSection }) {
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <span>官方输入 {formatUsd(section.officialInputPrice)} / 1M tokens</span>
             <span>官方输出 {formatUsd(section.officialOutputPrice)} / 1M tokens</span>
-            {section.priceSourceUrl ? (
-              <a
-                className="text-sky-700 underline-offset-2 hover:underline"
-                href={section.priceSourceUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {section.priceSourceLabel}
-              </a>
-            ) : (
-              <span>{section.priceSourceLabel}</span>
-            )}
           </div>
         </div>
         <div className="text-xs text-muted-foreground">{section.modelId}</div>
@@ -296,17 +281,22 @@ function PricingRowsTable({ rows }: { rows: PricingComparisonRow[] }) {
   return (
     <div className={tableScrollClassName}>
       <table className={tableClassName}>
+        <colgroup>
+          <col className="w-[18%]" />
+          <col className="w-[24%]" />
+          <col className="w-[12%]" />
+          <col className="w-[16%]" />
+          <col className="w-[16%]" />
+          <col className="w-[14%]" />
+        </colgroup>
         <thead>
-          <tr className="border-b border-border bg-slate-50">
+          <tr className="border-b border-border">
             <th className={tableHeaderClassName}>中转站</th>
             <th className={tableHeaderClassName}>分组</th>
-            <th className={`${tableHeaderClassName} text-right`}>分组倍率</th>
-            <th className={`${tableHeaderClassName} text-right`}>充值倍率</th>
-            <th className={`${tableHeaderClassName} text-right`}>折算倍率</th>
+            <th className={tableHeaderClassName}>倍率</th>
             <th className={`${tableHeaderClassName} text-right`}>输入价</th>
-            <th className={`${tableHeaderClassName} text-right`}>输出价</th>
-            <th className={tableHeaderClassName}>证据</th>
-            <th className={tableHeaderClassName}>更新时间</th>
+            <th className={priceOutputHeaderClassName}>输出价</th>
+            <th className={updatedAtHeaderClassName}>更新时间</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -314,7 +304,6 @@ function PricingRowsTable({ rows }: { rows: PricingComparisonRow[] }) {
             <tr key={row.id} className={row.isCheapest ? cheapestRowClassName : undefined}>
               <td className={tableCellClassName}>
                 <div className="font-medium text-slate-800">{row.stationName}</div>
-                <div className="text-xs text-muted-foreground">{row.source || "未知来源"}</div>
               </td>
               <td className={tableCellClassName}>
                 <div className="font-medium text-slate-800">{row.groupName}</div>
@@ -322,27 +311,16 @@ function PricingRowsTable({ rows }: { rows: PricingComparisonRow[] }) {
                   <div className="mt-0.5 text-xs font-medium text-emerald-700">当前最低</div>
                 )}
               </td>
-              <td className={`${tableCellClassName} text-right tabular-nums`}>
-                {formatNullableMultiplier(row.groupMultiplier)}
-              </td>
-              <td className={`${tableCellClassName} text-right tabular-nums`}>
-                {formatRecharge(row.creditPerCny)}
-              </td>
-              <td className={`${tableCellClassName} text-right tabular-nums font-semibold text-slate-800`}>
+              <td className={`${tableCellClassName} tabular-nums font-semibold text-slate-800`}>
                 {formatNullableMultiplier(row.effectiveMultiplier)}
               </td>
               <td className={`${tableCellClassName} text-right tabular-nums`}>
                 {formatCny(row.estimatedInputCny)}
               </td>
-              <td className={`${tableCellClassName} text-right tabular-nums`}>
+              <td className={priceOutputCellClassName}>
                 {formatCny(row.estimatedOutputCny)}
               </td>
-              <td className={tableCellClassName}>
-                <StatusBadge tone={evidenceTone(row.evidenceStatus)} className="h-5 px-1.5">
-                  {row.evidenceLabel}
-                </StatusBadge>
-              </td>
-              <td className={`${tableCellClassName} whitespace-nowrap text-muted-foreground`}>
+              <td className={updatedAtCellClassName}>
                 {formatTime(row.checkedAt)}
               </td>
             </tr>
@@ -376,7 +354,7 @@ function PricingEmptyState({ reason }: { reason: EmptyReason }) {
     return (
       <EmptyState
         title="没有匹配的模型分组"
-        description="调整提供方、模型关键词、中转站或已发现筛选后再试。"
+        description="调整提供方、关键词或中转站后再试。"
       />
     );
   }
@@ -389,16 +367,6 @@ function PricingEmptyState({ reason }: { reason: EmptyReason }) {
   );
 }
 
-function evidenceTone(status: PricingComparisonRow["evidenceStatus"]): StatusTone {
-  if (status === "discovered") {
-    return "healthy";
-  }
-  if (status === "unavailable") {
-    return "error";
-  }
-  return "info";
-}
-
 function formatNullableMultiplier(value: number | null) {
   return value === null ? "倍率未知" : formatMultiplier(value);
 }
@@ -407,12 +375,8 @@ function formatMultiplier(value: number) {
   return `${formatDecimal(value, 6)}x`;
 }
 
-function formatRecharge(value: number) {
-  return formatMultiplier(value);
-}
-
 function formatCny(value: number | null) {
-  return value === null ? "暂无" : `¥${formatDecimal(value, 4)}`;
+  return value === null ? "暂无" : `¥${formatDecimal(value, 4)}/M`;
 }
 
 function formatUsd(value: number) {
@@ -455,10 +419,14 @@ function providerLabel(provider: OfficialModelProvider) {
 }
 
 const inputClassName =
-  "h-8 w-[180px] rounded-[var(--surface-radius)] border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-[hsl(var(--accent)/0.45)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.16)]";
+  "h-8 w-[240px] rounded-[var(--surface-radius)] border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-[hsl(var(--accent)/0.45)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.16)]";
 
-const tableScrollClassName = "overflow-x-auto rounded-[var(--surface-radius)] border border-border";
-const tableClassName = "min-w-[980px] w-full table-fixed text-left text-sm";
-const tableHeaderClassName = "px-3 py-2 text-xs font-semibold text-muted-foreground";
-const tableCellClassName = "px-3 py-2.5 align-top text-sm text-slate-700";
+const tableScrollClassName = "overflow-x-auto border-y border-border";
+const tableClassName = "min-w-[840px] w-full table-fixed text-left text-sm";
+const tableHeaderClassName = "px-2.5 py-2 text-xs font-medium text-muted-foreground";
+const tableCellClassName = "px-2.5 py-2.5 align-top text-sm text-slate-700";
+const priceOutputHeaderClassName = `${tableHeaderClassName} pr-7 text-right`;
+const updatedAtHeaderClassName = `${tableHeaderClassName} pl-7 whitespace-nowrap`;
+const priceOutputCellClassName = `${tableCellClassName} pr-7 text-right tabular-nums`;
+const updatedAtCellClassName = `${tableCellClassName} pl-7 whitespace-nowrap text-muted-foreground`;
 const cheapestRowClassName = "bg-emerald-50/70";

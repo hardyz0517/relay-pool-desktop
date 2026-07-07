@@ -19,8 +19,9 @@ pub fn station_key_dedupe_key(station_key_id: &str, event_type: &str) -> String 
     format!("{event_type}:station_key:{station_key_id}")
 }
 
-pub fn collector_dedupe_key(station_id: &str, event_type: &str) -> String {
-    format!("{event_type}:collector:{station_id}")
+pub fn collector_dedupe_key(station_id: &str, event_type: &str, task_type: &str) -> String {
+    let task_type = collector_task_key(task_type);
+    format!("{event_type}:collector:{station_id}:task:{task_type}")
 }
 
 pub fn pricing_dedupe_key(station_id: &str, group_name: Option<&str>, model: &str) -> String {
@@ -155,8 +156,10 @@ pub fn key_health_event(
 
 pub fn collector_failed_event(
     station_id: &str,
+    task_type: &str,
     error_message: Option<&str>,
 ) -> UpsertChangeEventInput {
+    let task_type = collector_task_key(task_type);
     UpsertChangeEventInput {
         severity: SEVERITY_WARNING.to_string(),
         event_type: "collector_failed".to_string(),
@@ -171,9 +174,9 @@ pub fn collector_failed_event(
         pricing_rule_id: None,
         request_log_id: None,
         old_value_json: None,
-        new_value_json: None,
-        impact_json: Some(json!({ "staleDataRisk": true }).to_string()),
-        dedupe_key: collector_dedupe_key(station_id, "collector_failed"),
+        new_value_json: Some(json!({ "status": "failed", "taskType": task_type }).to_string()),
+        impact_json: Some(json!({ "staleDataRisk": true, "taskType": task_type }).to_string()),
+        dedupe_key: collector_dedupe_key(station_id, "collector_failed", &task_type),
         source: "collector".to_string(),
     }
 }
@@ -181,7 +184,9 @@ pub fn collector_failed_event(
 pub fn collector_recovered_event(
     station_id: &str,
     collector_run_id: &str,
+    task_type: &str,
 ) -> UpsertChangeEventInput {
+    let task_type = collector_task_key(task_type);
     UpsertChangeEventInput {
         severity: SEVERITY_INFO.to_string(),
         event_type: "collector_recovered".to_string(),
@@ -193,11 +198,20 @@ pub fn collector_recovered_event(
         station_key_id: None,
         pricing_rule_id: None,
         request_log_id: None,
-        old_value_json: Some(json!({ "status": "failed" }).to_string()),
-        new_value_json: Some(json!({ "status": "success" }).to_string()),
-        impact_json: Some(json!({ "staleDataRisk": false }).to_string()),
-        dedupe_key: collector_dedupe_key(station_id, "collector_recovered"),
+        old_value_json: Some(json!({ "status": "failed", "taskType": task_type }).to_string()),
+        new_value_json: Some(json!({ "status": "success", "taskType": task_type }).to_string()),
+        impact_json: Some(json!({ "staleDataRisk": false, "taskType": task_type }).to_string()),
+        dedupe_key: collector_dedupe_key(station_id, "collector_recovered", &task_type),
         source: "collector".to_string(),
+    }
+}
+
+fn collector_task_key(task_type: &str) -> String {
+    let trimmed = task_type.trim();
+    if trimmed.is_empty() {
+        "unknown".to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 
