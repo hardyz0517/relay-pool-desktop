@@ -17,6 +17,7 @@ async function importTsModule(path) {
 const {
   buildCurrentStationGroupFacts,
   buildStationGroupOptionsFromCurrentFacts,
+  isDisplayableStationGroupCurrentFact,
   latestGroupRatesByBindingOrHash,
 } = await importTsModule("src/lib/projections/groupFacts.ts");
 
@@ -188,6 +189,23 @@ assert.deepEqual(
     },
   ],
   "group options should include only available current facts and keep duplicate display names distinct",
+);
+
+const displayFacts = buildCurrentStationGroupFacts({
+  bindings: [
+    binding({ id: "display", groupName: "display", bindingStatus: "available", rateSource: "sub2api_groups_rates" }),
+    binding({ id: "missing", groupName: "missing", bindingStatus: "missing", rateSource: "sub2api_groups_rates" }),
+    binding({ id: "disabled", groupName: "disabled", bindingStatus: "disabled", rateSource: "sub2api_groups_rates" }),
+    binding({ id: "legacy", groupName: "legacy", bindingStatus: "manual_legacy", rateSource: "manual_legacy" }),
+    binding({ id: "legacy-key", groupName: "legacy key", bindingStatus: "available", rateSource: "legacy_key_group" }),
+  ],
+  rates: [],
+});
+
+assert.deepEqual(
+  displayFacts.filter(isDisplayableStationGroupCurrentFact).map((fact) => fact.groupName),
+  ["display"],
+  "displayable station group current facts should exclude missing, disabled, manual legacy, and legacy key group rows",
 );
 
 function binding(overrides) {
