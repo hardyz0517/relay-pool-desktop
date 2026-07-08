@@ -2,8 +2,9 @@ use crate::models::proxy::UpstreamApiFormat;
 use serde_json::Value;
 
 pub mod adapters;
-pub mod routing_types;
 pub mod router;
+pub mod routing_snapshot;
+pub mod routing_types;
 pub mod runtime;
 
 #[derive(Debug, Clone)]

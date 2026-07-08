@@ -46,6 +46,7 @@ pub fn run() {
             commands::update_settings,
             commands::choose_data_dir,
             commands::get_proxy_status,
+            commands::load_local_routing_workspace,
             commands::start_local_proxy,
             commands::stop_local_proxy,
             commands::restart_local_proxy,

@@ -197,6 +197,16 @@ pub fn get_proxy_status(
 }
 
 #[tauri::command]
+pub fn load_local_routing_workspace(
+    database: State<'_, AppDatabase>,
+    proxy: State<'_, ProxyRuntimeState>,
+) -> Result<crate::services::proxy::routing_types::LocalRoutingWorkspace, String> {
+    let settings = database.get_settings()?;
+    let proxy_status = proxy.status(settings.local_proxy_port);
+    database.load_local_routing_workspace(proxy_status)
+}
+
+#[tauri::command]
 pub fn start_local_proxy(
     database: State<'_, AppDatabase>,
     secrets: State<'_, SecretManager>,

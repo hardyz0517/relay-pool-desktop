@@ -791,6 +791,13 @@ impl AppDatabase {
         proxy_rich_route_candidates_from_connection_with_data_key(&connection, Some(data_key))
     }
 
+    pub fn load_local_routing_workspace(
+        &self,
+        proxy_status: crate::models::proxy::ProxyStatus,
+    ) -> Result<crate::services::proxy::routing_types::LocalRoutingWorkspace, String> {
+        crate::services::proxy::routing_snapshot::load_local_routing_workspace(self, proxy_status)
+    }
+
     pub fn route_candidate_economics(
         &self,
         station_key_id: String,
@@ -5773,9 +5780,7 @@ fn upsert_model_base_price_in_connection(
     if source_label.is_empty() {
         return Err("价格来源名称不能为空".to_string());
     }
-    let id = input
-        .id
-        .unwrap_or_else(|| generate_id("model_base_price"));
+    let id = input.id.unwrap_or_else(|| generate_id("model_base_price"));
     let now = now_string();
     connection
         .execute(
@@ -11679,7 +11684,10 @@ mod tests {
             economics.normalization_status.as_deref(),
             Some("base_price_with_group_rate")
         );
-        assert_eq!(economics.pricing_source.as_deref(), Some("model_base_price"));
+        assert_eq!(
+            economics.pricing_source.as_deref(),
+            Some("model_base_price")
+        );
     }
 
     #[test]
