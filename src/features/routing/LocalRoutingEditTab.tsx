@@ -1,6 +1,26 @@
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  type DragEndEvent,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { BadgeCheck, ListOrdered, LockKeyhole } from "lucide-react";
 import { EmptyState, SectionCard, StatusBadge } from "@/components/ui";
-import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
+import { reorderLocalRoutingKeys } from "@/lib/api/localRouting";
+import { readError } from "@/lib/errors";
+import type { LocalRoutingCandidateRow as LocalRoutingCandidate, LocalRoutingWorkspace } from "@/lib/types/localRouting";
+import { cn } from "@/lib/utils";
 import { LocalRoutingCandidateRow } from "./LocalRoutingCandidateRow";
 
 type LocalRoutingEditTabProps = {
@@ -8,7 +28,47 @@ type LocalRoutingEditTabProps = {
   loading: boolean;
 };
 
+type ReorderSyncState = "idle" | "saving" | "synced" | "failed";
+
+const reorderSyncLabels: Record<ReorderSyncState, string | null> = {
+  idle: null,
+  saving: "保存中",
+  synced: "已同步",
+  failed: "保存失败",
+};
+
+const reorderSyncTones: Record<Exclude<ReorderSyncState, "idle">, "healthy" | "warning" | "error"> = {
+  saving: "warning",
+  synced: "healthy",
+  failed: "error",
+};
+
 export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabProps) {
+  const [candidates, setCandidates] = useState<LocalRoutingCandidate[]>([]);
+  const [syncState, setSyncState] = useState<ReorderSyncState>("idle");
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const candidateIds = useMemo(
+    () => candidates.map((candidate) => candidate.stationKeyId),
+    [candidates],
+  );
+  const syncLabel = reorderSyncLabels[syncState];
+
+  useEffect(() => {
+    if (!workspace) {
+      setCandidates([]);
+      setSyncState("idle");
+      setSyncError(null);
+      return;
+    }
+    setCandidates(workspace.candidates);
+    setSyncState("idle");
+    setSyncError(null);
+  }, [workspace]);
+
   if (loading && !workspace) {
     return (
       <SectionCard title="编辑预览">
@@ -25,6 +85,47 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
     );
   }
 
+  async function handleDragEnd(event: DragEndEvent) {
+    if (syncState === "saving") {
+      return;
+    }
+
+    const { active, over } = event;
+    if (!over || active.id === over.id) {
+      return;
+    }
+
+    const activeIndex = candidateIds.indexOf(String(active.id));
+    const overIndex = candidateIds.indexOf(String(over.id));
+    if (activeIndex === -1 || overIndex === -1) {
+      return;
+    }
+
+    const previousCandidates = candidates;
+    const nextCandidates = [...candidates];
+    const [moved] = nextCandidates.splice(activeIndex, 1);
+    nextCandidates.splice(overIndex, 0, moved);
+    const nextStationKeyIds = nextCandidates.map((candidate) => candidate.stationKeyId);
+
+    setCandidates(nextCandidates);
+    setSyncState("saving");
+    setSyncError(null);
+
+    try {
+      const nextWorkspace = await reorderLocalRoutingKeys({ stationKeyIds: nextStationKeyIds });
+      setCandidates(
+        nextWorkspace.candidates.length === nextCandidates.length
+          ? nextWorkspace.candidates
+          : nextCandidates,
+      );
+      setSyncState("synced");
+    } catch (requestError) {
+      setCandidates(previousCandidates);
+      setSyncState("failed");
+      setSyncError(readError(requestError));
+    }
+  }
+
   return (
     <div className="grid gap-3">
       <SectionCard title="策略草案" contentClassName="grid gap-3">
@@ -36,32 +137,95 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-slate-900">低价优先 + 稳定保持</div>
               <div className="truncate text-xs text-muted-foreground">
-                预览候选顺位与启用状态，暂不写入路由行为。
+                调整候选顺位后自动写入本地路由工作区。
               </div>
             </div>
           </div>
-          <StatusBadge tone="info">预览</StatusBadge>
+          {syncLabel && syncState !== "idle" ? (
+            <StatusBadge tone={reorderSyncTones[syncState]}>{syncLabel}</StatusBadge>
+          ) : (
+            <StatusBadge tone="info">自动保存</StatusBadge>
+          )}
         </div>
         <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
-          <EditHint icon={<ListOrdered className="h-4 w-4" />} title="顺位预览" body="当前仅展示静态候选顺位与启用状态。" />
-          <EditHint icon={<LockKeyhole className="h-4 w-4" />} title="行为冻结" body="本页不触发保存或运行时策略更新。" />
+          <EditHint icon={<ListOrdered className="h-4 w-4" />} title="顺位编辑" body="列表编号按当前可见顺序显示为 1、2、3。" />
+          <EditHint icon={<LockKeyhole className="h-4 w-4" />} title="运行边界" body="本页只更新候选顺位，不改变模型映射和模拟器行为。" />
         </div>
       </SectionCard>
 
-      <SectionCard title="候选编辑列表" contentClassName="grid gap-2">
-        {workspace.candidates.length === 0 ? (
+      <SectionCard
+        title="候选编辑列表"
+        action={syncLabel && syncState !== "idle" ? <StatusBadge tone={reorderSyncTones[syncState]}>{syncLabel}</StatusBadge> : null}
+        contentClassName="grid gap-2"
+      >
+        {syncError && (
+          <div className="rounded-[var(--surface-radius)] border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            {syncError}
+          </div>
+        )}
+        {candidates.length === 0 ? (
           <EmptyState title="暂无候选 Key" description="候选列表会随本地路由工作区加载后显示。" />
         ) : (
-          workspace.candidates.map((candidate) => (
-            <LocalRoutingCandidateRow key={candidate.stationKeyId} candidate={candidate} />
-          ))
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={candidateIds} strategy={verticalListSortingStrategy}>
+              <div className="grid gap-2">
+                {candidates.map((candidate, index) => (
+                  <SortableLocalRoutingCandidateRow
+                    key={candidate.stationKeyId}
+                    candidate={candidate}
+                    order={index + 1}
+                    syncState={syncState}
+                    disabled={syncState === "saving"}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
         )}
       </SectionCard>
     </div>
   );
 }
 
-function EditHint({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
+function SortableLocalRoutingCandidateRow({
+  candidate,
+  order,
+  syncState,
+  disabled,
+}: {
+  candidate: LocalRoutingCandidate;
+  order: number;
+  syncState: ReorderSyncState;
+  disabled: boolean;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: candidate.stationKeyId,
+    disabled,
+  });
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn("will-change-transform", isDragging && "opacity-60")}
+    >
+      <LocalRoutingCandidateRow
+        candidate={candidate}
+        order={order}
+        syncState={syncState}
+        dragDisabled={disabled}
+        dragAttributes={attributes}
+        dragListeners={listeners}
+      />
+    </div>
+  );
+}
+
+function EditHint({ icon, title, body }: { icon: ReactNode; title: string; body: string }) {
   return (
     <div className="flex items-start gap-2 rounded-[var(--surface-radius)] border border-slate-200 bg-slate-50 px-3 py-2">
       <span className="mt-0.5 shrink-0 text-slate-500">{icon}</span>
