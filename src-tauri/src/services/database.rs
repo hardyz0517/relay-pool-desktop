@@ -1012,7 +1012,8 @@ impl AppDatabase {
 
     pub fn reset_model_base_prices_to_builtins(&self) -> Result<Vec<ModelBasePrice>, String> {
         let connection = self.connection()?;
-        seed_builtin_model_base_prices(&connection)?;
+        seed_builtin_model_base_prices(&connection)
+            .map_err(|error| format!("重置模型基准价格失败: {error}"))?;
         list_model_base_prices_from_connection(&connection)
     }
 
@@ -5736,6 +5737,89 @@ fn upsert_pricing_rule_in_connection(
     Ok(saved)
 }
 
+fn list_model_base_prices_from_connection(
+    connection: &Connection,
+) -> Result<Vec<ModelBasePrice>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, provider, model, input_price, output_price, currency, unit,
+                    source_url, source_label, source_checked_at, enabled, built_in, note,
+                    created_at, updated_at
+               FROM model_base_prices
+              ORDER BY enabled DESC, provider ASC, model ASC, updated_at DESC",
+        )
+        .map_err(|error| format!("读取模型基准价格失败: {error}"))?;
+    let rows = statement
+        .query_map([], row_to_model_base_price)
+        .map_err(|error| format!("查询模型基准价格失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析模型基准价格失败: {error}"))?;
+    Ok(rows)
+}
+
+fn upsert_model_base_price_in_connection(
+    connection: &Connection,
+    input: UpsertModelBasePriceInput,
+) -> Result<ModelBasePrice, String> {
+    let provider = input.provider.trim();
+    if provider.is_empty() {
+        return Err("模型服务商不能为空".to_string());
+    }
+    let model = input.model.trim();
+    if model.is_empty() {
+        return Err("模型名称不能为空".to_string());
+    }
+    let source_label = input.source_label.trim();
+    if source_label.is_empty() {
+        return Err("价格来源名称不能为空".to_string());
+    }
+    let id = input
+        .id
+        .unwrap_or_else(|| generate_id("model_base_price"));
+    let now = now_string();
+    connection
+        .execute(
+            "INSERT INTO model_base_prices (
+                id, provider, model, input_price, output_price, currency, unit,
+                source_url, source_label, source_checked_at, enabled, built_in, note,
+                created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+             ON CONFLICT(id) DO UPDATE SET
+                provider = excluded.provider,
+                model = excluded.model,
+                input_price = excluded.input_price,
+                output_price = excluded.output_price,
+                currency = excluded.currency,
+                unit = excluded.unit,
+                source_url = excluded.source_url,
+                source_label = excluded.source_label,
+                source_checked_at = excluded.source_checked_at,
+                enabled = excluded.enabled,
+                built_in = excluded.built_in,
+                note = excluded.note,
+                updated_at = excluded.updated_at",
+            params![
+                id,
+                provider,
+                model,
+                input.input_price,
+                input.output_price,
+                normalize_currency(input.currency),
+                normalize_unit(input.unit),
+                input.source_url.trim(),
+                source_label,
+                normalize_optional_string(input.source_checked_at),
+                bool_to_i64(input.enabled),
+                bool_to_i64(input.built_in),
+                normalize_optional_string(input.note),
+                now,
+                now,
+            ],
+        )
+        .map_err(|error| format!("保存模型基准价格失败: {error}"))?;
+    model_base_price_by_id(connection, &id)
+}
+
 fn delete_pricing_rule_from_connection(connection: &Connection, id: &str) -> Result<(), String> {
     let deleted = connection
         .execute("DELETE FROM pricing_rules WHERE id = ?1", params![id])
@@ -5891,6 +5975,26 @@ fn row_to_pricing_rule(row: &rusqlite::Row<'_>) -> rusqlite::Result<PricingRule>
     })
 }
 
+fn row_to_model_base_price(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModelBasePrice> {
+    Ok(ModelBasePrice {
+        id: row.get(0)?,
+        provider: row.get(1)?,
+        model: row.get(2)?,
+        input_price: row.get(3)?,
+        output_price: row.get(4)?,
+        currency: row.get(5)?,
+        unit: row.get(6)?,
+        source_url: row.get(7)?,
+        source_label: row.get(8)?,
+        source_checked_at: row.get(9)?,
+        enabled: i64_to_bool(row.get(10)?),
+        built_in: i64_to_bool(row.get(11)?),
+        note: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+    })
+}
+
 fn row_to_balance_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<BalanceSnapshot> {
     Ok(BalanceSnapshot {
         id: row.get(0)?,
@@ -5910,6 +6014,22 @@ fn row_to_balance_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<BalanceS
         created_at: row.get(14)?,
         updated_at: row.get(15)?,
     })
+}
+
+fn model_base_price_by_id(connection: &Connection, id: &str) -> Result<ModelBasePrice, String> {
+    connection
+        .query_row(
+            "SELECT id, provider, model, input_price, output_price, currency, unit,
+                    source_url, source_label, source_checked_at, enabled, built_in, note,
+                    created_at, updated_at
+               FROM model_base_prices
+              WHERE id = ?1",
+            params![id],
+            row_to_model_base_price,
+        )
+        .optional()
+        .map_err(|error| format!("读取模型基准价格失败: {error}"))?
+        .ok_or_else(|| "模型基准价格不存在".to_string())
 }
 
 fn pricing_rule_by_id(connection: &Connection, id: &str) -> Result<PricingRule, String> {
