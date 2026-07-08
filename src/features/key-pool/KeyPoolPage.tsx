@@ -16,12 +16,13 @@ import { Activity, Edit3, GripVertical, KeyRound, Loader2, Plus, Search, Trash2 
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, SelectControl, StatusBadge, SwitchControl, type StatusTone, useToast } from "@/components/ui";
 import { createChannelMonitor, listChannelMonitorTemplates, listChannelMonitors, updateChannelMonitor } from "@/lib/api/channelMonitors";
-import { listStationGroupOptions } from "@/lib/api/groupFacts";
+import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getStationKeyCapabilities } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
 import { deleteStationKey, listKeyPoolItems, reorderKeyPool, saveStationKeyWithDefaults, testStationKeyConnectivity, updateStationKey } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
 import { formatRate } from "@/lib/formatters";
+import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import { parseTimestampLikeDate } from "@/lib/time";
 import type { ChannelMonitor, ChannelMonitorRequestTemplate } from "@/lib/types/channelMonitors";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
@@ -29,6 +30,7 @@ import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { Station } from "@/lib/types/stations";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
+import { buildStationGroupOptionsFromCurrentFactsForSelect } from "@/features/stations/groupOptionViewModels";
 import {
   createStationKeyMonitorInput,
   findStationKeyMonitor,
@@ -327,7 +329,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     try {
       const [capabilities, groupOptions] = await Promise.all([
         getStationKeyCapabilities(item.id),
-        listStationGroupOptions(item.stationId),
+        loadCurrentStationGroupOptions(item.stationId),
       ]);
       setGroupOptionsForEdit(groupOptions);
       setEditForm((current) => current.id === item.id ? mergeCapabilitiesIntoForm(current, capabilities) : current);
@@ -353,7 +355,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     setSaving(true);
     setError(null);
     try {
-      const groupOptions = await listStationGroupOptions(station.id);
+      const groupOptions = await loadCurrentStationGroupOptions(station.id);
       setGroupOptionsForEdit(groupOptions);
     } catch (requestError) {
       toast.error("读取中转站分组失败", readError(requestError));
@@ -379,7 +381,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     setGroupOptionsForEdit([]);
     setSaving(true);
     try {
-      const groupOptions = await listStationGroupOptions(station.id);
+      const groupOptions = await loadCurrentStationGroupOptions(station.id);
       setGroupOptionsForEdit(groupOptions);
     } catch (requestError) {
       toast.error("读取中转站分组失败", readError(requestError));
@@ -1120,6 +1122,16 @@ function capabilitiesFromEditForm(form: KeyPoolEditForm) {
 
 function selectedGroupOption(options: StationGroupOption[], value: string) {
   return options.find((option) => option.groupBindingId === value || option.value === value) ?? null;
+}
+
+async function loadCurrentStationGroupOptions(stationId: string) {
+  const [bindings, rates] = await Promise.all([
+    listStationGroupBindings(stationId),
+    listGroupRateRecords(stationId),
+  ]);
+  return buildStationGroupOptionsFromCurrentFactsForSelect(
+    buildCurrentStationGroupFacts({ bindings, rates }),
+  );
 }
 
 function currentGroupOption(sourceItem: KeyPoolItem | null, options: StationGroupOption[]) {

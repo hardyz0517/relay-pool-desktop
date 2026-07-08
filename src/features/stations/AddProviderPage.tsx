@@ -21,6 +21,7 @@ import {
 } from "@/lib/api/stationKeys";
 import { createStation, listStations, updateStation } from "@/lib/api/stations";
 import { readError } from "@/lib/errors";
+import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import {
   isCollectedStationGroupBinding,
   type GroupRateRecord,
@@ -45,8 +46,10 @@ import {
 import { CreateRemoteKeyDialog } from "./components/CreateRemoteKeyDialog";
 import { RemoteKeyDiscoveryList } from "./components/RemoteKeyDiscoveryList";
 import {
+  buildStationGroupOptionsFromCurrentFactsForSelect,
   findMatchingGroupOption,
   formatMultiplier,
+  normalizeStationGroupOptions,
 } from "./groupOptionViewModels";
 import { providerPresets, type ProviderPresetId } from "./providerPresets";
 
@@ -269,22 +272,33 @@ function mergeGroupRowsWithSavedOptions(
   rows: StationGroupDraft[],
   groups: StationKeyGroupOption[],
 ): StationGroupDraft[] {
-  return dedupeGroupRows(rows.map((row) => {
-    if (row.deleteRequested) {
-      return row;
-    }
-    const group = groups.find((item) => groupsMatch(row, item));
-    if (!group) {
-      return row;
-    }
-    return {
-      ...row,
-      groupBindingId: group.groupBindingId,
-      groupIdHash: group.groupIdHash,
-      groupName: group.groupName,
-      rateMultiplier: group.rateMultiplier === null ? row.rateMultiplier : formatMultiplier(group.rateMultiplier),
-    };
-  }));
+  return dedupeGroupRows(
+    rows.map((row) => {
+      if (row.deleteRequested) {
+        return row;
+      }
+      const group = groups.find((item) => groupsMatch(row, item));
+      if (!group) {
+        return row;
+      }
+      return {
+        ...row,
+        groupBindingId: group.groupBindingId,
+        groupIdHash: group.groupIdHash,
+        groupName: group.groupName,
+        rateMultiplier: group.rateMultiplier === null ? row.rateMultiplier : formatMultiplier(group.rateMultiplier),
+      };
+    }),
+  );
+}
+
+function groupBindingsToCurrentOptions(
+  bindings: StationGroupBinding[],
+  rates: GroupRateRecord[],
+) {
+  return buildStationGroupOptionsFromCurrentFactsForSelect(
+    buildCurrentStationGroupFacts({ bindings, rates }),
+  );
 }
 
 function dedupeGroupRows(rows: StationGroupDraft[]): StationGroupDraft[] {
@@ -704,6 +718,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     message: null,
   });
   const [groupRows, setGroupRows] = useState<StationGroupDraft[]>([]);
+  const [currentGroupOptions, setCurrentGroupOptions] = useState<StationKeyGroupOption[]>([]);
   const [keyRows, setKeyRows] = useState<StationKeyDraft[]>([createEmptyStationKeyDraft(0)]);
   const [remoteCapability, setRemoteCapability] = useState<RemoteKeyCapability | null>(
     stationId ? null : draftRemoteCapability(defaultPreset.stationType),
@@ -717,14 +732,18 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   const [createRemoteOpen, setCreateRemoteOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const editableGroupOptions = useMemo(
-    () =>
-      groupRows.flatMap((row) => {
+  const editableGroupOptions = useMemo(() => {
+    const deletedCurrentGroups = currentGroupOptions.filter((option) =>
+      groupRows.some((row) => row.deleteRequested && groupsMatch(row, option)),
+    );
+    return normalizeStationGroupOptions([
+      ...currentGroupOptions.filter((option) => !deletedCurrentGroups.includes(option)),
+      ...groupRows.flatMap((row) => {
         const option = groupDraftToOption(row);
         return option ? [option] : [];
       }),
-    [groupRows],
-  );
+    ]);
+  }, [currentGroupOptions, groupRows]);
 
   const remoteGroupOptions = useMemo(
     () => mergeRemoteGroupOptions(editableGroupOptions, collectRemoteGroupOptions(remoteKeys)),
@@ -753,6 +772,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     setActiveStationId(stationId ?? null);
     if (!stationId) {
       setGroupRows([]);
+      setCurrentGroupOptions([]);
       setKeyRows([createEmptyStationKeyDraft(0)]);
       setLocalStationKeys([]);
       setRemoteCreatedLocalKeyIds({});
@@ -792,6 +812,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         setForm(formFromStation(station, credentials));
         setLocalStationKeys(keys);
         setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(discoveredRemoteKeysResult.keys, keys));
+        setCurrentGroupOptions(groupBindingsToCurrentOptions(groupBindings, groupRates));
         setGroupRows(dedupeGroupRows(groupBindingsToDrafts(groupBindings, groupRates)));
         setKeyRows(keys.length ? keys.map(keyToDraft) : []);
         setRemoteCapability(capabilityResult.capability);
@@ -1111,6 +1132,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         getRemoteKeyCapability(targetStationId).catch(() => null),
       ]);
       const syncedGroupRows = dedupeGroupRows(groupBindingsToDrafts(groupBindings, groupRates));
+      setCurrentGroupOptions(groupBindingsToCurrentOptions(groupBindings, groupRates));
       setRemoteCapability(capability);
       setRemoteCapabilityError(null);
       setGroupRows(syncedGroupRows);

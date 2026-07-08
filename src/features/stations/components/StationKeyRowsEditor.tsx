@@ -74,7 +74,7 @@ export function StationKeyRowsEditor({
           groupIdHash: row.groupIdHash,
           groupName: row.groupName,
           rateMultiplier: parseDraftMultiplier(row.rateMultiplier),
-          rateSource: null,
+          rateSource: "key_draft",
           selectableForRemoteKey: Boolean(row.groupBindingId || row.groupIdHash),
         };
         return { ...option, value: stationGroupSelectValue(option) };

@@ -2,12 +2,14 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, Check, KeyRound } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, EmptyState, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
-import { listStationGroupOptions } from "@/lib/api/groupFacts";
+import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { listKeyPoolItems, saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
 import { formatRate } from "@/lib/formatters";
+import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
+import { buildStationGroupOptionsFromCurrentFactsForSelect } from "@/features/stations/groupOptionViewModels";
 
 type EditKeyPageProps = {
   stationKeyId: string | null;
@@ -107,7 +109,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
         if (!item) {
           throw new Error("未找到要编辑的密钥。");
         }
-        const nextGroupOptions = await listStationGroupOptions(item.stationId);
+        const nextGroupOptions = await loadCurrentStationGroupOptions(item.stationId);
         if (!alive) {
           return;
         }
@@ -429,6 +431,16 @@ function groupSelectionFromEditForm(
 
 function selectedGroupOption(options: StationGroupOption[], value: string) {
   return options.find((option) => option.groupBindingId === value || option.value === value) ?? null;
+}
+
+async function loadCurrentStationGroupOptions(stationId: string) {
+  const [bindings, rates] = await Promise.all([
+    listStationGroupBindings(stationId),
+    listGroupRateRecords(stationId),
+  ]);
+  return buildStationGroupOptionsFromCurrentFactsForSelect(
+    buildCurrentStationGroupFacts({ bindings, rates }),
+  );
 }
 
 function currentGroupOption(sourceItem: KeyPoolItem | null, options: StationGroupOption[]) {
