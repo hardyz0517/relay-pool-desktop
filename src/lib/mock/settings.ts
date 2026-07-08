@@ -11,6 +11,8 @@ export type MockSettings = {
   allowDepletedFallback: boolean;
   lowBalanceThresholdCny: number;
   dataDir: string;
+  pendingDataDir: string | null;
+  dataDirChangeRequiresRestart: boolean;
   trayBehavior: "minimize-to-tray" | "close-to-tray" | "disabled";
   developerModeEnabled: boolean;
   themeNote: string;
@@ -29,6 +31,8 @@ export const mockSettings: MockSettings = {
   allowDepletedFallback: false,
   lowBalanceThresholdCny: 15,
   dataDir: "%APPDATA%\\Relay Pool Desktop",
+  pendingDataDir: null,
+  dataDirChangeRequiresRestart: false,
   trayBehavior: "minimize-to-tray",
   developerModeEnabled: false,
   themeNote: "当前使用浅色桌面工具主题。",

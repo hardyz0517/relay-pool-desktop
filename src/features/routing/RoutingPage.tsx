@@ -60,6 +60,8 @@ const fallbackSettings: AppSettings = {
   trayBehavior: "minimize-to-tray",
   developerModeEnabled: false,
   dataDir: "仅桌面端可读取",
+  pendingDataDir: null,
+  dataDirChangeRequiresRestart: false,
 };
 
 const emptyAliasForm: UpsertModelAliasInput = {

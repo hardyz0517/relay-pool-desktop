@@ -43,6 +43,7 @@ pub fn run() {
             commands::get_local_access_key,
             commands::import_relay_pool_to_ccswitch,
             commands::update_settings,
+            commands::choose_data_dir,
             commands::get_proxy_status,
             commands::start_local_proxy,
             commands::stop_local_proxy,

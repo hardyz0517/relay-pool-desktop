@@ -19,6 +19,8 @@ let memorySettings: AppSettings = {
   trayBehavior: "minimize-to-tray",
   developerModeEnabled: false,
   dataDir: "仅桌面端可读取",
+  pendingDataDir: null,
+  dataDirChangeRequiresRestart: false,
 };
 
 export function getSettings() {
@@ -58,10 +60,21 @@ export function updateSettings(input: UpdateSettingsInput) {
   });
 }
 
+export function chooseDataDir() {
+  return invoke<AppSettings>("choose_data_dir").then(normalizeSettings).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      throw new Error("只有桌面端可以选择数据保存位置");
+    }
+    throw error;
+  });
+}
+
 function normalizeSettings(settings: AppSettings): AppSettings {
   const maybeSettings = settings as AppSettings & Partial<Record<keyof AppSettings, unknown>>;
   return {
     ...settings,
+    pendingDataDir: typeof maybeSettings.pendingDataDir === "string" ? maybeSettings.pendingDataDir : null,
+    dataDirChangeRequiresRestart: normalizeBoolean(maybeSettings.dataDirChangeRequiresRestart),
     defaultRoutingStrategy: normalizeRoutingStrategy(settings.defaultRoutingStrategy),
     balanceIntervalMinutes: normalizeNumber(maybeSettings.balanceIntervalMinutes, 5),
     groupRateIntervalMinutes: normalizeNumber(maybeSettings.groupRateIntervalMinutes, 20),

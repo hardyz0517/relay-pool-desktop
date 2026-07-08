@@ -11,6 +11,7 @@ use std::{
 };
 
 use rusqlite::{params, types::Type, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
@@ -63,24 +64,71 @@ use crate::services::secrets::{
 };
 
 static NEXT_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DataDirConfig {
+    pending_data_dir: Option<String>,
+}
 
 #[derive(Clone)]
 pub struct AppDatabase {
     connection: Arc<Mutex<Connection>>,
     db_path: PathBuf,
+    default_data_dir: PathBuf,
+    data_dir_config_path: PathBuf,
+    pending_data_dir: Arc<Mutex<Option<PathBuf>>>,
+}
+
+fn read_data_dir_config(config_path: &PathBuf) -> Result<Option<PathBuf>, String> {
+    if !config_path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(config_path)
+        .map_err(|error| format!("读取数据目录配置 {} 失败: {error}", config_path.display()))?;
+    let config = serde_json::from_str::<DataDirConfig>(&raw)
+        .map_err(|error| format!("解析数据目录配置 {} 失败: {error}", config_path.display()))?;
+    Ok(config
+        .pending_data_dir
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty()))
+}
+
+fn write_data_dir_config(config_path: &PathBuf, data_dir: &PathBuf) -> Result<(), String> {
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("无法创建数据目录配置目录 {}: {error}", parent.display()))?;
+    }
+    let config = DataDirConfig {
+        pending_data_dir: Some(data_dir.to_string_lossy().to_string()),
+    };
+    let raw = serde_json::to_string_pretty(&config)
+        .map_err(|error| format!("序列化数据目录配置失败: {error}"))?;
+    fs::write(config_path, raw)
+        .map_err(|error| format!("写入数据目录配置 {} 失败: {error}", config_path.display()))
 }
 
 impl AppDatabase {
     pub fn initialize(app: &AppHandle) -> Result<Self, String> {
-        let data_dir = app
+        let default_data_dir = app
             .path()
             .app_data_dir()
             .map_err(|error| format!("无法解析应用数据目录: {error}"))?;
+        let data_dir_config_path = default_data_dir.join(DATA_DIR_CONFIG_FILE);
+        let pending_data_dir = read_data_dir_config(&data_dir_config_path)?;
+        let configured_data_dir = pending_data_dir
+            .clone()
+            .unwrap_or_else(|| default_data_dir.clone());
 
-        fs::create_dir_all(&data_dir)
-            .map_err(|error| format!("无法创建应用数据目录 {}: {error}", data_dir.display()))?;
+        fs::create_dir_all(&configured_data_dir).map_err(|error| {
+            format!(
+                "无法创建应用数据目录 {}: {error}",
+                configured_data_dir.display()
+            )
+        })?;
 
-        let db_path = data_dir.join("relay-pool-desktop.sqlite3");
+        let db_path = configured_data_dir.join("relay-pool-desktop.sqlite3");
         let connection = Connection::open(&db_path)
             .map_err(|error| format!("无法打开 SQLite 数据库 {}: {error}", db_path.display()))?;
 
@@ -110,6 +158,9 @@ impl AppDatabase {
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
             db_path,
+            default_data_dir,
+            data_dir_config_path,
+            pending_data_dir: Arc::new(Mutex::new(pending_data_dir)),
         })
     }
 
@@ -143,6 +194,9 @@ impl AppDatabase {
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
             db_path: PathBuf::from(":memory:"),
+            default_data_dir: PathBuf::from(":memory:"),
+            data_dir_config_path: PathBuf::from(":memory:"),
+            pending_data_dir: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -318,7 +372,7 @@ impl AppDatabase {
 
     pub fn get_settings(&self) -> Result<AppSettings, String> {
         let connection = self.connection()?;
-        settings_from_connection(&connection, self.db_path.to_string_lossy().as_ref())
+        self.settings_from_open_connection(&connection)
     }
 
     pub fn get_local_access_key(&self) -> Result<String, String> {
@@ -401,7 +455,46 @@ impl AppDatabase {
             upsert_setting(&connection, key, &value)?;
         }
 
-        settings_from_connection(&connection, self.db_path.to_string_lossy().as_ref())
+        self.settings_from_open_connection(&connection)
+    }
+
+    pub fn set_pending_data_dir(&self, data_dir: PathBuf) -> Result<AppSettings, String> {
+        fs::create_dir_all(&data_dir)
+            .map_err(|error| format!("无法创建数据目录 {}: {error}", data_dir.display()))?;
+        write_data_dir_config(&self.data_dir_config_path, &data_dir)?;
+        {
+            let mut pending = self
+                .pending_data_dir
+                .lock()
+                .map_err(|_| "数据目录配置锁已损坏".to_string())?;
+            *pending = Some(data_dir);
+        }
+        self.get_settings()
+    }
+
+    fn settings_from_open_connection(
+        &self,
+        connection: &Connection,
+    ) -> Result<AppSettings, String> {
+        let pending_data_dir = self.pending_data_dir_path()?;
+        settings_from_connection(
+            connection,
+            self.db_path.to_string_lossy().as_ref(),
+            pending_data_dir
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string()),
+        )
+    }
+
+    fn pending_data_dir_path(&self) -> Result<Option<PathBuf>, String> {
+        let pending = self
+            .pending_data_dir
+            .lock()
+            .map_err(|_| "数据目录配置锁已损坏".to_string())?;
+        Ok(pending
+            .as_ref()
+            .filter(|path| path != &&self.default_data_dir)
+            .cloned())
     }
 
     pub fn list_station_keys(&self, station_id: String) -> Result<Vec<StationKey>, String> {
@@ -696,7 +789,16 @@ impl AppDatabase {
         station_key_id: String,
     ) -> Result<Option<RouteCandidateEconomics>, String> {
         let connection = self.connection()?;
-        route_candidate_economics_by_station_key(&connection, &station_key_id)
+        route_candidate_economics_by_station_key(&connection, &station_key_id, None)
+    }
+
+    pub fn route_candidate_economics_for_model(
+        &self,
+        station_key_id: String,
+        model: Option<String>,
+    ) -> Result<Option<RouteCandidateEconomics>, String> {
+        let connection = self.connection()?;
+        route_candidate_economics_by_station_key(&connection, &station_key_id, model.as_deref())
     }
 
     pub fn enabled_model_alias_pairs(&self) -> Result<Vec<(String, String)>, String> {
@@ -5055,6 +5157,7 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
             connection,
             &row.candidate.station_key_id,
             &row.candidate.station_id,
+            None,
         )?;
         enriched_rows.push(row);
     }
@@ -5087,6 +5190,7 @@ fn route_candidate_economics_from_connection(
     connection: &Connection,
     station_key_id: &str,
     station_id: &str,
+    requested_model: Option<&str>,
 ) -> Result<Option<RouteCandidateEconomics>, String> {
     let pricing_rule = connection
         .query_row(
@@ -5097,12 +5201,20 @@ fn route_candidate_economics_from_connection(
                 AND enabled = 1
                 AND (station_key_id = ?2 OR station_key_id IS NULL)
               ORDER BY
+                CASE
+                    WHEN ?3 IS NOT NULL AND lower(model) = lower(?3) THEN 0
+                    ELSE 1
+                END,
                 CASE WHEN station_key_id = ?2 THEN 0 ELSE 1 END,
                 CASE WHEN normalization_status = 'complete' THEN 0 ELSE 1 END,
+                CASE
+                    WHEN input_price IS NOT NULL OR output_price IS NOT NULL OR fixed_price IS NOT NULL THEN 0
+                    ELSE 1
+                END,
                 updated_at DESC,
                 created_at DESC
               LIMIT 1",
-            params![station_id, station_key_id],
+            params![station_id, station_key_id, requested_model],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -5237,6 +5349,7 @@ fn route_candidate_economics_from_connection(
 fn route_candidate_economics_by_station_key(
     connection: &Connection,
     station_key_id: &str,
+    requested_model: Option<&str>,
 ) -> Result<Option<RouteCandidateEconomics>, String> {
     let station_id: Option<String> = connection
         .query_row(
@@ -5249,7 +5362,12 @@ fn route_candidate_economics_by_station_key(
     let Some(station_id) = station_id else {
         return Ok(None);
     };
-    route_candidate_economics_from_connection(connection, station_key_id, &station_id)
+    route_candidate_economics_from_connection(
+        connection,
+        station_key_id,
+        &station_id,
+        requested_model,
+    )
 }
 
 fn list_pricing_rules_from_connection(connection: &Connection) -> Result<Vec<PricingRule>, String> {
@@ -5871,11 +5989,11 @@ fn simulate_route_in_connection(
     input: RouteSimulationInput,
 ) -> Result<RouteSimulationResult, String> {
     let policy = input.policy.unwrap_or_else(|| {
-        settings_from_connection(connection, data_dir)
+        settings_from_connection(connection, data_dir, None)
             .map(|settings| parse_routing_policy_value(&settings.default_routing_strategy))
             .unwrap_or(RoutingPolicy::PriorityFallback)
     });
-    let allow_depleted_fallback = settings_from_connection(connection, data_dir)
+    let allow_depleted_fallback = settings_from_connection(connection, data_dir, None)
         .map(|settings| settings.allow_depleted_fallback)
         .unwrap_or(false);
     let request = RouteRequest {
@@ -8083,8 +8201,13 @@ fn parse_upstream_api_format(value: String) -> UpstreamApiFormat {
 fn settings_from_connection(
     connection: &Connection,
     data_dir: &str,
+    pending_data_dir: Option<String>,
 ) -> Result<AppSettings, String> {
     let local_key = read_setting(connection, "local_key")?;
+    let data_dir_change_requires_restart = pending_data_dir
+        .as_ref()
+        .map(|pending| pending != data_dir)
+        .unwrap_or(false);
 
     Ok(AppSettings {
         local_proxy_port: parse_setting(connection, "local_proxy_port")?,
@@ -8136,6 +8259,8 @@ fn settings_from_connection(
         .parse()
         .map_err(|_| "设置项 developer_mode_enabled 格式无效".to_string())?,
         data_dir: data_dir.to_string(),
+        pending_data_dir,
+        data_dir_change_requires_restart,
     })
 }
 
@@ -11073,6 +11198,81 @@ mod tests {
             .list_pricing_rules()
             .expect("pricing rules")
             .is_empty());
+    }
+
+    #[test]
+    fn route_candidate_economics_prefers_requested_model_price_rule() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "pricing-rule-model-match");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+
+        database
+            .upsert_pricing_rule(UpsertPricingRuleInput {
+                id: None,
+                station_id: station.id.clone(),
+                station_key_id: Some(key.id.clone()),
+                group_binding_id: None,
+                group_name: Some("default".to_string()),
+                tier_label: None,
+                model: "default-group".to_string(),
+                input_price: None,
+                output_price: None,
+                fixed_price: None,
+                rate_multiplier: Some(1.0),
+                currency: "CNY".to_string(),
+                unit: "multiplier".to_string(),
+                price_type: "multiplier".to_string(),
+                base_price_source: None,
+                normalization_status: Some("group_rate_only".to_string()),
+                source: "collector".to_string(),
+                confidence: 0.8,
+                enabled: true,
+                note: None,
+                collected_at: Some("1000".to_string()),
+                valid_from: None,
+                valid_until: None,
+            })
+            .expect("group rate rule");
+        database
+            .upsert_pricing_rule(UpsertPricingRuleInput {
+                id: None,
+                station_id: station.id,
+                station_key_id: Some(key.id.clone()),
+                group_binding_id: None,
+                group_name: Some("default".to_string()),
+                tier_label: None,
+                model: "gpt-5.4".to_string(),
+                input_price: Some(2.0),
+                output_price: Some(10.0),
+                fixed_price: None,
+                rate_multiplier: None,
+                currency: "CNY".to_string(),
+                unit: "per_1m_tokens".to_string(),
+                price_type: "token".to_string(),
+                base_price_source: Some("manual".to_string()),
+                normalization_status: Some("complete".to_string()),
+                source: "manual".to_string(),
+                confidence: 1.0,
+                enabled: true,
+                note: None,
+                collected_at: Some("2000".to_string()),
+                valid_from: None,
+                valid_until: None,
+            })
+            .expect("model price rule");
+
+        let economics = database
+            .route_candidate_economics_for_model(key.id, Some("gpt-5.4".to_string()))
+            .expect("economics")
+            .expect("model economics");
+
+        assert_eq!(economics.pricing_model.as_deref(), Some("gpt-5.4"));
+        assert_eq!(economics.estimated_input_price, Some(2.0));
+        assert_eq!(economics.estimated_output_price, Some(10.0));
+        assert_eq!(economics.price_currency.as_deref(), Some("CNY"));
     }
 
     #[test]

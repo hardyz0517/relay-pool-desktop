@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Layers3, RefreshCw, ShieldCheck, TrendingDown } from "lucide-react";
+import { Image, Layers3, RefreshCw, ShieldCheck, TrendingDown } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
@@ -8,7 +8,6 @@ import {
   SegmentedControl,
   SectionCard,
   SelectControl,
-  StatusBadge,
   Toolbar,
   useToast,
 } from "@/components/ui";
@@ -27,20 +26,24 @@ import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFact
 import type { StationKey } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
 import {
-  enabledOfficialModelCatalog,
-  normalizeCatalogText,
-  type OfficialModelProvider,
-} from "./officialModelCatalog";
-import {
   buildPricingComparisonViewModel,
-  type PricingModelEvidence,
   type PricingComparisonRow,
   type PricingComparisonViewModel,
-  type PricingModelSection,
+  type PricingGroupSection,
+  type PricingGroupType,
 } from "./pricingComparisonViewModel";
 
-type ProviderFilter = OfficialModelProvider | "all";
+type GroupTypeFilter = PricingGroupType | "all";
 type EmptyReason = PricingComparisonViewModel["emptyReason"];
+
+const groupTypeFilterOptions: Array<{ value: GroupTypeFilter; label: string }> = [
+  { value: "all", label: "全部" },
+  { value: "gpt", label: "GPT" },
+  { value: "claude", label: "Claude" },
+  { value: "gemini", label: "Gemini" },
+  { value: "grok", label: "Grok" },
+  { value: "image_generation", label: "生成图片" },
+];
 
 export function PricingPage() {
   const toast = useToast();
@@ -51,8 +54,8 @@ export function PricingPage() {
   const [groupRates, setGroupRates] = useState<GroupRateRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
-  const [modelQuery, setModelQuery] = useState("");
+  const [groupTypeFilter, setGroupTypeFilter] = useState<GroupTypeFilter>("all");
+  const [query, setQuery] = useState("");
   const [selectedStationId, setSelectedStationId] = useState<string>("all");
 
   useEffect(() => {
@@ -91,63 +94,26 @@ export function PricingPage() {
     }
   }
 
-  const catalogModels = useMemo(() => enabledOfficialModelCatalog(), []);
-  const modelEvidence = useMemo<PricingModelEvidence[]>(() => {
-    const modelIdByNormalizedName = new Map<string, string>();
-    for (const model of catalogModels) {
-      for (const name of [model.modelId, ...model.aliases]) {
-        modelIdByNormalizedName.set(normalizeCatalogText(name), model.modelId);
-      }
-    }
-
-    const seen = new Set<string>();
-    const evidence: PricingModelEvidence[] = [];
-    for (const rule of pricingRules) {
-      if (!rule.enabled) {
-        continue;
-      }
-      const modelId = modelIdByNormalizedName.get(normalizeCatalogText(rule.model));
-      if (!modelId) {
-        continue;
-      }
-      const evidenceKey = `${rule.stationId}\u0000${modelId}`;
-      if (seen.has(evidenceKey)) {
-        continue;
-      }
-      seen.add(evidenceKey);
-      evidence.push({
-        stationId: rule.stationId,
-        modelId,
-        status: "discovered",
-      });
-    }
-    return evidence;
-  }, [catalogModels, pricingRules]);
-
   const viewModel = useMemo(
     () =>
       buildPricingComparisonViewModel({
-        models: catalogModels,
         stations,
         stationKeys,
         groupBindings,
         groupRates,
         pricingRules,
-        modelEvidence,
         filters: {
-          provider: providerFilter,
-          modelQuery,
+          groupType: groupTypeFilter,
+          query,
           stationId: selectedStationId,
         },
       }),
     [
-      catalogModels,
       groupBindings,
       groupRates,
-      modelEvidence,
-      modelQuery,
+      groupTypeFilter,
       pricingRules,
-      providerFilter,
+      query,
       selectedStationId,
       stationKeys,
       stations,
@@ -167,56 +133,51 @@ export function PricingPage() {
       <div className="grid gap-[var(--shell-page-gap)] md:grid-cols-3">
         <MetricCard
           icon={Layers3}
-          label="覆盖模型"
-          value={`${viewModel.metrics.coveredModelCount}`}
-          detail="已有可比价分组的官方模型"
+          label="覆盖分组类型"
+          value={`${viewModel.metrics.coveredGroupTypeCount}`}
+          detail="已有可比较倍率的分组类型"
         />
         <MetricCard
           icon={ShieldCheck}
-          label="可比价分组"
+          label="可比分组"
           value={`${viewModel.metrics.comparableGroupCount}`}
-          detail="可折算输入 / 输出价格"
+          detail="已采集并可折算的分组倍率"
         />
         <MetricCard
           icon={TrendingDown}
-          label="最低折算倍率"
+          label="最低倍率"
           value={
             viewModel.metrics.lowestEffectiveMultiplier === null
               ? "暂无"
               : formatMultiplier(viewModel.metrics.lowestEffectiveMultiplier)
           }
-          detail={viewModel.metrics.lowestEffectiveMultiplierLabel || "暂无可比价分组"}
+          detail={viewModel.metrics.lowestEffectiveMultiplierLabel || "暂无可比分组"}
           tone={viewModel.metrics.lowestEffectiveMultiplier === null ? "neutral" : "good"}
         />
       </div>
 
       <SectionCard
-        title="模型比价"
+        title="分组倍率比较"
         contentClassName="overflow-visible rounded-none border-0 bg-transparent p-0 shadow-none"
       >
         <Toolbar className="items-start border-x-0 border-t-0 bg-transparent px-0">
           <div className="flex w-full flex-wrap items-center gap-2">
             <SegmentedControl
-              ariaLabel="按模型提供方筛选"
-              value={providerFilter}
-              options={[
-                { value: "all", label: "全部" },
-                { value: "openai", label: "OpenAI" },
-                { value: "anthropic", label: "Anthropic" },
-                { value: "google", label: "Google" },
-              ]}
-              onChange={setProviderFilter}
-              className="w-full max-w-[360px] sm:w-auto"
+              ariaLabel="按分组类型筛选"
+              value={groupTypeFilter}
+              options={groupTypeFilterOptions}
+              onChange={setGroupTypeFilter}
+              className="w-full max-w-[560px] sm:w-auto"
             />
-            <label className="sr-only" htmlFor="pricing-model-search">
-              搜索模型 / 中转站 / Key / 分组
+            <label className="sr-only" htmlFor="pricing-group-search">
+              搜索中转站 / Key / 分组
             </label>
             <input
-              id="pricing-model-search"
+              id="pricing-group-search"
               className={inputClassName}
-              value={modelQuery}
-              onChange={(event) => setModelQuery(event.target.value)}
-              placeholder="搜索模型 / 中转站 / Key / 分组"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索中转站 / Key / 分组"
             />
             <SelectControl
               ariaLabel="按中转站筛选"
@@ -238,7 +199,7 @@ export function PricingPage() {
         )}
 
         {loading ? (
-          <div className="px-4 py-5 text-sm text-muted-foreground">正在读取模型价格与分组倍率...</div>
+          <div className="px-4 py-5 text-sm text-muted-foreground">正在读取分组倍率...</div>
         ) : viewModel.sections.length === 0 ? (
           <div className="p-4">
             <PricingEmptyState reason={viewModel.emptyReason} />
@@ -246,7 +207,7 @@ export function PricingPage() {
         ) : (
           <div className="divide-y divide-border">
             {viewModel.sections.map((section) => (
-              <ModelPricingSection key={section.modelId} section={section} />
+              <GroupPricingSection key={section.groupType} section={section} />
             ))}
           </div>
         )}
@@ -255,30 +216,22 @@ export function PricingPage() {
   );
 }
 
-function ModelPricingSection({ section }: { section: PricingModelSection }) {
+function GroupPricingSection({ section }: { section: PricingGroupSection }) {
   return (
     <section className="grid gap-3 px-4 py-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold text-slate-900">{section.displayName}</h3>
-            <StatusBadge tone="info" className="h-5 px-1.5">
-              {providerLabel(section.provider)}
-            </StatusBadge>
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            <span>官方输入 {formatUsd(section.officialInputPrice)} / 1M tokens</span>
-            <span>官方输出 {formatUsd(section.officialOutputPrice)} / 1M tokens</span>
-          </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          {section.groupType === "image_generation" && (
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600">
+              <Image className="h-4 w-4" />
+            </span>
+          )}
+          <h3 className="text-sm font-semibold text-slate-900">{section.title}</h3>
         </div>
-        <div className="text-xs text-muted-foreground">{section.modelId}</div>
+        <div className="text-xs text-muted-foreground">{section.rows.length} 个分组</div>
       </div>
 
-      {section.rows.length === 0 ? (
-        <EmptyState title="暂无可比价分组" description="当前筛选下还没有匹配到该模型的分组倍率。" />
-      ) : (
-        <PricingRowsTable rows={section.rows} />
-      )}
+      <PricingRowsTable rows={section.rows} />
     </section>
   );
 }
@@ -288,20 +241,18 @@ function PricingRowsTable({ rows }: { rows: PricingComparisonRow[] }) {
     <div className={tableScrollClassName}>
       <table className={tableClassName}>
         <colgroup>
-          <col className="w-[18%]" />
-          <col className="w-[24%]" />
-          <col className="w-[12%]" />
-          <col className="w-[16%]" />
-          <col className="w-[16%]" />
+          <col className="w-[22%]" />
+          <col className="w-[28%]" />
+          <col className="w-[20%]" />
           <col className="w-[14%]" />
+          <col className="w-[16%]" />
         </colgroup>
         <thead>
           <tr className="border-b border-border">
             <th className={tableHeaderClassName}>中转站</th>
             <th className={tableHeaderClassName}>分组</th>
+            <th className={tableHeaderClassName}>Key</th>
             <th className={tableHeaderClassName}>倍率</th>
-            <th className={`${tableHeaderClassName} text-right`}>输入价</th>
-            <th className={priceOutputHeaderClassName}>输出价</th>
             <th className={updatedAtHeaderClassName}>更新时间</th>
           </tr>
         </thead>
@@ -317,14 +268,11 @@ function PricingRowsTable({ rows }: { rows: PricingComparisonRow[] }) {
                   <div className="mt-0.5 text-xs font-medium text-emerald-700">当前最低</div>
                 )}
               </td>
+              <td className={`${tableCellClassName} truncate text-muted-foreground`}>
+                {row.stationKeyName ?? "全站分组"}
+              </td>
               <td className={`${tableCellClassName} tabular-nums font-semibold text-slate-800`}>
                 {formatNullableMultiplier(row.effectiveMultiplier)}
-              </td>
-              <td className={`${tableCellClassName} text-right tabular-nums`}>
-                {formatCny(row.estimatedInputCny)}
-              </td>
-              <td className={priceOutputCellClassName}>
-                {formatCny(row.estimatedOutputCny)}
               </td>
               <td className={updatedAtCellClassName}>
                 {formatTime(row.checkedAt)}
@@ -355,20 +303,11 @@ function PricingGroupBadge({ row }: { row: PricingComparisonRow }) {
 }
 
 function PricingEmptyState({ reason }: { reason: EmptyReason }) {
-  if (reason === "no_catalog_models") {
-    return (
-      <EmptyState
-        title="暂无官方模型目录"
-        description="启用官方模型目录后，这里会按具体模型展示分组倍率折算。"
-      />
-    );
-  }
-
   if (reason === "no_group_rates") {
     return (
       <EmptyState
         title="暂无分组倍率"
-        description="先采集中转站分组与倍率记录，再按官方模型折算可比价。"
+        description="先采集中转站分组与倍率记录，再按分组类型比较倍率。"
       />
     );
   }
@@ -376,16 +315,16 @@ function PricingEmptyState({ reason }: { reason: EmptyReason }) {
   if (reason === "filtered_empty") {
     return (
       <EmptyState
-        title="没有匹配的模型分组"
-        description="调整提供方、关键词或中转站后再试。"
+        title="没有匹配的分组"
+        description="调整分组类型、关键词或中转站后再试。"
       />
     );
   }
 
   return (
     <EmptyState
-      title="暂无模型比价"
-      description="采集分组倍率后，这里会显示按具体模型整理的可比价表。"
+      title="暂无分组倍率"
+      description="采集分组倍率后，这里会显示同类分组的倍率比较。"
     />
   );
 }
@@ -396,14 +335,6 @@ function formatNullableMultiplier(value: number | null) {
 
 function formatMultiplier(value: number) {
   return `${formatDecimal(value, 6)}x`;
-}
-
-function formatCny(value: number | null) {
-  return value === null ? "暂无" : `¥${formatDecimal(value, 4)}/M`;
-}
-
-function formatUsd(value: number) {
-  return `$${formatDecimal(value, 4)}`;
 }
 
 function formatTime(value: string | null) {
@@ -422,30 +353,17 @@ function formatTime(value: string | null) {
   });
 }
 
-
 function formatDecimal(value: number, fractionDigits: number) {
   return formatTrimmedDecimal(value, fractionDigits);
 }
 
-function providerLabel(provider: OfficialModelProvider) {
-  if (provider === "openai") {
-    return "OpenAI";
-  }
-  if (provider === "anthropic") {
-    return "Anthropic";
-  }
-  return "Google";
-}
-
 const inputClassName =
-  "h-8 w-[240px] rounded-[var(--surface-radius)] border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-[hsl(var(--accent)/0.45)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.16)]";
+  "h-8 w-[220px] rounded-[var(--surface-radius)] border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-[hsl(var(--accent)/0.45)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.16)]";
 
 const tableScrollClassName = "overflow-x-auto border-y border-border";
-const tableClassName = "min-w-[840px] w-full table-fixed text-left text-sm";
+const tableClassName = "min-w-[720px] w-full table-fixed text-left text-sm";
 const tableHeaderClassName = "px-2.5 py-2 text-xs font-medium text-muted-foreground";
 const tableCellClassName = "px-2.5 py-2.5 align-top text-sm text-slate-700";
-const priceOutputHeaderClassName = `${tableHeaderClassName} pr-7 text-right`;
-const updatedAtHeaderClassName = `${tableHeaderClassName} pl-7 whitespace-nowrap`;
-const priceOutputCellClassName = `${tableCellClassName} pr-7 text-right tabular-nums`;
-const updatedAtCellClassName = `${tableCellClassName} pl-7 whitespace-nowrap text-muted-foreground`;
+const updatedAtHeaderClassName = `${tableHeaderClassName} whitespace-nowrap`;
+const updatedAtCellClassName = `${tableCellClassName} whitespace-nowrap text-muted-foreground`;
 const cheapestRowClassName = "bg-emerald-50/70";

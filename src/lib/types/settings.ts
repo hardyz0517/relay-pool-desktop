@@ -18,6 +18,8 @@ export type AppSettings = {
   trayBehavior: TrayBehavior;
   developerModeEnabled: boolean;
   dataDir: string;
+  pendingDataDir: string | null;
+  dataDirChangeRequiresRestart: boolean;
 };
 
 export type CcswitchImportResult = {

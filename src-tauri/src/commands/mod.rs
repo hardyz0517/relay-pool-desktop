@@ -174,6 +174,14 @@ pub fn update_settings(
 }
 
 #[tauri::command]
+pub fn choose_data_dir(database: State<'_, AppDatabase>) -> Result<AppSettings, String> {
+    let Some(data_dir) = rfd::FileDialog::new().pick_folder() else {
+        return database.get_settings();
+    };
+    database.set_pending_data_dir(data_dir)
+}
+
+#[tauri::command]
 pub fn get_proxy_status(
     database: State<'_, AppDatabase>,
     proxy: State<'_, ProxyRuntimeState>,

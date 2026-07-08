@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Play, RotateCcw, Save, Square } from "lucide-react";
+import { FolderOpen, Play, RotateCcw, Save, Square } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, MaskedSecret, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
@@ -9,10 +9,8 @@ import {
   startLocalProxy,
   stopLocalProxy,
 } from "@/lib/api/proxy";
-import { getSecretMigrationStatus, runSecretSafetyScan } from "@/lib/api/secrets";
-import { getLocalAccessKey, getSettings, SETTINGS_UPDATED_EVENT, updateSettings } from "@/lib/api/settings";
+import { chooseDataDir, getLocalAccessKey, getSettings, SETTINGS_UPDATED_EVENT, updateSettings } from "@/lib/api/settings";
 import type { ProxyStatus } from "@/lib/types/proxy";
-import type { SecretMigrationReport, SecretScanFinding } from "@/lib/types/secrets";
 import {
   routingStrategyLabels,
   type AppSettings,
@@ -53,6 +51,8 @@ const fallbackSettings: AppSettings = {
   trayBehavior: "minimize-to-tray",
   developerModeEnabled: false,
   dataDir: "仅桌面端可读取",
+  pendingDataDir: null,
+  dataDirChangeRequiresRestart: false,
 };
 
 const fallbackProxyStatus: ProxyStatus = {
@@ -74,9 +74,6 @@ export function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [proxyBusy, setProxyBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [secretMigration, setSecretMigration] = useState<SecretMigrationReport | null>(null);
-  const [scanFindings, setScanFindings] = useState<SecretScanFinding[]>([]);
-  const [securityError, setSecurityError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshSettings();
@@ -88,7 +85,6 @@ export function SettingsPage() {
     try {
       const nextSettings = await getSettings();
       const nextProxyStatus = await getProxyStatus();
-      await refreshSecurityStatus();
       setSettings(nextSettings);
       setProxyStatus(nextProxyStatus);
       setForm(settingsToForm(nextSettings));
@@ -98,20 +94,6 @@ export function SettingsPage() {
       toast.error("刷新设置失败", message);
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function refreshSecurityStatus() {
-    setSecurityError(null);
-    try {
-      const [migration, findings] = await Promise.all([
-        getSecretMigrationStatus(),
-        runSecretSafetyScan(),
-      ]);
-      setSecretMigration(migration);
-      setScanFindings(findings);
-    } catch (requestError) {
-      setSecurityError(readError(requestError));
     }
   }
 
@@ -165,6 +147,26 @@ export function SettingsPage() {
     await navigator.clipboard.writeText(localAccessKey);
   }
 
+  async function handleChooseDataDir() {
+    setSaving(true);
+    setError(null);
+    try {
+      const nextSettings = await chooseDataDir();
+      setSettings(nextSettings);
+      setForm(settingsToForm(nextSettings));
+      window.dispatchEvent(new CustomEvent<AppSettings>(SETTINGS_UPDATED_EVENT, { detail: nextSettings }));
+      if (nextSettings.dataDirChangeRequiresRestart) {
+        toast.success("数据保存位置已更新", "重启后使用新的数据目录。");
+      }
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      toast.error("选择数据保存位置失败", message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function persistSettings(
     nextForm: SettingsFormState,
     successMessage: string,
@@ -189,6 +191,8 @@ export function SettingsPage() {
       setSaving(false);
     }
   }
+
+  const restartRequired = settings.dataDirChangeRequiresRestart;
 
   return (
     <PageScaffold
@@ -365,51 +369,29 @@ export function SettingsPage() {
 
         <SectionCard title="数据与安全">
           <SettingRow
-            control={<code className="break-all text-xs text-slate-700">{settings.dataDir}</code>}
-            description="本地数据库不在仓库目录。"
-            label="数据目录"
-          />
-          <SettingRow
-            control={<StatusBadge tone="healthy">已启用</StatusBadge>}
-            description="本地访问密钥、站点密钥和登录密码写入本地加密存储。"
-            label="加密存储"
-          />
-          <SettingRow
             control={
-              <div className="text-left text-xs text-slate-700 sm:text-right">
-                {secretMigration
-                  ? `已迁移 ${secretMigration.migratedCount} 项 · 失败 ${secretMigration.failedCount} 项`
-                  : "检查中"}
+              <div className="flex min-w-0 flex-col items-start gap-2 sm:items-end">
+                <code className="break-all text-xs text-slate-700">
+                  {settings.pendingDataDir ?? settings.dataDir}
+                </code>
+                <Button
+                  disabled={saving || loading}
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleChooseDataDir()}
+                >
+                  <FolderOpen className="h-4 w-4" />
+                  选择位置
+                </Button>
               </div>
             }
             description={
-              secretMigration?.failures.length
-                ? secretMigration.failures.slice(0, 2).join("；")
-                : "旧明文凭据会在启动代理或写入凭据时迁移到 secrets 表。"
+              restartRequired
+                ? "重启后使用新的数据目录；当前运行仍使用原数据库。"
+                : "本地数据库不在仓库目录。"
             }
-            label="凭据迁移"
+            label="数据目录"
           />
-          <SettingRow
-            control={
-              <StatusBadge tone={scanFindings.length > 0 ? "warning" : "healthy"}>
-                {scanFindings.length > 0 ? `${scanFindings.length} 项` : "未发现"}
-              </StatusBadge>
-            }
-            description={
-              securityError
-                ? `安全扫描暂不可用：${securityError}`
-                : scanFindings.length > 0
-                  ? scanFindings
-                      .slice(0, 2)
-                      .map((finding) => `${finding.tableName}.${finding.columnName}`)
-                      .join("；")
-                  : "未发现明文凭据残留。"
-            }
-            label="安全扫描"
-          />
-          <div className="rounded-[var(--surface-radius)] border border-cyan-200 bg-cyan-50/80 px-4 py-3 text-xs leading-5 text-cyan-900">
-            默认列表接口只返回脱敏值和存在状态；请求日志、路由详情和采集快照在入库前统一脱敏。
-          </div>
         </SectionCard>
 
         {error && <div className="text-sm text-rose-700">{error}</div>}

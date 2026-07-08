@@ -81,7 +81,7 @@ pub fn parse_group_rate_facts(
     station_id: &str,
     available: &Value,
     rates: &Value,
-    credit_per_cny: f64,
+    _credit_per_cny: f64,
 ) -> CollectorFacts {
     let mut facts = CollectorFacts::default();
     let groups = collect_available_groups(available);
@@ -114,12 +114,9 @@ pub fn parse_group_rate_facts(
             group_id,
             group_key_hash,
             group_name: group.group_name,
-            default_rate_multiplier: normalize_credit_value(
-                group.default_rate_multiplier,
-                credit_per_cny,
-            ),
-            user_rate_multiplier: normalize_credit_value(user_rate, credit_per_cny),
-            effective_rate_multiplier: normalize_credit_value(effective, credit_per_cny),
+            default_rate_multiplier: group.default_rate_multiplier,
+            user_rate_multiplier: user_rate,
+            effective_rate_multiplier: effective,
             source: "sub2api_groups_rates".to_string(),
             confidence: if effective.is_some() { 0.9 } else { 0.6 },
             checked_at: None,
@@ -1596,7 +1593,7 @@ mod tests {
     }
 
     #[test]
-    fn sub2api_group_rates_normalize_credit_multiplier_to_cny() {
+    fn sub2api_group_rates_keep_raw_multipliers_before_pricing_conversion() {
         let available = json!({
             "data": [
                 { "id": "default", "name": "Default", "rate_multiplier": 1.0 }
@@ -1611,9 +1608,9 @@ mod tests {
         let facts = parse_group_rate_facts("station-1", &available, &rates, 10.0);
         let rate = facts.rates.first().expect("rate");
 
-        assert_eq!(rate.default_rate_multiplier, Some(0.1));
-        assert_eq!(rate.user_rate_multiplier, Some(0.1));
-        assert_eq!(rate.effective_rate_multiplier, Some(0.1));
+        assert_eq!(rate.default_rate_multiplier, Some(1.0));
+        assert_eq!(rate.user_rate_multiplier, Some(1.0));
+        assert_eq!(rate.effective_rate_multiplier, Some(1.0));
     }
 
     #[test]

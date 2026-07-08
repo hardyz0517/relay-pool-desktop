@@ -53,7 +53,11 @@ export function ChangeCenterPage() {
     try {
       const workspace = await loadChangeCenterWorkspace();
       setStationNamesById(new Map(workspace.stations.map((station) => [station.id, station.name])));
-      setEvents(workspace.changeEvents);
+      const readOnEntryResult = await markUnreadChangeEventsRead(workspace.changeEvents, markChangeEventRead);
+      setEvents(readOnEntryResult.events);
+      if (readOnEntryResult.changedCount > 0) {
+        notifyChangeEventsUpdated();
+      }
       if (showSuccess) {
         toast.success("变更中心已刷新");
       }

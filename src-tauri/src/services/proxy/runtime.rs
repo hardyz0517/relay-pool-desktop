@@ -1184,7 +1184,8 @@ fn forward_with_fallback(
                         &format!("上游返回 HTTP {}", routed_response.status_code),
                     );
                 }
-                let request_cost = extract_request_cost(context, candidate, &routed_response, true);
+                let request_cost =
+                    extract_request_cost(context, candidate, &routed_response, stream);
                 return routed_response.with_request_cost(request_cost);
             }
             Ok(response) => {
@@ -1381,7 +1382,10 @@ fn extract_request_cost(
     };
     let economics = context
         .database
-        .route_candidate_economics(candidate.station_key_id.clone())
+        .route_candidate_economics_for_model(
+            candidate.station_key_id.clone(),
+            response.model.clone(),
+        )
         .ok()
         .flatten();
     let pricing_rule_id = economics
@@ -1625,7 +1629,7 @@ fn now_string() -> String {
 mod tests {
     use super::*;
     use crate::models::{
-        pricing::UpsertBalanceSnapshotInput,
+        pricing::{UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
         routing::{UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
         station_keys::StationKey,
         stations::CreateStationInput,
@@ -2021,6 +2025,90 @@ mod tests {
     }
 
     #[test]
+    fn request_cost_uses_pricing_rule_for_requested_model() {
+        let upstream = test_upstream_json_success_with_usage(
+            "priced-model",
+            false,
+            Some(serde_json::json!({
+                "prompt_tokens": 12,
+                "completion_tokens": 20,
+                "total_tokens": 32
+            })),
+        );
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key = create_test_station_key(&database, "priced-model", &upstream.base_url);
+
+        database
+            .upsert_pricing_rule(UpsertPricingRuleInput {
+                id: None,
+                station_id: key.station_id.clone(),
+                station_key_id: Some(key.id.clone()),
+                group_binding_id: None,
+                group_name: Some("default".to_string()),
+                tier_label: None,
+                model: "default-group".to_string(),
+                input_price: None,
+                output_price: None,
+                fixed_price: None,
+                rate_multiplier: Some(1.0),
+                currency: "CNY".to_string(),
+                unit: "multiplier".to_string(),
+                price_type: "multiplier".to_string(),
+                base_price_source: None,
+                normalization_status: Some("group_rate_only".to_string()),
+                source: "collector".to_string(),
+                confidence: 0.8,
+                enabled: true,
+                note: None,
+                collected_at: Some("1000".to_string()),
+                valid_from: None,
+                valid_until: None,
+            })
+            .expect("group rate rule");
+        database
+            .upsert_pricing_rule(UpsertPricingRuleInput {
+                id: None,
+                station_id: key.station_id.clone(),
+                station_key_id: Some(key.id.clone()),
+                group_binding_id: None,
+                group_name: Some("default".to_string()),
+                tier_label: None,
+                model: "gpt-5.4".to_string(),
+                input_price: Some(2.0),
+                output_price: Some(10.0),
+                fixed_price: None,
+                rate_multiplier: None,
+                currency: "CNY".to_string(),
+                unit: "per_1m_tokens".to_string(),
+                price_type: "token".to_string(),
+                base_price_source: Some("manual".to_string()),
+                normalization_status: Some("complete".to_string()),
+                source: "manual".to_string(),
+                confidence: 1.0,
+                enabled: true,
+                note: None,
+                collected_at: Some("2000".to_string()),
+                valid_from: None,
+                valid_until: None,
+            })
+            .expect("model price rule");
+
+        let context = proxy_context(database);
+        let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
+
+        assert_eq!(response.status_code, 200);
+        let response_body: Value =
+            serde_json::from_slice(response.body_bytes().expect("body")).expect("response json");
+        assert_eq!(response_body["usage"]["total_tokens"], 32);
+        assert_eq!(response.request_cost.total_tokens, Some(32));
+        assert_eq!(response.request_cost.estimated_input_cost, Some(0.000024));
+        assert_eq!(response.request_cost.estimated_output_cost, Some(0.0002));
+        assert_f64_close(response.request_cost.estimated_total_cost, 0.000224);
+        assert_eq!(response.request_cost.cost_status, "estimated");
+        upstream.join();
+    }
+
+    #[test]
     fn successful_proxy_request_updates_key_health() {
         let upstream = test_upstream_json_success("health-success", false);
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
@@ -2185,6 +2273,14 @@ mod tests {
     }
 
     fn test_upstream_json_success(name: &str, expect_alias_model: bool) -> TestUpstream {
+        test_upstream_json_success_with_usage(name, expect_alias_model, None)
+    }
+
+    fn test_upstream_json_success_with_usage(
+        name: &str,
+        expect_alias_model: bool,
+        usage: Option<Value>,
+    ) -> TestUpstream {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
         listener
             .set_nonblocking(true)
@@ -2231,12 +2327,15 @@ mod tests {
                                 "upstream should receive mapped model, got {request_text}"
                             );
                         }
-                        let body = serde_json::to_vec(&serde_json::json!({
+                        let mut body_value = serde_json::json!({
                             "id": format!("chatcmpl-{name}"),
                             "object": "chat.completion",
                             "choices": [{"message": {"role": "assistant", "content": "pong"}}]
-                        }))
-                        .expect("body");
+                        });
+                        if let Some(usage) = usage.clone() {
+                            body_value["usage"] = usage;
+                        }
+                        let body = serde_json::to_vec(&body_value).expect("body");
                         let header = format!(
                             "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
                             body.len()
@@ -2309,6 +2408,14 @@ mod tests {
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    fn assert_f64_close(actual: Option<f64>, expected: f64) {
+        let actual = actual.expect("cost should be estimated");
+        assert!(
+            (actual - expected).abs() < f64::EPSILON,
+            "expected {expected}, got {actual}"
+        );
     }
 
     fn chat_request(model: &str, stream: bool) -> ParsedRequest {

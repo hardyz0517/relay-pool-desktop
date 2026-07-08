@@ -385,7 +385,7 @@ fn insert_monitor_request_log(
     error_message: Option<String>,
     usage: Option<MonitorProbeUsage>,
 ) -> Result<(), String> {
-    let request_cost = monitor_request_cost(database, &target.id, usage.as_ref());
+    let request_cost = monitor_request_cost(database, &target.id, model, usage.as_ref());
     database.insert_request_log(CreateRequestLogInput {
         method: request.method.clone(),
         path: request.path.clone(),
@@ -440,13 +440,14 @@ fn insert_monitor_request_log(
 fn monitor_request_cost(
     database: &AppDatabase,
     station_key_id: &str,
+    model: &str,
     usage: Option<&MonitorProbeUsage>,
 ) -> RequestCostEstimate {
     let Some(usage) = usage else {
         return crate::services::pricing::request_cost_unknown();
     };
     let economics = database
-        .route_candidate_economics(station_key_id.to_string())
+        .route_candidate_economics_for_model(station_key_id.to_string(), Some(model.to_string()))
         .ok()
         .flatten();
     let estimated_input_cost = economics

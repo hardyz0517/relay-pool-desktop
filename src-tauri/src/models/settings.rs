@@ -18,6 +18,8 @@ pub struct AppSettings {
     pub tray_behavior: String,
     pub developer_mode_enabled: bool,
     pub data_dir: String,
+    pub pending_data_dir: Option<String>,
+    pub data_dir_change_requires_restart: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -248,6 +248,11 @@ assert.ok(
 );
 
 assert.ok(
+  /const readOnEntryResult = await markUnreadChangeEventsRead\(workspace\.changeEvents, markChangeEventRead\);[\s\S]*setEvents\(readOnEntryResult\.events\);[\s\S]*if \(readOnEntryResult\.changedCount > 0\) \{[\s\S]*notifyChangeEventsUpdated\(\);[\s\S]*\}/.test(changeCenterSource),
+  "entering change center should mark unread events read and notify the sidebar badge to clear",
+);
+
+assert.ok(
   changeCenterSource.includes('import { loadChangeCenterWorkspace } from "@/lib/queries/changeQueries"') &&
     changeCenterSource.includes("workspace.stations.map((station) => [station.id, station.name])") &&
     changeCenterSource.includes("stationNamesById") &&
