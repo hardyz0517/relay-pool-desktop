@@ -23,13 +23,21 @@ pub enum DecisionFactKind {
     Policy,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionFactSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DecisionFact {
     pub kind: DecisionFactKind,
     pub label: String,
     pub value: String,
-    pub severity: String,
+    pub severity: DecisionFactSeverity,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -82,9 +90,18 @@ pub struct RouteDecisionSummary {
     pub selected_station_id: Option<String>,
     pub selected_station_name: Option<String>,
     pub policy: String,
-    pub status: String,
+    pub status: RouteDecisionStatus,
     pub reason: String,
     pub fallback_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteDecisionStatus {
+    Selected,
+    Fallback,
+    Failed,
+    Unavailable,
 }
 
 #[derive(Debug, Clone, Serialize)]
