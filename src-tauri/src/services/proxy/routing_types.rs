@@ -1,0 +1,112 @@
+use crate::models::proxy::ProxyStatus;
+use crate::models::routing::RouteEndpointKind;
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteHealthState {
+    Ready,
+    Cooldown,
+    Degraded,
+    Offline,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionFactKind {
+    Capability,
+    Health,
+    Model,
+    Pricing,
+    Balance,
+    Policy,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionFact {
+    pub kind: DecisionFactKind,
+    pub label: String,
+    pub value: String,
+    pub severity: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalRoutingSettingsView {
+    pub enabled: bool,
+    pub bind_addr: String,
+    pub port: u16,
+    pub endpoint: RouteEndpointKind,
+    pub policy: String,
+    pub fallback_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalRoutingSummary {
+    pub enabled_candidate_count: i64,
+    pub healthy_candidate_count: i64,
+    pub degraded_candidate_count: i64,
+    pub cooldown_candidate_count: i64,
+    pub last_decision_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalRoutingCandidateRow {
+    pub station_key_id: String,
+    pub station_id: String,
+    pub station_name: String,
+    pub key_name: String,
+    pub endpoint: RouteEndpointKind,
+    pub priority: i64,
+    pub enabled: bool,
+    pub health_state: RouteHealthState,
+    pub last_success_at: Option<String>,
+    pub last_failure_at: Option<String>,
+    pub cooldown_until: Option<String>,
+    pub score: Option<i64>,
+    pub facts: Vec<DecisionFact>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteDecisionSummary {
+    pub id: String,
+    pub decided_at: String,
+    pub endpoint: RouteEndpointKind,
+    pub model: Option<String>,
+    pub selected_station_key_id: Option<String>,
+    pub selected_station_id: Option<String>,
+    pub selected_station_name: Option<String>,
+    pub policy: String,
+    pub status: String,
+    pub reason: String,
+    pub fallback_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteDecisionEvent {
+    pub id: String,
+    pub decision_id: String,
+    pub occurred_at: String,
+    pub station_key_id: Option<String>,
+    pub station_id: Option<String>,
+    pub accepted: bool,
+    pub facts: Vec<DecisionFact>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalRoutingWorkspace {
+    pub proxy_status: ProxyStatus,
+    pub settings: LocalRoutingSettingsView,
+    pub summary: LocalRoutingSummary,
+    pub candidates: Vec<LocalRoutingCandidateRow>,
+    pub latest_decision: Option<RouteDecisionSummary>,
+    pub recent_events: Vec<RouteDecisionEvent>,
+}
