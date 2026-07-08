@@ -6,6 +6,8 @@ const apiSource = readFileSync("src/lib/api/localRouting.ts", "utf8");
 const commandSource = readFileSync("src-tauri/src/commands/mod.rs", "utf8");
 const libSource = readFileSync("src-tauri/src/lib.rs", "utf8");
 const editTabSource = readFileSync("src/features/routing/LocalRoutingEditTab.tsx", "utf8");
+const candidateRowSource = readFileSync("src/features/routing/LocalRoutingCandidateRow.tsx", "utf8");
+const statusTabSource = readFileSync("src/features/routing/LocalRoutingStatusTab.tsx", "utf8");
 
 assert.match(typeSource, /export type ReorderLocalRoutingKeysInput = \{/);
 assert.match(typeSource, /stationKeyIds: string\[\]/);
@@ -30,6 +32,9 @@ assert.match(editTabSource, /SortableContext/);
 assert.match(editTabSource, /reorderLocalRoutingKeys/);
 assert.match(editTabSource, /保存中/);
 assert.match(editTabSource, /保存失败/);
+assert.match(candidateRowSource, /const isSortable = Boolean\(/);
+assert.match(candidateRowSource, /draggable=\{isSortable\}/);
+assert.doesNotMatch(statusTabSource, /dragAttributes|dragListeners|dragDisabled/);
 assert.equal(editTabSource.includes("权重"), false, "local routing edit UI must not expose 权重 copy");
 assert.equal(editTabSource.includes("保存策略"), false, "local routing edit UI must not expose page-level 保存策略 copy");
 

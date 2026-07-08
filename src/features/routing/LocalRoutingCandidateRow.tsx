@@ -54,15 +54,20 @@ export function LocalRoutingCandidateRow({
 }: LocalRoutingCandidateRowProps) {
   const facts = candidate.facts.slice(0, 3).map((fact) => fact.label).join(" / ");
   const syncLabel = syncLabels[syncState];
+  const isSortable = Boolean(dragAttributes || dragListeners);
 
   return (
     <ObjectRow
-      draggable
-      dragHandleProps={{
-        attributes: dragAttributes,
-        listeners: dragListeners,
-        disabled: dragDisabled,
-      }}
+      draggable={isSortable}
+      dragHandleProps={
+        isSortable
+          ? {
+              attributes: dragAttributes,
+              listeners: dragListeners,
+              disabled: dragDisabled,
+            }
+          : undefined
+      }
       className="min-h-[72px]"
       icon={<KeyRound className="h-4 w-4" />}
       title={candidate.keyName}
