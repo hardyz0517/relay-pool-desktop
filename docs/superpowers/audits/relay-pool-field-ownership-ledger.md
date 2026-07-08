@@ -75,3 +75,20 @@
 - 记录 dirty paths 和风险，明确本 stage 未接入这些变化。
 
 不能仅凭 `git merge master` 成功就声称已经接入主 checkout 的未提交 bugfix。
+
+## Stage 8 兼容字段复查结论
+
+本轮无 removable candidate 字段。Stage 0-7 已将主要页面和 runtime snapshot 迁移到 query services 与 current projections，但旧数据库、preview fallback、远端 Key 兼容路径、Rust models、collector/database 写入路径仍需要这些字段作为兼容缓存或证据搬运字段。
+
+| 字段 | 当前结论 | 删除评估 |
+| --- | --- | --- |
+| `station_keys.group_name` | `compatibility cache`，继续用于展示、legacy fallback、远端 Key 兼容路径和旧记录读写 | 不批准删除；不能替代 `group_binding_id` |
+| `station_keys.group_id_hash` | `compatibility cache`，继续用于远端 identity metadata、remote key workflow 和 legacy fallback | 不批准删除；不能替代本地 binding id |
+| `station_keys.rate_multiplier` | `compatibility cache`，继续用于旧数据库、preview fallback 和未迁移诊断展示 | 不批准删除；current rate 由 projection 提供 |
+| `station_keys.rate_source` | `compatibility cache`，继续用于旧数据库、preview fallback 和诊断来源展示 | 不批准删除；current source 由 projection 提供 |
+| `station_keys.rate_collected_at` | `compatibility cache`，继续用于旧数据库、preview fallback 和粗粒度诊断 | 不批准删除；不能作为 current group freshness 唯一依据 |
+| `stations.balance_raw` | `compatibility cache`，无 station-scope balance snapshot 时继续作为余额 fallback | 不批准删除；station-scope snapshot 优先 |
+| `stations.balance_cny` | `compatibility cache`，无 station-scope balance snapshot 时继续作为余额 fallback | 不批准删除；station-scope snapshot 优先 |
+| `stations.last_pricing_fetched_at` | `compatibility cache`，继续作为粗粒度采集诊断和旧页面 fallback | 不批准删除；不能替代 group rate checked time |
+
+Stage 8 仅完成复查和保护网，不删除字段、不改 schema、不合并字段语义。Runtime snapshot 不消费 UI view model，也不携带明文 secret；后续如需 Rust proxy 注入真实 secret，必须保持 secret manager 边界并新增专门测试。
