@@ -1,4 +1,9 @@
 import { formatCompactMultiplier } from "@/lib/formatters";
+import {
+  buildStationGroupOptionsFromCurrentFacts,
+  isDisplayableStationGroupCurrentFact,
+  type StationGroupCurrentFact,
+} from "@/lib/projections/groupFacts";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 
 export const noGroupOptionValue = "__none__";
@@ -45,4 +50,14 @@ export function normalizeStationGroupOptions(options: StationGroupOption[]) {
     seen.add(value);
     return true;
   });
+}
+
+export function buildStationGroupOptionsFromCurrentFactsForSelect(
+  facts: StationGroupCurrentFact[],
+) {
+  return normalizeStationGroupOptions(
+    buildStationGroupOptionsFromCurrentFacts(
+      facts.filter(isDisplayableStationGroupCurrentFact),
+    ),
+  );
 }
