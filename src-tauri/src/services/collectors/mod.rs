@@ -15,6 +15,7 @@ use crate::{
         collector_runs::{CreateCollectorRunInput, FinishCollectorRunInput},
     },
     services::database::AppDatabase,
+    services::remote_keys,
 };
 
 pub fn detect_station_info(
@@ -50,7 +51,12 @@ pub fn collect_station_task(
     }
 
     let output = dispatch_adapter_output(database, data_key, &station_id, adapter, task);
-    apply::apply_adapter_output(database, &station_id, None, output).map(|applied| applied.result)
+    let applied = apply::apply_adapter_output(database, &station_id, None, output)?;
+    let mut result = applied.result;
+    if task == adapters::CollectorTask::Groups {
+        append_remote_key_refresh_event(database, data_key, &station_id, &mut result.events);
+    }
+    Ok(result)
 }
 
 fn collect_full_station_task(
@@ -77,6 +83,9 @@ fn collect_full_station_task(
             output,
         )?;
         events.extend(applied.result.events.clone());
+        if child_task == adapters::CollectorTask::Groups {
+            append_remote_key_refresh_event(database, data_key, &station_id, &mut events);
+        }
         child_results.push((applied.result.snapshot, applied.run));
     }
 
@@ -350,6 +359,35 @@ fn dispatch_adapter_output(
     };
 
     result.unwrap_or_else(|error| failed_adapter_output(adapter, task, error))
+}
+
+fn append_remote_key_refresh_event(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station_id: &str,
+    events: &mut Vec<CollectorEvent>,
+) {
+    match remote_keys::scan_remote_keys(database, data_key, station_id.to_string()) {
+        Ok(scan) => {
+            if scan.capability.can_list_remote_keys {
+                events.push(CollectorEvent {
+                    event_type: "remote_keys".to_string(),
+                    message: scan.message,
+                    status: "success".to_string(),
+                });
+            }
+        }
+        Err(error) => {
+            events.push(CollectorEvent {
+                event_type: "remote_keys".to_string(),
+                message: format!(
+                    "远端 Key 刷新失败：{}",
+                    crate::services::secrets::mask::redact_text(&error)
+                ),
+                status: "failed".to_string(),
+            });
+        }
+    }
 }
 
 fn failed_adapter_output(
@@ -829,12 +867,74 @@ mod tests {
         );
     }
 
+    #[test]
+    fn group_collection_refreshes_remote_key_discoveries() {
+        let server = TestGroupsAndKeysServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "groups and keys collect".to_string(),
+                    station_type: "sub2api".to_string(),
+                    base_url: server.base_url,
+                    api_key: "sk-route-key".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        database
+            .update_station_credentials_with_data_key(
+                UpdateStationCredentialsInput {
+                    station_id: station.id.clone(),
+                    login_username: Some("user@example.test".to_string()),
+                    login_password: Some("correct-password".to_string()),
+                    remember_password: true,
+                },
+                &data_key,
+            )
+            .expect("credentials");
+
+        let result = collect_station_task(
+            &database,
+            &data_key,
+            station.id.clone(),
+            adapters::CollectorTask::Groups,
+        )
+        .expect("group collect");
+        let remote_keys = database
+            .list_remote_station_keys(station.id)
+            .expect("remote keys");
+
+        assert_eq!(result.snapshot.status, "success");
+        assert_eq!(remote_keys.len(), 1);
+        assert_eq!(
+            remote_keys[0].remote_key_name.as_deref(),
+            Some("Auto Pro Key")
+        );
+        assert_eq!(remote_keys[0].group_name.as_deref(), Some("Pro"));
+        assert_eq!(remote_keys[0].rate_multiplier, Some(1.25));
+        assert_eq!(
+            remote_keys[0].rate_source.as_deref(),
+            Some("sub2api_groups_rates")
+        );
+    }
+
     struct TestLoginServer {
         base_url: String,
         last_login_password: Arc<Mutex<Option<String>>>,
     }
 
     struct TestFullServer {
+        base_url: String,
+    }
+
+    struct TestGroupsAndKeysServer {
         base_url: String,
     }
 
@@ -872,6 +972,19 @@ mod tests {
             thread::spawn(move || {
                 for stream in listener.incoming().take(4).flatten() {
                     handle_full_request(stream);
+                }
+            });
+            Self { base_url }
+        }
+    }
+
+    impl TestGroupsAndKeysServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            thread::spawn(move || {
+                for stream in listener.incoming().take(4).flatten() {
+                    handle_groups_and_keys_request(stream);
                 }
             });
             Self { base_url }
@@ -975,6 +1088,67 @@ mod tests {
             "/api/v1/groups/rates" if authorized => {
                 ("200 OK", json!({ "data": { "default": 0.8, "pro": 1.2 } }))
             }
+            _ => ("404 Not Found", json!({ "message": "not found" })),
+        };
+        let text = response.to_string();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
+    }
+
+    fn handle_groups_and_keys_request(mut stream: TcpStream) {
+        let request = read_http_request(&mut stream);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
+        let authorized = request
+            .to_lowercase()
+            .contains("authorization: bearer groups-and-keys-token");
+
+        let (status, response) = match path {
+            "/api/v1/auth/login" => {
+                let parsed = serde_json::from_str::<Value>(body).expect("login json");
+                if parsed.get("password").and_then(Value::as_str) == Some("correct-password") {
+                    (
+                        "200 OK",
+                        json!({ "data": { "access_token": "groups-and-keys-token" } }),
+                    )
+                } else {
+                    (
+                        "401 Unauthorized",
+                        json!({ "message": "invalid credentials" }),
+                    )
+                }
+            }
+            "/api/v1/groups/available" if authorized => (
+                "200 OK",
+                json!({
+                    "data": [
+                        { "id": "pro", "name": "Pro", "rate_multiplier": 1.5 }
+                    ]
+                }),
+            ),
+            "/api/v1/groups/rates" if authorized => ("200 OK", json!({ "data": { "pro": 1.25 } })),
+            "/api/v1/keys?page=1&page_size=100" if authorized => (
+                "200 OK",
+                json!({
+                    "data": {
+                        "items": [{
+                            "id": "remote-pro-key",
+                            "name": "Auto Pro Key",
+                            "masked_key": "sk-auto****7890",
+                            "group_id": "pro"
+                        }]
+                    }
+                }),
+            ),
             _ => ("404 Not Found", json!({ "message": "not found" })),
         };
         let text = response.to_string();

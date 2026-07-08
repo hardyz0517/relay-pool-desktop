@@ -166,6 +166,12 @@ pub fn import_relay_pool_to_ccswitch(
 }
 
 #[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), String> {
+    let url = validate_external_http_url(&url)?;
+    open_url_with_system(url)
+}
+
+#[tauri::command]
 pub fn update_settings(
     database: State<'_, AppDatabase>,
     input: UpdateSettingsInput,
@@ -1306,7 +1312,22 @@ fn open_url_with_system(url: &str) -> Result<(), String> {
 
     result
         .map(|_| ())
-        .map_err(|error| format!("无法打开 CCSwitch 导入链接: {error}"))
+        .map_err(|error| format!("无法打开外部链接: {error}"))
+}
+
+fn validate_external_http_url(url: &str) -> Result<&str, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("外部链接为空，无法打开。".to_string());
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err("外部链接包含无效字符，无法打开。".to_string());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if !lower.starts_with("http://") && !lower.starts_with("https://") {
+        return Err("只支持打开 HTTP 或 HTTPS 链接。".to_string());
+    }
+    Ok(trimmed)
 }
 
 fn test_station_key_connectivity_blocking(
@@ -1770,6 +1791,26 @@ mod tests {
         assert!(deeplink.contains("usageEnabled=true"));
         assert!(deeplink.contains("usageAutoInterval=30"));
         assert!(deeplink.contains("usageScript="));
+    }
+
+    #[test]
+    fn external_url_validation_accepts_http_urls() {
+        assert_eq!(
+            validate_external_http_url(" https://api.example.test/v1 "),
+            Ok("https://api.example.test/v1")
+        );
+        assert_eq!(
+            validate_external_http_url("HTTP://api.example.test"),
+            Ok("HTTP://api.example.test")
+        );
+    }
+
+    #[test]
+    fn external_url_validation_rejects_non_http_urls() {
+        let error = validate_external_http_url("ccswitch://v1/import?resource=provider")
+            .expect_err("custom schemes should not be accepted by the station URL opener");
+
+        assert!(error.contains("HTTP"));
     }
 
     #[test]

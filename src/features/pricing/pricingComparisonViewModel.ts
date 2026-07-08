@@ -50,7 +50,6 @@ export type PricingGroupSection = {
 };
 
 export type PricingComparisonMetrics = {
-  coveredGroupTypeCount: number;
   comparableGroupCount: number;
   lowestEffectiveMultiplier: number | null;
   lowestEffectiveMultiplierLabel: string;
@@ -379,7 +378,6 @@ function buildMetrics(sections: PricingGroupSection[]): PricingComparisonMetrics
     )[0];
 
   return {
-    coveredGroupTypeCount: sections.filter((section) => section.rows.length > 0).length,
     comparableGroupCount: rows.filter((entry) => entry.row.effectiveMultiplier !== null).length,
     lowestEffectiveMultiplier: lowest?.row.effectiveMultiplier ?? null,
     lowestEffectiveMultiplierLabel: lowest
@@ -390,7 +388,6 @@ function buildMetrics(sections: PricingGroupSection[]): PricingComparisonMetrics
 
 function emptyMetrics(): PricingComparisonMetrics {
   return {
-    coveredGroupTypeCount: 0,
     comparableGroupCount: 0,
     lowestEffectiveMultiplier: null,
     lowestEffectiveMultiplierLabel: "",

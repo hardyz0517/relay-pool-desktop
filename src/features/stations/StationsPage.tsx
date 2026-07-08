@@ -17,7 +17,7 @@ import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, type StatusTone, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
-import { createStation, deleteStation, listStations, reorderStations, updateStation } from "@/lib/api/stations";
+import { createStation, deleteStation, listStations, openStationBaseUrl, reorderStations, updateStation } from "@/lib/api/stations";
 import {
   clearStationCredentials,
   createStationKey,
@@ -1027,9 +1027,19 @@ function StationAssetListRow({
             title={stationStatusLabels[station.status]}
           />
         </div>
-        <div className="mt-1 truncate text-xs font-medium text-[hsl(var(--accent))]">
+        <button
+          type="button"
+          aria-label={`在浏览器打开 ${station.name}`}
+          title={station.baseUrl}
+          className="mt-1 block max-w-full truncate text-left text-xs font-medium text-[hsl(var(--accent))] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)]"
+          onClick={(event) => {
+            event.stopPropagation();
+            void openStationBaseUrl(station.baseUrl);
+          }}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
           {formatStationDisplayUrl(station.baseUrl)}
-        </div>
+        </button>
       </div>
 
       <div className="hidden shrink-0 items-center gap-5 md:flex">

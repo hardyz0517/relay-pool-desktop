@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Image, Layers3, RefreshCw, ShieldCheck, TrendingDown } from "lucide-react";
+import { Image, RefreshCw, ShieldCheck, TrendingDown } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
@@ -130,13 +130,7 @@ export function PricingPage() {
         </Button>
       }
     >
-      <div className="grid gap-[var(--shell-page-gap)] md:grid-cols-3">
-        <MetricCard
-          icon={Layers3}
-          label="覆盖分组类型"
-          value={`${viewModel.metrics.coveredGroupTypeCount}`}
-          detail="已有可比较倍率的分组类型"
-        />
+      <div className="grid gap-[var(--shell-page-gap)] md:grid-cols-2">
         <MetricCard
           icon={ShieldCheck}
           label="可比分组"

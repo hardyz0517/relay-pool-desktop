@@ -85,7 +85,6 @@ assert.deepEqual(
   "group names containing 图 should be classified into the image-generation group",
 );
 
-assert.equal(view.metrics.coveredGroupTypeCount, 5);
 assert.equal(view.metrics.comparableGroupCount, 5);
 assert.equal(view.metrics.lowestEffectiveMultiplier, 0.03);
 assert.equal(view.metrics.lowestEffectiveMultiplierLabel, "Gemini / Beta Relay / gemini_flash");
@@ -136,6 +135,8 @@ assert.ok(!pageSource.includes("官方输出"), "PricingPage should not display 
 assert.ok(!pageSource.includes("输入价"), "PricingPage should not render model-derived input price columns");
 assert.ok(!pageSource.includes("输出价"), "PricingPage should not render model-derived output price columns");
 assert.ok(pageSource.includes("分组倍率比较"), "PricingPage should describe the page as group multiplier comparison");
+assert.ok(!pageSource.includes("覆盖分组类型"), "PricingPage should not show the covered group-type metric card");
+assert.ok(!pageSource.includes("已有可比较倍率的分组类型"), "PricingPage should not show covered group-type metric detail copy");
 
 function viewInputStations() {
   return [station("station-a", "Alpha Relay", 10), station("station-b", "Beta Relay", 1)];

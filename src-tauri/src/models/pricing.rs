@@ -32,6 +32,26 @@ pub struct PricingRule {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct ModelBasePrice {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+    pub input_price: Option<f64>,
+    pub output_price: Option<f64>,
+    pub currency: String,
+    pub unit: String,
+    pub source_url: String,
+    pub source_label: String,
+    pub source_checked_at: Option<String>,
+    pub enabled: bool,
+    pub built_in: bool,
+    pub note: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct BalanceSnapshot {
     pub id: String,
     pub station_id: String,
@@ -77,6 +97,24 @@ pub struct UpsertPricingRuleInput {
     pub collected_at: Option<String>,
     pub valid_from: Option<String>,
     pub valid_until: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpsertModelBasePriceInput {
+    pub id: Option<String>,
+    pub provider: String,
+    pub model: String,
+    pub input_price: Option<f64>,
+    pub output_price: Option<f64>,
+    pub currency: String,
+    pub unit: String,
+    pub source_url: String,
+    pub source_label: String,
+    pub source_checked_at: Option<String>,
+    pub enabled: bool,
+    pub built_in: bool,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -153,6 +191,32 @@ mod tests {
         assert_eq!(json["inputPrice"], 0.15);
         assert_eq!(json["priceType"], "token");
         assert_eq!(json["normalizationStatus"], "complete");
+    }
+
+    #[test]
+    fn model_base_price_serializes_camel_case() {
+        let price = ModelBasePrice {
+            id: "base-1".to_string(),
+            provider: "openai".to_string(),
+            model: "gpt-5-mini".to_string(),
+            input_price: Some(0.25),
+            output_price: Some(2.0),
+            currency: "USD".to_string(),
+            unit: "per_1m_tokens".to_string(),
+            source_url: "https://developers.openai.com/api/docs/pricing".to_string(),
+            source_label: "OpenAI API pricing".to_string(),
+            source_checked_at: Some("2026-07-08".to_string()),
+            enabled: true,
+            built_in: true,
+            note: None,
+            created_at: "1000".to_string(),
+            updated_at: "1000".to_string(),
+        };
+
+        let json = serde_json::to_value(price).expect("json");
+        assert_eq!(json["inputPrice"], 0.25);
+        assert_eq!(json["sourceUrl"], "https://developers.openai.com/api/docs/pricing");
+        assert_eq!(json["builtIn"], true);
     }
 
     #[test]

@@ -6,11 +6,11 @@ import {
   BarChart3,
   Clock3,
   Copy,
+  FlaskConical,
   Gauge,
   KeyRound,
   type LucideIcon,
   Power,
-  Route,
   Server,
   Upload,
   Wallet,
@@ -46,12 +46,6 @@ const healthTone = {
   error: "error",
   disabled: "disabled",
   unchecked: "info",
-} as const;
-
-const requestTone = {
-  success: "healthy",
-  fallback: "warning",
-  failed: "error",
 } as const;
 
 const DASHBOARD_BALANCE_REFRESH_INTERVAL_MS = 30_000;
@@ -193,12 +187,13 @@ export function DashboardPage() {
   const totalTokens = requestLogs.reduce((sum, log) => sum + (log.totalTokens ?? 0), 0);
   const totalPromptTokens = requestLogs.reduce((sum, log) => sum + (log.promptTokens ?? 0), 0);
   const totalCompletionTokens = requestLogs.reduce((sum, log) => sum + (log.completionTokens ?? 0), 0);
-  const totalCost = requestLogs.reduce((sum, log) => sum + (log.estimatedTotalCost ?? 0), 0);
+  const pricedRequestLogs = requestLogs.filter((log) => log.estimatedTotalCost !== null);
+  const totalCost = pricedRequestLogs.reduce((sum, log) => sum + (log.estimatedTotalCost ?? 0), 0);
   const averageResponseMs = averageDurationMs(todayLogs);
   const todayTpm = getTodayAverageTpm(todayTokens);
   const activeRequests = proxyStatus?.activeRequests ?? 0;
   const balanceSummary = useMemo(() => summarizeDashboardBalances(balanceSnapshots), [balanceSnapshots]);
-  const { latestStationBalances, lowBalanceStations, primaryBalanceCurrency, totalBalance } = balanceSummary;
+  const { lowBalanceStations, primaryBalanceCurrency, totalBalance } = balanceSummary;
   const activeRiskEvents = useMemo(
     () =>
       changeEvents.filter(
@@ -464,41 +459,38 @@ export function DashboardPage() {
       </SectionCard>
 
       <div className="grid min-h-0 gap-3">
-        <SectionCard title="最近活动">
-          <div className="grid gap-4">
-            <div className="space-y-2">
-              <div className="text-sm font-semibold text-slate-900">请求日志</div>
-              {requestLogs.slice(0, 5).map((request) => (
-                <ObjectRow
-                  key={request.id}
-                  icon={<Server className="h-4 w-4" />}
-                  title={request.model ?? request.path}
-                  subtitle={`${request.path} - ${request.stationId ?? "未选择"} - ${request.durationMs ?? 0}ms - ${formatCost(request.estimatedTotalCost ?? 0)}`}
-                  badges={
-                    <StatusBadge tone={requestTone[request.status as keyof typeof requestTone] ?? "info"}>
-                      {requestStatusLabel(request.status)}
-                    </StatusBadge>
-                  }
-                  metrics={[{ label: "时间", value: formatTime(request.startedAt) }]}
-                />
-              ))}
-            </div>
-            <div className="space-y-2">
-              <div className="text-sm font-semibold text-slate-900">余额变化</div>
-              {latestStationBalances.slice(0, 5).map((snapshot) => (
-                <ObjectRow
-                  key={snapshot.id}
-                  icon={<Route className="h-4 w-4" />}
-                  title={snapshot.scope}
-                  subtitle={`${snapshot.stationId} - ${snapshot.currency} ${snapshot.value ?? 0}`}
-                  badges={<StatusBadge tone={balanceStatusTone(snapshot.status)}>{balanceStatusLabel(snapshot.status)}</StatusBadge>}
-                  metrics={[
-                    { label: "来源", value: snapshot.source },
-                    { label: "可信度", value: `${Math.round(snapshot.confidence * 100)}%` },
-                  ]}
-                />
-              ))}
-            </div>
+        <SectionCard title="最近使用" contentClassName="border-0">
+          <div className="grid gap-3">
+            {requestLogs.slice(0, 5).map((request) => (
+              <div
+                key={request.id}
+                className="grid min-h-[72px] grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3 rounded-[8px] bg-slate-50 px-4 py-3"
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-teal-100 text-teal-700">
+                  <FlaskConical className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-slate-900">
+                    {request.model ?? request.path}
+                  </div>
+                  <div className="mt-0.5 truncate text-xs text-slate-500">
+                    {formatDateTime(request.startedAt)}
+                  </div>
+                </div>
+                <div className="min-w-[118px] text-right">
+                  <div className="whitespace-nowrap text-sm font-semibold text-slate-400">
+                    <span className="text-emerald-600">
+                      {formatRequestCost(request.estimatedTotalCost, request.costCurrency, request.costStatus)}
+                    </span>
+                    <span className="mx-1">/</span>
+                    <span>{formatRequestCost(pricedRequestLogs.length > 0 ? totalCost : null, request.costCurrency)}</span>
+                  </div>
+                  <div className="mt-0.5 whitespace-nowrap text-xs text-slate-500">
+                    {formatTokenCount(request.totalTokens)} tokens
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </SectionCard>
 
@@ -571,12 +563,16 @@ function parseLogDate(value: string) {
   return parseTimestampLikeDate(value);
 }
 
-function formatTime(value: string) {
+function formatDateTime(value: string) {
   const date = parseLogDate(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const time = date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return `${year}/${month}/${day} ${time}`;
 }
 
 function averageDurationMs(logs: RequestLog[]) {
@@ -610,6 +606,21 @@ function formatBalance(value: number, currency?: string) {
 
 function formatCost(value: number) {
   return `¥${value.toFixed(4)}`;
+}
+
+function formatRequestCost(value: number | null | undefined, currency?: string | null, costStatus?: string | null) {
+  if (value == null && costStatus === "usage_only") {
+    return "未定价";
+  }
+  if (value == null) {
+    return "-";
+  }
+  const symbol = currencySymbol(currency ?? "USD") || "$";
+  return `${symbol}${value.toFixed(4)}`;
+}
+
+function formatTokenCount(value: number | null | undefined) {
+  return (value ?? 0).toLocaleString("zh-CN");
 }
 
 function formatCompactNumber(value: number) {
@@ -658,34 +669,6 @@ function currencySymbol(currency?: string) {
   if (normalized === "GBP") return "£";
   return "";
 }
-
-function requestStatusLabel(status: string) {
-  if (status === "success") return "成功";
-  if (status === "fallback") return "兜底";
-  if (status === "failed") return "失败";
-  return status;
-}
-
-function balanceStatusLabel(status: string) {
-  if (status === "normal") return "正常";
-  if (status === "low") return "偏低";
-  if (status === "depleted") return "耗尽";
-  return status;
-}
-
-function balanceStatusTone(status: string) {
-  if (status === "normal") {
-    return "healthy";
-  }
-  if (status === "low") {
-    return "warning";
-  }
-  if (status === "depleted") {
-    return "error";
-  }
-  return "info";
-}
-
 
 function isMaskedDisplayValue(value: string) {
   return /\*{2,}|\[REDACTED\]/i.test(value);

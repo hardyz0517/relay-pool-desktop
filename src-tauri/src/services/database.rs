@@ -29,7 +29,10 @@ use crate::models::{
         GroupRateRecord, InsertGroupRateRecordInput, StationGroupBinding,
         UpdateStationKeyGroupBindingInput, UpsertStationGroupBindingInput,
     },
-    pricing::{BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
+    pricing::{
+        BalanceSnapshot, ModelBasePrice, PricingRule, UpsertBalanceSnapshotInput,
+        UpsertModelBasePriceInput, UpsertPricingRuleInput,
+    },
     proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
     remote_keys::{RemoteKeyMatchStatus, RemoteStationKey},
     routing::{
@@ -146,6 +149,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移站点代理字段失败: {error}"))?;
         migrate_pricing_tables(&connection)
             .map_err(|error| format!("迁移价格和余额表失败: {error}"))?;
+        seed_builtin_model_base_prices(&connection)
+            .map_err(|error| format!("初始化模型基准价格失败: {error}"))?;
         migrate_request_log_route_columns(&connection)
             .map_err(|error| format!("迁移请求日志路由字段失败: {error}"))?;
         migrate_request_log_cost_columns(&connection)
@@ -182,6 +187,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移站点代理字段失败: {error}"))?;
         migrate_pricing_tables(&connection)
             .map_err(|error| format!("迁移价格和余额表失败: {error}"))?;
+        seed_builtin_model_base_prices(&connection)
+            .map_err(|error| format!("初始化模型基准价格失败: {error}"))?;
         migrate_request_log_route_columns(&connection)
             .map_err(|error| format!("迁移请求日志路由字段失败: {error}"))?;
         migrate_request_log_cost_columns(&connection)
@@ -990,6 +997,25 @@ impl AppDatabase {
         list_pricing_rules_from_connection(&connection)
     }
 
+    pub fn list_model_base_prices(&self) -> Result<Vec<ModelBasePrice>, String> {
+        let connection = self.connection()?;
+        list_model_base_prices_from_connection(&connection)
+    }
+
+    pub fn upsert_model_base_price(
+        &self,
+        input: UpsertModelBasePriceInput,
+    ) -> Result<ModelBasePrice, String> {
+        let connection = self.connection()?;
+        upsert_model_base_price_in_connection(&connection, input)
+    }
+
+    pub fn reset_model_base_prices_to_builtins(&self) -> Result<Vec<ModelBasePrice>, String> {
+        let connection = self.connection()?;
+        seed_builtin_model_base_prices(&connection)?;
+        list_model_base_prices_from_connection(&connection)
+    }
+
     pub fn upsert_pricing_rule(
         &self,
         input: UpsertPricingRuleInput,
@@ -1623,6 +1649,27 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_pricing_rules_station_model
             ON pricing_rules(station_id, model, enabled, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS model_base_prices (
+            id TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_price REAL,
+            output_price REAL,
+            currency TEXT NOT NULL,
+            unit TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            source_label TEXT NOT NULL,
+            source_checked_at TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            built_in INTEGER NOT NULL DEFAULT 0,
+            note TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_model_base_prices_model
+            ON model_base_prices(model, enabled, updated_at DESC);
 
         CREATE TABLE IF NOT EXISTS balance_snapshots (
             id TEXT PRIMARY KEY,
@@ -2525,6 +2572,153 @@ fn seed_default_settings(connection: &Connection) -> rusqlite::Result<()> {
         connection.execute(
             "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?1, ?2, ?3)",
             params![key, value, now_string()],
+        )?;
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BuiltinModelBasePrice {
+    id: &'static str,
+    provider: &'static str,
+    model: &'static str,
+    input_price: f64,
+    output_price: f64,
+    source_url: &'static str,
+    source_label: &'static str,
+    note: &'static str,
+}
+
+const BUILTIN_MODEL_BASE_PRICE_CHECKED_AT: &str = "2026-07-08";
+const BUILTIN_MODEL_BASE_PRICES: &[BuiltinModelBasePrice] = &[
+    BuiltinModelBasePrice {
+        id: "builtin-openai-gpt-5",
+        provider: "openai",
+        model: "gpt-5",
+        input_price: 1.25,
+        output_price: 10.0,
+        source_url: "https://developers.openai.com/api/docs/pricing",
+        source_label: "OpenAI API pricing",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-openai-gpt-5-mini",
+        provider: "openai",
+        model: "gpt-5-mini",
+        input_price: 0.25,
+        output_price: 2.0,
+        source_url: "https://developers.openai.com/api/docs/pricing",
+        source_label: "OpenAI API pricing",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-openai-gpt-5-nano",
+        provider: "openai",
+        model: "gpt-5-nano",
+        input_price: 0.05,
+        output_price: 0.4,
+        source_url: "https://developers.openai.com/api/docs/pricing",
+        source_label: "OpenAI API pricing",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-anthropic-claude-opus-4-1",
+        provider: "anthropic",
+        model: "claude-opus-4-1",
+        input_price: 15.0,
+        output_price: 75.0,
+        source_url: "https://docs.anthropic.com/en/docs/about-claude/pricing",
+        source_label: "Anthropic Claude pricing",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-anthropic-claude-sonnet-4-5",
+        provider: "anthropic",
+        model: "claude-sonnet-4-5",
+        input_price: 3.0,
+        output_price: 15.0,
+        source_url: "https://docs.anthropic.com/en/docs/about-claude/pricing",
+        source_label: "Anthropic Claude pricing",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-google-gemini-2-5-pro",
+        provider: "google",
+        model: "gemini-2.5-pro",
+        input_price: 1.25,
+        output_price: 10.0,
+        source_url: "https://ai.google.dev/gemini-api/docs/pricing",
+        source_label: "Gemini API pricing",
+        note: "Standard text token price per 1M tokens for prompts at or below 200k tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-google-gemini-2-5-flash",
+        provider: "google",
+        model: "gemini-2.5-flash",
+        input_price: 0.3,
+        output_price: 2.5,
+        source_url: "https://ai.google.dev/gemini-api/docs/pricing",
+        source_label: "Gemini API pricing",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-google-gemini-2-5-flash-lite",
+        provider: "google",
+        model: "gemini-2.5-flash-lite",
+        input_price: 0.1,
+        output_price: 0.4,
+        source_url: "https://ai.google.dev/gemini-api/docs/pricing",
+        source_label: "Gemini API pricing",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-xai-grok-build",
+        provider: "xai",
+        model: "grok-build",
+        input_price: 0.2,
+        output_price: 1.5,
+        source_url: "https://docs.x.ai/developers/pricing",
+        source_label: "xAI API pricing",
+        note: "Official Grok Build text token price per 1M tokens.",
+    },
+];
+
+fn seed_builtin_model_base_prices(connection: &Connection) -> rusqlite::Result<()> {
+    let now = now_string();
+    for price in BUILTIN_MODEL_BASE_PRICES {
+        connection.execute(
+            "INSERT INTO model_base_prices (
+                id, provider, model, input_price, output_price, currency, unit,
+                source_url, source_label, source_checked_at, enabled, built_in, note,
+                created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 'USD', 'per_1m_tokens', ?6, ?7, ?8, 1, 1, ?9, ?10, ?11)
+             ON CONFLICT(id) DO UPDATE SET
+                provider = excluded.provider,
+                model = excluded.model,
+                input_price = excluded.input_price,
+                output_price = excluded.output_price,
+                currency = excluded.currency,
+                unit = excluded.unit,
+                source_url = excluded.source_url,
+                source_label = excluded.source_label,
+                source_checked_at = excluded.source_checked_at,
+                built_in = 1,
+                note = excluded.note,
+                updated_at = excluded.updated_at",
+            params![
+                price.id,
+                price.provider,
+                price.model,
+                price.input_price,
+                price.output_price,
+                price.source_url,
+                price.source_label,
+                BUILTIN_MODEL_BASE_PRICE_CHECKED_AT,
+                price.note,
+                now,
+                now,
+            ],
         )?;
     }
 
@@ -4046,6 +4240,26 @@ fn migrate_pricing_tables(connection: &Connection) -> rusqlite::Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_pricing_rules_station_model
             ON pricing_rules(station_id, model, enabled, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS model_base_prices (
+            id TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_price REAL,
+            output_price REAL,
+            currency TEXT NOT NULL,
+            unit TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            source_label TEXT NOT NULL,
+            source_checked_at TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            built_in INTEGER NOT NULL DEFAULT 0,
+            note TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_model_base_prices_model
+            ON model_base_prices(model, enabled, updated_at DESC);
 
         CREATE TABLE IF NOT EXISTS balance_snapshots (
             id TEXT PRIMARY KEY,
@@ -8467,7 +8681,9 @@ mod tests {
         UpdateStationKeyGroupBindingInput, BINDING_KIND_KEY_BINDING, BINDING_KIND_STATION_GROUP,
         BINDING_STATUS_AVAILABLE, BINDING_STATUS_MISSING,
     };
-    use crate::models::pricing::{UpsertBalanceSnapshotInput, UpsertPricingRuleInput};
+    use crate::models::pricing::{
+        UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
+    };
     use crate::models::routing::RouteEndpointKind;
 
     fn test_station(database: &AppDatabase, name: &str) -> Station {
@@ -11273,6 +11489,77 @@ mod tests {
         assert_eq!(economics.estimated_input_price, Some(2.0));
         assert_eq!(economics.estimated_output_price, Some(10.0));
         assert_eq!(economics.price_currency.as_deref(), Some("CNY"));
+    }
+
+    #[test]
+    fn route_candidate_economics_uses_model_base_price_with_group_rate_only_rule() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "base-price-fallback");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+
+        database
+            .upsert_pricing_rule(UpsertPricingRuleInput {
+                id: None,
+                station_id: station.id,
+                station_key_id: Some(key.id.clone()),
+                group_binding_id: None,
+                group_name: Some("incentive".to_string()),
+                tier_label: None,
+                model: "gpt-5-mini".to_string(),
+                input_price: None,
+                output_price: None,
+                fixed_price: None,
+                rate_multiplier: Some(0.045),
+                currency: "USD".to_string(),
+                unit: "multiplier".to_string(),
+                price_type: "multiplier".to_string(),
+                base_price_source: None,
+                normalization_status: Some("group_rate_only".to_string()),
+                source: "collector".to_string(),
+                confidence: 0.8,
+                enabled: true,
+                note: None,
+                collected_at: Some("1000".to_string()),
+                valid_from: None,
+                valid_until: None,
+            })
+            .expect("group rate rule");
+        database
+            .upsert_model_base_price(UpsertModelBasePriceInput {
+                id: None,
+                provider: "openai".to_string(),
+                model: "gpt-5-mini".to_string(),
+                input_price: Some(0.25),
+                output_price: Some(2.0),
+                currency: "USD".to_string(),
+                unit: "per_1m_tokens".to_string(),
+                source_url: "https://developers.openai.com/api/docs/pricing".to_string(),
+                source_label: "OpenAI API pricing".to_string(),
+                source_checked_at: Some("2026-07-08".to_string()),
+                enabled: true,
+                built_in: false,
+                note: None,
+            })
+            .expect("base price");
+
+        let economics = database
+            .route_candidate_economics_for_model(key.id, Some("gpt-5-mini".to_string()))
+            .expect("economics")
+            .expect("model economics");
+
+        assert_eq!(economics.pricing_rule_id.as_deref(), None);
+        assert_eq!(economics.pricing_model.as_deref(), Some("gpt-5-mini"));
+        assert_eq!(economics.rate_multiplier, Some(0.045));
+        assert_eq!(economics.estimated_input_price, Some(0.01125));
+        assert_eq!(economics.estimated_output_price, Some(0.09));
+        assert_eq!(
+            economics.normalization_status.as_deref(),
+            Some("base_price_with_group_rate")
+        );
+        assert_eq!(economics.pricing_source.as_deref(), Some("model_base_price"));
     }
 
     #[test]

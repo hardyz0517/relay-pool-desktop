@@ -135,6 +135,16 @@ export function deleteStation(id: string) {
   });
 }
 
+export function openStationBaseUrl(url: string) {
+  return invoke<void>("open_external_url", { url }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    throw error;
+  });
+}
+
 export function reorderStations(stationIds: string[]) {
   return invoke<Station[]>("reorder_stations", { stationIds }).catch((error) => {
     if (isInvokeUnavailable(error)) {
