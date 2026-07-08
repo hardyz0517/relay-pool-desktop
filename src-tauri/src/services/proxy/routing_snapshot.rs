@@ -1,12 +1,12 @@
 use crate::{
     models::{
         proxy::{ProxyStatus, RequestLog},
-        routing::RouteEndpointKind,
+        routing::{RouteEndpointKind, StationKeyCapabilities, StationKeyHealth},
     },
     services::{
         database::{now_millis_for_services, AppDatabase},
         proxy::{
-            router::RichRouteCandidate,
+            router::RouteCandidateEconomics,
             routing_types::{
                 DecisionFact, DecisionFactKind, DecisionFactSeverity, LocalRoutingCandidateRow,
                 LocalRoutingSettingsView, LocalRoutingSummary, LocalRoutingWorkspace,
@@ -16,12 +16,24 @@ use crate::{
     },
 };
 
+#[derive(Debug, Clone)]
+pub(crate) struct LocalRoutingReadCandidate {
+    pub(crate) station_key_id: String,
+    pub(crate) station_id: String,
+    pub(crate) station_name: String,
+    pub(crate) key_name: String,
+    pub(crate) priority: i64,
+    pub(crate) capabilities: StationKeyCapabilities,
+    pub(crate) health: Option<StationKeyHealth>,
+    pub(crate) economics: Option<RouteCandidateEconomics>,
+}
+
 pub fn load_local_routing_workspace(
     database: &AppDatabase,
     proxy_status: ProxyStatus,
 ) -> Result<LocalRoutingWorkspace, String> {
     let settings = database.get_settings()?;
-    let candidates = database.proxy_rich_route_candidates()?;
+    let candidates = database.local_routing_read_candidates()?;
     let request_logs = database.list_request_logs()?;
     let latest_log = request_logs.first();
     let rows = candidates
@@ -62,13 +74,13 @@ pub fn load_local_routing_workspace(
     })
 }
 
-fn candidate_row(index: usize, candidate: &RichRouteCandidate) -> LocalRoutingCandidateRow {
+fn candidate_row(index: usize, candidate: &LocalRoutingReadCandidate) -> LocalRoutingCandidateRow {
     let health_state = health_state(candidate);
     let mut facts = Vec::new();
     facts.push(DecisionFact {
         kind: DecisionFactKind::Policy,
         label: "Priority".to_string(),
-        value: format!("#{}", candidate.candidate.priority + 1),
+        value: format!("#{}", candidate.priority + 1),
         severity: DecisionFactSeverity::Info,
     });
     facts.push(DecisionFact {
@@ -119,8 +131,8 @@ fn candidate_row(index: usize, candidate: &RichRouteCandidate) -> LocalRoutingCa
     }
 
     LocalRoutingCandidateRow {
-        station_key_id: candidate.candidate.station_key_id.clone(),
-        station_id: candidate.candidate.station_id.clone(),
+        station_key_id: candidate.station_key_id.clone(),
+        station_id: candidate.station_id.clone(),
         station_name: candidate.station_name.clone(),
         key_name: candidate.key_name.clone(),
         endpoint: RouteEndpointKind::ChatCompletions,
@@ -144,7 +156,7 @@ fn candidate_row(index: usize, candidate: &RichRouteCandidate) -> LocalRoutingCa
     }
 }
 
-fn health_state(candidate: &RichRouteCandidate) -> RouteHealthState {
+fn health_state(candidate: &LocalRoutingReadCandidate) -> RouteHealthState {
     let now = now_millis_for_services() as i64;
     let Some(health) = &candidate.health else {
         return RouteHealthState::Unknown;
@@ -167,7 +179,7 @@ fn health_state(candidate: &RichRouteCandidate) -> RouteHealthState {
     RouteHealthState::Unknown
 }
 
-fn capability_label(candidate: &RichRouteCandidate) -> String {
+fn capability_label(candidate: &LocalRoutingReadCandidate) -> String {
     let mut protocols = Vec::new();
     if candidate.capabilities.supports_chat_completions {
         protocols.push("chat");

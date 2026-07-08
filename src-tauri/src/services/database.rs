@@ -56,6 +56,7 @@ use crate::services::collectors::session::{token_is_fresh, ResolvedSession, Sess
 use crate::services::pricing::sanitize_pricing_rule_input;
 use crate::services::proxy::{
     router::{select_route_candidates, RichRouteCandidate, RouteCandidateEconomics, RouteRequest},
+    routing_snapshot::LocalRoutingReadCandidate,
     RouteCandidate,
 };
 use crate::services::secrets::{
@@ -796,6 +797,13 @@ impl AppDatabase {
         proxy_status: crate::models::proxy::ProxyStatus,
     ) -> Result<crate::services::proxy::routing_types::LocalRoutingWorkspace, String> {
         crate::services::proxy::routing_snapshot::load_local_routing_workspace(self, proxy_status)
+    }
+
+    pub(crate) fn local_routing_read_candidates(
+        &self,
+    ) -> Result<Vec<LocalRoutingReadCandidate>, String> {
+        let connection = self.connection()?;
+        local_routing_read_candidates_from_connection(&connection)
     }
 
     pub fn route_candidate_economics(
@@ -5379,6 +5387,111 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
             connection,
             &row.candidate.station_key_id,
             &row.candidate.station_id,
+            None,
+        )?;
+        enriched_rows.push(row);
+    }
+
+    Ok(enriched_rows)
+}
+
+fn local_routing_read_candidates_from_connection(
+    connection: &Connection,
+) -> Result<Vec<LocalRoutingReadCandidate>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT
+                k.id,
+                k.station_id,
+                k.priority,
+                s.name,
+                k.name,
+                COALESCE(c.supports_chat_completions, 1),
+                COALESCE(c.supports_responses, 1),
+                COALESCE(c.supports_embeddings, 0),
+                COALESCE(c.supports_stream, 1),
+                COALESCE(c.supports_tools, 0),
+                COALESCE(c.supports_vision, 0),
+                COALESCE(c.supports_reasoning, 0),
+                COALESCE(c.model_allowlist_json, '[]'),
+                COALESCE(c.model_blocklist_json, '[]'),
+                COALESCE(c.preferred_models_json, '[]'),
+                COALESCE(c.only_use_as_backup, 0),
+                COALESCE(c.routing_tags_json, '[]'),
+                COALESCE(c.updated_at, '0'),
+                h.station_key_id,
+                h.last_success_at,
+                h.last_failure_at,
+                h.consecutive_failures,
+                h.success_count,
+                h.failure_count,
+                h.avg_latency_ms,
+                h.last_error_summary,
+                h.cooldown_until,
+                h.updated_at
+             FROM station_keys k
+             JOIN stations s ON s.id = k.station_id
+             LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
+             LEFT JOIN station_key_health h ON h.station_key_id = k.id
+             WHERE k.enabled = 1
+               AND s.enabled = 1
+               AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
+             ORDER BY k.priority ASC, k.created_at ASC",
+        )
+        .map_err(|error| format!("读取本地路由读模型候选失败: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            let station_key_id = row.get::<_, String>(0)?;
+            let station_id = row.get::<_, String>(1)?;
+            let health_station_key_id = row.get::<_, Option<String>>(18)?;
+            Ok(LocalRoutingReadCandidate {
+                station_key_id: station_key_id.clone(),
+                station_id,
+                priority: row.get(2)?,
+                station_name: row.get(3)?,
+                key_name: row.get(4)?,
+                capabilities: StationKeyCapabilities {
+                    station_key_id,
+                    supports_chat_completions: i64_to_bool(row.get(5)?),
+                    supports_responses: i64_to_bool(row.get(6)?),
+                    supports_embeddings: i64_to_bool(row.get(7)?),
+                    supports_stream: i64_to_bool(row.get(8)?),
+                    supports_tools: i64_to_bool(row.get(9)?),
+                    supports_vision: i64_to_bool(row.get(10)?),
+                    supports_reasoning: i64_to_bool(row.get(11)?),
+                    model_allowlist: parse_json_string_list(row.get::<_, String>(12)?.as_str()),
+                    model_blocklist: parse_json_string_list(row.get::<_, String>(13)?.as_str()),
+                    preferred_models: parse_json_string_list(row.get::<_, String>(14)?.as_str()),
+                    only_use_as_backup: i64_to_bool(row.get(15)?),
+                    routing_tags: parse_json_string_list(row.get::<_, String>(16)?.as_str()),
+                    updated_at: row.get(17)?,
+                },
+                health: health_station_key_id.map(|station_key_id| StationKeyHealth {
+                    station_key_id,
+                    last_success_at: row.get(19).ok().flatten(),
+                    last_failure_at: row.get(20).ok().flatten(),
+                    consecutive_failures: row.get(21).unwrap_or(0),
+                    success_count: row.get(22).unwrap_or(0),
+                    failure_count: row.get(23).unwrap_or(0),
+                    avg_latency_ms: row.get(24).ok().flatten(),
+                    last_error_summary: row.get(25).ok().flatten(),
+                    cooldown_until: row.get(26).ok().flatten(),
+                    updated_at: row.get(27).unwrap_or_else(|_| "0".to_string()),
+                }),
+                economics: None,
+            })
+        })
+        .map_err(|error| format!("查询本地路由读模型候选失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析本地路由读模型候选失败: {error}"))?;
+
+    let mut enriched_rows = Vec::with_capacity(rows.len());
+    for mut row in rows {
+        row.economics = route_candidate_economics_from_connection(
+            connection,
+            &row.station_key_id,
+            &row.station_id,
             None,
         )?;
         enriched_rows.push(row);
@@ -11138,6 +11251,50 @@ mod tests {
             candidate.station_key_id == key.id
                 && candidate.api_key == "sk-p8-secret-plaintext-canary"
         }));
+    }
+
+    #[test]
+    fn local_routing_workspace_loads_migrated_secret_key_without_data_key() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "secret-read-model");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "read model key".to_string(),
+                api_key: "sk-p8-secret-plaintext-canary".to_string(),
+                enabled: true,
+                priority: Some(0),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect("key");
+        let data_key = crate::services::secrets::crypto::generate_data_key();
+        database
+            .migrate_plaintext_secrets_for_tests(&data_key)
+            .expect("migrate");
+
+        let workspace = database
+            .load_local_routing_workspace(crate::models::proxy::ProxyStatus {
+                running: false,
+                bind_addr: "127.0.0.1".to_string(),
+                port: 8787,
+                started_at: None,
+                last_error: None,
+                active_requests: 0,
+                request_count: 0,
+            })
+            .expect("workspace without data key");
+
+        assert!(workspace
+            .candidates
+            .iter()
+            .any(|candidate| candidate.station_key_id == key.id));
     }
 
     #[test]
