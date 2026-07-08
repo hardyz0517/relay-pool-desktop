@@ -119,17 +119,23 @@ export function RoutingPage() {
     setLoading(true);
     setError(null);
     try {
-      const [routingWorkspace, nextLocalWorkspace] = await Promise.all([
-        loadRoutingWorkspace(),
-        loadLocalRoutingWorkspace(),
-      ]);
+      const routingWorkspace = await loadRoutingWorkspace();
       setSettings(routingWorkspace.settings);
       setAliases(routingWorkspace.modelAliases);
-      setLocalWorkspace(nextLocalWorkspace);
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
       toast.error("刷新路由规则失败", message);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLocalWorkspace(await loadLocalRoutingWorkspace());
+    } catch (requestError) {
+      const message = readError(requestError);
+      setLocalWorkspace(null);
+      toast.error("刷新本地路由状态失败", message);
     } finally {
       setLoading(false);
     }
