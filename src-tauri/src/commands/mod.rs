@@ -64,6 +64,10 @@ use crate::{
     },
 };
 
+const STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
+const STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+const STATION_KEY_CONNECTIVITY_CANDIDATE_LIMIT: usize = 2;
+
 #[tauri::command]
 pub fn app_status() -> AppStatus {
     AppStatus::default()
@@ -1465,7 +1469,7 @@ fn station_key_connectivity_model_candidates(
     if candidates.is_empty() {
         candidates.push("gpt-4o-mini".to_string());
     }
-    candidates.truncate(8);
+    candidates.truncate(STATION_KEY_CONNECTIVITY_CANDIDATE_LIMIT);
     candidates
 }
 
@@ -1604,7 +1608,7 @@ fn send_station_key_connectivity_probe(
     let body = build_station_key_connectivity_probe_body(model, kind);
     let started = Instant::now();
     let response_result = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(20))
+        .timeout(STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT)
         .set("Authorization", &format!("Bearer {api_key}"))
         .set("Content-Type", "application/json")
         .set("Accept", "application/json")
@@ -1642,7 +1646,7 @@ fn send_station_key_connectivity_probe(
 fn discover_station_key_connectivity_models(base_url: &str, api_key: &str) -> Option<Vec<String>> {
     let url = build_upstream_url(base_url, "/v1/models");
     let response = ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT)
         .set("Authorization", &format!("Bearer {api_key}"))
         .set("Accept", "application/json")
         .call()
@@ -1822,7 +1826,7 @@ mod tests {
     }
 
     #[test]
-    fn station_key_connectivity_candidates_keep_multiple_discovered_models() {
+    fn station_key_connectivity_candidates_keep_fastest_discovered_models() {
         let discovered = vec![
             "codex-auto-review".to_string(),
             "gpt-5.4".to_string(),
@@ -1832,7 +1836,22 @@ mod tests {
         let candidates =
             station_key_connectivity_model_candidates(None, None, discovered.as_slice());
 
-        assert_eq!(candidates, vec!["codex-auto-review", "gpt-5.4", "gpt-5.5"]);
+        assert_eq!(candidates, vec!["codex-auto-review", "gpt-5.4"]);
+    }
+
+    #[test]
+    fn station_key_connectivity_candidates_are_capped_for_interactive_tests() {
+        let discovered = vec![
+            "gpt-4.1".to_string(),
+            "gpt-4.1-mini".to_string(),
+            "gpt-4.1-nano".to_string(),
+            "gpt-5.4".to_string(),
+        ];
+
+        let candidates =
+            station_key_connectivity_model_candidates(None, None, discovered.as_slice());
+
+        assert_eq!(candidates, vec!["gpt-4.1-nano", "gpt-4.1-mini"]);
     }
 
     #[test]
@@ -1846,7 +1865,7 @@ mod tests {
         let candidates =
             station_key_connectivity_model_candidates(None, None, discovered.as_slice());
 
-        assert_eq!(candidates, vec!["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"]);
+        assert_eq!(candidates, vec!["gpt-4.1-nano", "gpt-4.1-mini"]);
     }
 
     #[test]
