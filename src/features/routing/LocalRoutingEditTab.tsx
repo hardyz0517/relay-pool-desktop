@@ -1,4 +1,4 @@
-import { ArrowDownUp, BadgeCheck, LockKeyhole } from "lucide-react";
+import { BadgeCheck, ListOrdered, LockKeyhole } from "lucide-react";
 import { EmptyState, SectionCard, StatusBadge } from "@/components/ui";
 import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
 import { LocalRoutingCandidateRow } from "./LocalRoutingCandidateRow";
@@ -43,8 +43,8 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
           <StatusBadge tone="info">预览</StatusBadge>
         </div>
         <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
-          <EditHint icon={<ArrowDownUp className="h-4 w-4" />} title="拖拽排序" body="后续任务接入，当前只保留布局占位。" />
-          <EditHint icon={<LockKeyhole className="h-4 w-4" />} title="行为冻结" body="本页不触发保存、重排或运行时策略更新。" />
+          <EditHint icon={<ListOrdered className="h-4 w-4" />} title="顺位预览" body="当前仅展示静态候选顺位与启用状态。" />
+          <EditHint icon={<LockKeyhole className="h-4 w-4" />} title="行为冻结" body="本页不触发保存或运行时策略更新。" />
         </div>
       </SectionCard>
 

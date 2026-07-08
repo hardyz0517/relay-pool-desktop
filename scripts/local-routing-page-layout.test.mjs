@@ -31,6 +31,8 @@ assertIncludes(statusTab, "本地端点", "LocalRoutingStatusTab");
 assertIncludes(statusTab, "当前主 Key", "LocalRoutingStatusTab");
 assertIncludes(editTab, "低价优先 + 稳定保持", "LocalRoutingEditTab");
 assertExcludes(editTab, "权重", "LocalRoutingEditTab");
+assertExcludes(editTab, "拖拽", "LocalRoutingEditTab");
+assertExcludes(editTab, "重排", "LocalRoutingEditTab");
 assertExcludes(routingPage, "保存策略", "RoutingPage");
 
 console.log("local routing page layout contract ok");
