@@ -6868,15 +6868,16 @@ pub(super) fn create_station_key_in_connection_with_data_key(
         Some(priority) => priority,
         None => next_station_key_priority(connection, &input.station_id)?,
     };
+    let routing_order = next_local_routing_order(connection)?;
 
     connection
         .execute(
             "INSERT INTO station_keys (
-                id, station_id, name, api_key, api_key_secret_id, enabled, priority,
+                id, station_id, name, api_key, api_key_secret_id, enabled, priority, routing_order,
                 group_name, tier_label, group_binding_id, group_id_hash, rate_multiplier,
                 rate_source, rate_collected_at, balance_scope,
                 status, last_checked_at, last_used_at, note, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 'unchecked', NULL, NULL, ?16, ?17, ?18)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'unchecked', NULL, NULL, ?17, ?18, ?19)",
             params![
                 id,
                 input.station_id,
@@ -6885,6 +6886,7 @@ pub(super) fn create_station_key_in_connection_with_data_key(
                 secret_id,
                 bool_to_i64(input.enabled),
                 priority,
+                routing_order,
                 normalize_optional_string(input.group_name),
                 normalize_optional_string(input.tier_label),
                 normalize_optional_string(input.group_binding_id),
@@ -7134,6 +7136,16 @@ fn next_station_key_priority(connection: &Connection, station_id: &str) -> Resul
             |row| row.get(0),
         )
         .map_err(|error| format!("计算 Key 排序失败: {error}"))
+}
+
+fn next_local_routing_order(connection: &Connection) -> Result<i64, String> {
+    connection
+        .query_row(
+            "SELECT COALESCE(MAX(routing_order), -1) + 1 FROM station_keys",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("Calculate local routing order failed: {error}"))
 }
 
 fn normalize_station_key_priorities(
@@ -11047,6 +11059,68 @@ mod tests {
                 ("key-second".to_string(), 1, 1),
                 ("key-fourth".to_string(), 2, 2),
                 ("key-third".to_string(), 2, 3),
+            ]
+        );
+    }
+
+    #[test]
+    fn new_station_key_appends_after_persisted_local_routing_order() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let first_station = test_station(&database, "first-route");
+        let second_station = test_station(&database, "second-route");
+        let first_key = database
+            .list_station_keys(first_station.id.clone())
+            .expect("first keys")
+            .remove(0);
+        let second_key = database
+            .list_station_keys(second_station.id)
+            .expect("second keys")
+            .remove(0);
+
+        database
+            .reorder_local_routing_keys(vec![second_key.id.clone(), first_key.id.clone()])
+            .expect("persist routing order");
+        let new_key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: first_station.id,
+                name: "New appended key".to_string(),
+                api_key: "sk-new-appended".to_string(),
+                enabled: true,
+                priority: Some(0),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect("new key");
+
+        let workspace = database
+            .load_local_routing_workspace(crate::models::proxy::ProxyStatus {
+                running: false,
+                bind_addr: "127.0.0.1".to_string(),
+                port: 8787,
+                started_at: None,
+                last_error: None,
+                active_requests: 0,
+                request_count: 0,
+            })
+            .expect("workspace");
+        let ids = workspace
+            .candidates
+            .iter()
+            .map(|candidate| candidate.station_key_id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ids,
+            vec![
+                second_key.id.as_str(),
+                first_key.id.as_str(),
+                new_key.id.as_str()
             ]
         );
     }
