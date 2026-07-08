@@ -1,8 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
+import type { LocalRoutingWorkspace, ReorderLocalRoutingKeysInput } from "@/lib/types/localRouting";
 
 export function loadLocalRoutingWorkspaceApi() {
   return invoke<LocalRoutingWorkspace>("load_local_routing_workspace").catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return previewWorkspace();
+    }
+    throw error;
+  });
+}
+
+export function reorderLocalRoutingKeys(input: ReorderLocalRoutingKeysInput) {
+  return invoke<LocalRoutingWorkspace>("reorder_local_routing_keys", { input }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       return previewWorkspace();
     }

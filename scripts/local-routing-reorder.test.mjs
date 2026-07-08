@@ -1,0 +1,28 @@
+import { readFileSync } from "node:fs";
+import assert from "node:assert/strict";
+
+const typeSource = readFileSync("src/lib/types/localRouting.ts", "utf8");
+const apiSource = readFileSync("src/lib/api/localRouting.ts", "utf8");
+const commandSource = readFileSync("src-tauri/src/commands/mod.rs", "utf8");
+const libSource = readFileSync("src-tauri/src/lib.rs", "utf8");
+
+assert.match(typeSource, /export type ReorderLocalRoutingKeysInput = \{/);
+assert.match(typeSource, /stationKeyIds: string\[\]/);
+
+assert.match(apiSource, /reorderLocalRoutingKeys\(input: ReorderLocalRoutingKeysInput\)/);
+assert.match(
+  apiSource,
+  /invoke<LocalRoutingWorkspace>\("reorder_local_routing_keys", \{ input \}\)/,
+);
+assert.match(apiSource, /isInvokeUnavailable/);
+
+assert.match(commandSource, /struct ReorderLocalRoutingKeysInput/);
+assert.match(commandSource, /pub station_key_ids: Vec<String>/);
+assert.match(commandSource, /pub fn reorder_local_routing_keys/);
+assert.match(commandSource, /database\.reorder_local_routing_keys\(input\.station_key_ids\)/);
+assert.match(libSource, /commands::reorder_local_routing_keys/);
+
+assert.equal(typeSource.includes("权重"), false, "local routing types must not expose 权重 copy");
+assert.equal(apiSource.includes("权重"), false, "local routing API must not expose 权重 copy");
+
+console.log("local routing reorder boundary ok");

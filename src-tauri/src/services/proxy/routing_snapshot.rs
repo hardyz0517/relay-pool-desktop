@@ -22,7 +22,6 @@ pub(crate) struct LocalRoutingReadCandidate {
     pub(crate) station_id: String,
     pub(crate) station_name: String,
     pub(crate) key_name: String,
-    pub(crate) priority: i64,
     pub(crate) capabilities: StationKeyCapabilities,
     pub(crate) health: Option<StationKeyHealth>,
     pub(crate) economics: Option<RouteCandidateEconomics>,
@@ -80,7 +79,7 @@ fn candidate_row(index: usize, candidate: &LocalRoutingReadCandidate) -> LocalRo
     facts.push(DecisionFact {
         kind: DecisionFactKind::Policy,
         label: "Priority".to_string(),
-        value: format!("#{}", candidate.priority + 1),
+        value: format!("#{}", index + 1),
         severity: DecisionFactSeverity::Info,
     });
     facts.push(DecisionFact {

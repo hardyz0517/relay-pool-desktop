@@ -761,6 +761,93 @@ impl AppDatabase {
         list_station_keys_from_connection(&connection, &station_id)
     }
 
+    pub fn reorder_local_routing_keys(&self, station_key_ids: Vec<String>) -> Result<(), String> {
+        if station_key_ids.is_empty() {
+            return Err("Local routing order cannot be empty".to_string());
+        }
+
+        let mut seen = HashSet::new();
+        for id in &station_key_ids {
+            if !seen.insert(id) {
+                return Err(format!(
+                    "Duplicate Station Key in local routing order: {id}"
+                ));
+            }
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("Start local routing reorder transaction failed: {error}"))?;
+        for id in &station_key_ids {
+            let exists = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM station_keys WHERE id = ?1)",
+                    params![id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| format!("Validate local routing key failed: {error}"))?;
+            if exists == 0 {
+                return Err(format!(
+                    "Station Key does not exist for local routing order: {id}"
+                ));
+            }
+        }
+
+        let remaining_ids = transaction
+            .prepare(
+                "SELECT id
+                   FROM station_keys
+                  ORDER BY COALESCE(routing_order, priority) ASC,
+                           priority ASC,
+                           created_at ASC,
+                           id ASC",
+            )
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .map_err(|error| format!("Read remaining local routing keys failed: {error}"))?;
+        let requested_ids = station_key_ids.iter().collect::<HashSet<_>>();
+        let remaining_ids = remaining_ids
+            .into_iter()
+            .filter(|id| !requested_ids.contains(id))
+            .collect::<Vec<_>>();
+
+        for (index, id) in station_key_ids.iter().enumerate() {
+            let updated = transaction
+                .execute(
+                    "UPDATE station_keys
+                        SET routing_order = ?1,
+                            updated_at = ?2
+                      WHERE id = ?3",
+                    params![index as i64, now_string(), id],
+                )
+                .map_err(|error| format!("Update local routing order failed: {error}"))?;
+            if updated == 0 {
+                return Err(format!(
+                    "Station Key does not exist for local routing order: {id}"
+                ));
+            }
+        }
+        for (offset, id) in remaining_ids.iter().enumerate() {
+            transaction
+                .execute(
+                    "UPDATE station_keys
+                        SET routing_order = ?1,
+                            updated_at = ?2
+                      WHERE id = ?3",
+                    params![(station_key_ids.len() + offset) as i64, now_string(), id],
+                )
+                .map_err(|error| format!("Append remaining local routing order failed: {error}"))?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("Save local routing order failed: {error}"))?;
+        Ok(())
+    }
+
     pub fn list_key_pool_items(&self) -> Result<Vec<KeyPoolItem>, String> {
         let connection = self.connection()?;
         list_key_pool_items_from_connection(&connection)
@@ -1528,6 +1615,7 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             api_key TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1,
             priority INTEGER NOT NULL DEFAULT 0,
+            routing_order INTEGER,
             group_name TEXT,
             tier_label TEXT,
             status TEXT NOT NULL DEFAULT 'unchecked',
@@ -2028,6 +2116,13 @@ fn migrate_p9_fact_schema(connection: &Connection) -> rusqlite::Result<()> {
     add_column_if_missing(connection, "station_keys", "rate_source", "TEXT")?;
     add_column_if_missing(connection, "station_keys", "rate_collected_at", "TEXT")?;
     add_column_if_missing(connection, "station_keys", "balance_scope", "TEXT")?;
+    add_column_if_missing(connection, "station_keys", "routing_order", "INTEGER")?;
+    initialize_local_routing_order(connection)?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_station_keys_routing_order
+            ON station_keys(routing_order ASC, priority ASC, created_at ASC, id ASC)",
+        [],
+    )?;
 
     add_column_if_missing(connection, "pricing_rules", "station_key_id", "TEXT")?;
     add_column_if_missing(connection, "pricing_rules", "group_binding_id", "TEXT")?;
@@ -2103,6 +2198,60 @@ fn add_column_if_missing(
         connection.execute(
             &format!("ALTER TABLE {table} ADD COLUMN {column} {column_type}"),
             [],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn initialize_local_routing_order(connection: &Connection) -> rusqlite::Result<()> {
+    let missing_count = connection.query_row(
+        "SELECT COUNT(*) FROM station_keys WHERE routing_order IS NULL",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    if missing_count == 0 {
+        return Ok(());
+    }
+
+    let existing_count = connection.query_row(
+        "SELECT COUNT(*) FROM station_keys WHERE routing_order IS NOT NULL",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let (start_order, query) = if existing_count == 0 {
+        (
+            0,
+            "SELECT id
+               FROM station_keys
+              ORDER BY priority ASC, created_at ASC, id ASC",
+        )
+    } else {
+        let next_order = connection.query_row(
+            "SELECT COALESCE(MAX(routing_order), -1) + 1 FROM station_keys",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        (
+            next_order,
+            "SELECT id
+               FROM station_keys
+              WHERE routing_order IS NULL
+              ORDER BY priority ASC, created_at ASC, id ASC",
+        )
+    };
+    let mut statement = connection.prepare(query)?;
+    let ids = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (index, id) in ids.iter().enumerate() {
+        connection.execute(
+            "UPDATE station_keys
+                SET routing_order = ?1
+              WHERE id = ?2
+                AND routing_order IS NULL",
+            params![start_order + index as i64, id],
         )?;
     }
 
@@ -5220,13 +5369,16 @@ fn proxy_route_candidates_from_connection_with_data_key(
     let mut statement = connection
         .prepare(
             "SELECT k.id, k.station_id, s.base_url, k.api_key, k.api_key_secret_id,
-                    s.upstream_api_format, k.priority
+                    s.upstream_api_format, COALESCE(k.routing_order, k.priority)
                FROM station_keys k
                JOIN stations s ON s.id = k.station_id
               WHERE k.enabled = 1
                 AND s.enabled = 1
                 AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
-              ORDER BY k.priority ASC, k.created_at ASC",
+              ORDER BY COALESCE(k.routing_order, k.priority) ASC,
+                       k.priority ASC,
+                       k.created_at ASC,
+                       k.id ASC",
         )
         .map_err(|error| format!("读取 Key 池候选失败: {error}"))?;
     let rows = statement
@@ -5286,7 +5438,7 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                 k.api_key,
                 k.api_key_secret_id,
                 s.upstream_api_format,
-                k.priority,
+                COALESCE(k.routing_order, k.priority),
                 s.name,
                 k.name,
                 COALESCE(c.supports_chat_completions, 1),
@@ -5319,7 +5471,10 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
              WHERE k.enabled = 1
                AND s.enabled = 1
                AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
-             ORDER BY k.priority ASC, k.created_at ASC",
+             ORDER BY COALESCE(k.routing_order, k.priority) ASC,
+                      k.priority ASC,
+                      k.created_at ASC,
+                      k.id ASC",
         )
         .map_err(|error| format!("读取富路由候选失败: {error}"))?;
 
@@ -5403,7 +5558,6 @@ fn local_routing_read_candidates_from_connection(
             "SELECT
                 k.id,
                 k.station_id,
-                k.priority,
                 s.name,
                 k.name,
                 COALESCE(c.supports_chat_completions, 1),
@@ -5436,7 +5590,10 @@ fn local_routing_read_candidates_from_connection(
              WHERE k.enabled = 1
                AND s.enabled = 1
                AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
-             ORDER BY k.priority ASC, k.created_at ASC",
+             ORDER BY COALESCE(k.routing_order, k.priority) ASC,
+                      k.priority ASC,
+                      k.created_at ASC,
+                      k.id ASC",
         )
         .map_err(|error| format!("读取本地路由读模型候选失败: {error}"))?;
 
@@ -5444,40 +5601,39 @@ fn local_routing_read_candidates_from_connection(
         .query_map([], |row| {
             let station_key_id = row.get::<_, String>(0)?;
             let station_id = row.get::<_, String>(1)?;
-            let health_station_key_id = row.get::<_, Option<String>>(18)?;
+            let health_station_key_id = row.get::<_, Option<String>>(17)?;
             Ok(LocalRoutingReadCandidate {
                 station_key_id: station_key_id.clone(),
                 station_id,
-                priority: row.get(2)?,
-                station_name: row.get(3)?,
-                key_name: row.get(4)?,
+                station_name: row.get(2)?,
+                key_name: row.get(3)?,
                 capabilities: StationKeyCapabilities {
                     station_key_id,
-                    supports_chat_completions: i64_to_bool(row.get(5)?),
-                    supports_responses: i64_to_bool(row.get(6)?),
-                    supports_embeddings: i64_to_bool(row.get(7)?),
-                    supports_stream: i64_to_bool(row.get(8)?),
-                    supports_tools: i64_to_bool(row.get(9)?),
-                    supports_vision: i64_to_bool(row.get(10)?),
-                    supports_reasoning: i64_to_bool(row.get(11)?),
-                    model_allowlist: parse_json_string_list(row.get::<_, String>(12)?.as_str()),
-                    model_blocklist: parse_json_string_list(row.get::<_, String>(13)?.as_str()),
-                    preferred_models: parse_json_string_list(row.get::<_, String>(14)?.as_str()),
-                    only_use_as_backup: i64_to_bool(row.get(15)?),
-                    routing_tags: parse_json_string_list(row.get::<_, String>(16)?.as_str()),
-                    updated_at: row.get(17)?,
+                    supports_chat_completions: i64_to_bool(row.get(4)?),
+                    supports_responses: i64_to_bool(row.get(5)?),
+                    supports_embeddings: i64_to_bool(row.get(6)?),
+                    supports_stream: i64_to_bool(row.get(7)?),
+                    supports_tools: i64_to_bool(row.get(8)?),
+                    supports_vision: i64_to_bool(row.get(9)?),
+                    supports_reasoning: i64_to_bool(row.get(10)?),
+                    model_allowlist: parse_json_string_list(row.get::<_, String>(11)?.as_str()),
+                    model_blocklist: parse_json_string_list(row.get::<_, String>(12)?.as_str()),
+                    preferred_models: parse_json_string_list(row.get::<_, String>(13)?.as_str()),
+                    only_use_as_backup: i64_to_bool(row.get(14)?),
+                    routing_tags: parse_json_string_list(row.get::<_, String>(15)?.as_str()),
+                    updated_at: row.get(16)?,
                 },
                 health: health_station_key_id.map(|station_key_id| StationKeyHealth {
                     station_key_id,
-                    last_success_at: row.get(19).ok().flatten(),
-                    last_failure_at: row.get(20).ok().flatten(),
-                    consecutive_failures: row.get(21).unwrap_or(0),
-                    success_count: row.get(22).unwrap_or(0),
-                    failure_count: row.get(23).unwrap_or(0),
-                    avg_latency_ms: row.get(24).ok().flatten(),
-                    last_error_summary: row.get(25).ok().flatten(),
-                    cooldown_until: row.get(26).ok().flatten(),
-                    updated_at: row.get(27).unwrap_or_else(|_| "0".to_string()),
+                    last_success_at: row.get(18).ok().flatten(),
+                    last_failure_at: row.get(19).ok().flatten(),
+                    consecutive_failures: row.get(20).unwrap_or(0),
+                    success_count: row.get(21).unwrap_or(0),
+                    failure_count: row.get(22).unwrap_or(0),
+                    avg_latency_ms: row.get(23).ok().flatten(),
+                    last_error_summary: row.get(24).ok().flatten(),
+                    cooldown_until: row.get(25).ok().flatten(),
+                    updated_at: row.get(26).unwrap_or_else(|_| "0".to_string()),
                 }),
                 economics: None,
             })
@@ -10797,6 +10953,102 @@ mod tests {
         assert_eq!(loaded.model_blocklist, vec!["gpt-4o"]);
         assert!(loaded.supports_tools);
         assert!(loaded.supports_reasoning);
+    }
+
+    #[test]
+    fn local_routing_order_migration_initializes_global_order_without_changing_priority() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE stations (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    station_type TEXT NOT NULL,
+                    base_url TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    upstream_api_format TEXT NOT NULL DEFAULT 'auto',
+                    upstream_api_base_path TEXT NOT NULL DEFAULT '/v1',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    credit_per_cny REAL NOT NULL DEFAULT 1,
+                    balance_raw REAL,
+                    balance_cny REAL,
+                    low_balance_threshold_cny REAL,
+                    collection_interval_minutes INTEGER NOT NULL DEFAULT 5,
+                    status TEXT NOT NULL DEFAULT 'unchecked',
+                    latency_ms INTEGER,
+                    last_checked_at TEXT,
+                    last_pricing_fetched_at TEXT,
+                    note TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE station_keys (
+                    id TEXT PRIMARY KEY,
+                    station_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    group_name TEXT,
+                    tier_label TEXT,
+                    status TEXT NOT NULL DEFAULT 'unchecked',
+                    last_checked_at TEXT,
+                    last_used_at TEXT,
+                    note TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE
+                );
+
+                INSERT INTO stations (
+                    id, name, station_type, base_url, api_key, created_at, updated_at
+                ) VALUES
+                    ('station-a', 'Station A', 'openai-compatible', 'https://a.test', 'sk-a', '1000', '1000'),
+                    ('station-b', 'Station B', 'openai-compatible', 'https://b.test', 'sk-b', '1000', '1000');
+
+                INSERT INTO station_keys (
+                    id, station_id, name, api_key, enabled, priority, created_at, updated_at
+                ) VALUES
+                    ('key-third', 'station-a', 'third', 'sk-third', 1, 2, '1000', '1000'),
+                    ('key-second', 'station-b', 'second', 'sk-second', 1, 1, '1000', '1000'),
+                    ('key-first', 'station-a', 'first', 'sk-first', 1, 1, '0500', '0500'),
+                    ('key-fourth', 'station-b', 'fourth', 'sk-fourth', 1, 2, '1000', '1000');
+                ",
+            )
+            .expect("legacy schema");
+
+        initialize_schema(&connection).expect("migrate schema");
+
+        let rows = connection
+            .prepare(
+                "SELECT id, priority, routing_order
+                   FROM station_keys
+                  ORDER BY routing_order ASC",
+            )
+            .expect("select station keys")
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .expect("query station keys")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("station key rows");
+
+        assert_eq!(
+            rows,
+            vec![
+                ("key-first".to_string(), 1, 0),
+                ("key-second".to_string(), 1, 1),
+                ("key-fourth".to_string(), 2, 2),
+                ("key-third".to_string(), 2, 3),
+            ]
+        );
     }
 
     #[test]

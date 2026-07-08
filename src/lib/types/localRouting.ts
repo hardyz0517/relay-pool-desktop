@@ -84,3 +84,7 @@ export type LocalRoutingWorkspace = {
   latestDecision: RouteDecisionSummary | null;
   recentEvents: RouteDecisionEvent[];
 };
+
+export type ReorderLocalRoutingKeysInput = {
+  stationKeyIds: string[];
+};

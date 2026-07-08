@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose, Engine as _};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -201,6 +201,24 @@ pub fn load_local_routing_workspace(
     database: State<'_, AppDatabase>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<crate::services::proxy::routing_types::LocalRoutingWorkspace, String> {
+    let settings = database.get_settings()?;
+    let proxy_status = proxy.status(settings.local_proxy_port);
+    database.load_local_routing_workspace(proxy_status)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReorderLocalRoutingKeysInput {
+    pub station_key_ids: Vec<String>,
+}
+
+#[tauri::command]
+pub fn reorder_local_routing_keys(
+    database: State<'_, AppDatabase>,
+    proxy: State<'_, ProxyRuntimeState>,
+    input: ReorderLocalRoutingKeysInput,
+) -> Result<crate::services::proxy::routing_types::LocalRoutingWorkspace, String> {
+    database.reorder_local_routing_keys(input.station_key_ids)?;
     let settings = database.get_settings()?;
     let proxy_status = proxy.status(settings.local_proxy_port);
     database.load_local_routing_workspace(proxy_status)
