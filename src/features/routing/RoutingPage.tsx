@@ -16,6 +16,7 @@ import {
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { formatRate } from "@/lib/formatters";
+import { loadLocalRoutingWorkspace } from "@/lib/queries/localRoutingQueries";
 import { loadRoutingWorkspace } from "@/lib/queries/routingQueries";
 import {
   deleteModelAlias,
@@ -32,8 +33,11 @@ import type {
   RoutingPolicy,
   UpsertModelAliasInput,
 } from "@/lib/types/routing";
+import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
 import { routingStrategyLabels, type AppSettings } from "@/lib/types/settings";
 import { cn } from "@/lib/utils";
+import { LocalRoutingEditTab } from "./LocalRoutingEditTab";
+import { LocalRoutingStatusTab } from "./LocalRoutingStatusTab";
 
 const policyOptions: RoutingPolicy[] = ["priority_fallback", "stable_first", "backup_only", "cheap_first"];
 
@@ -82,9 +86,13 @@ const defaultSimulation: RouteSimulationInput = {
   policy: null,
 };
 
+type LocalRoutingTab = "status" | "edit";
+
 export function RoutingPage() {
   const toast = useToast();
+  const [activeTab, setActiveTab] = useState<LocalRoutingTab>("status");
   const [settings, setSettings] = useState<AppSettings>(fallbackSettings);
+  const [localWorkspace, setLocalWorkspace] = useState<LocalRoutingWorkspace | null>(null);
   const [aliases, setAliases] = useState<ModelAlias[]>([]);
   const [aliasForm, setAliasForm] = useState<UpsertModelAliasInput>(emptyAliasForm);
   const [simulation, setSimulation] = useState<RouteSimulationInput>(defaultSimulation);
@@ -111,9 +119,13 @@ export function RoutingPage() {
     setLoading(true);
     setError(null);
     try {
-      const workspace = await loadRoutingWorkspace();
-      setSettings(workspace.settings);
-      setAliases(workspace.modelAliases);
+      const [routingWorkspace, nextLocalWorkspace] = await Promise.all([
+        loadRoutingWorkspace(),
+        loadLocalRoutingWorkspace(),
+      ]);
+      setSettings(routingWorkspace.settings);
+      setAliases(routingWorkspace.modelAliases);
+      setLocalWorkspace(nextLocalWorkspace);
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
@@ -235,16 +247,33 @@ export function RoutingPage() {
   }
 
   return (
-      <PageScaffold
-        title="路由规则"
+    <PageScaffold
+      title="路由规则"
       actions={
-        <Button disabled={loading || saving} variant="secondary" onClick={() => void refresh()}>
-          <RefreshCcw className="h-4 w-4" />
-          刷新
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <SegmentedControl
+            ariaLabel="本地路由页面"
+            value={activeTab}
+            options={[
+              { value: "status", label: "状态" },
+              { value: "edit", label: "编辑" },
+            ]}
+            onChange={setActiveTab}
+          />
+          <Button disabled={loading || saving} variant="secondary" onClick={() => void refresh()}>
+            <RefreshCcw className="h-4 w-4" />
+            刷新
+          </Button>
+        </div>
       }
     >
       <div className="grid gap-3">
+        {activeTab === "status" ? (
+          <LocalRoutingStatusTab loading={loading} workspace={localWorkspace} />
+        ) : (
+          <LocalRoutingEditTab loading={loading} workspace={localWorkspace} />
+        )}
+
         <div className="grid gap-3">
           <SectionCard title="默认策略">
             <div className="flex flex-wrap items-center gap-3">
