@@ -391,7 +391,7 @@ pub fn create_remote_key(
         body["group"] = json!(group_name);
     }
     if let Some(group_id) = remote_group_id_for_create(database, &input)? {
-        body["group_id"] = json!(group_id);
+        body["group_id"] = sub2api_group_id_value(&group_id);
     }
 
     let result = post_json_with_bearer(&url, &access_token, &body);
@@ -607,6 +607,16 @@ fn remote_group_id_for_create(
         .and_then(|binding| binding.group_id_hash)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty()))
+}
+
+fn sub2api_group_id_value(group_id: &str) -> Value {
+    let trimmed = group_id.trim();
+    if let Ok(numeric_id) = trimmed.parse::<i64>() {
+        if numeric_id.to_string() == trimmed {
+            return json!(numeric_id);
+        }
+    }
+    json!(trimmed)
 }
 
 fn remote_key_from_create_input(
@@ -1590,6 +1600,80 @@ mod tests {
         assert_eq!(request["name"], "Grouped remote key");
         assert_eq!(request["group"], "Pro");
         assert_eq!(request["group_id"], "pro");
+    }
+
+    #[test]
+    fn create_remote_key_posts_numeric_group_id_as_number() {
+        let server = TestCreateKeyServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station(CreateStationInput {
+                name: "create remote key numeric station".to_string(),
+                station_type: "sub2api".to_string(),
+                base_url: server.base_url.clone(),
+                api_key: "sk-station".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+        database
+            .update_station_session_with_data_key(
+                UpdateStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: Some("remote-key-token".to_string()),
+                    refresh_token: None,
+                    cookie: None,
+                    newapi_user_id: None,
+                    token_expires_at: None,
+                },
+                &data_key,
+            )
+            .expect("session");
+        let group = database
+            .upsert_station_group_binding(
+                crate::models::group_facts::UpsertStationGroupBindingInput {
+                    station_id: station.id.clone(),
+                    station_key_id: None,
+                    binding_kind: crate::models::group_facts::BINDING_KIND_STATION_GROUP
+                        .to_string(),
+                    parent_group_binding_id: None,
+                    group_key_hash: "collector-sub2api-plus".to_string(),
+                    group_id_hash: Some("8".to_string()),
+                    group_name: "Plus".to_string(),
+                    binding_status: crate::models::group_facts::BINDING_STATUS_AVAILABLE
+                        .to_string(),
+                    default_rate_multiplier: Some(0.035),
+                    user_rate_multiplier: None,
+                    effective_rate_multiplier: Some(0.035),
+                    rate_source: Some("sub2api_groups_rates".to_string()),
+                    confidence: 0.95,
+                    last_seen_at: Some("1000".to_string()),
+                    raw_json_redacted: None,
+                },
+            )
+            .expect("group");
+
+        create_remote_key(
+            &database,
+            &data_key,
+            CreateRemoteStationKeyInput {
+                station_id: station.id,
+                name: "Numeric grouped remote key".to_string(),
+                group_binding_id: Some(group.id),
+                group_id_hash: Some("collector-sub2api-plus".to_string()),
+                group_name: Some("Plus".to_string()),
+            },
+        )
+        .expect("create remote key");
+        let request = server.request_body();
+
+        assert_eq!(request["name"], "Numeric grouped remote key");
+        assert_eq!(request["group"], "Plus");
+        assert_eq!(request["group_id"], json!(8));
     }
 
     #[test]
