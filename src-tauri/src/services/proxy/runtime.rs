@@ -642,6 +642,7 @@ fn route_request_for_chat(
         uses_vision: uses_vision(body),
         uses_reasoning: uses_reasoning(body, model.as_deref()),
         policy,
+        current_station_key_id: None,
         allow_depleted_fallback,
         now_ms: now_millis_for_services() as i64,
     }
@@ -662,6 +663,7 @@ fn route_request_for_responses(
         uses_vision: uses_vision(body),
         uses_reasoning: uses_reasoning(body, model.as_deref()),
         policy,
+        current_station_key_id: None,
         allow_depleted_fallback,
         now_ms: now_millis_for_services() as i64,
     }
@@ -690,6 +692,7 @@ fn parse_routing_policy(value: &str) -> RoutingPolicy {
         "stable_first" | "stable" => RoutingPolicy::StableFirst,
         "backup_only" => RoutingPolicy::BackupOnly,
         "cheap_first" => RoutingPolicy::CheapFirst,
+        "cost_stable_first" => RoutingPolicy::CostStableFirst,
         _ => RoutingPolicy::PriorityFallback,
     }
 }
@@ -785,6 +788,7 @@ fn routing_policy_label(policy: &RoutingPolicy) -> &'static str {
         RoutingPolicy::StableFirst => "stable_first",
         RoutingPolicy::BackupOnly => "backup_only",
         RoutingPolicy::CheapFirst => "cheap_first",
+        RoutingPolicy::CostStableFirst => "cost_stable_first",
     }
 }
 

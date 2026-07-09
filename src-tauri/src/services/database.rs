@@ -6612,6 +6612,7 @@ fn simulate_route_in_connection(
         uses_vision: input.uses_vision,
         uses_reasoning: input.uses_reasoning,
         policy: policy.clone(),
+        current_station_key_id: None,
         allow_depleted_fallback,
         now_ms: now_millis_for_services() as i64,
     };
@@ -6651,6 +6652,7 @@ fn parse_routing_policy_value(value: &str) -> RoutingPolicy {
         "stable_first" | "stable" => RoutingPolicy::StableFirst,
         "backup_only" => RoutingPolicy::BackupOnly,
         "cheap_first" => RoutingPolicy::CheapFirst,
+        "cost_stable_first" => RoutingPolicy::CostStableFirst,
         _ => RoutingPolicy::PriorityFallback,
     }
 }

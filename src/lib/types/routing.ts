@@ -1,4 +1,9 @@
-export type RoutingPolicy = "priority_fallback" | "stable_first" | "backup_only" | "cheap_first";
+export type RoutingPolicy =
+  | "priority_fallback"
+  | "stable_first"
+  | "backup_only"
+  | "cheap_first"
+  | "cost_stable_first";
 export type RouteEndpointKind = "models" | "chat_completions" | "responses" | "embeddings";
 
 export type StationKeyCapabilities = {

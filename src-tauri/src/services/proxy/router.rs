@@ -17,6 +17,7 @@ pub struct RouteRequest {
     pub uses_vision: bool,
     pub uses_reasoning: bool,
     pub policy: RoutingPolicy,
+    pub current_station_key_id: Option<String>,
     pub allow_depleted_fallback: bool,
     pub now_ms: i64,
 }
@@ -347,6 +348,109 @@ mod tests {
         assert_eq!(selected.accepted[0].candidate.station_key_id, "empty");
     }
 
+    #[test]
+    fn cost_stable_first_keeps_current_key_when_price_delta_is_small() {
+        let mut request = route_request(
+            RouteEndpointKind::ChatCompletions,
+            Some("gpt-5.4"),
+            false,
+            RoutingPolicy::CostStableFirst,
+        );
+        request.current_station_key_id = Some("current".to_string());
+        let candidates = vec![
+            rich_candidate_with_economics(
+                "cheaper",
+                1,
+                capabilities(|_| {}),
+                economics(Some(0.005), Some(0.006), Some(20.0), Some(1.0), "normal"),
+            ),
+            rich_candidate_with_economics(
+                "current",
+                2,
+                capabilities(|_| {}),
+                economics(Some(0.006), Some(0.006), Some(20.0), Some(1.0), "normal"),
+            ),
+        ];
+
+        let selected = select_route_candidates(&request, candidates, &[]).expect("selection");
+
+        assert_eq!(selected.accepted[0].candidate.station_key_id, "current");
+        assert!(selected.explanations.iter().any(|item| {
+            item.station_key_id == "current"
+                && item
+                    .economic_reasons
+                    .iter()
+                    .any(|reason| reason.contains("stability"))
+        }));
+    }
+
+    #[test]
+    fn cost_stable_first_switches_when_current_key_has_hard_failure() {
+        let mut request = route_request(
+            RouteEndpointKind::ChatCompletions,
+            Some("gpt-5.4"),
+            false,
+            RoutingPolicy::CostStableFirst,
+        );
+        request.current_station_key_id = Some("current".to_string());
+        let candidates = vec![
+            rich_candidate_with_economics(
+                "fallback",
+                1,
+                capabilities(|_| {}),
+                economics(Some(0.007), Some(0.004), Some(20.0), Some(1.0), "normal"),
+            ),
+            rich_candidate_with_economics(
+                "current",
+                2,
+                capabilities(|capabilities| {
+                    capabilities.model_blocklist = vec!["gpt-5.4".to_string()];
+                }),
+                economics(Some(0.006), Some(0.006), Some(20.0), Some(1.0), "normal"),
+            ),
+        ];
+
+        let selected = select_route_candidates(&request, candidates, &[]).expect("selection");
+
+        assert_eq!(selected.accepted[0].candidate.station_key_id, "fallback");
+        assert!(selected.explanations.iter().any(|item| {
+            item.station_key_id == "current"
+                && item
+                    .rejection_reasons
+                    .iter()
+                    .any(|reason| reason.contains("blocklisted"))
+        }));
+    }
+
+    #[test]
+    fn cost_stable_first_switches_when_price_delta_is_significant() {
+        let mut request = route_request(
+            RouteEndpointKind::ChatCompletions,
+            Some("gpt-5.4"),
+            false,
+            RoutingPolicy::CostStableFirst,
+        );
+        request.current_station_key_id = Some("current".to_string());
+        let candidates = vec![
+            rich_candidate_with_economics(
+                "current",
+                1,
+                capabilities(|_| {}),
+                economics(Some(0.020), Some(0.020), Some(20.0), Some(1.0), "normal"),
+            ),
+            rich_candidate_with_economics(
+                "cheaper",
+                2,
+                capabilities(|_| {}),
+                economics(Some(0.005), Some(0.006), Some(20.0), Some(1.0), "normal"),
+            ),
+        ];
+
+        let selected = select_route_candidates(&request, candidates, &[]).expect("selection");
+
+        assert_eq!(selected.accepted[0].candidate.station_key_id, "cheaper");
+    }
+
     fn route_request(
         endpoint: RouteEndpointKind,
         model: Option<&str>,
@@ -361,6 +465,7 @@ mod tests {
             uses_vision: false,
             uses_reasoning: false,
             policy,
+            current_station_key_id: None,
             allow_depleted_fallback: false,
             now_ms: 1_800_000_000_000,
         }

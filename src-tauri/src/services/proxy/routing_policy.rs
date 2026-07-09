@@ -5,6 +5,16 @@ use crate::{
     },
 };
 
+const COST_STABLE_RELATIVE_DELTA_THRESHOLD: f64 = 0.10;
+const COST_STABLE_ABSOLUTE_DELTA_THRESHOLD: f64 = 0.0001;
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct CandidateRank {
+    score: i64,
+    priority: i64,
+    station_key_id: String,
+}
+
 pub fn select_route_candidates(
     request: &RouteRequest,
     candidates: Vec<RichRouteCandidate>,
@@ -103,12 +113,13 @@ pub fn select_route_candidates(
         explanations.push(explanation);
     }
 
+    let stable_current_key_id = stable_current_key_id(request, &accepted);
+    if let Some(stable_current_key_id) = stable_current_key_id.as_deref() {
+        add_stability_reason(&mut explanations, stable_current_key_id);
+    }
+
     accepted.sort_by_key(|(score, candidate)| {
-        (
-            *score,
-            candidate.candidate.priority,
-            candidate.candidate.station_key_id.clone(),
-        )
+        candidate_rank(request, *score, candidate, stable_current_key_id.as_deref())
     });
 
     Ok(RouteSelection {
@@ -119,6 +130,73 @@ pub fn select_route_candidates(
         explanations,
         mapped_model,
     })
+}
+
+fn candidate_rank(
+    request: &RouteRequest,
+    score: i64,
+    candidate: &RichRouteCandidate,
+    stable_current_key_id: Option<&str>,
+) -> CandidateRank {
+    let score = if matches!(request.policy, RoutingPolicy::CostStableFirst)
+        && stable_current_key_id == Some(candidate.candidate.station_key_id.as_str())
+    {
+        i64::MIN / 2
+    } else {
+        score
+    };
+
+    CandidateRank {
+        score,
+        priority: candidate.candidate.priority,
+        station_key_id: candidate.candidate.station_key_id.clone(),
+    }
+}
+
+fn stable_current_key_id(
+    request: &RouteRequest,
+    accepted: &[(i64, RichRouteCandidate)],
+) -> Option<String> {
+    if !matches!(request.policy, RoutingPolicy::CostStableFirst) {
+        return None;
+    }
+    let current_station_key_id = request.current_station_key_id.as_deref()?;
+    let current = accepted
+        .iter()
+        .find(|(_, candidate)| candidate.candidate.station_key_id == current_station_key_id)?;
+    let current_cost = normalized_estimated_cost(&current.1)?;
+    let best_cost = accepted
+        .iter()
+        .filter_map(|(_, candidate)| normalized_estimated_cost(candidate))
+        .min_by(|left, right| left.total_cmp(right))?;
+    let delta = current_cost - best_cost;
+    if delta <= 0.0 || cost_delta_is_small(delta, best_cost) {
+        Some(current_station_key_id.to_string())
+    } else {
+        None
+    }
+}
+
+fn normalized_estimated_cost(candidate: &RichRouteCandidate) -> Option<f64> {
+    let economics = candidate.economics.as_ref()?;
+    (economics.normalization_status.as_deref() == Some("complete"))
+        .then(|| estimated_cost(economics))
+}
+
+fn cost_delta_is_small(delta: f64, best_cost: f64) -> bool {
+    delta <= COST_STABLE_ABSOLUTE_DELTA_THRESHOLD
+        || (best_cost > 0.0 && delta / best_cost <= COST_STABLE_RELATIVE_DELTA_THRESHOLD)
+}
+
+fn add_stability_reason(explanations: &mut [RouteCandidateExplanation], station_key_id: &str) {
+    if let Some(explanation) = explanations
+        .iter_mut()
+        .find(|item| item.station_key_id == station_key_id)
+    {
+        explanation
+            .economic_reasons
+            .push("stability retained current key because price delta is small".to_string());
+    }
 }
 
 fn mapped_model(model: Option<&str>, aliases: &[(String, String)]) -> Option<String> {
@@ -240,7 +318,10 @@ fn candidate_score(
     }
 
     if let Some(economics) = candidate.economics.as_ref() {
-        if matches!(request.policy, RoutingPolicy::CheapFirst) {
+        if matches!(
+            request.policy,
+            RoutingPolicy::CheapFirst | RoutingPolicy::CostStableFirst
+        ) {
             score += cheap_first_score(economics);
         } else {
             score += balance_penalty(economics);
@@ -333,8 +414,10 @@ fn candidate_economic_reasons(
     }
 
     let estimated_cost = estimated_cost(economics);
-    if matches!(request.policy, RoutingPolicy::CheapFirst)
-        && economics.normalization_status.as_deref() == Some("complete")
+    if matches!(
+        request.policy,
+        RoutingPolicy::CheapFirst | RoutingPolicy::CostStableFirst
+    ) && economics.normalization_status.as_deref() == Some("complete")
     {
         reasons.push(format!("lower estimated cost {:.4}", estimated_cost));
     }

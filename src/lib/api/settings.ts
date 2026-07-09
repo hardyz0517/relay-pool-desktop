@@ -101,6 +101,9 @@ function normalizeRoutingStrategy(value: AppSettings["defaultRoutingStrategy"] |
   if (value === "cheap_first") {
     return "cheap_first";
   }
+  if (value === "cost_stable_first") {
+    return "cost_stable_first";
+  }
   return "priority_fallback";
 }
 

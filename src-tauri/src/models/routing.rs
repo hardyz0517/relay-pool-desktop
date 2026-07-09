@@ -7,6 +7,7 @@ pub enum RoutingPolicy {
     StableFirst,
     BackupOnly,
     CheapFirst,
+    CostStableFirst,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
