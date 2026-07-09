@@ -7,6 +7,7 @@ pub mod routing_affinity;
 pub mod routing_failure;
 pub mod routing_health;
 pub mod routing_policy;
+pub mod routing_probe;
 pub mod routing_snapshot;
 pub mod routing_types;
 pub mod runtime;
