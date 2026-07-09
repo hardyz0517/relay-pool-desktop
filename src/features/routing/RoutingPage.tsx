@@ -34,6 +34,7 @@ import type {
   UpsertModelAliasInput,
 } from "@/lib/types/routing";
 import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
+import type { AppRouteId } from "@/lib/types/navigation";
 import { routingStrategyLabels, type AppSettings } from "@/lib/types/settings";
 import { cn } from "@/lib/utils";
 import { LocalRoutingEditTab } from "./LocalRoutingEditTab";
@@ -87,8 +88,13 @@ const defaultSimulation: RouteSimulationInput = {
 };
 
 type LocalRoutingTab = "status" | "edit";
+type LocalRoutingLinkedPage = Extract<AppRouteId, "channels" | "logs">;
 
-export function RoutingPage() {
+type RoutingPageProps = {
+  onOpenPage?: (pageId: LocalRoutingLinkedPage) => void;
+};
+
+export function RoutingPage({ onOpenPage }: RoutingPageProps) {
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<LocalRoutingTab>("status");
   const [settings, setSettings] = useState<AppSettings>(fallbackSettings);
@@ -275,7 +281,7 @@ export function RoutingPage() {
     >
       <div className="grid gap-3">
         {activeTab === "status" ? (
-          <LocalRoutingStatusTab loading={loading} workspace={localWorkspace} />
+          <LocalRoutingStatusTab loading={loading} workspace={localWorkspace} onOpenPage={onOpenPage} />
         ) : (
           <LocalRoutingEditTab loading={loading} workspace={localWorkspace} />
         )}

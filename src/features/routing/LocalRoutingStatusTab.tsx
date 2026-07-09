@@ -1,15 +1,27 @@
-import { Clock3, Server, ShieldCheck } from "lucide-react";
-import { EmptyState, SectionCard, StatusBadge } from "@/components/ui";
+import { Activity, Clock3, ScrollText, Server, ShieldCheck } from "lucide-react";
+import { Button, EmptyState, SectionCard, StatusBadge } from "@/components/ui";
 import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
+import type { AppRouteId } from "@/lib/types/navigation";
 import { LocalRoutingCandidateRow } from "./LocalRoutingCandidateRow";
 import { RouteExplanationPanel } from "./RouteExplanationPanel";
+
+type LocalRoutingLinkedPage = Extract<AppRouteId, "channels" | "logs">;
 
 type LocalRoutingStatusTabProps = {
   workspace: LocalRoutingWorkspace | null;
   loading: boolean;
+  onOpenPage?: (pageId: LocalRoutingLinkedPage) => void;
 };
 
-export function LocalRoutingStatusTab({ workspace, loading }: LocalRoutingStatusTabProps) {
+export function LocalRoutingStatusTab({ workspace, loading, onOpenPage }: LocalRoutingStatusTabProps) {
+  function openLinkedPage(pageId: LocalRoutingLinkedPage) {
+    if (onOpenPage) {
+      onOpenPage(pageId);
+      return;
+    }
+    window.dispatchEvent(new CustomEvent("relay-pool:open-page", { detail: { pageId } }));
+  }
+
   if (loading && !workspace) {
     return (
       <SectionCard title="本地路由状态">
@@ -75,6 +87,17 @@ export function LocalRoutingStatusTab({ workspace, loading }: LocalRoutingStatus
           </div>
         </SectionCard>
       </div>
+
+      <SectionCard title="排障入口" contentClassName="flex flex-wrap gap-2">
+        <Button variant="secondary" onClick={() => openLinkedPage("channels")}>
+          <Activity className="h-4 w-4" />
+          渠道状态
+        </Button>
+        <Button variant="secondary" onClick={() => openLinkedPage("logs")}>
+          <ScrollText className="h-4 w-4" />
+          请求日志
+        </Button>
+      </SectionCard>
 
       <SectionCard title="候选顺位" contentClassName="grid gap-2">
         {workspace.candidates.length === 0 ? (
