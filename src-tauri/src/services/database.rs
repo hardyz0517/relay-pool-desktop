@@ -6798,7 +6798,7 @@ fn insert_request_log_in_connection(
         .map_err(|error| format!("保存请求日志失败: {error}"))?;
 
     let saved = request_log_by_id(connection, &id)?;
-    if saved.status == "failed" {
+    if matches!(saved.status.as_str(), "failed" | "interrupted") {
         if let Some(station_id) = saved.station_id.as_deref() {
             let event = crate::services::change_events::route_impacted_event(
                 station_id,
@@ -6811,7 +6811,11 @@ fn insert_request_log_in_connection(
                     .route_reason
                     .as_deref()
                     .or(saved.error_message.as_deref())
-                    .unwrap_or("路由请求失败"),
+                    .unwrap_or(if saved.status == "interrupted" {
+                        "路由流式响应中断"
+                    } else {
+                        "路由请求失败"
+                    }),
                 Some(saved.id.as_str()),
             );
             let _ = upsert_change_event_in_connection(connection, event);
@@ -11355,6 +11359,77 @@ mod tests {
             candidate.health_state,
             crate::services::proxy::routing_types::RouteHealthState::Offline
         );
+    }
+
+    #[test]
+    fn interrupted_request_log_is_not_reported_as_selected_route() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "interrupted-route");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+
+        database
+            .insert_request_log(CreateRequestLogInput {
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                model: Some("gpt-5.4".to_string()),
+                stream: true,
+                status: "interrupted".to_string(),
+                lifecycle_status: Some("interrupted".to_string()),
+                station_key_id: Some(key.id.clone()),
+                station_id: Some(station.id.clone()),
+                upstream_base_url: Some("https://example.test".to_string()),
+                fallback_count: 0,
+                error_message: Some("client disconnected before stream completed".to_string()),
+                route_policy: Some("priority_fallback".to_string()),
+                route_reason: None,
+                rejected_candidates_json: Some("[]".to_string()),
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+                estimated_input_cost: None,
+                estimated_output_cost: None,
+                estimated_total_cost: None,
+                cost_currency: None,
+                pricing_rule_id: None,
+                pricing_source: None,
+                cost_status: None,
+                group_binding_id: None,
+                normalization_status: None,
+                balance_scope: None,
+                economic_context_json: None,
+                started_at: "2000".to_string(),
+                finished_at: Some("2500".to_string()),
+                duration_ms: Some(500),
+            })
+            .expect("interrupted log");
+
+        let workspace = database
+            .load_local_routing_workspace(crate::models::proxy::ProxyStatus {
+                running: false,
+                bind_addr: "127.0.0.1".to_string(),
+                port: 8787,
+                started_at: None,
+                last_error: None,
+                active_requests: 0,
+                request_count: 0,
+            })
+            .expect("workspace");
+        let decision_id = workspace.recent_events[0].decision_id.clone();
+        let events = database.list_change_events().expect("events");
+
+        assert_eq!(
+            workspace.latest_decision.expect("latest decision").status,
+            crate::services::proxy::routing_types::RouteDecisionStatus::Failed
+        );
+        assert_eq!(workspace.recent_events[0].accepted, false);
+        assert!(workspace.recent_events[0].message.contains("interrupted"));
+        assert!(events.iter().any(|event| {
+            event.event_type == "route_impacted"
+                && event.request_log_id.as_deref() == Some(decision_id.as_str())
+        }));
     }
 
     #[test]

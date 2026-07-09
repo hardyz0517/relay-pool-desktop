@@ -2478,6 +2478,38 @@ mod tests {
     }
 
     #[test]
+    fn runtime_falls_back_after_key_scoped_hard_failure() {
+        let rejected = test_upstream_status(401, "Unauthorized", &[]);
+        let accepted = test_upstream_json_success("after-auth-failure", false);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key_a = create_test_station_key(&database, "auth-failed", &rejected.base_url);
+        let key_b = create_test_station_key(&database, "auth-fallback", &accepted.base_url);
+        database
+            .reorder_key_pool(vec![key_a.id.clone(), key_b.id.clone()])
+            .expect("reorder");
+
+        let context = proxy_context(database);
+        let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
+        let failed_health = context
+            .database
+            .get_station_key_health(key_a.id.clone())
+            .expect("failed key health");
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.station_key_id.as_deref(), Some(key_b.id.as_str()));
+        assert_eq!(response.fallback_count, 1);
+        assert!(rejected.was_called());
+        assert!(accepted.was_called());
+        assert!(failed_health
+            .last_error_summary
+            .as_deref()
+            .is_some_and(|summary| summary.contains("auth_error")));
+
+        rejected.join();
+        accepted.join();
+    }
+
+    #[test]
     fn forward_models_request_aggregates_and_deduplicates_enabled_keys_by_priority() {
         let first_upstream = TcpListener::bind(("127.0.0.1", 0)).expect("bind first upstream");
         let first_port = first_upstream.local_addr().expect("first addr").port();

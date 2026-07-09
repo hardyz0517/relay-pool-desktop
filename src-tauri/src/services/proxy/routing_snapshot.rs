@@ -248,6 +248,7 @@ fn event_message(log: &RequestLog) -> String {
         "success" => "Request completed on selected route".to_string(),
         "fallback" => format!("Request completed after {} fallback(s)", log.fallback_count),
         "failed" => "Request failed before a usable route completed".to_string(),
+        "interrupted" => "Request stream was interrupted before completion".to_string(),
         other => format!("Request finished with status {other}"),
     }
 }
@@ -257,6 +258,7 @@ fn decision_status(log: &RequestLog) -> RouteDecisionStatus {
         "success" => RouteDecisionStatus::Selected,
         "fallback" => RouteDecisionStatus::Fallback,
         "failed" => RouteDecisionStatus::Failed,
+        "interrupted" => RouteDecisionStatus::Failed,
         _ if log.station_key_id.is_none() => RouteDecisionStatus::Unavailable,
         _ => RouteDecisionStatus::Selected,
     }
