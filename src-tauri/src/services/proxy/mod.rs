@@ -3,6 +3,8 @@ use serde_json::Value;
 
 pub mod adapters;
 pub mod router;
+pub mod routing_failure;
+pub mod routing_health;
 pub mod routing_policy;
 pub mod routing_snapshot;
 pub mod routing_types;

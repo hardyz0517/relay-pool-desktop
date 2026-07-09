@@ -28,6 +28,11 @@ use crate::{
             build_upstream_url, enabled_candidates, extract_chat_request_metadata, openai_error,
             redact_error_message,
             router::{select_route_candidates, RouteRequest},
+            routing_failure::{
+                classify_route_failure, RouteFailureAction, RouteFailureInput, RouteFailureScope,
+            },
+            routing_health::{apply_health_transition, error_summary_for_failure},
+            routing_types::RouteHealthState,
             should_fallback, RouteCandidate,
         },
     },
@@ -75,6 +80,7 @@ struct ProxyResponse {
     station_id: Option<String>,
     upstream_base_url: Option<String>,
     fallback_count: i64,
+    retry_after_ms: Option<i64>,
     status_label: String,
     error_message: Option<String>,
     route_policy: Option<String>,
@@ -422,6 +428,7 @@ fn local_usage_response(context: &ProxyServerContext) -> ProxyResponse {
         station_id: None,
         upstream_base_url: None,
         fallback_count: 0,
+        retry_after_ms: None,
         status_label: "success".to_string(),
         error_message: None,
         route_policy: None,
@@ -515,6 +522,7 @@ fn aggregate_models_request(
                             "warning",
                             &checked_at,
                             &error,
+                            RouteFailureInput::transport_error(false, &error),
                         );
                     }
                 }
@@ -523,12 +531,30 @@ fn aggregate_models_request(
                 failed_count += 1;
                 let error = format!("上游返回 HTTP {}", response.status_code);
                 last_error = Some(error.clone());
-                record_candidate_failure(context, candidate, "warning", &checked_at, &error);
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "warning",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::http_status_with_retry_after(
+                        response.status_code,
+                        false,
+                        response.retry_after_ms,
+                    ),
+                );
             }
             Err(error) => {
                 failed_count += 1;
                 last_error = Some(error.clone());
-                record_candidate_failure(context, candidate, "error", &checked_at, &error);
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "error",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::transport_error(false, &error),
+                );
             }
         }
     }
@@ -561,6 +587,7 @@ fn aggregate_models_request(
         station_id: None,
         upstream_base_url: None,
         fallback_count: failed_count,
+        retry_after_ms: None,
         status_label: "success".to_string(),
         error_message: None,
         route_policy: None,
@@ -875,18 +902,73 @@ fn record_candidate_failure(
     status_label: &str,
     checked_at: &str,
     error_summary: &str,
+    failure_input: RouteFailureInput,
 ) {
+    let classified = classify_route_failure(failure_input);
     let _ = context.database.touch_station_key_usage(
         &candidate.station_key_id,
         status_label,
         None,
         Some(checked_at),
     );
-    let _ = context.database.record_station_key_failure(
+    if classified.scope == RouteFailureScope::RequestOnly
+        || classified.action == RouteFailureAction::IgnoreForKeyHealth
+    {
+        return;
+    }
+
+    let current_health = context
+        .database
+        .get_station_key_health(candidate.station_key_id.clone())
+        .ok();
+    let consecutive_failures = current_health
+        .as_ref()
+        .map(|health| health.consecutive_failures + 1)
+        .unwrap_or(1);
+    let current_state = current_health
+        .as_ref()
+        .map(|health| route_health_state_from_record(health, checked_at))
+        .unwrap_or(RouteHealthState::Unknown);
+    let now_ms = checked_at
+        .parse::<i64>()
+        .unwrap_or_else(|_| now_millis_for_services() as i64);
+    let transition =
+        apply_health_transition(current_state, &classified, consecutive_failures, now_ms);
+    let cooldown_until = transition
+        .cooldown_until_ms
+        .as_ref()
+        .map(|value| value.to_string());
+    let classified_error_summary = error_summary_for_failure(&classified, error_summary);
+
+    let _ = context.database.record_station_key_failure_with_cooldown(
         &candidate.station_key_id,
-        error_summary,
+        &classified_error_summary,
         checked_at,
+        cooldown_until.as_deref(),
     );
+}
+
+fn route_health_state_from_record(
+    health: &crate::models::routing::StationKeyHealth,
+    now: &str,
+) -> RouteHealthState {
+    let now_ms = now.parse::<i64>().unwrap_or_default();
+    if health
+        .cooldown_until
+        .as_deref()
+        .and_then(|value| value.parse::<i64>().ok())
+        .map(|cooldown_until| cooldown_until > now_ms)
+        .unwrap_or(false)
+    {
+        return RouteHealthState::Cooldown;
+    }
+    if health.consecutive_failures > 0 {
+        return RouteHealthState::Degraded;
+    }
+    if health.success_count > 0 || health.last_success_at.is_some() {
+        return RouteHealthState::Ready;
+    }
+    RouteHealthState::Unknown
 }
 
 fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
@@ -1033,6 +1115,11 @@ fn forward_responses_with_fallback(
                         &status_label,
                         &checked_at,
                         &format!("上游返回 HTTP {}", routed_response.status_code),
+                        RouteFailureInput::http_status_with_retry_after(
+                            routed_response.status_code,
+                            false,
+                            routed_response.retry_after_ms,
+                        ),
                     );
                 }
                 let request_cost =
@@ -1042,11 +1129,29 @@ fn forward_responses_with_fallback(
             Ok(response) => {
                 let error = format!("上游返回 HTTP {}", response.status_code);
                 last_error = Some(error.clone());
-                record_candidate_failure(context, candidate, "warning", &checked_at, &error);
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "warning",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::http_status_with_retry_after(
+                        response.status_code,
+                        false,
+                        response.retry_after_ms,
+                    ),
+                );
             }
             Err(error) => {
                 last_error = Some(error.clone());
-                record_candidate_failure(context, candidate, "error", &checked_at, &error);
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "error",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::transport_error(false, &error),
+                );
             }
         }
     }
@@ -1131,6 +1236,7 @@ fn render_responses_proxy_response(
         station_id: response.station_id,
         upstream_base_url: response.upstream_base_url,
         fallback_count: response.fallback_count,
+        retry_after_ms: response.retry_after_ms,
         status_label: response.status_label,
         error_message: response.error_message,
         route_policy: response.route_policy,
@@ -1186,6 +1292,11 @@ fn forward_with_fallback(
                         &status_label,
                         &checked_at,
                         &format!("上游返回 HTTP {}", routed_response.status_code),
+                        RouteFailureInput::http_status_with_retry_after(
+                            routed_response.status_code,
+                            false,
+                            routed_response.retry_after_ms,
+                        ),
                     );
                 }
                 let request_cost =
@@ -1195,11 +1306,29 @@ fn forward_with_fallback(
             Ok(response) => {
                 let error = format!("上游返回 HTTP {}", response.status_code);
                 last_error = Some(error.clone());
-                record_candidate_failure(context, candidate, "warning", &checked_at, &error);
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "warning",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::http_status_with_retry_after(
+                        response.status_code,
+                        false,
+                        response.retry_after_ms,
+                    ),
+                );
             }
             Err(error) => {
                 last_error = Some(error.clone());
-                record_candidate_failure(context, candidate, "error", &checked_at, &error);
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "error",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::transport_error(false, &error),
+                );
             }
         }
     }
@@ -1277,6 +1406,7 @@ fn cors_preflight_response() -> ProxyResponse {
         station_id: None,
         upstream_base_url: None,
         fallback_count: 0,
+        retry_after_ms: None,
         status_label: "success".to_string(),
         error_message: None,
         route_policy: None,
@@ -1296,6 +1426,7 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
         .header("content-type")
         .unwrap_or("application/json")
         .to_string();
+    let retry_after_ms = parse_retry_after_ms(response.header("retry-after"));
     if stream && status_code < 400 {
         return ProxyResponse {
             status_code,
@@ -1307,6 +1438,7 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
             station_id: None,
             upstream_base_url: None,
             fallback_count: 0,
+            retry_after_ms,
             status_label: "success".to_string(),
             error_message: None,
             route_policy: None,
@@ -1335,6 +1467,7 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
         station_id: None,
         upstream_base_url: None,
         fallback_count: 0,
+        retry_after_ms,
         status_label: if status_code < 400 {
             "success".to_string()
         } else if should_fallback(status_code) {
@@ -1454,6 +1587,7 @@ impl ProxyResponse {
             station_id: None,
             upstream_base_url: None,
             fallback_count: 0,
+            retry_after_ms: None,
             status_label: "failed".to_string(),
             error_message: Some(redact_error_message(message)),
             route_policy: None,
@@ -1613,6 +1747,12 @@ fn content_type(request: &ParsedRequest) -> &str {
         .unwrap_or("application/json")
 }
 
+fn parse_retry_after_ms(value: Option<&str>) -> Option<i64> {
+    let trimmed = value?.trim();
+    let seconds = trimmed.parse::<i64>().ok()?;
+    Some(seconds.max(1) * 1000)
+}
+
 fn reason_phrase(status: u16) -> &'static str {
     match status {
         200 => "OK",
@@ -1674,6 +1814,7 @@ mod tests {
                 station_id: Some("station-1".to_string()),
                 upstream_base_url: Some("https://example.test/v1".to_string()),
                 fallback_count: 0,
+                retry_after_ms: None,
                 status_label: "success".to_string(),
                 error_message: None,
                 route_policy: None,
@@ -2168,6 +2309,34 @@ mod tests {
     }
 
     #[test]
+    fn runtime_uses_retry_after_header_for_rate_limit_cooldown() {
+        let upstream = test_upstream_status(429, "Too Many Requests", &[("retry-after", "90")]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key = create_test_station_key(&database, "rate-limited", &upstream.base_url);
+        let before = now_millis_for_services() as i64;
+
+        let context = proxy_context(database);
+        let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
+        let health = context
+            .database
+            .get_station_key_health(key.id)
+            .expect("health");
+        let cooldown_until = health
+            .cooldown_until
+            .as_deref()
+            .and_then(|value| value.parse::<i64>().ok())
+            .expect("cooldown");
+
+        assert_eq!(response.status_code, 502);
+        assert_eq!(health.failure_count, 1);
+        assert!(
+            cooldown_until >= before + 90_000 && cooldown_until < before + 120_000,
+            "cooldown should honor retry-after, got {cooldown_until}, before {before}"
+        );
+        upstream.join();
+    }
+
+    #[test]
     fn forward_models_request_aggregates_and_deduplicates_enabled_keys_by_priority() {
         let first_upstream = TcpListener::bind(("127.0.0.1", 0)).expect("bind first upstream");
         let first_port = first_upstream.local_addr().expect("first addr").port();
@@ -2346,6 +2515,59 @@ mod tests {
                         );
                         server_stream.write_all(header.as_bytes()).expect("header");
                         server_stream.write_all(&body).expect("body");
+                        return;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if std::time::Instant::now() >= deadline {
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept upstream: {error}"),
+                }
+            }
+        });
+
+        TestUpstream {
+            base_url: format!("http://127.0.0.1:{port}"),
+            called,
+            handle,
+        }
+    }
+
+    fn test_upstream_status(status: u16, reason: &str, headers: &[(&str, &str)]) -> TestUpstream {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
+        let called = Arc::new(AtomicBool::new(false));
+        let called_for_thread = Arc::clone(&called);
+        let reason = reason.to_string();
+        let headers = headers
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect::<Vec<_>>();
+        let handle = thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_millis(3000);
+            loop {
+                match listener.accept() {
+                    Ok((mut server_stream, _)) => {
+                        called_for_thread.store(true, Ordering::Relaxed);
+                        let _ = server_stream.set_read_timeout(Some(Duration::from_millis(200)));
+                        let mut buf = [0_u8; 4096];
+                        let _ = server_stream.read(&mut buf);
+                        let body = br#"{"error":{"message":"rate limited"}}"#;
+                        let extra_headers = headers
+                            .iter()
+                            .map(|(key, value)| format!("{key}: {value}\r\n"))
+                            .collect::<String>();
+                        let header = format!(
+                            "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\n{extra_headers}content-length: {}\r\nconnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        server_stream.write_all(header.as_bytes()).expect("header");
+                        server_stream.write_all(body).expect("body");
                         return;
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -2588,6 +2810,7 @@ mod tests {
                 station_id: None,
                 upstream_base_url: None,
                 fallback_count: 0,
+                retry_after_ms: None,
                 status_label: "success".to_string(),
                 error_message: None,
                 route_policy: None,

@@ -3,6 +3,7 @@ use crate::{
     services::proxy::router::{
         RichRouteCandidate, RouteCandidateEconomics, RouteRequest, RouteSelection,
     },
+    services::proxy::routing_health::error_summary_indicates_offline,
 };
 
 const COST_STABLE_RELATIVE_DELTA_THRESHOLD: f64 = 0.10;
@@ -275,6 +276,14 @@ fn collect_rejections(
     }
 
     if let Some(health) = &candidate.health {
+        if health
+            .last_error_summary
+            .as_deref()
+            .map(error_summary_indicates_offline)
+            .unwrap_or(false)
+        {
+            rejection_reasons.push("key is offline after hard failure".to_string());
+        }
         if let Some(cooldown_until) = &health.cooldown_until {
             if cooldown_until
                 .parse::<i64>()

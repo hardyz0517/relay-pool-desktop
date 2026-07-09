@@ -1545,6 +1545,23 @@ impl AppDatabase {
         )
     }
 
+    pub fn record_station_key_failure_with_cooldown(
+        &self,
+        station_key_id: &str,
+        error_summary: &str,
+        now: &str,
+        cooldown_until: Option<&str>,
+    ) -> Result<(), String> {
+        let connection = self.connection()?;
+        record_station_key_failure_with_explicit_cooldown_in_connection(
+            &connection,
+            station_key_id,
+            error_summary,
+            now,
+            cooldown_until,
+        )
+    }
+
     pub fn simulate_route(
         &self,
         input: RouteSimulationInput,
@@ -5262,12 +5279,55 @@ fn record_station_key_failure_in_connection(
     now: &str,
     consecutive_failure_threshold: i64,
 ) -> Result<(), String> {
-    validate_station_key_exists(connection, station_key_id)?;
     let current = station_key_health_by_id(connection, station_key_id)?;
     let consecutive_failures = current.consecutive_failures + 1;
-    let failure_count = current.failure_count + 1;
     let cooldown_until =
         cooldown_until_with_threshold(consecutive_failures, consecutive_failure_threshold, now);
+
+    record_station_key_failure_state_in_connection(
+        connection,
+        station_key_id,
+        error_summary,
+        now,
+        &current,
+        consecutive_failures,
+        cooldown_until.as_deref(),
+    )
+}
+
+fn record_station_key_failure_with_explicit_cooldown_in_connection(
+    connection: &Connection,
+    station_key_id: &str,
+    error_summary: &str,
+    now: &str,
+    cooldown_until: Option<&str>,
+) -> Result<(), String> {
+    let current = station_key_health_by_id(connection, station_key_id)?;
+    let consecutive_failures = current.consecutive_failures + 1;
+
+    record_station_key_failure_state_in_connection(
+        connection,
+        station_key_id,
+        error_summary,
+        now,
+        &current,
+        consecutive_failures,
+        cooldown_until,
+    )
+}
+
+fn record_station_key_failure_state_in_connection(
+    connection: &Connection,
+    station_key_id: &str,
+    error_summary: &str,
+    now: &str,
+    current: &StationKeyHealth,
+    consecutive_failures: i64,
+    cooldown_until: Option<&str>,
+) -> Result<(), String> {
+    validate_station_key_exists(connection, station_key_id)?;
+    let failure_count = current.failure_count + 1;
+    let cooldown_until = cooldown_until.map(ToString::to_string);
 
     connection
         .execute(
@@ -11209,6 +11269,71 @@ mod tests {
     }
 
     #[test]
+    fn explicit_failure_cooldown_is_persisted_without_threshold_policy() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "explicit-cooldown-key");
+        let key = database
+            .list_station_keys(station.id)
+            .expect("keys")
+            .remove(0);
+
+        database
+            .record_station_key_failure_with_cooldown(
+                &key.id,
+                "rate limited",
+                "1000",
+                Some("91000"),
+            )
+            .expect("failure with explicit cooldown");
+        let health = database.get_station_key_health(key.id).expect("health");
+
+        assert_eq!(health.failure_count, 1);
+        assert_eq!(health.consecutive_failures, 1);
+        assert_eq!(health.last_error_summary.as_deref(), Some("rate limited"));
+        assert_eq!(health.cooldown_until.as_deref(), Some("91000"));
+    }
+
+    #[test]
+    fn local_routing_workspace_shows_hard_failure_as_offline() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "offline-key");
+        let key = database
+            .list_station_keys(station.id)
+            .expect("keys")
+            .remove(0);
+
+        database
+            .record_station_key_failure_with_cooldown(
+                &key.id,
+                "auth_error: upstream returned HTTP 401",
+                "1000",
+                Some("901000"),
+            )
+            .expect("hard failure");
+        let workspace = database
+            .load_local_routing_workspace(crate::models::proxy::ProxyStatus {
+                running: false,
+                bind_addr: "127.0.0.1".to_string(),
+                port: 8787,
+                started_at: None,
+                last_error: None,
+                active_requests: 0,
+                request_count: 0,
+            })
+            .expect("workspace");
+        let candidate = workspace
+            .candidates
+            .iter()
+            .find(|candidate| candidate.station_key_id == key.id)
+            .expect("candidate");
+
+        assert_eq!(
+            candidate.health_state,
+            crate::services::proxy::routing_types::RouteHealthState::Offline
+        );
+    }
+
+    #[test]
     fn simulate_route_returns_selected_key_and_rejection_reasons() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let selected_station = test_station(&database, "selected-route-key");
@@ -11284,6 +11409,57 @@ mod tests {
                     .rejection_reasons
                     .iter()
                     .any(|reason| reason.contains("allowlist"))
+        }));
+    }
+
+    #[test]
+    fn simulate_route_rejects_key_after_hard_failure() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let offline_station = test_station(&database, "offline-route-key");
+        let ready_station = test_station(&database, "ready-route-key");
+        let offline = database
+            .list_station_keys(offline_station.id)
+            .expect("offline keys")
+            .remove(0);
+        let ready = database
+            .list_station_keys(ready_station.id)
+            .expect("ready keys")
+            .remove(0);
+        database
+            .reorder_key_pool(vec![offline.id.clone(), ready.id.clone()])
+            .expect("priority order");
+        database
+            .record_station_key_failure_with_cooldown(
+                &offline.id,
+                "auth_error: upstream returned HTTP 401",
+                "1000",
+                Some("901000"),
+            )
+            .expect("hard failure");
+
+        let result = database
+            .simulate_route(RouteSimulationInput {
+                endpoint: RouteEndpointKind::ChatCompletions,
+                model: Some("gpt-5.4".to_string()),
+                stream: false,
+                uses_tools: false,
+                uses_vision: false,
+                uses_reasoning: false,
+                policy: Some(RoutingPolicy::PriorityFallback),
+            })
+            .expect("simulate");
+
+        assert_eq!(
+            result.selected_station_key_id.as_deref(),
+            Some(ready.id.as_str())
+        );
+        assert!(result.candidates.iter().any(|candidate| {
+            candidate.station_key_id == offline.id
+                && !candidate.accepted
+                && candidate
+                    .rejection_reasons
+                    .iter()
+                    .any(|reason| reason.contains("offline"))
         }));
     }
 

@@ -7,6 +7,7 @@ use crate::{
         database::{now_millis_for_services, AppDatabase},
         proxy::{
             router::RouteCandidateEconomics,
+            routing_health::error_summary_indicates_offline,
             routing_types::{
                 DecisionFact, DecisionFactKind, DecisionFactSeverity, LocalRoutingCandidateRow,
                 LocalRoutingSettingsView, LocalRoutingSummary, LocalRoutingWorkspace,
@@ -160,6 +161,14 @@ fn health_state(candidate: &LocalRoutingReadCandidate) -> RouteHealthState {
     let Some(health) = &candidate.health else {
         return RouteHealthState::Unknown;
     };
+    if health
+        .last_error_summary
+        .as_deref()
+        .map(error_summary_indicates_offline)
+        .unwrap_or(false)
+    {
+        return RouteHealthState::Offline;
+    }
     if health
         .cooldown_until
         .as_deref()
