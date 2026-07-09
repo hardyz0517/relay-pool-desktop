@@ -396,6 +396,7 @@ fn insert_monitor_request_log(
         } else {
             "success".to_string()
         },
+        lifecycle_status: Some("completed".to_string()),
         station_key_id: Some(target.id.clone()),
         station_id: Some(target.station_id.clone()),
         upstream_base_url: Some(target.station_base_url.clone()),

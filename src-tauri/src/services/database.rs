@@ -158,6 +158,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移请求日志成本字段失败: {error}"))?;
         migrate_request_log_economic_columns(&connection)
             .map_err(|error| format!("迁移请求日志经济上下文字段失败: {error}"))?;
+        migrate_request_log_lifecycle_columns(&connection)
+            .map_err(|error| format!("迁移请求日志生命周期字段失败: {error}"))?;
         migrate_remote_key_tables(&connection)
             .map_err(|error| format!("迁移远端 Key 表失败: {error}"))?;
 
@@ -196,6 +198,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移请求日志成本字段失败: {error}"))?;
         migrate_request_log_economic_columns(&connection)
             .map_err(|error| format!("迁移请求日志经济上下文字段失败: {error}"))?;
+        migrate_request_log_lifecycle_columns(&connection)
+            .map_err(|error| format!("迁移请求日志生命周期字段失败: {error}"))?;
         migrate_remote_key_tables(&connection)
             .map_err(|error| format!("迁移远端 Key 表失败: {error}"))?;
 
@@ -1826,6 +1830,7 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             model TEXT,
             stream INTEGER NOT NULL DEFAULT 0,
             status TEXT NOT NULL,
+            lifecycle_status TEXT,
             station_key_id TEXT,
             station_id TEXT,
             upstream_base_url TEXT,
@@ -4227,6 +4232,22 @@ fn migrate_request_log_economic_columns(connection: &Connection) -> rusqlite::Re
                 [],
             )?;
         }
+    }
+
+    Ok(())
+}
+
+fn migrate_request_log_lifecycle_columns(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(request_logs)")?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if !rows.iter().any(|existing| existing == "lifecycle_status") {
+        connection.execute(
+            "ALTER TABLE request_logs ADD COLUMN lifecycle_status TEXT",
+            [],
+        )?;
     }
 
     Ok(())
@@ -6731,13 +6752,13 @@ fn insert_request_log_in_connection(
         .execute(
             "INSERT INTO request_logs (
                 id, started_at, finished_at, duration_ms, method, path, model, stream,
-                status, station_key_id, station_id, upstream_base_url, fallback_count,
-                error_message, route_policy, route_reason, rejected_candidates_json,
+                status, lifecycle_status, station_key_id, station_id, upstream_base_url,
+                fallback_count, error_message, route_policy, route_reason, rejected_candidates_json,
                 prompt_tokens, completion_tokens, total_tokens, estimated_input_cost,
                 estimated_output_cost, estimated_total_cost, cost_currency, pricing_rule_id,
                 pricing_source, cost_status, group_binding_id, normalization_status,
                 balance_scope, economic_context_json, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33)",
             params![
                 id,
                 input.started_at,
@@ -6748,6 +6769,7 @@ fn insert_request_log_in_connection(
                 normalize_optional_string(input.model),
                 bool_to_i64(input.stream),
                 input.status,
+                normalize_optional_string(input.lifecycle_status),
                 normalize_optional_string(input.station_key_id),
                 normalize_optional_string(input.station_id),
                 normalize_optional_string(input.upstream_base_url),
@@ -6816,29 +6838,30 @@ fn row_to_request_log(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLog> {
         model: row.get(6)?,
         stream: i64_to_bool(row.get(7)?),
         status: row.get(8)?,
-        station_key_id: row.get(9)?,
-        station_id: row.get(10)?,
-        upstream_base_url: row.get(11)?,
-        fallback_count: row.get(12)?,
-        error_message: row.get(13)?,
-        route_policy: row.get(14)?,
-        route_reason: row.get(15)?,
-        rejected_candidates_json: row.get(16)?,
-        prompt_tokens: row.get(17)?,
-        completion_tokens: row.get(18)?,
-        total_tokens: row.get(19)?,
-        estimated_input_cost: row.get(20)?,
-        estimated_output_cost: row.get(21)?,
-        estimated_total_cost: row.get(22)?,
-        cost_currency: row.get(23)?,
-        pricing_rule_id: row.get(24)?,
-        pricing_source: row.get(25)?,
-        cost_status: row.get(26)?,
-        group_binding_id: row.get(27)?,
-        normalization_status: row.get(28)?,
-        balance_scope: row.get(29)?,
-        economic_context_json: row.get(30)?,
-        created_at: row.get(31)?,
+        lifecycle_status: row.get(9)?,
+        station_key_id: row.get(10)?,
+        station_id: row.get(11)?,
+        upstream_base_url: row.get(12)?,
+        fallback_count: row.get(13)?,
+        error_message: row.get(14)?,
+        route_policy: row.get(15)?,
+        route_reason: row.get(16)?,
+        rejected_candidates_json: row.get(17)?,
+        prompt_tokens: row.get(18)?,
+        completion_tokens: row.get(19)?,
+        total_tokens: row.get(20)?,
+        estimated_input_cost: row.get(21)?,
+        estimated_output_cost: row.get(22)?,
+        estimated_total_cost: row.get(23)?,
+        cost_currency: row.get(24)?,
+        pricing_rule_id: row.get(25)?,
+        pricing_source: row.get(26)?,
+        cost_status: row.get(27)?,
+        group_binding_id: row.get(28)?,
+        normalization_status: row.get(29)?,
+        balance_scope: row.get(30)?,
+        economic_context_json: row.get(31)?,
+        created_at: row.get(32)?,
     })
 }
 
@@ -6846,8 +6869,8 @@ fn request_log_by_id(connection: &Connection, id: &str) -> Result<RequestLog, St
     connection
         .query_row(
             "SELECT id, started_at, finished_at, duration_ms, method, path, model, stream,
-                    status, station_key_id, station_id, upstream_base_url, fallback_count,
-                    error_message, route_policy, route_reason, rejected_candidates_json,
+                    status, lifecycle_status, station_key_id, station_id, upstream_base_url,
+                    fallback_count, error_message, route_policy, route_reason, rejected_candidates_json,
                     prompt_tokens, completion_tokens, total_tokens, estimated_input_cost,
                     estimated_output_cost, estimated_total_cost, cost_currency, pricing_rule_id,
                     pricing_source, cost_status, group_binding_id, normalization_status,
@@ -6866,8 +6889,8 @@ fn list_request_logs_from_connection(connection: &Connection) -> Result<Vec<Requ
     let mut statement = connection
         .prepare(
             "SELECT id, started_at, finished_at, duration_ms, method, path, model, stream,
-                    status, station_key_id, station_id, upstream_base_url, fallback_count,
-                    error_message, route_policy, route_reason, rejected_candidates_json,
+                    status, lifecycle_status, station_key_id, station_id, upstream_base_url,
+                    fallback_count, error_message, route_policy, route_reason, rejected_candidates_json,
                     prompt_tokens, completion_tokens, total_tokens, estimated_input_cost,
                     estimated_output_cost, estimated_total_cost, cost_currency, pricing_rule_id,
                     pricing_source, cost_status, group_binding_id, normalization_status,
@@ -10285,6 +10308,7 @@ mod tests {
             ("request_logs", "normalization_status"),
             ("request_logs", "balance_scope"),
             ("request_logs", "economic_context_json"),
+            ("request_logs", "lifecycle_status"),
         ] {
             let count: i64 = connection
                 .query_row(
@@ -11473,6 +11497,7 @@ mod tests {
                 model: Some("gpt-5.4".to_string()),
                 stream: false,
                 status: "success".to_string(),
+                lifecycle_status: Some("completed".to_string()),
                 station_key_id: Some("key-1".to_string()),
                 station_id: Some("station-1".to_string()),
                 upstream_base_url: Some("https://example.test".to_string()),
@@ -11509,6 +11534,7 @@ mod tests {
             .expect("insert log");
 
         assert_eq!(log.route_policy.as_deref(), Some("priority_fallback"));
+        assert_eq!(log.lifecycle_status.as_deref(), Some("completed"));
         assert_eq!(
             log.route_reason.as_deref(),
             Some("selected key-1 because model allowed")
@@ -11531,6 +11557,7 @@ mod tests {
                 model: Some("gpt-5.4".to_string()),
                 stream: false,
                 status: "failed".to_string(),
+                lifecycle_status: Some("completed".to_string()),
                 station_key_id: Some("key-1".to_string()),
                 station_id: Some("station-1".to_string()),
                 upstream_base_url: Some("https://example.test".to_string()),

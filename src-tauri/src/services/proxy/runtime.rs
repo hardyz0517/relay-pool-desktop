@@ -310,41 +310,118 @@ fn handle_connection(mut stream: TcpStream, context: &ProxyServerContext) {
             ProxyResponse::json_error(400, "bad_request", &error),
         ),
     };
-    let finished_at = now_string();
-    let _ = context.database.insert_request_log(CreateRequestLogInput {
+    let log_snapshot = RequestLogSnapshot::from_response(&response);
+    let write_result = write_http_response(&mut stream, response);
+    let _ = context.database.insert_request_log(build_request_log_input(
         method,
         path,
-        model: response.model.clone(),
-        stream: response.stream,
-        status: response.status_label.clone(),
-        station_key_id: response.station_key_id.clone(),
-        station_id: response.station_id.clone(),
-        upstream_base_url: response.upstream_base_url.clone(),
-        fallback_count: response.fallback_count,
-        error_message: response.error_message.clone(),
-        route_policy: response.route_policy.clone(),
-        route_reason: response.route_reason.clone(),
-        rejected_candidates_json: response.rejected_candidates_json.clone(),
-        prompt_tokens: response.request_cost.prompt_tokens,
-        completion_tokens: response.request_cost.completion_tokens,
-        total_tokens: response.request_cost.total_tokens,
-        estimated_input_cost: response.request_cost.estimated_input_cost,
-        estimated_output_cost: response.request_cost.estimated_output_cost,
-        estimated_total_cost: response.request_cost.estimated_total_cost,
-        cost_currency: response.request_cost.cost_currency.clone(),
-        pricing_rule_id: response.request_cost.pricing_rule_id.clone(),
-        pricing_source: response.request_cost.pricing_source.clone(),
-        cost_status: Some(response.request_cost.cost_status.clone()),
-        group_binding_id: response.group_binding_id.clone(),
-        normalization_status: response.normalization_status.clone(),
-        balance_scope: response.balance_scope.clone(),
-        economic_context_json: response.economic_context_json.clone(),
+        log_snapshot,
         started_at,
-        finished_at: Some(finished_at),
-        duration_ms: Some(started.elapsed().as_millis() as i64),
-    });
-    let _ = write_http_response(&mut stream, response);
+        started,
+        &write_result,
+    ));
     let _ = stream.shutdown(Shutdown::Both);
+}
+
+#[derive(Debug, Clone)]
+struct RequestLogSnapshot {
+    model: Option<String>,
+    stream: bool,
+    status_label: String,
+    station_key_id: Option<String>,
+    station_id: Option<String>,
+    upstream_base_url: Option<String>,
+    fallback_count: i64,
+    error_message: Option<String>,
+    route_policy: Option<String>,
+    route_reason: Option<String>,
+    rejected_candidates_json: Option<String>,
+    request_cost: RequestCostEstimate,
+    group_binding_id: Option<String>,
+    normalization_status: Option<String>,
+    balance_scope: Option<String>,
+    economic_context_json: Option<String>,
+}
+
+impl RequestLogSnapshot {
+    fn from_response(response: &ProxyResponse) -> Self {
+        Self {
+            model: response.model.clone(),
+            stream: response.stream,
+            status_label: response.status_label.clone(),
+            station_key_id: response.station_key_id.clone(),
+            station_id: response.station_id.clone(),
+            upstream_base_url: response.upstream_base_url.clone(),
+            fallback_count: response.fallback_count,
+            error_message: response.error_message.clone(),
+            route_policy: response.route_policy.clone(),
+            route_reason: response.route_reason.clone(),
+            rejected_candidates_json: response.rejected_candidates_json.clone(),
+            request_cost: response.request_cost.clone(),
+            group_binding_id: response.group_binding_id.clone(),
+            normalization_status: response.normalization_status.clone(),
+            balance_scope: response.balance_scope.clone(),
+            economic_context_json: response.economic_context_json.clone(),
+        }
+    }
+}
+
+fn build_request_log_input(
+    method: String,
+    path: String,
+    snapshot: RequestLogSnapshot,
+    started_at: String,
+    started: Instant,
+    write_result: &Result<(), String>,
+) -> CreateRequestLogInput {
+    let interrupted = snapshot.stream && write_result.is_err();
+    let error_message = if interrupted {
+        write_result.as_ref().err().cloned()
+    } else {
+        snapshot.error_message.clone()
+    };
+
+    CreateRequestLogInput {
+        method,
+        path,
+        model: snapshot.model,
+        stream: snapshot.stream,
+        status: if interrupted {
+            "interrupted".to_string()
+        } else {
+            snapshot.status_label
+        },
+        lifecycle_status: Some(if interrupted {
+            "interrupted".to_string()
+        } else {
+            "completed".to_string()
+        }),
+        station_key_id: snapshot.station_key_id,
+        station_id: snapshot.station_id,
+        upstream_base_url: snapshot.upstream_base_url,
+        fallback_count: snapshot.fallback_count,
+        error_message,
+        route_policy: snapshot.route_policy,
+        route_reason: snapshot.route_reason,
+        rejected_candidates_json: snapshot.rejected_candidates_json,
+        prompt_tokens: snapshot.request_cost.prompt_tokens,
+        completion_tokens: snapshot.request_cost.completion_tokens,
+        total_tokens: snapshot.request_cost.total_tokens,
+        estimated_input_cost: snapshot.request_cost.estimated_input_cost,
+        estimated_output_cost: snapshot.request_cost.estimated_output_cost,
+        estimated_total_cost: snapshot.request_cost.estimated_total_cost,
+        cost_currency: snapshot.request_cost.cost_currency,
+        pricing_rule_id: snapshot.request_cost.pricing_rule_id,
+        pricing_source: snapshot.request_cost.pricing_source,
+        cost_status: Some(snapshot.request_cost.cost_status),
+        group_binding_id: snapshot.group_binding_id,
+        normalization_status: snapshot.normalization_status,
+        balance_scope: snapshot.balance_scope,
+        economic_context_json: snapshot.economic_context_json,
+        started_at,
+        finished_at: Some(now_string()),
+        duration_ms: Some(started.elapsed().as_millis() as i64),
+    }
 }
 
 fn handle_proxy_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
@@ -1842,6 +1919,70 @@ mod tests {
         assert!(text.contains("content-type: text/event-stream"));
         assert!(!text.contains("content-length:"));
         assert!(text.contains("data: {\"id\":\"evt-1\"}"));
+    }
+
+    #[test]
+    fn request_log_finalizes_after_buffered_response_write() {
+        let response = ProxyResponse::json_error(400, "bad_request", "bad input");
+        let started = Instant::now() - Duration::from_millis(25);
+
+        let input = build_request_log_input(
+            "POST".to_string(),
+            "/v1/chat/completions".to_string(),
+            RequestLogSnapshot::from_response(&response),
+            "1000".to_string(),
+            started,
+            &Ok(()),
+        );
+
+        assert_eq!(input.status, "failed");
+        assert!(input.finished_at.is_some());
+        assert!(input.duration_ms.is_some_and(|duration| duration >= 25));
+    }
+
+    #[test]
+    fn stream_write_failure_marks_request_interrupted() {
+        let response = ProxyResponse {
+            status_code: 200,
+            content_type: "text/event-stream".to_string(),
+            body: ProxyResponseBody::Streamed(Box::new(std::io::Cursor::new(
+                b"data: {\"id\":\"evt-1\"}\n\n".to_vec(),
+            ))),
+            model: Some("gpt-5.4".to_string()),
+            stream: true,
+            station_key_id: Some("key-1".to_string()),
+            station_id: Some("station-1".to_string()),
+            upstream_base_url: Some("https://example.test/v1".to_string()),
+            fallback_count: 0,
+            retry_after_ms: None,
+            status_label: "success".to_string(),
+            error_message: None,
+            route_policy: Some("cost_stable_first".to_string()),
+            route_reason: Some("selected key-1".to_string()),
+            rejected_candidates_json: Some("[]".to_string()),
+            group_binding_id: None,
+            normalization_status: None,
+            balance_scope: None,
+            economic_context_json: None,
+            request_cost: crate::services::pricing::request_cost_unknown(),
+        };
+        let write_result = Err("写入流式响应失败: connection reset".to_string());
+
+        let input = build_request_log_input(
+            "POST".to_string(),
+            "/v1/chat/completions".to_string(),
+            RequestLogSnapshot::from_response(&response),
+            "1000".to_string(),
+            Instant::now(),
+            &write_result,
+        );
+
+        assert_eq!(input.status, "interrupted");
+        assert_eq!(input.fallback_count, 0);
+        assert!(input
+            .error_message
+            .as_deref()
+            .is_some_and(|message| message.contains("connection reset")));
     }
 
     #[test]
