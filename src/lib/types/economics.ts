@@ -26,6 +26,24 @@ export type PricingRule = {
   updatedAt: string;
 };
 
+export type ModelBasePrice = {
+  id: string;
+  provider: string;
+  model: string;
+  inputPrice: number | null;
+  outputPrice: number | null;
+  currency: string;
+  unit: string;
+  sourceUrl: string;
+  sourceLabel: string;
+  sourceCheckedAt: string | null;
+  enabled: boolean;
+  builtIn: boolean;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type BalanceSnapshot = {
   id: string;
   stationId: string;

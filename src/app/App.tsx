@@ -4,6 +4,7 @@ import { CollectorsPage } from "@/features/collectors/CollectorsPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { LogsPage } from "@/features/logs/LogsPage";
 import { PricingPage } from "@/features/pricing/PricingPage";
+import { ModelBasePricesPage } from "@/features/pricing/ModelBasePricesPage";
 import { RoutingPage } from "@/features/routing/RoutingPage";
 import { KeyPoolPage } from "@/features/key-pool/KeyPoolPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
@@ -122,13 +123,15 @@ export function App() {
       case "changes":
         return <ChangeCenterPage />;
       case "pricing":
-        return <PricingPage />;
+        return <PricingPage onOpenModelBasePrices={() => setActiveRouteId("modelBasePrices")} />;
+      case "modelBasePrices":
+        return <ModelBasePricesPage onBack={() => setActiveRouteId("pricing")} />;
       case "routing":
         return <RoutingPage />;
       case "logs":
         return <LogsPage />;
       case "settings":
-        return <SettingsPage />;
+        return <SettingsPage onOpenModelBasePrices={() => setActiveRouteId("modelBasePrices")} />;
       case "dashboard":
       default:
         return <DashboardPage />;
@@ -148,6 +151,9 @@ function getShellRouteId(pageId: AppPageId): AppRouteId {
   }
   if (pageId === "addKey" || pageId === "editKey") {
     return "keyPool";
+  }
+  if (pageId === "modelBasePrices") {
+    return "pricing";
   }
   return pageId;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { FolderOpen, Play, RotateCcw, Save, Square } from "lucide-react";
+import { Coins, FolderOpen, Play, RotateCcw, Save, Square } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, MaskedSecret, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
@@ -65,7 +65,11 @@ const fallbackProxyStatus: ProxyStatus = {
   requestCount: 0,
 };
 
-export function SettingsPage() {
+type SettingsPageProps = {
+  onOpenModelBasePrices: () => void;
+};
+
+export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
   const toast = useToast();
   const [settings, setSettings] = useState<AppSettings>(fallbackSettings);
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus>(fallbackProxyStatus);
@@ -327,6 +331,16 @@ export function SettingsPage() {
             control={<SettingsNumberInput min="1" value={form.pricingRefreshIntervalMinutes} onChange={(pricingRefreshIntervalMinutes) => setForm({ ...form, pricingRefreshIntervalMinutes })} />}
             description="价格规则和倍率归一化刷新周期。"
             label="价格刷新周期（分钟）"
+          />
+          <SettingRow
+            control={
+              <Button type="button" variant="outline" onClick={onOpenModelBasePrices}>
+                <Coins className="h-4 w-4" />
+                编辑
+              </Button>
+            }
+            description="用于把站点分组倍率折算成请求成本；默认值来自官方 API 定价页，可手动覆盖。"
+            label="模型基准价格"
           />
           <SettingRow
             control={<SettingsNumberInput min="3" value={form.collectorTimeoutSeconds} onChange={(collectorTimeoutSeconds) => setForm({ ...form, collectorTimeoutSeconds })} />}

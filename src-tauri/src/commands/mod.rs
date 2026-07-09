@@ -26,7 +26,8 @@ use crate::{
             UpsertStationGroupBindingInput,
         },
         pricing::{
-            BalanceSnapshot, PricingRule, UpsertBalanceSnapshotInput, UpsertPricingRuleInput,
+            BalanceSnapshot, ModelBasePrice, PricingRule, UpsertBalanceSnapshotInput,
+            UpsertModelBasePriceInput, UpsertPricingRuleInput,
         },
         proxy::{ProxyStatus, RequestLog, UpstreamApiFormat},
         remote_keys::{
@@ -681,6 +682,28 @@ pub fn simulate_route(
 #[tauri::command]
 pub fn list_pricing_rules(database: State<'_, AppDatabase>) -> Result<Vec<PricingRule>, String> {
     database.list_pricing_rules()
+}
+
+#[tauri::command]
+pub fn list_model_base_prices(
+    database: State<'_, AppDatabase>,
+) -> Result<Vec<ModelBasePrice>, String> {
+    database.list_model_base_prices()
+}
+
+#[tauri::command]
+pub fn upsert_model_base_price(
+    database: State<'_, AppDatabase>,
+    input: UpsertModelBasePriceInput,
+) -> Result<ModelBasePrice, String> {
+    database.upsert_model_base_price(input)
+}
+
+#[tauri::command]
+pub fn reset_model_base_prices_to_builtins(
+    database: State<'_, AppDatabase>,
+) -> Result<Vec<ModelBasePrice>, String> {
+    database.reset_model_base_prices_to_builtins()
 }
 
 #[tauri::command]

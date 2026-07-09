@@ -1,0 +1,187 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import ts from "typescript";
+
+async function importStationAssetViewModels() {
+  const tempRoot = await mkdtemp(join(tmpdir(), "relay-station-tags-"));
+  const outputPath = join(tempRoot, "stationAssetViewModels.mjs");
+  const balancePath = join(tempRoot, "balanceFacts.mjs");
+  const groupPath = join(tempRoot, "groupFacts.mjs");
+  let source = await readFile("src/features/stations/stationAssetViewModels.ts", "utf8");
+  source = source
+    .replaceAll("@/lib/projections/balanceFacts", "./balanceFacts.mjs")
+    .replaceAll("@/lib/projections/groupFacts", "./groupFacts.mjs");
+  const output = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+      verbatimModuleSyntax: true,
+    },
+  }).outputText;
+
+  await writeFile(outputPath, output, "utf8");
+  await writeFile(
+    balancePath,
+    "export function buildCurrentStationBalanceFacts() { return new Map(); }",
+    "utf8",
+  );
+  await writeFile(
+    groupPath,
+    [
+      "export function buildCurrentStationGroupFacts() { return []; }",
+      "export function isDisplayableStationGroupCurrentFact() { return true; }",
+    ].join("\n"),
+    "utf8",
+  );
+
+  return import(`file://${outputPath.replaceAll("\\", "/")}`);
+}
+
+const { stationIssueTags } = await importStationAssetViewModels();
+
+assert.deepEqual(
+  tagLabels(row({ riskEvents: [change({ severity: "critical" }), change({ severity: "warning" })] })),
+  [],
+  "change-event severity alone should not create broad risk/reminder tags",
+);
+
+assert.deepEqual(
+  tagLabels(row({
+    balanceFactsReady: false,
+    currentBalance: { value: null, lowBalanceThreshold: null, status: null, source: "missing", currency: "CNY" },
+  })),
+  [],
+  "balance-missing tags should wait until balance enrichment has finished to avoid return-navigation flicker",
+);
+
+assert.deepEqual(
+  tagLabels(row({
+    currentBalance: { value: 0, lowBalanceThreshold: 10, status: "low", currency: "CNY" },
+  })),
+  ["余额为零"],
+  "zero balance should be a concrete balance tag instead of a generic warning",
+);
+
+assert.deepEqual(
+  tagLabels(row({
+    currentBalance: { value: 6, lowBalanceThreshold: 10, status: "low", currency: "CNY" },
+  })),
+  ["余额偏低"],
+  "low balance should name the specific balance problem",
+);
+
+assert.deepEqual(
+  tagLabels(row({
+    station: { apiKeyPresent: false, keyCount: 0 },
+    currentBalance: { value: 20, lowBalanceThreshold: 10, status: "normal", currency: "CNY" },
+  })),
+  ["缺 API Key"],
+  "missing credentials should be shown as a key/configuration problem",
+);
+
+assert.deepEqual(
+  tagLabels(row({
+    station: { status: "healthy", keyCount: 2 },
+    enabledKeyCount: 0,
+    currentBalance: { value: 20, lowBalanceThreshold: 10, status: "normal", currency: "CNY" },
+  })),
+  ["无可用 Key"],
+  "disabled local keys should be shown as a key problem without mentioning routing",
+);
+
+assert.deepEqual(
+  tagLabels(row({
+    latestSnapshot: { status: "manual_required", errorMessage: null, summaryJson: { loginRequired: true } },
+    currentBalance: { value: 20, lowBalanceThreshold: 10, status: "normal", currency: "CNY" },
+  })),
+  ["需登录"],
+  "manual login collection states should be concrete",
+);
+
+const pageSource = await readFile("src/features/stations/StationsPage.tsx", "utf8");
+const viewModelSource = await readFile("src/features/stations/stationAssetViewModels.ts", "utf8");
+
+assert.ok(
+  pageSource.includes("stationIssueTags(row)") || pageSource.includes("const issueTags = stationIssueTags"),
+  "station list row should render explicit issue tags from the row model",
+);
+
+assert.ok(
+  !pageSource.includes("statusDotClassName") && !pageSource.includes("h-1.5 w-1.5 shrink-0 rounded-full"),
+  "station list row should not use an ambiguous status color dot",
+);
+
+assert.ok(
+  !viewModelSource.includes('label: "变更风险"') &&
+    !viewModelSource.includes('label: "变更提醒"') &&
+    !viewModelSource.includes('label: "采集需关注"') &&
+    !viewModelSource.includes("路由"),
+  "issue tags should avoid broad severity labels and route-related wording",
+);
+
+function tagLabels(input) {
+  return stationIssueTags(input).map((tag) => tag.label);
+}
+
+function row(overrides = {}) {
+  return {
+    station: station(overrides.station),
+    enabledKeyCount: 1,
+    warningKeyCount: 0,
+    latestBalance: null,
+    balanceFactsReady: true,
+    currentBalance: {
+      value: 20,
+      lowBalanceThreshold: 10,
+      status: "normal",
+      source: "station_cache",
+      currency: "CNY",
+      ...overrides.currentBalance,
+    },
+    latestSnapshot: null,
+    riskEvents: [],
+    rateChips: [],
+    participatesInRouting: true,
+    ...overrides,
+    station: station(overrides.station),
+  };
+}
+
+function station(overrides = {}) {
+  return {
+    id: "station-a",
+    name: "Station A",
+    stationType: "sub2api",
+    baseUrl: "https://station.example.test",
+    apiKeyMasked: "sk-...",
+    apiKeyPresent: true,
+    keyCount: 1,
+    enabled: true,
+    priority: 0,
+    creditPerCny: 10,
+    balanceRaw: null,
+    balanceCny: 20,
+    lowBalanceThresholdCny: 10,
+    collectionIntervalMinutes: 5,
+    status: "healthy",
+    latencyMs: null,
+    lastCheckedAt: "2026-07-09T00:00:00.000Z",
+    lastPricingFetchedAt: null,
+    note: null,
+    createdAt: "2026-07-09T00:00:00.000Z",
+    updatedAt: "2026-07-09T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function change(overrides = {}) {
+  return {
+    id: "change-a",
+    stationId: "station-a",
+    severity: "warning",
+    status: "unread",
+    ...overrides,
+  };
+}

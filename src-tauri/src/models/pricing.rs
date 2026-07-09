@@ -215,7 +215,10 @@ mod tests {
 
         let json = serde_json::to_value(price).expect("json");
         assert_eq!(json["inputPrice"], 0.25);
-        assert_eq!(json["sourceUrl"], "https://developers.openai.com/api/docs/pricing");
+        assert_eq!(
+            json["sourceUrl"],
+            "https://developers.openai.com/api/docs/pricing"
+        );
         assert_eq!(json["builtIn"], true);
     }
 

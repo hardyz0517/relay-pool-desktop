@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Image, RefreshCw, ShieldCheck, TrendingDown } from "lucide-react";
+import { Coins, Image, RefreshCw, ShieldCheck, TrendingDown } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
@@ -45,7 +45,11 @@ const groupTypeFilterOptions: Array<{ value: GroupTypeFilter; label: string }> =
   { value: "image_generation", label: "生成图片" },
 ];
 
-export function PricingPage() {
+type PricingPageProps = {
+  onOpenModelBasePrices: () => void;
+};
+
+export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
   const toast = useToast();
   const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
@@ -124,10 +128,16 @@ export function PricingPage() {
     <PageScaffold
       title="价格 / 倍率"
       actions={
-        <Button variant="secondary" onClick={() => void refresh(true)}>
-          <RefreshCw className="h-4 w-4" />
-          刷新
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="secondary" onClick={onOpenModelBasePrices}>
+            <Coins className="h-4 w-4" />
+            模型基准价格
+          </Button>
+          <Button variant="secondary" onClick={() => void refresh(true)}>
+            <RefreshCw className="h-4 w-4" />
+            刷新
+          </Button>
+        </div>
       }
     >
       <div className="grid gap-[var(--shell-page-gap)] md:grid-cols-2">

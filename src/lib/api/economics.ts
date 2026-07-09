@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { mockPricingRows } from "@/lib/mock/pricing";
-import type { BalanceSnapshot, PricingRule } from "@/lib/types/economics";
+import type { BalanceSnapshot, ModelBasePrice, PricingRule } from "@/lib/types/economics";
 
 let memoryPricingRules: PricingRule[] | null = null;
 let memoryBalanceSnapshots: BalanceSnapshot[] | null = null;
+let memoryModelBasePrices: ModelBasePrice[] | null = null;
 
 export function listPricingRules() {
   return invoke<PricingRule[]>("list_pricing_rules").catch((error) => {
@@ -33,6 +34,39 @@ export function deletePricingRule(id: string) {
     if (isInvokeUnavailable(error)) {
       memoryPricingRules = ensureMemoryPricingRules().filter((rule) => rule.id !== id);
       return;
+    }
+    throw error;
+  });
+}
+
+export function listModelBasePrices() {
+  return invoke<ModelBasePrice[]>("list_model_base_prices").catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return ensureMemoryModelBasePrices();
+    }
+    throw error;
+  });
+}
+
+export function upsertModelBasePrice(input: unknown) {
+  return invoke<ModelBasePrice>("upsert_model_base_price", { input }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      const nextPrice = coerceModelBasePrice(input);
+      memoryModelBasePrices = [
+        nextPrice,
+        ...ensureMemoryModelBasePrices().filter((price) => price.id !== nextPrice.id),
+      ];
+      return nextPrice;
+    }
+    throw error;
+  });
+}
+
+export function resetModelBasePricesToBuiltins() {
+  return invoke<ModelBasePrice[]>("reset_model_base_prices_to_builtins").catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      memoryModelBasePrices = builtinModelBasePrices();
+      return memoryModelBasePrices;
     }
     throw error;
   });
@@ -162,6 +196,58 @@ function ensureMemoryBalanceSnapshots() {
   return memoryBalanceSnapshots;
 }
 
+function ensureMemoryModelBasePrices() {
+  if (memoryModelBasePrices) {
+    return memoryModelBasePrices;
+  }
+
+  memoryModelBasePrices = builtinModelBasePrices();
+  return memoryModelBasePrices;
+}
+
+function builtinModelBasePrices(): ModelBasePrice[] {
+  const now = new Date().toISOString();
+  const rows = [
+    ["builtin-openai-gpt-5-5", "openai", "gpt-5.5", 2.5, 15, "https://developers.openai.com/api/docs/pricing", "OpenAI API pricing", "Standard text token price per 1M tokens for short context."],
+    ["builtin-openai-gpt-5-4", "openai", "gpt-5.4", 1.25, 7.5, "https://developers.openai.com/api/docs/pricing", "OpenAI API pricing", "Standard text token price per 1M tokens for short context."],
+    ["builtin-openai-gpt-5-4-mini", "openai", "gpt-5.4-mini", 0.375, 2.25, "https://developers.openai.com/api/docs/pricing", "OpenAI API pricing", "Standard text token price per 1M tokens."],
+    ["builtin-anthropic-claude-fable-5", "anthropic", "claude-fable-5", 10, 50, "https://docs.anthropic.com/en/docs/about-claude/pricing", "Anthropic Claude pricing", "Standard text token price per 1M tokens."],
+    ["builtin-anthropic-claude-opus-4-8", "anthropic", "claude-opus-4-8", 5, 25, "https://docs.anthropic.com/en/docs/about-claude/pricing", "Anthropic Claude pricing", "Standard text token price per 1M tokens."],
+    ["builtin-anthropic-claude-opus-4-7", "anthropic", "claude-opus-4-7", 5, 25, "https://docs.anthropic.com/en/docs/about-claude/pricing", "Anthropic Claude pricing", "Standard text token price per 1M tokens."],
+    ["builtin-anthropic-claude-sonnet-5", "anthropic", "claude-sonnet-5", 2, 10, "https://docs.anthropic.com/en/docs/about-claude/pricing", "Anthropic Claude pricing", "Promotional text token price per 1M tokens through 2026-08-31."],
+    ["builtin-anthropic-claude-sonnet-4-6", "anthropic", "claude-sonnet-4-6", 3, 15, "https://docs.anthropic.com/en/docs/about-claude/pricing", "Anthropic Claude pricing", "Standard text token price per 1M tokens."],
+    ["builtin-anthropic-claude-haiku-4-5", "anthropic", "claude-haiku-4-5", 1, 5, "https://docs.anthropic.com/en/docs/about-claude/pricing", "Anthropic Claude pricing", "Standard text token price per 1M tokens."],
+    ["builtin-google-gemini-3-1-pro-preview", "google", "gemini-3.1-pro-preview", 2, 12, "https://ai.google.dev/gemini-api/docs/pricing", "Gemini API pricing", "Standard text token price per 1M tokens for prompts at or below 200k tokens."],
+    ["builtin-google-gemini-3-flash-preview", "google", "gemini-3-flash-preview", 0.5, 3, "https://ai.google.dev/gemini-api/docs/pricing", "Gemini API pricing", "Standard text token price per 1M tokens."],
+    ["builtin-google-gemini-2-5-pro", "google", "gemini-2.5-pro", 1.25, 10, "https://ai.google.dev/gemini-api/docs/pricing", "Gemini API pricing", "Standard text token price per 1M tokens for prompts at or below 200k tokens."],
+    ["builtin-google-gemini-2-5-flash", "google", "gemini-2.5-flash", 0.3, 2.5, "https://ai.google.dev/gemini-api/docs/pricing", "Gemini API pricing", "Standard text token price per 1M tokens."],
+    ["builtin-google-gemini-2-5-flash-lite", "google", "gemini-2.5-flash-lite", 0.1, 0.4, "https://ai.google.dev/gemini-api/docs/pricing", "Gemini API pricing", "Standard text token price per 1M tokens."],
+    ["builtin-xai-grok-build-0-1", "xai", "grok-build-0.1", 1, 2, "https://docs.x.ai/docs/models/grok-build", "xAI Grok Build model card", "Standard text token price per 1M tokens."],
+    ["builtin-xai-grok-4-3", "xai", "grok-4.3", 1.25, 2.5, "https://docs.x.ai/developers/pricing", "xAI API pricing", "Standard text token price per 1M tokens."],
+    ["builtin-xai-grok-4-20-multi-agent-0309", "xai", "grok-4.20-multi-agent-0309", 1.25, 2.5, "https://docs.x.ai/developers/pricing", "xAI API pricing", "Standard text token price per 1M tokens."],
+    ["builtin-xai-grok-4-20-0309-reasoning", "xai", "grok-4.20-0309-reasoning", 1.25, 2.5, "https://docs.x.ai/developers/pricing", "xAI API pricing", "Standard text token price per 1M tokens."],
+    ["builtin-xai-grok-4-20-0309-non-reasoning", "xai", "grok-4.20-0309-non-reasoning", 1.25, 2.5, "https://docs.x.ai/developers/pricing", "xAI API pricing", "Standard text token price per 1M tokens."],
+  ] as const;
+
+  return rows.map(([id, provider, model, inputPrice, outputPrice, sourceUrl, sourceLabel, note]) => ({
+    id,
+    provider,
+    model,
+    inputPrice,
+    outputPrice,
+    currency: "USD",
+    unit: "per_1m_tokens",
+    sourceUrl,
+    sourceLabel,
+    sourceCheckedAt: "2026-07-08",
+    enabled: true,
+    builtIn: true,
+    note,
+    createdAt: now,
+    updatedAt: now,
+  }));
+}
+
 function coercePricingRule(input: unknown): PricingRule {
   const now = new Date().toISOString();
   const candidate = typeof input === "object" && input ? (input as Partial<PricingRule>) : {};
@@ -189,6 +275,28 @@ function coercePricingRule(input: unknown): PricingRule {
     collectedAt: candidate.collectedAt ?? now,
     validFrom: candidate.validFrom ?? null,
     validUntil: candidate.validUntil ?? null,
+    createdAt: candidate.createdAt ?? now,
+    updatedAt: now,
+  };
+}
+
+function coerceModelBasePrice(input: unknown): ModelBasePrice {
+  const now = new Date().toISOString();
+  const candidate = typeof input === "object" && input ? (input as Partial<ModelBasePrice>) : {};
+  return {
+    id: candidate.id ?? `mock-model-base-price-${Date.now()}`,
+    provider: candidate.provider ?? "custom",
+    model: candidate.model ?? "unknown-model",
+    inputPrice: candidate.inputPrice ?? null,
+    outputPrice: candidate.outputPrice ?? null,
+    currency: candidate.currency ?? "USD",
+    unit: candidate.unit ?? "per_1m_tokens",
+    sourceUrl: candidate.sourceUrl ?? "manual",
+    sourceLabel: candidate.sourceLabel ?? "Manual",
+    sourceCheckedAt: candidate.sourceCheckedAt ?? now.slice(0, 10),
+    enabled: candidate.enabled ?? true,
+    builtIn: candidate.builtIn ?? false,
+    note: candidate.note ?? null,
     createdAt: candidate.createdAt ?? now,
     updatedAt: now,
   };

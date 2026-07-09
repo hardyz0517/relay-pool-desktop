@@ -20,10 +20,19 @@ export type RateChip = {
   tone: "neutral" | "good" | "warning";
 };
 
+export type StationIssueTag = {
+  label: string;
+  tone: "info" | "warning" | "error" | "disabled";
+  title?: string;
+};
+
 export type StationAssetRow = {
   station: Station;
   enabledKeyCount: number;
   warningKeyCount: number;
+  groupIssueCount: number;
+  missingRateCount: number;
+  balanceFactsReady: boolean;
   latestBalance: BalanceSnapshot | null;
   currentBalance: StationBalanceCurrentFact;
   latestSnapshot: CollectorSnapshot | null;
@@ -40,6 +49,7 @@ export function buildStationAssetRows({
   groupBindingsByStation,
   groupRatesByStation,
   changes,
+  balanceFactsReady = true,
 }: {
   stations: Station[];
   keysByStation: Map<string, StationKey[]>;
@@ -48,6 +58,7 @@ export function buildStationAssetRows({
   groupBindingsByStation: Map<string, StationGroupBinding[]>;
   groupRatesByStation?: Map<string, GroupRateRecord[]>;
   changes: ChangeEvent[];
+  balanceFactsReady?: boolean;
 }): StationAssetRow[] {
   const currentBalancesByStation = buildCurrentStationBalanceFacts({ stations, balances });
   return stations.map((station) => {
@@ -67,6 +78,9 @@ export function buildStationAssetRows({
       station,
       enabledKeyCount,
       warningKeyCount: keys.filter((key) => key.status === "warning" || key.status === "error").length,
+      groupIssueCount: countGroupIssues(groupBindings),
+      missingRateCount: countMissingRates(groupBindings, groupRates),
+      balanceFactsReady,
       latestBalance: currentBalance?.sourceSnapshot ?? null,
       currentBalance: currentBalance ?? buildCurrentStationBalanceFacts({ stations: [station], balances: [] }).get(station.id)!,
       latestSnapshot: snapshotsByStation.get(station.id) ?? null,
@@ -125,6 +139,96 @@ export function formatStationBalance(row: StationAssetRow) {
     return "未采集";
   }
   return `${row.currentBalance.currency} ${value.toFixed(2)}`;
+}
+
+export function stationIssueTags(row: StationAssetRow): StationIssueTag[] {
+  const tags: StationIssueTag[] = [];
+  const balanceValue = row.currentBalance.value;
+  const lowBalanceThreshold = row.currentBalance.lowBalanceThreshold ?? row.station.lowBalanceThresholdCny;
+  const collectionTag = stationCollectionIssueTag(row);
+
+  if (!row.station.enabled || row.station.status === "disabled") {
+    tags.push({ label: "已禁用", tone: "disabled" });
+  }
+
+  if (!row.station.apiKeyPresent && row.station.keyCount === 0) {
+    tags.push({ label: "缺 API Key", tone: "error" });
+  } else if (row.station.keyCount > 0 && row.enabledKeyCount === 0) {
+    tags.push({ label: "无可用 Key", tone: "warning" });
+  }
+
+  if (row.warningKeyCount > 0) {
+    tags.push({ label: "Key 异常", tone: "warning" });
+  }
+
+  if (collectionTag) {
+    tags.push(collectionTag);
+  }
+
+  if (balanceValue == null && row.balanceFactsReady) {
+    tags.push({ label: "余额未采集", tone: "info" });
+  } else if (typeof balanceValue === "number" && balanceValue <= 0) {
+    tags.push({ label: "余额为零", tone: "error" });
+  } else if (
+    row.currentBalance.status === "low" ||
+    (typeof balanceValue === "number" && typeof lowBalanceThreshold === "number" && balanceValue < lowBalanceThreshold)
+  ) {
+    tags.push({ label: "余额偏低", tone: "warning" });
+  }
+
+  if (row.groupIssueCount > 0) {
+    tags.push({ label: "分组异常", tone: "warning" });
+  }
+
+  if (row.missingRateCount > 0) {
+    tags.push({ label: "倍率缺失", tone: "warning" });
+  }
+
+  return tags;
+}
+
+function stationCollectionIssueTag(row: StationAssetRow): StationIssueTag | null {
+  const snapshotStatus = row.latestSnapshot?.status;
+  const snapshotSummary = row.latestSnapshot?.summaryJson ?? {};
+  const loginRequired =
+    row.latestSnapshot?.status === "manual_required" ||
+    snapshotSummary.loginRequired === true ||
+    snapshotSummary.loginStatus === "manual_required";
+
+  if (loginRequired) {
+    return { label: "需登录", tone: "warning", title: row.latestSnapshot?.errorMessage ?? "采集需要登录或人工处理" };
+  }
+
+  if (snapshotStatus === "failed" || snapshotStatus === "error" || row.station.status === "error") {
+    return { label: "采集失败", tone: "error", title: row.latestSnapshot?.errorMessage ?? "最近一次采集失败" };
+  }
+
+  if (row.station.status === "unchecked" && !row.latestSnapshot) {
+    return { label: "未采集", tone: "info" };
+  }
+
+  return null;
+}
+
+function countGroupIssues(bindings: StationGroupBinding[]) {
+  return bindings.filter(
+    (binding) =>
+      binding.bindingKind === "station_group" &&
+      (binding.bindingStatus === "missing" || binding.bindingStatus === "disabled"),
+  ).length;
+}
+
+function countMissingRates(bindings: StationGroupBinding[], rates: GroupRateRecord[]) {
+  const collectedBindingsWithoutRates = bindings.filter(
+    (binding) =>
+      binding.bindingKind === "station_group" &&
+      binding.bindingStatus !== "missing" &&
+      binding.bindingStatus !== "disabled" &&
+      binding.bindingStatus !== "manual_legacy" &&
+      binding.effectiveRateMultiplier == null,
+  ).length;
+  const missingRateRecords = rates.filter((rate) => rate.effectiveRateMultiplier == null).length;
+  return collectedBindingsWithoutRates + missingRateRecords;
 }
 
 export function stationRiskTone(row: StationAssetRow): StatusTone {

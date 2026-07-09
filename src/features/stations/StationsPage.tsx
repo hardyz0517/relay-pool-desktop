@@ -14,7 +14,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { Clock3, Edit3, GripVertical, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, type StatusTone, useToast } from "@/components/ui";
+import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
 import { createStation, deleteStation, listStations, openStationBaseUrl, reorderStations, updateStation } from "@/lib/api/stations";
@@ -54,7 +54,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   buildStationAssetRows,
-  stationRiskTone,
+  stationIssueTags,
   type StationAssetRow,
 } from "./stationAssetViewModels";
 
@@ -152,6 +152,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   const [rateRecordsByStation, setRateRecordsByStation] = useState(new Map<string, GroupRateRecord[]>());
   const [collectorRunsByStation, setCollectorRunsByStation] = useState(new Map<string, CollectorRun[]>());
   const [balanceSnapshots, setBalanceSnapshots] = useState<BalanceSnapshot[]>([]);
+  const [balanceFactsReady, setBalanceFactsReady] = useState(false);
   const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
   const [drawerStationId, setDrawerStationId] = useState<string | null>(null);
   const [drawerVisible, setDrawerVisible] = useState(false);
@@ -250,11 +251,12 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
         stations,
         keysByStation,
         balances: balanceSnapshots,
+        balanceFactsReady,
         snapshotsByStation,
         groupBindingsByStation,
         changes: changeEvents,
       }),
-    [balanceSnapshots, changeEvents, groupBindingsByStation, keysByStation, snapshotsByStation, stations],
+    [balanceFactsReady, balanceSnapshots, changeEvents, groupBindingsByStation, keysByStation, snapshotsByStation, stations],
   );
   const collectedBalanceCount = useMemo(
     () => stationAssetRows.filter((row) => row.latestBalance?.value != null || row.station.balanceCny != null).length,
@@ -338,6 +340,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     }
     if (balancesResult.status === "fulfilled") {
       setBalanceSnapshots(balancesResult.value);
+      setBalanceFactsReady(true);
     }
     if (changesResult.status === "fulfilled") {
       setChangeEvents(changesResult.value);
@@ -971,7 +974,7 @@ function StationAssetListRow({
   onRefreshBalance,
 }: StationAssetListRowProps) {
   const station = row.station;
-  const statusToneValue = stationRiskTone(row);
+  const issueTags = stationIssueTags(row);
   const balance = formatStationBalanceParts(row);
   const lastCollectText = formatRelativeTime(
     row.latestBalance?.updatedAt ?? row.latestBalance?.collectedAt ?? station.lastCheckedAt ?? station.updatedAt,
@@ -1022,10 +1025,18 @@ function StationAssetListRow({
           <span className="hidden rounded-full border border-slate-200 bg-white/80 px-2 py-0.5 text-[11px] font-medium leading-4 text-slate-500 sm:inline-flex">
             {stationTypeLabels[station.stationType]}
           </span>
-          <span
-            className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDotClassName(statusToneValue))}
-            title={stationStatusLabels[station.status]}
-          />
+          {issueTags.map((tag) => (
+            <span
+              key={tag.label}
+              className={cn(
+                "hidden rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 sm:inline-flex",
+                stationIssueTagClassName(tag.tone),
+              )}
+              title={tag.title ?? tag.label}
+            >
+              {tag.label}
+            </span>
+          ))}
         </div>
         <button
           type="button"
@@ -1674,12 +1685,11 @@ function formatRelativeTime(value: string | null) {
   return `${Math.floor(diffMs / day)} 天前`;
 }
 
-function statusDotClassName(tone: StatusTone) {
-  if (tone === "healthy") return "bg-emerald-500";
-  if (tone === "warning") return "bg-amber-500";
-  if (tone === "error") return "bg-rose-500";
-  if (tone === "disabled") return "bg-slate-400";
-  return "bg-blue-500";
+function stationIssueTagClassName(tone: "info" | "warning" | "error" | "disabled") {
+  if (tone === "error") return "border-rose-200 bg-rose-50 text-rose-700";
+  if (tone === "warning") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (tone === "disabled") return "border-slate-200 bg-slate-100 text-slate-500";
+  return "border-sky-200 bg-sky-50 text-sky-700";
 }
 
 function formatNullableTime(value: string | null) {

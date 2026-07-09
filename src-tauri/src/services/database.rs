@@ -1012,7 +1012,8 @@ impl AppDatabase {
 
     pub fn reset_model_base_prices_to_builtins(&self) -> Result<Vec<ModelBasePrice>, String> {
         let connection = self.connection()?;
-        seed_builtin_model_base_prices(&connection)?;
+        seed_builtin_model_base_prices(&connection)
+            .map_err(|error| format!("恢复内置模型基准价格失败: {error}"))?;
         list_model_base_prices_from_connection(&connection)
     }
 
@@ -2593,53 +2594,113 @@ struct BuiltinModelBasePrice {
 const BUILTIN_MODEL_BASE_PRICE_CHECKED_AT: &str = "2026-07-08";
 const BUILTIN_MODEL_BASE_PRICES: &[BuiltinModelBasePrice] = &[
     BuiltinModelBasePrice {
-        id: "builtin-openai-gpt-5",
+        id: "builtin-openai-gpt-5-5",
         provider: "openai",
-        model: "gpt-5",
+        model: "gpt-5.5",
+        input_price: 2.5,
+        output_price: 15.0,
+        source_url: "https://developers.openai.com/api/docs/pricing",
+        source_label: "OpenAI API pricing",
+        note: "Standard text token price per 1M tokens for short context.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-openai-gpt-5-4",
+        provider: "openai",
+        model: "gpt-5.4",
         input_price: 1.25,
-        output_price: 10.0,
+        output_price: 7.5,
         source_url: "https://developers.openai.com/api/docs/pricing",
         source_label: "OpenAI API pricing",
-        note: "Standard text token price per 1M tokens.",
+        note: "Standard text token price per 1M tokens for short context.",
     },
     BuiltinModelBasePrice {
-        id: "builtin-openai-gpt-5-mini",
+        id: "builtin-openai-gpt-5-4-mini",
         provider: "openai",
-        model: "gpt-5-mini",
-        input_price: 0.25,
-        output_price: 2.0,
+        model: "gpt-5.4-mini",
+        input_price: 0.375,
+        output_price: 2.25,
         source_url: "https://developers.openai.com/api/docs/pricing",
         source_label: "OpenAI API pricing",
         note: "Standard text token price per 1M tokens.",
     },
     BuiltinModelBasePrice {
-        id: "builtin-openai-gpt-5-nano",
-        provider: "openai",
-        model: "gpt-5-nano",
-        input_price: 0.05,
-        output_price: 0.4,
-        source_url: "https://developers.openai.com/api/docs/pricing",
-        source_label: "OpenAI API pricing",
-        note: "Standard text token price per 1M tokens.",
-    },
-    BuiltinModelBasePrice {
-        id: "builtin-anthropic-claude-opus-4-1",
+        id: "builtin-anthropic-claude-fable-5",
         provider: "anthropic",
-        model: "claude-opus-4-1",
-        input_price: 15.0,
-        output_price: 75.0,
+        model: "claude-fable-5",
+        input_price: 10.0,
+        output_price: 50.0,
         source_url: "https://docs.anthropic.com/en/docs/about-claude/pricing",
         source_label: "Anthropic Claude pricing",
         note: "Standard text token price per 1M tokens.",
     },
     BuiltinModelBasePrice {
-        id: "builtin-anthropic-claude-sonnet-4-5",
+        id: "builtin-anthropic-claude-opus-4-8",
         provider: "anthropic",
-        model: "claude-sonnet-4-5",
+        model: "claude-opus-4-8",
+        input_price: 5.0,
+        output_price: 25.0,
+        source_url: "https://docs.anthropic.com/en/docs/about-claude/pricing",
+        source_label: "Anthropic Claude pricing",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-anthropic-claude-opus-4-7",
+        provider: "anthropic",
+        model: "claude-opus-4-7",
+        input_price: 5.0,
+        output_price: 25.0,
+        source_url: "https://docs.anthropic.com/en/docs/about-claude/pricing",
+        source_label: "Anthropic Claude pricing",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-anthropic-claude-sonnet-5",
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+        input_price: 2.0,
+        output_price: 10.0,
+        source_url: "https://docs.anthropic.com/en/docs/about-claude/pricing",
+        source_label: "Anthropic Claude pricing",
+        note: "Promotional text token price per 1M tokens through 2026-08-31.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-anthropic-claude-sonnet-4-6",
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
         input_price: 3.0,
         output_price: 15.0,
         source_url: "https://docs.anthropic.com/en/docs/about-claude/pricing",
         source_label: "Anthropic Claude pricing",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-anthropic-claude-haiku-4-5",
+        provider: "anthropic",
+        model: "claude-haiku-4-5",
+        input_price: 1.0,
+        output_price: 5.0,
+        source_url: "https://docs.anthropic.com/en/docs/about-claude/pricing",
+        source_label: "Anthropic Claude pricing",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-google-gemini-3-1-pro-preview",
+        provider: "google",
+        model: "gemini-3.1-pro-preview",
+        input_price: 2.0,
+        output_price: 12.0,
+        source_url: "https://ai.google.dev/gemini-api/docs/pricing",
+        source_label: "Gemini API pricing",
+        note: "Standard text token price per 1M tokens for prompts at or below 200k tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-google-gemini-3-flash-preview",
+        provider: "google",
+        model: "gemini-3-flash-preview",
+        input_price: 0.5,
+        output_price: 3.0,
+        source_url: "https://ai.google.dev/gemini-api/docs/pricing",
+        source_label: "Gemini API pricing",
         note: "Standard text token price per 1M tokens.",
     },
     BuiltinModelBasePrice {
@@ -2673,14 +2734,54 @@ const BUILTIN_MODEL_BASE_PRICES: &[BuiltinModelBasePrice] = &[
         note: "Standard text token price per 1M tokens.",
     },
     BuiltinModelBasePrice {
-        id: "builtin-xai-grok-build",
+        id: "builtin-xai-grok-build-0-1",
         provider: "xai",
-        model: "grok-build",
-        input_price: 0.2,
-        output_price: 1.5,
+        model: "grok-build-0.1",
+        input_price: 1.0,
+        output_price: 2.0,
+        source_url: "https://docs.x.ai/docs/models/grok-build",
+        source_label: "xAI Grok Build model card",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-xai-grok-4-3",
+        provider: "xai",
+        model: "grok-4.3",
+        input_price: 1.25,
+        output_price: 2.5,
         source_url: "https://docs.x.ai/developers/pricing",
         source_label: "xAI API pricing",
-        note: "Official Grok Build text token price per 1M tokens.",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-xai-grok-4-20-multi-agent-0309",
+        provider: "xai",
+        model: "grok-4.20-multi-agent-0309",
+        input_price: 1.25,
+        output_price: 2.5,
+        source_url: "https://docs.x.ai/developers/pricing",
+        source_label: "xAI API pricing",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-xai-grok-4-20-0309-reasoning",
+        provider: "xai",
+        model: "grok-4.20-0309-reasoning",
+        input_price: 1.25,
+        output_price: 2.5,
+        source_url: "https://docs.x.ai/developers/pricing",
+        source_label: "xAI API pricing",
+        note: "Standard text token price per 1M tokens.",
+    },
+    BuiltinModelBasePrice {
+        id: "builtin-xai-grok-4-20-0309-non-reasoning",
+        provider: "xai",
+        model: "grok-4.20-0309-non-reasoning",
+        input_price: 1.25,
+        output_price: 2.5,
+        source_url: "https://docs.x.ai/developers/pricing",
+        source_label: "xAI API pricing",
+        note: "Standard text token price per 1M tokens.",
     },
 ];
 
@@ -5471,58 +5572,184 @@ fn route_candidate_economics_from_connection(
         .optional()
         .map_err(|error| format!("读取余额快照失败: {error}"))?;
 
-    let economics = pricing_rule
-        .map(
-            |(
-                id,
-                model,
-                input_price,
-                output_price,
-                fixed_price,
-                currency,
-                source,
-                group_binding_id,
-                rate_multiplier,
-                normalization_status,
-                confidence,
-            )| {
-                let (
-                    balance_value,
-                    balance_currency,
-                    low_balance_threshold,
-                    balance_status,
-                    balance_scope,
-                    balance_collected_at,
-                ) = balance_snapshot.clone().unwrap_or((
-                    None,
-                    "unknown".to_string(),
-                    None,
-                    "unknown".to_string(),
-                    "unknown".to_string(),
-                    None,
-                ));
-                RouteCandidateEconomics {
-                    pricing_rule_id: Some(id),
-                    pricing_model: Some(model),
+    let base_price_economics = pricing_rule.as_ref().and_then(
+        |(
+            _id,
+            rule_model,
+            input_price,
+            output_price,
+            fixed_price,
+            _currency,
+            _source,
+            group_binding_id,
+            rate_multiplier,
+            _normalization_status,
+            confidence,
+        )| {
+            if input_price.is_some() || output_price.is_some() || fixed_price.is_some() {
+                return None;
+            }
+            let multiplier = (*rate_multiplier)?;
+            let model = requested_model
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(rule_model.as_str());
+            let base_price = model_base_price_for_model(connection, model)
+                .ok()
+                .flatten()?;
+            let (
+                base_model,
+                base_input_price,
+                base_output_price,
+                base_currency,
+                base_source_label,
+                base_confidence,
+            ) = base_price;
+            let (
+                balance_value,
+                balance_currency,
+                low_balance_threshold,
+                balance_status,
+                balance_scope,
+                balance_collected_at,
+            ) = balance_snapshot.clone().unwrap_or((
+                None,
+                "unknown".to_string(),
+                None,
+                "unknown".to_string(),
+                "unknown".to_string(),
+                None,
+            ));
+            Some(RouteCandidateEconomics {
+                pricing_rule_id: None,
+                pricing_model: Some(base_model),
+                group_binding_id: group_binding_id.clone(),
+                rate_multiplier: Some(multiplier),
+                normalization_status: Some("base_price_with_group_rate".to_string()),
+                price_confidence: Some((*confidence).min(base_confidence)),
+                estimated_input_price: base_input_price.map(|price| price * multiplier),
+                estimated_output_price: base_output_price.map(|price| price * multiplier),
+                fixed_price: None,
+                price_currency: Some(base_currency),
+                pricing_source: Some("model_base_price".to_string()),
+                balance_status: Some(balance_status),
+                balance_value,
+                low_balance_threshold,
+                balance_currency: Some(balance_currency),
+                balance_scope: Some(balance_scope),
+                balance_collected_at,
+                economic_freshness: Some(base_source_label),
+            })
+        },
+    );
+
+    let direct_base_price_economics = requested_model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|model| {
+            let base_price = model_base_price_for_model(connection, model)
+                .ok()
+                .flatten()?;
+            let (
+                base_model,
+                base_input_price,
+                base_output_price,
+                base_currency,
+                base_source_label,
+                base_confidence,
+            ) = base_price;
+            let (
+                balance_value,
+                balance_currency,
+                low_balance_threshold,
+                balance_status,
+                balance_scope,
+                balance_collected_at,
+            ) = balance_snapshot.clone().unwrap_or((
+                None,
+                "unknown".to_string(),
+                None,
+                "unknown".to_string(),
+                "unknown".to_string(),
+                None,
+            ));
+            Some(RouteCandidateEconomics {
+                pricing_rule_id: None,
+                pricing_model: Some(base_model),
+                group_binding_id: None,
+                rate_multiplier: Some(1.0),
+                normalization_status: Some("base_price_only".to_string()),
+                price_confidence: Some(base_confidence),
+                estimated_input_price: base_input_price,
+                estimated_output_price: base_output_price,
+                fixed_price: None,
+                price_currency: Some(base_currency),
+                pricing_source: Some("model_base_price".to_string()),
+                balance_status: Some(balance_status),
+                balance_value,
+                low_balance_threshold,
+                balance_currency: Some(balance_currency),
+                balance_scope: Some(balance_scope),
+                balance_collected_at,
+                economic_freshness: Some(base_source_label),
+            })
+        });
+
+    let economics = base_price_economics
+        .or_else(|| {
+            pricing_rule.map(
+                |(
+                    id,
+                    model,
+                    input_price,
+                    output_price,
+                    fixed_price,
+                    currency,
+                    source,
                     group_binding_id,
                     rate_multiplier,
-                    normalization_status: Some(normalization_status),
-                    price_confidence: Some(confidence),
-                    estimated_input_price: input_price,
-                    estimated_output_price: output_price,
-                    fixed_price,
-                    price_currency: Some(currency),
-                    pricing_source: Some(source),
-                    balance_status: Some(balance_status),
-                    balance_value,
-                    low_balance_threshold,
-                    balance_currency: Some(balance_currency),
-                    balance_scope: Some(balance_scope),
-                    balance_collected_at,
-                    economic_freshness: Some("latest_available".to_string()),
-                }
-            },
-        )
+                    normalization_status,
+                    confidence,
+                )| {
+                    let (
+                        balance_value,
+                        balance_currency,
+                        low_balance_threshold,
+                        balance_status,
+                        balance_scope,
+                        balance_collected_at,
+                    ) = balance_snapshot.clone().unwrap_or((
+                        None,
+                        "unknown".to_string(),
+                        None,
+                        "unknown".to_string(),
+                        "unknown".to_string(),
+                        None,
+                    ));
+                    RouteCandidateEconomics {
+                        pricing_rule_id: Some(id),
+                        pricing_model: Some(model),
+                        group_binding_id,
+                        rate_multiplier,
+                        normalization_status: Some(normalization_status),
+                        price_confidence: Some(confidence),
+                        estimated_input_price: input_price,
+                        estimated_output_price: output_price,
+                        fixed_price,
+                        price_currency: Some(currency),
+                        pricing_source: Some(source),
+                        balance_status: Some(balance_status),
+                        balance_value,
+                        low_balance_threshold,
+                        balance_currency: Some(balance_currency),
+                        balance_scope: Some(balance_scope),
+                        balance_collected_at,
+                        economic_freshness: Some("latest_available".to_string()),
+                    }
+                },
+            )
+        })
+        .or(direct_base_price_economics)
         .or_else(|| {
             balance_snapshot.map(
                 |(
@@ -5558,6 +5785,35 @@ fn route_candidate_economics_from_connection(
         });
 
     Ok(economics)
+}
+
+fn model_base_price_for_model(
+    connection: &Connection,
+    model: &str,
+) -> Result<Option<(String, Option<f64>, Option<f64>, String, String, f64)>, String> {
+    connection
+        .query_row(
+            "SELECT model, input_price, output_price, currency, source_label,
+                    CASE WHEN built_in = 1 THEN 0.95 ELSE 0.85 END
+               FROM model_base_prices
+              WHERE enabled = 1
+                AND lower(model) = lower(?1)
+              ORDER BY built_in DESC, updated_at DESC, created_at DESC
+              LIMIT 1",
+            params![model.trim()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<f64>>(1)?,
+                    row.get::<_, Option<f64>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, f64>(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("读取模型基准价格失败: {error}"))
 }
 
 fn route_candidate_economics_by_station_key(
@@ -5601,6 +5857,115 @@ fn list_pricing_rules_from_connection(connection: &Connection) -> Result<Vec<Pri
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析价格规则失败: {error}"))?;
     Ok(rows)
+}
+
+fn list_model_base_prices_from_connection(
+    connection: &Connection,
+) -> Result<Vec<ModelBasePrice>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, provider, model, input_price, output_price, currency, unit,
+                    source_url, source_label, source_checked_at, enabled, built_in, note,
+                    created_at, updated_at
+               FROM model_base_prices
+              ORDER BY built_in DESC, provider ASC, model ASC, updated_at DESC",
+        )
+        .map_err(|error| format!("读取模型基准价格失败: {error}"))?;
+    let rows = statement
+        .query_map([], row_to_model_base_price)
+        .map_err(|error| format!("查询模型基准价格失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析模型基准价格失败: {error}"))?;
+    Ok(rows)
+}
+
+fn model_base_price_by_id(connection: &Connection, id: &str) -> Result<ModelBasePrice, String> {
+    connection
+        .query_row(
+            "SELECT id, provider, model, input_price, output_price, currency, unit,
+                    source_url, source_label, source_checked_at, enabled, built_in, note,
+                    created_at, updated_at
+               FROM model_base_prices
+              WHERE id = ?1",
+            params![id],
+            row_to_model_base_price,
+        )
+        .optional()
+        .map_err(|error| format!("读取模型基准价格失败: {error}"))?
+        .ok_or_else(|| "模型基准价格不存在".to_string())
+}
+
+fn upsert_model_base_price_in_connection(
+    connection: &Connection,
+    input: UpsertModelBasePriceInput,
+) -> Result<ModelBasePrice, String> {
+    if input.provider.trim().is_empty() {
+        return Err("供应商不能为空".to_string());
+    }
+    if input.model.trim().is_empty() {
+        return Err("模型不能为空".to_string());
+    }
+    if input.source_url.trim().is_empty() {
+        return Err("来源 URL 不能为空".to_string());
+    }
+    if input.source_label.trim().is_empty() {
+        return Err("来源名称不能为空".to_string());
+    }
+
+    let id = input.id.unwrap_or_else(|| generate_id("model_base_price"));
+    let existing_created_at: Option<String> = connection
+        .query_row(
+            "SELECT created_at FROM model_base_prices WHERE id = ?1",
+            params![id.clone()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取旧模型基准价格失败: {error}"))?;
+    let now = now_string();
+    let created_at = existing_created_at.unwrap_or_else(|| now.clone());
+
+    connection
+        .execute(
+            "INSERT INTO model_base_prices (
+                id, provider, model, input_price, output_price, currency, unit,
+                source_url, source_label, source_checked_at, enabled, built_in, note,
+                created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+             ON CONFLICT(id) DO UPDATE SET
+                provider = excluded.provider,
+                model = excluded.model,
+                input_price = excluded.input_price,
+                output_price = excluded.output_price,
+                currency = excluded.currency,
+                unit = excluded.unit,
+                source_url = excluded.source_url,
+                source_label = excluded.source_label,
+                source_checked_at = excluded.source_checked_at,
+                enabled = excluded.enabled,
+                built_in = excluded.built_in,
+                note = excluded.note,
+                updated_at = excluded.updated_at",
+            params![
+                id,
+                input.provider.trim(),
+                input.model.trim(),
+                input.input_price,
+                input.output_price,
+                normalize_currency(input.currency),
+                normalize_unit(input.unit),
+                input.source_url.trim(),
+                input.source_label.trim(),
+                normalize_optional_string(input.source_checked_at),
+                bool_to_i64(input.enabled),
+                bool_to_i64(input.built_in),
+                normalize_optional_string(input.note),
+                created_at,
+                now,
+            ],
+        )
+        .map_err(|error| format!("保存模型基准价格失败: {error}"))?;
+
+    model_base_price_by_id(connection, &id)
 }
 
 fn upsert_pricing_rule_in_connection(
@@ -5888,6 +6253,26 @@ fn row_to_pricing_rule(row: &rusqlite::Row<'_>) -> rusqlite::Result<PricingRule>
         valid_until: row.get(22)?,
         created_at: row.get(23)?,
         updated_at: row.get(24)?,
+    })
+}
+
+fn row_to_model_base_price(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModelBasePrice> {
+    Ok(ModelBasePrice {
+        id: row.get(0)?,
+        provider: row.get(1)?,
+        model: row.get(2)?,
+        input_price: row.get(3)?,
+        output_price: row.get(4)?,
+        currency: row.get(5)?,
+        unit: row.get(6)?,
+        source_url: row.get(7)?,
+        source_label: row.get(8)?,
+        source_checked_at: row.get(9)?,
+        enabled: i64_to_bool(row.get(10)?),
+        built_in: i64_to_bool(row.get(11)?),
+        note: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
     })
 }
 
@@ -6437,7 +6822,68 @@ fn list_request_logs_from_connection(connection: &Connection) -> Result<Vec<Requ
         .map_err(|error| format!("查询请求日志失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析请求日志失败: {error}"))?;
-    Ok(rows)
+    Ok(rows
+        .into_iter()
+        .map(|log| request_log_with_estimated_cost(connection, log))
+        .collect())
+}
+
+fn request_log_with_estimated_cost(connection: &Connection, mut log: RequestLog) -> RequestLog {
+    if log.estimated_total_cost.is_some() {
+        return log;
+    }
+    let Some(model) = log
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return log;
+    };
+    let Some(station_key_id) = log.station_key_id.as_deref() else {
+        return log;
+    };
+    let Some(economics) =
+        route_candidate_economics_by_station_key(connection, station_key_id, Some(model))
+            .ok()
+            .flatten()
+    else {
+        return log;
+    };
+
+    let estimated_input_cost = economics
+        .estimated_input_price
+        .map(|price| price * log.prompt_tokens.unwrap_or(0) as f64 / 1_000_000.0);
+    let estimated_output_cost = economics
+        .estimated_output_price
+        .map(|price| price * log.completion_tokens.unwrap_or(0) as f64 / 1_000_000.0);
+    let estimated_total_cost = match (estimated_input_cost, estimated_output_cost) {
+        (Some(input), Some(output)) => Some(input + output),
+        (Some(input), None) => Some(input),
+        (None, Some(output)) => Some(output),
+        _ => None,
+    };
+    if estimated_total_cost.is_none() {
+        return log;
+    }
+
+    log.estimated_input_cost = estimated_input_cost;
+    log.estimated_output_cost = estimated_output_cost;
+    log.estimated_total_cost = estimated_total_cost;
+    log.cost_currency = economics.price_currency;
+    log.pricing_rule_id = economics.pricing_rule_id;
+    log.pricing_source = economics.pricing_source;
+    log.cost_status = Some("estimated".to_string());
+    if log.group_binding_id.is_none() {
+        log.group_binding_id = economics.group_binding_id;
+    }
+    if log.normalization_status.is_none() {
+        log.normalization_status = economics.normalization_status;
+    }
+    if log.balance_scope.is_none() {
+        log.balance_scope = economics.balance_scope;
+    }
+    log
 }
 
 fn create_station_key_in_connection(
@@ -8739,6 +9185,14 @@ mod tests {
             .expect("monitor")
     }
 
+    fn assert_option_f64_close(actual: Option<f64>, expected: f64) {
+        let actual = actual.expect("expected value");
+        assert!(
+            (actual - expected).abs() < 0.000000001,
+            "expected {expected}, got {actual}"
+        );
+    }
+
     #[test]
     fn station_endpoint_health_flows_into_key_pool_items() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
@@ -10150,6 +10604,7 @@ mod tests {
         assert_eq!(new_value["userRateMultiplier"], 1.25);
         assert_eq!(new_value["effectiveRateMultiplier"], 1.25);
     }
+
     #[test]
     fn key_group_unresolved_event_is_emitted_for_missing_key_binding() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
@@ -10933,6 +11388,66 @@ mod tests {
     }
 
     #[test]
+    fn list_request_logs_estimates_usage_only_logs_from_model_base_price() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "request-log-base-price");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        let log = database
+            .insert_request_log(CreateRequestLogInput {
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                model: Some("gpt-5.4-mini".to_string()),
+                stream: false,
+                status: "success".to_string(),
+                station_key_id: Some(key.id),
+                station_id: Some(station.id),
+                upstream_base_url: Some("https://example.test".to_string()),
+                fallback_count: 0,
+                error_message: None,
+                route_policy: Some("priority_fallback".to_string()),
+                route_reason: None,
+                rejected_candidates_json: None,
+                prompt_tokens: Some(10),
+                completion_tokens: Some(11),
+                total_tokens: Some(21),
+                estimated_input_cost: None,
+                estimated_output_cost: None,
+                estimated_total_cost: None,
+                cost_currency: None,
+                pricing_rule_id: None,
+                pricing_source: None,
+                cost_status: Some("usage_only".to_string()),
+                group_binding_id: None,
+                normalization_status: None,
+                balance_scope: None,
+                economic_context_json: None,
+                started_at: "1000".to_string(),
+                finished_at: Some("1100".to_string()),
+                duration_ms: Some(100),
+            })
+            .expect("insert log");
+
+        let listed = database.list_request_logs().expect("request logs");
+        let listed_log = listed
+            .iter()
+            .find(|candidate| candidate.id == log.id)
+            .expect("listed log");
+
+        assert_option_f64_close(listed_log.estimated_input_cost, 0.00000375);
+        assert_option_f64_close(listed_log.estimated_output_cost, 0.00002475);
+        assert_option_f64_close(listed_log.estimated_total_cost, 0.0000285);
+        assert_eq!(listed_log.cost_currency.as_deref(), Some("USD"));
+        assert_eq!(
+            listed_log.pricing_source.as_deref(),
+            Some("model_base_price")
+        );
+        assert_eq!(listed_log.cost_status.as_deref(), Some("estimated"));
+    }
+
+    #[test]
     fn request_log_redacts_error() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let log = database
@@ -11712,7 +12227,39 @@ mod tests {
             economics.normalization_status.as_deref(),
             Some("base_price_with_group_rate")
         );
-        assert_eq!(economics.pricing_source.as_deref(), Some("model_base_price"));
+        assert_eq!(
+            economics.pricing_source.as_deref(),
+            Some("model_base_price")
+        );
+    }
+
+    #[test]
+    fn route_candidate_economics_uses_model_base_price_without_pricing_rule() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "base-price-only");
+        let key = database
+            .list_station_keys(station.id)
+            .expect("keys")
+            .remove(0);
+
+        let economics = database
+            .route_candidate_economics_for_model(key.id, Some("gpt-5.4-mini".to_string()))
+            .expect("economics")
+            .expect("model base price economics");
+
+        assert_eq!(economics.pricing_rule_id.as_deref(), None);
+        assert_eq!(economics.pricing_model.as_deref(), Some("gpt-5.4-mini"));
+        assert_eq!(economics.rate_multiplier, Some(1.0));
+        assert_eq!(economics.estimated_input_price, Some(0.375));
+        assert_eq!(economics.estimated_output_price, Some(2.25));
+        assert_eq!(
+            economics.normalization_status.as_deref(),
+            Some("base_price_only")
+        );
+        assert_eq!(
+            economics.pricing_source.as_deref(),
+            Some("model_base_price")
+        );
     }
 
     #[test]
