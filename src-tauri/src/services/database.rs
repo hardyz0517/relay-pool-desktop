@@ -6019,9 +6019,7 @@ fn upsert_change_event_in_connection(
                 severity = excluded.severity,
                 event_type = excluded.event_type,
                 status = CASE
-                    WHEN excluded.event_type = 'balance_depleted'
-                        AND change_events.status IN ('read', 'dismissed', 'resolved')
-                        THEN change_events.status
+                    WHEN excluded.event_type = 'balance_depleted' THEN change_events.status
                     WHEN change_events.status = 'dismissed' THEN change_events.status
                     ELSE 'unread'
                 END,
@@ -6037,9 +6035,18 @@ fn upsert_change_event_in_connection(
                 new_value_json = excluded.new_value_json,
                 impact_json = excluded.impact_json,
                 source = excluded.source,
-                detected_at = excluded.detected_at,
-                resolved_at = NULL,
-                updated_at = excluded.updated_at",
+                detected_at = CASE
+                    WHEN excluded.event_type = 'balance_depleted' THEN change_events.detected_at
+                    ELSE excluded.detected_at
+                END,
+                resolved_at = CASE
+                    WHEN excluded.event_type = 'balance_depleted' THEN change_events.resolved_at
+                    ELSE NULL
+                END,
+                updated_at = CASE
+                    WHEN excluded.event_type = 'balance_depleted' THEN change_events.updated_at
+                    ELSE excluded.updated_at
+                END",
             params![
                 id,
                 input.severity.trim(),
@@ -10474,9 +10481,42 @@ mod tests {
             .expect("depleted event");
         assert_eq!(first_event.status, "unread");
 
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
         database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: None,
+                station_id: station.id.clone(),
+                station_key_id: None,
+                scope: "station".to_string(),
+                value: Some(0.0),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                low_balance_threshold: Some(10.0),
+                status: "depleted".to_string(),
+                source: "test".to_string(),
+                confidence: 1.0,
+                collected_at: Some("2026-07-09T01:03:00.000Z".to_string()),
+            })
+            .expect("repeated unread zero balance");
+
+        let unread_repeat = database
+            .list_change_events()
+            .expect("events")
+            .into_iter()
+            .find(|event| event.event_type == "balance_depleted")
+            .expect("depleted event after unread repeat");
+        assert_eq!(unread_repeat.status, "unread");
+        assert_eq!(unread_repeat.detected_at, first_event.detected_at);
+        assert_eq!(unread_repeat.updated_at, first_event.updated_at);
+
+        let read_event = database
             .mark_change_event_read(first_event.id.clone())
             .expect("read event");
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
 
         database
             .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
@@ -10501,8 +10541,11 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].id, first_event.id);
         assert_eq!(events[0].status, "read");
+        assert_eq!(events[0].detected_at, first_event.detected_at);
+        assert_eq!(events[0].updated_at, read_event.updated_at);
         assert!(events[0].message.contains('0'));
     }
+
     #[test]
     fn low_balance_snapshot_creates_change_event() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
