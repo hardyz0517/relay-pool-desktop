@@ -32,9 +32,26 @@ assert.match(editTabSource, /SortableContext/);
 assert.match(editTabSource, /reorderLocalRoutingKeys/);
 assert.match(editTabSource, /保存中/);
 assert.match(editTabSource, /保存失败/);
+assert.match(editTabSource, /useRef/);
+assert.match(editTabSource, /saveOperationRef/);
+assert.match(editTabSource, /workspaceVersionRef/);
+assert.equal(
+  editTabSource.match(/operationId !== saveOperationRef\.current/g)?.length,
+  2,
+  "success and failure paths must both ignore stale save operations",
+);
+assert.equal(
+  editTabSource.match(/workspaceVersionAtStart !== workspaceVersionRef\.current/g)?.length,
+  2,
+  "success and failure paths must both ignore responses after workspace refresh",
+);
+assert.match(editTabSource, /syncState === "saving"/);
+assert.match(editTabSource, /disabled=\{syncState === "saving"\}/);
+assert.match(editTabSource, /useSortable\(\{\s*id: candidate\.stationKeyId,\s*disabled,\s*\}\)/s);
 assert.match(candidateRowSource, /const isSortable = Boolean\(/);
 assert.match(candidateRowSource, /draggable=\{isSortable\}/);
 assert.doesNotMatch(statusTabSource, /dragAttributes|dragListeners|dragDisabled/);
+assert.doesNotMatch(statusTabSource, /DndContext|SortableContext|useSortable|reorderLocalRoutingKeys/);
 assert.equal(editTabSource.includes("权重"), false, "local routing edit UI must not expose 权重 copy");
 assert.equal(editTabSource.includes("保存策略"), false, "local routing edit UI must not expose page-level 保存策略 copy");
 

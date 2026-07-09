@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   closestCenter,
   DndContext,
@@ -47,6 +47,8 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
   const [candidates, setCandidates] = useState<LocalRoutingCandidate[]>([]);
   const [syncState, setSyncState] = useState<ReorderSyncState>("idle");
   const [syncError, setSyncError] = useState<string | null>(null);
+  const saveOperationRef = useRef(0);
+  const workspaceVersionRef = useRef(0);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -58,6 +60,8 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
   const syncLabel = reorderSyncLabels[syncState];
 
   useEffect(() => {
+    workspaceVersionRef.current += 1;
+    saveOperationRef.current += 1;
     if (!workspace) {
       setCandidates([]);
       setSyncState("idle");
@@ -106,13 +110,19 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
     const [moved] = nextCandidates.splice(activeIndex, 1);
     nextCandidates.splice(overIndex, 0, moved);
     const nextStationKeyIds = nextCandidates.map((candidate) => candidate.stationKeyId);
+    const operationId = saveOperationRef.current + 1;
+    const workspaceVersionAtStart = workspaceVersionRef.current;
 
+    saveOperationRef.current = operationId;
     setCandidates(nextCandidates);
     setSyncState("saving");
     setSyncError(null);
 
     try {
       const nextWorkspace = await reorderLocalRoutingKeys({ stationKeyIds: nextStationKeyIds });
+      if (operationId !== saveOperationRef.current || workspaceVersionAtStart !== workspaceVersionRef.current) {
+        return;
+      }
       setCandidates(
         nextWorkspace.candidates.length === nextCandidates.length
           ? nextWorkspace.candidates
@@ -120,6 +130,9 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
       );
       setSyncState("synced");
     } catch (requestError) {
+      if (operationId !== saveOperationRef.current || workspaceVersionAtStart !== workspaceVersionRef.current) {
+        return;
+      }
       setCandidates(previousCandidates);
       setSyncState("failed");
       setSyncError(readError(requestError));
