@@ -6019,6 +6019,9 @@ fn upsert_change_event_in_connection(
                 severity = excluded.severity,
                 event_type = excluded.event_type,
                 status = CASE
+                    WHEN excluded.event_type = 'balance_depleted'
+                        AND change_events.status IN ('read', 'dismissed', 'resolved')
+                        THEN change_events.status
                     WHEN change_events.status = 'dismissed' THEN change_events.status
                     ELSE 'unread'
                 END,
@@ -7625,6 +7628,9 @@ fn upsert_station_group_binding_in_connection(
             &saved.station_id,
             &saved.group_name,
             &saved.id,
+            saved.default_rate_multiplier,
+            saved.user_rate_multiplier,
+            saved.effective_rate_multiplier,
         );
         let _ = upsert_change_event_in_connection(connection, event);
     }
@@ -7731,6 +7737,9 @@ fn emit_group_binding_change_events(
             &saved.station_id,
             &saved.group_name,
             &saved.id,
+            saved.default_rate_multiplier,
+            saved.user_rate_multiplier,
+            saved.effective_rate_multiplier,
         );
         let _ = upsert_change_event_in_connection(connection, event);
     }
@@ -10095,6 +10104,46 @@ mod tests {
     }
 
     #[test]
+    fn group_added_event_includes_collected_rate_multiplier() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "group-added-rate-relay");
+
+        database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:codex-pro".to_string(),
+                group_id_hash: Some("codex-pro".to_string()),
+                group_name: "codex-pro".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(1.25),
+                effective_rate_multiplier: Some(1.25),
+                rate_source: Some("groups_api".to_string()),
+                confidence: 0.9,
+                last_seen_at: Some("2026-07-09T01:00:00.000Z".to_string()),
+                raw_json_redacted: None,
+            })
+            .expect("binding");
+
+        let event = database
+            .list_change_events()
+            .expect("events")
+            .into_iter()
+            .find(|event| event.event_type == "group_added")
+            .expect("group added event");
+        let new_value: serde_json::Value =
+            serde_json::from_str(event.new_value_json.as_deref().expect("new value"))
+                .expect("new value json");
+
+        assert_eq!(new_value["groupName"], "codex-pro");
+        assert_eq!(new_value["defaultRateMultiplier"], 1.0);
+        assert_eq!(new_value["userRateMultiplier"], 1.25);
+        assert_eq!(new_value["effectiveRateMultiplier"], 1.25);
+    }
+    #[test]
     fn key_group_unresolved_event_is_emitted_for_missing_key_binding() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let station = test_station(&database, "unresolved-key-relay");
@@ -10393,6 +10442,67 @@ mod tests {
         assert_eq!(events.len(), 1);
     }
 
+    #[test]
+    fn depleted_balance_event_stays_read_when_zero_balance_repeats() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "zero-balance-relay");
+
+        database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: None,
+                station_id: station.id.clone(),
+                station_key_id: None,
+                scope: "station".to_string(),
+                value: Some(0.0),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                low_balance_threshold: Some(10.0),
+                status: "depleted".to_string(),
+                source: "test".to_string(),
+                confidence: 1.0,
+                collected_at: Some("2026-07-09T01:00:00.000Z".to_string()),
+            })
+            .expect("first zero balance");
+
+        let first_event = database
+            .list_change_events()
+            .expect("events")
+            .into_iter()
+            .find(|event| event.event_type == "balance_depleted")
+            .expect("depleted event");
+        assert_eq!(first_event.status, "unread");
+
+        database
+            .mark_change_event_read(first_event.id.clone())
+            .expect("read event");
+
+        database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: None,
+                station_id: station.id.clone(),
+                station_key_id: None,
+                scope: "station".to_string(),
+                value: Some(0.0),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                low_balance_threshold: Some(10.0),
+                status: "depleted".to_string(),
+                source: "test".to_string(),
+                confidence: 1.0,
+                collected_at: Some("2026-07-09T01:05:00.000Z".to_string()),
+            })
+            .expect("repeated zero balance");
+
+        let events = database.list_change_events().expect("events");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].id, first_event.id);
+        assert_eq!(events[0].status, "read");
+        assert!(events[0].message.contains('0'));
+    }
     #[test]
     fn low_balance_snapshot_creates_change_event() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");

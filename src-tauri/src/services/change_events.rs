@@ -219,6 +219,9 @@ pub fn group_added_event(
     station_id: &str,
     group_name: &str,
     group_binding_id: &str,
+    default_rate_multiplier: Option<f64>,
+    user_rate_multiplier: Option<f64>,
+    effective_rate_multiplier: Option<f64>,
 ) -> UpsertChangeEventInput {
     UpsertChangeEventInput {
         severity: SEVERITY_INFO.to_string(),
@@ -232,7 +235,15 @@ pub fn group_added_event(
         pricing_rule_id: None,
         request_log_id: None,
         old_value_json: None,
-        new_value_json: Some(json!({ "groupName": group_name }).to_string()),
+        new_value_json: Some(
+            json!({
+                "groupName": group_name,
+                "defaultRateMultiplier": default_rate_multiplier,
+                "userRateMultiplier": user_rate_multiplier,
+                "effectiveRateMultiplier": effective_rate_multiplier
+            })
+            .to_string(),
+        ),
         impact_json: Some(json!({ "priceMatrixMayChange": true }).to_string()),
         dedupe_key: group_dedupe_key(station_id, "group_added", group_binding_id),
         source: "collector".to_string(),
@@ -243,6 +254,9 @@ pub fn group_missing_event(
     station_id: &str,
     group_name: &str,
     group_binding_id: &str,
+    default_rate_multiplier: Option<f64>,
+    user_rate_multiplier: Option<f64>,
+    effective_rate_multiplier: Option<f64>,
 ) -> UpsertChangeEventInput {
     UpsertChangeEventInput {
         severity: SEVERITY_WARNING.to_string(),
@@ -255,8 +269,26 @@ pub fn group_missing_event(
         station_key_id: None,
         pricing_rule_id: None,
         request_log_id: None,
-        old_value_json: Some(json!({ "bindingStatus": "available" }).to_string()),
-        new_value_json: Some(json!({ "bindingStatus": "missing" }).to_string()),
+        old_value_json: Some(
+            json!({
+                "groupName": group_name,
+                "bindingStatus": "available",
+                "defaultRateMultiplier": default_rate_multiplier,
+                "userRateMultiplier": user_rate_multiplier,
+                "effectiveRateMultiplier": effective_rate_multiplier
+            })
+            .to_string(),
+        ),
+        new_value_json: Some(
+            json!({
+                "groupName": group_name,
+                "bindingStatus": "missing",
+                "defaultRateMultiplier": default_rate_multiplier,
+                "userRateMultiplier": user_rate_multiplier,
+                "effectiveRateMultiplier": effective_rate_multiplier
+            })
+            .to_string(),
+        ),
         impact_json: Some(json!({ "routingRisk": "bound_keys_may_be_unavailable" }).to_string()),
         dedupe_key: group_dedupe_key(station_id, "group_missing", group_binding_id),
         source: "collector".to_string(),
