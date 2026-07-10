@@ -1164,7 +1164,10 @@ fn confirm_switch_candidate(
             }
             Ok(())
         }
-        Err(SwitchProbeError::Http { status, retry_after_ms }) => {
+        Err(SwitchProbeError::Http {
+            status,
+            retry_after_ms,
+        }) => {
             let error = format!("switch probe returned HTTP {status}");
             record_candidate_failure(
                 context,
@@ -1881,45 +1884,30 @@ fn extract_request_cost(
         )
         .ok()
         .flatten();
-    let pricing_rule_id = economics
-        .as_ref()
-        .and_then(|economics| economics.pricing_rule_id.clone());
-    let cost_currency = economics
-        .as_ref()
-        .and_then(|economics| economics.price_currency.clone());
-    let estimated_input_cost = economics
-        .as_ref()
-        .and_then(|economics| economics.estimated_input_price)
-        .map(|price| price * prompt_tokens.unwrap_or(0) as f64 / 1_000_000.0);
-    let estimated_output_cost = economics
-        .as_ref()
-        .and_then(|economics| economics.estimated_output_price)
-        .map(|price| price * completion_tokens.unwrap_or(0) as f64 / 1_000_000.0);
-    let estimated_total_cost = match (estimated_input_cost, estimated_output_cost) {
-        (Some(input), Some(output)) => Some(input + output),
-        (Some(input), None) => Some(input),
-        (None, Some(output)) => Some(output),
-        _ => None,
-    };
-
-    RequestCostEstimate {
+    crate::services::pricing::request_cost_from_pricing_parts(
+        economics
+            .as_ref()
+            .map(|economics| crate::services::pricing::RequestPricingParts {
+                station_key_id: &candidate.station_key_id,
+                station_id: Some(&candidate.station_id),
+                model: response.model.as_deref(),
+                pricing_rule_id: economics.pricing_rule_id.as_deref(),
+                pricing_model: economics.pricing_model.as_deref(),
+                group_binding_id: economics.group_binding_id.as_deref(),
+                rate_multiplier: economics.rate_multiplier,
+                normalization_status: economics.normalization_status.as_deref(),
+                price_confidence: economics.price_confidence,
+                estimated_input_price: economics.estimated_input_price,
+                estimated_output_price: economics.estimated_output_price,
+                fixed_price: economics.fixed_price,
+                price_currency: economics.price_currency.as_deref(),
+                pricing_source: economics.pricing_source.as_deref(),
+                collected_at: economics.balance_collected_at.as_deref(),
+            }),
         prompt_tokens,
         completion_tokens,
-        total_tokens: Some(total_tokens),
-        estimated_input_cost,
-        estimated_output_cost,
-        estimated_total_cost,
-        cost_currency,
-        pricing_rule_id,
-        pricing_source: economics
-            .as_ref()
-            .and_then(|economics| economics.pricing_source.clone()),
-        cost_status: if estimated_total_cost.is_some() {
-            "estimated".to_string()
-        } else {
-            "usage_only".to_string()
-        },
-    }
+        Some(total_tokens),
+    )
 }
 
 impl ProxyResponse {
@@ -2698,7 +2686,7 @@ mod tests {
         assert_eq!(response.request_cost.estimated_input_cost, Some(0.000024));
         assert_eq!(response.request_cost.estimated_output_cost, Some(0.0002));
         assert_f64_close(response.request_cost.estimated_total_cost, 0.000224);
-        assert_eq!(response.request_cost.cost_status, "estimated");
+        assert_eq!(response.request_cost.cost_status, "priced");
         upstream.join();
     }
 
@@ -2721,15 +2709,11 @@ mod tests {
         assert_eq!(health.failure_count, 0);
         assert_eq!(health.consecutive_failures, 0);
         assert!(health.last_success_at.is_some());
-        let remembered_key = context
-            .route_affinity
-            .lock()
-            .expect("affinity")
-            .lookup(
-                RouteEndpointKind::ChatCompletions,
-                Some("gpt-5.4"),
-                now_millis_for_services() as i64,
-            );
+        let remembered_key = context.route_affinity.lock().expect("affinity").lookup(
+            RouteEndpointKind::ChatCompletions,
+            Some("gpt-5.4"),
+            now_millis_for_services() as i64,
+        );
         assert_eq!(remembered_key.as_deref(), Some(key.id.as_str()));
         upstream.join();
     }

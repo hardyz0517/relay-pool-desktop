@@ -207,7 +207,10 @@ fn capability_label(candidate: &LocalRoutingReadCandidate) -> String {
     }
 }
 
-fn latest_decision(log: &RequestLog, candidates: &[LocalRoutingCandidateRow]) -> RouteDecisionSummary {
+fn latest_decision(
+    log: &RequestLog,
+    candidates: &[LocalRoutingCandidateRow],
+) -> RouteDecisionSummary {
     let selected_station_name = log.station_key_id.as_ref().and_then(|station_key_id| {
         candidates
             .iter()

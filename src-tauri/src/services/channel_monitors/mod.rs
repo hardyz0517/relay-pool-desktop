@@ -451,43 +451,30 @@ fn monitor_request_cost(
         .route_candidate_economics_for_model(station_key_id.to_string(), Some(model.to_string()))
         .ok()
         .flatten();
-    let estimated_input_cost = economics
-        .as_ref()
-        .and_then(|economics| economics.estimated_input_price)
-        .map(|price| price * usage.prompt_tokens.unwrap_or(0) as f64 / 1_000_000.0);
-    let estimated_output_cost = economics
-        .as_ref()
-        .and_then(|economics| economics.estimated_output_price)
-        .map(|price| price * usage.completion_tokens.unwrap_or(0) as f64 / 1_000_000.0);
-    let estimated_total_cost = match (estimated_input_cost, estimated_output_cost) {
-        (Some(input), Some(output)) => Some(input + output),
-        (Some(input), None) => Some(input),
-        (None, Some(output)) => Some(output),
-        _ => None,
-    };
-
-    RequestCostEstimate {
-        prompt_tokens: usage.prompt_tokens,
-        completion_tokens: usage.completion_tokens,
-        total_tokens: usage.total_tokens,
-        estimated_input_cost,
-        estimated_output_cost,
-        estimated_total_cost,
-        cost_currency: economics
+    crate::services::pricing::request_cost_from_pricing_parts(
+        economics
             .as_ref()
-            .and_then(|economics| economics.price_currency.clone()),
-        pricing_rule_id: economics
-            .as_ref()
-            .and_then(|economics| economics.pricing_rule_id.clone()),
-        pricing_source: economics
-            .as_ref()
-            .and_then(|economics| economics.pricing_source.clone()),
-        cost_status: if estimated_total_cost.is_some() {
-            "estimated".to_string()
-        } else {
-            "usage_only".to_string()
-        },
-    }
+            .map(|economics| crate::services::pricing::RequestPricingParts {
+                station_key_id,
+                station_id: None,
+                model: Some(model),
+                pricing_rule_id: economics.pricing_rule_id.as_deref(),
+                pricing_model: economics.pricing_model.as_deref(),
+                group_binding_id: economics.group_binding_id.as_deref(),
+                rate_multiplier: economics.rate_multiplier,
+                normalization_status: economics.normalization_status.as_deref(),
+                price_confidence: economics.price_confidence,
+                estimated_input_price: economics.estimated_input_price,
+                estimated_output_price: economics.estimated_output_price,
+                fixed_price: economics.fixed_price,
+                price_currency: economics.price_currency.as_deref(),
+                pricing_source: economics.pricing_source.as_deref(),
+                collected_at: economics.balance_collected_at.as_deref(),
+            }),
+        usage.prompt_tokens,
+        usage.completion_tokens,
+        usage.total_tokens,
+    )
 }
 
 fn insert_failed_key_run(
@@ -666,6 +653,75 @@ mod tests {
         thread,
         time::Duration,
     };
+
+    #[test]
+    fn monitor_request_cost_uses_unified_pricing_status() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = [7_u8; 32];
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "monitor cost station".to_string(),
+                    station_type: "openai-compatible".to_string(),
+                    base_url: "http://127.0.0.1:9".to_string(),
+                    api_key: "sk-monitor-cost".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        database
+            .upsert_pricing_rule(UpsertPricingRuleInput {
+                id: None,
+                station_id: station.id,
+                station_key_id: Some(key.id.clone()),
+                group_binding_id: None,
+                group_name: None,
+                tier_label: None,
+                model: "gpt-test".to_string(),
+                input_price: Some(1.0),
+                output_price: Some(2.0),
+                fixed_price: None,
+                rate_multiplier: None,
+                currency: "USD".to_string(),
+                unit: "per_1m_tokens".to_string(),
+                price_type: "token".to_string(),
+                base_price_source: None,
+                normalization_status: Some("complete".to_string()),
+                source: "manual".to_string(),
+                confidence: 1.0,
+                enabled: true,
+                note: None,
+                collected_at: Some("1000".to_string()),
+                valid_from: None,
+                valid_until: None,
+            })
+            .expect("pricing rule");
+
+        let cost = monitor_request_cost(
+            &database,
+            &key.id,
+            "gpt-test",
+            Some(&MonitorProbeUsage {
+                prompt_tokens: Some(4),
+                completion_tokens: Some(6),
+                total_tokens: Some(10),
+            }),
+        );
+
+        assert_eq!(cost.estimated_input_cost, Some(0.000004));
+        assert_eq!(cost.estimated_output_cost, Some(0.000012));
+        assert_eq!(cost.estimated_total_cost, Some(0.000016));
+        assert_eq!(cost.cost_status, "priced");
+    }
 
     #[test]
     fn manual_monitor_run_updates_station_key_health() {
@@ -868,7 +924,7 @@ mod tests {
             Some(pricing_rule.id.as_str())
         );
         assert_eq!(log.pricing_source.as_deref(), Some("manual"));
-        assert_eq!(log.cost_status.as_deref(), Some("estimated"));
+        assert_eq!(log.cost_status.as_deref(), Some("priced"));
     }
 
     #[test]
@@ -1549,28 +1605,31 @@ mod tests {
         let address = listener.local_addr().expect("local addr");
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .expect("read timeout");
-            let mut request = Vec::new();
-            let mut buffer = [0_u8; 1024];
-            loop {
-                let size = stream.read(&mut buffer).expect("read request");
-                if size == 0 {
-                    break;
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .expect("read timeout");
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    let size = stream.read(&mut buffer).expect("read request");
+                    if size == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..size]);
+                    if request_is_complete(&request) {
+                        break;
+                    }
                 }
-                request.extend_from_slice(&buffer[..size]);
-                if request_is_complete(&request) {
-                    break;
+                let raw_request = String::from_utf8_lossy(&request).to_string();
+                if raw_request.starts_with("POST ") {
+                    sender.send(raw_request).expect("send request");
                 }
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write response");
             }
-            sender
-                .send(String::from_utf8_lossy(&request).to_string())
-                .expect("send request");
-            stream
-                .write_all(response.as_bytes())
-                .expect("write response");
         });
         (format!("http://{address}"), receiver)
     }
@@ -1603,7 +1662,9 @@ mod tests {
                 } else {
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"ok\":true}"
                 };
-                sender.send(raw_request).expect("send request");
+                if raw_request.starts_with("POST ") {
+                    sender.send(raw_request).expect("send request");
+                }
                 stream
                     .write_all(response.as_bytes())
                     .expect("write response");
