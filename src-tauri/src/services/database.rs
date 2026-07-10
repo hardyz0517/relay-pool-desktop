@@ -5888,6 +5888,16 @@ fn route_candidate_economics_from_connection(
               WHERE station_id = ?1
                 AND enabled = 1
                 AND (station_key_id = ?2 OR station_key_id IS NULL)
+                AND (
+                    ?3 IS NULL
+                    OR lower(model) = lower(?3)
+                    OR (
+                        normalization_status = 'group_rate_only'
+                        AND input_price IS NULL
+                        AND output_price IS NULL
+                        AND fixed_price IS NULL
+                    )
+                )
               ORDER BY
                 CASE
                     WHEN ?3 IS NOT NULL AND lower(model) = lower(?3) THEN 0
@@ -13058,6 +13068,58 @@ mod tests {
         assert_eq!(
             economics.pricing_source.as_deref(),
             Some("model_base_price")
+        );
+    }
+
+    #[test]
+    fn route_candidate_economics_ignores_manual_rule_for_other_model() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "manual-rule-other-model");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+
+        database
+            .upsert_pricing_rule(UpsertPricingRuleInput {
+                id: None,
+                station_id: station.id,
+                station_key_id: Some(key.id.clone()),
+                group_binding_id: None,
+                group_name: Some("default".to_string()),
+                tier_label: None,
+                model: "gpt-other".to_string(),
+                input_price: Some(99.0),
+                output_price: Some(199.0),
+                fixed_price: None,
+                rate_multiplier: None,
+                currency: "USD".to_string(),
+                unit: "per_1m_tokens".to_string(),
+                price_type: "token".to_string(),
+                base_price_source: Some("manual".to_string()),
+                normalization_status: Some("complete".to_string()),
+                source: "manual".to_string(),
+                confidence: 1.0,
+                enabled: true,
+                note: None,
+                collected_at: Some("1000".to_string()),
+                valid_from: None,
+                valid_until: None,
+            })
+            .expect("other model manual rule");
+
+        let economics = database
+            .route_candidate_economics_for_model(key.id, Some("gpt-5.4-mini".to_string()))
+            .expect("economics")
+            .expect("model base price economics");
+
+        assert_eq!(economics.pricing_rule_id.as_deref(), None);
+        assert_eq!(economics.pricing_model.as_deref(), Some("gpt-5.4-mini"));
+        assert_eq!(economics.estimated_input_price, Some(0.375));
+        assert_eq!(economics.estimated_output_price, Some(2.25));
+        assert_eq!(
+            economics.normalization_status.as_deref(),
+            Some("base_price_only")
         );
     }
 
