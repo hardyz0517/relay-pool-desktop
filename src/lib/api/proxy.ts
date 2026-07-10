@@ -3,6 +3,7 @@ import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 
 let memoryProxyStatus: ProxyStatus = {
   running: false,
+  lifecycle: "stopped",
   bindAddr: "127.0.0.1",
   port: 8787,
   startedAt: null,
@@ -27,6 +28,7 @@ export function startLocalProxy() {
       memoryProxyStatus = {
         ...memoryProxyStatus,
         running: true,
+        lifecycle: "running",
         startedAt: new Date().toISOString(),
         lastError: null,
       };
@@ -39,7 +41,12 @@ export function startLocalProxy() {
 export function stopLocalProxy() {
   return invoke<ProxyStatus>("stop_local_proxy").catch((error) => {
     if (isInvokeUnavailable(error)) {
-      memoryProxyStatus = { ...memoryProxyStatus, running: false, activeRequests: 0 };
+      memoryProxyStatus = {
+        ...memoryProxyStatus,
+        running: false,
+        lifecycle: "stopped",
+        activeRequests: 0,
+      };
       return memoryProxyStatus;
     }
     throw error;
@@ -52,6 +59,7 @@ export function restartLocalProxy() {
       memoryProxyStatus = {
         ...memoryProxyStatus,
         running: true,
+        lifecycle: "running",
         startedAt: new Date().toISOString(),
         lastError: null,
       };

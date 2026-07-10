@@ -1,9 +1,19 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProxyLifecycle {
+    #[default]
+    Stopped,
+    Running,
+    Draining,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyStatus {
     pub running: bool,
+    pub lifecycle: ProxyLifecycle,
     pub bind_addr: String,
     pub port: u16,
     pub started_at: Option<String>,
