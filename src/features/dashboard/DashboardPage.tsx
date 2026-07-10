@@ -39,6 +39,11 @@ import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { stationKeyStatusLabels } from "@/lib/types/stationKeys";
 import { formatChangeTime, severityLabels, severityTone, unreadRiskCount } from "@/features/changes/changeEventViewModels";
 import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
+import {
+  summarizeDashboardRequestCosts,
+  type DashboardCostTotal,
+  type DashboardRequestCostSummary,
+} from "@/features/dashboard/requestCostSummary";
 
 const healthTone = {
   healthy: "healthy",
@@ -180,15 +185,13 @@ export function DashboardPage() {
   const localKeyMasked = settings?.localKeyMasked ?? "未读取";
   const enabledKeyCount = keyPoolItems.filter((key) => key.enabled).length;
   const proxyRequestCount = proxyStatus?.requestCount ?? requestLogs.length;
-  const todayCost = todayLogs.reduce((sum, log) => sum + (log.estimatedTotalCost ?? 0), 0);
   const todayTokens = todayLogs.reduce((sum, log) => sum + (log.totalTokens ?? 0), 0);
   const todayPromptTokens = todayLogs.reduce((sum, log) => sum + (log.promptTokens ?? 0), 0);
   const todayCompletionTokens = todayLogs.reduce((sum, log) => sum + (log.completionTokens ?? 0), 0);
   const totalTokens = requestLogs.reduce((sum, log) => sum + (log.totalTokens ?? 0), 0);
   const totalPromptTokens = requestLogs.reduce((sum, log) => sum + (log.promptTokens ?? 0), 0);
   const totalCompletionTokens = requestLogs.reduce((sum, log) => sum + (log.completionTokens ?? 0), 0);
-  const pricedRequestLogs = requestLogs.filter((log) => log.estimatedTotalCost !== null);
-  const totalCost = pricedRequestLogs.reduce((sum, log) => sum + (log.estimatedTotalCost ?? 0), 0);
+  const requestCostSummary = useMemo(() => summarizeDashboardRequestCosts(requestLogs), [requestLogs]);
   const averageResponseMs = averageDurationMs(todayLogs);
   const todayTpm = getTodayAverageTpm(todayTokens);
   const activeRequests = proxyStatus?.activeRequests ?? 0;
@@ -333,10 +336,10 @@ export function DashboardPage() {
             },
             {
               label: "今日消耗",
-              value: formatCost(todayCost),
-              detail: `累计 ${formatCost(totalCost)}`,
+              value: formatCostTotals(requestCostSummary.todayTotalsByCurrency),
+              detail: formatCostMetricDetail(requestCostSummary),
               icon: BadgeDollarSign,
-              tone: todayCost > 0 ? "warning" : "neutral",
+              tone: requestCostSummary.todayTotalsByCurrency.length > 0 ? "warning" : "neutral",
               accent: "purple",
             },
             {
@@ -483,7 +486,7 @@ export function DashboardPage() {
                       {formatRequestCost(request.estimatedTotalCost, request.costCurrency, request.costStatus)}
                     </span>
                     <span className="mx-1">/</span>
-                    <span>{formatRequestCost(pricedRequestLogs.length > 0 ? totalCost : null, request.costCurrency)}</span>
+                    <span>{formatCostTotals(requestCostSummary.allTotalsByCurrency)}</span>
                   </div>
                   <div className="mt-0.5 whitespace-nowrap text-xs text-slate-500">
                     {formatTokenCount(request.totalTokens)} tokens
@@ -604,8 +607,27 @@ function formatBalance(value: number, currency?: string) {
   return `${symbol}${value.toFixed(2)}`;
 }
 
-function formatCost(value: number) {
-  return `¥${value.toFixed(4)}`;
+function formatCostTotals(totals: DashboardCostTotal[]) {
+  if (totals.length === 0) {
+    return "无成本";
+  }
+  return totals
+    .map((total) => {
+      const symbol = currencySymbol(total.currency);
+      return `${total.currency} ${symbol}${total.totalCost.toFixed(4)}`;
+    })
+    .join(" / ");
+}
+
+function formatCostMetricDetail(summary: DashboardRequestCostSummary) {
+  const parts = [`累计 ${formatCostTotals(summary.allTotalsByCurrency)}`];
+  if (summary.unpricedCount > 0) {
+    parts.push(`${summary.unpricedCount} 未定价`);
+  }
+  if (summary.legacyEstimateCount > 0) {
+    parts.push(`${summary.legacyEstimateCount} 旧估算`);
+  }
+  return parts.join(" · ");
 }
 
 function formatRequestCost(value: number | null | undefined, currency?: string | null, costStatus?: string | null) {

@@ -27,7 +27,7 @@ assert(
 
 assert(
   dashboardSource.includes('return "未定价";') &&
-    dashboardSource.includes("pricedRequestLogs") &&
+    dashboardSource.includes("requestCostSummary.allTotalsByCurrency") &&
     dashboardSource.includes('costStatus === "usage_only"') &&
     dashboardSource.includes("request.costStatus"),
   "dashboard request cost display should show usage-only rows as unpriced instead of $0.0000",
