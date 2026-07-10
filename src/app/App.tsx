@@ -127,7 +127,7 @@ export function App() {
       case "modelBasePrices":
         return <ModelBasePricesPage onBack={() => setActiveRouteId("pricing")} />;
       case "routing":
-        return <RoutingPage />;
+        return <RoutingPage onOpenPage={(routeId) => setActiveRouteId(routeId)} />;
       case "logs":
         return <LogsPage />;
       case "settings":

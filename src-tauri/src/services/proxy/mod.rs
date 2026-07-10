@@ -3,6 +3,13 @@ use serde_json::Value;
 
 pub mod adapters;
 pub mod router;
+pub mod routing_affinity;
+pub mod routing_failure;
+pub mod routing_health;
+pub mod routing_policy;
+pub mod routing_probe;
+pub mod routing_snapshot;
+pub mod routing_types;
 pub mod runtime;
 
 #[derive(Debug, Clone)]
@@ -39,7 +46,17 @@ pub fn build_upstream_url(base_url: &str, path: &str) -> String {
 }
 
 pub fn should_fallback(status: u16) -> bool {
-    status == 429 || (500..=599).contains(&status)
+    if status < 400 {
+        return false;
+    }
+    let failure = routing_failure::classify_route_failure(
+        routing_failure::RouteFailureInput::http_status(status, false),
+    );
+    failure.retryable_before_output
+        || matches!(
+            failure.action,
+            routing_failure::RouteFailureAction::HardFail
+        )
 }
 
 pub fn openai_error(message: &str, status: &str) -> Value {
@@ -161,11 +178,14 @@ mod tests {
 
     #[test]
     fn should_fallback_only_for_retryable_upstream_statuses() {
+        assert!(should_fallback(401));
+        assert!(should_fallback(402));
+        assert!(should_fallback(403));
         assert!(should_fallback(429));
         assert!(should_fallback(500));
         assert!(should_fallback(503));
         assert!(!should_fallback(400));
-        assert!(!should_fallback(401));
+        assert!(!should_fallback(404));
         assert!(!should_fallback(200));
     }
 

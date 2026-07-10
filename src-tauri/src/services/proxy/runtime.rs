@@ -28,6 +28,13 @@ use crate::{
             build_upstream_url, enabled_candidates, extract_chat_request_metadata, openai_error,
             redact_error_message,
             router::{select_route_candidates, RouteRequest},
+            routing_affinity::RouteAffinityStore,
+            routing_failure::{
+                classify_route_failure, RouteFailureAction, RouteFailureInput, RouteFailureScope,
+            },
+            routing_health::{apply_health_transition, error_summary_for_failure},
+            routing_probe::{ProbeCacheKey, ProbeConfirmationCache},
+            routing_types::RouteHealthState,
             should_fallback, RouteCandidate,
         },
     },
@@ -55,6 +62,8 @@ struct ProxyServerContext {
     data_key: [u8; 32],
     active_requests: Arc<AtomicU32>,
     request_count: Arc<AtomicU64>,
+    route_affinity: Arc<Mutex<RouteAffinityStore>>,
+    probe_cache: Arc<Mutex<ProbeConfirmationCache>>,
 }
 
 #[derive(Clone)]
@@ -75,6 +84,7 @@ struct ProxyResponse {
     station_id: Option<String>,
     upstream_base_url: Option<String>,
     fallback_count: i64,
+    retry_after_ms: Option<i64>,
     status_label: String,
     error_message: Option<String>,
     route_policy: Option<String>,
@@ -85,6 +95,17 @@ struct ProxyResponse {
     balance_scope: Option<String>,
     economic_context_json: Option<String>,
     request_cost: RequestCostEstimate,
+    pending_successes: Vec<PendingCandidateSuccess>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingCandidateSuccess {
+    station_key_id: String,
+    status_label: String,
+    checked_at: String,
+    duration_ms: i64,
+    endpoint: RouteEndpointKind,
+    model: Option<String>,
 }
 
 enum ProxyResponseBody {
@@ -167,6 +188,8 @@ impl ProxyRuntimeState {
             data_key,
             active_requests: Arc::clone(&active_requests),
             request_count: Arc::clone(&request_count),
+            route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
+            probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
         });
         let handle = thread::spawn(move || run_server(listener, thread_stop, context));
 
@@ -304,41 +327,161 @@ fn handle_connection(mut stream: TcpStream, context: &ProxyServerContext) {
             ProxyResponse::json_error(400, "bad_request", &error),
         ),
     };
-    let finished_at = now_string();
-    let _ = context.database.insert_request_log(CreateRequestLogInput {
+    let log_snapshot = RequestLogSnapshot::from_response(&response);
+    let pending_successes = response.pending_successes.clone();
+    let write_result = write_http_response(&mut stream, response);
+    if write_result.is_ok() {
+        let completed_at = now_string();
+        commit_pending_successes(
+            context,
+            &pending_successes,
+            Some(&completed_at),
+            Some(started.elapsed().as_millis() as i64),
+        );
+    }
+    let _ = context.database.insert_request_log(build_request_log_input(
         method,
         path,
-        model: response.model.clone(),
-        stream: response.stream,
-        status: response.status_label.clone(),
-        station_key_id: response.station_key_id.clone(),
-        station_id: response.station_id.clone(),
-        upstream_base_url: response.upstream_base_url.clone(),
-        fallback_count: response.fallback_count,
-        error_message: response.error_message.clone(),
-        route_policy: response.route_policy.clone(),
-        route_reason: response.route_reason.clone(),
-        rejected_candidates_json: response.rejected_candidates_json.clone(),
-        prompt_tokens: response.request_cost.prompt_tokens,
-        completion_tokens: response.request_cost.completion_tokens,
-        total_tokens: response.request_cost.total_tokens,
-        estimated_input_cost: response.request_cost.estimated_input_cost,
-        estimated_output_cost: response.request_cost.estimated_output_cost,
-        estimated_total_cost: response.request_cost.estimated_total_cost,
-        cost_currency: response.request_cost.cost_currency.clone(),
-        pricing_rule_id: response.request_cost.pricing_rule_id.clone(),
-        pricing_source: response.request_cost.pricing_source.clone(),
-        cost_status: Some(response.request_cost.cost_status.clone()),
-        group_binding_id: response.group_binding_id.clone(),
-        normalization_status: response.normalization_status.clone(),
-        balance_scope: response.balance_scope.clone(),
-        economic_context_json: response.economic_context_json.clone(),
+        log_snapshot,
         started_at,
-        finished_at: Some(finished_at),
-        duration_ms: Some(started.elapsed().as_millis() as i64),
-    });
-    let _ = write_http_response(&mut stream, response);
+        started,
+        &write_result,
+    ));
     let _ = stream.shutdown(Shutdown::Both);
+}
+
+fn commit_pending_successes(
+    context: &ProxyServerContext,
+    pending_successes: &[PendingCandidateSuccess],
+    completed_at: Option<&str>,
+    completed_duration_ms: Option<i64>,
+) {
+    for success in pending_successes {
+        let checked_at = completed_at.unwrap_or(success.checked_at.as_str());
+        let duration_ms = completed_duration_ms.unwrap_or(success.duration_ms);
+        let _ = context.database.touch_station_key_usage(
+            &success.station_key_id,
+            &success.status_label,
+            Some(checked_at),
+            Some(checked_at),
+        );
+        let _ = context.database.record_station_key_success(
+            &success.station_key_id,
+            duration_ms,
+            checked_at,
+        );
+        if let Ok(mut affinity) = context.route_affinity.lock() {
+            affinity.record_success(
+                success.endpoint.clone(),
+                success.model.as_deref(),
+                &success.station_key_id,
+                checked_at
+                    .parse::<i64>()
+                    .unwrap_or_else(|_| now_millis_for_services() as i64),
+            );
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RequestLogSnapshot {
+    model: Option<String>,
+    stream: bool,
+    status_label: String,
+    station_key_id: Option<String>,
+    station_id: Option<String>,
+    upstream_base_url: Option<String>,
+    fallback_count: i64,
+    error_message: Option<String>,
+    route_policy: Option<String>,
+    route_reason: Option<String>,
+    rejected_candidates_json: Option<String>,
+    request_cost: RequestCostEstimate,
+    group_binding_id: Option<String>,
+    normalization_status: Option<String>,
+    balance_scope: Option<String>,
+    economic_context_json: Option<String>,
+}
+
+impl RequestLogSnapshot {
+    fn from_response(response: &ProxyResponse) -> Self {
+        Self {
+            model: response.model.clone(),
+            stream: response.stream,
+            status_label: response.status_label.clone(),
+            station_key_id: response.station_key_id.clone(),
+            station_id: response.station_id.clone(),
+            upstream_base_url: response.upstream_base_url.clone(),
+            fallback_count: response.fallback_count,
+            error_message: response.error_message.clone(),
+            route_policy: response.route_policy.clone(),
+            route_reason: response.route_reason.clone(),
+            rejected_candidates_json: response.rejected_candidates_json.clone(),
+            request_cost: response.request_cost.clone(),
+            group_binding_id: response.group_binding_id.clone(),
+            normalization_status: response.normalization_status.clone(),
+            balance_scope: response.balance_scope.clone(),
+            economic_context_json: response.economic_context_json.clone(),
+        }
+    }
+}
+
+fn build_request_log_input(
+    method: String,
+    path: String,
+    snapshot: RequestLogSnapshot,
+    started_at: String,
+    started: Instant,
+    write_result: &Result<(), String>,
+) -> CreateRequestLogInput {
+    let interrupted = snapshot.stream && write_result.is_err();
+    let error_message = if interrupted {
+        write_result.as_ref().err().cloned()
+    } else {
+        snapshot.error_message.clone()
+    };
+
+    CreateRequestLogInput {
+        method,
+        path,
+        model: snapshot.model,
+        stream: snapshot.stream,
+        status: if interrupted {
+            "interrupted".to_string()
+        } else {
+            snapshot.status_label
+        },
+        lifecycle_status: Some(if interrupted {
+            "interrupted".to_string()
+        } else {
+            "completed".to_string()
+        }),
+        station_key_id: snapshot.station_key_id,
+        station_id: snapshot.station_id,
+        upstream_base_url: snapshot.upstream_base_url,
+        fallback_count: snapshot.fallback_count,
+        error_message,
+        route_policy: snapshot.route_policy,
+        route_reason: snapshot.route_reason,
+        rejected_candidates_json: snapshot.rejected_candidates_json,
+        prompt_tokens: snapshot.request_cost.prompt_tokens,
+        completion_tokens: snapshot.request_cost.completion_tokens,
+        total_tokens: snapshot.request_cost.total_tokens,
+        estimated_input_cost: snapshot.request_cost.estimated_input_cost,
+        estimated_output_cost: snapshot.request_cost.estimated_output_cost,
+        estimated_total_cost: snapshot.request_cost.estimated_total_cost,
+        cost_currency: snapshot.request_cost.cost_currency,
+        pricing_rule_id: snapshot.request_cost.pricing_rule_id,
+        pricing_source: snapshot.request_cost.pricing_source,
+        cost_status: Some(snapshot.request_cost.cost_status),
+        group_binding_id: snapshot.group_binding_id,
+        normalization_status: snapshot.normalization_status,
+        balance_scope: snapshot.balance_scope,
+        economic_context_json: snapshot.economic_context_json,
+        started_at,
+        finished_at: Some(now_string()),
+        duration_ms: Some(started.elapsed().as_millis() as i64),
+    }
 }
 
 fn handle_proxy_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
@@ -422,6 +565,7 @@ fn local_usage_response(context: &ProxyServerContext) -> ProxyResponse {
         station_id: None,
         upstream_base_url: None,
         fallback_count: 0,
+        retry_after_ms: None,
         status_label: "success".to_string(),
         error_message: None,
         route_policy: None,
@@ -432,6 +576,7 @@ fn local_usage_response(context: &ProxyServerContext) -> ProxyResponse {
         balance_scope: Some("station".to_string()),
         economic_context_json: None,
         request_cost: crate::services::pricing::request_cost_unknown(),
+        pending_successes: Vec::new(),
     }
 }
 
@@ -515,6 +660,7 @@ fn aggregate_models_request(
                             "warning",
                             &checked_at,
                             &error,
+                            RouteFailureInput::transport_error(false, &error),
                         );
                     }
                 }
@@ -523,12 +669,30 @@ fn aggregate_models_request(
                 failed_count += 1;
                 let error = format!("上游返回 HTTP {}", response.status_code);
                 last_error = Some(error.clone());
-                record_candidate_failure(context, candidate, "warning", &checked_at, &error);
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "warning",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::http_status_with_retry_after(
+                        response.status_code,
+                        false,
+                        response.retry_after_ms,
+                    ),
+                );
             }
             Err(error) => {
                 failed_count += 1;
                 last_error = Some(error.clone());
-                record_candidate_failure(context, candidate, "error", &checked_at, &error);
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "error",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::transport_error(false, &error),
+                );
             }
         }
     }
@@ -561,6 +725,7 @@ fn aggregate_models_request(
         station_id: None,
         upstream_base_url: None,
         fallback_count: failed_count,
+        retry_after_ms: None,
         status_label: "success".to_string(),
         error_message: None,
         route_policy: None,
@@ -571,6 +736,7 @@ fn aggregate_models_request(
         balance_scope: None,
         economic_context_json: None,
         request_cost: crate::services::pricing::request_cost_unknown(),
+        pending_successes: Vec::new(),
     }
 }
 
@@ -633,6 +799,7 @@ fn route_request_for_chat(
     body: &Value,
     policy: RoutingPolicy,
     allow_depleted_fallback: bool,
+    current_station_key_id: Option<String>,
 ) -> RouteRequest {
     RouteRequest {
         endpoint: RouteEndpointKind::ChatCompletions,
@@ -642,6 +809,7 @@ fn route_request_for_chat(
         uses_vision: uses_vision(body),
         uses_reasoning: uses_reasoning(body, model.as_deref()),
         policy,
+        current_station_key_id,
         allow_depleted_fallback,
         now_ms: now_millis_for_services() as i64,
     }
@@ -653,6 +821,7 @@ fn route_request_for_responses(
     body: &Value,
     policy: RoutingPolicy,
     allow_depleted_fallback: bool,
+    current_station_key_id: Option<String>,
 ) -> RouteRequest {
     RouteRequest {
         endpoint: RouteEndpointKind::Responses,
@@ -662,9 +831,22 @@ fn route_request_for_responses(
         uses_vision: uses_vision(body),
         uses_reasoning: uses_reasoning(body, model.as_deref()),
         policy,
+        current_station_key_id,
         allow_depleted_fallback,
         now_ms: now_millis_for_services() as i64,
     }
+}
+
+fn lookup_route_affinity(
+    context: &ProxyServerContext,
+    endpoint: RouteEndpointKind,
+    model: Option<&str>,
+) -> Option<String> {
+    context
+        .route_affinity
+        .lock()
+        .ok()
+        .and_then(|mut affinity| affinity.lookup(endpoint, model, now_millis_for_services() as i64))
 }
 
 fn routing_policy(context: &ProxyServerContext) -> RoutingPolicy {
@@ -690,6 +872,7 @@ fn parse_routing_policy(value: &str) -> RoutingPolicy {
         "stable_first" | "stable" => RoutingPolicy::StableFirst,
         "backup_only" => RoutingPolicy::BackupOnly,
         "cheap_first" => RoutingPolicy::CheapFirst,
+        "cost_stable_first" => RoutingPolicy::CostStableFirst,
         _ => RoutingPolicy::PriorityFallback,
     }
 }
@@ -785,6 +968,7 @@ fn routing_policy_label(policy: &RoutingPolicy) -> &'static str {
         RoutingPolicy::StableFirst => "stable_first",
         RoutingPolicy::BackupOnly => "backup_only",
         RoutingPolicy::CheapFirst => "cheap_first",
+        RoutingPolicy::CostStableFirst => "cost_stable_first",
     }
 }
 
@@ -871,18 +1055,229 @@ fn record_candidate_failure(
     status_label: &str,
     checked_at: &str,
     error_summary: &str,
+    failure_input: RouteFailureInput,
 ) {
+    let classified = classify_route_failure(failure_input);
     let _ = context.database.touch_station_key_usage(
         &candidate.station_key_id,
         status_label,
         None,
         Some(checked_at),
     );
-    let _ = context.database.record_station_key_failure(
+    if classified.scope == RouteFailureScope::RequestOnly
+        || classified.action == RouteFailureAction::IgnoreForKeyHealth
+    {
+        return;
+    }
+
+    let current_health = context
+        .database
+        .get_station_key_health(candidate.station_key_id.clone())
+        .ok();
+    let consecutive_failures = current_health
+        .as_ref()
+        .map(|health| health.consecutive_failures + 1)
+        .unwrap_or(1);
+    let current_state = current_health
+        .as_ref()
+        .map(|health| route_health_state_from_record(health, checked_at))
+        .unwrap_or(RouteHealthState::Unknown);
+    let now_ms = checked_at
+        .parse::<i64>()
+        .unwrap_or_else(|_| now_millis_for_services() as i64);
+    let transition =
+        apply_health_transition(current_state, &classified, consecutive_failures, now_ms);
+    let cooldown_until = transition
+        .cooldown_until_ms
+        .as_ref()
+        .map(|value| value.to_string());
+    let classified_error_summary = error_summary_for_failure(&classified, error_summary);
+
+    let _ = context.database.record_station_key_failure_with_cooldown(
         &candidate.station_key_id,
-        error_summary,
+        &classified_error_summary,
         checked_at,
+        cooldown_until.as_deref(),
     );
+}
+
+fn route_health_state_from_record(
+    health: &crate::models::routing::StationKeyHealth,
+    now: &str,
+) -> RouteHealthState {
+    let now_ms = now.parse::<i64>().unwrap_or_default();
+    if health
+        .cooldown_until
+        .as_deref()
+        .and_then(|value| value.parse::<i64>().ok())
+        .map(|cooldown_until| cooldown_until > now_ms)
+        .unwrap_or(false)
+    {
+        return RouteHealthState::Cooldown;
+    }
+    if health.consecutive_failures > 0 {
+        return RouteHealthState::Degraded;
+    }
+    if health.success_count > 0 || health.last_success_at.is_some() {
+        return RouteHealthState::Ready;
+    }
+    RouteHealthState::Unknown
+}
+
+fn confirm_switch_candidate(
+    context: &ProxyServerContext,
+    candidate: &RouteCandidate,
+    endpoint: RouteEndpointKind,
+    mapped_model: Option<&str>,
+    route_context: &RouteLogContext,
+) -> Result<(), String> {
+    if route_context
+        .explanations
+        .iter()
+        .find(|explanation| explanation.station_key_id == candidate.station_key_id)
+        .and_then(|explanation| explanation.balance_status.as_deref())
+        == Some("depleted")
+    {
+        return Err("switch probe skipped because candidate balance is depleted".to_string());
+    }
+
+    let cache_key = ProbeCacheKey::new(
+        candidate.station_key_id.clone(),
+        endpoint.clone(),
+        mapped_model,
+    );
+    let now_ms = now_millis_for_services() as i64;
+    if context
+        .probe_cache
+        .lock()
+        .map(|mut cache| cache.should_skip_probe(&cache_key, now_ms))
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    let checked_at = now_string();
+    match send_switch_probe(candidate, endpoint, mapped_model) {
+        Ok(()) => {
+            if let Ok(mut cache) = context.probe_cache.lock() {
+                cache.record_pass(cache_key, now_ms);
+            }
+            Ok(())
+        }
+        Err(SwitchProbeError::Http { status, retry_after_ms }) => {
+            let error = format!("switch probe returned HTTP {status}");
+            record_candidate_failure(
+                context,
+                candidate,
+                "warning",
+                &checked_at,
+                &error,
+                RouteFailureInput::http_status_with_retry_after(status, false, retry_after_ms),
+            );
+            Err(error)
+        }
+        Err(SwitchProbeError::Transport(error)) => {
+            record_candidate_failure(
+                context,
+                candidate,
+                "error",
+                &checked_at,
+                &error,
+                RouteFailureInput::transport_error(false, &error),
+            );
+            Err(error)
+        }
+    }
+}
+
+enum SwitchProbeError {
+    Http {
+        status: u16,
+        retry_after_ms: Option<i64>,
+    },
+    Transport(String),
+}
+
+fn send_switch_probe(
+    candidate: &RouteCandidate,
+    endpoint: RouteEndpointKind,
+    mapped_model: Option<&str>,
+) -> Result<(), SwitchProbeError> {
+    let model = mapped_model.unwrap_or("gpt-4o-mini");
+    match endpoint {
+        RouteEndpointKind::Responses => {
+            let body = responses_probe_body(model);
+            let path = upstream_responses_path(&candidate.upstream_api_format);
+            match send_probe_request(candidate, path, &body) {
+                Ok(()) => Ok(()),
+                Err(SwitchProbeError::Http { status, .. })
+                    if matches!(status, 404 | 405 | 501)
+                        && should_try_chat_fallback(&candidate.upstream_api_format) =>
+                {
+                    let body = chat_probe_body(model);
+                    send_probe_request(candidate, "/v1/chat/completions", &body)
+                }
+                Err(error) => Err(error),
+            }
+        }
+        RouteEndpointKind::ChatCompletions => {
+            let body = chat_probe_body(model);
+            send_probe_request(candidate, "/v1/chat/completions", &body)
+        }
+        RouteEndpointKind::Models | RouteEndpointKind::Embeddings => Ok(()),
+    }
+}
+
+fn send_probe_request(
+    candidate: &RouteCandidate,
+    upstream_path: &str,
+    body: &[u8],
+) -> Result<(), SwitchProbeError> {
+    let url = build_upstream_url(&candidate.upstream_base_url, upstream_path);
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(10))
+        .build();
+    let result = agent
+        .post(&url)
+        .set("authorization", &format!("Bearer {}", candidate.api_key))
+        .set("content-type", "application/json")
+        .set("accept", "application/json")
+        .send_bytes(body);
+
+    match result {
+        Ok(response) if response.status() < 400 => Ok(()),
+        Ok(response) => Err(SwitchProbeError::Http {
+            status: response.status(),
+            retry_after_ms: parse_retry_after_ms(response.header("retry-after")),
+        }),
+        Err(ureq::Error::Status(status, response)) => Err(SwitchProbeError::Http {
+            status,
+            retry_after_ms: parse_retry_after_ms(response.header("retry-after")),
+        }),
+        Err(error) => Err(SwitchProbeError::Transport(redact_error_message(&format!(
+            "{error}"
+        )))),
+    }
+}
+
+fn chat_probe_body(model: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "model": model,
+        "messages": [{"role": "user", "content": "ping"}],
+        "stream": false,
+        "max_tokens": 1
+    }))
+    .unwrap_or_default()
+}
+
+fn responses_probe_body(model: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "model": model,
+        "input": "ping",
+        "store": false,
+        "max_output_tokens": 1
+    }))
+    .unwrap_or_default()
 }
 
 fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
@@ -897,12 +1292,18 @@ fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -
         }
     };
     let (model, stream) = extract_chat_request_metadata(&body_value);
+    let current_station_key_id = lookup_route_affinity(
+        context,
+        RouteEndpointKind::ChatCompletions,
+        model.as_deref(),
+    );
     let route_request = route_request_for_chat(
         model.clone(),
         stream,
         &body_value,
         routing_policy(context),
         allow_depleted_fallback(context),
+        current_station_key_id,
     );
     let route = match select_proxy_route(context, &route_request) {
         Ok(route) => route,
@@ -915,6 +1316,7 @@ fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -
         model.as_deref(),
         route.mapped_model.as_deref(),
     );
+    let probe_model = route.mapped_model.clone().or_else(|| model.clone());
     let candidates = route
         .accepted
         .into_iter()
@@ -925,6 +1327,7 @@ fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -
         &request,
         &candidates,
         model,
+        probe_model,
         stream,
         &route_context,
     )
@@ -945,12 +1348,15 @@ fn forward_responses_request(
         }
     };
     let (model, stream) = extract_responses_metadata(&body_value);
+    let current_station_key_id =
+        lookup_route_affinity(context, RouteEndpointKind::Responses, model.as_deref());
     let route_request = route_request_for_responses(
         model.clone(),
         stream,
         &body_value,
         routing_policy(context),
         allow_depleted_fallback(context),
+        current_station_key_id,
     );
     let route = match select_proxy_route(context, &route_request) {
         Ok(route) => route,
@@ -963,6 +1369,7 @@ fn forward_responses_request(
         model.as_deref(),
         route.mapped_model.as_deref(),
     );
+    let probe_model = route.mapped_model.clone().or_else(|| model.clone());
     let body_value: Value = serde_json::from_slice(&request.body).unwrap_or(body_value);
     let candidates = route
         .accepted
@@ -975,6 +1382,7 @@ fn forward_responses_request(
         &candidates,
         &body_value,
         model,
+        probe_model,
         stream,
         &route_context,
     )
@@ -986,11 +1394,24 @@ fn forward_responses_with_fallback(
     candidates: &[RouteCandidate],
     body_value: &Value,
     model: Option<String>,
+    probe_model: Option<String>,
     stream: bool,
     route_context: &RouteLogContext,
 ) -> ProxyResponse {
     let mut last_error = None;
     for (index, candidate) in candidates.iter().enumerate() {
+        if index > 0 {
+            if let Err(error) = confirm_switch_candidate(
+                context,
+                candidate,
+                RouteEndpointKind::Responses,
+                probe_model.as_deref(),
+                route_context,
+            ) {
+                last_error = Some(error);
+                continue;
+            }
+        }
         let checked_at = now_string();
         let attempt_started = Instant::now();
         match forward_responses_to_candidate(
@@ -1012,16 +1433,18 @@ fn forward_responses_with_fallback(
                         Some(candidate.station_key_id.as_str()),
                     ));
                 let status_label = routed_response.status_label.clone();
-                let used_at = checked_at.clone();
                 if routed_response.status_code < 400 {
-                    record_candidate_success(
-                        context,
-                        candidate,
-                        &status_label,
-                        &used_at,
-                        &checked_at,
-                        attempt_started.elapsed().as_millis() as i64,
-                    );
+                    let request_cost =
+                        extract_request_cost(context, candidate, &routed_response, false);
+                    return routed_response
+                        .with_request_cost(request_cost)
+                        .with_pending_success(
+                            candidate,
+                            RouteEndpointKind::Responses,
+                            model.clone(),
+                            attempt_started.elapsed().as_millis() as i64,
+                            checked_at,
+                        );
                 } else {
                     record_candidate_failure(
                         context,
@@ -1029,6 +1452,11 @@ fn forward_responses_with_fallback(
                         &status_label,
                         &checked_at,
                         &format!("上游返回 HTTP {}", routed_response.status_code),
+                        RouteFailureInput::http_status_with_retry_after(
+                            routed_response.status_code,
+                            false,
+                            routed_response.retry_after_ms,
+                        ),
                     );
                 }
                 let request_cost =
@@ -1038,11 +1466,29 @@ fn forward_responses_with_fallback(
             Ok(response) => {
                 let error = format!("上游返回 HTTP {}", response.status_code);
                 last_error = Some(error.clone());
-                record_candidate_failure(context, candidate, "warning", &checked_at, &error);
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "warning",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::http_status_with_retry_after(
+                        response.status_code,
+                        false,
+                        response.retry_after_ms,
+                    ),
+                );
             }
             Err(error) => {
                 last_error = Some(error.clone());
-                record_candidate_failure(context, candidate, "error", &checked_at, &error);
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "error",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::transport_error(false, &error),
+                );
             }
         }
     }
@@ -1127,6 +1573,7 @@ fn render_responses_proxy_response(
         station_id: response.station_id,
         upstream_base_url: response.upstream_base_url,
         fallback_count: response.fallback_count,
+        retry_after_ms: response.retry_after_ms,
         status_label: response.status_label,
         error_message: response.error_message,
         route_policy: response.route_policy,
@@ -1137,6 +1584,7 @@ fn render_responses_proxy_response(
         balance_scope: response.balance_scope,
         economic_context_json: response.economic_context_json,
         request_cost: response.request_cost,
+        pending_successes: response.pending_successes,
     }
 }
 
@@ -1145,11 +1593,24 @@ fn forward_with_fallback(
     request: &ParsedRequest,
     candidates: &[RouteCandidate],
     model: Option<String>,
+    probe_model: Option<String>,
     stream: bool,
     route_context: &RouteLogContext,
 ) -> ProxyResponse {
     let mut last_error = None;
     for (index, candidate) in candidates.iter().enumerate() {
+        if index > 0 {
+            if let Err(error) = confirm_switch_candidate(
+                context,
+                candidate,
+                RouteEndpointKind::ChatCompletions,
+                probe_model.as_deref(),
+                route_context,
+            ) {
+                last_error = Some(error);
+                continue;
+            }
+        }
         let checked_at = now_string();
         let attempt_started = Instant::now();
         match forward_to_candidate(request, candidate, stream) {
@@ -1165,16 +1626,18 @@ fn forward_with_fallback(
                         Some(candidate.station_key_id.as_str()),
                     ));
                 let status_label = routed_response.status_label.clone();
-                let used_at = checked_at.clone();
                 if routed_response.status_code < 400 {
-                    record_candidate_success(
-                        context,
-                        candidate,
-                        &status_label,
-                        &used_at,
-                        &checked_at,
-                        attempt_started.elapsed().as_millis() as i64,
-                    );
+                    let request_cost =
+                        extract_request_cost(context, candidate, &routed_response, stream);
+                    return routed_response
+                        .with_request_cost(request_cost)
+                        .with_pending_success(
+                            candidate,
+                            RouteEndpointKind::ChatCompletions,
+                            model.clone(),
+                            attempt_started.elapsed().as_millis() as i64,
+                            checked_at,
+                        );
                 } else {
                     record_candidate_failure(
                         context,
@@ -1182,6 +1645,11 @@ fn forward_with_fallback(
                         &status_label,
                         &checked_at,
                         &format!("上游返回 HTTP {}", routed_response.status_code),
+                        RouteFailureInput::http_status_with_retry_after(
+                            routed_response.status_code,
+                            false,
+                            routed_response.retry_after_ms,
+                        ),
                     );
                 }
                 let request_cost =
@@ -1191,11 +1659,29 @@ fn forward_with_fallback(
             Ok(response) => {
                 let error = format!("上游返回 HTTP {}", response.status_code);
                 last_error = Some(error.clone());
-                record_candidate_failure(context, candidate, "warning", &checked_at, &error);
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "warning",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::http_status_with_retry_after(
+                        response.status_code,
+                        false,
+                        response.retry_after_ms,
+                    ),
+                );
             }
             Err(error) => {
                 last_error = Some(error.clone());
-                record_candidate_failure(context, candidate, "error", &checked_at, &error);
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "error",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::transport_error(false, &error),
+                );
             }
         }
     }
@@ -1273,6 +1759,7 @@ fn cors_preflight_response() -> ProxyResponse {
         station_id: None,
         upstream_base_url: None,
         fallback_count: 0,
+        retry_after_ms: None,
         status_label: "success".to_string(),
         error_message: None,
         route_policy: None,
@@ -1283,6 +1770,7 @@ fn cors_preflight_response() -> ProxyResponse {
         balance_scope: None,
         economic_context_json: None,
         request_cost: crate::services::pricing::request_cost_unknown(),
+        pending_successes: Vec::new(),
     }
 }
 
@@ -1292,6 +1780,7 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
         .header("content-type")
         .unwrap_or("application/json")
         .to_string();
+    let retry_after_ms = parse_retry_after_ms(response.header("retry-after"));
     if stream && status_code < 400 {
         return ProxyResponse {
             status_code,
@@ -1303,6 +1792,7 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
             station_id: None,
             upstream_base_url: None,
             fallback_count: 0,
+            retry_after_ms,
             status_label: "success".to_string(),
             error_message: None,
             route_policy: None,
@@ -1313,6 +1803,7 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
             balance_scope: None,
             economic_context_json: None,
             request_cost: crate::services::pricing::request_cost_unknown(),
+            pending_successes: Vec::new(),
         };
     }
     let body = response
@@ -1331,6 +1822,7 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
         station_id: None,
         upstream_base_url: None,
         fallback_count: 0,
+        retry_after_ms,
         status_label: if status_code < 400 {
             "success".to_string()
         } else if should_fallback(status_code) {
@@ -1351,6 +1843,7 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
         balance_scope: None,
         economic_context_json: None,
         request_cost: crate::services::pricing::request_cost_unknown(),
+        pending_successes: Vec::new(),
     }
 }
 
@@ -1450,6 +1943,7 @@ impl ProxyResponse {
             station_id: None,
             upstream_base_url: None,
             fallback_count: 0,
+            retry_after_ms: None,
             status_label: "failed".to_string(),
             error_message: Some(redact_error_message(message)),
             route_policy: None,
@@ -1460,6 +1954,7 @@ impl ProxyResponse {
             balance_scope: None,
             economic_context_json: None,
             request_cost: crate::services::pricing::request_cost_unknown(),
+            pending_successes: Vec::new(),
         }
     }
 
@@ -1494,6 +1989,25 @@ impl ProxyResponse {
 
     fn with_request_cost(mut self, request_cost: RequestCostEstimate) -> Self {
         self.request_cost = request_cost;
+        self
+    }
+
+    fn with_pending_success(
+        mut self,
+        candidate: &RouteCandidate,
+        endpoint: RouteEndpointKind,
+        model: Option<String>,
+        duration_ms: i64,
+        checked_at: String,
+    ) -> Self {
+        self.pending_successes.push(PendingCandidateSuccess {
+            station_key_id: candidate.station_key_id.clone(),
+            status_label: self.status_label.clone(),
+            checked_at,
+            duration_ms,
+            endpoint,
+            model,
+        });
         self
     }
 }
@@ -1609,6 +2123,12 @@ fn content_type(request: &ParsedRequest) -> &str {
         .unwrap_or("application/json")
 }
 
+fn parse_retry_after_ms(value: Option<&str>) -> Option<i64> {
+    let trimmed = value?.trim();
+    let seconds = trimmed.parse::<i64>().ok()?;
+    Some(seconds.max(1) * 1000)
+}
+
 fn reason_phrase(status: u16) -> &'static str {
     match status {
         200 => "OK",
@@ -1670,6 +2190,7 @@ mod tests {
                 station_id: Some("station-1".to_string()),
                 upstream_base_url: Some("https://example.test/v1".to_string()),
                 fallback_count: 0,
+                retry_after_ms: None,
                 status_label: "success".to_string(),
                 error_message: None,
                 route_policy: None,
@@ -1680,6 +2201,7 @@ mod tests {
                 balance_scope: None,
                 economic_context_json: None,
                 request_cost: crate::services::pricing::request_cost_unknown(),
+                pending_successes: Vec::new(),
             };
             write_http_response(&mut server_stream, response).expect("write response");
         });
@@ -1697,6 +2219,71 @@ mod tests {
         assert!(text.contains("content-type: text/event-stream"));
         assert!(!text.contains("content-length:"));
         assert!(text.contains("data: {\"id\":\"evt-1\"}"));
+    }
+
+    #[test]
+    fn request_log_finalizes_after_buffered_response_write() {
+        let response = ProxyResponse::json_error(400, "bad_request", "bad input");
+        let started = Instant::now() - Duration::from_millis(25);
+
+        let input = build_request_log_input(
+            "POST".to_string(),
+            "/v1/chat/completions".to_string(),
+            RequestLogSnapshot::from_response(&response),
+            "1000".to_string(),
+            started,
+            &Ok(()),
+        );
+
+        assert_eq!(input.status, "failed");
+        assert!(input.finished_at.is_some());
+        assert!(input.duration_ms.is_some_and(|duration| duration >= 25));
+    }
+
+    #[test]
+    fn stream_write_failure_marks_request_interrupted() {
+        let response = ProxyResponse {
+            status_code: 200,
+            content_type: "text/event-stream".to_string(),
+            body: ProxyResponseBody::Streamed(Box::new(std::io::Cursor::new(
+                b"data: {\"id\":\"evt-1\"}\n\n".to_vec(),
+            ))),
+            model: Some("gpt-5.4".to_string()),
+            stream: true,
+            station_key_id: Some("key-1".to_string()),
+            station_id: Some("station-1".to_string()),
+            upstream_base_url: Some("https://example.test/v1".to_string()),
+            fallback_count: 0,
+            retry_after_ms: None,
+            status_label: "success".to_string(),
+            error_message: None,
+            route_policy: Some("cost_stable_first".to_string()),
+            route_reason: Some("selected key-1".to_string()),
+            rejected_candidates_json: Some("[]".to_string()),
+            group_binding_id: None,
+            normalization_status: None,
+            balance_scope: None,
+            economic_context_json: None,
+            request_cost: crate::services::pricing::request_cost_unknown(),
+            pending_successes: Vec::new(),
+        };
+        let write_result = Err("写入流式响应失败: connection reset".to_string());
+
+        let input = build_request_log_input(
+            "POST".to_string(),
+            "/v1/chat/completions".to_string(),
+            RequestLogSnapshot::from_response(&response),
+            "1000".to_string(),
+            Instant::now(),
+            &write_result,
+        );
+
+        assert_eq!(input.status, "interrupted");
+        assert_eq!(input.fallback_count, 0);
+        assert!(input
+            .error_message
+            .as_deref()
+            .is_some_and(|message| message.contains("connection reset")));
     }
 
     #[test]
@@ -1790,6 +2377,8 @@ mod tests {
             data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
+            route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
+            probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
         };
         let request = ParsedRequest {
             method: "POST".to_string(),
@@ -1825,57 +2414,60 @@ mod tests {
         let upstream_port = upstream.local_addr().expect("upstream addr").port();
 
         let handle = thread::spawn(move || {
-            let (mut server_stream, _) = upstream.accept().expect("accept upstream");
-            let _ = server_stream.set_read_timeout(Some(Duration::from_millis(1000)));
-            let mut buf = [0_u8; 4096];
-            let mut read = 0;
-            let deadline = std::time::Instant::now() + Duration::from_millis(1000);
-            loop {
-                match server_stream.read(&mut buf[read..]) {
-                    Ok(0) => break,
-                    Ok(count) => {
-                        read += count;
-                        if read >= buf.len() {
-                            break;
+            for _ in 0..2 {
+                let (mut server_stream, _) = upstream.accept().expect("accept upstream");
+                let _ = server_stream.set_read_timeout(Some(Duration::from_millis(1000)));
+                let mut buf = [0_u8; 4096];
+                let mut read = 0;
+                let deadline = std::time::Instant::now() + Duration::from_millis(1000);
+                loop {
+                    match server_stream.read(&mut buf[read..]) {
+                        Ok(0) => break,
+                        Ok(count) => {
+                            read += count;
+                            if read >= buf.len() {
+                                break;
+                            }
+                            if String::from_utf8_lossy(&buf[..read])
+                                .to_lowercase()
+                                .contains("\r\n\r\n")
+                            {
+                                break;
+                            }
                         }
-                        if String::from_utf8_lossy(&buf[..read])
-                            .to_lowercase()
-                            .contains("\r\n\r\n")
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::WouldBlock
+                                || error.kind() == std::io::ErrorKind::TimedOut =>
                         {
-                            break;
+                            if read > 0 || std::time::Instant::now() >= deadline {
+                                break;
+                            }
+                            thread::sleep(Duration::from_millis(5));
                         }
+                        Err(error) => panic!("read upstream request: {error}"),
                     }
-                    Err(error)
-                        if error.kind() == std::io::ErrorKind::WouldBlock
-                            || error.kind() == std::io::ErrorKind::TimedOut =>
-                    {
-                        if read > 0 || std::time::Instant::now() >= deadline {
-                            break;
-                        }
-                        thread::sleep(Duration::from_millis(5));
-                    }
-                    Err(error) => panic!("read upstream request: {error}"),
                 }
-            }
-            let request_text = String::from_utf8_lossy(&buf[..read]).to_lowercase();
-            if !request_text.contains("accept: text/event-stream") {
-                let body = b"{\"error\":{\"message\":\"expected sse accept\"}}";
+                let request_text = String::from_utf8_lossy(&buf[..read]).to_lowercase();
+                if !request_text.contains("accept: text/event-stream") {
+                    let body = b"{\"id\":\"probe-ok\",\"output_text\":\"pong\"}";
+                    let header = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    server_stream.write_all(header.as_bytes()).expect("header");
+                    server_stream.write_all(body).expect("body");
+                    continue;
+                }
+
+                let body = b"event: response.output_text.delta\ndata: {\"delta\":\"pong\"}\n\ndata: [DONE]\n\n";
                 let header = format!(
-                    "HTTP/1.1 406 Not Acceptable\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
                     body.len()
                 );
                 server_stream.write_all(header.as_bytes()).expect("header");
                 server_stream.write_all(body).expect("body");
                 return;
             }
-
-            let body = b"event: response.output_text.delta\ndata: {\"delta\":\"pong\"}\n\ndata: [DONE]\n\n";
-            let header = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                body.len()
-            );
-            server_stream.write_all(header.as_bytes()).expect("header");
-            server_stream.write_all(body).expect("body");
         });
 
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
@@ -1897,6 +2489,8 @@ mod tests {
             data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
+            route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
+            probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
         };
         let request = ParsedRequest {
             method: "POST".to_string(),
@@ -2116,9 +2710,10 @@ mod tests {
 
         let context = proxy_context(database);
         let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
+        commit_pending_successes(&context, &response.pending_successes, None, None);
         let health = context
             .database
-            .get_station_key_health(key.id)
+            .get_station_key_health(key.id.clone())
             .expect("health");
 
         assert_eq!(response.status_code, 200);
@@ -2126,6 +2721,16 @@ mod tests {
         assert_eq!(health.failure_count, 0);
         assert_eq!(health.consecutive_failures, 0);
         assert!(health.last_success_at.is_some());
+        let remembered_key = context
+            .route_affinity
+            .lock()
+            .expect("affinity")
+            .lookup(
+                RouteEndpointKind::ChatCompletions,
+                Some("gpt-5.4"),
+                now_millis_for_services() as i64,
+            );
+        assert_eq!(remembered_key.as_deref(), Some(key.id.as_str()));
         upstream.join();
     }
 
@@ -2161,6 +2766,67 @@ mod tests {
         );
         ready.join();
         skipped.join();
+    }
+
+    #[test]
+    fn runtime_uses_retry_after_header_for_rate_limit_cooldown() {
+        let upstream = test_upstream_status(429, "Too Many Requests", &[("retry-after", "90")]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key = create_test_station_key(&database, "rate-limited", &upstream.base_url);
+        let before = now_millis_for_services() as i64;
+
+        let context = proxy_context(database);
+        let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
+        let health = context
+            .database
+            .get_station_key_health(key.id)
+            .expect("health");
+        let cooldown_until = health
+            .cooldown_until
+            .as_deref()
+            .and_then(|value| value.parse::<i64>().ok())
+            .expect("cooldown");
+
+        assert_eq!(response.status_code, 502);
+        assert_eq!(health.failure_count, 1);
+        assert!(
+            cooldown_until >= before + 90_000 && cooldown_until < before + 120_000,
+            "cooldown should honor retry-after, got {cooldown_until}, before {before}"
+        );
+        upstream.join();
+    }
+
+    #[test]
+    fn runtime_falls_back_after_key_scoped_hard_failure() {
+        let rejected = test_upstream_status(401, "Unauthorized", &[]);
+        let accepted = test_upstream_json_success_times("after-auth-failure", false, None, 2);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key_a = create_test_station_key(&database, "auth-failed", &rejected.base_url);
+        let key_b = create_test_station_key(&database, "auth-fallback", &accepted.base_url);
+        database
+            .reorder_key_pool(vec![key_a.id.clone(), key_b.id.clone()])
+            .expect("reorder");
+
+        let context = proxy_context(database);
+        let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
+        let failed_health = context
+            .database
+            .get_station_key_health(key_a.id.clone())
+            .expect("failed key health");
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.station_key_id.as_deref(), Some(key_b.id.as_str()));
+        assert_eq!(response.fallback_count, 1);
+        assert!(rejected.was_called());
+        assert!(accepted.was_called());
+        assert_eq!(accepted.call_count(), 2);
+        assert!(failed_health
+            .last_error_summary
+            .as_deref()
+            .is_some_and(|summary| summary.contains("auth_error")));
+
+        rejected.join();
+        accepted.join();
     }
 
     #[test]
@@ -2210,6 +2876,8 @@ mod tests {
             data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
+            route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
+            probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
         };
         let request = ParsedRequest {
             method: "GET".to_string(),
@@ -2259,12 +2927,17 @@ mod tests {
     struct TestUpstream {
         base_url: String,
         called: Arc<AtomicBool>,
+        call_count: Arc<AtomicU32>,
         handle: JoinHandle<()>,
     }
 
     impl TestUpstream {
         fn was_called(&self) -> bool {
             self.called.load(Ordering::Relaxed)
+        }
+
+        fn call_count(&self) -> u32 {
+            self.call_count.load(Ordering::Relaxed)
         }
 
         fn join(self) {
@@ -2281,20 +2954,33 @@ mod tests {
         expect_alias_model: bool,
         usage: Option<Value>,
     ) -> TestUpstream {
+        test_upstream_json_success_times(name, expect_alias_model, usage, 1)
+    }
+
+    fn test_upstream_json_success_times(
+        name: &str,
+        expect_alias_model: bool,
+        usage: Option<Value>,
+        expected_requests: usize,
+    ) -> TestUpstream {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
         listener
             .set_nonblocking(true)
             .expect("nonblocking upstream");
         let port = listener.local_addr().expect("upstream addr").port();
         let called = Arc::new(AtomicBool::new(false));
+        let call_count = Arc::new(AtomicU32::new(0));
         let called_for_thread = Arc::clone(&called);
+        let call_count_for_thread = Arc::clone(&call_count);
         let name = name.to_string();
         let handle = thread::spawn(move || {
             let deadline = std::time::Instant::now() + Duration::from_millis(3000);
+            let mut handled = 0_usize;
             loop {
                 match listener.accept() {
                     Ok((mut server_stream, _)) => {
                         called_for_thread.store(true, Ordering::Relaxed);
+                        call_count_for_thread.fetch_add(1, Ordering::Relaxed);
                         let _ = server_stream.set_read_timeout(Some(Duration::from_millis(200)));
                         let mut buf = [0_u8; 4096];
                         let mut read = 0;
@@ -2342,6 +3028,66 @@ mod tests {
                         );
                         server_stream.write_all(header.as_bytes()).expect("header");
                         server_stream.write_all(&body).expect("body");
+                        handled += 1;
+                        if handled >= expected_requests {
+                            return;
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if std::time::Instant::now() >= deadline {
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept upstream: {error}"),
+                }
+            }
+        });
+
+        TestUpstream {
+            base_url: format!("http://127.0.0.1:{port}"),
+            called,
+            call_count,
+            handle,
+        }
+    }
+
+    fn test_upstream_status(status: u16, reason: &str, headers: &[(&str, &str)]) -> TestUpstream {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
+        let called = Arc::new(AtomicBool::new(false));
+        let call_count = Arc::new(AtomicU32::new(0));
+        let called_for_thread = Arc::clone(&called);
+        let call_count_for_thread = Arc::clone(&call_count);
+        let reason = reason.to_string();
+        let headers = headers
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect::<Vec<_>>();
+        let handle = thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_millis(3000);
+            loop {
+                match listener.accept() {
+                    Ok((mut server_stream, _)) => {
+                        called_for_thread.store(true, Ordering::Relaxed);
+                        call_count_for_thread.fetch_add(1, Ordering::Relaxed);
+                        let _ = server_stream.set_read_timeout(Some(Duration::from_millis(200)));
+                        let mut buf = [0_u8; 4096];
+                        let _ = server_stream.read(&mut buf);
+                        let body = br#"{"error":{"message":"rate limited"}}"#;
+                        let extra_headers = headers
+                            .iter()
+                            .map(|(key, value)| format!("{key}: {value}\r\n"))
+                            .collect::<String>();
+                        let header = format!(
+                            "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\n{extra_headers}content-length: {}\r\nconnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        server_stream.write_all(header.as_bytes()).expect("header");
+                        server_stream.write_all(body).expect("body");
                         return;
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -2358,6 +3104,7 @@ mod tests {
         TestUpstream {
             base_url: format!("http://127.0.0.1:{port}"),
             called,
+            call_count,
             handle,
         }
     }
@@ -2407,6 +3154,8 @@ mod tests {
             data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
+            route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
+            probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
         }
     }
 
@@ -2552,6 +3301,8 @@ mod tests {
             data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
+            route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
+            probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
         };
         let request = ParsedRequest {
             method: "OPTIONS".to_string(),
@@ -2584,6 +3335,7 @@ mod tests {
                 station_id: None,
                 upstream_base_url: None,
                 fallback_count: 0,
+                retry_after_ms: None,
                 status_label: "success".to_string(),
                 error_message: None,
                 route_policy: None,
@@ -2594,6 +3346,7 @@ mod tests {
                 balance_scope: None,
                 economic_context_json: None,
                 request_cost: crate::services::pricing::request_cost_unknown(),
+                pending_successes: Vec::new(),
             };
             write_http_response(&mut server_stream, response).expect("write response");
         });

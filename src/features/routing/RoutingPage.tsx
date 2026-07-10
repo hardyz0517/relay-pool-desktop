@@ -16,6 +16,7 @@ import {
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { formatRate } from "@/lib/formatters";
+import { loadLocalRoutingWorkspace } from "@/lib/queries/localRoutingQueries";
 import { loadRoutingWorkspace } from "@/lib/queries/routingQueries";
 import {
   deleteModelAlias,
@@ -32,10 +33,20 @@ import type {
   RoutingPolicy,
   UpsertModelAliasInput,
 } from "@/lib/types/routing";
+import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
+import type { AppRouteId } from "@/lib/types/navigation";
 import { routingStrategyLabels, type AppSettings } from "@/lib/types/settings";
 import { cn } from "@/lib/utils";
+import { LocalRoutingEditTab } from "./LocalRoutingEditTab";
+import { LocalRoutingStatusTab } from "./LocalRoutingStatusTab";
 
-const policyOptions: RoutingPolicy[] = ["priority_fallback", "stable_first", "backup_only", "cheap_first"];
+const policyOptions: RoutingPolicy[] = [
+  "cost_stable_first",
+  "priority_fallback",
+  "stable_first",
+  "cheap_first",
+  "backup_only",
+];
 
 const endpointLabels: Record<RouteEndpointKind, string> = {
   models: "模型列表",
@@ -47,7 +58,7 @@ const endpointLabels: Record<RouteEndpointKind, string> = {
 const fallbackSettings: AppSettings = {
   localProxyPort: 8787,
   localKeyMasked: "未读取",
-  defaultRoutingStrategy: "priority_fallback",
+  defaultRoutingStrategy: "cost_stable_first",
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   balanceIntervalMinutes: 5,
@@ -82,9 +93,18 @@ const defaultSimulation: RouteSimulationInput = {
   policy: null,
 };
 
-export function RoutingPage() {
+type LocalRoutingTab = "status" | "edit";
+type LocalRoutingLinkedPage = Extract<AppRouteId, "channels" | "logs">;
+
+type RoutingPageProps = {
+  onOpenPage?: (pageId: LocalRoutingLinkedPage) => void;
+};
+
+export function RoutingPage({ onOpenPage }: RoutingPageProps) {
   const toast = useToast();
+  const [activeTab, setActiveTab] = useState<LocalRoutingTab>("status");
   const [settings, setSettings] = useState<AppSettings>(fallbackSettings);
+  const [localWorkspace, setLocalWorkspace] = useState<LocalRoutingWorkspace | null>(null);
   const [aliases, setAliases] = useState<ModelAlias[]>([]);
   const [aliasForm, setAliasForm] = useState<UpsertModelAliasInput>(emptyAliasForm);
   const [simulation, setSimulation] = useState<RouteSimulationInput>(defaultSimulation);
@@ -111,13 +131,23 @@ export function RoutingPage() {
     setLoading(true);
     setError(null);
     try {
-      const workspace = await loadRoutingWorkspace();
-      setSettings(workspace.settings);
-      setAliases(workspace.modelAliases);
+      const routingWorkspace = await loadRoutingWorkspace();
+      setSettings(routingWorkspace.settings);
+      setAliases(routingWorkspace.modelAliases);
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
       toast.error("刷新路由规则失败", message);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLocalWorkspace(await loadLocalRoutingWorkspace());
+    } catch (requestError) {
+      const message = readError(requestError);
+      setLocalWorkspace(null);
+      toast.error("刷新本地路由状态失败", message);
     } finally {
       setLoading(false);
     }
@@ -235,16 +265,33 @@ export function RoutingPage() {
   }
 
   return (
-      <PageScaffold
-        title="路由规则"
+    <PageScaffold
+      title="路由规则"
       actions={
-        <Button disabled={loading || saving} variant="secondary" onClick={() => void refresh()}>
-          <RefreshCcw className="h-4 w-4" />
-          刷新
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <SegmentedControl
+            ariaLabel="本地路由页面"
+            value={activeTab}
+            options={[
+              { value: "status", label: "状态" },
+              { value: "edit", label: "编辑" },
+            ]}
+            onChange={setActiveTab}
+          />
+          <Button disabled={loading || saving} variant="secondary" onClick={() => void refresh()}>
+            <RefreshCcw className="h-4 w-4" />
+            刷新
+          </Button>
+        </div>
       }
     >
       <div className="grid gap-3">
+        {activeTab === "status" ? (
+          <LocalRoutingStatusTab loading={loading} workspace={localWorkspace} onOpenPage={onOpenPage} />
+        ) : (
+          <LocalRoutingEditTab loading={loading} workspace={localWorkspace} />
+        )}
+
         <div className="grid gap-3">
           <SectionCard title="默认策略">
             <div className="flex flex-wrap items-center gap-3">
@@ -423,7 +470,6 @@ function CandidateList({
               subtitle={`${index + 1}. ${candidate.keyName} · ${candidate.mappedModel ?? "未映射模型"} · ${candidateSummary(candidate)}`}
               badges={<StatusBadge tone={candidate.accepted ? "healthy" : "disabled"}>{candidate.accepted ? "可用" : "已过滤"}</StatusBadge>}
               metrics={[
-                { label: "分数", value: candidate.score.toFixed(1), tone: candidate.accepted ? "good" : "neutral" },
                 { label: "成本", value: formatCandidateCost(candidate), tone: candidate.estimatedOutputPrice == null ? "neutral" : "good" },
                 { label: "余额", value: formatCandidateBalance(candidate), tone: candidate.balanceStatus === "low" || candidate.balanceStatus === "depleted" ? "warning" : "neutral" },
                 { label: "过滤", value: `${candidate.rejectionReasons.length}`, tone: candidate.rejectionReasons.length > 0 ? "warning" : "neutral" },

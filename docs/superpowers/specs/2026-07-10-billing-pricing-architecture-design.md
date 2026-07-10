@@ -119,6 +119,11 @@ Use explicit statuses instead of a single vague unpriced state:
 
 Only `unpriced` should display as true "未定价".
 
+`base_price_only` and `missing_rate` must stay distinct:
+
+- Use `base_price_only` when the station key has no active group binding or multiplier expectation and the model base price can price the request at `1.0x`.
+- Use `missing_rate` when a key, route candidate, or group binding indicates a group multiplier should exist, but the current multiplier fact is absent, stale, invalid, or unavailable. The calculator may still use `1.0x` as an estimate, but the status must preserve the warning.
+
 ### `RequestUsage`
 
 Initial shape:
@@ -176,6 +181,8 @@ Owns manual pricing overrides. It should not be the general storage mechanism fo
 
 Any manual override used for request pricing must match the requested model or a deliberate model pattern. A rule for another model must never price the current request.
 
+Model-pattern overrides are allowed only if the pattern field and matcher are explicit in the implementation plan and tests. Plain string inequality must not fall through to "closest" or "latest" rules for a different model.
+
 ### `request_logs`
 
 Owns immutable request-time cost snapshots. Existing estimated cost fields may be reused, but writes should come from the unified calculator. Read paths should not silently recompute old rows from current prices.
@@ -185,10 +192,11 @@ Owns immutable request-time cost snapshots. Existing estimated cost fields may b
 The resolver should use this priority:
 
 1. Manual override that exactly matches the station/key/group scope and requested model.
-2. Key-bound group multiplier fact multiplied by model base price.
-3. Current station/group multiplier fact multiplied by model base price.
-4. Model base price with `1.0x`, returned as `base_price_only`.
-5. `missing_model_price` or `unpriced` with a concrete reason.
+2. Explicit model-pattern manual override, if the implementation introduces a tested model-pattern matcher.
+3. Key-bound group multiplier fact multiplied by model base price.
+4. Current station/group multiplier fact multiplied by model base price.
+5. Model base price with `1.0x`, returned as `base_price_only` or `missing_rate` according to the expectation rules above.
+6. `missing_model_price` or `unpriced` with a concrete reason.
 
 Hard rules:
 

@@ -97,7 +97,7 @@ export function simulateRoute(input: RouteSimulationInput) {
         selectedStationKeyId: null,
         selectedStationId: null,
         mappedModel: input.model,
-        policy: input.policy ?? "priority_fallback",
+        policy: input.policy ?? "cost_stable_first",
         candidates: [],
         message: "浏览器预览环境没有 Tauri 后端，无法模拟真实候选。",
       };
