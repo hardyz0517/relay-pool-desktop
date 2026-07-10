@@ -7208,7 +7208,11 @@ fn list_request_logs_from_connection(connection: &Connection) -> Result<Vec<Requ
 }
 
 fn request_log_with_estimated_cost(connection: &Connection, mut log: RequestLog) -> RequestLog {
-    if log.estimated_total_cost.is_some() {
+    if log.cost_status.is_some()
+        || log.estimated_input_cost.is_some()
+        || log.estimated_output_cost.is_some()
+        || log.estimated_total_cost.is_some()
+    {
         return log;
     }
     let Some(model) = log
@@ -7230,29 +7234,39 @@ fn request_log_with_estimated_cost(connection: &Connection, mut log: RequestLog)
         return log;
     };
 
-    let estimated_input_cost = economics
-        .estimated_input_price
-        .map(|price| price * log.prompt_tokens.unwrap_or(0) as f64 / 1_000_000.0);
-    let estimated_output_cost = economics
-        .estimated_output_price
-        .map(|price| price * log.completion_tokens.unwrap_or(0) as f64 / 1_000_000.0);
-    let estimated_total_cost = match (estimated_input_cost, estimated_output_cost) {
-        (Some(input), Some(output)) => Some(input + output),
-        (Some(input), None) => Some(input),
-        (None, Some(output)) => Some(output),
-        _ => None,
-    };
-    if estimated_total_cost.is_none() {
+    let estimate = crate::services::pricing::request_cost_from_pricing_parts(
+        Some(crate::services::pricing::RequestPricingParts {
+            station_key_id,
+            station_id: log.station_id.as_deref(),
+            model: Some(model),
+            pricing_rule_id: economics.pricing_rule_id.as_deref(),
+            pricing_model: economics.pricing_model.as_deref(),
+            group_binding_id: economics.group_binding_id.as_deref(),
+            rate_multiplier: economics.rate_multiplier,
+            normalization_status: economics.normalization_status.as_deref(),
+            price_confidence: economics.price_confidence,
+            estimated_input_price: economics.estimated_input_price,
+            estimated_output_price: economics.estimated_output_price,
+            fixed_price: economics.fixed_price,
+            price_currency: economics.price_currency.as_deref(),
+            pricing_source: economics.pricing_source.as_deref(),
+            collected_at: economics.balance_collected_at.as_deref(),
+        }),
+        log.prompt_tokens,
+        log.completion_tokens,
+        log.total_tokens,
+    );
+    if estimate.estimated_total_cost.is_none() {
         return log;
     }
 
-    log.estimated_input_cost = estimated_input_cost;
-    log.estimated_output_cost = estimated_output_cost;
-    log.estimated_total_cost = estimated_total_cost;
-    log.cost_currency = economics.price_currency;
-    log.pricing_rule_id = economics.pricing_rule_id;
-    log.pricing_source = economics.pricing_source;
-    log.cost_status = Some("estimated".to_string());
+    log.estimated_input_cost = estimate.estimated_input_cost;
+    log.estimated_output_cost = estimate.estimated_output_cost;
+    log.estimated_total_cost = estimate.estimated_total_cost;
+    log.cost_currency = estimate.cost_currency;
+    log.pricing_rule_id = estimate.pricing_rule_id;
+    log.pricing_source = estimate.pricing_source;
+    log.cost_status = Some("legacy_estimate".to_string());
     if log.group_binding_id.is_none() {
         log.group_binding_id = economics.group_binding_id;
     }
@@ -12151,9 +12165,9 @@ mod tests {
     }
 
     #[test]
-    fn list_request_logs_estimates_usage_only_logs_from_model_base_price() {
+    fn list_request_logs_preserves_usage_only_snapshot_without_repricing() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
-        let station = test_station(&database, "request-log-base-price");
+        let station = test_station(&database, "request-log-usage-only-snapshot");
         let key = database
             .list_station_keys(station.id.clone())
             .expect("keys")
@@ -12200,6 +12214,64 @@ mod tests {
             .find(|candidate| candidate.id == log.id)
             .expect("listed log");
 
+        assert_eq!(listed_log.estimated_input_cost, None);
+        assert_eq!(listed_log.estimated_output_cost, None);
+        assert_eq!(listed_log.estimated_total_cost, None);
+        assert_eq!(listed_log.cost_currency, None);
+        assert_eq!(listed_log.pricing_source, None);
+        assert_eq!(listed_log.cost_status.as_deref(), Some("usage_only"));
+    }
+
+    #[test]
+    fn list_request_logs_marks_legacy_backfilled_costs() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "request-log-base-price");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        let log = database
+            .insert_request_log(CreateRequestLogInput {
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                model: Some("gpt-5.4-mini".to_string()),
+                stream: false,
+                status: "success".to_string(),
+                lifecycle_status: Some("completed".to_string()),
+                station_key_id: Some(key.id),
+                station_id: Some(station.id),
+                upstream_base_url: Some("https://example.test".to_string()),
+                fallback_count: 0,
+                error_message: None,
+                route_policy: Some("priority_fallback".to_string()),
+                route_reason: None,
+                rejected_candidates_json: None,
+                prompt_tokens: Some(10),
+                completion_tokens: Some(11),
+                total_tokens: Some(21),
+                estimated_input_cost: None,
+                estimated_output_cost: None,
+                estimated_total_cost: None,
+                cost_currency: None,
+                pricing_rule_id: None,
+                pricing_source: None,
+                cost_status: None,
+                group_binding_id: None,
+                normalization_status: None,
+                balance_scope: None,
+                economic_context_json: None,
+                started_at: "1000".to_string(),
+                finished_at: Some("1100".to_string()),
+                duration_ms: Some(100),
+            })
+            .expect("insert log");
+
+        let listed = database.list_request_logs().expect("request logs");
+        let listed_log = listed
+            .iter()
+            .find(|candidate| candidate.id == log.id)
+            .expect("listed log");
+
         assert_option_f64_close(listed_log.estimated_input_cost, 0.00000375);
         assert_option_f64_close(listed_log.estimated_output_cost, 0.00002475);
         assert_option_f64_close(listed_log.estimated_total_cost, 0.0000285);
@@ -12208,7 +12280,7 @@ mod tests {
             listed_log.pricing_source.as_deref(),
             Some("model_base_price")
         );
-        assert_eq!(listed_log.cost_status.as_deref(), Some("estimated"));
+        assert_eq!(listed_log.cost_status.as_deref(), Some("legacy_estimate"));
     }
 
     #[test]
