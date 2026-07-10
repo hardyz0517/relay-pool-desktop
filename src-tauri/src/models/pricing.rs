@@ -151,6 +151,102 @@ pub struct RequestCostEstimate {
     pub cost_status: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum PricingStatus {
+    Priced,
+    BasePriceOnly,
+    MissingRate,
+    MissingModelPrice,
+    Unpriced,
+    UnsupportedBillingMode,
+    LegacyEstimate,
+}
+
+impl PricingStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Priced => "priced",
+            Self::BasePriceOnly => "base_price_only",
+            Self::MissingRate => "missing_rate",
+            Self::MissingModelPrice => "missing_model_price",
+            Self::Unpriced => "unpriced",
+            Self::UnsupportedBillingMode => "unsupported_billing_mode",
+            Self::LegacyEstimate => "legacy_estimate",
+        }
+    }
+
+    pub fn can_have_numeric_cost(&self) -> bool {
+        matches!(
+            self,
+            Self::Priced | Self::BasePriceOnly | Self::MissingRate | Self::LegacyEstimate
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestKind {
+    Text,
+    Image,
+    Video,
+    Any,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedPricingContext {
+    pub station_key_id: String,
+    pub station_id: String,
+    pub requested_model: String,
+    pub resolved_model: String,
+    pub request_kind: RequestKind,
+    pub group_binding_id: Option<String>,
+    pub base_input_price: Option<f64>,
+    pub base_output_price: Option<f64>,
+    pub base_fixed_price: Option<f64>,
+    pub currency: String,
+    pub unit: String,
+    pub base_price_source: Option<String>,
+    pub effective_rate_multiplier: Option<f64>,
+    pub rate_source: Option<String>,
+    pub rate_collected_at: Option<String>,
+    pub estimated_input_price: Option<f64>,
+    pub estimated_output_price: Option<f64>,
+    pub estimated_fixed_price: Option<f64>,
+    pub pricing_status: PricingStatus,
+    pub confidence: f64,
+    pub source_chain: Vec<String>,
+    pub reason: Option<String>,
+    pub resolved_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestUsage {
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
+    pub request_count: Option<i64>,
+    pub cache_creation_tokens: Option<i64>,
+    pub cache_read_tokens: Option<i64>,
+    pub media_count: Option<i64>,
+    pub duration_seconds: Option<f64>,
+    pub size_tier: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestCostBreakdown {
+    pub input_cost: Option<f64>,
+    pub output_cost: Option<f64>,
+    pub fixed_cost: Option<f64>,
+    pub total_cost: Option<f64>,
+    pub currency: Option<String>,
+    pub pricing_status: PricingStatus,
+    pub pricing_context_json: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

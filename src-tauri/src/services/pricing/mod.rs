@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use crate::models::pricing::{
-    BalanceSnapshot, PricingRule, RequestCostEstimate, UpsertBalanceSnapshotInput,
-    UpsertPricingRuleInput,
+    BalanceSnapshot, PricingRule, RequestCostBreakdown, RequestCostEstimate, RequestUsage,
+    ResolvedPricingContext, UpsertBalanceSnapshotInput, UpsertPricingRuleInput,
 };
 
 pub fn normalize_currency(value: String) -> String {
@@ -222,4 +222,113 @@ mod tests {
         assert_eq!(sanitized.confidence, 1.0);
         assert_eq!(sanitized.note, None);
     }
+
+    #[test]
+    fn cost_calculator_includes_fixed_price() {
+        let context = crate::models::pricing::ResolvedPricingContext {
+            station_key_id: "key-1".to_string(),
+            station_id: "station-1".to_string(),
+            requested_model: "gpt-5-mini".to_string(),
+            resolved_model: "gpt-5-mini".to_string(),
+            request_kind: crate::models::pricing::RequestKind::Text,
+            group_binding_id: None,
+            base_input_price: Some(0.25),
+            base_output_price: Some(2.0),
+            base_fixed_price: Some(0.05),
+            currency: "USD".to_string(),
+            unit: "per_1m_tokens".to_string(),
+            base_price_source: Some("model_base_prices".to_string()),
+            effective_rate_multiplier: Some(1.0),
+            rate_source: None,
+            rate_collected_at: None,
+            estimated_input_price: Some(0.25),
+            estimated_output_price: Some(2.0),
+            estimated_fixed_price: Some(0.05),
+            pricing_status: crate::models::pricing::PricingStatus::BasePriceOnly,
+            confidence: 0.75,
+            source_chain: vec!["model_base_prices:gpt-5-mini".to_string()],
+            reason: Some("no_multiplier_expected".to_string()),
+            resolved_at: "1000".to_string(),
+        };
+        let usage = crate::models::pricing::RequestUsage {
+            input_tokens: Some(1_000),
+            output_tokens: Some(500),
+            total_tokens: Some(1_500),
+            request_count: Some(1),
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
+            media_count: None,
+            duration_seconds: None,
+            size_tier: None,
+        };
+
+        let cost = calculate_request_cost(&context, &usage);
+
+        assert_eq!(cost.pricing_status, crate::models::pricing::PricingStatus::BasePriceOnly);
+        assert_eq!(cost.currency.as_deref(), Some("USD"));
+        assert_option_f64_close(cost.input_cost, 0.00025);
+        assert_option_f64_close(cost.output_cost, 0.001);
+        assert_option_f64_close(cost.fixed_cost, 0.05);
+        assert_option_f64_close(cost.total_cost, 0.05125);
+    }
+
+    fn assert_option_f64_close(actual: Option<f64>, expected: f64) {
+        let actual = actual.expect("expected numeric cost");
+        assert!(
+            (actual - expected).abs() < 0.000000001,
+            "expected {expected}, got {actual}"
+        );
+    }
+}
+
+pub fn calculate_request_cost(
+    context: &ResolvedPricingContext,
+    usage: &RequestUsage,
+) -> RequestCostBreakdown {
+    if !context.pricing_status.can_have_numeric_cost() {
+        return RequestCostBreakdown {
+            input_cost: None,
+            output_cost: None,
+            fixed_cost: None,
+            total_cost: None,
+            currency: Some(context.currency.clone()),
+            pricing_status: context.pricing_status.clone(),
+            pricing_context_json: serialize_pricing_context(context),
+        };
+    }
+
+    let input_tokens = usage.input_tokens.unwrap_or(0).max(0) as f64;
+    let output_tokens = usage.output_tokens.unwrap_or(0).max(0) as f64;
+    let input_cost = context
+        .estimated_input_price
+        .map(|price| price * input_tokens / 1_000_000.0);
+    let output_cost = context
+        .estimated_output_price
+        .map(|price| price * output_tokens / 1_000_000.0);
+    let fixed_cost = context.estimated_fixed_price;
+    let total_cost = sum_costs([input_cost, output_cost, fixed_cost]);
+
+    RequestCostBreakdown {
+        input_cost,
+        output_cost,
+        fixed_cost,
+        total_cost,
+        currency: Some(context.currency.clone()),
+        pricing_status: context.pricing_status.clone(),
+        pricing_context_json: serialize_pricing_context(context),
+    }
+}
+
+fn sum_costs(values: [Option<f64>; 3]) -> Option<f64> {
+    let mut total = 0.0;
+    let mut has_value = false;
+    for value in values.into_iter().flatten() {
+        total += value;
+        has_value = true;
+    }
+    has_value.then_some(total)
+}
+
+fn serialize_pricing_context(context: &ResolvedPricingContext) -> Option<String> {
+    serde_json::to_string(context).ok()
 }
