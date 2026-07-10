@@ -165,7 +165,7 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
         </div>
         <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
           <EditHint icon={<ListOrdered className="h-4 w-4" />} title="顺位编辑" body="列表编号按当前可见顺序显示为 1、2、3。" />
-          <EditHint icon={<LockKeyhole className="h-4 w-4" />} title="运行边界" body="本页只更新候选顺位，不改变模型映射和模拟器行为。" />
+          <EditHint icon={<LockKeyhole className="h-4 w-4" />} title="运行边界" body="本页只更新候选顺位，不改变渠道和 Key 本身配置。" />
         </div>
       </SectionCard>
 
