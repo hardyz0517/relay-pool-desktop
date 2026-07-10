@@ -26,8 +26,9 @@ use crate::{
             UpsertStationGroupBindingInput,
         },
         pricing::{
-            BalanceSnapshot, ModelBasePrice, PricingRule, UpsertBalanceSnapshotInput,
-            UpsertModelBasePriceInput, UpsertPricingRuleInput,
+            BalanceSnapshot, ModelBasePrice, PricingRule, PricingStatus, RequestKind,
+            ResolvedPricingContext, UpsertBalanceSnapshotInput, UpsertModelBasePriceInput,
+            UpsertPricingRuleInput,
         },
         proxy::{ProxyStatus, RequestLog, UpstreamApiFormat},
         remote_keys::{
@@ -57,6 +58,7 @@ use crate::{
         capture, collectors,
         database::{now_millis_for_services, AppDatabase},
         endpoint_ping::ping_station_endpoint as probe_station_endpoint,
+        pricing::{pricing_context_from_pricing_parts, RequestPricingParts},
         proxy::{
             build_upstream_url, redact_error_message, runtime::ProxyRuntimeState, should_fallback,
         },
@@ -745,6 +747,65 @@ pub fn upsert_pricing_rule(
 #[tauri::command]
 pub fn delete_pricing_rule(database: State<'_, AppDatabase>, id: String) -> Result<(), String> {
     database.delete_pricing_rule(id)
+}
+
+#[tauri::command]
+pub fn resolve_station_key_pricing_context(
+    database: State<'_, AppDatabase>,
+    station_key_id: String,
+    requested_model: String,
+    request_kind: Option<RequestKind>,
+) -> Result<ResolvedPricingContext, String> {
+    let model = requested_model.trim().to_string();
+    let economics = database
+        .route_candidate_economics_for_model(station_key_id.clone(), Some(model.clone()))?;
+    let Some(economics) = economics else {
+        return Ok(ResolvedPricingContext {
+            station_key_id,
+            station_id: "unknown".to_string(),
+            requested_model: model,
+            resolved_model: "unknown".to_string(),
+            request_kind: request_kind.unwrap_or(RequestKind::Text),
+            group_binding_id: None,
+            base_input_price: None,
+            base_output_price: None,
+            base_fixed_price: None,
+            currency: "unknown".to_string(),
+            unit: "per_1m_tokens".to_string(),
+            base_price_source: None,
+            effective_rate_multiplier: None,
+            rate_source: None,
+            rate_collected_at: None,
+            estimated_input_price: None,
+            estimated_output_price: None,
+            estimated_fixed_price: None,
+            pricing_status: PricingStatus::Unpriced,
+            confidence: 0.0,
+            source_chain: Vec::new(),
+            reason: Some("pricing_not_available".to_string()),
+            resolved_at: now_millis_for_services().to_string(),
+        });
+    };
+
+    let mut context = pricing_context_from_pricing_parts(&RequestPricingParts {
+        station_key_id: &station_key_id,
+        station_id: None,
+        model: Some(&model),
+        pricing_rule_id: economics.pricing_rule_id.as_deref(),
+        pricing_model: economics.pricing_model.as_deref(),
+        group_binding_id: economics.group_binding_id.as_deref(),
+        rate_multiplier: economics.rate_multiplier,
+        normalization_status: economics.normalization_status.as_deref(),
+        price_confidence: economics.price_confidence,
+        estimated_input_price: economics.estimated_input_price,
+        estimated_output_price: economics.estimated_output_price,
+        fixed_price: economics.fixed_price,
+        price_currency: economics.price_currency.as_deref(),
+        pricing_source: economics.pricing_source.as_deref(),
+        collected_at: economics.balance_collected_at.as_deref(),
+    });
+    context.request_kind = request_kind.unwrap_or(RequestKind::Text);
+    Ok(context)
 }
 
 #[tauri::command]

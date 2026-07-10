@@ -63,6 +63,43 @@ export type BalanceSnapshot = {
   updatedAt: string;
 };
 
+export type PricingStatus =
+  | "priced"
+  | "base_price_only"
+  | "missing_rate"
+  | "missing_model_price"
+  | "unpriced"
+  | "unsupported_billing_mode"
+  | "legacy_estimate";
+
+export type RequestKind = "text" | "image" | "video" | "any";
+
+export type ResolvedPricingContext = {
+  stationKeyId: string;
+  stationId: string;
+  requestedModel: string;
+  resolvedModel: string;
+  requestKind: RequestKind;
+  groupBindingId: string | null;
+  baseInputPrice: number | null;
+  baseOutputPrice: number | null;
+  baseFixedPrice: number | null;
+  currency: string;
+  unit: string;
+  basePriceSource: string | null;
+  effectiveRateMultiplier: number | null;
+  rateSource: string | null;
+  rateCollectedAt: string | null;
+  estimatedInputPrice: number | null;
+  estimatedOutputPrice: number | null;
+  estimatedFixedPrice: number | null;
+  pricingStatus: PricingStatus;
+  confidence: number;
+  sourceChain: string[];
+  reason: string | null;
+  resolvedAt: string;
+};
+
 export type RequestCost = {
   promptTokens: number | null;
   completionTokens: number | null;

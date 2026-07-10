@@ -1,6 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { mockPricingRows } from "@/lib/mock/pricing";
-import type { BalanceSnapshot, ModelBasePrice, PricingRule } from "@/lib/types/economics";
+import type {
+  BalanceSnapshot,
+  ModelBasePrice,
+  PricingRule,
+  RequestKind,
+  ResolvedPricingContext,
+} from "@/lib/types/economics";
 
 let memoryPricingRules: PricingRule[] | null = null;
 let memoryBalanceSnapshots: BalanceSnapshot[] | null = null;
@@ -36,6 +42,18 @@ export function deletePricingRule(id: string) {
       return;
     }
     throw error;
+  });
+}
+
+export function resolveStationKeyPricingContext(
+  stationKeyId: string,
+  requestedModel: string,
+  requestKind: RequestKind = "text",
+) {
+  return invoke<ResolvedPricingContext>("resolve_station_key_pricing_context", {
+    stationKeyId,
+    requestedModel,
+    requestKind,
   });
 }
 

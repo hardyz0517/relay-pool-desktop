@@ -283,6 +283,98 @@ mod tests {
             "expected {expected}, got {actual}"
         );
     }
+
+    #[test]
+    fn pricing_diagnostics_context_returns_source_chain() {
+        let parts = RequestPricingParts {
+            station_key_id: "key-1",
+            station_id: Some("station-1"),
+            model: Some("gpt-5.4-mini"),
+            pricing_rule_id: Some("rule-1"),
+            pricing_model: Some("gpt-5.4-mini"),
+            group_binding_id: Some("binding-1"),
+            rate_multiplier: Some(0.8),
+            normalization_status: Some("base_price_with_group_rate"),
+            price_confidence: Some(0.9),
+            estimated_input_price: Some(0.3),
+            estimated_output_price: Some(1.8),
+            fixed_price: None,
+            price_currency: Some("USD"),
+            pricing_source: Some("model_base_price"),
+            collected_at: Some("1000"),
+        };
+
+        let context = pricing_context_from_pricing_parts(&parts);
+
+        assert_eq!(context.pricing_status, PricingStatus::Priced);
+        assert_eq!(
+            context.source_chain,
+            vec![
+                "pricing_rule:rule-1".to_string(),
+                "model:gpt-5.4-mini".to_string(),
+                "group_binding:binding-1".to_string(),
+                "pricing_source:model_base_price".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn pricing_diagnostics_context_marks_missing_expected_rate() {
+        let parts = RequestPricingParts {
+            station_key_id: "key-1",
+            station_id: Some("station-1"),
+            model: Some("gpt-5.4-mini"),
+            pricing_rule_id: None,
+            pricing_model: Some("gpt-5.4-mini"),
+            group_binding_id: Some("binding-1"),
+            rate_multiplier: None,
+            normalization_status: None,
+            price_confidence: Some(0.5),
+            estimated_input_price: None,
+            estimated_output_price: None,
+            fixed_price: None,
+            price_currency: Some("USD"),
+            pricing_source: None,
+            collected_at: Some("1000"),
+        };
+
+        let context = pricing_context_from_pricing_parts(&parts);
+
+        assert_eq!(context.pricing_status, PricingStatus::MissingRate);
+        assert_eq!(context.reason.as_deref(), Some("pricing_not_available"));
+    }
+
+    #[test]
+    fn pricing_diagnostics_context_marks_base_price_only() {
+        let parts = RequestPricingParts {
+            station_key_id: "key-1",
+            station_id: Some("station-1"),
+            model: Some("gpt-5.4-mini"),
+            pricing_rule_id: None,
+            pricing_model: Some("gpt-5.4-mini"),
+            group_binding_id: None,
+            rate_multiplier: Some(1.0),
+            normalization_status: Some("base_price_only"),
+            price_confidence: Some(0.8),
+            estimated_input_price: Some(0.375),
+            estimated_output_price: Some(2.25),
+            fixed_price: None,
+            price_currency: Some("USD"),
+            pricing_source: Some("model_base_price"),
+            collected_at: Some("1000"),
+        };
+
+        let context = pricing_context_from_pricing_parts(&parts);
+
+        assert_eq!(context.pricing_status, PricingStatus::BasePriceOnly);
+        assert_eq!(
+            context.source_chain,
+            vec![
+                "model:gpt-5.4-mini".to_string(),
+                "pricing_source:model_base_price".to_string(),
+            ]
+        );
+    }
 }
 
 pub fn calculate_request_cost(
@@ -361,38 +453,7 @@ pub fn request_cost_from_pricing_parts(
             cost_status: "usage_only".to_string(),
         };
     };
-    let requested_model = parts
-        .model
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or(parts.pricing_model)
-        .unwrap_or("unknown");
-    let pricing_status = pricing_status_from_parts(&parts);
-    let context = ResolvedPricingContext {
-        station_key_id: parts.station_key_id.to_string(),
-        station_id: parts.station_id.unwrap_or("unknown").to_string(),
-        requested_model: requested_model.to_string(),
-        resolved_model: parts.pricing_model.unwrap_or(requested_model).to_string(),
-        request_kind: RequestKind::Text,
-        group_binding_id: parts.group_binding_id.map(ToString::to_string),
-        base_input_price: None,
-        base_output_price: None,
-        base_fixed_price: None,
-        currency: parts.price_currency.unwrap_or("unknown").to_string(),
-        unit: "per_1m_tokens".to_string(),
-        base_price_source: parts.pricing_source.map(ToString::to_string),
-        effective_rate_multiplier: parts.rate_multiplier,
-        rate_source: parts.pricing_source.map(ToString::to_string),
-        rate_collected_at: parts.collected_at.map(ToString::to_string),
-        estimated_input_price: parts.estimated_input_price,
-        estimated_output_price: parts.estimated_output_price,
-        estimated_fixed_price: parts.fixed_price,
-        pricing_status,
-        confidence: parts.price_confidence.unwrap_or(0.0),
-        source_chain: pricing_parts_source_chain(&parts),
-        reason: pricing_parts_reason(&parts),
-        resolved_at: parts.collected_at.unwrap_or("unknown").to_string(),
-    };
+    let context = pricing_context_from_pricing_parts(&parts);
     let usage = RequestUsage {
         input_tokens: prompt_tokens,
         output_tokens: completion_tokens,
@@ -424,6 +485,43 @@ pub fn request_cost_from_pricing_parts(
     }
 }
 
+pub fn pricing_context_from_pricing_parts(
+    parts: &RequestPricingParts<'_>,
+) -> ResolvedPricingContext {
+    let requested_model = parts
+        .model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or(parts.pricing_model)
+        .unwrap_or("unknown");
+    let pricing_status = pricing_status_from_parts(&parts);
+    ResolvedPricingContext {
+        station_key_id: parts.station_key_id.to_string(),
+        station_id: parts.station_id.unwrap_or("unknown").to_string(),
+        requested_model: requested_model.to_string(),
+        resolved_model: parts.pricing_model.unwrap_or(requested_model).to_string(),
+        request_kind: RequestKind::Text,
+        group_binding_id: parts.group_binding_id.map(ToString::to_string),
+        base_input_price: None,
+        base_output_price: None,
+        base_fixed_price: None,
+        currency: parts.price_currency.unwrap_or("unknown").to_string(),
+        unit: "per_1m_tokens".to_string(),
+        base_price_source: parts.pricing_source.map(ToString::to_string),
+        effective_rate_multiplier: parts.rate_multiplier,
+        rate_source: parts.pricing_source.map(ToString::to_string),
+        rate_collected_at: parts.collected_at.map(ToString::to_string),
+        estimated_input_price: parts.estimated_input_price,
+        estimated_output_price: parts.estimated_output_price,
+        estimated_fixed_price: parts.fixed_price,
+        pricing_status,
+        confidence: parts.price_confidence.unwrap_or(0.0),
+        source_chain: pricing_parts_source_chain(&parts),
+        reason: pricing_parts_reason(&parts),
+        resolved_at: parts.collected_at.unwrap_or("unknown").to_string(),
+    }
+}
+
 fn pricing_status_from_parts(parts: &RequestPricingParts<'_>) -> PricingStatus {
     match parts.normalization_status {
         Some("base_price_only") => PricingStatus::BasePriceOnly,
@@ -435,6 +533,14 @@ fn pricing_status_from_parts(parts: &RequestPricingParts<'_>) -> PricingStatus {
                 && parts.fixed_price.is_none() =>
         {
             PricingStatus::MissingModelPrice
+        }
+        _ if parts.group_binding_id.is_some()
+            && parts.rate_multiplier.is_none()
+            && parts.estimated_input_price.is_none()
+            && parts.estimated_output_price.is_none()
+            && parts.fixed_price.is_none() =>
+        {
+            PricingStatus::MissingRate
         }
         _ if parts.estimated_input_price.is_some()
             || parts.estimated_output_price.is_some()

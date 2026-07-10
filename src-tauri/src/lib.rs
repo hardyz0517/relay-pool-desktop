@@ -100,6 +100,7 @@ pub fn run() {
             commands::reset_model_base_prices_to_builtins,
             commands::upsert_pricing_rule,
             commands::delete_pricing_rule,
+            commands::resolve_station_key_pricing_context,
             commands::list_balance_snapshots,
             commands::list_balance_snapshots_for_station,
             commands::upsert_balance_snapshot,
