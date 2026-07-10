@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AppShell } from "@/components/shell/AppShell";
 import { CollectorsPage } from "@/features/collectors/CollectorsPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
@@ -21,12 +21,29 @@ import type { Station } from "@/lib/types/stations";
 
 export function App() {
   const [activeRouteId, setActiveRouteId] = useState<AppPageId>("dashboard");
+  const [mountedRouteIds, setMountedRouteIds] = useState<Set<AppRouteId>>(
+    () => new Set(["dashboard"]),
+  );
   const [editingStationId, setEditingStationId] = useState<string | null>(null);
   const [detailStationId, setDetailStationId] = useState<string | null>(null);
   const [detailStationPreview, setDetailStationPreview] = useState<Station | null>(null);
   const [initialKeyStationId, setInitialKeyStationId] = useState<string | null>(null);
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
   const activeShellRouteId = getShellRouteId(activeRouteId);
+
+  useEffect(() => {
+    if (!isShellPage(activeRouteId)) {
+      return;
+    }
+    setMountedRouteIds((current) => {
+      if (current.has(activeRouteId)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(activeRouteId);
+      return next;
+    });
+  }, [activeRouteId]);
 
   function returnToStations() {
     setEditingStationId(null);
@@ -64,7 +81,39 @@ export function App() {
     setActiveRouteId("editKey");
   }
 
-  const page = useMemo(() => {
+  function renderShellPage(routeId: AppRouteId) {
+    switch (routeId) {
+      case "stations":
+        return (
+          <StationsPage
+            onAddProvider={() => setActiveRouteId("addProvider")}
+            onEditProvider={openEditProvider}
+            onOpenStation={openStationDetail}
+          />
+        );
+      case "keyPool":
+        return <KeyPoolPage onAddKey={openAddKey} onEditKey={openEditKey} />;
+      case "channels":
+        return <ChannelStatusPage />;
+      case "collectors":
+        return <CollectorsPage />;
+      case "changes":
+        return <ChangeCenterPage />;
+      case "pricing":
+        return <PricingPage onOpenModelBasePrices={() => setActiveRouteId("modelBasePrices")} />;
+      case "routing":
+        return <RoutingPage onOpenPage={(routeId) => setActiveRouteId(routeId)} />;
+      case "logs":
+        return <LogsPage />;
+      case "settings":
+        return <SettingsPage onOpenModelBasePrices={() => setActiveRouteId("modelBasePrices")} />;
+      case "dashboard":
+      default:
+        return <DashboardPage />;
+    }
+  }
+
+  function renderTransientPage(): ReactNode {
     switch (activeRouteId) {
       case "addProvider":
         return (
@@ -106,42 +155,46 @@ export function App() {
             onUpdated={returnToKeyPool}
           />
         );
-      case "stations":
-        return (
-          <StationsPage
-            onAddProvider={() => setActiveRouteId("addProvider")}
-            onEditProvider={openEditProvider}
-            onOpenStation={openStationDetail}
-          />
-        );
-      case "keyPool":
-        return <KeyPoolPage onAddKey={openAddKey} onEditKey={openEditKey} />;
-      case "channels":
-        return <ChannelStatusPage />;
-      case "collectors":
-        return <CollectorsPage />;
-      case "changes":
-        return <ChangeCenterPage />;
-      case "pricing":
-        return <PricingPage onOpenModelBasePrices={() => setActiveRouteId("modelBasePrices")} />;
       case "modelBasePrices":
         return <ModelBasePricesPage onBack={() => setActiveRouteId("pricing")} />;
-      case "routing":
-        return <RoutingPage onOpenPage={(routeId) => setActiveRouteId(routeId)} />;
-      case "logs":
-        return <LogsPage />;
-      case "settings":
-        return <SettingsPage onOpenModelBasePrices={() => setActiveRouteId("modelBasePrices")} />;
-      case "dashboard":
       default:
-        return <DashboardPage />;
+        return null;
     }
-  }, [activeRouteId, editingStationId, detailStationId, detailStationPreview, initialKeyStationId, editingKeyId]);
+  }
+
+  const transientPage = renderTransientPage();
+  const shellRouteIds = isShellPage(activeRouteId) && !mountedRouteIds.has(activeRouteId)
+    ? [...mountedRouteIds, activeRouteId]
+    : [...mountedRouteIds];
 
   return (
     <AppShell activeRouteId={activeShellRouteId} onRouteChange={(routeId) => setActiveRouteId(routeId)}>
-      {page}
+      {shellRouteIds.map((routeId) => (
+        <div
+          key={routeId}
+          aria-hidden={activeRouteId !== routeId}
+          className={activeRouteId === routeId ? "contents" : "hidden"}
+        >
+          {renderShellPage(routeId)}
+        </div>
+      ))}
+      {transientPage}
     </AppShell>
+  );
+}
+
+function isShellPage(pageId: AppPageId): pageId is AppRouteId {
+  return (
+    pageId === "dashboard" ||
+    pageId === "stations" ||
+    pageId === "keyPool" ||
+    pageId === "routing" ||
+    pageId === "pricing" ||
+    pageId === "channels" ||
+    pageId === "collectors" ||
+    pageId === "changes" ||
+    pageId === "logs" ||
+    pageId === "settings"
   );
 }
 
