@@ -81,7 +81,7 @@ export function LogsPage() {
       ),
     },
     { key: "tokens", header: "用量", className: "w-28 text-right", render: (row) => formatTokens(row) },
-    { key: "cost", header: "成本", className: "w-28 text-right", render: (row) => formatCost(row) },
+    { key: "cost", header: "成本", className: "w-36 text-right", render: (row) => <CostCell log={row} /> },
     { key: "fallback", header: "兜底", className: "w-24 text-right", render: (row) => row.fallbackCount },
     { key: "latency", header: "耗时", className: "w-24 text-right", render: (row) => row.durationMs == null ? "暂无" : `${row.durationMs}ms` },
   ], [keyById]);
@@ -191,7 +191,7 @@ export function LogsPage() {
                 <PropertyRow label="选择原因" value={selected.routeReason ?? "未记录"} />
                 <PropertyRow label="用量" value={formatTokens(selected)} />
                 <PropertyRow label="成本" value={formatCost(selected)} />
-                <PropertyRow label="成本状态" value={statusFallback(selected.costStatus)} />
+                <PropertyRow label="成本状态" value={pricingStatusLabel(selected.costStatus)} />
                 <PropertyRow label="价格规则" value={selected.pricingRuleId ?? "未命中"} />
                 <PropertyRow label="价格来源" value={selected.pricingSource ?? "未知"} />
                 <PropertyRow label="价格状态" value={normalizationLabel(selected.normalizationStatus ?? selected.costStatus)} />
@@ -326,9 +326,20 @@ function formatTokens(log: RequestLog) {
   return `${log.totalTokens.toLocaleString("zh-CN")} t`;
 }
 
+function CostCell({ log }: { log: RequestLog }) {
+  return (
+    <div className="grid justify-items-end gap-1">
+      <span className="text-sm font-medium text-slate-800">{formatCost(log)}</span>
+      <StatusBadge className="h-5 px-1.5" tone={pricingStatusTone(log.costStatus)}>
+        {pricingStatusLabel(log.costStatus)}
+      </StatusBadge>
+    </div>
+  );
+}
+
 function formatCost(log: RequestLog) {
   if (log.estimatedTotalCost == null) {
-    return log.costStatus === "unknown_usage" ? "未知" : "暂无";
+    return pricingStatusLabel(log.costStatus);
   }
   const currency = log.costCurrency ?? "USD";
   return `${currency} ${log.estimatedTotalCost.toFixed(6)}`;
@@ -338,8 +349,43 @@ function statusFallback(value: string | null | undefined) {
   return value ?? "未知";
 }
 
+function pricingStatusLabel(value: string | null | undefined) {
+  if (value === "priced") return "已计价";
+  if (value === "base_price_only") return "基准价估算";
+  if (value === "missing_rate") return "缺倍率";
+  if (value === "missing_model_price") return "缺模型基准价";
+  if (value === "unsupported_billing_mode") return "不支持计费";
+  if (value === "legacy_estimate") return "旧估算";
+  if (value === "usage_only") return "未定价";
+  if (value === "unknown_usage") return "用量未知";
+  if (value === "unpriced") return "未定价";
+  return "未知";
+}
+
+function pricingStatusTone(value: string | null | undefined) {
+  if (value === "priced") return "healthy";
+  if (value === "base_price_only" || value === "legacy_estimate") return "warning";
+  if (
+    value === "missing_rate" ||
+    value === "missing_model_price" ||
+    value === "unsupported_billing_mode" ||
+    value === "unpriced"
+  ) {
+    return "error";
+  }
+  return "info";
+}
+
 function normalizationLabel(value: string | null | undefined) {
   if (!value) return "未知";
+  if (value === "priced") return "已计价";
+  if (value === "base_price_only") return "基准价估算";
+  if (value === "missing_rate") return "缺倍率";
+  if (value === "missing_model_price") return "缺模型基准价";
+  if (value === "unsupported_billing_mode") return "不支持计费";
+  if (value === "legacy_estimate") return "旧估算";
+  if (value === "usage_only") return "未定价";
+  if (value === "unpriced") return "未定价";
   if (value === "complete") return "完整";
   if (value === "group_rate_only") return "仅倍率";
   if (value === "expired") return "已过期";
