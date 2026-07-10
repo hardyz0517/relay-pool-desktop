@@ -42,6 +42,8 @@ pub fn load_local_routing_workspace(
         .map(|(index, candidate)| candidate_row(index, candidate))
         .collect::<Vec<_>>();
 
+    let latest_decision = latest_log.map(|log| latest_decision(log, &rows));
+
     Ok(LocalRoutingWorkspace {
         proxy_status,
         settings: LocalRoutingSettingsView {
@@ -69,7 +71,7 @@ pub fn load_local_routing_workspace(
             last_decision_at: latest_log.map(|log| log.started_at.clone()),
         },
         candidates: rows,
-        latest_decision: latest_log.map(latest_decision),
+        latest_decision,
         recent_events: recent_events(&request_logs),
     })
 }
@@ -205,7 +207,14 @@ fn capability_label(candidate: &LocalRoutingReadCandidate) -> String {
     }
 }
 
-fn latest_decision(log: &RequestLog) -> RouteDecisionSummary {
+fn latest_decision(log: &RequestLog, candidates: &[LocalRoutingCandidateRow]) -> RouteDecisionSummary {
+    let selected_station_name = log.station_key_id.as_ref().and_then(|station_key_id| {
+        candidates
+            .iter()
+            .find(|candidate| &candidate.station_key_id == station_key_id)
+            .map(|candidate| format!("{} / {}", candidate.station_name, candidate.key_name))
+    });
+
     RouteDecisionSummary {
         id: log.id.clone(),
         decided_at: log.started_at.clone(),
@@ -213,11 +222,11 @@ fn latest_decision(log: &RequestLog) -> RouteDecisionSummary {
         model: log.model.clone(),
         selected_station_key_id: log.station_key_id.clone(),
         selected_station_id: log.station_id.clone(),
-        selected_station_name: None,
+        selected_station_name,
         policy: log
             .route_policy
             .clone()
-            .unwrap_or_else(|| "priority_fallback".to_string()),
+            .unwrap_or_else(|| "cost_stable_first".to_string()),
         status: decision_status(log),
         reason: log
             .route_reason

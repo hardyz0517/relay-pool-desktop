@@ -36,7 +36,7 @@ assertIncludes(routingPage, "状态", "RoutingPage");
 assertIncludes(routingPage, "编辑", "RoutingPage");
 assertIncludes(statusTab, "本地端点", "LocalRoutingStatusTab");
 assertIncludes(statusTab, "当前主 Key", "LocalRoutingStatusTab");
-assertIncludes(editTab, "低价优先 + 稳定保持", "LocalRoutingEditTab");
+assertIncludes(editTab, "低价稳定优先", "LocalRoutingEditTab");
 assertExcludes(editTab, "权重", "LocalRoutingEditTab");
 assertExcludes(editTab, "拖拽", "LocalRoutingEditTab");
 assertExcludes(editTab, "重排", "LocalRoutingEditTab");

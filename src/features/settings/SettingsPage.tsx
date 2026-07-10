@@ -38,7 +38,7 @@ type SettingsFormState = {
 const fallbackSettings: AppSettings = {
   localProxyPort: 8787,
   localKeyMasked: "未读取",
-  defaultRoutingStrategy: "priority_fallback",
+  defaultRoutingStrategy: "cost_stable_first",
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   balanceIntervalMinutes: 5,
@@ -140,6 +140,12 @@ export function SettingsPage() {
       nextForm.developerModeEnabled ? "开发者模式已开启" : "开发者模式已关闭",
       true,
     );
+  }
+
+  async function handleDefaultRoutingStrategyChange(defaultRoutingStrategy: RoutingStrategy) {
+    const nextForm = { ...form, defaultRoutingStrategy };
+    setForm(nextForm);
+    await persistSettings(nextForm, "默认路由策略已更新", true);
   }
 
   async function copyLocalAccessKey() {
@@ -286,7 +292,7 @@ export function SettingsPage() {
                   value: value as RoutingStrategy,
                   label,
                 }))}
-                onChange={(defaultRoutingStrategy) => setForm({ ...form, defaultRoutingStrategy })}
+                onChange={(defaultRoutingStrategy) => void handleDefaultRoutingStrategyChange(defaultRoutingStrategy)}
               />
             }
             description="当前本地代理会按所选策略对密钥池候选排序。"

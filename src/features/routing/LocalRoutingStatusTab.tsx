@@ -2,6 +2,7 @@ import { Activity, Clock3, ScrollText, Server, ShieldCheck } from "lucide-react"
 import { Button, EmptyState, SectionCard, StatusBadge } from "@/components/ui";
 import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
 import type { AppRouteId } from "@/lib/types/navigation";
+import type { RouteEndpointKind } from "@/lib/types/routing";
 import { LocalRoutingCandidateRow } from "./LocalRoutingCandidateRow";
 import { RouteExplanationPanel } from "./RouteExplanationPanel";
 
@@ -11,6 +12,21 @@ type LocalRoutingStatusTabProps = {
   workspace: LocalRoutingWorkspace | null;
   loading: boolean;
   onOpenPage?: (pageId: LocalRoutingLinkedPage) => void;
+};
+
+const endpointLabels: Record<RouteEndpointKind, string> = {
+  chat_completions: "聊天补全",
+  responses: "Responses",
+  models: "模型列表",
+  embeddings: "向量",
+};
+
+const policyLabels: Record<string, string> = {
+  cost_stable_first: "低价稳定优先",
+  priority_fallback: "顺位故障切换",
+  stable_first: "稳定优先",
+  backup_only: "仅备用兜底",
+  cheap_first: "低价优先",
 };
 
 export function LocalRoutingStatusTab({ workspace, loading, onOpenPage }: LocalRoutingStatusTabProps) {
@@ -54,7 +70,7 @@ export function LocalRoutingStatusTab({ workspace, loading, onOpenPage }: LocalR
                   {workspace.settings.bindAddr}:{workspace.settings.port}
                 </div>
                 <div className="truncate text-xs text-muted-foreground">
-                  {workspace.settings.endpoint} / {workspace.settings.policy}
+                  {formatEndpoint(workspace.settings.endpoint)} / {formatPolicy(workspace.settings.policy)}
                 </div>
               </div>
             </div>
@@ -112,6 +128,14 @@ export function LocalRoutingStatusTab({ workspace, loading, onOpenPage }: LocalR
       <RouteExplanationPanel workspace={workspace} />
     </div>
   );
+}
+
+function formatEndpoint(endpoint: RouteEndpointKind) {
+  return endpointLabels[endpoint] ?? endpoint;
+}
+
+function formatPolicy(policy: string) {
+  return policyLabels[policy] ?? policy;
 }
 
 function Metric({ label, value }: { label: string; value: number }) {

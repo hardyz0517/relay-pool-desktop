@@ -16,7 +16,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BadgeCheck, ListOrdered, LockKeyhole } from "lucide-react";
-import { EmptyState, SectionCard, StatusBadge } from "@/components/ui";
+import { EmptyState, SectionCard, StatusBadge, useToast } from "@/components/ui";
 import { reorderLocalRoutingKeys } from "@/lib/api/localRouting";
 import { readError } from "@/lib/errors";
 import type { LocalRoutingCandidateRow as LocalRoutingCandidate, LocalRoutingWorkspace } from "@/lib/types/localRouting";
@@ -44,6 +44,7 @@ const reorderSyncTones: Record<Exclude<ReorderSyncState, "idle">, "healthy" | "w
 };
 
 export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabProps) {
+  const toast = useToast();
   const [candidates, setCandidates] = useState<LocalRoutingCandidate[]>([]);
   const [syncState, setSyncState] = useState<ReorderSyncState>("idle");
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -135,7 +136,9 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
       }
       setCandidates(previousCandidates);
       setSyncState("failed");
-      setSyncError(readError(requestError));
+      const message = readError(requestError);
+      setSyncError(message);
+      toast.error("保存候选顺序失败", message);
     }
   }
 
@@ -148,7 +151,7 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
               <BadgeCheck className="h-5 w-5" />
             </span>
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-slate-900">低价优先 + 稳定保持</div>
+              <div className="truncate text-sm font-semibold text-slate-900">低价稳定优先</div>
               <div className="truncate text-xs text-muted-foreground">
                 调整候选顺位后自动写入本地路由工作区。
               </div>

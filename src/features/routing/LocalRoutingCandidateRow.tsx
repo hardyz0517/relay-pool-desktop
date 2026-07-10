@@ -55,6 +55,8 @@ export function LocalRoutingCandidateRow({
   const facts = candidate.facts.slice(0, 3).map((fact) => fact.label).join(" / ");
   const syncLabel = syncLabels[syncState];
   const isSortable = Boolean(dragAttributes || dragListeners);
+  const pricingFact = candidate.facts.find((fact) => fact.kind === "pricing");
+  const balanceFact = candidate.facts.find((fact) => fact.kind === "balance");
 
   return (
     <ObjectRow
@@ -87,7 +89,8 @@ export function LocalRoutingCandidateRow({
       }
       metrics={[
         { label: "顺位", value: order ?? candidate.priority + 1, tone: "neutral" },
-        { label: "评分", value: candidate.score == null ? "-" : candidate.score.toFixed(1), tone: candidate.score == null ? "neutral" : "good" },
+        { label: "成本", value: pricingFact?.value ?? pricingFact?.label ?? "-", tone: pricingFact ? "good" : "neutral" },
+        { label: "余额", value: balanceFact?.value ?? balanceFact?.label ?? "-", tone: balanceFact?.severity === "warning" || balanceFact?.severity === "error" ? "warning" : "neutral" },
         { label: "冷却", value: candidate.cooldownUntil ? "进行中" : "无", tone: candidate.cooldownUntil ? "warning" : "neutral" },
       ]}
     />

@@ -40,7 +40,13 @@ import { cn } from "@/lib/utils";
 import { LocalRoutingEditTab } from "./LocalRoutingEditTab";
 import { LocalRoutingStatusTab } from "./LocalRoutingStatusTab";
 
-const policyOptions: RoutingPolicy[] = ["priority_fallback", "stable_first", "backup_only", "cheap_first"];
+const policyOptions: RoutingPolicy[] = [
+  "cost_stable_first",
+  "priority_fallback",
+  "stable_first",
+  "cheap_first",
+  "backup_only",
+];
 
 const endpointLabels: Record<RouteEndpointKind, string> = {
   models: "模型列表",
@@ -52,7 +58,7 @@ const endpointLabels: Record<RouteEndpointKind, string> = {
 const fallbackSettings: AppSettings = {
   localProxyPort: 8787,
   localKeyMasked: "未读取",
-  defaultRoutingStrategy: "priority_fallback",
+  defaultRoutingStrategy: "cost_stable_first",
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   balanceIntervalMinutes: 5,
@@ -464,7 +470,6 @@ function CandidateList({
               subtitle={`${index + 1}. ${candidate.keyName} · ${candidate.mappedModel ?? "未映射模型"} · ${candidateSummary(candidate)}`}
               badges={<StatusBadge tone={candidate.accepted ? "healthy" : "disabled"}>{candidate.accepted ? "可用" : "已过滤"}</StatusBadge>}
               metrics={[
-                { label: "分数", value: candidate.score.toFixed(1), tone: candidate.accepted ? "good" : "neutral" },
                 { label: "成本", value: formatCandidateCost(candidate), tone: candidate.estimatedOutputPrice == null ? "neutral" : "good" },
                 { label: "余额", value: formatCandidateBalance(candidate), tone: candidate.balanceStatus === "low" || candidate.balanceStatus === "depleted" ? "warning" : "neutral" },
                 { label: "过滤", value: `${candidate.rejectionReasons.length}`, tone: candidate.rejectionReasons.length > 0 ? "warning" : "neutral" },

@@ -142,6 +142,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移凭据安全字段失败: {error}"))?;
         seed_default_settings(&connection)
             .map_err(|error| format!("初始化默认设置失败: {error}"))?;
+        migrate_default_routing_strategy(&connection)
+            .map_err(|error| format!("migrate default routing strategy failed: {error}"))?;
         migrate_default_station_keys(&connection)
             .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
         migrate_legacy_group_facts(&connection)
@@ -182,6 +184,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移凭据安全字段失败: {error}"))?;
         seed_default_settings(&connection)
             .map_err(|error| format!("初始化默认设置失败: {error}"))?;
+        migrate_default_routing_strategy(&connection)
+            .map_err(|error| format!("migrate default routing strategy failed: {error}"))?;
         migrate_default_station_keys(&connection)
             .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
         migrate_legacy_group_facts(&connection)
@@ -2741,7 +2745,7 @@ fn seed_default_settings(connection: &Connection) -> rusqlite::Result<()> {
     let defaults = [
         ("local_proxy_port", "8787"),
         ("local_key", "sk-local-pool-change-me"),
-        ("default_routing_strategy", "manual"),
+        ("default_routing_strategy", "cost_stable_first"),
         ("low_balance_threshold_cny", "15"),
         ("collector_interval_minutes", "30"),
         ("balance_interval_minutes", "5"),
@@ -2762,6 +2766,18 @@ fn seed_default_settings(connection: &Connection) -> rusqlite::Result<()> {
         )?;
     }
 
+    Ok(())
+}
+
+fn migrate_default_routing_strategy(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute(
+        "UPDATE settings
+            SET value = 'cost_stable_first',
+                updated_at = ?1
+          WHERE key = 'default_routing_strategy'
+            AND value = 'manual'",
+        params![now_string()],
+    )?;
     Ok(())
 }
 
@@ -9216,6 +9232,30 @@ mod tests {
                 note: None,
             })
             .expect("monitor")
+    }
+
+    #[test]
+    fn migrate_default_routing_strategy_replaces_legacy_manual_placeholder() {
+        let connection = Connection::open_in_memory().expect("connection");
+        initialize_schema(&connection).expect("schema");
+        connection
+            .execute(
+                "INSERT INTO settings (key, value, updated_at)
+                 VALUES ('default_routing_strategy', 'manual', '1000')",
+                [],
+            )
+            .expect("legacy setting");
+
+        migrate_default_routing_strategy(&connection).expect("migrate strategy");
+
+        let value: String = connection
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'default_routing_strategy'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("setting value");
+        assert_eq!(value, "cost_stable_first");
     }
 
     #[test]

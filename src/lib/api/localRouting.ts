@@ -35,7 +35,7 @@ function previewWorkspace(): LocalRoutingWorkspace {
       bindAddr: "127.0.0.1",
       port: 8787,
       endpoint: "chat_completions",
-      policy: "priority_fallback",
+      policy: "cost_stable_first",
       fallbackEnabled: true,
     },
     summary: {

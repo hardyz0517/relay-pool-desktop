@@ -6,7 +6,7 @@ export const SETTINGS_UPDATED_EVENT = "relay-pool-settings-updated";
 let memorySettings: AppSettings = {
   localProxyPort: 8787,
   localKeyMasked: "未读取",
-  defaultRoutingStrategy: "priority_fallback",
+  defaultRoutingStrategy: "cost_stable_first",
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   balanceIntervalMinutes: 5,
@@ -104,7 +104,7 @@ function normalizeRoutingStrategy(value: AppSettings["defaultRoutingStrategy"] |
   if (value === "cost_stable_first") {
     return "cost_stable_first";
   }
-  return "priority_fallback";
+  return "cost_stable_first";
 }
 
 function isInvokeUnavailable(error: unknown) {
