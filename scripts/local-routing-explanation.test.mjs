@@ -15,35 +15,25 @@ function assertIncludes(source, needle, label) {
 
 function assertExcludes(source, needle, label) {
   if (source.includes(needle)) {
-    throw new Error(`${label} should not include secret-bearing text: ${needle}`);
+    throw new Error(`${label} should not include ${needle}`);
   }
 }
 
-const explanationPanel = read("src/features/routing/RouteExplanationPanel.tsx");
 const statusTab = read("src/features/routing/LocalRoutingStatusTab.tsx");
-
-for (const source of [explanationPanel, statusTab]) {
-  assertExcludes(source, "apiKey", "local routing explanation UI");
-  assertExcludes(source, "Authorization", "local routing explanation UI");
-}
-
-assertIncludes(explanationPanel, "selectedReason", "RouteExplanationPanel");
-assertIncludes(explanationPanel, "keptForStability", "RouteExplanationPanel");
-assertIncludes(explanationPanel, "决策字段", "RouteExplanationPanel");
-assertIncludes(explanationPanel, "FieldRow", "RouteExplanationPanel");
-assertIncludes(explanationPanel, "fallbackCount", "RouteExplanationPanel");
-assertIncludes(explanationPanel, "authorization|x-api-key|api[_-]?key", "RouteExplanationPanel");
-assertIncludes(explanationPanel, "bearer|basic", "RouteExplanationPanel");
-
-assertIncludes(statusTab, "渠道状态", "LocalRoutingStatusTab");
-assertIncludes(statusTab, "请求日志", "LocalRoutingStatusTab");
-assertIncludes(statusTab, "onOpenPage", "LocalRoutingStatusTab");
-assertIncludes(statusTab, "\"channels\"", "LocalRoutingStatusTab");
-assertIncludes(statusTab, "\"logs\"", "LocalRoutingStatusTab");
-
 const routingPage = read("src/features/routing/RoutingPage.tsx");
 const appPage = read("src/app/App.tsx");
-assertIncludes(routingPage, "onOpenPage={onOpenPage}", "RoutingPage");
-assertIncludes(appPage, "onOpenPage={(routeId) => setActiveRouteId(routeId)}", "App");
 
-console.log("local routing explanation UI contract ok");
+for (const removedText of ["排障入口", "最近一次路由解释", "RouteExplanationPanel", "onOpenPage"]) {
+  assertExcludes(statusTab, removedText, "LocalRoutingStatusTab");
+}
+
+assertExcludes(routingPage, "onOpenPage", "RoutingPage");
+assertExcludes(appPage, "<RoutingPage onOpenPage=", "App");
+
+assertIncludes(
+  statusTab,
+  'className="grid items-start gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]"',
+  "routing summary grid",
+);
+
+console.log("local routing status simplification contract ok");

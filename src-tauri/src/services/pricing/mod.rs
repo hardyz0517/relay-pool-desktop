@@ -33,9 +33,16 @@ pub fn request_cost_unknown() -> RequestCostEstimate {
         prompt_tokens: None,
         completion_tokens: None,
         total_tokens: None,
+        cache_creation_tokens: None,
+        cache_read_tokens: None,
+        billing_mode: None,
         estimated_input_cost: None,
         estimated_output_cost: None,
         estimated_total_cost: None,
+        base_input_cost: None,
+        base_output_cost: None,
+        base_fixed_cost: None,
+        base_total_cost: None,
         cost_currency: None,
         pricing_rule_id: None,
         pricing_source: None,
@@ -296,6 +303,9 @@ mod tests {
             rate_multiplier: Some(0.8),
             normalization_status: Some("base_price_with_group_rate"),
             price_confidence: Some(0.9),
+            base_input_price: None,
+            base_output_price: None,
+            base_fixed_price: None,
             estimated_input_price: Some(0.3),
             estimated_output_price: Some(1.8),
             fixed_price: None,
@@ -319,6 +329,36 @@ mod tests {
     }
 
     #[test]
+    fn request_cost_keeps_actual_and_one_x_base_costs_separate() {
+        let parts = RequestPricingParts {
+            station_key_id: "key-1",
+            station_id: Some("station-1"),
+            model: Some("gpt-5.4-mini"),
+            pricing_rule_id: None,
+            pricing_model: Some("gpt-5.4-mini"),
+            group_binding_id: Some("binding-1"),
+            rate_multiplier: Some(0.1),
+            normalization_status: Some("base_price_with_group_rate"),
+            price_confidence: Some(0.9),
+            base_input_price: Some(10.0),
+            base_output_price: Some(20.0),
+            base_fixed_price: None,
+            estimated_input_price: Some(1.0),
+            estimated_output_price: Some(2.0),
+            fixed_price: None,
+            price_currency: Some("USD"),
+            pricing_source: Some("model_base_price"),
+            collected_at: Some("1000"),
+        };
+
+        let cost = request_cost_from_pricing_parts(Some(parts), Some(100), Some(100), Some(200));
+
+        assert_option_f64_close(cost.estimated_total_cost, 0.0003);
+        assert_option_f64_close(cost.base_total_cost, 0.003);
+        assert_eq!(cost.cost_status, "priced");
+    }
+
+    #[test]
     fn pricing_diagnostics_context_marks_missing_expected_rate() {
         let parts = RequestPricingParts {
             station_key_id: "key-1",
@@ -330,6 +370,9 @@ mod tests {
             rate_multiplier: None,
             normalization_status: None,
             price_confidence: Some(0.5),
+            base_input_price: None,
+            base_output_price: None,
+            base_fixed_price: None,
             estimated_input_price: None,
             estimated_output_price: None,
             fixed_price: None,
@@ -356,6 +399,9 @@ mod tests {
             rate_multiplier: Some(1.0),
             normalization_status: Some("base_price_only"),
             price_confidence: Some(0.8),
+            base_input_price: Some(0.375),
+            base_output_price: Some(2.25),
+            base_fixed_price: None,
             estimated_input_price: Some(0.375),
             estimated_output_price: Some(2.25),
             fixed_price: None,
@@ -375,6 +421,48 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn usage_aware_cost_preserves_cache_tokens_and_billing_mode() {
+        let parts = RequestPricingParts {
+            station_key_id: "key-1",
+            station_id: Some("station-1"),
+            model: Some("gpt-5.5"),
+            pricing_rule_id: Some("rule-fixed"),
+            pricing_model: Some("gpt-5.5"),
+            group_binding_id: Some("group-1"),
+            rate_multiplier: Some(1.0),
+            normalization_status: Some("complete"),
+            price_confidence: Some(1.0),
+            base_input_price: None,
+            base_output_price: None,
+            base_fixed_price: Some(0.01),
+            estimated_input_price: None,
+            estimated_output_price: None,
+            fixed_price: Some(0.01),
+            price_currency: Some("USD"),
+            pricing_source: Some("pricing_rule"),
+            collected_at: Some("1000"),
+        };
+        let usage = RequestUsage {
+            input_tokens: Some(100),
+            output_tokens: Some(20),
+            total_tokens: Some(120),
+            request_count: Some(1),
+            cache_creation_tokens: Some(7),
+            cache_read_tokens: Some(70),
+            media_count: None,
+            duration_seconds: None,
+            size_tier: None,
+        };
+
+        let cost = request_cost_from_pricing_parts_and_usage(Some(parts), &usage);
+
+        assert_eq!(cost.cache_creation_tokens, Some(7));
+        assert_eq!(cost.cache_read_tokens, Some(70));
+        assert_eq!(cost.billing_mode.as_deref(), Some("per_request"));
+        assert_option_f64_close(cost.estimated_total_cost, 0.01);
+    }
 }
 
 pub fn calculate_request_cost(
@@ -387,6 +475,10 @@ pub fn calculate_request_cost(
             output_cost: None,
             fixed_cost: None,
             total_cost: None,
+            base_input_cost: None,
+            base_output_cost: None,
+            base_fixed_cost: None,
+            base_total_cost: None,
             currency: Some(context.currency.clone()),
             pricing_status: context.pricing_status.clone(),
             pricing_context_json: serialize_pricing_context(context),
@@ -403,16 +495,54 @@ pub fn calculate_request_cost(
         .map(|price| price * output_tokens / 1_000_000.0);
     let fixed_cost = context.estimated_fixed_price;
     let total_cost = sum_costs([input_cost, output_cost, fixed_cost]);
+    let base_input_price = one_x_price(
+        context.base_input_price,
+        context.estimated_input_price,
+        context.effective_rate_multiplier,
+    );
+    let base_output_price = one_x_price(
+        context.base_output_price,
+        context.estimated_output_price,
+        context.effective_rate_multiplier,
+    );
+    let base_fixed_price = one_x_price(
+        context.base_fixed_price,
+        context.estimated_fixed_price,
+        context.effective_rate_multiplier,
+    );
+    let base_input_cost = base_input_price.map(|price| price * input_tokens / 1_000_000.0);
+    let base_output_cost = base_output_price.map(|price| price * output_tokens / 1_000_000.0);
+    let base_fixed_cost = base_fixed_price;
+    let base_total_cost = sum_costs([base_input_cost, base_output_cost, base_fixed_cost]);
 
     RequestCostBreakdown {
         input_cost,
         output_cost,
         fixed_cost,
         total_cost,
+        base_input_cost,
+        base_output_cost,
+        base_fixed_cost,
+        base_total_cost,
         currency: Some(context.currency.clone()),
         pricing_status: context.pricing_status.clone(),
         pricing_context_json: serialize_pricing_context(context),
     }
+}
+
+fn one_x_price(
+    base_price: Option<f64>,
+    estimated_price: Option<f64>,
+    multiplier: Option<f64>,
+) -> Option<f64> {
+    base_price.or_else(|| {
+        let multiplier = multiplier?;
+        if multiplier.is_finite() && multiplier > 0.0 {
+            estimated_price.map(|price| price / multiplier)
+        } else {
+            estimated_price
+        }
+    })
 }
 
 pub struct RequestPricingParts<'a> {
@@ -425,6 +555,9 @@ pub struct RequestPricingParts<'a> {
     pub rate_multiplier: Option<f64>,
     pub normalization_status: Option<&'a str>,
     pub price_confidence: Option<f64>,
+    pub base_input_price: Option<f64>,
+    pub base_output_price: Option<f64>,
+    pub base_fixed_price: Option<f64>,
     pub estimated_input_price: Option<f64>,
     pub estimated_output_price: Option<f64>,
     pub fixed_price: Option<f64>,
@@ -439,21 +572,6 @@ pub fn request_cost_from_pricing_parts(
     completion_tokens: Option<i64>,
     total_tokens: Option<i64>,
 ) -> RequestCostEstimate {
-    let Some(parts) = parts else {
-        return RequestCostEstimate {
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
-            estimated_input_cost: None,
-            estimated_output_cost: None,
-            estimated_total_cost: None,
-            cost_currency: None,
-            pricing_rule_id: None,
-            pricing_source: None,
-            cost_status: "usage_only".to_string(),
-        };
-    };
-    let context = pricing_context_from_pricing_parts(&parts);
     let usage = RequestUsage {
         input_tokens: prompt_tokens,
         output_tokens: completion_tokens,
@@ -465,15 +583,66 @@ pub fn request_cost_from_pricing_parts(
         duration_seconds: None,
         size_tier: None,
     };
-    let breakdown = calculate_request_cost(&context, &usage);
+    request_cost_from_pricing_parts_and_usage(parts, &usage)
+}
+
+pub fn request_cost_from_pricing_parts_and_usage(
+    parts: Option<RequestPricingParts<'_>>,
+    usage: &RequestUsage,
+) -> RequestCostEstimate {
+    let prompt_tokens = usage.input_tokens;
+    let completion_tokens = usage.output_tokens;
+    let total_tokens = usage.total_tokens.or_else(|| {
+        prompt_tokens
+            .zip(completion_tokens)
+            .map(|(input, output)| input + output)
+    });
+    let Some(parts) = parts else {
+        return RequestCostEstimate {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            cache_creation_tokens: usage.cache_creation_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
+            billing_mode: Some("token".to_string()),
+            estimated_input_cost: None,
+            estimated_output_cost: None,
+            estimated_total_cost: None,
+            base_input_cost: None,
+            base_output_cost: None,
+            base_fixed_cost: None,
+            base_total_cost: None,
+            cost_currency: None,
+            pricing_rule_id: None,
+            pricing_source: None,
+            cost_status: "usage_only".to_string(),
+        };
+    };
+    let context = pricing_context_from_pricing_parts(&parts);
+    let breakdown = calculate_request_cost(&context, usage);
+    let billing_mode = if context.estimated_fixed_price.is_some()
+        && context.estimated_input_price.is_none()
+        && context.estimated_output_price.is_none()
+    {
+        "per_request"
+    } else {
+        "token"
+    };
 
     RequestCostEstimate {
         prompt_tokens,
         completion_tokens,
         total_tokens,
+        cache_creation_tokens: usage.cache_creation_tokens,
+        cache_read_tokens: usage.cache_read_tokens,
+        billing_mode: Some(billing_mode.to_string()),
         estimated_input_cost: breakdown.input_cost,
         estimated_output_cost: breakdown.output_cost,
         estimated_total_cost: breakdown.total_cost,
+        base_input_cost: breakdown.base_input_cost,
+        base_output_cost: breakdown.base_output_cost,
+        base_fixed_cost: breakdown.base_fixed_cost,
+        base_total_cost: breakdown.base_total_cost,
         cost_currency: breakdown.currency,
         pricing_rule_id: parts.pricing_rule_id.map(ToString::to_string),
         pricing_source: parts.pricing_source.map(ToString::to_string),
@@ -502,9 +671,9 @@ pub fn pricing_context_from_pricing_parts(
         resolved_model: parts.pricing_model.unwrap_or(requested_model).to_string(),
         request_kind: RequestKind::Text,
         group_binding_id: parts.group_binding_id.map(ToString::to_string),
-        base_input_price: None,
-        base_output_price: None,
-        base_fixed_price: None,
+        base_input_price: parts.base_input_price,
+        base_output_price: parts.base_output_price,
+        base_fixed_price: parts.base_fixed_price,
         currency: parts.price_currency.unwrap_or("unknown").to_string(),
         unit: "per_1m_tokens".to_string(),
         base_price_source: parts.pricing_source.map(ToString::to_string),

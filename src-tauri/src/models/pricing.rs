@@ -142,9 +142,16 @@ pub struct RequestCostEstimate {
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
+    pub cache_creation_tokens: Option<i64>,
+    pub cache_read_tokens: Option<i64>,
+    pub billing_mode: Option<String>,
     pub estimated_input_cost: Option<f64>,
     pub estimated_output_cost: Option<f64>,
     pub estimated_total_cost: Option<f64>,
+    pub base_input_cost: Option<f64>,
+    pub base_output_cost: Option<f64>,
+    pub base_fixed_cost: Option<f64>,
+    pub base_total_cost: Option<f64>,
     pub cost_currency: Option<String>,
     pub pricing_rule_id: Option<String>,
     pub pricing_source: Option<String>,
@@ -242,6 +249,10 @@ pub struct RequestCostBreakdown {
     pub output_cost: Option<f64>,
     pub fixed_cost: Option<f64>,
     pub total_cost: Option<f64>,
+    pub base_input_cost: Option<f64>,
+    pub base_output_cost: Option<f64>,
+    pub base_fixed_cost: Option<f64>,
+    pub base_total_cost: Option<f64>,
     pub currency: Option<String>,
     pub pricing_status: PricingStatus,
     pub pricing_context_json: Option<String>,
@@ -324,9 +335,16 @@ mod tests {
             prompt_tokens: Some(10),
             completion_tokens: Some(5),
             total_tokens: Some(15),
+            cache_creation_tokens: Some(2),
+            cache_read_tokens: Some(8),
+            billing_mode: Some("token".to_string()),
             estimated_input_cost: Some(0.1),
             estimated_output_cost: Some(0.2),
             estimated_total_cost: Some(0.3),
+            base_input_cost: Some(1.0),
+            base_output_cost: Some(2.0),
+            base_fixed_cost: None,
+            base_total_cost: Some(3.0),
             cost_currency: Some("USD".to_string()),
             pricing_rule_id: Some("price-1".to_string()),
             pricing_source: Some("manual".to_string()),
@@ -335,7 +353,10 @@ mod tests {
 
         let json = serde_json::to_value(estimate).expect("json");
         assert_eq!(json["promptTokens"], 10);
+        assert_eq!(json["cacheReadTokens"], 8);
+        assert_eq!(json["billingMode"], "token");
         assert_eq!(json["estimatedTotalCost"], 0.3);
+        assert_eq!(json["baseTotalCost"], 3.0);
         assert_eq!(json["costStatus"], "estimated");
     }
 }

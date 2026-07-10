@@ -25,8 +25,14 @@ assert.match(
 
 assert.match(
   runtimeSource,
-  /route_candidate_economics_for_model\(\s*candidate\.station_key_id\.clone\(\),\s*response\.model\.clone\(\),?\s*\)/,
+  /request_cost_for_observed_usage\(\s*context,\s*Some\(&candidate\.station_key_id\),\s*Some\(&candidate\.station_id\),\s*response\.model\.as_deref\(\),\s*&usage,?\s*\)/,
   "proxy request cost extraction should use the actual routed model when choosing pricing",
+);
+
+assert.match(
+  runtimeSource,
+  /route_candidate_economics_for_model\(\s*station_key_id\.to_string\(\),\s*model\.map\(ToString::to_string\),?\s*\)/,
+  "observed usage pricing should forward the routed model to the model-aware economics lookup",
 );
 
 assert.match(

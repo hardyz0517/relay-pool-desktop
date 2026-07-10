@@ -107,6 +107,10 @@ export type RequestCost = {
   estimatedInputCost: number | null;
   estimatedOutputCost: number | null;
   estimatedTotalCost: number | null;
+  baseInputCost: number | null;
+  baseOutputCost: number | null;
+  baseFixedCost: number | null;
+  baseTotalCost: number | null;
   costCurrency: string | null;
   pricingRuleId: string | null;
   pricingSource: string | null;

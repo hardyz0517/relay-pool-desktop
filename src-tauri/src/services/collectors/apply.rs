@@ -562,6 +562,56 @@ mod tests {
     }
 
     #[test]
+    fn group_added_event_is_enriched_when_rate_arrives_after_group_name() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = create_test_station(&database);
+        let mut facts = crate::services::collectors::facts::CollectorFacts::default();
+        facts
+            .groups
+            .push(crate::services::collectors::facts::CollectedGroupFact {
+                station_id: station.id.clone(),
+                group_id: Some("image-universal".to_string()),
+                group_key_hash: "group-image-universal".to_string(),
+                group_name: "万能生图".to_string(),
+                visibility: "available".to_string(),
+                source: "sub2api_groups_available".to_string(),
+                confidence: 0.9,
+                raw_json_redacted: None,
+            });
+        facts
+            .rates
+            .push(crate::services::collectors::facts::CollectedRateFact {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                group_id: Some("image-universal".to_string()),
+                group_key_hash: "group-image-universal".to_string(),
+                group_name: "万能生图".to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: None,
+                effective_rate_multiplier: Some(1.0),
+                source: "sub2api_groups_rates".to_string(),
+                confidence: 0.9,
+                checked_at: Some("1000".to_string()),
+                raw_json_redacted: None,
+            });
+
+        apply_collector_facts(&database, facts).expect("apply group and rate facts");
+
+        let event = database
+            .list_change_events()
+            .expect("events")
+            .into_iter()
+            .find(|event| event.event_type == "group_added")
+            .expect("group added event");
+        let new_value: serde_json::Value =
+            serde_json::from_str(event.new_value_json.as_deref().expect("new value"))
+                .expect("new value json");
+
+        assert_eq!(new_value["groupName"], "万能生图");
+        assert_eq!(new_value["effectiveRateMultiplier"], 1.0);
+    }
+
+    #[test]
     fn sub2api_group_facts_mark_remote_scan_groups_missing_when_absent_from_latest_collection() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let station = create_test_station(&database);

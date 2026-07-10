@@ -162,6 +162,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移请求日志经济上下文字段失败: {error}"))?;
         migrate_request_log_lifecycle_columns(&connection)
             .map_err(|error| format!("迁移请求日志生命周期字段失败: {error}"))?;
+        migrate_request_log_observability_columns(&connection)
+            .map_err(|error| format!("迁移请求日志观测字段失败: {error}"))?;
         migrate_remote_key_tables(&connection)
             .map_err(|error| format!("迁移远端 Key 表失败: {error}"))?;
 
@@ -204,6 +206,8 @@ impl AppDatabase {
             .map_err(|error| format!("迁移请求日志经济上下文字段失败: {error}"))?;
         migrate_request_log_lifecycle_columns(&connection)
             .map_err(|error| format!("迁移请求日志生命周期字段失败: {error}"))?;
+        migrate_request_log_observability_columns(&connection)
+            .map_err(|error| format!("迁移请求日志观测字段失败: {error}"))?;
         migrate_remote_key_tables(&connection)
             .map_err(|error| format!("迁移远端 Key 表失败: {error}"))?;
 
@@ -1846,9 +1850,18 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             prompt_tokens INTEGER,
             completion_tokens INTEGER,
             total_tokens INTEGER,
+            cache_creation_tokens INTEGER,
+            cache_read_tokens INTEGER,
+            reasoning_effort TEXT,
+            first_token_ms INTEGER,
+            billing_mode TEXT,
             estimated_input_cost REAL,
             estimated_output_cost REAL,
             estimated_total_cost REAL,
+            base_input_cost REAL,
+            base_output_cost REAL,
+            base_fixed_cost REAL,
+            base_total_cost REAL,
             cost_currency TEXT,
             pricing_rule_id TEXT,
             pricing_source TEXT,
@@ -4307,6 +4320,10 @@ fn migrate_request_log_cost_columns(connection: &Connection) -> rusqlite::Result
         "estimated_input_cost",
         "estimated_output_cost",
         "estimated_total_cost",
+        "base_input_cost",
+        "base_output_cost",
+        "base_fixed_cost",
+        "base_total_cost",
         "cost_currency",
         "pricing_rule_id",
         "pricing_source",
@@ -4366,6 +4383,19 @@ fn migrate_request_log_lifecycle_columns(connection: &Connection) -> rusqlite::R
         )?;
     }
 
+    Ok(())
+}
+
+fn migrate_request_log_observability_columns(connection: &Connection) -> rusqlite::Result<()> {
+    for (column, column_type) in [
+        ("cache_creation_tokens", "INTEGER"),
+        ("cache_read_tokens", "INTEGER"),
+        ("reasoning_effort", "TEXT"),
+        ("first_token_ms", "INTEGER"),
+        ("billing_mode", "TEXT"),
+    ] {
+        add_column_if_missing(connection, "request_logs", column, column_type)?;
+    }
     Ok(())
 }
 
@@ -5955,6 +5985,33 @@ fn route_candidate_economics_from_connection(
         .optional()
         .map_err(|error| format!("读取余额快照失败: {error}"))?;
 
+    let station_key_group_rate = connection
+        .query_row(
+            "SELECT COALESCE(k.group_binding_id, b.id),
+                    COALESCE(k.rate_multiplier, b.effective_rate_multiplier),
+                    COALESCE(b.confidence, 0.8)
+               FROM station_keys k
+               LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
+              WHERE k.id = ?1",
+            params![station_key_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<f64>>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("读取 Station Key 分组费率失败: {error}"))?
+        .and_then(|(group_binding_id, rate_multiplier, confidence)| {
+            let multiplier = rate_multiplier?;
+            if !multiplier.is_finite() || multiplier <= 0.0 {
+                return None;
+            }
+            Some((group_binding_id, multiplier, confidence))
+        });
+
     let base_price_economics = pricing_rule.as_ref().and_then(
         |(
             _id,
@@ -6010,6 +6067,9 @@ fn route_candidate_economics_from_connection(
                 rate_multiplier: Some(multiplier),
                 normalization_status: Some("base_price_with_group_rate".to_string()),
                 price_confidence: Some((*confidence).min(base_confidence)),
+                base_input_price,
+                base_output_price,
+                base_fixed_price: None,
                 estimated_input_price: base_input_price.map(|price| price * multiplier),
                 estimated_output_price: base_output_price.map(|price| price * multiplier),
                 fixed_price: None,
@@ -6063,8 +6123,67 @@ fn route_candidate_economics_from_connection(
                 rate_multiplier: Some(1.0),
                 normalization_status: Some("base_price_only".to_string()),
                 price_confidence: Some(base_confidence),
+                base_input_price,
+                base_output_price,
+                base_fixed_price: None,
                 estimated_input_price: base_input_price,
                 estimated_output_price: base_output_price,
+                fixed_price: None,
+                price_currency: Some(base_currency),
+                pricing_source: Some("model_base_price".to_string()),
+                balance_status: Some(balance_status),
+                balance_value,
+                low_balance_threshold,
+                balance_currency: Some(balance_currency),
+                balance_scope: Some(balance_scope),
+                balance_collected_at,
+                economic_freshness: Some(base_source_label),
+            })
+        });
+
+    let station_key_base_price_economics =
+        station_key_group_rate.and_then(|(group_binding_id, multiplier, confidence)| {
+            let model = requested_model
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            let base_price = model_base_price_for_model(connection, model)
+                .ok()
+                .flatten()?;
+            let (
+                base_model,
+                base_input_price,
+                base_output_price,
+                base_currency,
+                base_source_label,
+                base_confidence,
+            ) = base_price;
+            let (
+                balance_value,
+                balance_currency,
+                low_balance_threshold,
+                balance_status,
+                balance_scope,
+                balance_collected_at,
+            ) = balance_snapshot.clone().unwrap_or((
+                None,
+                "unknown".to_string(),
+                None,
+                "unknown".to_string(),
+                "unknown".to_string(),
+                None,
+            ));
+            Some(RouteCandidateEconomics {
+                pricing_rule_id: None,
+                pricing_model: Some(base_model),
+                group_binding_id,
+                rate_multiplier: Some(multiplier),
+                normalization_status: Some("base_price_with_group_rate".to_string()),
+                price_confidence: Some(confidence.min(base_confidence)),
+                base_input_price,
+                base_output_price,
+                base_fixed_price: None,
+                estimated_input_price: base_input_price.map(|price| price * multiplier),
+                estimated_output_price: base_output_price.map(|price| price * multiplier),
                 fixed_price: None,
                 price_currency: Some(base_currency),
                 pricing_source: Some("model_base_price".to_string()),
@@ -6116,6 +6235,9 @@ fn route_candidate_economics_from_connection(
                         rate_multiplier,
                         normalization_status: Some(normalization_status),
                         price_confidence: Some(confidence),
+                        base_input_price: input_price,
+                        base_output_price: output_price,
+                        base_fixed_price: fixed_price,
                         estimated_input_price: input_price,
                         estimated_output_price: output_price,
                         fixed_price,
@@ -6132,6 +6254,7 @@ fn route_candidate_economics_from_connection(
                 },
             )
         })
+        .or(station_key_base_price_economics)
         .or(direct_base_price_economics)
         .or_else(|| {
             balance_snapshot.map(
@@ -6150,6 +6273,9 @@ fn route_candidate_economics_from_connection(
                         rate_multiplier: None,
                         normalization_status: None,
                         price_confidence: None,
+                        base_input_price: None,
+                        base_output_price: None,
+                        base_fixed_price: None,
                         estimated_input_price: None,
                         estimated_output_price: None,
                         fixed_price: None,
@@ -7045,11 +7171,13 @@ fn insert_request_log_in_connection(
                 id, started_at, finished_at, duration_ms, method, path, model, stream,
                 status, lifecycle_status, station_key_id, station_id, upstream_base_url,
                 fallback_count, error_message, route_policy, route_reason, rejected_candidates_json,
-                prompt_tokens, completion_tokens, total_tokens, estimated_input_cost,
-                estimated_output_cost, estimated_total_cost, cost_currency, pricing_rule_id,
-                pricing_source, cost_status, group_binding_id, normalization_status,
-                balance_scope, economic_context_json, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33)",
+                prompt_tokens, completion_tokens, total_tokens, cache_creation_tokens,
+                cache_read_tokens, reasoning_effort, first_token_ms, billing_mode, estimated_input_cost,
+                estimated_output_cost, estimated_total_cost, base_input_cost, base_output_cost,
+                base_fixed_cost, base_total_cost, cost_currency, pricing_rule_id, pricing_source,
+                cost_status, group_binding_id, normalization_status, balance_scope,
+                economic_context_json, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42)",
             params![
                 id,
                 input.started_at,
@@ -7072,9 +7200,18 @@ fn insert_request_log_in_connection(
                 input.prompt_tokens,
                 input.completion_tokens,
                 input.total_tokens,
+                input.cache_creation_tokens,
+                input.cache_read_tokens,
+                normalize_optional_string(input.reasoning_effort),
+                input.first_token_ms,
+                normalize_optional_string(input.billing_mode),
                 input.estimated_input_cost,
                 input.estimated_output_cost,
                 input.estimated_total_cost,
+                input.base_input_cost,
+                input.base_output_cost,
+                input.base_fixed_cost,
+                input.base_total_cost,
                 normalize_optional_string(input.cost_currency),
                 normalize_optional_string(input.pricing_rule_id),
                 normalize_optional_string(input.pricing_source),
@@ -7145,33 +7282,45 @@ fn row_to_request_log(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLog> {
         prompt_tokens: row.get(18)?,
         completion_tokens: row.get(19)?,
         total_tokens: row.get(20)?,
-        estimated_input_cost: row.get(21)?,
-        estimated_output_cost: row.get(22)?,
-        estimated_total_cost: row.get(23)?,
-        cost_currency: row.get(24)?,
-        pricing_rule_id: row.get(25)?,
-        pricing_source: row.get(26)?,
-        cost_status: row.get(27)?,
-        group_binding_id: row.get(28)?,
-        normalization_status: row.get(29)?,
-        balance_scope: row.get(30)?,
-        economic_context_json: row.get(31)?,
-        created_at: row.get(32)?,
+        cache_creation_tokens: row.get(21)?,
+        cache_read_tokens: row.get(22)?,
+        reasoning_effort: row.get(23)?,
+        first_token_ms: row.get(24)?,
+        billing_mode: row.get(25)?,
+        estimated_input_cost: row.get(26)?,
+        estimated_output_cost: row.get(27)?,
+        estimated_total_cost: row.get(28)?,
+        base_input_cost: row.get(29)?,
+        base_output_cost: row.get(30)?,
+        base_fixed_cost: row.get(31)?,
+        base_total_cost: row.get(32)?,
+        cost_currency: row.get(33)?,
+        pricing_rule_id: row.get(34)?,
+        pricing_source: row.get(35)?,
+        cost_status: row.get(36)?,
+        group_binding_id: row.get(37)?,
+        normalization_status: row.get(38)?,
+        balance_scope: row.get(39)?,
+        economic_context_json: row.get(40)?,
+        created_at: row.get(41)?,
     })
 }
+
+const REQUEST_LOG_SELECT_COLUMNS: &str = "
+    id, started_at, finished_at, duration_ms, method, path, model, stream,
+    status, lifecycle_status, station_key_id, station_id, upstream_base_url,
+    fallback_count, error_message, route_policy, route_reason, rejected_candidates_json,
+    prompt_tokens, completion_tokens, total_tokens, cache_creation_tokens,
+    cache_read_tokens, reasoning_effort, first_token_ms, billing_mode, estimated_input_cost,
+    estimated_output_cost, estimated_total_cost, base_input_cost, base_output_cost,
+    base_fixed_cost, base_total_cost, cost_currency, pricing_rule_id, pricing_source,
+    cost_status, group_binding_id, normalization_status, balance_scope,
+    economic_context_json, created_at";
 
 fn request_log_by_id(connection: &Connection, id: &str) -> Result<RequestLog, String> {
     connection
         .query_row(
-            "SELECT id, started_at, finished_at, duration_ms, method, path, model, stream,
-                    status, lifecycle_status, station_key_id, station_id, upstream_base_url,
-                    fallback_count, error_message, route_policy, route_reason, rejected_candidates_json,
-                    prompt_tokens, completion_tokens, total_tokens, estimated_input_cost,
-                    estimated_output_cost, estimated_total_cost, cost_currency, pricing_rule_id,
-                    pricing_source, cost_status, group_binding_id, normalization_status,
-                    balance_scope, economic_context_json, created_at
-               FROM request_logs
-              WHERE id = ?1",
+            &format!("SELECT {REQUEST_LOG_SELECT_COLUMNS} FROM request_logs WHERE id = ?1"),
             params![id],
             row_to_request_log,
         )
@@ -7182,18 +7331,9 @@ fn request_log_by_id(connection: &Connection, id: &str) -> Result<RequestLog, St
 
 fn list_request_logs_from_connection(connection: &Connection) -> Result<Vec<RequestLog>, String> {
     let mut statement = connection
-        .prepare(
-            "SELECT id, started_at, finished_at, duration_ms, method, path, model, stream,
-                    status, lifecycle_status, station_key_id, station_id, upstream_base_url,
-                    fallback_count, error_message, route_policy, route_reason, rejected_candidates_json,
-                    prompt_tokens, completion_tokens, total_tokens, estimated_input_cost,
-                    estimated_output_cost, estimated_total_cost, cost_currency, pricing_rule_id,
-                    pricing_source, cost_status, group_binding_id, normalization_status,
-                    balance_scope, economic_context_json, created_at
-               FROM request_logs
-              ORDER BY created_at DESC
-              LIMIT 500",
-        )
+        .prepare(&format!(
+            "SELECT {REQUEST_LOG_SELECT_COLUMNS} FROM request_logs ORDER BY created_at DESC LIMIT 500"
+        ))
         .map_err(|error| format!("读取请求日志列表失败: {error}"))?;
 
     let rows = statement
@@ -7208,10 +7348,12 @@ fn list_request_logs_from_connection(connection: &Connection) -> Result<Vec<Requ
 }
 
 fn request_log_with_estimated_cost(connection: &Connection, mut log: RequestLog) -> RequestLog {
-    if log.cost_status.is_some()
+    let has_cost_snapshot = log.cost_status.is_some()
         || log.estimated_input_cost.is_some()
         || log.estimated_output_cost.is_some()
-        || log.estimated_total_cost.is_some()
+        || log.estimated_total_cost.is_some();
+    if log.cost_status.as_deref() == Some("usage_only")
+        || (has_cost_snapshot && log.base_total_cost.is_some())
     {
         return log;
     }
@@ -7245,6 +7387,9 @@ fn request_log_with_estimated_cost(connection: &Connection, mut log: RequestLog)
             rate_multiplier: economics.rate_multiplier,
             normalization_status: economics.normalization_status.as_deref(),
             price_confidence: economics.price_confidence,
+            base_input_price: economics.base_input_price,
+            base_output_price: economics.base_output_price,
+            base_fixed_price: economics.base_fixed_price,
             estimated_input_price: economics.estimated_input_price,
             estimated_output_price: economics.estimated_output_price,
             fixed_price: economics.fixed_price,
@@ -7260,9 +7405,30 @@ fn request_log_with_estimated_cost(connection: &Connection, mut log: RequestLog)
         return log;
     }
 
+    if has_cost_snapshot {
+        log.base_input_cost = estimate.base_input_cost;
+        log.base_output_cost = estimate.base_output_cost;
+        log.base_fixed_cost = estimate.base_fixed_cost;
+        log.base_total_cost = estimate.base_total_cost;
+        if log.group_binding_id.is_none() {
+            log.group_binding_id = economics.group_binding_id;
+        }
+        if log.normalization_status.is_none() {
+            log.normalization_status = economics.normalization_status;
+        }
+        if log.balance_scope.is_none() {
+            log.balance_scope = economics.balance_scope;
+        }
+        return log;
+    }
+
     log.estimated_input_cost = estimate.estimated_input_cost;
     log.estimated_output_cost = estimate.estimated_output_cost;
     log.estimated_total_cost = estimate.estimated_total_cost;
+    log.base_input_cost = estimate.base_input_cost;
+    log.base_output_cost = estimate.base_output_cost;
+    log.base_fixed_cost = estimate.base_fixed_cost;
+    log.base_total_cost = estimate.base_total_cost;
     log.cost_currency = estimate.cost_currency;
     log.pricing_rule_id = estimate.pricing_rule_id;
     log.pricing_source = estimate.pricing_source;
@@ -8492,8 +8658,48 @@ fn upsert_station_group_binding_in_connection(
         );
         let _ = upsert_change_event_in_connection(connection, event);
     }
+    let _ = sync_group_added_event_rates_in_connection(connection, &saved);
 
     Ok(saved)
+}
+
+fn sync_group_added_event_rates_in_connection(
+    connection: &Connection,
+    binding: &StationGroupBinding,
+) -> Result<(), String> {
+    if binding.binding_kind != "station_group"
+        || binding.binding_status != "available"
+        || (binding.default_rate_multiplier.is_none()
+            && binding.user_rate_multiplier.is_none()
+            && binding.effective_rate_multiplier.is_none())
+    {
+        return Ok(());
+    }
+
+    let new_value_json = json!({
+        "groupName": binding.group_name,
+        "defaultRateMultiplier": binding.default_rate_multiplier,
+        "userRateMultiplier": binding.user_rate_multiplier,
+        "effectiveRateMultiplier": binding.effective_rate_multiplier
+    })
+    .to_string();
+    let dedupe_key = crate::services::change_events::group_dedupe_key(
+        &binding.station_id,
+        "group_added",
+        &binding.id,
+    );
+
+    connection
+        .execute(
+            "UPDATE change_events
+                SET new_value_json = ?1
+              WHERE event_type = 'group_added'
+                AND dedupe_key = ?2",
+            params![new_value_json, dedupe_key],
+        )
+        .map_err(|error| format!("同步新增分组事件倍率失败: {error}"))?;
+
+    Ok(())
 }
 
 fn disable_shadow_station_group_bindings(
@@ -11931,9 +12137,18 @@ mod tests {
                 prompt_tokens: None,
                 completion_tokens: None,
                 total_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                reasoning_effort: None,
+                first_token_ms: None,
+                billing_mode: None,
                 estimated_input_cost: None,
                 estimated_output_cost: None,
                 estimated_total_cost: None,
+                base_input_cost: None,
+                base_output_cost: None,
+                base_fixed_cost: None,
+                base_total_cost: None,
                 cost_currency: None,
                 pricing_rule_id: None,
                 pricing_source: None,
@@ -12126,9 +12341,18 @@ mod tests {
                 prompt_tokens: None,
                 completion_tokens: None,
                 total_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                reasoning_effort: None,
+                first_token_ms: None,
+                billing_mode: None,
                 estimated_input_cost: None,
                 estimated_output_cost: None,
                 estimated_total_cost: None,
+                base_input_cost: Some(0.04),
+                base_output_cost: Some(0.08),
+                base_fixed_cost: None,
+                base_total_cost: Some(0.12),
                 cost_currency: None,
                 pricing_rule_id: None,
                 pricing_source: None,
@@ -12160,6 +12384,7 @@ mod tests {
         assert_eq!(log.group_binding_id.as_deref(), Some("group-1"));
         assert_eq!(log.normalization_status.as_deref(), Some("complete"));
         assert_eq!(log.balance_scope.as_deref(), Some("station"));
+        assert_option_f64_close(log.base_total_cost, 0.12);
         let serialized = serde_json::to_string(&log).unwrap();
         assert!(!serialized.contains("\"prompt\":"));
     }
@@ -12191,9 +12416,18 @@ mod tests {
                 prompt_tokens: Some(10),
                 completion_tokens: Some(11),
                 total_tokens: Some(21),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                reasoning_effort: None,
+                first_token_ms: None,
+                billing_mode: None,
                 estimated_input_cost: None,
                 estimated_output_cost: None,
                 estimated_total_cost: None,
+                base_input_cost: None,
+                base_output_cost: None,
+                base_fixed_cost: None,
+                base_total_cost: None,
                 cost_currency: None,
                 pricing_rule_id: None,
                 pricing_source: None,
@@ -12249,9 +12483,18 @@ mod tests {
                 prompt_tokens: Some(10),
                 completion_tokens: Some(11),
                 total_tokens: Some(21),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                reasoning_effort: None,
+                first_token_ms: None,
+                billing_mode: None,
                 estimated_input_cost: None,
                 estimated_output_cost: None,
                 estimated_total_cost: None,
+                base_input_cost: None,
+                base_output_cost: None,
+                base_fixed_cost: None,
+                base_total_cost: None,
                 cost_currency: None,
                 pricing_rule_id: None,
                 pricing_source: None,
@@ -12275,12 +12518,138 @@ mod tests {
         assert_option_f64_close(listed_log.estimated_input_cost, 0.00000375);
         assert_option_f64_close(listed_log.estimated_output_cost, 0.00002475);
         assert_option_f64_close(listed_log.estimated_total_cost, 0.0000285);
+        assert_option_f64_close(listed_log.base_total_cost, 0.0000285);
         assert_eq!(listed_log.cost_currency.as_deref(), Some("USD"));
         assert_eq!(
             listed_log.pricing_source.as_deref(),
             Some("model_base_price")
         );
         assert_eq!(listed_log.cost_status.as_deref(), Some("legacy_estimate"));
+    }
+
+    #[test]
+    fn request_log_round_trips_observability_fields() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let log = database
+            .insert_request_log(CreateRequestLogInput {
+                method: "POST".to_string(),
+                path: "/v1/responses".to_string(),
+                model: Some("gpt-5.5".to_string()),
+                stream: true,
+                status: "success".to_string(),
+                lifecycle_status: Some("completed".to_string()),
+                station_key_id: Some("key-observed".to_string()),
+                station_id: Some("station-observed".to_string()),
+                upstream_base_url: Some("https://example.test".to_string()),
+                fallback_count: 0,
+                error_message: None,
+                route_policy: Some("cost_stable_first".to_string()),
+                route_reason: None,
+                rejected_candidates_json: None,
+                prompt_tokens: Some(101),
+                completion_tokens: Some(23),
+                total_tokens: Some(124),
+                cache_creation_tokens: Some(17),
+                cache_read_tokens: Some(83),
+                reasoning_effort: Some("high".to_string()),
+                first_token_ms: Some(321),
+                billing_mode: Some("token".to_string()),
+                estimated_input_cost: None,
+                estimated_output_cost: None,
+                estimated_total_cost: Some(0.0042),
+                base_input_cost: None,
+                base_output_cost: None,
+                base_fixed_cost: None,
+                base_total_cost: None,
+                cost_currency: Some("USD".to_string()),
+                pricing_rule_id: None,
+                pricing_source: None,
+                cost_status: Some("priced".to_string()),
+                group_binding_id: Some("group-observed".to_string()),
+                normalization_status: Some("complete".to_string()),
+                balance_scope: Some("key".to_string()),
+                economic_context_json: None,
+                started_at: "1000".to_string(),
+                finished_at: Some("2000".to_string()),
+                duration_ms: Some(1000),
+            })
+            .expect("insert observed request log");
+
+        let listed = database.list_request_logs().expect("request logs");
+        let listed = listed
+            .iter()
+            .find(|candidate| candidate.id == log.id)
+            .expect("listed observed request log");
+
+        assert_eq!(listed.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(listed.cache_creation_tokens, Some(17));
+        assert_eq!(listed.cache_read_tokens, Some(83));
+        assert_eq!(listed.first_token_ms, Some(321));
+        assert_eq!(listed.billing_mode.as_deref(), Some("token"));
+    }
+
+    #[test]
+    fn list_request_logs_backfills_missing_base_cost_without_repricing_snapshot() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "request-log-existing-cost-missing-base");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        let log = database
+            .insert_request_log(CreateRequestLogInput {
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                model: Some("gpt-5.4-mini".to_string()),
+                stream: false,
+                status: "success".to_string(),
+                lifecycle_status: Some("completed".to_string()),
+                station_key_id: Some(key.id),
+                station_id: Some(station.id),
+                upstream_base_url: Some("https://example.test".to_string()),
+                fallback_count: 0,
+                error_message: None,
+                route_policy: Some("priority_fallback".to_string()),
+                route_reason: None,
+                rejected_candidates_json: None,
+                prompt_tokens: Some(10),
+                completion_tokens: Some(11),
+                total_tokens: Some(21),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                reasoning_effort: None,
+                first_token_ms: None,
+                billing_mode: None,
+                estimated_input_cost: Some(0.5),
+                estimated_output_cost: Some(0.25),
+                estimated_total_cost: Some(0.75),
+                base_input_cost: None,
+                base_output_cost: None,
+                base_fixed_cost: None,
+                base_total_cost: None,
+                cost_currency: Some("USD".to_string()),
+                pricing_rule_id: None,
+                pricing_source: Some("model_base_price".to_string()),
+                cost_status: Some("base_price_only".to_string()),
+                group_binding_id: None,
+                normalization_status: None,
+                balance_scope: None,
+                economic_context_json: None,
+                started_at: "1000".to_string(),
+                finished_at: Some("1100".to_string()),
+                duration_ms: Some(100),
+            })
+            .expect("insert log");
+
+        let listed = database.list_request_logs().expect("request logs");
+        let listed_log = listed
+            .iter()
+            .find(|candidate| candidate.id == log.id)
+            .expect("listed log");
+
+        assert_option_f64_close(listed_log.estimated_total_cost, 0.75);
+        assert_option_f64_close(listed_log.base_total_cost, 0.0000285);
+        assert_eq!(listed_log.cost_status.as_deref(), Some("base_price_only"));
     }
 
     #[test]
@@ -12316,9 +12685,18 @@ mod tests {
                 prompt_tokens: None,
                 completion_tokens: None,
                 total_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                reasoning_effort: None,
+                first_token_ms: None,
+                billing_mode: None,
                 estimated_input_cost: None,
                 estimated_output_cost: None,
                 estimated_total_cost: None,
+                base_input_cost: None,
+                base_output_cost: None,
+                base_fixed_cost: None,
+                base_total_cost: None,
                 cost_currency: None,
                 pricing_rule_id: None,
                 pricing_source: None,
@@ -13111,6 +13489,76 @@ mod tests {
         assert_eq!(
             economics.pricing_source.as_deref(),
             Some("model_base_price")
+        );
+    }
+
+    #[test]
+    fn route_candidate_economics_uses_station_key_group_rate_without_pricing_rule() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "key-bound-group-rate");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        let binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "group-hash-discount".to_string(),
+                group_id_hash: Some("external-group-discount".to_string()),
+                group_name: "discount".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(0.05),
+                user_rate_multiplier: None,
+                effective_rate_multiplier: Some(0.05),
+                rate_source: Some("groups_api".to_string()),
+                confidence: 0.9,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("binding");
+        database
+            .update_station_key_group_binding(UpdateStationKeyGroupBindingInput {
+                station_key_id: key.id.clone(),
+                group_binding_id: binding.id.clone(),
+            })
+            .expect("bind key");
+        database
+            .upsert_model_base_price(UpsertModelBasePriceInput {
+                id: None,
+                provider: "openai".to_string(),
+                model: "key-bound-model".to_string(),
+                input_price: Some(0.25),
+                output_price: Some(2.0),
+                currency: "USD".to_string(),
+                unit: "per_1m_tokens".to_string(),
+                source_url: "https://developers.openai.com/api/docs/pricing".to_string(),
+                source_label: "OpenAI API pricing".to_string(),
+                source_checked_at: Some("2026-07-08".to_string()),
+                enabled: true,
+                built_in: false,
+                note: None,
+            })
+            .expect("base price");
+
+        let economics = database
+            .route_candidate_economics_for_model(key.id, Some("key-bound-model".to_string()))
+            .expect("economics")
+            .expect("model economics");
+
+        assert_eq!(economics.pricing_rule_id.as_deref(), None);
+        assert_eq!(
+            economics.group_binding_id.as_deref(),
+            Some(binding.id.as_str())
+        );
+        assert_eq!(economics.rate_multiplier, Some(0.05));
+        assert_eq!(economics.estimated_input_price, Some(0.0125));
+        assert_eq!(economics.estimated_output_price, Some(0.1));
+        assert_eq!(
+            economics.normalization_status.as_deref(),
+            Some("base_price_with_group_rate")
         );
     }
 

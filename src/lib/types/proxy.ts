@@ -29,9 +29,18 @@ export type RequestLog = {
   promptTokens: number | null;
   completionTokens: number | null;
   totalTokens: number | null;
+  cacheCreationTokens: number | null;
+  cacheReadTokens: number | null;
+  reasoningEffort: string | null;
+  firstTokenMs: number | null;
+  billingMode: string | null;
   estimatedInputCost: number | null;
   estimatedOutputCost: number | null;
   estimatedTotalCost: number | null;
+  baseInputCost: number | null;
+  baseOutputCost: number | null;
+  baseFixedCost: number | null;
+  baseTotalCost: number | null;
   costCurrency: string | null;
   pricingRuleId: string | null;
   pricingSource: string | null;

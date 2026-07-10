@@ -26,18 +26,21 @@ const summary = summarizeDashboardRequestCosts(
     requestLog("usd-today-a", {
       startedAt: "2026-07-10T09:00:00.000Z",
       estimatedTotalCost: 1.25,
+      baseTotalCost: 0.5,
       costCurrency: "USD",
       costStatus: "priced",
     }),
     requestLog("cny-today", {
       startedAt: "2026-07-10T10:00:00.000Z",
       estimatedTotalCost: 8,
+      baseTotalCost: 4,
       costCurrency: "CNY",
       costStatus: "base_price_only",
     }),
     requestLog("usd-today-legacy", {
       startedAt: "2026-07-10T11:00:00.000Z",
       estimatedTotalCost: 0.75,
+      baseTotalCost: 0.25,
       costCurrency: "usd",
       costStatus: "legacy_estimate",
     }),
@@ -56,6 +59,7 @@ const summary = summarizeDashboardRequestCosts(
     requestLog("usd-yesterday", {
       startedAt: "2026-07-09T12:00:00.000Z",
       estimatedTotalCost: 5,
+      baseTotalCost: 2,
       costCurrency: "USD",
       costStatus: "priced",
     }),
@@ -67,11 +71,12 @@ assert.deepEqual(
   summary.todayTotalsByCurrency.map((row) => ({
     currency: row.currency,
     totalCost: row.totalCost,
+    baseTotalCost: row.baseTotalCost,
     requestCount: row.requestCount,
   })),
   [
-    { currency: "CNY", totalCost: 8, requestCount: 1 },
-    { currency: "USD", totalCost: 2, requestCount: 2 },
+    { currency: "CNY", totalCost: 8, baseTotalCost: 4, requestCount: 1 },
+    { currency: "USD", totalCost: 2, baseTotalCost: 0.75, requestCount: 2 },
   ],
   "dashboard should keep today's request cost totals grouped by currency",
 );
@@ -80,11 +85,12 @@ assert.deepEqual(
   summary.allTotalsByCurrency.map((row) => ({
     currency: row.currency,
     totalCost: row.totalCost,
+    baseTotalCost: row.baseTotalCost,
     requestCount: row.requestCount,
   })),
   [
-    { currency: "CNY", totalCost: 8, requestCount: 1 },
-    { currency: "USD", totalCost: 7, requestCount: 3 },
+    { currency: "CNY", totalCost: 8, baseTotalCost: 4, requestCount: 1 },
+    { currency: "USD", totalCost: 7, baseTotalCost: 2.75, requestCount: 3 },
   ],
   "dashboard should keep cumulative request cost totals grouped by currency",
 );
@@ -97,6 +103,48 @@ assert.equal(summary.statusCounts.unsupportedBillingMode, 1);
 assert.equal(summary.unpricedCount, 2);
 assert.equal(summary.legacyEstimateCount, 1);
 assert.equal(summary.unsupportedBillingModeCount, 1);
+
+const dashboardSource = await readFile("src/features/dashboard/DashboardPage.tsx", "utf8");
+assert.match(
+  dashboardSource,
+  /currency: "USD", totalCost: 0, baseTotalCost: 0, requestCount: 0/,
+  "empty cost totals should render the explicit paired zero values shown in the dashboard design",
+);
+assert.match(
+  dashboardSource,
+  /<span>总计: <\/span>/,
+  "the cumulative paired costs should use the 总计: label as a separate muted prefix",
+);
+assert.match(
+  dashboardSource,
+  /title="实际花费"/,
+  "the charged side of the dashboard cost pair should identify its actual-cost semantics",
+);
+assert.match(
+  dashboardSource,
+  /title="1倍率 Token 花费"/,
+  "the standard side of the dashboard cost pair should identify its 1x token-cost semantics",
+);
+assert.match(
+  dashboardSource,
+  /text-sm font-normal text-slate-400/,
+  "the slash and 1x token cost should be smaller and gray like Sub2API",
+);
+assert.doesNotMatch(
+  dashboardSource,
+  /tone: requestCostSummary\.todayTotalsByCurrency\.length > 0 \? "warning" : "neutral"/,
+  "actual cost should keep the purple cost accent instead of turning into a warning color",
+);
+assert.match(
+  dashboardSource,
+  /formatRequestCost\(requestBaseCostValue\(request\),\s*request\.costCurrency,\s*request\.costStatus\)/,
+  "recent usage rows should display the single request 1x base cost after the actual charged cost",
+);
+assert.doesNotMatch(
+  dashboardSource,
+  /requestCostSummary\.allTotalsByCurrency[\s\S]{0,160}tokens/,
+  "recent usage rows should not use cumulative request totals as the per-row base cost",
+);
 
 function requestLog(id, overrides) {
   return {
@@ -123,6 +171,10 @@ function requestLog(id, overrides) {
     estimatedInputCost: null,
     estimatedOutputCost: null,
     estimatedTotalCost: null,
+    baseInputCost: null,
+    baseOutputCost: null,
+    baseFixedCost: null,
+    baseTotalCost: null,
     costCurrency: null,
     pricingRuleId: null,
     pricingSource: null,

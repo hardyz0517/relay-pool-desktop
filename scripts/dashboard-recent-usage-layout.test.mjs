@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
 
 const dashboardSource = await readFile("src/features/dashboard/DashboardPage.tsx", "utf8");
+const requestCostFormatSource = await readFile(
+  "src/features/dashboard/requestCostFormat.ts",
+  "utf8",
+);
 
 function assert(condition, message) {
   if (!condition) {
@@ -11,6 +15,23 @@ function assert(condition, message) {
 assert(
   /<SectionCard\s+title="最近使用"[\s>]/.test(dashboardSource),
   "dashboard recent activity section should be renamed to 最近使用",
+);
+
+assert(
+  dashboardSource.includes("Inbox") &&
+    dashboardSource.includes("暂无使用记录") &&
+    dashboardSource.includes("开始使用 API 后，您的使用历史将显示在这里。"),
+  "dashboard recent usage should explain the empty request-log state",
+);
+
+assert(
+  /dashboardLoaded\s*&&\s*requestLogs\.length\s*===\s*0/.test(dashboardSource),
+  "dashboard recent usage should render empty state only after a successful workspace load",
+);
+
+assert(
+  /min-h-\[260px\][^\"]*items-center[^\"]*justify-center/.test(dashboardSource),
+  "dashboard recent usage empty state should remain centered in a stable content area",
 );
 
 assert(
@@ -26,9 +47,10 @@ assert(
 );
 
 assert(
-  dashboardSource.includes('return "未定价";') &&
-    dashboardSource.includes("requestCostSummary.allTotalsByCurrency") &&
-    dashboardSource.includes('costStatus === "usage_only"') &&
+  requestCostFormatSource.includes('return "未定价";') &&
+    requestCostFormatSource.includes("request.baseTotalCost") &&
+    dashboardSource.includes("requestBaseCostValue(request)") &&
+    requestCostFormatSource.includes('costStatus === "usage_only"') &&
     dashboardSource.includes("request.costStatus"),
   "dashboard request cost display should show usage-only rows as unpriced instead of $0.0000",
 );

@@ -24,7 +24,6 @@ const destructiveSurfaces = [
   "src/features/channels/ChannelMonitoringTab.tsx",
   "src/features/channels/ChannelMonitorTemplateManager.tsx",
   "src/features/logs/LogsPage.tsx",
-  "src/features/routing/RoutingPage.tsx",
   "src/features/stations/StationsPage.tsx",
   "src/features/key-pool/KeyPoolPage.tsx",
 ];

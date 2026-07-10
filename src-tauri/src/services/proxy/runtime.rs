@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use crate::{
     models::{
-        pricing::{BalanceSnapshot, RequestCostEstimate},
+        pricing::{BalanceSnapshot, RequestCostEstimate, RequestUsage},
         proxy::{CreateRequestLogInput, ProxyStatus},
         routing::{RouteCandidateExplanation, RouteEndpointKind, RoutingPolicy},
     },
@@ -25,8 +25,9 @@ use crate::{
                 extract_responses_metadata, normalize_responses_request, render_responses_response,
                 should_try_chat_fallback, upstream_responses_path,
             },
-            build_upstream_url, enabled_candidates, extract_chat_request_metadata, openai_error,
-            redact_error_message,
+            build_upstream_url, enabled_candidates, extract_chat_request_metadata,
+            observability::{ObservedUsage, RequestObservation, SseUsageObserver},
+            openai_error, redact_error_message,
             router::{select_route_candidates, RouteRequest},
             routing_affinity::RouteAffinityStore,
             routing_failure::{
@@ -111,6 +112,13 @@ struct PendingCandidateSuccess {
 enum ProxyResponseBody {
     Buffered(Vec<u8>),
     Streamed(Box<dyn Read + Send>),
+}
+
+#[derive(Debug, Default)]
+struct ResponseWriteOutcome {
+    first_token_ms: Option<i64>,
+    usage: Option<ObservedUsage>,
+    error_message: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -315,22 +323,41 @@ fn handle_connection(mut stream: TcpStream, context: &ProxyServerContext) {
     context.request_count.fetch_add(1, Ordering::Relaxed);
     let started_at = now_string();
     let started = Instant::now();
-    let (method, path, response) = match read_http_request(&mut stream) {
+    let (method, path, request_observation, response) = match read_http_request(&mut stream) {
         Ok(request) => {
             let method = request.method.clone();
             let path = request.path.clone();
-            (method, path, handle_proxy_request(context, &request))
+            let request_observation = serde_json::from_slice::<Value>(&request.body)
+                .ok()
+                .map(|body| RequestObservation::from_json(&body))
+                .unwrap_or_default();
+            (
+                method,
+                path,
+                request_observation,
+                handle_proxy_request(context, &request),
+            )
         }
         Err(error) => (
             "HTTP".to_string(),
             "/".to_string(),
+            RequestObservation::default(),
             ProxyResponse::json_error(400, "bad_request", &error),
         ),
     };
-    let log_snapshot = RequestLogSnapshot::from_response(&response);
+    let mut log_snapshot = RequestLogSnapshot::from_response(&response, request_observation);
     let pending_successes = response.pending_successes.clone();
-    let write_result = write_http_response(&mut stream, response);
-    if write_result.is_ok() {
+    let write_result = write_http_response(&mut stream, response, started);
+    if let Some(usage) = write_result.usage.as_ref() {
+        log_snapshot.request_cost = request_cost_for_observed_usage(
+            context,
+            log_snapshot.station_key_id.as_deref(),
+            log_snapshot.station_id.as_deref(),
+            log_snapshot.model.as_deref(),
+            usage,
+        );
+    }
+    if write_result.error_message.is_none() {
         let completed_at = now_string();
         commit_pending_successes(
             context,
@@ -401,10 +428,11 @@ struct RequestLogSnapshot {
     normalization_status: Option<String>,
     balance_scope: Option<String>,
     economic_context_json: Option<String>,
+    reasoning_effort: Option<String>,
 }
 
 impl RequestLogSnapshot {
-    fn from_response(response: &ProxyResponse) -> Self {
+    fn from_response(response: &ProxyResponse, observation: RequestObservation) -> Self {
         Self {
             model: response.model.clone(),
             stream: response.stream,
@@ -422,6 +450,7 @@ impl RequestLogSnapshot {
             normalization_status: response.normalization_status.clone(),
             balance_scope: response.balance_scope.clone(),
             economic_context_json: response.economic_context_json.clone(),
+            reasoning_effort: observation.reasoning_effort,
         }
     }
 }
@@ -432,11 +461,11 @@ fn build_request_log_input(
     snapshot: RequestLogSnapshot,
     started_at: String,
     started: Instant,
-    write_result: &Result<(), String>,
+    write_result: &ResponseWriteOutcome,
 ) -> CreateRequestLogInput {
-    let interrupted = snapshot.stream && write_result.is_err();
+    let interrupted = snapshot.stream && write_result.error_message.is_some();
     let error_message = if interrupted {
-        write_result.as_ref().err().cloned()
+        write_result.error_message.clone()
     } else {
         snapshot.error_message.clone()
     };
@@ -464,12 +493,41 @@ fn build_request_log_input(
         route_policy: snapshot.route_policy,
         route_reason: snapshot.route_reason,
         rejected_candidates_json: snapshot.rejected_candidates_json,
-        prompt_tokens: snapshot.request_cost.prompt_tokens,
-        completion_tokens: snapshot.request_cost.completion_tokens,
-        total_tokens: snapshot.request_cost.total_tokens,
+        prompt_tokens: write_result
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.input_tokens)
+            .or(snapshot.request_cost.prompt_tokens),
+        completion_tokens: write_result
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.output_tokens)
+            .or(snapshot.request_cost.completion_tokens),
+        total_tokens: write_result
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.total_tokens)
+            .or(snapshot.request_cost.total_tokens),
+        cache_creation_tokens: write_result
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.cache_creation_tokens)
+            .or(snapshot.request_cost.cache_creation_tokens),
+        cache_read_tokens: write_result
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.cache_read_tokens)
+            .or(snapshot.request_cost.cache_read_tokens),
+        reasoning_effort: snapshot.reasoning_effort,
+        first_token_ms: write_result.first_token_ms,
+        billing_mode: snapshot.request_cost.billing_mode,
         estimated_input_cost: snapshot.request_cost.estimated_input_cost,
         estimated_output_cost: snapshot.request_cost.estimated_output_cost,
         estimated_total_cost: snapshot.request_cost.estimated_total_cost,
+        base_input_cost: snapshot.request_cost.base_input_cost,
+        base_output_cost: snapshot.request_cost.base_output_cost,
+        base_fixed_cost: snapshot.request_cost.base_fixed_cost,
+        base_total_cost: snapshot.request_cost.base_total_cost,
         cost_currency: snapshot.request_cost.cost_currency,
         pricing_rule_id: snapshot.request_cost.pricing_rule_id,
         pricing_source: snapshot.request_cost.pricing_source,
@@ -1023,8 +1081,7 @@ fn uses_vision(body: &Value) -> bool {
 }
 
 fn uses_reasoning(body: &Value, model: Option<&str>) -> bool {
-    body.get("reasoning").is_some()
-        || body.get("reasoning_effort").is_some()
+    RequestObservation::from_json(body).uses_reasoning
         || model.map(|model| model.starts_with('o')).unwrap_or(false)
 }
 
@@ -1865,48 +1922,74 @@ fn extract_request_cost(
     let Ok(value) = serde_json::from_slice::<Value>(body) else {
         return crate::services::pricing::request_cost_unknown();
     };
-    let usage = value.get("usage").cloned().unwrap_or(Value::Null);
-    let prompt_tokens = usage.get("prompt_tokens").and_then(Value::as_i64);
-    let completion_tokens = usage.get("completion_tokens").and_then(Value::as_i64);
-    let total_tokens = usage.get("total_tokens").and_then(Value::as_i64);
-    let Some(total_tokens) = total_tokens.or_else(|| {
-        prompt_tokens
-            .zip(completion_tokens)
-            .map(|(prompt, completion)| prompt + completion)
-    }) else {
+    let Some(usage) = ObservedUsage::from_json(&value) else {
         return crate::services::pricing::request_cost_unknown();
     };
-    let economics = context
-        .database
-        .route_candidate_economics_for_model(
-            candidate.station_key_id.clone(),
-            response.model.clone(),
-        )
-        .ok()
-        .flatten();
-    crate::services::pricing::request_cost_from_pricing_parts(
+
+    request_cost_for_observed_usage(
+        context,
+        Some(&candidate.station_key_id),
+        Some(&candidate.station_id),
+        response.model.as_deref(),
+        &usage,
+    )
+}
+
+fn request_cost_for_observed_usage(
+    context: &ProxyServerContext,
+    station_key_id: Option<&str>,
+    station_id: Option<&str>,
+    model: Option<&str>,
+    usage: &ObservedUsage,
+) -> RequestCostEstimate {
+    let economics = station_key_id.and_then(|station_key_id| {
+        context
+            .database
+            .route_candidate_economics_for_model(
+                station_key_id.to_string(),
+                model.map(ToString::to_string),
+            )
+            .ok()
+            .flatten()
+    });
+    let request_usage = RequestUsage {
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        total_tokens: usage.total_tokens,
+        request_count: Some(1),
+        cache_creation_tokens: usage.cache_creation_tokens,
+        cache_read_tokens: usage.cache_read_tokens,
+        media_count: None,
+        duration_seconds: None,
+        size_tier: None,
+    };
+    crate::services::pricing::request_cost_from_pricing_parts_and_usage(
         economics
             .as_ref()
-            .map(|economics| crate::services::pricing::RequestPricingParts {
-                station_key_id: &candidate.station_key_id,
-                station_id: Some(&candidate.station_id),
-                model: response.model.as_deref(),
-                pricing_rule_id: economics.pricing_rule_id.as_deref(),
-                pricing_model: economics.pricing_model.as_deref(),
-                group_binding_id: economics.group_binding_id.as_deref(),
-                rate_multiplier: economics.rate_multiplier,
-                normalization_status: economics.normalization_status.as_deref(),
-                price_confidence: economics.price_confidence,
-                estimated_input_price: economics.estimated_input_price,
-                estimated_output_price: economics.estimated_output_price,
-                fixed_price: economics.fixed_price,
-                price_currency: economics.price_currency.as_deref(),
-                pricing_source: economics.pricing_source.as_deref(),
-                collected_at: economics.balance_collected_at.as_deref(),
-            }),
-        prompt_tokens,
-        completion_tokens,
-        Some(total_tokens),
+            .and_then(|economics| station_key_id.map(|station_key_id| (economics, station_key_id)))
+            .map(
+                |(economics, station_key_id)| crate::services::pricing::RequestPricingParts {
+                    station_key_id,
+                    station_id,
+                    model,
+                    pricing_rule_id: economics.pricing_rule_id.as_deref(),
+                    pricing_model: economics.pricing_model.as_deref(),
+                    group_binding_id: economics.group_binding_id.as_deref(),
+                    rate_multiplier: economics.rate_multiplier,
+                    normalization_status: economics.normalization_status.as_deref(),
+                    price_confidence: economics.price_confidence,
+                    base_input_price: economics.base_input_price,
+                    base_output_price: economics.base_output_price,
+                    base_fixed_price: economics.base_fixed_price,
+                    estimated_input_price: economics.estimated_input_price,
+                    estimated_output_price: economics.estimated_output_price,
+                    fixed_price: economics.fixed_price,
+                    price_currency: economics.price_currency.as_deref(),
+                    pricing_source: economics.pricing_source.as_deref(),
+                    collected_at: economics.balance_collected_at.as_deref(),
+                },
+            ),
+        &request_usage,
     )
 }
 
@@ -2067,10 +2150,17 @@ fn read_http_request(stream: &mut TcpStream) -> Result<ParsedRequest, String> {
     })
 }
 
-fn write_http_response(stream: &mut TcpStream, response: ProxyResponse) -> Result<(), String> {
+fn write_http_response(
+    stream: &mut TcpStream,
+    response: ProxyResponse,
+    started: Instant,
+) -> ResponseWriteOutcome {
     let reason = reason_phrase(response.status_code);
     match response.body {
         ProxyResponseBody::Buffered(body) => {
+            let usage = serde_json::from_slice::<Value>(&body)
+                .ok()
+                .and_then(|value| ObservedUsage::from_json(&value));
             let header = format!(
                 "HTTP/1.1 {} {}\r\ncontent-type: {}\r\ncontent-length: {}\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET, POST, OPTIONS\r\naccess-control-allow-headers: authorization, content-type, accept\r\nconnection: close\r\n\r\n",
                 response.status_code,
@@ -2078,10 +2168,16 @@ fn write_http_response(stream: &mut TcpStream, response: ProxyResponse) -> Resul
                 response.content_type,
                 body.len()
             );
-            stream
+            let error_message = stream
                 .write_all(header.as_bytes())
                 .and_then(|_| stream.write_all(&body))
-                .map_err(|error| format!("写入响应失败: {error}"))
+                .err()
+                .map(|error| format!("写入响应失败: {error}"));
+            ResponseWriteOutcome {
+                first_token_ms: None,
+                usage,
+                error_message,
+            }
         }
         ProxyResponseBody::Streamed(mut body) => {
             let header = format!(
@@ -2090,11 +2186,44 @@ fn write_http_response(stream: &mut TcpStream, response: ProxyResponse) -> Resul
                 reason,
                 response.content_type,
             );
-            stream
+            let mut observer = SseUsageObserver::default();
+            let mut first_token_ms = None;
+            let mut error_message = stream
                 .write_all(header.as_bytes())
-                .and_then(|_| std::io::copy(&mut body, stream).map(|_| ()))
-                .and_then(|_| stream.flush())
-                .map_err(|error| format!("写入流式响应失败: {error}"))
+                .err()
+                .map(|error| format!("写入流式响应失败: {error}"));
+            let mut buffer = [0_u8; 8192];
+            while error_message.is_none() {
+                let count = match body.read(&mut buffer) {
+                    Ok(count) => count,
+                    Err(error) => {
+                        error_message = Some(format!("读取流式响应失败: {error}"));
+                        break;
+                    }
+                };
+                if count == 0 {
+                    break;
+                }
+                observer.push(&buffer[..count]);
+                if let Err(error) = stream.write_all(&buffer[..count]) {
+                    error_message = Some(format!("写入流式响应失败: {error}"));
+                    break;
+                }
+                if first_token_ms.is_none() {
+                    first_token_ms = Some(started.elapsed().as_millis() as i64);
+                }
+            }
+            if error_message.is_none() {
+                error_message = stream
+                    .flush()
+                    .err()
+                    .map(|error| format!("写入流式响应失败: {error}"));
+            }
+            ResponseWriteOutcome {
+                first_token_ms,
+                usage: observer.usage().cloned(),
+                error_message,
+            }
         }
     }
 }
@@ -2170,7 +2299,7 @@ mod tests {
                 status_code: 200,
                 content_type: "text/event-stream".to_string(),
                 body: ProxyResponseBody::Streamed(Box::new(std::io::Cursor::new(
-                    b"data: {\"id\":\"evt-1\"}\n\n".to_vec(),
+                    b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4,\"prompt_tokens_details\":{\"cached_tokens\":3}}}\n\ndata: [DONE]\n\n".to_vec(),
                 ))),
                 model: Some("gpt-5.4".to_string()),
                 stream: true,
@@ -2191,7 +2320,13 @@ mod tests {
                 request_cost: crate::services::pricing::request_cost_unknown(),
                 pending_successes: Vec::new(),
             };
-            write_http_response(&mut server_stream, response).expect("write response");
+            let outcome = write_http_response(&mut server_stream, response, Instant::now());
+            assert!(outcome.error_message.is_none());
+            assert!(outcome.first_token_ms.is_some());
+            let usage = outcome.usage.expect("stream usage");
+            assert_eq!(usage.input_tokens, Some(9));
+            assert_eq!(usage.output_tokens, Some(4));
+            assert_eq!(usage.cache_read_tokens, Some(3));
         });
 
         let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
@@ -2206,7 +2341,7 @@ mod tests {
         let text = String::from_utf8(buf).expect("utf8");
         assert!(text.contains("content-type: text/event-stream"));
         assert!(!text.contains("content-length:"));
-        assert!(text.contains("data: {\"id\":\"evt-1\"}"));
+        assert!(text.contains("\"prompt_tokens\":9"));
     }
 
     #[test]
@@ -2217,13 +2352,34 @@ mod tests {
         let input = build_request_log_input(
             "POST".to_string(),
             "/v1/chat/completions".to_string(),
-            RequestLogSnapshot::from_response(&response),
+            RequestLogSnapshot::from_response(
+                &response,
+                crate::services::proxy::observability::RequestObservation {
+                    reasoning_effort: Some("high".to_string()),
+                    uses_reasoning: true,
+                },
+            ),
             "1000".to_string(),
             started,
-            &Ok(()),
+            &ResponseWriteOutcome {
+                first_token_ms: None,
+                usage: Some(ObservedUsage {
+                    input_tokens: Some(9),
+                    output_tokens: Some(4),
+                    total_tokens: Some(13),
+                    cache_creation_tokens: None,
+                    cache_read_tokens: Some(3),
+                }),
+                error_message: None,
+            },
         );
 
         assert_eq!(input.status, "failed");
+        assert_eq!(input.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(input.prompt_tokens, Some(9));
+        assert_eq!(input.completion_tokens, Some(4));
+        assert_eq!(input.total_tokens, Some(13));
+        assert_eq!(input.cache_read_tokens, Some(3));
         assert!(input.finished_at.is_some());
         assert!(input.duration_ms.is_some_and(|duration| duration >= 25));
     }
@@ -2255,18 +2411,30 @@ mod tests {
             request_cost: crate::services::pricing::request_cost_unknown(),
             pending_successes: Vec::new(),
         };
-        let write_result = Err("写入流式响应失败: connection reset".to_string());
+        let write_result = ResponseWriteOutcome {
+            first_token_ms: Some(123),
+            usage: Some(ObservedUsage {
+                input_tokens: Some(5),
+                output_tokens: Some(2),
+                total_tokens: Some(7),
+                cache_creation_tokens: None,
+                cache_read_tokens: Some(3),
+            }),
+            error_message: Some("写入流式响应失败: connection reset".to_string()),
+        };
 
         let input = build_request_log_input(
             "POST".to_string(),
             "/v1/chat/completions".to_string(),
-            RequestLogSnapshot::from_response(&response),
+            RequestLogSnapshot::from_response(&response, RequestObservation::default()),
             "1000".to_string(),
             Instant::now(),
             &write_result,
         );
 
         assert_eq!(input.status, "interrupted");
+        assert_eq!(input.first_token_ms, Some(123));
+        assert_eq!(input.cache_read_tokens, Some(3));
         assert_eq!(input.fallback_count, 0);
         assert!(input
             .error_message
@@ -2687,6 +2855,23 @@ mod tests {
         assert_eq!(response.request_cost.estimated_output_cost, Some(0.0002));
         assert_f64_close(response.request_cost.estimated_total_cost, 0.000224);
         assert_eq!(response.request_cost.cost_status, "priced");
+
+        let streamed_cost = request_cost_for_observed_usage(
+            &context,
+            Some(&key.id),
+            Some(&key.station_id),
+            Some("gpt-5.4"),
+            &ObservedUsage {
+                input_tokens: Some(12),
+                output_tokens: Some(20),
+                total_tokens: Some(32),
+                cache_creation_tokens: Some(2),
+                cache_read_tokens: Some(8),
+            },
+        );
+        assert_eq!(streamed_cost.cache_read_tokens, Some(8));
+        assert_eq!(streamed_cost.billing_mode.as_deref(), Some("token"));
+        assert_f64_close(streamed_cost.estimated_total_cost, 0.000224);
         upstream.join();
     }
 
@@ -3332,7 +3517,8 @@ mod tests {
                 request_cost: crate::services::pricing::request_cost_unknown(),
                 pending_successes: Vec::new(),
             };
-            write_http_response(&mut server_stream, response).expect("write response");
+            let outcome = write_http_response(&mut server_stream, response, Instant::now());
+            assert!(outcome.error_message.is_none());
         });
 
         let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");

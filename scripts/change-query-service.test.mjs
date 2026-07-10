@@ -30,7 +30,8 @@ assert.ok(
   pageSource.includes('import { loadChangeCenterWorkspace } from "@/lib/queries/changeQueries";') &&
     pageSource.includes("const workspace = await loadChangeCenterWorkspace()") &&
     pageSource.includes("setStationNamesById(new Map(workspace.stations.map((station) => [station.id, station.name])))") &&
-    pageSource.includes("setEvents(workspace.changeEvents)"),
+    pageSource.includes("markUnreadChangeEventsRead(workspace.changeEvents, markChangeEventRead)") &&
+    pageSource.includes("setEvents(readOnEntryResult.events)"),
   "change center page should consume the query service without changing existing state assignments",
 );
 

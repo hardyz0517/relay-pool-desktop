@@ -3,6 +3,7 @@ import type { RequestLog } from "@/lib/types/proxy";
 export type DashboardCostTotal = {
   currency: string;
   totalCost: number;
+  baseTotalCost: number;
   requestCount: number;
 };
 
@@ -110,12 +111,25 @@ function incrementStatusCount(counts: DashboardRequestCostStatusCounts, status: 
 
 function addCost(totals: Map<string, DashboardCostTotal>, log: RequestLog) {
   const cost = log.estimatedTotalCost;
-  if (typeof cost !== "number" || !Number.isFinite(cost)) {
+  const baseCost = log.baseTotalCost;
+  const hasCost = typeof cost === "number" && Number.isFinite(cost);
+  const hasBaseCost = typeof baseCost === "number" && Number.isFinite(baseCost);
+  if (!hasCost && !hasBaseCost) {
     return;
   }
   const currency = normalizeCurrency(log.costCurrency);
-  const current = totals.get(currency) ?? { currency, totalCost: 0, requestCount: 0 };
-  current.totalCost += cost;
+  const current = totals.get(currency) ?? {
+    currency,
+    totalCost: 0,
+    baseTotalCost: 0,
+    requestCount: 0,
+  };
+  if (hasCost) {
+    current.totalCost += cost;
+  }
+  if (hasBaseCost) {
+    current.baseTotalCost += baseCost;
+  }
   current.requestCount += 1;
   totals.set(currency, current);
 }

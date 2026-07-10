@@ -8,6 +8,7 @@ import {
   Copy,
   FlaskConical,
   Gauge,
+  Inbox,
   KeyRound,
   type LucideIcon,
   Power,
@@ -40,6 +41,7 @@ import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { stationKeyStatusLabels } from "@/lib/types/stationKeys";
 import { formatChangeTime, severityLabels, severityTone, unreadRiskCount } from "@/features/changes/changeEventViewModels";
 import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
+import { formatRequestCost, requestBaseCostValue } from "@/features/dashboard/requestCostFormat";
 import {
   summarizeDashboardRequestCosts,
   type DashboardCostTotal,
@@ -78,6 +80,7 @@ export function DashboardPage() {
   const [balanceSnapshots, setBalanceSnapshots] = useState<BalanceSnapshot[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
+  const [dashboardLoaded, setDashboardLoaded] = useState(false);
   const [startingLocalProxy, setStartingLocalProxy] = useState(false);
   const [stoppingLocalProxy, setStoppingLocalProxy] = useState(false);
   const [importingCCSwitch, setImportingCCSwitch] = useState(false);
@@ -91,6 +94,7 @@ export function DashboardPage() {
         setBalanceSnapshots(workspace.balanceSnapshots);
         setSettings(workspace.settings);
         setChangeEvents(workspace.changeEvents);
+        setDashboardLoaded(true);
       })
       .catch((requestError) => {
         toast.error("工作台刷新失败", readError(requestError));
@@ -185,6 +189,10 @@ export function DashboardPage() {
     : `http://127.0.0.1:${settings?.localProxyPort ?? 8787}/v1`;
   const localKeyMasked = settings?.localKeyMasked ?? "未读取";
   const enabledKeyCount = keyPoolItems.filter((key) => key.enabled).length;
+  const requestKeyNameById = useMemo(
+    () => new Map(keyPoolItems.map((key) => [key.id, key.name])),
+    [keyPoolItems],
+  );
   const proxyRequestCount = proxyStatus?.requestCount ?? requestLogs.length;
   const todayTokens = todayLogs.reduce((sum, log) => sum + (log.totalTokens ?? 0), 0);
   const todayPromptTokens = todayLogs.reduce((sum, log) => sum + (log.promptTokens ?? 0), 0);
@@ -337,10 +345,9 @@ export function DashboardPage() {
             },
             {
               label: "今日消耗",
-              value: formatCostTotals(requestCostSummary.todayTotalsByCurrency),
-              detail: formatCostMetricDetail(requestCostSummary),
+              value: <DashboardCostTotals totals={requestCostSummary.todayTotalsByCurrency} />,
+              detail: <DashboardCostMetricDetail summary={requestCostSummary} />,
               icon: BadgeDollarSign,
-              tone: requestCostSummary.todayTotalsByCurrency.length > 0 ? "warning" : "neutral",
               accent: "purple",
             },
             {
@@ -465,7 +472,23 @@ export function DashboardPage() {
       <div className="grid min-h-0 gap-3">
         <SectionCard title="最近使用" contentClassName="border-0">
           <div className="grid gap-3">
-            {requestLogs.slice(0, 5).map((request) => (
+            {dashboardLoaded && requestLogs.length === 0 ? (
+              <div className="flex min-h-[260px] flex-col items-center justify-center px-4 py-10 text-center">
+                <div className="flex h-20 w-20 items-center justify-center rounded-[16px] bg-slate-100 text-slate-300">
+                  <Inbox className="h-8 w-8" strokeWidth={1.75} />
+                </div>
+                <div className="mt-5 text-base font-medium text-slate-800">暂无使用记录</div>
+                <p className="mt-2 text-sm text-slate-500">
+                  开始使用 API 后，您的使用历史将显示在这里。
+                </p>
+              </div>
+            ) : (
+              requestLogs.slice(0, 5).map((request) => {
+                const requestKeyName =
+                  (request.stationKeyId && requestKeyNameById.get(request.stationKeyId)) ||
+                  request.stationKeyId ||
+                  "未知";
+                return (
               <div
                 key={request.id}
                 className="grid min-h-[72px] grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3 rounded-[8px] bg-slate-50 px-4 py-3"
@@ -480,6 +503,9 @@ export function DashboardPage() {
                   <div className="mt-0.5 truncate text-xs text-slate-500">
                     {formatDateTime(request.startedAt)}
                   </div>
+                  <div className="mt-0.5 truncate text-xs text-slate-500">
+                    Key：{requestKeyName}
+                  </div>
                 </div>
                 <div className="min-w-[118px] text-right">
                   <div className="whitespace-nowrap text-sm font-semibold text-slate-400">
@@ -487,14 +513,18 @@ export function DashboardPage() {
                       {formatRequestCost(request.estimatedTotalCost, request.costCurrency, request.costStatus)}
                     </span>
                     <span className="mx-1">/</span>
-                    <span>{formatCostTotals(requestCostSummary.allTotalsByCurrency)}</span>
+                    <span>
+                      {formatRequestCost(requestBaseCostValue(request), request.costCurrency, request.costStatus)}
+                    </span>
                   </div>
                   <div className="mt-0.5 whitespace-nowrap text-xs text-slate-500">
                     {formatTokenCount(request.totalTokens)} tokens
                   </div>
                 </div>
               </div>
-            ))}
+                );
+              })
+            )}
           </div>
         </SectionCard>
 
@@ -608,38 +638,50 @@ function formatBalance(value: number, currency?: string) {
   return `${symbol}${value.toFixed(2)}`;
 }
 
-function formatCostTotals(totals: DashboardCostTotal[]) {
-  if (totals.length === 0) {
-    return "无成本";
-  }
-  return totals
-    .map((total) => {
+function DashboardCostTotals({ totals, compact = false }: { totals: DashboardCostTotal[]; compact?: boolean }) {
+  const displayTotals = totals.length > 0
+    ? totals
+    : [{ currency: "USD", totalCost: 0, baseTotalCost: 0, requestCount: 0 }];
+
+  return (
+    <>
+      {displayTotals.map((total, index) => {
       const symbol = currencySymbol(total.currency);
-      return `${total.currency} ${symbol}${total.totalCost.toFixed(4)}`;
-    })
-    .join(" / ");
+      const prefix = symbol || `${total.currency} `;
+        return (
+          <span key={total.currency}>
+            {index > 0 ? <span className="text-slate-400"> · </span> : null}
+            <span className={compact ? "text-purple-600" : undefined} title="实际花费">
+              {prefix}{total.totalCost.toFixed(4)}
+            </span>
+            <span
+              className={compact ? "font-normal text-slate-400" : "text-sm font-normal text-slate-400"}
+              title="1倍率 Token 花费"
+            >
+              {` / ${prefix}${total.baseTotalCost.toFixed(4)}`}
+            </span>
+          </span>
+        );
+      })}
+    </>
+  );
 }
 
-function formatCostMetricDetail(summary: DashboardRequestCostSummary) {
-  const parts = [`累计 ${formatCostTotals(summary.allTotalsByCurrency)}`];
+function DashboardCostMetricDetail({ summary }: { summary: DashboardRequestCostSummary }) {
+  const diagnostics: string[] = [];
   if (summary.unpricedCount > 0) {
-    parts.push(`${summary.unpricedCount} 未定价`);
+    diagnostics.push(`${summary.unpricedCount} 未定价`);
   }
   if (summary.legacyEstimateCount > 0) {
-    parts.push(`${summary.legacyEstimateCount} 旧估算`);
+    diagnostics.push(`${summary.legacyEstimateCount} 旧估算`);
   }
-  return parts.join(" · ");
-}
-
-function formatRequestCost(value: number | null | undefined, currency?: string | null, costStatus?: string | null) {
-  if (value == null && costStatus === "usage_only") {
-    return "未定价";
-  }
-  if (value == null) {
-    return "-";
-  }
-  const symbol = currencySymbol(currency ?? "USD") || "$";
-  return `${symbol}${value.toFixed(4)}`;
+  return (
+    <>
+      <span>总计: </span>
+      <DashboardCostTotals totals={summary.allTotalsByCurrency} compact />
+      {diagnostics.map((diagnostic) => <span key={diagnostic}> · {diagnostic}</span>)}
+    </>
+  );
 }
 
 function formatTokenCount(value: number | null | undefined) {

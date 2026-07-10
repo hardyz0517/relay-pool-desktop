@@ -1,17 +1,12 @@
-import { Activity, Clock3, ScrollText, Server, ShieldCheck } from "lucide-react";
-import { Button, EmptyState, SectionCard, StatusBadge } from "@/components/ui";
+import { Clock3, Server, ShieldCheck } from "lucide-react";
+import { EmptyState, SectionCard, StatusBadge } from "@/components/ui";
 import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
-import type { AppRouteId } from "@/lib/types/navigation";
 import type { RouteEndpointKind } from "@/lib/types/routing";
 import { LocalRoutingCandidateRow } from "./LocalRoutingCandidateRow";
-import { RouteExplanationPanel } from "./RouteExplanationPanel";
-
-type LocalRoutingLinkedPage = Extract<AppRouteId, "channels" | "logs">;
 
 type LocalRoutingStatusTabProps = {
   workspace: LocalRoutingWorkspace | null;
   loading: boolean;
-  onOpenPage?: (pageId: LocalRoutingLinkedPage) => void;
 };
 
 const endpointLabels: Record<RouteEndpointKind, string> = {
@@ -29,15 +24,7 @@ const policyLabels: Record<string, string> = {
   cheap_first: "低价优先",
 };
 
-export function LocalRoutingStatusTab({ workspace, loading, onOpenPage }: LocalRoutingStatusTabProps) {
-  function openLinkedPage(pageId: LocalRoutingLinkedPage) {
-    if (onOpenPage) {
-      onOpenPage(pageId);
-      return;
-    }
-    window.dispatchEvent(new CustomEvent("relay-pool:open-page", { detail: { pageId } }));
-  }
-
+export function LocalRoutingStatusTab({ workspace, loading }: LocalRoutingStatusTabProps) {
   if (loading && !workspace) {
     return (
       <SectionCard title="本地路由状态">
@@ -58,7 +45,7 @@ export function LocalRoutingStatusTab({ workspace, loading, onOpenPage }: LocalR
 
   return (
     <div className="grid gap-3">
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
+      <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
         <SectionCard title="本地端点" contentClassName="grid gap-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
@@ -104,17 +91,6 @@ export function LocalRoutingStatusTab({ workspace, loading, onOpenPage }: LocalR
         </SectionCard>
       </div>
 
-      <SectionCard title="排障入口" contentClassName="flex flex-wrap gap-2">
-        <Button variant="secondary" onClick={() => openLinkedPage("channels")}>
-          <Activity className="h-4 w-4" />
-          渠道状态
-        </Button>
-        <Button variant="secondary" onClick={() => openLinkedPage("logs")}>
-          <ScrollText className="h-4 w-4" />
-          请求日志
-        </Button>
-      </SectionCard>
-
       <SectionCard title="候选顺位" contentClassName="grid gap-2">
         {workspace.candidates.length === 0 ? (
           <EmptyState title="暂无候选 Key" description="后续任务会接入可编辑的本地路由候选列表。" />
@@ -124,8 +100,6 @@ export function LocalRoutingStatusTab({ workspace, loading, onOpenPage }: LocalR
           ))
         )}
       </SectionCard>
-
-      <RouteExplanationPanel workspace={workspace} />
     </div>
   );
 }
