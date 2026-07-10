@@ -101,8 +101,24 @@ assert.ok(
 );
 
 assert.ok(
-  /createStationKeyMonitorInput\([^)]*connectivityResult\.model/s.test(keyPoolPageSource),
-  "key-pool monitor creation should pass the connectivity-tested model into the default monitor config",
+  keyPoolPageSource.includes("createStationKeyMonitorInput(item, preferredTemplate, capabilities, monitorModel)"),
+  "key-pool monitor creation should pass the successful connectivity-tested model into the default monitor config",
+);
+
+assert.ok(
+  keyPoolPageSource.includes("const monitorModel = connectivityResult.ok ? connectivityResult.model : null"),
+  "key-pool monitor creation should fall back to configured model selection when the immediate connectivity test fails",
+);
+
+assert.ok(
+  !keyPoolPageSource.includes("throw new Error(`连通性测试未通过"),
+  "key-pool monitor creation should not block monitor creation when the immediate connectivity test fails",
+);
+
+assert.ok(
+  keyPoolPageSource.indexOf("await createChannelMonitor(")
+    < keyPoolPageSource.indexOf("if (!connectivityResult.ok)"),
+  "key-pool monitor creation should complete before reporting an immediate connectivity failure",
 );
 
 const existingMonitor = {

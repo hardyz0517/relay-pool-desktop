@@ -33,6 +33,22 @@ const memoryCredentials = new Map<string, StationCredentials>();
 let memoryKeyPool: KeyPoolItem[] = [];
 let memoryIdCounter = 0;
 
+export const KEY_POOL_ITEMS_UPDATED_EVENT = "relay-pool:key-pool-items-updated";
+
+function notifyKeyPoolItemsUpdated() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent(KEY_POOL_ITEMS_UPDATED_EVENT));
+}
+
+function withKeyPoolItemsInvalidation<T>(request: Promise<T>): Promise<T> {
+  return request.then((result) => {
+    notifyKeyPoolItemsUpdated();
+    return result;
+  });
+}
+
 export function listStationKeys(stationId: string) {
   return invoke<StationKey[]>("list_station_keys", { stationId }).catch((error) => {
     if (isInvokeUnavailable(error)) {
@@ -77,7 +93,7 @@ export function scanRemoteStationKeys(stationId: string): Promise<RemoteKeyScanR
 }
 
 export function createRemoteStationKey(input: CreateRemoteStationKeyInput): Promise<CreateRemoteStationKeyResult> {
-  return invoke<CreateRemoteStationKeyResult>("create_remote_station_key", { input }).catch(async (error) => {
+  return withKeyPoolItemsInvalidation(invoke<CreateRemoteStationKeyResult>("create_remote_station_key", { input }).catch(async (error) => {
     if (isInvokeUnavailable(error)) {
       const fullKeyOnce = `sk-browser-preview-${nextMemoryId("secret")}`;
       const stationKey = await createStationKey({
@@ -107,14 +123,14 @@ export function createRemoteStationKey(input: CreateRemoteStationKeyInput): Prom
       };
     }
     throw error;
-  });
+  }));
 }
 
 export function createLocalStationKeyFromRemote(
   remoteKeyId: string,
   stationId: string,
 ): Promise<CreateLocalStationKeyFromRemoteResult> {
-  return invoke<CreateLocalStationKeyFromRemoteResult>("create_local_station_key_from_remote", {
+  return withKeyPoolItemsInvalidation(invoke<CreateLocalStationKeyFromRemoteResult>("create_local_station_key_from_remote", {
     remoteKeyId,
     stationId,
   }).catch((error) => {
@@ -122,7 +138,7 @@ export function createLocalStationKeyFromRemote(
       throw new Error("浏览器预览模式无法读取远端完整 Key，请在桌面端同步或手动补全。");
     }
     throw error;
-  });
+  }));
 }
 
 export function bindRemoteStationKey(remoteKeyId: string, stationKeyId: string): Promise<RemoteStationKey[]> {
@@ -188,7 +204,7 @@ export function unbindRemoteStationKey(remoteKeyId: string, stationId: string): 
 }
 
 export function createStationKey(input: CreateStationKeyInput) {
-  return invoke<StationKey>("create_station_key", { input }).catch(async (error) => {
+  return withKeyPoolItemsInvalidation(invoke<StationKey>("create_station_key", { input }).catch(async (error) => {
     if (isInvokeUnavailable(error)) {
       const key = memoryKeyFromInput(input);
       memoryKeys.set(input.stationId, [...(memoryKeys.get(input.stationId) ?? []), key]);
@@ -200,11 +216,11 @@ export function createStationKey(input: CreateStationKeyInput) {
       return key;
     }
     throw error;
-  });
+  }));
 }
 
 export function updateStationKey(input: UpdateStationKeyInput) {
-  return invoke<StationKey>("update_station_key", { input }).catch((error) => {
+  return withKeyPoolItemsInvalidation(invoke<StationKey>("update_station_key", { input }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       const keys = memoryKeys.get(input.stationId) ?? [];
       const nextKeys = keys.map((key) => key.id === input.id ? { ...key, ...input, apiKeyPresent: input.apiKey ? true : key.apiKeyPresent } : key);
@@ -212,22 +228,22 @@ export function updateStationKey(input: UpdateStationKeyInput) {
       return nextKeys.find((key) => key.id === input.id) ?? keys[0];
     }
     throw error;
-  });
+  }));
 }
 
 export function saveStationKeyWithDefaults(
   input: SaveStationKeyWithDefaultsInput,
 ): Promise<SaveStationKeyWithDefaultsResult> {
-  return invoke<SaveStationKeyWithDefaultsResult>("save_station_key_with_defaults", { input }).catch((error) => {
+  return withKeyPoolItemsInvalidation(invoke<SaveStationKeyWithDefaultsResult>("save_station_key_with_defaults", { input }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       return saveStationKeyWithDefaultsInMemory(input);
     }
     throw error;
-  });
+  }));
 }
 
 export function updateStationKeyGroupBinding(stationKeyId: string, groupBindingId: string) {
-  return invoke<StationKey>("update_station_key_group_binding", {
+  return withKeyPoolItemsInvalidation(invoke<StationKey>("update_station_key_group_binding", {
     input: { stationKeyId, groupBindingId },
   }).catch((error) => {
     if (isInvokeUnavailable(error)) {
@@ -256,11 +272,11 @@ export function updateStationKeyGroupBinding(stationKeyId: string, groupBindingI
       return memoryKeyPool[0];
     }
     throw error;
-  });
+  }));
 }
 
 export function deleteStationKey(id: string) {
-  return invoke<void>("delete_station_key", { id }).catch((error) => {
+  return withKeyPoolItemsInvalidation(invoke<void>("delete_station_key", { id }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       for (const [stationId, keys] of memoryKeys) {
         memoryKeys.set(stationId, keys.filter((key) => key.id !== id));
@@ -268,11 +284,11 @@ export function deleteStationKey(id: string) {
       return;
     }
     throw error;
-  });
+  }));
 }
 
 export function reorderStationKeys(stationId: string, keyIds: string[]) {
-  return invoke<StationKey[]>("reorder_station_keys", { stationId, keyIds }).catch((error) => {
+  return withKeyPoolItemsInvalidation(invoke<StationKey[]>("reorder_station_keys", { stationId, keyIds }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       const byId = new Map((memoryKeys.get(stationId) ?? []).map((key) => [key.id, key] as const));
       const nextKeys = keyIds.flatMap((id, index) => {
@@ -283,7 +299,7 @@ export function reorderStationKeys(stationId: string, keyIds: string[]) {
       return nextKeys;
     }
     throw error;
-  });
+  }));
 }
 
 export function listKeyPoolItems() {
@@ -296,7 +312,7 @@ export function listKeyPoolItems() {
 }
 
 export function reorderKeyPool(keyIds: string[]) {
-  return invoke<KeyPoolItem[]>("reorder_key_pool", { keyIds }).catch((error) => {
+  return withKeyPoolItemsInvalidation(invoke<KeyPoolItem[]>("reorder_key_pool", { keyIds }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       const byId = new Map(memoryKeyPool.map((item) => [item.id, item] as const));
       memoryKeyPool = keyIds.flatMap((id, index) => {
@@ -306,7 +322,7 @@ export function reorderKeyPool(keyIds: string[]) {
       return memoryKeyPool;
     }
     throw error;
-  });
+  }));
 }
 
 export function testStationKeyConnectivity(stationKeyId: string) {

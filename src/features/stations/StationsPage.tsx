@@ -14,6 +14,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { Clock3, Edit3, GripVertical, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
@@ -173,9 +174,9 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  useEffect(() => {
-    void refreshStations();
-  }, []);
+  usePageActivation(({ isInitial }) => {
+    void refreshStations({ silent: !isInitial });
+  });
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {

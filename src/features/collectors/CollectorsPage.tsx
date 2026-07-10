@@ -9,6 +9,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, EmptyState, InspectorPanel, ObjectRow, SectionCard, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import {
@@ -80,9 +81,14 @@ export function CollectorsPage() {
     ? normalized.rateMultipliers
     : [];
 
-  useEffect(() => {
-    void refreshStations();
-  }, []);
+  usePageActivation(({ isInitial }) => {
+    void refreshStations(isInitial);
+    if (!isInitial && selectedStation) {
+      void refreshSnapshot(selectedStation.id);
+      void refreshCaptureStatus(selectedStation.id);
+      void refreshRuns(selectedStation.id);
+    }
+  });
 
   useEffect(() => {
     if (!selectedStation) {
@@ -96,8 +102,10 @@ export function CollectorsPage() {
     void refreshRuns(selectedStation.id);
   }, [selectedStation?.id]);
 
-  async function refreshStations() {
-    setLoading(true);
+  async function refreshStations(showLoading = true) {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const nextStations = await listStations();
@@ -113,7 +121,9 @@ export function CollectorsPage() {
       setError(message);
       toast.error("读取站点失败", message);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }
 

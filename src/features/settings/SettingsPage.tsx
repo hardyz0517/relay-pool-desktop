@@ -1,6 +1,7 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { Coins, FolderOpen, Play, RotateCcw, Save, Square } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, MaskedSecret, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import {
@@ -79,12 +80,14 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
   const [proxyBusy, setProxyBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void refreshSettings();
-  }, []);
+  usePageActivation(({ isInitial }) => {
+    void refreshSettings(isInitial);
+  });
 
-  async function refreshSettings() {
-    setLoading(true);
+  async function refreshSettings(showLoading = true) {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const nextSettings = await getSettings();
@@ -97,7 +100,9 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
       setError(message);
       toast.error("刷新设置失败", message);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }
 

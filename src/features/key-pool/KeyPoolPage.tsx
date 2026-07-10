@@ -14,12 +14,13 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { Activity, Edit3, GripVertical, KeyRound, Loader2, Plus, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, SelectControl, StatusBadge, SwitchControl, type StatusTone, useToast } from "@/components/ui";
 import { createChannelMonitor, listChannelMonitorTemplates, listChannelMonitors, updateChannelMonitor } from "@/lib/api/channelMonitors";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getStationKeyCapabilities } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
-import { deleteStationKey, listKeyPoolItems, reorderKeyPool, saveStationKeyWithDefaults, testStationKeyConnectivity, updateStationKey } from "@/lib/api/stationKeys";
+import { KEY_POOL_ITEMS_UPDATED_EVENT, deleteStationKey, listKeyPoolItems, reorderKeyPool, saveStationKeyWithDefaults, testStationKeyConnectivity, updateStationKey } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
 import { formatRate } from "@/lib/formatters";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
@@ -94,8 +95,19 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     [activeDragId, items],
   );
 
+  usePageActivation(({ isInitial }) => {
+    void refresh(isInitial);
+  });
+
   useEffect(() => {
-    void refresh();
+    function handleKeyPoolItemsUpdated() {
+      void refresh(false);
+    }
+
+    window.addEventListener(KEY_POOL_ITEMS_UPDATED_EVENT, handleKeyPoolItemsUpdated);
+    return () => {
+      window.removeEventListener(KEY_POOL_ITEMS_UPDATED_EVENT, handleKeyPoolItemsUpdated);
+    };
   }, []);
 
   const filteredItems = useMemo(() => {
@@ -133,8 +145,10 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     [stations],
   );
 
-  async function refresh() {
-    setLoading(true);
+  async function refresh(showLoading = true) {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const [nextStations, nextItems, nextMonitors, nextTemplates] = await Promise.all([
@@ -152,7 +166,9 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       setError(message);
       toast.error("读取密钥池失败", message);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }
 
@@ -301,10 +317,11 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
           capabilities,
         }) ?? template;
         const connectivityResult = await testStationKeyConnectivity(item.id);
+        const monitorModel = connectivityResult.ok ? connectivityResult.model : null;
+        await createChannelMonitor(createStationKeyMonitorInput(item, preferredTemplate, capabilities, monitorModel));
         if (!connectivityResult.ok) {
-          throw new Error(`连通性测试未通过，未创建监控：${connectivityResult.message}`);
+          toast.info("即时连通性未通过，已创建定时监控", connectivityResult.message);
         }
-        await createChannelMonitor(createStationKeyMonitorInput(item, preferredTemplate, capabilities, connectivityResult.model));
       }
       await refresh();
       toast.success(nextEnabled ? "监控已开启" : "监控已停用");

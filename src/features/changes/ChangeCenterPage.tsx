@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { CheckCheck, ChevronLeft, ChevronRight, RefreshCw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import {
   Button,
   ConfirmDialog,
@@ -43,12 +44,14 @@ export function ChangeCenterPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void refresh();
-  }, []);
+  usePageActivation(({ isInitial }) => {
+    void refresh(false, isInitial);
+  });
 
-  async function refresh(showSuccess = false) {
-    setLoading(true);
+  async function refresh(showSuccess = false, showLoading = true) {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const workspace = await loadChangeCenterWorkspace();
@@ -66,7 +69,9 @@ export function ChangeCenterPage() {
       setError(message);
       toast.error("刷新变更中心失败", message);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }
 

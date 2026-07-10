@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { RefreshCcw } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, SegmentedControl, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { loadLocalRoutingWorkspace } from "@/lib/queries/localRoutingQueries";
@@ -22,19 +23,23 @@ export function RoutingPage({ onOpenPage }: RoutingPageProps) {
   const [workspace, setWorkspace] = useState<LocalRoutingWorkspace | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    void refresh();
-  }, []);
+  usePageActivation(({ isInitial }) => {
+    void refresh(isInitial);
+  });
 
-  async function refresh() {
-    setLoading(true);
+  async function refresh(showLoading = true) {
+    if (showLoading) {
+      setLoading(true);
+    }
     try {
       setWorkspace(await loadLocalRoutingWorkspace());
     } catch (requestError) {
       setWorkspace(null);
       toast.error("刷新本地路由状态失败", readError(requestError));
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }
 

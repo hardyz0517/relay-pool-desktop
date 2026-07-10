@@ -2119,6 +2119,49 @@ mod tests {
     }
 
     #[test]
+    fn station_key_connectivity_network_error_does_not_switch_protocol() {
+        let candidates = vec!["gpt-4.1-mini".to_string()];
+        let mut attempted = Vec::new();
+
+        let (_model, result) =
+            run_station_key_connectivity_model_attempts(&candidates, |candidate| {
+                run_station_key_connectivity_single_model_probe(
+                    &UpstreamApiFormat::Auto,
+                    None,
+                    |kind| {
+                        attempted.push((candidate.to_string(), kind));
+                        match kind {
+                            StationKeyConnectivityProbeKind::Responses => {
+                                StationKeyConnectivityProbeResult::failure(
+                                    0,
+                                    9,
+                                    "Network Error".to_string(),
+                                )
+                            }
+                            StationKeyConnectivityProbeKind::ChatCompletions => {
+                                StationKeyConnectivityProbeResult::success(
+                                    200,
+                                    13,
+                                    "Chat Completions 连通正常".to_string(),
+                                )
+                            }
+                        }
+                    },
+                )
+            });
+
+        assert_eq!(
+            attempted,
+            vec![(
+                "gpt-4.1-mini".to_string(),
+                StationKeyConnectivityProbeKind::Responses,
+            )]
+        );
+        assert!(!result.ok);
+        assert_eq!(result.status_code, 0);
+    }
+
+    #[test]
     fn station_key_connectivity_chat_probe_uses_low_token_request() {
         let body = build_station_key_connectivity_probe_body(
             "claude-test",

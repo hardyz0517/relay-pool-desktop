@@ -16,6 +16,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import {
   Button,
   MetricPanel,
@@ -81,7 +82,7 @@ export function DashboardPage() {
   const [stoppingLocalProxy, setStoppingLocalProxy] = useState(false);
   const [importingCCSwitch, setImportingCCSwitch] = useState(false);
 
-  useEffect(() => {
+  usePageActivation(() => {
     void loadDashboardWorkspace()
       .then((workspace) => {
         setProxyStatus(workspace.proxyStatus);
@@ -94,7 +95,7 @@ export function DashboardPage() {
       .catch((requestError) => {
         toast.error("工作台刷新失败", readError(requestError));
       });
-  }, []);
+  });
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {

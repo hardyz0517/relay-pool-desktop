@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { AppShell } from "@/components/shell/AppShell";
+import { PageActivityProvider } from "@/components/shell/PageActivity";
 import { CollectorsPage } from "@/features/collectors/CollectorsPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { LogsPage } from "@/features/logs/LogsPage";
@@ -170,13 +171,14 @@ export function App() {
   return (
     <AppShell activeRouteId={activeShellRouteId} onRouteChange={(routeId) => setActiveRouteId(routeId)}>
       {shellRouteIds.map((routeId) => (
-        <div
-          key={routeId}
-          aria-hidden={activeRouteId !== routeId}
-          className={activeRouteId === routeId ? "contents" : "hidden"}
-        >
-          {renderShellPage(routeId)}
-        </div>
+        <PageActivityProvider key={routeId} active={activeRouteId === routeId}>
+          <div
+            aria-hidden={activeRouteId !== routeId}
+            className={activeRouteId === routeId ? "contents" : "hidden"}
+          >
+            {renderShellPage(routeId)}
+          </div>
+        </PageActivityProvider>
       ))}
       {transientPage}
     </AppShell>

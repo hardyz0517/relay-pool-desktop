@@ -783,7 +783,7 @@ pub fn collect_groups(
         data_key,
         crate::services::database::now_millis_for_services() as i64,
     )?;
-    let access_token = match session.access_token {
+    let mut access_token = match session.access_token {
         Some(access_token) => access_token,
         None => match login_and_store_access_token(database, data_key, &station)? {
             Some(access_token) => access_token,
@@ -799,11 +799,17 @@ pub fn collect_groups(
     let mut available_result = fetch_json_with_bearer(&available_url, &access_token);
     let mut rates_result = fetch_json_with_bearer(&rates_url, &access_token);
     if available_result.is_auth_failure() || rates_result.is_auth_failure() {
-        if let Some(access_token) = login_and_store_access_token(database, data_key, &station)? {
+        if let Some(refreshed_access_token) =
+            login_and_store_access_token(database, data_key, &station)?
+        {
+            access_token = refreshed_access_token;
             available_result = fetch_json_with_bearer(&available_url, &access_token);
             rates_result = fetch_json_with_bearer(&rates_url, &access_token);
         }
     }
+    available_result =
+        retry_transient_fetch_json_with_bearer(&available_url, &access_token, available_result);
+    rates_result = retry_transient_fetch_json_with_bearer(&rates_url, &access_token, rates_result);
     let available_payload = available_result.payload.clone().unwrap_or(Value::Null);
     let rates_payload = rates_result.payload.clone().unwrap_or(Value::Null);
     let mut facts = parse_group_rate_facts(
@@ -945,6 +951,22 @@ impl EndpointJsonResult {
 
     fn is_auth_failure(&self) -> bool {
         matches!(self.status, Some(401 | 403))
+    }
+
+    fn is_transient_failure(&self) -> bool {
+        matches!(self.status, None | Some(408 | 429 | 500..=599))
+    }
+}
+
+fn retry_transient_fetch_json_with_bearer(
+    url: &str,
+    access_token: &str,
+    result: EndpointJsonResult,
+) -> EndpointJsonResult {
+    if result.is_transient_failure() {
+        fetch_json_with_bearer(url, access_token)
+    } else {
+        result
     }
 }
 
@@ -1259,7 +1281,10 @@ mod tests {
     use std::{
         io::{Read, Write},
         net::{TcpListener, TcpStream},
-        sync::mpsc,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc, Arc,
+        },
         thread,
         time::Duration,
     };
@@ -1831,6 +1856,45 @@ mod tests {
     }
 
     #[test]
+    fn sub2api_groups_retries_transient_rate_endpoint_failure() {
+        let server = FlakyGroupServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station(CreateStationInput {
+                name: "flaky group station".to_string(),
+                station_type: "sub2api".to_string(),
+                base_url: server.base_url.clone(),
+                api_key: "sk-station".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+        database
+            .update_station_credentials_with_data_key(
+                UpdateStationCredentialsInput {
+                    station_id: station.id.clone(),
+                    login_username: Some("user@example.test".to_string()),
+                    login_password: Some("correct-password".to_string()),
+                    remember_password: true,
+                },
+                &data_key,
+            )
+            .expect("credentials");
+
+        let output = collect_groups(&database, &data_key, &station.id).expect("groups");
+
+        assert_eq!(output.status, "success");
+        assert!(output.facts.rates.iter().any(|rate| {
+            rate.group_name == "Pro" && rate.effective_rate_multiplier == Some(1.2)
+        }));
+        assert_eq!(server.rate_request_count(), 2);
+    }
+
+    #[test]
     fn sub2api_balance_falls_back_to_account_profile_when_usage_is_unauthorized() {
         let server = TestBalanceFallbackServer::start();
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
@@ -1879,6 +1943,11 @@ mod tests {
         base_url: String,
     }
 
+    struct FlakyGroupServer {
+        base_url: String,
+        rate_requests: Arc<AtomicUsize>,
+    }
+
     struct TestCreateKeyServer {
         base_url: String,
         request_rx: mpsc::Receiver<Value>,
@@ -1898,6 +1967,28 @@ mod tests {
                 }
             });
             Self { base_url }
+        }
+    }
+
+    impl FlakyGroupServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            let rate_requests = Arc::new(AtomicUsize::new(0));
+            let handler_rate_requests = Arc::clone(&rate_requests);
+            thread::spawn(move || {
+                for stream in listener.incoming().take(6).flatten() {
+                    handle_flaky_group_test_request(stream, Arc::clone(&handler_rate_requests));
+                }
+            });
+            Self {
+                base_url,
+                rate_requests,
+            }
+        }
+
+        fn rate_request_count(&self) -> usize {
+            self.rate_requests.load(Ordering::Relaxed)
         }
     }
 
@@ -2015,6 +2106,65 @@ mod tests {
             ),
             "/api/v1/groups/rates" if authorized => {
                 ("200 OK", json!({ "data": { "default": 0.8, "pro": 1.2 } }))
+            }
+            _ => ("401 Unauthorized", json!({ "message": "unauthorized" })),
+        };
+        let text = response.to_string();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
+    }
+
+    fn handle_flaky_group_test_request(mut stream: TcpStream, rate_requests: Arc<AtomicUsize>) {
+        let request = read_http_request(&mut stream);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
+        let authorized = request
+            .to_lowercase()
+            .contains("authorization: bearer flaky-collector-token");
+
+        let (status, response) = match path {
+            "/api/v1/auth/login" => {
+                let parsed = serde_json::from_str::<Value>(body).expect("login json");
+                if parsed.get("password").and_then(Value::as_str) == Some("correct-password") {
+                    (
+                        "200 OK",
+                        json!({ "data": { "access_token": "flaky-collector-token" } }),
+                    )
+                } else {
+                    (
+                        "401 Unauthorized",
+                        json!({ "message": "invalid credentials" }),
+                    )
+                }
+            }
+            "/api/v1/groups/available" if authorized => (
+                "200 OK",
+                json!({
+                    "data": [
+                        { "id": "default", "name": "Default" },
+                        { "id": "pro", "name": "Pro" }
+                    ]
+                }),
+            ),
+            "/api/v1/groups/rates" if authorized => {
+                let request_index = rate_requests.fetch_add(1, Ordering::Relaxed);
+                if request_index == 0 {
+                    (
+                        "502 Bad Gateway",
+                        json!({ "message": "temporary upstream failure" }),
+                    )
+                } else {
+                    ("200 OK", json!({ "data": { "default": 0.8, "pro": 1.2 } }))
+                }
             }
             _ => ("401 Unauthorized", json!({ "message": "unauthorized" })),
         };

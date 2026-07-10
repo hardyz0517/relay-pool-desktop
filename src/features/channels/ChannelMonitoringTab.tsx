@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Copy, Edit3, LayoutTemplate, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button, ConfirmDialog, EmptyState, IconButton, StatusBadge, useToast } from "@/components/ui";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import {
   createChannelMonitor,
   deleteChannelMonitor,
@@ -52,9 +53,9 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
   const [editingMonitor, setEditingMonitor] = useState<ChannelMonitor | null>(null);
   const [pendingDeleteMonitor, setPendingDeleteMonitor] = useState<ChannelMonitor | null>(null);
 
-  useEffect(() => {
-    void refresh();
-  }, []);
+  usePageActivation(({ isInitial }) => {
+    void refresh(false, isInitial);
+  });
 
   const summary = useMemo(() => {
     const enabledCount = monitors.filter((monitor) => monitor.enabled).length;
@@ -71,8 +72,10 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
     };
   }, [monitors, runLoadFailedIds, runsByMonitor]);
 
-  async function refresh(showSuccess = false) {
-    setLoading(true);
+  async function refresh(showSuccess = false, showLoading = true) {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const workspace = await loadChannelMonitoringWorkspace();
@@ -91,7 +94,9 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
       setError(message);
       toast.error("读取渠道监控失败", message);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }
 

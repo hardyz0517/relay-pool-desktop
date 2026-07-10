@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { RefreshCw, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import {
   Button,
   ConfirmDialog,
@@ -48,9 +49,9 @@ export function LogsPage() {
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void refreshLogs();
-  }, []);
+  usePageActivation(({ isInitial }) => {
+    void refreshLogs(false, isInitial);
+  });
 
   const filteredLogs = useMemo(() => {
     if (filter === "failed") {
@@ -86,8 +87,10 @@ export function LogsPage() {
     { key: "latency", header: "耗时", className: "w-24 text-right", render: (row) => row.durationMs == null ? "暂无" : `${row.durationMs}ms` },
   ], [keyById]);
 
-  async function refreshLogs(showSuccess = false) {
-    setLoading(true);
+  async function refreshLogs(showSuccess = false, showLoading = true) {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const workspace = await loadRequestLogWorkspace();
@@ -102,7 +105,9 @@ export function LogsPage() {
       setError(message);
       toast.error("刷新请求日志失败", message);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }
 

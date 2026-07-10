@@ -18,6 +18,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { LucideIcon } from "lucide-react";
 import { Radio, RefreshCw, Server, Timer } from "lucide-react";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, EmptyState, SegmentedControl, StatusBadge, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { loadChannelStatusWorkspace } from "@/lib/queries/channelQueries";
@@ -96,8 +97,14 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  usePageActivation(({ isInitial }) => {
+    void refresh(false, isInitial);
+  });
+
   useEffect(() => {
-    void refresh();
+    if (refreshToken > 0) {
+      void refresh();
+    }
   }, [refreshToken]);
 
   const visibleLogs = useMemo(() => filterLogsByWindow(logs, timeWindow), [logs, timeWindow]);
@@ -129,8 +136,10 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
     setChannelOrder(nextOrder);
   }
 
-  async function refresh(showSuccess = false) {
-    setLoading(true);
+  async function refresh(showSuccess = false, showLoading = true) {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const workspace = await loadChannelStatusWorkspace();
@@ -148,7 +157,9 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
       setError(message);
       toast.error("刷新渠道状态失败", message);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }
 

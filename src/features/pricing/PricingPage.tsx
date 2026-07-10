@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Coins, Image, RefreshCw, ShieldCheck, TrendingDown } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import {
   Button,
   EmptyState,
@@ -62,12 +63,14 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
   const [query, setQuery] = useState("");
   const [selectedStationId, setSelectedStationId] = useState<string>("all");
 
-  useEffect(() => {
-    void refresh();
-  }, []);
+  usePageActivation(({ isInitial }) => {
+    void refresh(false, isInitial);
+  });
 
-  async function refresh(showSuccess = false) {
-    setLoading(true);
+  async function refresh(showSuccess = false, showLoading = true) {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const [nextPricingRules, nextStations] = await Promise.all([
@@ -94,7 +97,9 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
       setError(message);
       toast.error("刷新价格倍率失败", message);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }
 
