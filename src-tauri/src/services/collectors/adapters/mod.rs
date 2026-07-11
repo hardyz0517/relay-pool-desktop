@@ -1,5 +1,6 @@
 pub mod newapi;
 pub mod openai_compatible;
+pub mod request_recovery;
 pub mod sub2api;
 
 use crate::models::remote_keys::RemoteStationKey;
