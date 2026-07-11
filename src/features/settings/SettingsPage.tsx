@@ -196,7 +196,7 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
     setSaving(true);
     setError(null);
     try {
-      const nextSettings = await updateSettings(formToInput(nextForm));
+      const nextSettings = await updateSettings(formToInput(nextForm, settings));
       setSettings(nextSettings);
       setForm(settingsToForm(nextSettings));
       window.dispatchEvent(new CustomEvent<AppSettings>(SETTINGS_UPDATED_EVENT, { detail: nextSettings }));
@@ -512,13 +512,13 @@ function settingsToForm(settings: AppSettings): SettingsFormState {
   };
 }
 
-function formToInput(form: SettingsFormState): UpdateSettingsInput {
+function formToInput(form: SettingsFormState, settings: AppSettings): UpdateSettingsInput {
   return {
     localProxyPort: Number(form.localProxyPort),
     defaultRoutingStrategy: form.defaultRoutingStrategy,
-    maxRateMultiplier: null,
-    defaultRoutingGroupFilter: "all_groups",
-    schedulerAdvancedSettings: DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
+    maxRateMultiplier: settings.maxRateMultiplier,
+    defaultRoutingGroupFilter: settings.defaultRoutingGroupFilter,
+    schedulerAdvancedSettings: settings.schedulerAdvancedSettings,
     lowBalanceThresholdCny: Number(form.lowBalanceThresholdCny),
     collectorIntervalMinutes: Number(form.collectorIntervalMinutes),
     balanceIntervalMinutes: Number(form.balanceIntervalMinutes),
