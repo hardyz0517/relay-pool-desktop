@@ -1374,7 +1374,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                     className={inputClassName}
                     value={form.name}
                     onChange={(event) => setForm({ ...form, name: event.target.value })}
-                    placeholder="例如 DeepSeek"
+                    placeholder="例如 我的供应商"
                   />
                 </Field>
                 <Field label="站点类型">
@@ -1403,7 +1403,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                       setForm({ ...form, baseUrl: event.target.value });
                       setConnectionTest({ status: "idle", message: null });
                     }}
-                    placeholder="https://api.example.com/v1"
+                    placeholder="https://api.example.com"
                   />
                 </Field>
               </div>

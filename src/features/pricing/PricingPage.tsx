@@ -18,7 +18,7 @@ import { parseTimestampLikeDate } from "@/lib/time";
 import { listPricingRules } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { listStationKeys } from "@/lib/api/stationKeys";
-import { listStations } from "@/lib/api/stations";
+import { listStations, openStationBaseUrl } from "@/lib/api/stations";
 import { Sub2ApiPlatformIcon } from "@/features/stations/components/Sub2ApiPlatformIcon";
 import { groupVisualMetaFor } from "@/features/stations/groupVisualMeta";
 import { cn } from "@/lib/utils";
@@ -128,6 +128,24 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
       stations,
     ],
   );
+  const stationBaseUrls = useMemo(
+    () => new Map(stations.map((station) => [station.id, station.baseUrl])),
+    [stations],
+  );
+
+  async function handleOpenStation(stationId: string, stationName: string) {
+    const baseUrl = stationBaseUrls.get(stationId);
+    if (!baseUrl) {
+      toast.error("打开中转站网址失败", `未找到 ${stationName} 的配置地址`);
+      return;
+    }
+
+    try {
+      await openStationBaseUrl(baseUrl);
+    } catch (error) {
+      toast.error("打开中转站网址失败", readError(error));
+    }
+  }
 
   return (
     <PageScaffold
@@ -216,7 +234,11 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
         ) : (
           <div className="divide-y divide-border">
             {viewModel.sections.map((section) => (
-              <GroupPricingSection key={section.groupType} section={section} />
+              <GroupPricingSection
+                key={section.groupType}
+                section={section}
+                onOpenStation={handleOpenStation}
+              />
             ))}
           </div>
         )}
@@ -225,7 +247,13 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
   );
 }
 
-function GroupPricingSection({ section }: { section: PricingGroupSection }) {
+function GroupPricingSection({
+  section,
+  onOpenStation,
+}: {
+  section: PricingGroupSection;
+  onOpenStation: (stationId: string, stationName: string) => void;
+}) {
   return (
     <section className="grid gap-3 px-4 py-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -240,12 +268,18 @@ function GroupPricingSection({ section }: { section: PricingGroupSection }) {
         <div className="text-xs text-muted-foreground">{section.rows.length} 个分组</div>
       </div>
 
-      <PricingRowsTable rows={section.rows} />
+      <PricingRowsTable rows={section.rows} onOpenStation={onOpenStation} />
     </section>
   );
 }
 
-function PricingRowsTable({ rows }: { rows: PricingComparisonRow[] }) {
+function PricingRowsTable({
+  rows,
+  onOpenStation,
+}: {
+  rows: PricingComparisonRow[];
+  onOpenStation: (stationId: string, stationName: string) => void;
+}) {
   return (
     <div className={tableScrollClassName}>
       <table className={tableClassName}>
@@ -267,7 +301,15 @@ function PricingRowsTable({ rows }: { rows: PricingComparisonRow[] }) {
           {rows.map((row) => (
             <tr key={row.id} className={row.isCheapest ? cheapestRowClassName : undefined}>
               <td className={tableCellClassName}>
-                <div className="font-medium text-slate-800">{row.stationName}</div>
+                <button
+                  type="button"
+                  aria-label={`在浏览器打开 ${row.stationName}`}
+                  title={`打开 ${row.stationName}`}
+                  className="max-w-full truncate text-left font-medium text-slate-800 transition-colors hover:text-[hsl(var(--accent))] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)]"
+                  onClick={() => onOpenStation(row.stationId, row.stationName)}
+                >
+                  {row.stationName}
+                </button>
               </td>
               <td className={tableCellClassName}>
                 <PricingGroupBadge row={row} />
