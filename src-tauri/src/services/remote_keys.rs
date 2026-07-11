@@ -503,7 +503,7 @@ fn sync_station_key_metadata(
                 .clone()
                 .or_else(|| local_key.group_id_hash.clone()),
             rate_multiplier: remote_key.rate_multiplier.or(local_key.rate_multiplier),
-            manual_rate_multiplier: local_key.manual_rate_multiplier,
+            manual_rate_multiplier: None,
             rate_source: remote_key
                 .rate_source
                 .clone()

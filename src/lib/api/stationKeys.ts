@@ -233,13 +233,18 @@ export function updateStationKey(input: UpdateStationKeyInput) {
 }
 
 function normalizeUpdateStationKeyInput(input: UpdateStationKeyInput): UpdateStationKeyInput {
-  return {
+  const normalized: UpdateStationKeyInput = {
     ...input,
     maxConcurrency: input.maxConcurrency ?? 3,
     loadFactor: input.loadFactor ?? null,
     schedulable: input.schedulable ?? true,
-    manualRateMultiplier: input.manualRateMultiplier ?? null,
   };
+  if ("manualRateMultiplier" in input) {
+    normalized.manualRateMultiplier = input.manualRateMultiplier ?? null;
+  } else {
+    delete normalized.manualRateMultiplier;
+  }
+  return normalized;
 }
 
 export function saveStationKeyWithDefaults(
@@ -547,7 +552,7 @@ function memoryKeyFromInput(input: CreateStationKeyInput): StationKey {
     tierLabel: input.tierLabel,
     rateMultiplier: input.rateMultiplier ?? null,
     manualRateMultiplier: input.manualRateMultiplier ?? null,
-    manualRateUpdatedAt: input.manualRateMultiplier == null ? null : now,
+    manualRateUpdatedAt: null,
     rateSource: input.rateSource ?? null,
     rateCollectedAt: null,
     balanceScope: input.balanceScope ?? null,

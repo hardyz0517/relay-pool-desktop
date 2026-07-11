@@ -32,9 +32,9 @@ pub struct AppSettings {
 pub struct UpdateSettingsInput {
     pub local_proxy_port: u16,
     pub default_routing_strategy: String,
-    pub max_rate_multiplier: Option<f64>,
-    pub default_routing_group_filter: RoutingGroupFilter,
-    pub scheduler_advanced_settings: SchedulerAdvancedSettings,
+    pub max_rate_multiplier: Option<Option<f64>>,
+    pub default_routing_group_filter: Option<RoutingGroupFilter>,
+    pub scheduler_advanced_settings: Option<SchedulerAdvancedSettings>,
     pub low_balance_threshold_cny: f64,
     pub collector_interval_minutes: u16,
     pub balance_interval_minutes: u16,
@@ -46,4 +46,32 @@ pub struct UpdateSettingsInput {
     pub allow_depleted_fallback: bool,
     pub tray_behavior: String,
     pub developer_mode_enabled: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_settings_input_allows_missing_scheduler_fields() {
+        let input: UpdateSettingsInput = serde_json::from_value(serde_json::json!({
+            "localProxyPort": 8787,
+            "defaultRoutingStrategy": "cost_stable_first",
+            "lowBalanceThresholdCny": 15.0,
+            "collectorIntervalMinutes": 30,
+            "balanceIntervalMinutes": 5,
+            "groupRateIntervalMinutes": 20,
+            "modelListIntervalMinutes": 60,
+            "pricingRefreshIntervalMinutes": 60,
+            "collectorTimeoutSeconds": 15,
+            "collectorMaxConcurrency": 3,
+            "allowDepletedFallback": false,
+            "trayBehavior": "minimize-to-tray",
+            "developerModeEnabled": false
+        }))
+        .expect("old clients may omit scheduler fields");
+
+        assert!(input.default_routing_group_filter.is_none());
+        assert!(input.scheduler_advanced_settings.is_none());
+    }
 }

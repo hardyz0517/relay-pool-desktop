@@ -428,28 +428,37 @@ impl AppDatabase {
             return Err("采集并发数必须在 1 到 8 之间".to_string());
         }
 
-        if let Some(max_rate_multiplier) = input.max_rate_multiplier {
+        let connection = self.connection()?;
+        let current_settings = self.settings_from_open_connection(&connection)?;
+        let max_rate_multiplier = input
+            .max_rate_multiplier
+            .unwrap_or(current_settings.max_rate_multiplier);
+        let default_routing_group_filter = input
+            .default_routing_group_filter
+            .unwrap_or(current_settings.default_routing_group_filter);
+        let scheduler_advanced_settings = input
+            .scheduler_advanced_settings
+            .unwrap_or(current_settings.scheduler_advanced_settings);
+
+        if let Some(max_rate_multiplier) = max_rate_multiplier {
             if !max_rate_multiplier.is_finite() || max_rate_multiplier < 0.0 {
                 return Err("invalid max_rate_multiplier".to_string());
             }
         }
-        input
-            .scheduler_advanced_settings
+        scheduler_advanced_settings
             .validate()
             .map_err(|error| format!("invalid scheduler advanced settings: {error:?}"))?;
 
-        let connection = self.connection()?;
         let default_routing_group_filter =
-            serialize_routing_group_filter_setting(&input.default_routing_group_filter)?;
-        let scheduler_advanced_settings = serde_json::to_string(&input.scheduler_advanced_settings)
+            serialize_routing_group_filter_setting(&default_routing_group_filter)?;
+        let scheduler_advanced_settings = serde_json::to_string(&scheduler_advanced_settings)
             .map_err(|error| format!("serialize scheduler advanced settings failed: {error}"))?;
         let values = [
             ("local_proxy_port", input.local_proxy_port.to_string()),
             ("default_routing_strategy", input.default_routing_strategy),
             (
                 "max_rate_multiplier",
-                input
-                    .max_rate_multiplier
+                max_rate_multiplier
                     .map(|value| value.to_string())
                     .unwrap_or_default(),
             ),
@@ -2294,6 +2303,36 @@ fn migrate_automatic_scheduler_schema(connection: &Connection) -> rusqlite::Resu
     )?;
     add_column_if_missing(connection, "station_keys", "manual_rate_multiplier", "REAL")?;
     add_column_if_missing(connection, "station_keys", "manual_rate_updated_at", "TEXT")?;
+    // Existing disabled keys received the ADD COLUMN default of 1. Flip only those
+    // default-looking rows; repeated runs leave already-migrated rows unchanged.
+    connection.execute(
+        "UPDATE station_keys
+            SET schedulable = enabled
+          WHERE enabled = 0
+            AND schedulable = 1",
+        [],
+    )?;
+    Ok(())
+}
+
+fn validate_station_key_scheduler_values(
+    max_concurrency: i64,
+    load_factor: Option<i64>,
+    manual_rate_multiplier: Option<f64>,
+) -> Result<(), String> {
+    if max_concurrency < 0 {
+        return Err("max_concurrency must be >= 0".to_string());
+    }
+    if let Some(load_factor) = load_factor {
+        if !(1..=10_000).contains(&load_factor) {
+            return Err("load_factor must be between 1 and 10000".to_string());
+        }
+    }
+    if let Some(manual_rate_multiplier) = manual_rate_multiplier {
+        if !manual_rate_multiplier.is_finite() || manual_rate_multiplier < 0.0 {
+            return Err("manual_rate_multiplier must be finite and >= 0".to_string());
+        }
+    }
     Ok(())
 }
 
@@ -7573,9 +7612,13 @@ pub(super) fn create_station_key_in_connection_with_data_key(
         None => next_station_key_priority(connection, &input.station_id)?,
     };
     let max_concurrency = input.max_concurrency.unwrap_or(3);
-    if max_concurrency <= 0 {
-        return Err("max_concurrency must be positive".to_string());
-    }
+    let load_factor = input.load_factor;
+    let schedulable = input.schedulable.unwrap_or(input.enabled);
+    validate_station_key_scheduler_values(
+        max_concurrency,
+        load_factor,
+        input.manual_rate_multiplier,
+    )?;
     let routing_order = next_local_routing_order(connection)?;
 
     connection
@@ -7598,8 +7641,8 @@ pub(super) fn create_station_key_in_connection_with_data_key(
                 priority,
                 routing_order,
                 max_concurrency,
-                input.load_factor,
-                bool_to_i64(input.schedulable.unwrap_or(true)),
+                load_factor,
+                bool_to_i64(schedulable),
                 normalize_optional_string(input.group_name),
                 normalize_optional_string(input.tier_label),
                 normalize_optional_string(input.group_binding_id),
@@ -7671,9 +7714,17 @@ pub(super) fn update_station_key_in_connection_with_data_key(
     } else {
         (new_api_key.unwrap_or(existing_api_key), existing_secret_id)
     };
-    if input.max_concurrency <= 0 {
-        return Err("max_concurrency must be positive".to_string());
-    }
+    let manual_rate_multiplier_update = input.manual_rate_multiplier;
+    let (manual_rate_multiplier_present, manual_rate_multiplier) =
+        match manual_rate_multiplier_update {
+            Some(value) => (1_i64, value),
+            None => (0_i64, None),
+        };
+    validate_station_key_scheduler_values(
+        input.max_concurrency,
+        input.load_factor,
+        manual_rate_multiplier,
+    )?;
     let now = now_string();
 
     connection
@@ -7692,21 +7743,24 @@ pub(super) fn update_station_key_in_connection_with_data_key(
                     group_binding_id = COALESCE(?11, group_binding_id),
                     group_id_hash = COALESCE(?12, group_id_hash),
                     rate_multiplier = COALESCE(?13, rate_multiplier),
-                    manual_rate_multiplier = COALESCE(?14, manual_rate_multiplier),
+                    manual_rate_multiplier = CASE
+                        WHEN ?14 = 1 THEN ?15
+                        ELSE manual_rate_multiplier
+                    END,
                     manual_rate_updated_at = CASE
-                        WHEN ?14 IS NOT NULL THEN ?15
+                        WHEN ?14 = 1 THEN ?16
                         ELSE manual_rate_updated_at
                     END,
-                    rate_source = COALESCE(?16, rate_source),
+                    rate_source = COALESCE(?17, rate_source),
                     rate_collected_at = CASE
-                        WHEN ?13 IS NOT NULL THEN ?15
+                        WHEN ?13 IS NOT NULL THEN ?16
                         ELSE rate_collected_at
                     END,
-                    balance_scope = COALESCE(?17, balance_scope),
-                    status = ?18,
-                    note = ?19,
-                    updated_at = ?20
-              WHERE id = ?21 AND station_id = ?22",
+                    balance_scope = COALESCE(?18, balance_scope),
+                    status = ?19,
+                    note = ?20,
+                    updated_at = ?21
+              WHERE id = ?22 AND station_id = ?23",
             params![
                 input.name.trim(),
                 next_api_key,
@@ -7721,7 +7775,8 @@ pub(super) fn update_station_key_in_connection_with_data_key(
                 normalize_optional_string(input.group_binding_id),
                 normalize_optional_string(input.group_id_hash),
                 input.rate_multiplier,
-                input.manual_rate_multiplier,
+                manual_rate_multiplier_present,
+                manual_rate_multiplier,
                 now.clone(),
                 normalize_optional_string(input.rate_source),
                 normalize_optional_string(input.balance_scope),
@@ -9997,6 +10052,72 @@ mod tests {
     }
 
     #[test]
+    fn migrate_automatic_scheduler_schema_sets_disabled_keys_unschedulable() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE stations (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    station_type TEXT NOT NULL,
+                    base_url TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    credit_per_cny REAL NOT NULL DEFAULT 1,
+                    collection_interval_minutes INTEGER NOT NULL DEFAULT 5,
+                    status TEXT NOT NULL DEFAULT 'unchecked',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE station_keys (
+                    id TEXT PRIMARY KEY,
+                    station_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'unchecked',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                INSERT INTO stations (
+                    id, name, station_type, base_url, enabled, priority, credit_per_cny,
+                    collection_interval_minutes, status, created_at, updated_at
+                ) VALUES
+                    ('station-enabled', 'enabled', 'sub2api', 'https://example.test', 1, 0, 1, 5, 'unchecked', '1000', '1000'),
+                    ('station-disabled', 'disabled', 'sub2api', 'https://example.test', 0, 1, 1, 5, 'unchecked', '1000', '1000');
+                INSERT INTO station_keys (
+                    id, station_id, name, api_key, enabled, priority, status, created_at, updated_at
+                ) VALUES
+                    ('key-enabled', 'station-enabled', 'enabled key', 'sk-a', 1, 0, 'unchecked', '1000', '1000'),
+                    ('key-disabled', 'station-disabled', 'disabled key', 'sk-b', 0, 0, 'unchecked', '1000', '1000');
+                ",
+            )
+            .expect("legacy schema");
+
+        migrate_automatic_scheduler_schema(&connection).expect("migrate scheduler schema");
+
+        let enabled_schedulable: i64 = connection
+            .query_row(
+                "SELECT schedulable FROM station_keys WHERE id = 'key-enabled'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("enabled schedulable");
+        let disabled_schedulable: i64 = connection
+            .query_row(
+                "SELECT schedulable FROM station_keys WHERE id = 'key-disabled'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("disabled schedulable");
+
+        assert_eq!(enabled_schedulable, 1);
+        assert_eq!(disabled_schedulable, 0);
+    }
+
+    #[test]
     fn station_endpoint_health_flows_into_key_pool_items() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let station = test_station(&database, "endpoint-health-relay");
@@ -10053,6 +10174,152 @@ mod tests {
 
         assert!(!station.api_key_present);
         assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn station_key_create_accepts_unlimited_max_concurrency_and_valid_ranges() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-ranges");
+
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "scheduler key".to_string(),
+                api_key: "sk-scheduler".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: Some(0),
+                load_factor: Some(10_000),
+                schedulable: Some(true),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                manual_rate_multiplier: Some(1.25),
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect("station key");
+
+        assert_eq!(key.max_concurrency, 0);
+        assert_eq!(key.load_factor, Some(10_000));
+        assert_eq!(key.manual_rate_multiplier, Some(1.25));
+    }
+
+    #[test]
+    fn station_key_create_rejects_invalid_load_factor() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-load-factor");
+
+        let error = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "scheduler key".to_string(),
+                api_key: "sk-scheduler".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: Some(1),
+                load_factor: Some(0),
+                schedulable: Some(true),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                manual_rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect_err("load factor must be rejected");
+
+        assert!(error.contains("load_factor"));
+    }
+
+    #[test]
+    fn station_key_create_rejects_invalid_manual_rate_multiplier() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-manual-rate-invalid");
+
+        let error = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "scheduler key".to_string(),
+                api_key: "sk-scheduler".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: Some(1),
+                load_factor: Some(1),
+                schedulable: Some(true),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                manual_rate_multiplier: Some(-1.0),
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect_err("manual multiplier must be rejected");
+
+        assert!(error.contains("manual_rate_multiplier"));
+    }
+
+    #[test]
+    fn station_key_update_can_clear_manual_rate_multiplier() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-manual-rate");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id.clone(),
+                name: "scheduler key".to_string(),
+                api_key: "sk-scheduler".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: Some(1),
+                load_factor: Some(1),
+                schedulable: Some(true),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                manual_rate_multiplier: Some(2.5),
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect("station key");
+
+        let cleared = database
+            .update_station_key(UpdateStationKeyInput {
+                id: key.id.clone(),
+                station_id: station.id,
+                name: key.name,
+                api_key: None,
+                enabled: key.enabled,
+                priority: key.priority,
+                max_concurrency: key.max_concurrency,
+                load_factor: key.load_factor,
+                schedulable: key.schedulable,
+                group_name: key.group_name,
+                tier_label: key.tier_label,
+                group_binding_id: key.group_binding_id,
+                group_id_hash: key.group_id_hash,
+                rate_multiplier: key.rate_multiplier,
+                manual_rate_multiplier: Some(None),
+                rate_source: key.rate_source,
+                balance_scope: key.balance_scope,
+                status: key.status,
+                note: key.note,
+            })
+            .expect("clear manual rate");
+
+        assert_eq!(cleared.manual_rate_multiplier, None);
+        assert!(cleared.manual_rate_updated_at.is_some());
     }
 
     #[test]

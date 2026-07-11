@@ -117,7 +117,7 @@ pub struct UpdateStationKeyInput {
     pub group_binding_id: Option<String>,
     pub group_id_hash: Option<String>,
     pub rate_multiplier: Option<f64>,
-    pub manual_rate_multiplier: Option<f64>,
+    pub manual_rate_multiplier: Option<Option<f64>>,
     pub rate_source: Option<String>,
     pub balance_scope: Option<String>,
     pub status: String,
