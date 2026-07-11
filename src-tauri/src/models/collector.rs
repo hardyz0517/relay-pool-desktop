@@ -34,6 +34,8 @@ pub struct CollectorRunResult {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StationLoginTestInput {
+    #[serde(default)]
+    pub station_type: Option<String>,
     pub base_url: String,
     pub login_username: String,
     pub login_password: String,

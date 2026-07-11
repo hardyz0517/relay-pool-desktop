@@ -55,6 +55,7 @@ export type CollectorRunResult = {
 };
 
 export type StationLoginTestInput = {
+  stationType?: string;
   baseUrl: string;
   loginUsername: string;
   loginPassword: string;

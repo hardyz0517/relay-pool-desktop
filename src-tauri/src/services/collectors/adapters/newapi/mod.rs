@@ -25,6 +25,24 @@ use crate::services::{
 const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const NEWAPI_REMOTE_KEY_PAGE_SIZE: usize = 100;
 
+pub(crate) fn login_with_password(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &Station,
+    login_username: &str,
+    login_password: &str,
+) -> Result<auth::NewApiLoginProbeOutcome, String> {
+    auth::login_with_password(database, data_key, station, login_username, login_password)
+}
+
+pub(crate) fn test_login_credentials(
+    base_url: &str,
+    login_username: &str,
+    login_password: &str,
+) -> Result<auth::NewApiLoginProbeOutcome, String> {
+    auth::test_login_credentials(base_url, login_username, login_password)
+}
+
 fn parse_newapi_balance(station_id: &str, payload: &Value) -> CollectedBalanceFact {
     parsers::parse_balance_fact(station_id, payload, 500000.0, true)
 }

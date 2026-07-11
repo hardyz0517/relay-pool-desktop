@@ -1098,6 +1098,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     setConnectionTest({ status: "testing", message: "正在测试连通性..." });
     try {
       const result = await testStationLoginInput({
+        stationType: form.stationType,
         baseUrl: form.baseUrl.trim(),
         loginUsername: form.loginUsername.trim(),
         loginPassword: form.loginPassword.trim(),

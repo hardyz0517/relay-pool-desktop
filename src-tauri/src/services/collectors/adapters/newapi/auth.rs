@@ -57,6 +57,12 @@ pub(crate) struct NewApiLoginProbeOutcome {
     pub manual_required: Option<String>,
 }
 
+struct NewApiPasswordLogin {
+    user_id: String,
+    cookie: Option<String>,
+    outcome: NewApiLoginProbeOutcome,
+}
+
 pub(super) fn normalize_set_cookie_headers(headers: &[String]) -> Option<String> {
     let cookies = headers
         .iter()
@@ -75,7 +81,40 @@ pub(crate) fn login_with_password(
     login_username: &str,
     login_password: &str,
 ) -> Result<NewApiLoginProbeOutcome, String> {
-    let urls = collector_base_urls(&station.base_url);
+    let login = request_password_login(&station.base_url, login_username, login_password)?;
+    if login.outcome.manual_required.is_some() {
+        return Ok(login.outcome);
+    }
+    database.persist_station_session_with_data_key(
+        PersistStationSessionInput {
+            station_id: station.id.clone(),
+            access_token: None,
+            refresh_token: None,
+            cookie: login.cookie,
+            newapi_user_id: Some(login.user_id),
+            token_expires_at: None,
+            session_expires_at: None,
+            session_source: "password_login".to_string(),
+        },
+        data_key,
+    )?;
+    Ok(login.outcome)
+}
+
+pub(crate) fn test_login_credentials(
+    base_url: &str,
+    login_username: &str,
+    login_password: &str,
+) -> Result<NewApiLoginProbeOutcome, String> {
+    request_password_login(base_url, login_username, login_password).map(|login| login.outcome)
+}
+
+fn request_password_login(
+    base_url: &str,
+    login_username: &str,
+    login_password: &str,
+) -> Result<NewApiPasswordLogin, String> {
+    let urls = collector_base_urls(base_url);
     let url = join_url(&urls.management_base_url, "/api/user/login");
     let response = match ureq::post(&url)
         .timeout(LOGIN_TIMEOUT)
@@ -108,7 +147,8 @@ pub(crate) fn login_with_password(
             cookie_present: false,
             login_message: Some("NewAPI login requires manual verification".to_string()),
             manual_required: Some("manual_session_required".to_string()),
-        });
+        }
+        .into_password_login(String::new(), None));
     }
     let data = parsers::envelope_data(&payload).map_err(|error| redact_text(&error.message))?;
     let user_id = data
@@ -123,24 +163,31 @@ pub(crate) fn login_with_password(
         .ok_or_else(|| "NewAPI login response is missing user id".to_string())?;
     let cookie = normalize_set_cookie_headers(&set_cookies);
     let cookie_present = cookie.is_some();
-    database.persist_station_session_with_data_key(
-        PersistStationSessionInput {
-            station_id: station.id.clone(),
-            access_token: None,
-            refresh_token: None,
-            cookie,
-            newapi_user_id: Some(user_id),
-            token_expires_at: None,
-            session_expires_at: None,
-            session_source: "password_login".to_string(),
+    let manual_required = (!cookie_present)
+        .then(|| "NewAPI 登录成功但响应没有返回 Cookie，无法保存会话。".to_string());
+    Ok(NewApiPasswordLogin {
+        user_id,
+        cookie,
+        outcome: NewApiLoginProbeOutcome {
+            cookie_present,
+            login_message: Some(if cookie_present {
+                "NewAPI login succeeded".to_string()
+            } else {
+                "NewAPI login did not return a session cookie".to_string()
+            }),
+            manual_required,
         },
-        data_key,
-    )?;
-    Ok(NewApiLoginProbeOutcome {
-        cookie_present,
-        login_message: Some("NewAPI login succeeded".to_string()),
-        manual_required: None,
     })
+}
+
+impl NewApiLoginProbeOutcome {
+    fn into_password_login(self, user_id: String, cookie: Option<String>) -> NewApiPasswordLogin {
+        NewApiPasswordLogin {
+            user_id,
+            cookie,
+            outcome: self,
+        }
+    }
 }
 
 #[cfg(test)]
