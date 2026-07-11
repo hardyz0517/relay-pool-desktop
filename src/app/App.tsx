@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type AnimationEvent, type ReactNode } from "react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageActivityProvider } from "@/components/shell/PageActivity";
 import {
@@ -252,7 +252,7 @@ export function App() {
     setExitingTransientPage(null);
   }
 
-  function handleTransientExitTransitionEnd(event: TransitionEvent<HTMLDivElement>) {
+  function handleTransientExitAnimationEnd(event: AnimationEvent<HTMLDivElement>) {
     if (event.target !== event.currentTarget) {
       return;
     }
@@ -315,7 +315,7 @@ export function App() {
               }
               data-page-transition-state="exiting"
               inert
-              onTransitionEnd={handleTransientExitTransitionEnd}
+              onAnimationEnd={handleTransientExitAnimationEnd}
             >
               {exitingTransientPage.node}
             </div>
