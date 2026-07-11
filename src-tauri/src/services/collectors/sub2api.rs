@@ -578,6 +578,20 @@ pub(crate) fn login_access_token(
     })
 }
 
+pub(crate) fn login_access_token_with_budget(
+    base_url: &str,
+    username: &str,
+    password: &str,
+    budget: Duration,
+) -> Result<LoginTokenOutcome, String> {
+    let config = ProbeMode::Collect.config();
+    let deadline = LoginAttemptDeadline::new(budget);
+    let attempt = attempt_login_with_budget(base_url, username, password, config, &deadline)?;
+    Ok(LoginTokenOutcome {
+        access_token: attempt.token,
+    })
+}
+
 fn attempt_login(
     agent: &Agent,
     base_url: &str,
@@ -640,6 +654,188 @@ fn attempt_login(
         login_message: Some("未能从登录接口获取 token。".to_string()),
         manual_required: Some("登录失败，账号密码可能无效或站点字段已魔改。".to_string()),
     })
+}
+
+struct LoginAttemptDeadline {
+    started_at: Instant,
+    budget: Duration,
+}
+
+impl LoginAttemptDeadline {
+    fn new(budget: Duration) -> Self {
+        Self {
+            started_at: Instant::now(),
+            budget,
+        }
+    }
+
+    fn remaining(&self) -> Result<Duration, String> {
+        self.budget
+            .checked_sub(self.started_at.elapsed())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| "task_budget_exhausted".to_string())
+    }
+}
+
+fn attempt_login_with_budget(
+    base_url: &str,
+    username: &str,
+    password: &str,
+    config: ProbeConfig,
+    deadline: &LoginAttemptDeadline,
+) -> Result<LoginAttempt, String> {
+    let username_variants = [
+        ("email", username),
+        ("username", username),
+        ("user", username),
+    ];
+
+    for path in LOGIN_PATHS {
+        for (field, value) in username_variants {
+            let payload = json!({
+                field: value,
+                "password": password,
+            });
+            let url = join_url(base_url, path);
+            let mut transient_attempted = false;
+
+            loop {
+                let response = login_candidate_request(&url, payload.clone(), config, deadline)?;
+                match response {
+                    LoginCandidateResponse::Response(response) => {
+                        let status = response.status();
+                        if status == 429 {
+                            if transient_attempted {
+                                return Ok(login_transient_failure("rate_limited"));
+                            }
+                            transient_attempted = true;
+                            let delay = retry_after_duration(&response).unwrap_or_default();
+                            let remaining = deadline.remaining()?;
+                            if delay >= remaining {
+                                return Err("task_budget_exhausted".to_string());
+                            }
+                            if !delay.is_zero() {
+                                thread::sleep(delay);
+                            }
+                            continue;
+                        }
+
+                        if (500..=599).contains(&status) {
+                            if transient_attempted {
+                                return Ok(login_transient_failure("upstream_5xx"));
+                            }
+                            transient_attempted = true;
+                            continue;
+                        }
+
+                        let body = response
+                            .into_string()
+                            .map_err(|error| format!("读取登录响应失败: {error}"))?;
+                        let parsed = serde_json::from_str::<Value>(&body).ok();
+                        if let Some(parsed) = parsed {
+                            if let Some(token) = extract_token(&parsed) {
+                                return Ok(LoginAttempt {
+                                    token: Some(token),
+                                    login_message: Some(format!("已从 {path} 读取登录 token。")),
+                                    manual_required: None,
+                                });
+                            }
+                            if needs_manual_login(&parsed, status) {
+                                return Ok(LoginAttempt {
+                                    token: None,
+                                    login_message: Some(shorten_error(&parsed.to_string())),
+                                    manual_required: Some(
+                                        "接口需要验证码、2FA 或额外登录步骤。".to_string(),
+                                    ),
+                                });
+                            }
+                        }
+                        if (200..300).contains(&status) {
+                            return Ok(LoginAttempt {
+                                token: None,
+                                login_message: Some(
+                                    "登录接口返回成功，但未识别到 token 字段。".to_string(),
+                                ),
+                                manual_required: Some("登录响应未返回可用 token。".to_string()),
+                            });
+                        }
+                        break;
+                    }
+                    LoginCandidateResponse::Transient(error) => {
+                        if transient_attempted {
+                            return Ok(login_transient_failure(&error));
+                        }
+                        transient_attempted = true;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(LoginAttempt {
+        token: None,
+        login_message: Some("未能从登录接口获取 token。".to_string()),
+        manual_required: Some("登录失败，账号密码可能无效或站点字段已魔改。".to_string()),
+    })
+}
+
+enum LoginCandidateResponse {
+    Response(ureq::Response),
+    Transient(String),
+}
+
+fn login_candidate_request(
+    url: &str,
+    payload: Value,
+    config: ProbeConfig,
+    deadline: &LoginAttemptDeadline,
+) -> Result<LoginCandidateResponse, String> {
+    let remaining = deadline.remaining()?;
+    let timeout = remaining
+        .min(config.read_timeout)
+        .max(Duration::from_millis(1));
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(
+            timeout
+                .min(config.connect_timeout)
+                .max(Duration::from_millis(1)),
+        )
+        .timeout_read(timeout)
+        .timeout_write(
+            timeout
+                .min(config.connect_timeout)
+                .max(Duration::from_millis(1)),
+        )
+        .build();
+
+    match agent.post(url).send_json(payload) {
+        Ok(response) => Ok(LoginCandidateResponse::Response(response)),
+        Err(ureq::Error::Status(_, response)) => Ok(LoginCandidateResponse::Response(response)),
+        Err(error) => {
+            if deadline.remaining().is_err() {
+                Err("task_budget_exhausted".to_string())
+            } else {
+                Ok(LoginCandidateResponse::Transient(format!(
+                    "network_timeout:{error}"
+                )))
+            }
+        }
+    }
+}
+
+fn retry_after_duration(response: &ureq::Response) -> Option<Duration> {
+    response
+        .header("retry-after")
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(Duration::from_secs)
+}
+
+fn login_transient_failure(kind: &str) -> LoginAttempt {
+    LoginAttempt {
+        token: None,
+        login_message: Some(kind.to_string()),
+        manual_required: Some(kind.to_string()),
+    }
 }
 
 fn extract_token(value: &Value) -> Option<String> {
@@ -1944,9 +2140,70 @@ mod tests {
         );
     }
 
+    #[test]
+    fn login_recovery_stops_when_budget_is_exhausted() {
+        let server = SlowLoginServer::start();
+
+        let outcome = login_access_token_with_budget(
+            &server.base_url,
+            "user@example.test",
+            "secret",
+            Duration::from_millis(30),
+        );
+
+        assert!(matches!(outcome, Err(error) if error.contains("task_budget_exhausted")));
+        assert_eq!(server.request_count(), 1);
+    }
+
+    #[test]
+    fn login_recovery_does_not_restart_candidate_sequence() {
+        let server = FlakyLoginServer::start();
+
+        let outcome = login_access_token_with_budget(
+            &server.base_url,
+            "user@example.test",
+            "secret",
+            Duration::from_secs(1),
+        )
+        .expect("login outcome");
+
+        assert_eq!(outcome.access_token.as_deref(), Some("fresh-token"));
+        assert!(server.request_count() <= 2);
+    }
+
+    #[test]
+    fn login_recovery_rejects_retry_after_that_exceeds_budget() {
+        let server = RateLimitedLoginServer::start();
+
+        let outcome = login_access_token_with_budget(
+            &server.base_url,
+            "user@example.test",
+            "secret",
+            Duration::from_millis(100),
+        );
+
+        assert!(matches!(outcome, Err(error) if error.contains("task_budget_exhausted")));
+        assert_eq!(server.request_count(), 1);
+    }
+
     struct TestCollectorServer {
         base_url: String,
         last_login_password: Arc<Mutex<Option<String>>>,
+    }
+
+    struct SlowLoginServer {
+        base_url: String,
+        request_count: Arc<Mutex<usize>>,
+    }
+
+    struct FlakyLoginServer {
+        base_url: String,
+        request_count: Arc<Mutex<usize>>,
+    }
+
+    struct RateLimitedLoginServer {
+        base_url: String,
+        request_count: Arc<Mutex<usize>>,
     }
 
     impl TestCollectorServer {
@@ -1973,6 +2230,78 @@ mod tests {
                 .lock()
                 .ok()
                 .and_then(|value| value.clone())
+        }
+    }
+
+    impl SlowLoginServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind slow login server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            let request_count = Arc::new(Mutex::new(0));
+            let captured_count = Arc::clone(&request_count);
+
+            thread::spawn(move || {
+                for stream in listener.incoming().take(3).flatten() {
+                    handle_slow_login_request(stream, Arc::clone(&captured_count));
+                }
+            });
+
+            Self {
+                base_url,
+                request_count,
+            }
+        }
+
+        fn request_count(&self) -> usize {
+            self.request_count.lock().map(|count| *count).unwrap_or(0)
+        }
+    }
+
+    impl FlakyLoginServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind flaky login server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            let request_count = Arc::new(Mutex::new(0));
+            let captured_count = Arc::clone(&request_count);
+
+            thread::spawn(move || {
+                for stream in listener.incoming().take(3).flatten() {
+                    handle_flaky_login_request(stream, Arc::clone(&captured_count));
+                }
+            });
+
+            Self {
+                base_url,
+                request_count,
+            }
+        }
+
+        fn request_count(&self) -> usize {
+            self.request_count.lock().map(|count| *count).unwrap_or(0)
+        }
+    }
+
+    impl RateLimitedLoginServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind rate login server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            let request_count = Arc::new(Mutex::new(0));
+            let captured_count = Arc::clone(&request_count);
+
+            thread::spawn(move || {
+                for stream in listener.incoming().take(2).flatten() {
+                    handle_rate_limited_login_request(stream, Arc::clone(&captured_count));
+                }
+            });
+
+            Self {
+                base_url,
+                request_count,
+            }
+        }
+
+        fn request_count(&self) -> usize {
+            self.request_count.lock().map(|count| *count).unwrap_or(0)
         }
     }
 
@@ -2055,6 +2384,76 @@ mod tests {
         let text = response.to_string();
         let response = format!(
             "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
+    }
+
+    fn handle_slow_login_request(mut stream: TcpStream, request_count: Arc<Mutex<usize>>) {
+        let _request = read_http_request(&mut stream);
+        if let Ok(mut count) = request_count.lock() {
+            *count += 1;
+        }
+        thread::sleep(Duration::from_millis(120));
+        write_json_response(
+            stream,
+            "200 OK",
+            json!({ "data": { "access_token": "late-token" } }),
+            None,
+        );
+    }
+
+    fn handle_flaky_login_request(mut stream: TcpStream, request_count: Arc<Mutex<usize>>) {
+        let _request = read_http_request(&mut stream);
+        let attempt = request_count
+            .lock()
+            .map(|mut count| {
+                *count += 1;
+                *count
+            })
+            .unwrap_or(1);
+        if attempt == 1 {
+            write_json_response(
+                stream,
+                "502 Bad Gateway",
+                json!({ "message": "temporary upstream failure" }),
+                None,
+            );
+        } else {
+            write_json_response(
+                stream,
+                "200 OK",
+                json!({ "data": { "access_token": "fresh-token" } }),
+                None,
+            );
+        }
+    }
+
+    fn handle_rate_limited_login_request(mut stream: TcpStream, request_count: Arc<Mutex<usize>>) {
+        let _request = read_http_request(&mut stream);
+        if let Ok(mut count) = request_count.lock() {
+            *count += 1;
+        }
+        write_json_response(
+            stream,
+            "429 Too Many Requests",
+            json!({ "message": "slow down" }),
+            Some("Retry-After: 1\r\n"),
+        );
+    }
+
+    fn write_json_response(
+        mut stream: TcpStream,
+        status: &str,
+        response: Value,
+        extra_header: Option<&str>,
+    ) {
+        let text = response.to_string();
+        let extra_header = extra_header.unwrap_or("");
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n{extra_header}Content-Length: {}\r\nConnection: close\r\n\r\n{text}",
             text.len()
         );
         stream
