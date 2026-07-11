@@ -1031,28 +1031,13 @@ fn collector_request_policy() -> RequestPolicy {
 
 #[derive(Debug, Clone)]
 struct EndpointJsonResult {
-    url: String,
     status: Option<u16>,
     ok: bool,
-    duration_ms: i64,
     payload: Option<Value>,
     error_message: Option<String>,
 }
 
-impl EndpointJsonResult {
-    fn to_redacted_json(&self) -> Value {
-        json!({
-            "url": self.url,
-            "status": self.status,
-            "ok": self.ok,
-            "durationMs": self.duration_ms,
-            "errorMessage": self.error_message,
-        })
-    }
-}
-
 fn fetch_json_with_bearer(url: &str, access_token: &str) -> EndpointJsonResult {
-    let started = std::time::Instant::now();
     let response = match ureq::get(url)
         .timeout(COLLECTOR_HTTP_TIMEOUT)
         .set("Authorization", &format!("Bearer {access_token}"))
@@ -1062,10 +1047,8 @@ fn fetch_json_with_bearer(url: &str, access_token: &str) -> EndpointJsonResult {
         Err(ureq::Error::Status(_, response)) => response,
         Err(error) => {
             return EndpointJsonResult {
-                url: url.to_string(),
                 status: None,
                 ok: false,
-                duration_ms: started.elapsed().as_millis() as i64,
                 payload: None,
                 error_message: Some(crate::services::secrets::mask::redact_text(
                     &error.to_string(),
@@ -1078,10 +1061,8 @@ fn fetch_json_with_bearer(url: &str, access_token: &str) -> EndpointJsonResult {
     let payload = serde_json::from_str::<Value>(&text).ok();
 
     EndpointJsonResult {
-        url: url.to_string(),
         status: Some(status),
         ok: (200..400).contains(&status),
-        duration_ms: started.elapsed().as_millis() as i64,
         payload,
         error_message: None,
     }
@@ -1139,8 +1120,31 @@ fn fetch_recoverable_json_with_bearer(
     }
 }
 
+fn result_to_balance_endpoint_json(
+    result: &RecoverableEndpointJsonResult,
+    url: &str,
+    station_key_id: &str,
+) -> Value {
+    json!({
+        "endpoint": url,
+        "url": result.url,
+        "stationKeyId": station_key_id,
+        "status": result.status,
+        "durationMs": result.duration_ms,
+        "ok": result.ok,
+        "errorMessage": result.error_message,
+    })
+}
+
+fn balance_request_timeout(budget: &CollectionAttemptBudget) -> std::time::Duration {
+    budget
+        .remaining()
+        .unwrap_or_else(|| std::time::Duration::from_millis(1))
+        .min(COLLECTOR_HTTP_TIMEOUT)
+        .max(std::time::Duration::from_millis(1))
+}
+
 fn post_json_with_bearer(url: &str, access_token: &str, body: &Value) -> EndpointJsonResult {
-    let started = std::time::Instant::now();
     let response = match ureq::post(url)
         .timeout(COLLECTOR_HTTP_TIMEOUT)
         .set("Authorization", &format!("Bearer {access_token}"))
@@ -1151,10 +1155,8 @@ fn post_json_with_bearer(url: &str, access_token: &str, body: &Value) -> Endpoin
         Err(ureq::Error::Status(_, response)) => response,
         Err(error) => {
             return EndpointJsonResult {
-                url: url.to_string(),
                 status: None,
                 ok: false,
-                duration_ms: started.elapsed().as_millis() as i64,
                 payload: None,
                 error_message: Some(crate::services::secrets::mask::redact_text(
                     &error.to_string(),
@@ -1172,10 +1174,8 @@ fn post_json_with_bearer(url: &str, access_token: &str, body: &Value) -> Endpoin
     };
 
     EndpointJsonResult {
-        url: url.to_string(),
         status: Some(status),
         ok: (200..400).contains(&status),
-        duration_ms: started.elapsed().as_millis() as i64,
         payload,
         error_message,
     }
@@ -1227,6 +1227,9 @@ pub fn collect_balance(
     let url = join_url(&urls.upstream_api_base_url, "/usage");
     let mut facts = CollectorFacts::default();
     let mut endpoint_results = Vec::new();
+    let policy = collector_request_policy();
+    let budget = CollectionAttemptBudget::new(policy.task_budget);
+    let mut transient_retry_keys: Vec<(StationKey, String)> = Vec::new();
 
     for key in keys {
         let api_key = match database.resolve_station_key_secret_with_data_key(data_key, &key.id) {
@@ -1241,48 +1244,63 @@ pub fn collect_balance(
                 continue;
             }
         };
-        let started = std::time::Instant::now();
-        let response = match ureq::get(&url)
-            .timeout(COLLECTOR_HTTP_TIMEOUT)
-            .set("Authorization", &format!("Bearer {api_key}"))
-            .call()
-        {
-            Ok(response) => response,
-            Err(ureq::Error::Status(_, response)) => response,
-            Err(error) => {
-                endpoint_results.push(json!({
-                    "endpoint": url,
-                    "stationKeyId": key.id,
-                    "status": "network_error",
-                    "message": crate::services::secrets::mask::redact_text(&error.to_string()),
-                    "durationMs": started.elapsed().as_millis() as i64,
-                }));
-                continue;
-            }
-        };
-        let status = response.status();
-        let text = response.into_string().unwrap_or_default();
-        let parsed = serde_json::from_str::<Value>(&text).unwrap_or(Value::Null);
-        endpoint_results.push(json!({
-            "endpoint": url,
-            "stationKeyId": key.id,
-            "status": status,
-            "durationMs": started.elapsed().as_millis() as i64,
-            "ok": (200..400).contains(&status),
-        }));
-        if (200..400).contains(&status) {
+        let result =
+            fetch_recoverable_json_with_bearer(&url, &api_key, balance_request_timeout(&budget));
+        let mut redacted = result_to_balance_endpoint_json(&result, &url, &key.id);
+        redacted["attemptCount"] = json!(1);
+        endpoint_results.push(redacted);
+        if result.ok {
+            let parsed = result.payload.clone().unwrap_or(Value::Null);
             facts.balances.push(parse_usage_balance(
                 &station.id,
                 Some(key.id),
                 &parsed,
                 station.credit_per_cny,
             ));
+        } else if matches!(result.status, None | Some(408 | 429 | 500..=599)) {
+            transient_retry_keys.push((key, api_key));
+        }
+    }
+    for _round in 0..2 {
+        if transient_retry_keys.is_empty() {
+            break;
+        }
+        let retrying = std::mem::take(&mut transient_retry_keys);
+        for (key, api_key) in retrying {
+            if budget.remaining().is_none() {
+                break;
+            }
+            let result = fetch_recoverable_json_with_bearer(
+                &url,
+                &api_key,
+                balance_request_timeout(&budget),
+            );
+            let mut redacted = result_to_balance_endpoint_json(&result, &url, &key.id);
+            redacted["attemptCount"] = json!(2);
+            redacted["recoveryActions"] = json!(["transient_retry"]);
+            endpoint_results.push(redacted);
+            if result.ok {
+                let parsed = result.payload.clone().unwrap_or(Value::Null);
+                facts.balances.push(parse_usage_balance(
+                    &station.id,
+                    Some(key.id),
+                    &parsed,
+                    station.credit_per_cny,
+                ));
+            } else if matches!(result.status, None | Some(408 | 429 | 500..=599)) {
+                transient_retry_keys.push((key, api_key));
+            }
         }
     }
     if facts.balances.is_empty() {
-        if let Some(balance) =
-            collect_account_balance_fallback(database, data_key, &station, &mut endpoint_results)?
-        {
+        if let Some(balance) = collect_account_balance_fallback(
+            database,
+            data_key,
+            &station,
+            &mut endpoint_results,
+            &budget,
+            &policy,
+        )? {
             facts.balances.push(balance);
         }
     }
@@ -1324,6 +1342,8 @@ fn collect_account_balance_fallback(
     data_key: &[u8; 32],
     station: &crate::models::stations::Station,
     endpoint_results: &mut Vec<Value>,
+    budget: &CollectionAttemptBudget,
+    policy: &RequestPolicy,
 ) -> Result<Option<CollectedBalanceFact>, String> {
     let session = database.resolve_station_session_with_data_key(
         station.id.clone(),
@@ -1339,12 +1359,36 @@ fn collect_account_balance_fallback(
     };
 
     let urls = collector_base_urls(&station.base_url);
+    let mut access_token = access_token;
+    let mut auth_refresh_started = false;
+    let mut auth_refresh = |_: &String, remaining: std::time::Duration| {
+        if auth_refresh_started {
+            return None;
+        }
+        auth_refresh_started = true;
+        login_and_store_access_token_with_budget(database, data_key, station, remaining)
+            .ok()
+            .flatten()
+    };
     for path in ["/api/v1/user/profile", "/api/v1/auth/me"] {
         let url = join_url(&urls.management_base_url, path);
-        let result = fetch_json_with_bearer(&url, &access_token);
-        let payload = result.payload.clone().unwrap_or(Value::Null);
-        endpoint_results.push(result.to_redacted_json());
-        if !result.ok {
+        let mut request = |token: &String, timeout: std::time::Duration| {
+            fetch_recoverable_json_with_bearer(&url, token, timeout)
+        };
+        let execution = execute_json_request(
+            path,
+            access_token.clone(),
+            Some(&mut auth_refresh),
+            &mut request,
+            policy,
+            budget,
+        );
+        if let Some(refreshed) = execution.latest_credential.clone() {
+            access_token = refreshed;
+        }
+        let payload = execution.result.payload.clone().unwrap_or(Value::Null);
+        endpoint_results.push(execution.to_redacted_json());
+        if execution.failure_kind.is_some() || !execution.result.ok {
             continue;
         }
         if let Some(balance) = parse_account_balance(&station.id, &payload, station.credit_per_cny)
@@ -1408,7 +1452,10 @@ fn parse_account_balance(
 mod tests {
     use super::*;
     use crate::{
-        models::{credentials::UpdateStationCredentialsInput, stations::CreateStationInput},
+        models::{
+            credentials::UpdateStationCredentialsInput, station_keys::CreateStationKeyInput,
+            stations::CreateStationInput,
+        },
         services::{database::AppDatabase, secrets::crypto::generate_data_key},
     };
     use std::{
@@ -1416,7 +1463,7 @@ mod tests {
         net::{TcpListener, TcpStream},
         sync::{
             atomic::{AtomicUsize, Ordering},
-            mpsc, Arc,
+            mpsc, Arc, Mutex,
         },
         thread,
         time::Duration,
@@ -2127,6 +2174,115 @@ mod tests {
         assert_eq!(output.facts.balances[0].source, "sub2api_account_profile");
     }
 
+    #[test]
+    fn sub2api_balance_refreshes_rejected_account_token() {
+        let server = RefreshingBalanceFallbackServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "refresh balance fallback station".to_string(),
+                    station_type: "sub2api".to_string(),
+                    base_url: server.base_url,
+                    api_key: "sk-invalid-for-usage".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        database
+            .update_station_credentials_with_data_key(
+                UpdateStationCredentialsInput {
+                    station_id: station.id.clone(),
+                    login_username: Some("user@example.test".to_string()),
+                    login_password: Some("correct-password".to_string()),
+                    remember_password: true,
+                },
+                &data_key,
+            )
+            .expect("credentials");
+        database
+            .update_station_session_with_data_key(
+                UpdateStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: Some("stale-profile-token".to_string()),
+                    refresh_token: None,
+                    cookie: None,
+                    newapi_user_id: None,
+                    token_expires_at: None,
+                },
+                &data_key,
+            )
+            .expect("session");
+
+        let output = collect_balance(&database, &data_key, &station.id).expect("balance");
+        let session = database
+            .resolve_station_session_with_data_key(station.id, &data_key, 100000)
+            .expect("session");
+        let account_endpoint = &output.summary_json["endpointResults"][1];
+
+        assert_eq!(output.status, "success");
+        assert_eq!(output.facts.balances.len(), 1);
+        assert_eq!(output.facts.balances[0].value, Some(42.0));
+        assert_eq!(session.access_token.as_deref(), Some("fresh-profile-token"));
+        assert_eq!(account_endpoint["recoveryActions"], json!(["auth_refresh"]));
+    }
+
+    #[test]
+    fn sub2api_balance_attempts_all_keys_before_transient_retries() {
+        let server = FairBalanceServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "fair balance station".to_string(),
+                    station_type: "sub2api".to_string(),
+                    base_url: server.base_url.clone(),
+                    api_key: "sk-fallback".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        for (name, api_key) in [("key-a", "sk-key-a"), ("key-b", "sk-key-b")] {
+            database
+                .create_station_key_with_data_key(
+                    CreateStationKeyInput {
+                        station_id: station.id.clone(),
+                        name: name.to_string(),
+                        api_key: api_key.to_string(),
+                        enabled: true,
+                        priority: None,
+                        group_name: None,
+                        tier_label: None,
+                        group_binding_id: None,
+                        group_id_hash: None,
+                        rate_multiplier: None,
+                        rate_source: None,
+                        balance_scope: None,
+                        note: None,
+                    },
+                    &data_key,
+                )
+                .expect("station key");
+        }
+
+        let output = collect_balance(&database, &data_key, &station.id).expect("balance");
+
+        assert_eq!(output.status, "success");
+        assert_eq!(server.request_order(), vec!["A", "B", "A"]);
+    }
+
     struct TestGroupServer {
         base_url: String,
     }
@@ -2147,6 +2303,15 @@ mod tests {
 
     struct TestBalanceFallbackServer {
         base_url: String,
+    }
+
+    struct RefreshingBalanceFallbackServer {
+        base_url: String,
+    }
+
+    struct FairBalanceServer {
+        base_url: String,
+        request_order: Arc<Mutex<Vec<String>>>,
     }
 
     impl TestGroupServer {
@@ -2235,6 +2400,49 @@ mod tests {
                 }
             });
             Self { base_url }
+        }
+    }
+
+    impl RefreshingBalanceFallbackServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            thread::spawn(move || {
+                for stream in listener.incoming().take(4).flatten() {
+                    handle_refreshing_balance_fallback_request(stream);
+                }
+            });
+            Self { base_url }
+        }
+    }
+
+    impl FairBalanceServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            let request_order = Arc::new(Mutex::new(Vec::new()));
+            let handler_request_order = Arc::clone(&request_order);
+            thread::spawn(move || {
+                for stream in listener.incoming().take(4).flatten() {
+                    handle_fair_balance_request(stream, Arc::clone(&handler_request_order));
+                }
+            });
+            Self {
+                base_url,
+                request_order,
+            }
+        }
+
+        fn request_order(&self) -> Vec<&'static str> {
+            self.request_order
+                .lock()
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|item| if item == "sk-key-a" { "A" } else { "B" })
+                        .collect()
+                })
+                .unwrap_or_default()
         }
     }
 
@@ -2474,6 +2682,104 @@ mod tests {
                 }),
             ),
             _ => ("404 Not Found", json!({ "message": "not found" })),
+        };
+        let text = response.to_string();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
+    }
+
+    fn handle_refreshing_balance_fallback_request(mut stream: TcpStream) {
+        let request = read_http_request(&mut stream);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
+        let fresh_authorized = request
+            .to_lowercase()
+            .contains("authorization: bearer fresh-profile-token");
+
+        let (status, response) = match path {
+            "/v1/usage" => ("401 Unauthorized", json!({ "message": "unauthorized" })),
+            "/api/v1/auth/login" => {
+                let parsed = serde_json::from_str::<Value>(body).expect("login json");
+                if parsed.get("password").and_then(Value::as_str) == Some("correct-password") {
+                    (
+                        "200 OK",
+                        json!({ "data": { "access_token": "fresh-profile-token" } }),
+                    )
+                } else {
+                    (
+                        "401 Unauthorized",
+                        json!({ "message": "invalid credentials" }),
+                    )
+                }
+            }
+            "/api/v1/user/profile" if fresh_authorized => (
+                "200 OK",
+                json!({
+                    "data": {
+                        "balance": 42.0
+                    }
+                }),
+            ),
+            _ => ("401 Unauthorized", json!({ "message": "unauthorized" })),
+        };
+        let text = response.to_string();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
+    }
+
+    fn handle_fair_balance_request(mut stream: TcpStream, request_order: Arc<Mutex<Vec<String>>>) {
+        let request = read_http_request(&mut stream);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
+        let lower = request.to_lowercase();
+        let api_key = if lower.contains("authorization: bearer sk-key-a") {
+            Some("sk-key-a")
+        } else if lower.contains("authorization: bearer sk-key-b") {
+            Some("sk-key-b")
+        } else {
+            None
+        };
+        if path == "/v1/usage" {
+            if let Some(api_key) = api_key {
+                if let Ok(mut order) = request_order.lock() {
+                    order.push(api_key.to_string());
+                }
+            }
+        }
+        let attempts_for_key = api_key
+            .and_then(|key| {
+                request_order
+                    .lock()
+                    .ok()
+                    .map(|order| order.iter().filter(|item| item.as_str() == key).count())
+            })
+            .unwrap_or(0);
+
+        let (status, response) = match (path, api_key, attempts_for_key) {
+            ("/v1/usage", Some("sk-key-a"), 1) => (
+                "502 Bad Gateway",
+                json!({ "message": "temporary upstream failure" }),
+            ),
+            ("/v1/usage", Some("sk-key-a"), _) => ("200 OK", json!({ "remaining": 11.0 })),
+            ("/v1/usage", Some("sk-key-b"), _) => ("200 OK", json!({ "remaining": 22.0 })),
+            _ => ("401 Unauthorized", json!({ "message": "unauthorized" })),
         };
         let text = response.to_string();
         let response = format!(
