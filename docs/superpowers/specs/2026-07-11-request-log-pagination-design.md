@@ -23,8 +23,10 @@ Add compact pagination below the request-log table so long usage histories remai
 
 ## Layout
 
-- Render pagination as a separate light surface below the table rather than inside the table border.
-- Use approximately 16px of vertical separation from the records above.
+- Render the filter/actions toolbar as its own compact white surface with border, radius, and light shadow.
+- Render the request-log table as a second white surface approximately 12px below the toolbar, with its own border and radius.
+- Render pagination as a third light surface below the table rather than inside the table border.
+- Use approximately 16px of vertical separation between the table and pagination.
 - Keep the footer compact, flat, and consistent with the existing light desktop-tool UI.
 - Use Lucide chevrons for previous and next controls, visible focus states, and disabled styling.
 - Wrap controls on narrow widths without overlapping or forcing the table itself to compress.
