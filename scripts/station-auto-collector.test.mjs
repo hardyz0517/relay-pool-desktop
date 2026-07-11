@@ -84,7 +84,7 @@ assert.ok(
 );
 
 const accountBalanceFallbackSource = sub2apiAdapterSource.match(
-  /fn collect_account_balance_fallback[\s\S]*?\n}\n\nfn parse_account_balance/,
+  /fn collect_account_balance_fallback[\s\S]*?\r?\n}\r?\n\r?\nfn parse_account_balance/,
 )?.[0];
 assert.ok(accountBalanceFallbackSource, "Sub2API account balance fallback should exist");
 assert.ok(
