@@ -4990,36 +4990,36 @@ fn load_scheduler_candidates_from_connection(
                  OR (
                     latest_balance.station_key_id IS NULL
                     AND latest_balance.station_id = k.station_id
+                    AND latest_balance.scope = 'station'
                  )
               ORDER BY latest_balance.updated_at DESC, latest_balance.created_at DESC
               LIMIT 1
          )",
     );
+    let mut where_clauses =
+        vec!["(TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)".to_string()];
     let mut sql_params = Vec::new();
+    let mut group_type_filter = None;
     match filter {
         RoutingGroupFilter::AllGroups => {}
         RoutingGroupFilter::UngroupedOnly => {
-            sql.push_str(" WHERE k.group_binding_id IS NULL AND k.group_id_hash IS NULL");
+            where_clauses
+                .push("k.group_binding_id IS NULL AND k.group_id_hash IS NULL".to_string());
         }
         RoutingGroupFilter::GroupBindingId(group_binding_id) => {
-            sql.push_str(" WHERE k.group_binding_id = ?1");
+            where_clauses.push("k.group_binding_id = ?".to_string());
             sql_params.push(group_binding_id.clone());
         }
         RoutingGroupFilter::GroupIdHash(group_id_hash) => {
-            sql.push_str(" WHERE COALESCE(b.group_id_hash, k.group_id_hash) = ?1");
+            where_clauses.push("COALESCE(b.group_id_hash, k.group_id_hash) = ?".to_string());
             sql_params.push(group_id_hash.clone());
         }
         RoutingGroupFilter::GroupType(group_type) => {
-            let aliases = pricing_group_type_aliases(group_type);
-            let placeholders = std::iter::repeat_n("?", aliases.len())
-                .collect::<Vec<_>>()
-                .join(", ");
-            sql.push_str(&format!(
-                " WHERE LOWER(TRIM(COALESCE(b.group_name, k.group_name, ''))) IN ({placeholders})"
-            ));
-            sql_params.extend(aliases.iter().map(|alias| alias.to_string()));
+            group_type_filter = Some(group_type.clone());
         }
     }
+    sql.push_str(" WHERE ");
+    sql.push_str(&where_clauses.join(" AND "));
     sql.push_str(" ORDER BY COALESCE(k.routing_order, k.priority) ASC, k.priority ASC, k.created_at ASC, k.id ASC");
 
     let rows = {
@@ -5066,6 +5066,14 @@ fn load_scheduler_candidates_from_connection(
     };
 
     rows.into_iter()
+        .filter(|row| {
+            group_type_filter
+                .as_ref()
+                .map(|expected| {
+                    parse_pricing_group_type(row.group_name.as_deref()).as_ref() == Some(expected)
+                })
+                .unwrap_or(true)
+        })
         .map(|row| {
             let multiplier_facts =
                 load_multiplier_source_facts_from_connection(connection, &row.station_key_id)?;
@@ -5103,29 +5111,74 @@ fn load_scheduler_candidates_from_connection(
         .collect()
 }
 
-fn pricing_group_type_aliases(group_type: &PricingGroupType) -> &'static [&'static str] {
-    match group_type {
-        PricingGroupType::Gpt => &["gpt"],
-        PricingGroupType::Claude => &["claude"],
-        PricingGroupType::Gemini => &["gemini"],
-        PricingGroupType::Grok => &["grok"],
-        PricingGroupType::ImageGeneration => {
-            &["image_generation", "image-generation", "image generation"]
-        }
+fn parse_pricing_group_type(value: Option<&str>) -> Option<PricingGroupType> {
+    let normalized = normalize_group_type_text(value?);
+    if text_matches_any_group_type_matcher(
+        &normalized,
+        &[
+            "图",
+            "画图",
+            "绘图",
+            "image",
+            "images",
+            "picture",
+            "pictures",
+            "dall-e",
+            "midjourney",
+        ],
+    ) {
+        return Some(PricingGroupType::ImageGeneration);
     }
+    if text_matches_any_group_type_matcher(
+        &normalized,
+        &[
+            "claude",
+            "anthropic",
+            "sonnet",
+            "opus",
+            "haiku",
+            "yellow",
+            "amber",
+        ],
+    ) {
+        return Some(PricingGroupType::Claude);
+    }
+    if text_matches_any_group_type_matcher(&normalized, &["gemini", "google"]) {
+        return Some(PricingGroupType::Gemini);
+    }
+    if text_matches_any_group_type_matcher(&normalized, &["grok", "xai", "x-ai"]) {
+        return Some(PricingGroupType::Grok);
+    }
+    if text_matches_any_group_type_matcher(
+        &normalized,
+        &["openai", "gpt", "codex", "default", "green"],
+    ) {
+        return Some(PricingGroupType::Gpt);
+    }
+    None
 }
 
-fn parse_pricing_group_type(value: Option<&str>) -> Option<PricingGroupType> {
-    match value?.trim().to_ascii_lowercase().as_str() {
-        "gpt" => Some(PricingGroupType::Gpt),
-        "claude" => Some(PricingGroupType::Claude),
-        "gemini" => Some(PricingGroupType::Gemini),
-        "grok" => Some(PricingGroupType::Grok),
-        "image_generation" | "image-generation" | "image generation" => {
-            Some(PricingGroupType::ImageGeneration)
-        }
-        _ => None,
-    }
+fn text_matches_any_group_type_matcher(value: &str, matchers: &[&str]) -> bool {
+    matchers
+        .iter()
+        .map(|matcher| normalize_group_type_text(matcher))
+        .filter(|matcher| !matcher.is_empty())
+        .any(|matcher| value.contains(&matcher))
+}
+
+fn normalize_group_type_text(value: &str) -> String {
+    value
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|character| {
+            if character == '_' || character.is_whitespace() {
+                '-'
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 fn list_remote_station_keys_from_connection(
@@ -10554,7 +10607,15 @@ mod tests {
             "hash-image-generation-slug",
             2,
         );
-        scheduler_group_candidate(&database, &station.id, "gpt key", "gpt", "hash-gpt", 3);
+        let image_generation_chinese_key = scheduler_group_candidate(
+            &database,
+            &station.id,
+            "gpt image key",
+            "GPT画图分组",
+            "hash-gpt-image",
+            3,
+        );
+        scheduler_group_candidate(&database, &station.id, "gpt key", "gpt", "hash-gpt", 4);
 
         let candidates = database
             .load_scheduler_candidates(
@@ -10569,6 +10630,7 @@ mod tests {
                 image_generation_key.id,
                 image_generation_space_key.id,
                 image_generation_slug_key.id,
+                image_generation_chinese_key.id,
             ]
         );
         assert!(candidates
@@ -10582,6 +10644,135 @@ mod tests {
             missing.is_empty(),
             "group type filters must not fall back to unrelated groups"
         );
+    }
+
+    #[test]
+    fn load_scheduler_candidates_requires_plaintext_or_encrypted_secret_material() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-candidates-secret-material");
+        {
+            let connection = database.connection().expect("connection");
+            connection
+                .execute(
+                    "UPDATE station_keys SET api_key = '', api_key_secret_id = NULL WHERE station_id = ?1",
+                    params![station.id],
+                )
+                .expect("clear default key secret material");
+        }
+
+        let missing_secret_key = scheduler_group_candidate(
+            &database,
+            &station.id,
+            "missing secret key",
+            "gpt",
+            "hash-missing-secret",
+            0,
+        );
+        {
+            let connection = database.connection().expect("connection");
+            connection
+                .execute(
+                    "UPDATE station_keys SET api_key = '', api_key_secret_id = NULL WHERE id = ?1",
+                    params![missing_secret_key.id],
+                )
+                .expect("clear key secret material");
+        }
+
+        let secret_binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:secret".to_string(),
+                group_id_hash: Some("hash-secret".to_string()),
+                group_name: "gpt".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(1.0),
+                effective_rate_multiplier: Some(1.0),
+                rate_source: Some("group_rates".to_string()),
+                confidence: 0.9,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("secret binding");
+        let data_key = [7_u8; 32];
+        let encrypted_secret_key = database
+            .create_station_key_with_data_key(
+                CreateStationKeyInput {
+                    station_id: station.id,
+                    name: "encrypted secret key".to_string(),
+                    api_key: "sk-encrypted-secret".to_string(),
+                    enabled: true,
+                    priority: Some(1),
+                    max_concurrency: None,
+                    load_factor: None,
+                    schedulable: Some(true),
+                    group_name: Some("gpt".to_string()),
+                    tier_label: None,
+                    group_binding_id: Some(secret_binding.id),
+                    group_id_hash: Some("hash-secret".to_string()),
+                    rate_multiplier: Some(1.0),
+                    manual_rate_multiplier: None,
+                    rate_source: Some("group_rates".to_string()),
+                    balance_scope: None,
+                    note: None,
+                },
+                &data_key,
+            )
+            .expect("encrypted secret key");
+
+        let candidates = database
+            .load_scheduler_candidates(&RoutingGroupFilter::AllGroups, 0)
+            .expect("scheduler candidates");
+
+        assert_eq!(
+            candidate_key_ids(&candidates),
+            vec![encrypted_secret_key.id]
+        );
+    }
+
+    #[test]
+    fn load_scheduler_candidates_ignores_null_key_balance_snapshots_unless_station_scoped() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-candidates-balance-scope");
+        let key = scheduler_group_candidate(
+            &database,
+            &station.id,
+            "balance scoped key",
+            "gpt",
+            "hash-balance-scope",
+            0,
+        );
+        database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: None,
+                station_id: station.id,
+                station_key_id: None,
+                scope: "station_key".to_string(),
+                value: Some(0.0),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                low_balance_threshold: None,
+                status: "depleted".to_string(),
+                source: "test".to_string(),
+                confidence: 1.0,
+                collected_at: Some("2026-07-11T00:00:00Z".to_string()),
+            })
+            .expect("balance snapshot");
+
+        let candidates = database
+            .load_scheduler_candidates(&RoutingGroupFilter::AllGroups, 0)
+            .expect("scheduler candidates");
+
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.station_key_id == key.id)
+            .expect("candidate");
+        assert!(!candidate.balance_depleted);
     }
 
     #[test]
