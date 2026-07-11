@@ -1,3 +1,5 @@
+mod parsers;
+
 use serde_json::{json, Value};
 
 use crate::models::{
@@ -7,7 +9,7 @@ use crate::models::{
 use crate::services::{
     collectors::{
         adapters::{AdapterOutput, CollectorTask, CreatedRemoteKey},
-        facts::{CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts},
+        facts::{CollectedBalanceFact, CollectorFacts},
         url::{collector_base_urls, join_url},
     },
     database::AppDatabase,
@@ -19,132 +21,11 @@ const NEWAPI_REMOTE_KEY_UNSUPPORTED: &str =
 const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 fn parse_newapi_balance(station_id: &str, payload: &Value) -> CollectedBalanceFact {
-    let quota = payload.get("quota").and_then(Value::as_f64);
-    let used_quota = payload.get("used_quota").and_then(Value::as_f64);
-    let remaining = quota.map(|value| value / 500000.0);
-    let used = used_quota.map(|value| value / 500000.0);
-    let total = match (remaining, used) {
-        (Some(remaining), Some(used)) => Some(remaining + used),
-        _ => None,
-    };
-    CollectedBalanceFact {
-        station_id: station_id.to_string(),
-        station_key_id: None,
-        scope: "station".to_string(),
-        value: remaining,
-        used_value: used,
-        total_value: total,
-        currency: "USD".to_string(),
-        credit_unit: Some("newapi_quota_500000".to_string()),
-        status: if remaining == Some(0.0) {
-            "depleted"
-        } else {
-            "normal"
-        }
-        .to_string(),
-        source: "newapi_user_self".to_string(),
-        confidence: if remaining.is_some() { 0.9 } else { 0.4 },
-        collected_at: None,
-    }
+    parsers::parse_balance_fact(station_id, payload, 500000.0, true)
 }
 
 fn parse_newapi_group_facts(station_id: &str, payload: &Value) -> CollectorFacts {
-    let mut facts = CollectorFacts::default();
-
-    for group in newapi_group_values(payload) {
-        let group_id = group_id_from_value(group);
-        let group_name = group_name_from_value(group)
-            .or_else(|| group_id.clone())
-            .unwrap_or_else(|| "default".to_string());
-        let rate = rate_from_group_value(group);
-        let group_key_hash =
-            stable_group_key_hash(station_id, "newapi", group_id.as_deref(), &group_name);
-
-        facts.groups.push(CollectedGroupFact {
-            station_id: station_id.to_string(),
-            group_id: group_id.clone(),
-            group_key_hash: group_key_hash.clone(),
-            group_name: group_name.clone(),
-            visibility: "available".to_string(),
-            source: "newapi_user_groups".to_string(),
-            confidence: 0.85,
-            raw_json_redacted: Some(crate::services::secrets::mask::redact_value(group)),
-        });
-        facts.rates.push(CollectedRateFact {
-            station_id: station_id.to_string(),
-            station_key_id: None,
-            group_id,
-            group_key_hash,
-            group_name,
-            default_rate_multiplier: rate,
-            user_rate_multiplier: rate,
-            effective_rate_multiplier: rate,
-            source: "newapi_user_groups".to_string(),
-            confidence: if rate.is_some() { 0.85 } else { 0.6 },
-            checked_at: None,
-            raw_json_redacted: None,
-        });
-    }
-
-    facts
-}
-
-fn newapi_group_values(payload: &Value) -> Vec<&Value> {
-    if let Some(items) = payload.as_array() {
-        return items.iter().collect();
-    }
-
-    for key in ["groups", "items", "list", "data"] {
-        if let Some(value) = payload.get(key) {
-            if let Some(items) = value.as_array() {
-                return items.iter().collect();
-            }
-            if let Some(map) = value.as_object() {
-                return map.values().collect();
-            }
-        }
-    }
-
-    for key in ["user_group", "userGroup"] {
-        if let Some(value) = payload.get(key) {
-            return vec![value];
-        }
-    }
-
-    Vec::new()
-}
-
-fn group_id_from_value(value: &Value) -> Option<String> {
-    string_field(value, &["id", "group_id", "groupId", "key"])
-}
-
-fn group_name_from_value(value: &Value) -> Option<String> {
-    if let Some(name) = value.as_str() {
-        return Some(name.trim().to_string()).filter(|value| !value.is_empty());
-    }
-    string_field(value, &["name", "group_name", "groupName", "label"])
-}
-
-fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .filter_map(|key| value.get(*key))
-        .find_map(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-}
-
-fn rate_from_group_value(value: &Value) -> Option<f64> {
-    value
-        .get("effective_rate_multiplier")
-        .and_then(Value::as_f64)
-        .or_else(|| value.get("rateMultiplier").and_then(Value::as_f64))
-        .or_else(|| value.get("rate_multiplier").and_then(Value::as_f64))
-        .or_else(|| value.get("user_rate_multiplier").and_then(Value::as_f64))
-        .or_else(|| value.get("default_rate_multiplier").and_then(Value::as_f64))
-        .or_else(|| value.get("ratio").and_then(Value::as_f64))
-        .or_else(|| value.get("rate").and_then(Value::as_f64))
-        .or_else(|| value.as_f64())
+    parsers::parse_group_facts(station_id, payload)
 }
 
 pub fn remote_key_capability(station: &Station) -> Result<RemoteKeyCapability, String> {
@@ -283,15 +164,15 @@ pub fn collect_balance_and_groups(
         let url = join_url(&urls.management_base_url, "/api/user/self");
         let payload =
             get_newapi_json(&url, &access_token, &user_id, &proxy, &mut endpoint_results)?;
-        facts
-            .balances
-            .push(parse_newapi_balance(station_id, &payload));
+        let data = parsers::envelope_data(&payload).map_err(|error| error.message)?;
+        facts.balances.push(parse_newapi_balance(station_id, data));
     }
     if matches!(task, CollectorTask::Groups | CollectorTask::Full) {
         let url = join_url(&urls.management_base_url, "/api/user/self/groups");
         let payload =
             get_newapi_json(&url, &access_token, &user_id, &proxy, &mut endpoint_results)?;
-        let group_facts = parse_newapi_group_facts(station_id, &payload);
+        let data = parsers::envelope_data(&payload).map_err(|error| error.message)?;
+        let group_facts = parse_newapi_group_facts(station_id, data);
         facts.groups.extend(group_facts.groups);
         facts.rates.extend(group_facts.rates);
     }
@@ -449,19 +330,17 @@ mod tests {
         let facts = parse_newapi_group_facts(
             "station-1",
             &json!({
-                "groups": [
-                    { "id": "default", "name": "Default", "rate": 1.0 },
-                    { "id": "vip", "name": "VIP", "rateMultiplier": 0.8 }
-                ]
+                "default": { "desc": "Default", "ratio": 1.0 },
+                "vip": { "desc": "VIP", "ratio": 0.8 }
             }),
         );
 
         assert!(facts
             .groups
             .iter()
-            .any(|group| group.group_name == "Default"));
+            .any(|group| group.group_name == "default"));
         assert!(facts.rates.iter().any(|rate| {
-            rate.group_name == "VIP" && rate.effective_rate_multiplier == Some(0.8)
+            rate.group_name == "vip" && rate.effective_rate_multiplier == Some(0.8)
         }));
     }
 }
