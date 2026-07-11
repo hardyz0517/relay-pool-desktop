@@ -3,7 +3,7 @@ import { Circle } from "lucide-react";
 import { appRoutes } from "@/app/routes";
 import { shellLayout } from "@/components/ui/layout";
 import { CHANGE_EVENTS_UPDATED_EVENT, listChangeEvents } from "@/lib/api/changeEvents";
-import { getProxyStatus } from "@/lib/api/proxy";
+import { getProxyStatus, PROXY_STATUS_UPDATED_EVENT } from "@/lib/api/proxy";
 import { getSettings, SETTINGS_UPDATED_EVENT } from "@/lib/api/settings";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { ProxyStatus } from "@/lib/types/proxy";
@@ -50,9 +50,17 @@ export function AppShell({
       void getProxyStatus().then(setProxyStatus).catch(() => {});
     }
 
+    function handleProxyStatusUpdated(event: Event) {
+      setProxyStatus((event as CustomEvent<ProxyStatus>).detail);
+    }
+
     refreshProxyStatus();
     const intervalId = window.setInterval(refreshProxyStatus, 2_000);
-    return () => window.clearInterval(intervalId);
+    window.addEventListener(PROXY_STATUS_UPDATED_EVENT, handleProxyStatusUpdated);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener(PROXY_STATUS_UPDATED_EVENT, handleProxyStatusUpdated);
+    };
   }, []);
 
   useEffect(() => {
