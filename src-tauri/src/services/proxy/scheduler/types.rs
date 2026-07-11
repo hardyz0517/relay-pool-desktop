@@ -1,3 +1,65 @@
+use crate::models::routing::{PricingGroupType, RouteEndpointKind, RoutingGroupFilter};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScheduleRequest {
+    pub endpoint: RouteEndpointKind,
+    pub requested_model: Option<String>,
+    pub mapped_model: Option<String>,
+    pub routing_group_filter: RoutingGroupFilter,
+    pub stream: bool,
+    pub uses_tools: bool,
+    pub uses_vision: bool,
+    pub uses_reasoning: bool,
+    pub max_rate_multiplier: f64,
+    pub session_hash: Option<String>,
+    pub previous_response_id: Option<String>,
+    pub excluded_key_ids: Vec<String>,
+    pub now_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SchedulerCandidate {
+    pub station_key_id: String,
+    pub station_id: String,
+    pub priority: i64,
+    pub group_binding_id: Option<String>,
+    pub group_id_hash: Option<String>,
+    pub group_type: Option<PricingGroupType>,
+    pub station_enabled: bool,
+    pub key_enabled: bool,
+    pub schedulable: bool,
+    pub supports_chat_completions: bool,
+    pub supports_responses: bool,
+    pub supports_embeddings: bool,
+    pub supports_stream: bool,
+    pub supports_tools: bool,
+    pub supports_vision: bool,
+    pub supports_reasoning: bool,
+    pub model_allowlist: Vec<String>,
+    pub model_blocklist: Vec<String>,
+    pub health_blocked: bool,
+    pub balance_depleted: bool,
+    pub effective_multiplier: Option<EffectiveMultiplierFact>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CandidateRejectionCode {
+    AssetUnavailable,
+    RoutingGroupMismatch,
+    CapabilityMismatch,
+    ModelMismatch,
+    HealthBlocked,
+    BalanceDepleted,
+    NoMultiplierEvidence,
+    MultiplierOverCeiling,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidateRejection {
+    pub primary_code: CandidateRejectionCode,
+    pub reasons: Vec<CandidateRejectionCode>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct EffectiveMultiplierFact {
     pub station_key_id: String,

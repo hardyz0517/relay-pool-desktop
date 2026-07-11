@@ -10,7 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{params, types::Type, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, types::Type, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
@@ -36,8 +36,9 @@ use crate::models::{
     proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
     remote_keys::{RemoteKeyMatchStatus, RemoteStationKey},
     routing::{
-        ModelAlias, RouteSimulationInput, RouteSimulationResult, RoutingGroupFilter, RoutingPolicy,
-        SchedulerAdvancedSettings, StationKeyCapabilities, StationKeyHealth,
+        ModelAlias, PricingGroupType, RouteSimulationInput, RouteSimulationResult,
+        RoutingGroupFilter, RoutingPolicy, SchedulerAdvancedSettings, StationKeyCapabilities,
+        StationKeyHealth,
         UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
     },
     secrets::{SecretMigrationReport, SecretScanFinding},
@@ -57,7 +58,10 @@ use crate::services::pricing::sanitize_pricing_rule_input;
 use crate::services::proxy::{
     router::{select_route_candidates, RichRouteCandidate, RouteCandidateEconomics, RouteRequest},
     routing_snapshot::LocalRoutingReadCandidate,
-    scheduler::types::MultiplierSourceFacts,
+    scheduler::{
+        multiplier::resolve_effective_multiplier,
+        types::{MultiplierSourceFacts, SchedulerCandidate},
+    },
     RouteCandidate,
 };
 use crate::services::secrets::{
@@ -568,6 +572,15 @@ impl AppDatabase {
     ) -> Result<MultiplierSourceFacts, String> {
         let connection = self.connection()?;
         load_multiplier_source_facts_from_connection(&connection, station_key_id)
+    }
+
+    pub fn load_scheduler_candidates(
+        &self,
+        filter: &RoutingGroupFilter,
+        now_ms: i64,
+    ) -> Result<Vec<SchedulerCandidate>, String> {
+        let connection = self.connection()?;
+        load_scheduler_candidates_from_connection(&connection, filter, now_ms)
     }
 
     pub fn list_remote_station_keys(
@@ -4905,6 +4918,207 @@ fn load_multiplier_source_facts_from_connection(
         .optional()
         .map_err(|error| format!("读取 Key 倍率事实失败: {error}"))?
         .ok_or_else(|| "Station Key 不存在，无法读取倍率事实".to_string())
+}
+
+struct SchedulerCandidateBaseRow {
+    station_key_id: String,
+    station_id: String,
+    priority: i64,
+    group_binding_id: Option<String>,
+    group_id_hash: Option<String>,
+    group_name: Option<String>,
+    station_enabled: bool,
+    key_enabled: bool,
+    schedulable: bool,
+    supports_chat_completions: bool,
+    supports_responses: bool,
+    supports_embeddings: bool,
+    supports_stream: bool,
+    supports_tools: bool,
+    supports_vision: bool,
+    supports_reasoning: bool,
+    model_allowlist: Vec<String>,
+    model_blocklist: Vec<String>,
+    health_blocked: bool,
+    balance_depleted: bool,
+}
+
+fn load_scheduler_candidates_from_connection(
+    connection: &Connection,
+    filter: &RoutingGroupFilter,
+    now_ms: i64,
+) -> Result<Vec<SchedulerCandidate>, String> {
+    let advanced_settings = parse_scheduler_advanced_settings(&read_setting_or_default(
+        connection,
+        "scheduler_advanced_settings_json",
+        "",
+    )?)?;
+    let group_rate_interval_minutes: u16 =
+        parse_setting_or_default(connection, "group_rate_interval_minutes", "20")?;
+    let group_rate_interval_ms = i64::from(group_rate_interval_minutes) * 60 * 1000;
+
+    let mut sql = String::from(
+        "SELECT
+            k.id,
+            k.station_id,
+            COALESCE(k.routing_order, k.priority),
+            k.group_binding_id,
+            COALESCE(b.group_id_hash, k.group_id_hash),
+            COALESCE(b.group_name, k.group_name),
+            s.enabled,
+            k.enabled,
+            k.schedulable,
+            COALESCE(c.supports_chat_completions, 1),
+            COALESCE(c.supports_responses, 1),
+            COALESCE(c.supports_embeddings, 0),
+            COALESCE(c.supports_stream, 1),
+            COALESCE(c.supports_tools, 0),
+            COALESCE(c.supports_vision, 0),
+            COALESCE(c.supports_reasoning, 0),
+            COALESCE(c.model_allowlist_json, '[]'),
+            COALESCE(c.model_blocklist_json, '[]'),
+            h.cooldown_until,
+            COALESCE(bs.status, '')
+         FROM station_keys k
+         JOIN stations s ON s.id = k.station_id
+         LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
+         LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
+         LEFT JOIN station_key_health h ON h.station_key_id = k.id
+         LEFT JOIN balance_snapshots bs ON bs.id = (
+             SELECT latest_balance.id
+               FROM balance_snapshots latest_balance
+              WHERE latest_balance.station_key_id = k.id
+                 OR (
+                    latest_balance.station_key_id IS NULL
+                    AND latest_balance.station_id = k.station_id
+                 )
+              ORDER BY latest_balance.updated_at DESC, latest_balance.created_at DESC
+              LIMIT 1
+         )",
+    );
+    let mut sql_params = Vec::new();
+    match filter {
+        RoutingGroupFilter::AllGroups => {}
+        RoutingGroupFilter::UngroupedOnly => {
+            sql.push_str(" WHERE k.group_binding_id IS NULL AND k.group_id_hash IS NULL");
+        }
+        RoutingGroupFilter::GroupBindingId(group_binding_id) => {
+            sql.push_str(" WHERE k.group_binding_id = ?1");
+            sql_params.push(group_binding_id.clone());
+        }
+        RoutingGroupFilter::GroupIdHash(group_id_hash) => {
+            sql.push_str(" WHERE COALESCE(b.group_id_hash, k.group_id_hash) = ?1");
+            sql_params.push(group_id_hash.clone());
+        }
+        RoutingGroupFilter::GroupType(group_type) => {
+            sql.push_str(" WHERE LOWER(COALESCE(b.group_name, k.group_name, '')) = ?1");
+            sql_params.push(pricing_group_type_slug(group_type).to_string());
+        }
+    }
+    sql.push_str(" ORDER BY COALESCE(k.routing_order, k.priority) ASC, k.priority ASC, k.created_at ASC, k.id ASC");
+
+    let rows = {
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| format!("read scheduler candidates failed: {error}"))?;
+        let rows = statement
+            .query_map(params_from_iter(sql_params.iter()), |row| {
+                let cooldown_until: Option<String> = row.get(18)?;
+                let balance_status: String = row.get(19)?;
+                Ok(SchedulerCandidateBaseRow {
+                    station_key_id: row.get(0)?,
+                    station_id: row.get(1)?,
+                    priority: row.get(2)?,
+                    group_binding_id: row.get(3)?,
+                    group_id_hash: row.get(4)?,
+                    group_name: row.get(5)?,
+                    station_enabled: i64_to_bool(row.get(6)?),
+                    key_enabled: i64_to_bool(row.get(7)?),
+                    schedulable: i64_to_bool(row.get(8)?),
+                    supports_chat_completions: i64_to_bool(row.get(9)?),
+                    supports_responses: i64_to_bool(row.get(10)?),
+                    supports_embeddings: i64_to_bool(row.get(11)?),
+                    supports_stream: i64_to_bool(row.get(12)?),
+                    supports_tools: i64_to_bool(row.get(13)?),
+                    supports_vision: i64_to_bool(row.get(14)?),
+                    supports_reasoning: i64_to_bool(row.get(15)?),
+                    model_allowlist: parse_json_string_list(row.get::<_, String>(16)?.as_str()),
+                    model_blocklist: parse_json_string_list(row.get::<_, String>(17)?.as_str()),
+                    health_blocked: cooldown_until
+                        .as_deref()
+                        .and_then(|value| parse_optional_millisecond_timestamp(Some(value)))
+                        .is_some_and(|cooldown_until_ms| now_ms < cooldown_until_ms),
+                    balance_depleted: matches!(
+                        balance_status.trim().to_ascii_lowercase().as_str(),
+                        "depleted" | "insufficient" | "blocked"
+                    ),
+                })
+            })
+            .map_err(|error| format!("query scheduler candidates failed: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("parse scheduler candidates failed: {error}"))?;
+        rows
+    };
+
+    rows.into_iter()
+        .map(|row| {
+            let multiplier_facts =
+                load_multiplier_source_facts_from_connection(connection, &row.station_key_id)?;
+            let effective_multiplier = resolve_effective_multiplier(
+                multiplier_facts,
+                now_ms,
+                advanced_settings.multiplier_min_confidence,
+                group_rate_interval_ms,
+            )
+            .ok();
+            Ok(SchedulerCandidate {
+                station_key_id: row.station_key_id,
+                station_id: row.station_id,
+                priority: row.priority,
+                group_binding_id: row.group_binding_id,
+                group_id_hash: row.group_id_hash,
+                group_type: parse_pricing_group_type(row.group_name.as_deref()),
+                station_enabled: row.station_enabled,
+                key_enabled: row.key_enabled,
+                schedulable: row.schedulable,
+                supports_chat_completions: row.supports_chat_completions,
+                supports_responses: row.supports_responses,
+                supports_embeddings: row.supports_embeddings,
+                supports_stream: row.supports_stream,
+                supports_tools: row.supports_tools,
+                supports_vision: row.supports_vision,
+                supports_reasoning: row.supports_reasoning,
+                model_allowlist: row.model_allowlist,
+                model_blocklist: row.model_blocklist,
+                health_blocked: row.health_blocked,
+                balance_depleted: row.balance_depleted,
+                effective_multiplier,
+            })
+        })
+        .collect()
+}
+
+fn pricing_group_type_slug(group_type: &PricingGroupType) -> &'static str {
+    match group_type {
+        PricingGroupType::Gpt => "gpt",
+        PricingGroupType::Claude => "claude",
+        PricingGroupType::Gemini => "gemini",
+        PricingGroupType::Grok => "grok",
+        PricingGroupType::ImageGeneration => "image_generation",
+    }
+}
+
+fn parse_pricing_group_type(value: Option<&str>) -> Option<PricingGroupType> {
+    match value?.trim().to_ascii_lowercase().as_str() {
+        "gpt" => Some(PricingGroupType::Gpt),
+        "claude" => Some(PricingGroupType::Claude),
+        "gemini" => Some(PricingGroupType::Gemini),
+        "grok" => Some(PricingGroupType::Grok),
+        "image_generation" | "image-generation" | "image generation" => {
+            Some(PricingGroupType::ImageGeneration)
+        }
+        _ => None,
+    }
 }
 
 fn list_remote_station_keys_from_connection(
@@ -10086,6 +10300,13 @@ mod tests {
         );
     }
 
+    fn candidate_key_ids(candidates: &[SchedulerCandidate]) -> Vec<String> {
+        candidates
+            .iter()
+            .map(|candidate| candidate.station_key_id.clone())
+            .collect()
+    }
+
     #[test]
     fn load_multiplier_source_facts_preserves_binding_confidence_for_collected_rate() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
@@ -10144,6 +10365,106 @@ mod tests {
             20 * 60 * 1000,
         )
         .expect("binding confidence should satisfy default multiplier threshold");
+    }
+
+    #[test]
+    fn load_scheduler_candidates_applies_specific_group_filter_without_fallback() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-candidates-filter");
+        let gpt_binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:gpt".to_string(),
+                group_id_hash: Some("hash-gpt".to_string()),
+                group_name: "gpt".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(1.0),
+                effective_rate_multiplier: Some(1.0),
+                rate_source: Some("group_rates".to_string()),
+                confidence: 0.9,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("gpt binding");
+        let claude_binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:claude".to_string(),
+                group_id_hash: Some("hash-claude".to_string()),
+                group_name: "claude".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(0.1),
+                user_rate_multiplier: Some(0.1),
+                effective_rate_multiplier: Some(0.1),
+                rate_source: Some("group_rates".to_string()),
+                confidence: 0.9,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("claude binding");
+        let gpt_key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id.clone(),
+                name: "gpt key".to_string(),
+                api_key: "sk-gpt".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: Some(true),
+                group_name: Some("gpt".to_string()),
+                tier_label: None,
+                group_binding_id: Some(gpt_binding.id.clone()),
+                group_id_hash: Some("hash-gpt".to_string()),
+                rate_multiplier: Some(1.0),
+                manual_rate_multiplier: None,
+                rate_source: Some("group_rates".to_string()),
+                balance_scope: None,
+                note: None,
+            })
+            .expect("gpt key");
+        database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "claude key".to_string(),
+                api_key: "sk-claude".to_string(),
+                enabled: true,
+                priority: Some(1),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: Some(true),
+                group_name: Some("claude".to_string()),
+                tier_label: None,
+                group_binding_id: Some(claude_binding.id),
+                group_id_hash: Some("hash-claude".to_string()),
+                rate_multiplier: Some(0.1),
+                manual_rate_multiplier: None,
+                rate_source: Some("group_rates".to_string()),
+                balance_scope: None,
+                note: None,
+            })
+            .expect("claude key");
+
+        let candidates = database
+            .load_scheduler_candidates(&RoutingGroupFilter::GroupBindingId(gpt_binding.id), 0)
+            .expect("scheduler candidates");
+
+        assert_eq!(candidate_key_ids(&candidates), vec![gpt_key.id]);
+
+        let missing = database
+            .load_scheduler_candidates(&RoutingGroupFilter::GroupIdHash("missing".to_string()), 0)
+            .expect("missing group filter candidates");
+        assert!(
+            missing.is_empty(),
+            "specific group filters must not fall back to all groups"
+        );
     }
 
     #[test]
