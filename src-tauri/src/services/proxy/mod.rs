@@ -12,6 +12,7 @@ pub mod routing_probe;
 pub mod routing_snapshot;
 pub mod routing_types;
 pub mod runtime;
+pub mod scheduler;
 
 #[derive(Debug, Clone)]
 pub struct RouteCandidate {

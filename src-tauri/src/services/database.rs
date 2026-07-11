@@ -57,6 +57,7 @@ use crate::services::pricing::sanitize_pricing_rule_input;
 use crate::services::proxy::{
     router::{select_route_candidates, RichRouteCandidate, RouteCandidateEconomics, RouteRequest},
     routing_snapshot::LocalRoutingReadCandidate,
+    scheduler::types::MultiplierSourceFacts,
     RouteCandidate,
 };
 use crate::services::secrets::{
@@ -559,6 +560,14 @@ impl AppDatabase {
     pub fn list_station_keys(&self, station_id: String) -> Result<Vec<StationKey>, String> {
         let connection = self.connection()?;
         list_station_keys_from_connection(&connection, &station_id)
+    }
+
+    pub fn load_multiplier_source_facts(
+        &self,
+        station_key_id: &str,
+    ) -> Result<MultiplierSourceFacts, String> {
+        let connection = self.connection()?;
+        load_multiplier_source_facts_from_connection(&connection, station_key_id)
     }
 
     pub fn list_remote_station_keys(
@@ -3681,6 +3690,13 @@ fn parse_channel_monitor_run_time(value: &str, field_name: &str) -> Result<i64, 
     Ok(timestamp)
 }
 
+fn parse_optional_millisecond_timestamp(value: Option<&str>) -> Option<i64> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<i64>().ok())
+}
+
 fn create_channel_monitor_in_connection(
     connection: &Connection,
     input: CreateChannelMonitorInput,
@@ -4850,6 +4866,43 @@ fn list_station_keys_from_connection(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析 Station Key 失败: {error}"))?;
     Ok(rows)
+}
+
+fn load_multiplier_source_facts_from_connection(
+    connection: &Connection,
+    station_key_id: &str,
+) -> Result<MultiplierSourceFacts, String> {
+    connection
+        .query_row(
+            "SELECT id, manual_rate_multiplier, manual_rate_updated_at,
+                    group_binding_id, group_id_hash, group_name,
+                    rate_multiplier, rate_source, rate_collected_at
+               FROM station_keys
+              WHERE id = ?1",
+            params![station_key_id],
+            |row| {
+                let manual_rate_updated_at: Option<String> = row.get(2)?;
+                let rate_collected_at: Option<String> = row.get(8)?;
+                Ok(MultiplierSourceFacts {
+                    station_key_id: row.get(0)?,
+                    manual_rate_multiplier: row.get(1)?,
+                    manual_rate_updated_at,
+                    group_binding_id: row.get(3)?,
+                    group_id_hash: row.get(4)?,
+                    group_name: row.get(5)?,
+                    collected_rate_multiplier: row.get(6)?,
+                    collected_rate_source: row.get(7)?,
+                    collected_rate_confidence: None,
+                    collected_rate_collected_at_ms: parse_optional_millisecond_timestamp(
+                        rate_collected_at.as_deref(),
+                    ),
+                    collected_rate_valid_until_ms: None,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| format!("读取 Key 倍率事实失败: {error}"))?
+        .ok_or_else(|| "Station Key 不存在，无法读取倍率事实".to_string())
 }
 
 fn list_remote_station_keys_from_connection(
