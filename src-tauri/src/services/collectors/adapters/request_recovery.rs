@@ -111,7 +111,7 @@ impl RequestExecution {
             "url": self.result.url,
             "status": self.result.status,
             "ok": self.result.ok,
-            "durationMs": self.duration_ms,
+            "durationMs": self.result.duration_ms,
             "path": self.path,
             "attemptCount": self.attempts.len(),
             "failureKind": self.failure_kind.map(FailureKind::as_str),
@@ -175,8 +175,11 @@ where
             break;
         }
         if failure == Some(FailureKind::AuthRejected) {
+            final_failure = failure;
+            if attempts.len() >= max_attempts {
+                break;
+            }
             if auth_refreshed {
-                final_failure = failure;
                 break;
             }
             auth_refreshed = true;
@@ -471,6 +474,61 @@ mod tests {
 
         assert_eq!(refreshes, 1);
         assert_eq!(execution.attempts.len(), 2);
+        assert_eq!(execution.failure_kind, Some(FailureKind::AuthRejected));
+    }
+
+    #[test]
+    fn request_recovery_redacted_json_preserves_endpoint_summary_fields() {
+        let mut request = |_: &String, _: Duration| EndpointJsonResult {
+            url: "https://example.test/v1/models?view=summary".to_string(),
+            status: Some(200),
+            ok: true,
+            duration_ms: 37,
+            payload: Some(json!({"body": "must-not-appear"})),
+            error_message: None,
+            retry_after: None,
+        };
+
+        let execution = execute_json_request(
+            "/v1/models",
+            "secret".to_string(),
+            None,
+            &mut request,
+            policy(),
+        );
+        let redacted = execution.to_redacted_json();
+
+        assert_eq!(
+            redacted["url"],
+            "https://example.test/v1/models?view=summary"
+        );
+        assert_eq!(redacted["status"], 200);
+        assert_eq!(redacted["ok"], true);
+        assert_eq!(redacted["durationMs"], 37);
+        assert!(!redacted.to_string().contains("must-not-appear"));
+    }
+
+    #[test]
+    fn request_recovery_does_not_refresh_auth_after_final_attempt() {
+        let mut refreshes = 0;
+        let mut refresh = |_: &String| {
+            refreshes += 1;
+            Some("fresh-secret".to_string())
+        };
+        let mut request = |_: &String, _: Duration| result(Some(401), None);
+        let mut policy = policy();
+        policy.max_attempts = 1;
+
+        let execution = execute_json_request(
+            "/v1/models",
+            "stale-secret".to_string(),
+            Some(&mut refresh),
+            &mut request,
+            policy,
+        );
+
+        assert_eq!(refreshes, 0);
+        assert!(execution.recovery_actions.is_empty());
         assert_eq!(execution.failure_kind, Some(FailureKind::AuthRejected));
     }
 }
