@@ -26,20 +26,39 @@ const transientPages = [
   ["modelBasePrices", "pricing"],
 ];
 
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getPolicyBlock(pageId) {
+  const policyBlockPattern = new RegExp(
+    `\\b${escapeRegExp(pageId)}:\\s*\\{([\\s\\S]*?)\\n\\s*\\}`,
+  );
+  const match = policySource.match(policyBlockPattern);
+  assert.ok(match, `page transition policy should include policy block ${pageId}`);
+  return match[1];
+}
+
 for (const routeId of shellPages) {
+  const policyBlock = getPolicyBlock(routeId);
+
   assert.ok(
-    policySource.includes(`"${routeId}"`),
-    `page transition policy should include shell route ${routeId}`,
+    policyBlock.includes(`pageId: "${routeId}"`) &&
+      policyBlock.includes('kind: "shell"') &&
+      policyBlock.includes(`parentRouteId: "${routeId}"`),
+    `page transition policy should map shell route ${routeId} to itself`,
   );
 }
 
 for (const [pageId, parentRouteId] of transientPages) {
+  const policyBlock = getPolicyBlock(pageId);
+
   assert.ok(
-    policySource.includes(`${pageId}:`) &&
-      policySource.includes(`parentRouteId: "${parentRouteId}"`) &&
-      policySource.includes('kind: "transient"') &&
-      policySource.includes('enterDirection: "forward"') &&
-      policySource.includes('exitDirection: "back"'),
+    policyBlock.includes(`pageId: "${pageId}"`) &&
+      policyBlock.includes(`parentRouteId: "${parentRouteId}"`) &&
+      policyBlock.includes('kind: "transient"') &&
+      policyBlock.includes('enterDirection: "forward"') &&
+      policyBlock.includes('exitDirection: "back"'),
     `page transition policy should map ${pageId} to parent route ${parentRouteId}`,
   );
 }
