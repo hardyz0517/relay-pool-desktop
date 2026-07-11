@@ -114,7 +114,13 @@ pub fn queue_factors(waiting: &[u64]) -> Vec<f64> {
 pub fn error_factors(error_rate_ewmas: &[f64]) -> Vec<f64> {
     error_rate_ewmas
         .iter()
-        .map(|value| 1.0 - clamp01(*value))
+        .map(|value| {
+            if value.is_finite() {
+                1.0 - clamp01(*value)
+            } else {
+                0.0
+            }
+        })
         .collect()
 }
 
@@ -139,7 +145,8 @@ pub fn ttft_factors(ttfts: &[Option<f64>]) -> Vec<f64> {
                 present_index += 1;
                 factor
             }
-            _ => 0.5,
+            Some(_) => 0.0,
+            None => 0.5,
         })
         .collect()
 }
@@ -162,7 +169,7 @@ fn lower_is_better_factors(values: &[f64], equal_factor: f64) -> Vec<f64> {
         .filter(|value| value.is_finite())
         .collect();
     if finite_values.is_empty() {
-        return vec![equal_factor; values.len()];
+        return vec![0.0; values.len()];
     }
 
     let min = finite_values.iter().copied().fold(f64::INFINITY, f64::min);
@@ -172,7 +179,16 @@ fn lower_is_better_factors(values: &[f64], equal_factor: f64) -> Vec<f64> {
         .fold(f64::NEG_INFINITY, f64::max);
     let range = max - min;
     if range == 0.0 {
-        return vec![equal_factor; values.len()];
+        return values
+            .iter()
+            .map(|value| {
+                if value.is_finite() {
+                    equal_factor
+                } else {
+                    0.0
+                }
+            })
+            .collect();
     }
 
     values
@@ -181,7 +197,7 @@ fn lower_is_better_factors(values: &[f64], equal_factor: f64) -> Vec<f64> {
             if value.is_finite() {
                 clamp01((max - *value) / range)
             } else {
-                equal_factor
+                0.0
             }
         })
         .collect()
@@ -239,6 +255,27 @@ mod tests {
         let factors = error_factors(&[-0.25, 0.25, 1.5]);
 
         assert_eq!(factors, vec![1.0, 0.75, 0.0]);
+    }
+
+    #[test]
+    fn multiplier_factor_does_not_reward_nan_or_infinity() {
+        let factors = multiplier_factors(&[0.5, f64::NAN, f64::INFINITY, f64::NEG_INFINITY]);
+
+        assert_eq!(factors, vec![1.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn error_factor_does_not_reward_nan() {
+        let factors = error_factors(&[0.0, f64::NAN]);
+
+        assert_eq!(factors, vec![1.0, 0.0]);
+    }
+
+    #[test]
+    fn ttft_factor_does_not_reward_explicit_non_finite_values() {
+        let factors = ttft_factors(&[Some(100.0), None, Some(f64::NAN), Some(f64::INFINITY)]);
+
+        assert_eq!(factors, vec![0.5, 0.5, 0.0, 0.0]);
     }
 
     #[test]

@@ -24,17 +24,25 @@ pub fn top_k_candidates(candidates: &[ScoredCandidate], top_k: usize) -> Vec<Sco
 }
 
 pub fn top_k_weights(top_k: &[ScoredCandidate]) -> Vec<f64> {
-    let min_score = top_k
+    let finite_scores: Vec<_> = top_k
         .iter()
         .map(|candidate| candidate.score)
-        .fold(f64::INFINITY, f64::min);
-    if !min_score.is_finite() {
-        return Vec::new();
+        .filter(|score| score.is_finite())
+        .collect();
+    if finite_scores.is_empty() {
+        return vec![1.0; top_k.len()];
     }
 
+    let min_score = finite_scores.iter().copied().fold(f64::INFINITY, f64::min);
     top_k
         .iter()
-        .map(|candidate| (candidate.score - min_score) + 1.0)
+        .map(|candidate| {
+            if candidate.score.is_finite() {
+                positive_weight((candidate.score - min_score) + 1.0)
+            } else {
+                1.0
+            }
+        })
         .collect()
 }
 
@@ -87,13 +95,28 @@ pub fn move_sticky_candidate_to_front(candidates: &mut Vec<ScoredCandidate>) {
 }
 
 fn compare_candidates(left: &ScoredCandidate, right: &ScoredCandidate) -> Ordering {
-    right
-        .score
-        .total_cmp(&left.score)
+    compare_scores(left.score, right.score)
         .then_with(|| left.priority.cmp(&right.priority))
         .then_with(|| left.load_rate.total_cmp(&right.load_rate))
         .then_with(|| left.waiting.cmp(&right.waiting))
         .then_with(|| left.station_key_id.cmp(&right.station_key_id))
+}
+
+fn compare_scores(left: f64, right: f64) -> Ordering {
+    match (left.is_finite(), right.is_finite()) {
+        (true, true) => right.total_cmp(&left),
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (false, false) => Ordering::Equal,
+    }
+}
+
+fn positive_weight(value: f64) -> f64 {
+    if value.is_finite() && value > 0.0 {
+        value
+    } else {
+        1.0
+    }
 }
 
 struct DeterministicRng {
@@ -152,6 +175,65 @@ mod tests {
         let weights = top_k_weights(&top_k);
 
         assert_eq!(weights, vec![2.5, 1.5, 1.0]);
+    }
+
+    #[test]
+    fn top_k_candidates_places_nan_score_after_finite_scores() {
+        let candidates = vec![
+            scored("key-nan", 0, f64::NAN, 0.0, 0),
+            scored("key-valid", 0, 10.0, 0.0, 0),
+            scored("key-inf", 0, f64::INFINITY, 0.0, 0),
+            scored("key-neg-inf", 0, f64::NEG_INFINITY, 0.0, 0),
+        ];
+
+        let selected = top_k_candidates(&candidates, 4);
+        let keys: Vec<_> = selected
+            .iter()
+            .map(|candidate| candidate.station_key_id.as_str())
+            .collect();
+
+        assert_eq!(
+            keys,
+            vec!["key-valid", "key-inf", "key-nan", "key-neg-inf"]
+        );
+    }
+
+    #[test]
+    fn weighted_order_uses_positive_weights_with_nan_and_infinite_scores() {
+        let candidates = vec![
+            scored("key-valid", 0, 10.0, 0.0, 0),
+            scored("key-nan", 0, f64::NAN, 0.0, 0),
+            scored("key-inf", 0, f64::INFINITY, 0.0, 0),
+            scored("key-neg-inf", 0, f64::NEG_INFINITY, 0.0, 0),
+        ];
+
+        let weights = top_k_weights(&candidates);
+        assert_eq!(weights.len(), candidates.len());
+        assert!(weights.iter().all(|weight| weight.is_finite() && *weight > 0.0));
+
+        let ordered = weighted_order_without_replacement(&candidates, 42);
+        let mut keys: Vec<_> = ordered
+            .iter()
+            .map(|candidate| candidate.station_key_id.as_str())
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec!["key-inf", "key-nan", "key-neg-inf", "key-valid"]
+        );
+    }
+
+    #[test]
+    fn top_k_weights_are_equal_when_no_finite_scores_exist() {
+        let candidates = vec![
+            scored("key-nan", 0, f64::NAN, 0.0, 0),
+            scored("key-inf", 0, f64::INFINITY, 0.0, 0),
+            scored("key-neg-inf", 0, f64::NEG_INFINITY, 0.0, 0),
+        ];
+
+        let weights = top_k_weights(&candidates);
+
+        assert_eq!(weights, vec![1.0, 1.0, 1.0]);
     }
 
     #[test]
