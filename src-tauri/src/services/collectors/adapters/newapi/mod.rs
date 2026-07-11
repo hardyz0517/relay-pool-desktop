@@ -1,4 +1,8 @@
+mod auth;
+mod client;
 mod parsers;
+#[cfg(test)]
+mod test_support;
 
 use serde_json::{json, Value};
 
