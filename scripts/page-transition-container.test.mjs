@@ -74,9 +74,11 @@ assert.ok(
 );
 
 assert.ok(
-  appSource.includes("onTransitionEnd={handleTransientExitComplete}") &&
+  appSource.includes("handleTransientExitTransitionEnd") &&
+    appSource.includes("event.target !== event.currentTarget") &&
+    appSource.includes("onTransitionEnd={handleTransientExitTransitionEnd}") &&
     appSource.includes("window.setTimeout(handleTransientExitComplete"),
-  "outgoing transient cleanup should use transitionend and timeout fallback",
+  "outgoing transient cleanup should ignore bubbled transitionend events and keep timeout fallback",
 );
 
 assert.ok(

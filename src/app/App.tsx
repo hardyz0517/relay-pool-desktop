@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from "react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageActivityProvider } from "@/components/shell/PageActivity";
 import {
@@ -252,6 +252,13 @@ export function App() {
     setExitingTransientPage(null);
   }
 
+  function handleTransientExitTransitionEnd(event: TransitionEvent<HTMLDivElement>) {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+    handleTransientExitComplete();
+  }
+
   const shellRouteIds = isShellPage(activeRouteId) && !mountedRouteIds.has(activeRouteId)
     ? [...mountedRouteIds, activeRouteId]
     : [...mountedRouteIds];
@@ -308,7 +315,7 @@ export function App() {
               }
               data-page-transition-state="exiting"
               inert
-              onTransitionEnd={handleTransientExitComplete}
+              onTransitionEnd={handleTransientExitTransitionEnd}
             >
               {exitingTransientPage.node}
             </div>
