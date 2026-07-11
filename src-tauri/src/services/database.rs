@@ -53,6 +53,7 @@ use crate::services::change_events::{
     STATUS_DISMISSED, STATUS_READ, STATUS_RESOLVED, STATUS_UNREAD,
 };
 use crate::services::collectors::session::{token_is_fresh, ResolvedSession, SessionResolveStatus};
+use crate::services::outbound::{normalize_proxy_mode, normalize_proxy_url, resolve_proxy_config};
 use crate::services::pricing::sanitize_pricing_rule_input;
 use crate::services::proxy::{
     router::{select_route_candidates, RichRouteCandidate, RouteCandidateEconomics, RouteRequest},
@@ -321,6 +322,11 @@ impl AppDatabase {
             input.credit_per_cny,
             input.collection_interval_minutes,
         )?;
+        validate_proxy_config(
+            input.collector_proxy_mode.clone(),
+            input.collector_proxy_url.clone(),
+            true,
+        )?;
 
         let connection = self.connection()?;
         create_station_in_connection(&connection, input, data_key)
@@ -341,6 +347,11 @@ impl AppDatabase {
             &input.base_url,
             input.credit_per_cny,
             input.collection_interval_minutes,
+        )?;
+        validate_proxy_config(
+            input.collector_proxy_mode.clone(),
+            input.collector_proxy_url.clone(),
+            true,
         )?;
 
         let connection = self.connection()?;
@@ -400,6 +411,17 @@ impl AppDatabase {
         read_setting(&connection, "local_key")
     }
 
+    pub fn update_local_access_key(&self, value: String) -> Result<AppSettings, String> {
+        let local_key = value.trim();
+        if local_key.is_empty() {
+            return Err("本地访问密钥不能为空".to_string());
+        }
+
+        let connection = self.connection()?;
+        upsert_setting(&connection, "local_key", local_key)?;
+        self.settings_from_open_connection(&connection)
+    }
+
     pub fn update_settings(&self, input: UpdateSettingsInput) -> Result<AppSettings, String> {
         if input.local_proxy_port == 0 {
             return Err("本地代理端口必须大于 0".to_string());
@@ -424,10 +446,22 @@ impl AppDatabase {
             return Err("采集并发数必须在 1 到 8 之间".to_string());
         }
 
+        let collector_proxy_mode = validate_proxy_config(
+            input.collector_proxy_mode,
+            input.collector_proxy_url.clone(),
+            false,
+        )?;
+        let collector_proxy_url = normalize_proxy_url(input.collector_proxy_url);
+
         let connection = self.connection()?;
         let values = [
             ("local_proxy_port", input.local_proxy_port.to_string()),
             ("default_routing_strategy", input.default_routing_strategy),
+            ("collector_proxy_mode", collector_proxy_mode),
+            (
+                "collector_proxy_url",
+                collector_proxy_url.unwrap_or_default(),
+            ),
             (
                 "low_balance_threshold_cny",
                 input.low_balance_threshold_cny.to_string(),
@@ -1594,6 +1628,8 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             station_type TEXT NOT NULL,
             base_url TEXT NOT NULL,
             api_key TEXT NOT NULL,
+            collector_proxy_mode TEXT NOT NULL DEFAULT 'inherit',
+            collector_proxy_url TEXT,
             upstream_api_format TEXT NOT NULL DEFAULT 'auto',
             upstream_api_base_path TEXT NOT NULL DEFAULT '/v1',
             enabled INTEGER NOT NULL DEFAULT 1,
@@ -2759,6 +2795,8 @@ fn seed_default_settings(connection: &Connection) -> rusqlite::Result<()> {
         ("local_proxy_port", "8787"),
         ("local_key", "sk-local-pool-change-me"),
         ("default_routing_strategy", "cost_stable_first"),
+        ("collector_proxy_mode", "direct"),
+        ("collector_proxy_url", ""),
         ("low_balance_threshold_cny", "15"),
         ("collector_interval_minutes", "30"),
         ("balance_interval_minutes", "5"),
@@ -3941,6 +3979,8 @@ fn row_to_station(row: &rusqlite::Row<'_>) -> rusqlite::Result<Station> {
         name: row.get(1)?,
         station_type: row.get(2)?,
         base_url: row.get(3)?,
+        collector_proxy_mode: row.get(24)?,
+        collector_proxy_url: row.get(25)?,
         api_key_masked,
         api_key_present,
         key_count: row.get(7)?,
@@ -3973,7 +4013,8 @@ fn list_stations_from_connection(connection: &Connection) -> Result<Vec<Station>
                     status, latency_ms, last_checked_at, last_pricing_fetched_at,
                     note, created_at, updated_at,
                     (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id),
-                    api_key_secret_id
+                    api_key_secret_id,
+                    collector_proxy_mode, collector_proxy_url
                FROM stations
               ORDER BY priority ASC, created_at ASC",
         )
@@ -4000,7 +4041,8 @@ fn station_by_id(connection: &Connection, id: &str) -> Result<Station, String> {
                     status, latency_ms, last_checked_at, last_pricing_fetched_at,
                     note, created_at, updated_at,
                     (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id),
-                    api_key_secret_id
+                    api_key_secret_id,
+                    collector_proxy_mode, collector_proxy_url
                FROM stations
               WHERE id = ?1",
             params![id],
@@ -4027,7 +4069,8 @@ fn due_station_collectors_from_connection(
                     status, latency_ms, last_checked_at, last_pricing_fetched_at,
                     note, created_at, updated_at,
                     (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id),
-                    api_key_secret_id
+                    api_key_secret_id,
+                    collector_proxy_mode, collector_proxy_url
                FROM stations
               WHERE enabled = 1
                 AND (
@@ -4058,6 +4101,8 @@ fn create_station_in_connection(
     let now = now_string();
     let next_priority = next_station_priority(connection)?;
     let plaintext_api_key = input.api_key.trim().to_string();
+    let collector_proxy_mode = normalize_proxy_mode(&input.collector_proxy_mode, true);
+    let collector_proxy_url = normalize_proxy_url(input.collector_proxy_url);
     let stored_api_key = if data_key.is_some() {
         "".to_string()
     } else {
@@ -4067,19 +4112,22 @@ fn create_station_in_connection(
     connection
         .execute(
             "INSERT INTO stations (
-                id, name, station_type, base_url, api_key, api_key_secret_id, enabled, priority,
+                id, name, station_type, base_url, api_key, api_key_secret_id,
+                collector_proxy_mode, collector_proxy_url, enabled, priority,
                 credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
                 collection_interval_minutes,
                 status, latency_ms, last_checked_at, last_pricing_fetched_at,
                 note, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, NULL, NULL, ?9,
-                ?10, ?11, NULL, NULL, NULL, ?12, ?13, ?14)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9, ?10, NULL, NULL, ?11,
+                ?12, ?13, NULL, NULL, NULL, ?14, ?15, ?16)",
             params![
                 id,
                 input.name.trim(),
                 input.station_type,
                 input.base_url.trim(),
                 stored_api_key,
+                collector_proxy_mode,
+                collector_proxy_url,
                 bool_to_i64(input.enabled),
                 next_priority,
                 input.credit_per_cny,
@@ -4178,6 +4226,8 @@ fn update_station_in_connection(
             existing_secret_id,
         )
     };
+    let collector_proxy_mode = normalize_proxy_mode(&input.collector_proxy_mode, true);
+    let collector_proxy_url = normalize_proxy_url(input.collector_proxy_url);
     let now = now_string();
 
     connection
@@ -4188,22 +4238,26 @@ fn update_station_in_connection(
                     base_url = ?3,
                     api_key = ?4,
                     api_key_secret_id = ?5,
-                    enabled = ?6,
-                    credit_per_cny = ?7,
-                    low_balance_threshold_cny = ?8,
-                    collection_interval_minutes = ?9,
-                    status = CASE WHEN ?6 = 0 THEN 'disabled'
+                    collector_proxy_mode = ?6,
+                    collector_proxy_url = ?7,
+                    enabled = ?8,
+                    credit_per_cny = ?9,
+                    low_balance_threshold_cny = ?10,
+                    collection_interval_minutes = ?11,
+                    status = CASE WHEN ?8 = 0 THEN 'disabled'
                                   WHEN status = 'disabled' THEN 'unchecked'
                                   ELSE status END,
-                    note = ?10,
-                    updated_at = ?11
-              WHERE id = ?12",
+                    note = ?12,
+                    updated_at = ?13
+              WHERE id = ?14",
             params![
                 input.name.trim(),
                 input.station_type,
                 input.base_url.trim(),
                 next_api_key,
                 next_secret_id,
+                collector_proxy_mode,
+                collector_proxy_url,
                 bool_to_i64(input.enabled),
                 input.credit_per_cny,
                 input.low_balance_threshold_cny,
@@ -4259,6 +4313,18 @@ fn migrate_station_proxy_columns(connection: &Connection) -> rusqlite::Result<()
     {
         connection.execute(
             "ALTER TABLE stations ADD COLUMN collection_interval_minutes INTEGER NOT NULL DEFAULT 5",
+            [],
+        )?;
+    }
+    if !rows.iter().any(|column| column == "collector_proxy_mode") {
+        connection.execute(
+            "ALTER TABLE stations ADD COLUMN collector_proxy_mode TEXT NOT NULL DEFAULT 'inherit'",
+            [],
+        )?;
+    }
+    if !rows.iter().any(|column| column == "collector_proxy_url") {
+        connection.execute(
+            "ALTER TABLE stations ADD COLUMN collector_proxy_url TEXT",
             [],
         )?;
     }
@@ -5597,10 +5663,13 @@ fn proxy_route_candidates_from_connection_with_data_key(
     connection: &Connection,
     data_key: Option<&[u8; 32]>,
 ) -> Result<Vec<RouteCandidate>, String> {
+    let global_proxy_mode = read_setting_or_default(connection, "collector_proxy_mode", "direct")?;
+    let global_proxy_url = read_setting_or_default(connection, "collector_proxy_url", "")?;
     let mut statement = connection
         .prepare(
             "SELECT k.id, k.station_id, s.base_url, k.api_key, k.api_key_secret_id,
-                    s.upstream_api_format, COALESCE(k.routing_order, k.priority)
+                    s.upstream_api_format, COALESCE(k.routing_order, k.priority),
+                    s.collector_proxy_mode, s.collector_proxy_url
                FROM station_keys k
                JOIN stations s ON s.id = k.station_id
               WHERE k.enabled = 1
@@ -5623,6 +5692,24 @@ fn proxy_route_candidates_from_connection_with_data_key(
                 api_key,
                 upstream_api_format: parse_upstream_api_format(row.get::<_, String>(5)?),
                 priority: row.get(6)?,
+                collector_proxy_mode: {
+                    let proxy = resolve_proxy_config(
+                        &row.get::<_, String>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                        &global_proxy_mode,
+                        Some(global_proxy_url.clone()),
+                    );
+                    proxy.mode
+                },
+                collector_proxy_url: {
+                    let proxy = resolve_proxy_config(
+                        &row.get::<_, String>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                        &global_proxy_mode,
+                        Some(global_proxy_url.clone()),
+                    );
+                    proxy.url
+                },
             })
         })
         .map_err(|error| format!("查询 Key 池候选失败: {error}"))?
@@ -5660,6 +5747,8 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
     connection: &Connection,
     data_key: Option<&[u8; 32]>,
 ) -> Result<Vec<RichRouteCandidate>, String> {
+    let global_proxy_mode = read_setting_or_default(connection, "collector_proxy_mode", "direct")?;
+    let global_proxy_url = read_setting_or_default(connection, "collector_proxy_url", "")?;
     let mut statement = connection
         .prepare(
             "SELECT
@@ -5694,7 +5783,9 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                 h.avg_latency_ms,
                 h.last_error_summary,
                 h.cooldown_until,
-                h.updated_at
+                h.updated_at,
+                s.collector_proxy_mode,
+                s.collector_proxy_url
              FROM station_keys k
              JOIN stations s ON s.id = k.station_id
              LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
@@ -5714,6 +5805,12 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
             let station_key_id = row.get::<_, String>(0)?;
             let api_key: String = row.get(3)?;
             let health_station_key_id = row.get::<_, Option<String>>(22)?;
+            let proxy = resolve_proxy_config(
+                &row.get::<_, String>(32)?,
+                row.get::<_, Option<String>>(33)?,
+                &global_proxy_mode,
+                Some(global_proxy_url.clone()),
+            );
             Ok(RichRouteCandidate {
                 candidate: RouteCandidate {
                     station_key_id: station_key_id.clone(),
@@ -5722,6 +5819,8 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                     api_key,
                     upstream_api_format: parse_upstream_api_format(row.get::<_, String>(5)?),
                     priority: row.get(6)?,
+                    collector_proxy_mode: proxy.mode,
+                    collector_proxy_url: proxy.url,
                 },
                 station_name: row.get(7)?,
                 key_name: row.get(8)?,
@@ -9504,6 +9603,15 @@ fn settings_from_connection(
         local_proxy_port: parse_setting(connection, "local_proxy_port")?,
         local_key_masked: mask_secret(&local_key),
         default_routing_strategy: read_setting(connection, "default_routing_strategy")?,
+        collector_proxy_mode: normalize_proxy_mode(
+            &read_setting_or_default(connection, "collector_proxy_mode", "direct")?,
+            false,
+        ),
+        collector_proxy_url: normalize_proxy_url(Some(read_setting_or_default(
+            connection,
+            "collector_proxy_url",
+            "",
+        )?)),
         low_balance_threshold_cny: parse_setting(connection, "low_balance_threshold_cny")?,
         collector_interval_minutes: parse_setting(connection, "collector_interval_minutes")?,
         balance_interval_minutes: parse_setting_or_default(
@@ -9647,6 +9755,29 @@ fn validate_station_fields(
     Ok(())
 }
 
+fn validate_proxy_config(
+    mode: String,
+    url: Option<String>,
+    allow_inherit: bool,
+) -> Result<String, String> {
+    let normalized_mode = normalize_proxy_mode(&mode, allow_inherit);
+    let allowed = if allow_inherit {
+        matches!(
+            normalized_mode.as_str(),
+            "inherit" | "direct" | "system" | "manual"
+        )
+    } else {
+        matches!(normalized_mode.as_str(), "direct" | "system" | "manual")
+    };
+    if !allowed || normalized_mode != mode.trim() {
+        return Err("Proxy mode is invalid".to_string());
+    }
+    if normalized_mode == "manual" && normalize_proxy_url(url).is_none() {
+        return Err("Manual proxy URL is required".to_string());
+    }
+    Ok(normalized_mode)
+}
+
 fn next_station_priority(connection: &Connection) -> Result<i64, String> {
     connection
         .query_row(
@@ -9770,6 +9901,8 @@ mod tests {
                 station_type: "openai-compatible".to_string(),
                 base_url: "https://example.test".to_string(),
                 api_key: "sk-test-routing".to_string(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 enabled: true,
                 credit_per_cny: 1.0,
                 low_balance_threshold_cny: None,
@@ -9833,6 +9966,69 @@ mod tests {
     }
 
     #[test]
+    fn settings_persist_collector_proxy_defaults() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+
+        let settings = database
+            .update_settings(UpdateSettingsInput {
+                local_proxy_port: 8787,
+                default_routing_strategy: "cost_stable_first".to_string(),
+                collector_proxy_mode: "manual".to_string(),
+                collector_proxy_url: Some("http://127.0.0.1:7890".to_string()),
+                low_balance_threshold_cny: 15.0,
+                collector_interval_minutes: 30,
+                balance_interval_minutes: 5,
+                group_rate_interval_minutes: 20,
+                model_list_interval_minutes: 60,
+                pricing_refresh_interval_minutes: 60,
+                collector_timeout_seconds: 15,
+                collector_max_concurrency: 3,
+                allow_depleted_fallback: false,
+                tray_behavior: "minimize-to-tray".to_string(),
+                developer_mode_enabled: false,
+            })
+            .expect("settings");
+
+        assert_eq!(settings.collector_proxy_mode, "manual");
+        assert_eq!(
+            settings.collector_proxy_url.as_deref(),
+            Some("http://127.0.0.1:7890")
+        );
+    }
+
+    #[test]
+    fn station_proxy_override_flows_into_route_candidates() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = database
+            .create_station(CreateStationInput {
+                name: "proxied station".to_string(),
+                station_type: "openai-compatible".to_string(),
+                base_url: "https://proxied.example/v1".to_string(),
+                api_key: "sk-test-routing".to_string(),
+                collector_proxy_mode: "manual".to_string(),
+                collector_proxy_url: Some("http://127.0.0.1:7890".to_string()),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+
+        let candidates = database.proxy_route_candidates().expect("route candidates");
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.station_id == station.id)
+            .expect("station candidate");
+
+        assert_eq!(candidate.collector_proxy_mode, "manual");
+        assert_eq!(
+            candidate.collector_proxy_url.as_deref(),
+            Some("http://127.0.0.1:7890")
+        );
+    }
+
+    #[test]
     fn station_endpoint_health_flows_into_key_pool_items() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let station = test_station(&database, "endpoint-health-relay");
@@ -9873,6 +10069,8 @@ mod tests {
                     name: "login only station".to_string(),
                     station_type: "sub2api".to_string(),
                     base_url: "https://relay.example.test".to_string(),
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                     api_key: "".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -10891,6 +11089,8 @@ mod tests {
                 name: "responses station".to_string(),
                 station_type: "openai-compatible".to_string(),
                 base_url: "https://responses.example".to_string(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-responses".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,

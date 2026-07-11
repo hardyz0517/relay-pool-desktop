@@ -7,6 +7,7 @@ use crate::services::{
         url::{collector_base_urls, join_url},
     },
     database::AppDatabase,
+    outbound::{agent_builder_for_proxy, resolve_proxy_config},
 };
 
 const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
@@ -83,8 +84,33 @@ pub fn collect_models(
 
     let urls = collector_base_urls(&station.base_url);
     let url = join_url(&urls.upstream_api_base_url, "/models");
+    let settings = database.get_settings()?;
+    let proxy = resolve_proxy_config(
+        &station.collector_proxy_mode,
+        station.collector_proxy_url.clone(),
+        &settings.collector_proxy_mode,
+        settings.collector_proxy_url,
+    );
     let started = std::time::Instant::now();
-    let response = match ureq::get(&url)
+    let agent = match agent_builder_for_proxy(&proxy) {
+        Ok(builder) => builder.timeout(COLLECTOR_HTTP_TIMEOUT).build(),
+        Err(error) => {
+            return failed_output(
+                task,
+                json!({
+                    "url": url,
+                    "status": null,
+                    "ok": false,
+                    "durationMs": started.elapsed().as_millis() as i64,
+                }),
+                "network_error",
+                &crate::services::secrets::mask::redact_text(&error),
+                None,
+            );
+        }
+    };
+    let response = match agent
+        .get(&url)
         .timeout(COLLECTOR_HTTP_TIMEOUT)
         .set("Authorization", &format!("Bearer {api_key}"))
         .call()

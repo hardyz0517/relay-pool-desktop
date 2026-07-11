@@ -122,6 +122,14 @@ pub fn get_local_access_key(database: State<'_, AppDatabase>) -> Result<String, 
     database.get_local_access_key()
 }
 
+#[tauri::command]
+pub fn update_local_access_key(
+    database: State<'_, AppDatabase>,
+    value: String,
+) -> Result<AppSettings, String> {
+    database.update_local_access_key(value)
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CcswitchImportResult {

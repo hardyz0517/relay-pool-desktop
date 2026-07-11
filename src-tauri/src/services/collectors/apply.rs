@@ -418,6 +418,8 @@ mod tests {
                 name: "balance aggregate relay".to_string(),
                 station_type: "sub2api".to_string(),
                 base_url: "https://relay.example.test".to_string(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-test".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,

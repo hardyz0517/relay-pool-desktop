@@ -22,6 +22,7 @@ The following decisions are fixed:
 - Do not silently route above the ceiling.
 - Do not replace the requested model with a cheaper model.
 - Model mapping may translate the same logical model to an upstream name only.
+- Optional routing group filters are hard candidate-pool constraints. When the user chooses a Key group such as `gpt`, the automatic router may use only Station Keys bound to that group and must not fall back to other groups.
 - Preserve Sub2API's scheduler control flow and defaults for priority/load/queue/error/TTFT scoring, TopK selection, weighted ordering, affinity, concurrency slots, bounded waiting, fresh-load retry, and result feedback.
 - Add the multiplier ceiling and multiplier factor as an explicit Relay Pool product extension. Sub2API's reviewed scheduler stores an account billing multiplier but does not use it as a scheduler score factor or ceiling.
 - Implement the behavior independently in Rust. Do not copy or link Sub2API core code.
@@ -39,10 +40,10 @@ Primary reference:
 Relevant reference areas:
 
 - `backend/internal/service/openai_account_scheduler.go`
-- `backend/internal/service/gateway_scheduling.go`
 - `backend/internal/service/concurrency_service.go`
-- `backend/internal/service/openai_gateway_scheduling.go`
+- `backend/internal/service/openai_gateway_service.go`
 - `backend/internal/service/gateway_service.go`
+- `backend/internal/service/scheduler_snapshot_service.go`
 - `backend/internal/config/config.go`
 - scheduler and sticky-session tests under `backend/internal/service/*_test.go`
 
@@ -50,7 +51,7 @@ The reviewed commit is the normative source for "Sub2API-compatible" behavior in
 
 Compatibility boundary:
 
-- Exact Sub2API behavior: eligibility rechecks, lower-number priority, effective load capacity, queue/error/TTFT factors, TopK tie-breaks, weighted ordering, direct and weighted affinity, concurrency acquisition, fresh-load retry, wait plans, and EWMA defaults.
+- Exact Sub2API behavior: group-scoped candidate pools, group-scoped sticky affinity, eligibility rechecks, lower-number priority, effective load capacity, queue/error/TTFT factors, TopK tie-breaks, weighted ordering, direct and weighted affinity, concurrency acquisition, fresh-load retry, wait plans, and EWMA defaults.
 - Relay Pool extension: hard effective-multiplier evidence and ceiling, multiplier normalization/weight, Station/Key capability and balance gates, local-only storage, and decision explanations.
 - Omitted Sub2API-specific behavior: subscription-priority pools, reset-window scoring, quota-headroom scoring until equivalent facts exist, Redis coordination, and OpenAI compact/transport special cases that do not map to Relay Pool protocols.
 
@@ -59,6 +60,7 @@ Normative source map at the reviewed commit:
 | Contract | Sub2API source |
 |---|---|
 | Scheduler layer order and direct/weighted affinity | `openai_account_scheduler.go`: `Select`, `selectBySessionHash`, `buildOpenAISelectionOrder` |
+| Group-scoped candidate pools and sticky validation | `openai_account_scheduler.go`: `OpenAIAccountScheduleRequest.GroupID`, `selectByLoadBalance`, `openAIStickyAccountMatchesGroup`; `openai_gateway_service.go`: `listSchedulableAccounts`; `gateway_service.go`: `listSchedulableAccounts`, `isAccountInGroup` |
 | Factors, TopK, tie-breaks, and weighted order | `openai_account_scheduler.go`: `buildOpenAIAccountLoadPlan`, `selectTopKOpenAICandidates`, `buildOpenAIWeightedSelectionOrder` |
 | Immediate acquisition, fresh-load retry, sticky/fallback wait | `openai_account_scheduler.go`: `tryAcquireOpenAISelectionOrder`, `trySelectByLoadBalancePool`, `finishLoadBalanceSelectionFallback` |
 | Runtime EWMA and sticky escape | `openai_account_scheduler.go`: `ReportResult`, `shouldEscapeStickyAccount` |
@@ -298,15 +300,15 @@ Behavior follows Sub2API:
 
 Maintain in-memory TTL maps:
 
-- `session_hash -> station_key_id`
-- `response_id -> station_key_id`
+- `(routing_group_scope, session_hash) -> station_key_id`
+- `(routing_group_scope, response_id) -> station_key_id`
 
 Defaults matching Sub2API:
 
 - session affinity TTL: `3600 seconds`;
 - response ID affinity TTL: `3600 seconds`.
 
-The store contains opaque hashes/IDs only and must not persist raw prompt content.
+The store contains opaque hashes/IDs only and must not persist raw prompt content. The group scope is part of the key, matching Sub2API's `groupID + sessionHash` sticky cache behavior. A sticky binding created while routing through one group must never be reused when a later request selects a different routing group.
 
 ### 6.5 Request-Scoped State
 
@@ -317,6 +319,7 @@ struct ScheduleRequest {
     endpoint: RouteEndpointKind,
     requested_model: Option<String>,
     mapped_model: Option<String>,
+    routing_group_filter: RoutingGroupFilter,
     stream: bool,
     uses_tools: bool,
     uses_vision: bool,
@@ -331,6 +334,29 @@ struct ScheduleRequest {
 
 Each acquired slot returns a release guard. Dropping the guard must release the slot exactly once, including cancellation, errors, and panics unwinding through normal Rust ownership.
 
+The group filter is a request-level hard constraint:
+
+```rust
+enum RoutingGroupFilter {
+    AllGroups,
+    UngroupedOnly,
+    GroupBindingId(String),
+    GroupIdHash(String),
+    GroupType(PricingGroupType),
+}
+```
+
+Resolution rules:
+
+- `GroupBindingId` is preferred when the UI or API selects one exact upstream group binding.
+- `GroupIdHash` is accepted when a binding ID is not stable across collector refreshes but the upstream group identity hash is known.
+- `GroupType` is the coarse user-facing selector, such as `gpt`, `claude`, `gemini`, `grok`, or `image_generation`; it resolves to the current Station Key group bindings of that type before candidate loading.
+- `UngroupedOnly` matches Sub2API's non-simple behavior when no group ID is provided: only ungrouped accounts are considered. Relay Pool may expose this explicitly for diagnostics, but the normal UI should prefer an exact group or group type.
+- `AllGroups` means no extra group restriction beyond the other hard gates. It is the default local Relay Pool scope because Relay Pool does not have Sub2API's user/API-key group context.
+- Any specific group filter must not fall back to `AllGroups`, `UngroupedOnly`, or another group after it returns zero candidates.
+
+A resolved filter is frozen for the request lifetime and is included in affinity lookup, weighted seed material, candidate explanations, and request logs.
+
 ## 7. Settings
 
 ### 7.1 Primary User Setting
@@ -338,14 +364,16 @@ Each acquired slot returns a release guard. Dropping the guard must release the 
 Add:
 
 - `max_rate_multiplier: Option<f64>`
+- `default_routing_group_filter: RoutingGroupFilter`
 
 Rules:
 
-- must be finite and `>= 0`;
+- `max_rate_multiplier` must be finite and `>= 0`;
 - no default is silently assumed for migrated users;
-- the local proxy may start without it for diagnostics, but routeable API requests return `routing_multiplier_limit_not_configured` until the user sets it;
+- the local proxy may start without `max_rate_multiplier` for diagnostics, but routeable API requests return `routing_multiplier_limit_not_configured` until the user sets it;
 - the UI should present this setting prominently in Local Routing;
-- show the number of currently eligible keys under the selected ceiling before saving.
+- `default_routing_group_filter` defaults to `AllGroups` for existing installations and can be narrowed to an exact group or group type;
+- show the number of currently eligible keys under the selected group filter and multiplier ceiling before saving.
 
 ### 7.2 Advanced Scheduler Settings
 
@@ -395,6 +423,7 @@ Profile fields include:
 - endpoint kind;
 - original requested model;
 - same-model upstream mapping;
+- routing group filter and resolved group scope;
 - streaming flag;
 - tool, vision, reasoning, and embedding requirements;
 - session hash;
@@ -408,6 +437,15 @@ Model rules:
 - mapping does not authorize a cheaper or lower-quality substitute;
 - wildcard support must remain explicit in capability/mapping configuration;
 - a key rejected for model mismatch cannot re-enter through affinity or fallback.
+
+Group rules:
+
+- a specific group filter is resolved before candidate loading;
+- candidate loading must use the resolved group scope as the first pool boundary when a specific group is selected, matching Sub2API's `listSchedulableAccounts(ctx, groupID)` behavior;
+- an exact group filter must not fall back to ungrouped or other groups when it returns zero candidates;
+- an ungrouped filter may use only keys without a group binding;
+- affinity, fresh-load retry, wait plans, retry exclusions, and final forwarding rechecks must all preserve the same group scope;
+- a key rejected for group mismatch cannot re-enter through affinity or fallback.
 
 ### 8.1 Session Hash Generation
 
@@ -436,27 +474,35 @@ Eligibility is ordered and produces structured decision facts.
    - Station Key enabled;
    - Station Key schedulable;
    - API secret present.
-2. Protocol/capability gate:
+2. Group gate:
+   - `AllGroups` admits all keys that pass the other gates;
+   - any specific filter resolves to a stable request group scope;
+   - Station Key is bound to the requested group binding, group hash, or group type when a specific filter is active;
+   - ungrouped-only requests use only keys without a group binding;
+   - zero candidates inside the requested group returns a group-scoped no-candidate error and does not trigger global fallback.
+3. Protocol/capability gate:
    - endpoint supported;
    - stream supported when requested;
    - tools, vision, reasoning, embeddings supported when required.
-3. Exact model gate:
+4. Exact model gate:
    - requested model accepted after same-model mapping;
    - blocklist and allowlist enforced.
-4. Health gate:
+5. Health gate:
    - not offline after hard failure;
    - not in cooldown/temp-unschedulable period;
    - not auth-failed;
    - not explicitly rate-limited for the requested model.
-5. Balance gate:
+6. Balance gate:
    - depleted balance is rejected;
    - legacy `allow_depleted_fallback` no longer bypasses the automatic router.
-6. Multiplier fact gate:
+7. Multiplier fact gate:
    - multiplier fact exists, is trusted, current, finite, and non-negative.
-7. Budget gate:
+8. Budget gate:
    - `effective_multiplier <= max_rate_multiplier`.
 
-The hard budget rule must be asserted again immediately before upstream forwarding. Keep the request's configured ceiling immutable for its lifetime, but re-resolve the selected key's latest effective multiplier fact and recheck trust, freshness, binding, and `value <= request_ceiling`. If that fact changed or expired, exclude the key and reschedule; never rely only on the earlier candidate snapshot. A candidate cannot be admitted through affinity, weighted-sticky fallback, fresh-load retry, or a wait plan if it failed any hard gate.
+The group gate is a pool boundary, not a score factor. Sub2API first asks the repository/snapshot for accounts inside `GroupID`; Relay Pool should mirror that shape whenever the user selects a specific group scope. When the user selects `gpt`, every downstream step sees only the Station Keys resolved from that group type.
+
+The hard budget and group rules must be asserted again immediately before upstream forwarding. Keep the request's configured ceiling and group scope immutable for its lifetime, but re-resolve the selected key's latest group binding and effective multiplier fact, then recheck group membership, trust, freshness, binding, and `value <= request_ceiling`. If either the group binding or multiplier fact changed or expired, exclude the key and reschedule inside the same group scope; never rely only on the earlier candidate snapshot. A candidate cannot be admitted through affinity, weighted-sticky fallback, fresh-load retry, or a wait plan if it failed any hard gate.
 
 ## 10. Scoring Formula
 
@@ -592,7 +638,7 @@ Behavior:
 
 1. Resolve previous response affinity first.
 2. Resolve session affinity second.
-3. Re-run every hard eligibility gate against the bound key.
+3. Re-run every hard eligibility gate against the bound key, including group membership.
 4. Apply sticky-escape checks.
 5. If the key has a free slot, select it immediately.
 6. If it is full and sticky escape is enabled, escape immediately with reason `concurrency_full` and continue into normal scoring.
@@ -600,11 +646,15 @@ Behavior:
 8. If its sticky queue is full at wait-plan execution, fall through to normal load-aware scheduling.
 9. Escaping for TTFT, error rate, or concurrency does not delete a still-valid binding. A hard eligibility failure may clear an invalid binding according to the affinity invalidation rules.
 
+The affinity lookup namespace must include the resolved group scope. This mirrors Sub2API's sticky cache behavior, where the session binding is stored and fetched with `groupID`; it prevents a sticky key from one group being reused after the user switches the route to another group.
+
 ### 12.2 Weighted Affinity Mode
 
 When enabled, affinity adds the Sub2API-style bonuses before TopK selection. A sticky key must still enter the TopK set. If a previous-response or session sticky key is in TopK, Sub2API moves the first matching sticky key to the front of the immediate acquisition order instead of applying weighted sampling to that first choice; previous-response affinity has precedence over session affinity.
 
 Previous-response affinity is weighted only when the request can safely rebuild/move its context. If it cannot move, previous-response affinity remains a hard direct selection even when weighted affinity is enabled. When every TopK candidate is full, weighted mode rechecks previous-response then session sticky candidates and may return their sticky wait plan before constructing the normal fallback wait plan.
+
+Weighted affinity cannot pull a sticky key across group boundaries. A sticky key outside the resolved group scope is treated like a hard-gate failure and ignored or cleared according to the affinity invalidation rules.
 
 ### 12.3 Sticky Escape
 
@@ -707,6 +757,7 @@ Only scheduler-relevant upstream failures contribute error sample `1.0`. Client 
 Add stable local error codes:
 
 - `routing_multiplier_limit_not_configured`
+- `routing_no_candidate_in_group_scope`
 - `routing_no_multiplier_evidence`
 - `routing_multiplier_evidence_expired`
 - `routing_no_candidate_within_multiplier_limit`
@@ -737,6 +788,8 @@ EWMA success must reflect a valid upstream request outcome, not merely an establ
 Extend request-log metadata with:
 
 - `scheduler_layer`
+- `routing_group_filter`
+- `routing_group_scope`
 - `candidate_count`
 - `top_k`
 - `selected_score`
@@ -752,6 +805,7 @@ Each candidate explanation contains:
 
 - accepted/rejected state;
 - hard rejection reasons;
+- group binding/scope match result;
 - effective multiplier value/source/freshness;
 - every normalized factor;
 - every weighted contribution;
@@ -770,8 +824,9 @@ The JSON must be bounded and secret-safe. Store IDs, names, numeric metrics, rea
 Local Routing should present:
 
 - local proxy running/stopped state;
+- optional routing group filter, with options such as all groups, exact group binding, or group type `gpt`;
 - required maximum multiplier control;
-- count of eligible keys under the current limit;
+- count of eligible keys under the current group filter and multiplier limit;
 - clear blocking reasons when zero keys qualify;
 - current/last selected key;
 - recent effective multiplier, load, error rate, and TTFT;
@@ -783,8 +838,10 @@ Do not show the old five-strategy selector.
 Primary copy should describe the outcome:
 
 - `最高倍率`
-- `自动选择倍率上限内综合质量最好的 Key`
+- `分组范围`
+- `自动选择当前分组内、倍率上限内综合质量最好的 Key`
 - `倍率未知或过期的 Key 不参与路由`
+- `当前分组没有可用 Key 时会拒绝请求，不会跨分组兜底`
 
 ### 17.2 Advanced Settings
 
@@ -816,6 +873,8 @@ Keep multiplier facts read-only when collector-owned. Manual multiplier override
 
 The route page and request log should answer:
 
+- Which routing group filter was active?
+- Was the key inside the requested group scope?
 - Was the key inside the multiplier ceiling?
 - Was its multiplier current and trusted?
 - What were its multiplier/load/queue/error/TTFT factors?
@@ -830,6 +889,7 @@ The route page and request log should answer:
 
 - Add new settings columns with validated defaults for advanced fields.
 - Set `max_rate_multiplier = NULL` for existing installations so no budget is invented.
+- Set `default_routing_group_filter = AllGroups` for existing installations so the new group filter is opt-in and does not silently narrow the candidate pool.
 - Keep parsing old `default_routing_strategy` values during migration.
 - UI no longer exposes old strategies.
 - Once automatic routing is enabled, persist internal strategy value `automatic_balanced`.
@@ -863,6 +923,8 @@ No long-lived dual scheduler is allowed.
 ### 19.1 Pure Algorithm Tests
 
 - multiplier ceiling rejects above-limit candidates;
+- group filter rejects candidates outside the requested binding/hash/type before scoring;
+- exact group filters never fall back to ungrouped or other groups when zero candidates remain;
 - unknown, invalid, unbound, and expired multipliers reject;
 - requested model is never substituted;
 - priority normalization matches lower-number-is-better behavior;
@@ -896,6 +958,7 @@ No long-lived dual scheduler is allowed.
 ### 19.3 Retry And Streaming Tests
 
 - retryable pre-output status switches keys;
+- retry/failover preserves the original resolved group scope;
 - non-retryable client errors do not switch;
 - no failover occurs after output starts;
 - stream interruption is logged without replay;
@@ -909,7 +972,9 @@ No long-lived dual scheduler is allowed.
 - immovable previous-response affinity remains direct even in weighted mode;
 - session affinity works within TTL;
 - affinity cannot bypass hard gates;
+- affinity cache keys are scoped by routing group, so a sticky binding from one group cannot satisfy another group;
 - a weighted sticky key outside TopK receives no traffic;
+- a sticky key outside the current group is ignored or cleared and cannot receive traffic through direct, weighted, wait-plan, or fallback paths;
 - a weighted sticky key inside TopK is attempted first, previous-response before session affinity;
 - model mismatch clears or ignores invalid affinity;
 - unhealthy sticky key escapes;
@@ -928,14 +993,17 @@ No long-lived dual scheduler is allowed.
 ### 19.6 UI And Integration Tests
 
 - maximum multiplier is required and validated;
-- eligible-key preview updates;
+- routing group filter is optional, validated when selected, and treated as a hard pool boundary;
+- eligible-key preview updates from both the selected group filter and multiplier ceiling;
 - zero eligible keys show concrete reasons;
 - advanced defaults match the design;
 - route simulator and real proxy use the same scheduler path;
 - request logs display scheduler facts;
 - Station Key concurrency and schedulable fields round-trip;
 - local proxy returns stable error codes for budget/capacity failures;
-- a multiplier fact that changes, expires, or rises above the request ceiling after planning is rejected by the forward-time recheck.
+- local proxy returns a stable error when no key remains inside the requested group scope;
+- a multiplier fact that changes, expires, or rises above the request ceiling after planning is rejected by the forward-time recheck;
+- a key whose group binding changes after planning is rejected by the forward-time group recheck.
 
 ### 19.7 Verification Commands
 
@@ -963,22 +1031,24 @@ Focused scheduler and migration tests should run before the full Rust suite.
 These invariants are release blockers:
 
 1. Selected multiplier is always known, trusted, current, non-negative, and within the configured limit.
-2. Requested logical model is never silently changed.
-3. Every selected key passed every hard eligibility gate.
-4. A key excluded in one request attempt cannot re-enter that request.
-5. No automatic failover after downstream output starts.
-6. Every acquired slot is released exactly once.
-7. Waiting counters cannot remain elevated after cancellation or timeout.
-8. Affinity cannot bypass budget, model, capability, health, or schedulable gates.
-9. Route simulation and real routing use the same scheduler implementation.
-10. Explanations contain no secrets.
-11. The selected key's latest multiplier fact is revalidated immediately before each upstream attempt, including after waiting.
+2. Selected key is always inside the request's resolved routing group scope.
+3. Requested logical model is never silently changed.
+4. Every selected key passed every hard eligibility gate.
+5. A key excluded in one request attempt cannot re-enter that request.
+6. No automatic failover after downstream output starts.
+7. Every acquired slot is released exactly once.
+8. Waiting counters cannot remain elevated after cancellation or timeout.
+9. Affinity cannot bypass group, budget, model, capability, health, or schedulable gates.
+10. Route simulation and real routing use the same scheduler implementation.
+11. Explanations contain no secrets.
+12. The selected key's latest group binding and multiplier fact are revalidated immediately before each upstream attempt, including after waiting.
 
 ## 22. Acceptance Criteria
 
 The design is implemented successfully when:
 
-- a user can set a maximum multiplier and use one automatic routing mode;
+- a user can set a maximum multiplier, optionally narrow routing to a group scope, then use one automatic routing mode;
+- every routed request stays inside the selected group scope when a group filter is active;
 - every routed request respects the hard multiplier ceiling;
 - unknown or expired multiplier evidence produces an explicit rejection;
 - the scheduler combines multiplier, priority, load, queue, error EWMA, and TTFT EWMA;

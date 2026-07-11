@@ -25,6 +25,7 @@ use crate::{
             url::{collector_base_urls, join_url},
         },
         database::AppDatabase,
+        outbound::{resolve_proxy_config, ProxyConfig},
     },
 };
 
@@ -322,13 +323,14 @@ pub fn scan_remote_keys(
     station_id: &str,
 ) -> Result<Vec<RemoteStationKey>, String> {
     let station = database.station_for_collector(station_id)?;
+    let proxy = effective_station_proxy(database, &station)?;
     let access_token = resolve_sub2api_access_token(database, data_key, &station)?;
     let urls = collector_base_urls(&station.base_url);
     let url = join_url(
         &urls.management_base_url,
         "/api/v1/keys?page=1&page_size=100",
     );
-    let result = fetch_json_with_bearer(&url, &access_token);
+    let result = fetch_json_with_bearer(&url, &access_token, &proxy);
     let payload = result.payload.unwrap_or(Value::Null);
     if !result.ok {
         return Err(result.error_message.unwrap_or_else(|| {
@@ -346,13 +348,14 @@ pub fn scan_remote_key_full_secret(
     remote_key_id: &str,
 ) -> Result<(RemoteStationKey, String), String> {
     let station = database.station_for_collector(station_id)?;
+    let proxy = effective_station_proxy(database, &station)?;
     let access_token = resolve_sub2api_access_token(database, data_key, &station)?;
     let urls = collector_base_urls(&station.base_url);
     let url = join_url(
         &urls.management_base_url,
         "/api/v1/keys?page=1&page_size=100",
     );
-    let result = fetch_json_with_bearer(&url, &access_token);
+    let result = fetch_json_with_bearer(&url, &access_token, &proxy);
     let payload = result.payload.unwrap_or(Value::Null);
     if !result.ok {
         return Err(result.error_message.unwrap_or_else(|| {
@@ -383,6 +386,7 @@ pub fn create_remote_key(
     input: CreateRemoteStationKeyInput,
 ) -> Result<CreatedRemoteKey, String> {
     let station = database.station_for_collector(&input.station_id)?;
+    let proxy = effective_station_proxy(database, &station)?;
     let access_token = resolve_sub2api_access_token(database, data_key, &station)?;
     let urls = collector_base_urls(&station.base_url);
     let url = join_url(&urls.management_base_url, "/api/v1/keys");
@@ -401,7 +405,7 @@ pub fn create_remote_key(
         body["group_id"] = sub2api_group_id_value(&group_id);
     }
 
-    let result = post_json_with_bearer(&url, &access_token, &body);
+    let result = post_json_with_bearer(&url, &access_token, &body, &proxy);
     let payload = result.payload.unwrap_or(Value::Null);
     if !result.ok {
         return Err(result.error_message.unwrap_or_else(|| {
@@ -452,6 +456,19 @@ fn resolve_sub2api_access_token(
     Err(session.message.unwrap_or_else(|| {
         "Sub2API 远端 Key 管理需要 access token，请先导入手动会话或保存登录账号密码。".to_string()
     }))
+}
+
+fn effective_station_proxy(
+    database: &AppDatabase,
+    station: &Station,
+) -> Result<ProxyConfig, String> {
+    let settings = database.get_settings()?;
+    Ok(resolve_proxy_config(
+        &station.collector_proxy_mode,
+        station.collector_proxy_url.clone(),
+        &settings.collector_proxy_mode,
+        settings.collector_proxy_url,
+    ))
 }
 
 fn parse_remote_key_payload(station_id: &str, payload: &Value) -> Vec<RemoteStationKey> {
@@ -785,15 +802,20 @@ pub fn collect_groups(
     station_id: &str,
 ) -> Result<AdapterOutput, String> {
     let station = database.station_for_collector(station_id)?;
+    let proxy = effective_station_proxy(database, &station)?;
     let session = database.resolve_station_session_with_data_key(
         station_id.to_string(),
         data_key,
         crate::services::database::now_millis_for_services() as i64,
     )?;
+    let mut session_source = "reused_session";
     let mut access_token = match session.access_token {
         Some(access_token) => access_token,
         None => match login_and_store_access_token(database, data_key, &station)? {
-            Some(access_token) => access_token,
+            Some(access_token) => {
+                session_source = "password_login";
+                access_token
+            }
             None => {
                 return Ok(manual_session_required_output(session.message));
             }
@@ -816,7 +838,7 @@ pub fn collect_groups(
             .flatten()
     };
     let mut available_request = |token: &String, timeout: std::time::Duration| {
-        fetch_recoverable_json_with_bearer(&available_url, token, timeout)
+        fetch_recoverable_json_with_bearer(&available_url, token, timeout, &proxy)
     };
     let available_execution = execute_json_request(
         "/api/v1/groups/available",
@@ -827,10 +849,11 @@ pub fn collect_groups(
         &budget,
     );
     if let Some(refreshed) = available_execution.latest_credential.clone() {
+        session_source = "auth_refresh";
         access_token = refreshed;
     }
     let mut rates_request = |token: &String, timeout: std::time::Duration| {
-        fetch_recoverable_json_with_bearer(&rates_url, token, timeout)
+        fetch_recoverable_json_with_bearer(&rates_url, token, timeout, &proxy)
     };
     let rates_execution = execute_json_request(
         "/api/v1/groups/rates",
@@ -885,6 +908,7 @@ pub fn collect_groups(
         summary_json: json!({
             "adapter": "sub2api",
             "task": "groups",
+            "sessionSource": session_source,
             "endpointResults": endpoint_results,
             "groups": group_count,
             "rates": rate_count,
@@ -945,10 +969,12 @@ fn login_and_store_access_token(
     else {
         return Ok(None);
     };
-    let login = crate::services::collectors::sub2api::login_access_token(
+    let proxy = effective_station_proxy(database, station)?;
+    let login = crate::services::collectors::sub2api::login_access_token_with_proxy(
         &station.base_url,
         username,
         &password,
+        &proxy,
     )?;
     let Some(access_token) = login.access_token else {
         return Ok(None);
@@ -992,11 +1018,13 @@ fn login_and_store_access_token_with_budget(
     else {
         return Ok(None);
     };
-    let login = crate::services::collectors::sub2api::login_access_token_with_budget(
+    let proxy = effective_station_proxy(database, station)?;
+    let login = crate::services::collectors::sub2api::login_access_token_with_budget_and_proxy(
         &station.base_url,
         username,
         &password,
         budget,
+        &proxy,
     )?;
     let Some(access_token) = login.access_token else {
         return Ok(None);
@@ -1037,8 +1065,24 @@ struct EndpointJsonResult {
     error_message: Option<String>,
 }
 
-fn fetch_json_with_bearer(url: &str, access_token: &str) -> EndpointJsonResult {
-    let response = match ureq::get(url)
+fn fetch_json_with_bearer(
+    url: &str,
+    access_token: &str,
+    proxy: &ProxyConfig,
+) -> EndpointJsonResult {
+    let agent = match crate::services::outbound::agent_builder_for_proxy(proxy) {
+        Ok(builder) => builder.timeout(COLLECTOR_HTTP_TIMEOUT).build(),
+        Err(error) => {
+            return EndpointJsonResult {
+                status: None,
+                ok: false,
+                payload: None,
+                error_message: Some(crate::services::secrets::mask::redact_text(&error)),
+            };
+        }
+    };
+    let response = match agent
+        .get(url)
         .timeout(COLLECTOR_HTTP_TIMEOUT)
         .set("Authorization", &format!("Bearer {access_token}"))
         .call()
@@ -1072,9 +1116,25 @@ fn fetch_recoverable_json_with_bearer(
     url: &str,
     access_token: &str,
     timeout: std::time::Duration,
+    proxy: &ProxyConfig,
 ) -> RecoverableEndpointJsonResult {
     let started = std::time::Instant::now();
-    let response = match ureq::get(url)
+    let agent = match crate::services::outbound::agent_builder_for_proxy(proxy) {
+        Ok(builder) => builder.timeout(timeout.min(COLLECTOR_HTTP_TIMEOUT)).build(),
+        Err(error) => {
+            return RecoverableEndpointJsonResult {
+                url: url.to_string(),
+                status: None,
+                ok: false,
+                duration_ms: started.elapsed().as_millis() as i64,
+                payload: None,
+                error_message: Some(crate::services::secrets::mask::redact_text(&error)),
+                retry_after: None,
+            };
+        }
+    };
+    let response = match agent
+        .get(url)
         .timeout(timeout.min(COLLECTOR_HTTP_TIMEOUT))
         .set("Authorization", &format!("Bearer {access_token}"))
         .call()
@@ -1174,8 +1234,25 @@ fn balance_request_timeout(budget: &CollectionAttemptBudget) -> std::time::Durat
         .max(std::time::Duration::from_millis(1))
 }
 
-fn post_json_with_bearer(url: &str, access_token: &str, body: &Value) -> EndpointJsonResult {
-    let response = match ureq::post(url)
+fn post_json_with_bearer(
+    url: &str,
+    access_token: &str,
+    body: &Value,
+    proxy: &ProxyConfig,
+) -> EndpointJsonResult {
+    let agent = match crate::services::outbound::agent_builder_for_proxy(proxy) {
+        Ok(builder) => builder.timeout(COLLECTOR_HTTP_TIMEOUT).build(),
+        Err(error) => {
+            return EndpointJsonResult {
+                status: None,
+                ok: false,
+                payload: None,
+                error_message: Some(crate::services::secrets::mask::redact_text(&error)),
+            };
+        }
+    };
+    let response = match agent
+        .post(url)
         .timeout(COLLECTOR_HTTP_TIMEOUT)
         .set("Authorization", &format!("Bearer {access_token}"))
         .set("Content-Type", "application/json")
@@ -1252,6 +1329,7 @@ pub fn collect_balance(
     station_id: &str,
 ) -> Result<AdapterOutput, String> {
     let station = database.station_for_collector(station_id)?;
+    let proxy = effective_station_proxy(database, &station)?;
     let keys = routeable_keys_for_station(database, station_id)?;
     let urls = collector_base_urls(&station.base_url);
     let url = join_url(&urls.upstream_api_base_url, "/usage");
@@ -1274,8 +1352,12 @@ pub fn collect_balance(
                 continue;
             }
         };
-        let result =
-            fetch_recoverable_json_with_bearer(&url, &api_key, balance_request_timeout(&budget));
+        let result = fetch_recoverable_json_with_bearer(
+            &url,
+            &api_key,
+            balance_request_timeout(&budget),
+            &proxy,
+        );
         let mut redacted = result_to_balance_endpoint_json(&result, &url, &key.id);
         redacted["attemptCount"] = json!(1);
         endpoint_results.push(redacted);
@@ -1305,6 +1387,7 @@ pub fn collect_balance(
                 &url,
                 &api_key,
                 balance_request_timeout(&budget),
+                &proxy,
             );
             if let Some(endpoint) = endpoint_results.get_mut(endpoint_index) {
                 append_balance_endpoint_attempt(endpoint, &result);
@@ -1327,6 +1410,7 @@ pub fn collect_balance(
             database,
             data_key,
             &station,
+            &proxy,
             &mut endpoint_results,
             &budget,
             &policy,
@@ -1371,6 +1455,7 @@ fn collect_account_balance_fallback(
     database: &AppDatabase,
     data_key: &[u8; 32],
     station: &crate::models::stations::Station,
+    proxy: &ProxyConfig,
     endpoint_results: &mut Vec<Value>,
     budget: &CollectionAttemptBudget,
     policy: &RequestPolicy,
@@ -1409,7 +1494,7 @@ fn collect_account_balance_fallback(
     for path in ["/api/v1/user/profile", "/api/v1/auth/me"] {
         let url = join_url(&urls.management_base_url, path);
         let mut request = |token: &String, timeout: std::time::Duration| {
-            fetch_recoverable_json_with_bearer(&url, token, timeout)
+            fetch_recoverable_json_with_bearer(&url, token, timeout, proxy)
         };
         let execution = execute_json_request(
             path,
@@ -1775,6 +1860,8 @@ mod tests {
                 name: "create remote key station".to_string(),
                 station_type: "sub2api".to_string(),
                 base_url: server.base_url.clone(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-station".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,
@@ -1853,6 +1940,8 @@ mod tests {
                 name: "create remote key numeric station".to_string(),
                 station_type: "sub2api".to_string(),
                 base_url: server.base_url.clone(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-station".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,
@@ -1979,6 +2068,8 @@ mod tests {
                 name: "group login station".to_string(),
                 station_type: "sub2api".to_string(),
                 base_url: server.base_url,
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-station".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,
@@ -2013,6 +2104,10 @@ mod tests {
             session.access_token.as_deref(),
             Some("collector-token-secret")
         );
+        assert_eq!(
+            output.summary_json["sessionSource"],
+            json!("password_login")
+        );
     }
 
     #[test]
@@ -2025,6 +2120,8 @@ mod tests {
                 name: "stale token station".to_string(),
                 station_type: "sub2api".to_string(),
                 base_url: server.base_url,
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-station".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,
@@ -2072,6 +2169,49 @@ mod tests {
     }
 
     #[test]
+    fn sub2api_groups_marks_reused_session_in_summary() {
+        let server = TestGroupServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station(CreateStationInput {
+                name: "warm session station".to_string(),
+                station_type: "sub2api".to_string(),
+                base_url: server.base_url,
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                api_key: "sk-station".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+        database
+            .update_station_session_with_data_key(
+                UpdateStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: Some("collector-token-secret".to_string()),
+                    refresh_token: None,
+                    cookie: None,
+                    newapi_user_id: None,
+                    token_expires_at: None,
+                },
+                &data_key,
+            )
+            .expect("session");
+
+        let output = collect_groups(&database, &data_key, &station.id).expect("groups");
+
+        assert_eq!(output.status, "success");
+        assert_eq!(
+            output.summary_json["sessionSource"],
+            json!("reused_session")
+        );
+    }
+
+    #[test]
     fn sub2api_groups_retries_transient_rate_endpoint_failure() {
         let server = FlakyGroupServer::start();
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
@@ -2081,6 +2221,8 @@ mod tests {
                 name: "flaky group station".to_string(),
                 station_type: "sub2api".to_string(),
                 base_url: server.base_url.clone(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-station".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,
@@ -2120,6 +2262,8 @@ mod tests {
                 name: "auth then transient group station".to_string(),
                 station_type: "sub2api".to_string(),
                 base_url: server.base_url.clone(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-station".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,
@@ -2176,6 +2320,8 @@ mod tests {
                     name: "balance fallback station".to_string(),
                     station_type: "sub2api".to_string(),
                     base_url: server.base_url,
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                     api_key: "sk-invalid-for-usage".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -2221,6 +2367,8 @@ mod tests {
                     name: "refresh balance fallback station".to_string(),
                     station_type: "sub2api".to_string(),
                     base_url: server.base_url,
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                     api_key: "sk-invalid-for-usage".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -2280,6 +2428,8 @@ mod tests {
                     name: "fair balance station".to_string(),
                     station_type: "sub2api".to_string(),
                     base_url: server.base_url.clone(),
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                     api_key: "sk-fallback".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,

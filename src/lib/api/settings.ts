@@ -7,6 +7,8 @@ let memorySettings: AppSettings = {
   localProxyPort: 8787,
   localKeyMasked: "未读取",
   defaultRoutingStrategy: "cost_stable_first",
+  collectorProxyMode: "direct",
+  collectorProxyUrl: null,
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   balanceIntervalMinutes: 5,
@@ -36,6 +38,17 @@ export function getLocalAccessKey() {
   return invoke<string>("get_local_access_key").catch((error) => {
     if (isInvokeUnavailable(error)) {
       throw new Error("只有桌面端可以复制真实本地访问密钥");
+    }
+    throw error;
+  });
+}
+
+export function updateLocalAccessKey(value: string) {
+  return invoke<AppSettings>("update_local_access_key", { value }).then(normalizeSettings).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      const localKeyMasked = maskSecret(value);
+      memorySettings = { ...memorySettings, localKeyMasked };
+      return normalizeSettings(memorySettings);
     }
     throw error;
   });
@@ -76,6 +89,11 @@ function normalizeSettings(settings: AppSettings): AppSettings {
     pendingDataDir: typeof maybeSettings.pendingDataDir === "string" ? maybeSettings.pendingDataDir : null,
     dataDirChangeRequiresRestart: normalizeBoolean(maybeSettings.dataDirChangeRequiresRestart),
     defaultRoutingStrategy: normalizeRoutingStrategy(settings.defaultRoutingStrategy),
+    collectorProxyMode: normalizeCollectorProxyMode(maybeSettings.collectorProxyMode),
+    collectorProxyUrl:
+      typeof maybeSettings.collectorProxyUrl === "string" && maybeSettings.collectorProxyUrl.trim()
+        ? maybeSettings.collectorProxyUrl.trim()
+        : null,
     balanceIntervalMinutes: normalizeNumber(maybeSettings.balanceIntervalMinutes, 5),
     groupRateIntervalMinutes: normalizeNumber(maybeSettings.groupRateIntervalMinutes, 20),
     modelListIntervalMinutes: normalizeNumber(maybeSettings.modelListIntervalMinutes, 60),
@@ -89,6 +107,13 @@ function normalizeSettings(settings: AppSettings): AppSettings {
       maybeSettings.allowDepletedFallback,
     ),
   };
+}
+
+function normalizeCollectorProxyMode(value: unknown): AppSettings["collectorProxyMode"] {
+  if (value === "system" || value === "manual") {
+    return value;
+  }
+  return "direct";
 }
 
 function normalizeRoutingStrategy(value: AppSettings["defaultRoutingStrategy"] | string) {
@@ -118,4 +143,15 @@ function normalizeBoolean(value: unknown) {
 function normalizeNumber(value: unknown, fallback: number) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function maskSecret(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "未设置";
+  }
+  if (trimmed.length <= 8) {
+    return "****";
+  }
+  return `${trimmed.slice(0, 4)}****${trimmed.slice(-4)}`;
 }

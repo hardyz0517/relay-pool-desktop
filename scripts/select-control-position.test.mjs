@@ -40,3 +40,19 @@ assert.ok(
   source.includes('window.addEventListener("wheel", handleViewportScroll'),
   "mouse-wheel scrolling should close the menu before the fixed portal can visibly lag behind",
 );
+
+assert.ok(
+  source.includes("MIN_MENU_WIDTH"),
+  "SelectControl should keep dropdown menus readable when the trigger is narrow",
+);
+
+assert.match(
+  source,
+  /width:\s*Math\.max\(rect\.width,\s*MIN_MENU_WIDTH\)/,
+  "SelectControl menu width should be at least the readable menu minimum, not just trigger width",
+);
+
+assert.ok(
+  source.includes("window.innerWidth - menuWidth - viewportPadding"),
+  "SelectControl should clamp the widened menu against the viewport right edge",
+);

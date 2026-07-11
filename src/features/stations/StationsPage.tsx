@@ -1567,6 +1567,8 @@ function formToInput(form: StationFormState): StationInput {
     stationType: form.stationType,
     baseUrl: form.baseUrl.trim(),
     apiKey: form.apiKey.trim(),
+    collectorProxyMode: "inherit",
+    collectorProxyUrl: null,
     enabled: form.enabled,
     creditPerCny: Number(form.creditPerCny),
     lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim() ? Number(form.lowBalanceThresholdCny) : null,

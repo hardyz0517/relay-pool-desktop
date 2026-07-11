@@ -19,6 +19,7 @@ import {
   downloadPendingUpdate,
   installPendingUpdateAndRelaunch,
 } from "@/lib/api/updater";
+import { normalizeUpdaterError } from "@/lib/api/updaterErrors";
 import { readError } from "@/lib/errors";
 
 type UpdaterContextValue = {
@@ -56,7 +57,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
         setDialogOpen(false);
       }
     } catch (error) {
-      dispatch({ type: "FAILED", message: readError(error) });
+      dispatch({ type: "FAILED", message: normalizeUpdaterError(error) });
     } finally {
       checkingRef.current = false;
     }

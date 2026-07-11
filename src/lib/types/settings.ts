@@ -6,11 +6,14 @@ export type RoutingStrategy =
   | "cost_stable_first";
 
 export type TrayBehavior = "minimize-to-tray" | "close-to-tray" | "disabled";
+export type CollectorProxyMode = "direct" | "system" | "manual";
 
 export type AppSettings = {
   localProxyPort: number;
   localKeyMasked: string;
   defaultRoutingStrategy: RoutingStrategy;
+  collectorProxyMode: CollectorProxyMode;
+  collectorProxyUrl: string | null;
   lowBalanceThresholdCny: number;
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;
@@ -36,6 +39,8 @@ export type CcswitchImportResult = {
 export type UpdateSettingsInput = {
   localProxyPort: number;
   defaultRoutingStrategy: RoutingStrategy;
+  collectorProxyMode: CollectorProxyMode;
+  collectorProxyUrl: string | null;
   lowBalanceThresholdCny: number;
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;
@@ -61,4 +66,10 @@ export const trayBehaviorLabels: Record<TrayBehavior, string> = {
   "minimize-to-tray": "最小化到托盘",
   "close-to-tray": "关闭到托盘",
   disabled: "禁用",
+};
+
+export const collectorProxyModeLabels: Record<CollectorProxyMode, string> = {
+  direct: "直连",
+  system: "使用系统代理",
+  manual: "手动代理地址",
 };

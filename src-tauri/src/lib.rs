@@ -43,6 +43,7 @@ pub fn run() {
             commands::reorder_stations,
             commands::get_settings,
             commands::get_local_access_key,
+            commands::update_local_access_key,
             commands::import_relay_pool_to_ccswitch,
             commands::open_external_url,
             commands::update_settings,

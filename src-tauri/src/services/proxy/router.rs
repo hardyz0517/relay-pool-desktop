@@ -496,6 +496,8 @@ mod tests {
                 api_key: format!("sk-{id}"),
                 upstream_api_format: UpstreamApiFormat::Auto,
                 priority,
+                collector_proxy_mode: "direct".to_string(),
+                collector_proxy_url: None,
             },
             station_name: format!("Station {id}"),
             key_name: format!("Key {id}"),

@@ -9,8 +9,14 @@ use serde_json::{json, Map, Value};
 use ureq::Agent;
 
 use crate::{
-    models::collector::{CollectorEvent, CollectorRunResult},
-    services::database::AppDatabase,
+    models::{
+        collector::{CollectorEvent, CollectorRunResult},
+        stations::Station,
+    },
+    services::{
+        database::AppDatabase,
+        outbound::{agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
+    },
 };
 
 const PROBE_PATHS: [&str; 5] = [
@@ -69,6 +75,19 @@ const SECRET_HINTS: [&str; 12] = [
     "credential",
 ];
 
+fn effective_station_proxy(
+    database: &AppDatabase,
+    station: &Station,
+) -> Result<ProxyConfig, String> {
+    let settings = database.get_settings()?;
+    Ok(resolve_proxy_config(
+        &station.collector_proxy_mode,
+        station.collector_proxy_url.clone(),
+        &settings.collector_proxy_mode,
+        settings.collector_proxy_url,
+    ))
+}
+
 pub fn detect_station(
     database: &AppDatabase,
     station_id: String,
@@ -108,7 +127,8 @@ pub fn collect_login_state(
     };
 
     let config = ProbeMode::Collect.config();
-    let agent = ureq::AgentBuilder::new()
+    let proxy = effective_station_proxy(database, &station)?;
+    let agent = agent_builder_for_proxy(&proxy)?
         .timeout_connect(config.connect_timeout)
         .timeout_read(config.read_timeout)
         .timeout_write(config.connect_timeout)
@@ -163,7 +183,8 @@ fn run_probe(
     }
 
     let config = mode.config();
-    let probe_results = run_endpoint_probes(&station.base_url, config);
+    let proxy = effective_station_proxy(database, &station)?;
+    let probe_results = run_endpoint_probes(&station.base_url, config, &proxy);
     let mut events = Vec::with_capacity(probe_results.len());
     let mut responses = Vec::with_capacity(probe_results.len());
     let mut first_error: Option<String> = None;
@@ -359,7 +380,11 @@ enum EndpointProbe {
     Error(ProbeError),
 }
 
-fn run_endpoint_probes(base_url: &str, config: ProbeConfig) -> Vec<EndpointProbe> {
+fn run_endpoint_probes(
+    base_url: &str,
+    config: ProbeConfig,
+    proxy: &ProxyConfig,
+) -> Vec<EndpointProbe> {
     let started_at = Instant::now();
     let worker_count = config.max_concurrency.min(PROBE_PATHS.len());
     let queue = Arc::new(Mutex::new(VecDeque::from(PROBE_PATHS.to_vec())));
@@ -369,12 +394,37 @@ fn run_endpoint_probes(base_url: &str, config: ProbeConfig) -> Vec<EndpointProbe
         let worker_queue = Arc::clone(&queue);
         let worker_sender = sender.clone();
         let worker_base_url = base_url.to_string();
+        let worker_proxy = proxy.clone();
         thread::spawn(move || {
-            let agent = ureq::AgentBuilder::new()
-                .timeout_connect(config.connect_timeout)
-                .timeout_read(config.read_timeout)
-                .timeout_write(config.connect_timeout)
-                .build();
+            let agent = match agent_builder_for_proxy(&worker_proxy) {
+                Ok(builder) => builder
+                    .timeout_connect(config.connect_timeout)
+                    .timeout_read(config.read_timeout)
+                    .timeout_write(config.connect_timeout)
+                    .build(),
+                Err(error) => {
+                    loop {
+                        let Some(path) = worker_queue
+                            .lock()
+                            .ok()
+                            .and_then(|mut paths| paths.pop_front())
+                        else {
+                            break;
+                        };
+                        let url = join_url(&worker_base_url, path);
+                        let probe = EndpointProbe::Error(ProbeError {
+                            path,
+                            url,
+                            label: "network_error".to_string(),
+                            message: error.clone(),
+                        });
+                        if worker_sender.send(probe).is_err() {
+                            break;
+                        }
+                    }
+                    return;
+                }
+            };
 
             loop {
                 let Some(path) = worker_queue
@@ -548,7 +598,8 @@ pub(crate) fn test_login_credentials(
     password: &str,
 ) -> Result<LoginProbeOutcome, String> {
     let config = ProbeMode::Collect.config();
-    let agent = ureq::AgentBuilder::new()
+    let proxy = ProxyConfig::direct();
+    let agent = agent_builder_for_proxy(&proxy)?
         .timeout_connect(config.connect_timeout)
         .timeout_read(config.read_timeout)
         .timeout_write(config.connect_timeout)
@@ -566,8 +617,17 @@ pub(crate) fn login_access_token(
     username: &str,
     password: &str,
 ) -> Result<LoginTokenOutcome, String> {
+    login_access_token_with_proxy(base_url, username, password, &ProxyConfig::direct())
+}
+
+pub(crate) fn login_access_token_with_proxy(
+    base_url: &str,
+    username: &str,
+    password: &str,
+    proxy: &ProxyConfig,
+) -> Result<LoginTokenOutcome, String> {
     let config = ProbeMode::Collect.config();
-    let agent = ureq::AgentBuilder::new()
+    let agent = agent_builder_for_proxy(proxy)?
         .timeout_connect(config.connect_timeout)
         .timeout_read(config.read_timeout)
         .timeout_write(config.connect_timeout)
@@ -584,9 +644,26 @@ pub(crate) fn login_access_token_with_budget(
     password: &str,
     budget: Duration,
 ) -> Result<LoginTokenOutcome, String> {
+    login_access_token_with_budget_and_proxy(
+        base_url,
+        username,
+        password,
+        budget,
+        &ProxyConfig::direct(),
+    )
+}
+
+pub(crate) fn login_access_token_with_budget_and_proxy(
+    base_url: &str,
+    username: &str,
+    password: &str,
+    budget: Duration,
+    proxy: &ProxyConfig,
+) -> Result<LoginTokenOutcome, String> {
     let config = ProbeMode::Collect.config();
     let deadline = LoginAttemptDeadline::new(budget);
-    let attempt = attempt_login_with_budget(base_url, username, password, config, &deadline)?;
+    let attempt =
+        attempt_login_with_budget(base_url, username, password, config, &deadline, proxy)?;
     Ok(LoginTokenOutcome {
         access_token: attempt.token,
     })
@@ -624,19 +701,9 @@ fn attempt_login(
                 .map_err(|error| format!("读取登录响应失败: {error}"))?;
             let parsed = serde_json::from_str::<Value>(&body).ok();
             if let Some(parsed) = parsed {
-                if let Some(token) = extract_token(&parsed) {
-                    return Ok(LoginAttempt {
-                        token: Some(token),
-                        login_message: Some(format!("已从 {path} 读取登录 token。")),
-                        manual_required: None,
-                    });
-                }
-                if needs_manual_login(&parsed, status) {
-                    return Ok(LoginAttempt {
-                        token: None,
-                        login_message: Some(shorten_error(&parsed.to_string())),
-                        manual_required: Some("接口需要验证码、2FA 或额外登录步骤。".to_string()),
-                    });
+                let attempt = login_attempt_from_response(path, status, &parsed);
+                if attempt.token.is_some() || attempt.manual_required.is_some() {
+                    return Ok(attempt);
                 }
             }
             if (200..300).contains(&status) {
@@ -683,6 +750,7 @@ fn attempt_login_with_budget(
     password: &str,
     config: ProbeConfig,
     deadline: &LoginAttemptDeadline,
+    proxy: &ProxyConfig,
 ) -> Result<LoginAttempt, String> {
     let username_variants = [
         ("email", username),
@@ -700,7 +768,8 @@ fn attempt_login_with_budget(
             let mut transient_attempted = false;
 
             loop {
-                let response = login_candidate_request(&url, payload.clone(), config, deadline)?;
+                let response =
+                    login_candidate_request(&url, payload.clone(), config, deadline, proxy)?;
                 match response {
                     LoginCandidateResponse::Response(response) => {
                         let status = response.status();
@@ -733,21 +802,9 @@ fn attempt_login_with_budget(
                             .map_err(|error| format!("读取登录响应失败: {error}"))?;
                         let parsed = serde_json::from_str::<Value>(&body).ok();
                         if let Some(parsed) = parsed {
-                            if let Some(token) = extract_token(&parsed) {
-                                return Ok(LoginAttempt {
-                                    token: Some(token),
-                                    login_message: Some(format!("已从 {path} 读取登录 token。")),
-                                    manual_required: None,
-                                });
-                            }
-                            if needs_manual_login(&parsed, status) {
-                                return Ok(LoginAttempt {
-                                    token: None,
-                                    login_message: Some(shorten_error(&parsed.to_string())),
-                                    manual_required: Some(
-                                        "接口需要验证码、2FA 或额外登录步骤。".to_string(),
-                                    ),
-                                });
+                            let attempt = login_attempt_from_response(path, status, &parsed);
+                            if attempt.token.is_some() || attempt.manual_required.is_some() {
+                                return Ok(attempt);
                             }
                         }
                         if (200..300).contains(&status) {
@@ -789,12 +846,13 @@ fn login_candidate_request(
     payload: Value,
     config: ProbeConfig,
     deadline: &LoginAttemptDeadline,
+    proxy: &ProxyConfig,
 ) -> Result<LoginCandidateResponse, String> {
     let remaining = deadline.remaining()?;
     let timeout = remaining
         .min(config.read_timeout)
         .max(Duration::from_millis(1));
-    let agent = ureq::AgentBuilder::new()
+    let agent = agent_builder_for_proxy(proxy)?
         .timeout_connect(
             timeout
                 .min(config.connect_timeout)
@@ -821,6 +879,49 @@ fn login_candidate_request(
             }
         }
     }
+}
+
+fn login_attempt_from_response(path: &str, status: u16, parsed: &Value) -> LoginAttempt {
+    if let Some(token) = extract_token(&parsed) {
+        return LoginAttempt {
+            token: Some(token),
+            login_message: Some(format!("已从 {path} 读取登录 token。")),
+            manual_required: None,
+        };
+    }
+    if is_region_restricted_login(&parsed, status) {
+        return LoginAttempt {
+            token: None,
+            login_message: Some(shorten_error(&parsed.to_string())),
+            manual_required: Some(
+                "登录接口返回地区限制，当前网络可能需要代理；请在设置或站点代理中启用可访问该中转站的代理。"
+                    .to_string(),
+            ),
+        };
+    }
+    if needs_manual_login(&parsed, status) {
+        return LoginAttempt {
+            token: None,
+            login_message: Some(shorten_error(&parsed.to_string())),
+            manual_required: Some("接口需要验证码、2FA 或额外登录步骤。".to_string()),
+        };
+    }
+    LoginAttempt {
+        token: None,
+        login_message: Some(shorten_error(&parsed.to_string())),
+        manual_required: None,
+    }
+}
+
+fn is_region_restricted_login(value: &Value, status: u16) -> bool {
+    if status != 403 {
+        return false;
+    }
+    let text = value.to_string().to_lowercase();
+    text.contains("region_restricted")
+        || text.contains("地区")
+        || text.contains("区域")
+        || text.contains("region")
 }
 
 fn retry_after_duration(response: &ureq::Response) -> Option<Duration> {
@@ -1877,6 +1978,8 @@ mod tests {
                 name: "collector test".to_string(),
                 station_type: "sub2api".to_string(),
                 base_url: server.base_url.clone(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-test-routing".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,
@@ -1975,6 +2078,26 @@ mod tests {
                 .map(Vec::len),
             Some(2),
         );
+    }
+
+    #[test]
+    fn login_region_restricted_reports_proxy_needed_not_captcha() {
+        let attempt = login_attempt_from_response(
+            "/api/v1/auth/login",
+            403,
+            &json!({
+                "code": 403,
+                "message": "当前地区暂不支持注册或登录",
+                "reason": "REGION_RESTRICTED"
+            }),
+        );
+
+        assert_eq!(attempt.token, None);
+        let manual_required = attempt.manual_required.expect("manual required");
+        assert!(manual_required.contains("当前网络"));
+        assert!(manual_required.contains("代理"));
+        assert!(!manual_required.contains("验证码"));
+        assert!(!manual_required.contains("2FA"));
     }
 
     #[test]

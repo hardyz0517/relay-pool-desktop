@@ -19,6 +19,8 @@ pub struct RouteCandidate {
     pub station_id: String,
     pub upstream_base_url: String,
     pub api_key: String,
+    pub collector_proxy_mode: String,
+    pub collector_proxy_url: Option<String>,
     pub upstream_api_format: UpstreamApiFormat,
     pub priority: i64,
 }
@@ -196,6 +198,8 @@ mod tests {
             station_id: format!("station-{id}"),
             upstream_base_url: "https://example.test/v1".to_string(),
             api_key: format!("sk-{id}"),
+            collector_proxy_mode: "direct".to_string(),
+            collector_proxy_url: None,
             upstream_api_format: UpstreamApiFormat::Auto,
             priority,
         }

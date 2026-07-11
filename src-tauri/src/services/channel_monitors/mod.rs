@@ -685,6 +685,8 @@ mod tests {
                     name: "monitor cost station".to_string(),
                     station_type: "openai-compatible".to_string(),
                     base_url: "http://127.0.0.1:9".to_string(),
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                     api_key: "sk-monitor-cost".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -765,6 +767,9 @@ mod tests {
                     low_balance_threshold_cny: None,
                     collection_interval_minutes: 5,
                     note: None,
+
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                 },
                 Some(&data_key),
             )
@@ -847,6 +852,8 @@ mod tests {
                     name: "usage monitor station".to_string(),
                     station_type: "openai-compatible".to_string(),
                     base_url: base_url.clone(),
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                     api_key: "sk-usage-monitor".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -991,6 +998,8 @@ mod tests {
                     name: "missing secret station".to_string(),
                     station_type: "openai-compatible".to_string(),
                     base_url: "http://127.0.0.1:9".to_string(),
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                     api_key: "sk-to-be-cleared".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -1070,6 +1079,8 @@ mod tests {
                     name: "threshold station".to_string(),
                     station_type: "openai-compatible".to_string(),
                     base_url: "http://127.0.0.1:9".to_string(),
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                     api_key: "sk-threshold".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -1200,6 +1211,9 @@ mod tests {
                     low_balance_threshold_cny: None,
                     collection_interval_minutes: 5,
                     note: None,
+
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                 },
                 Some(&data_key),
             )
@@ -1262,6 +1276,9 @@ mod tests {
                     low_balance_threshold_cny: None,
                     collection_interval_minutes: 5,
                     note: None,
+
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                 },
                 Some(&data_key),
             )
@@ -1320,6 +1337,9 @@ mod tests {
                     low_balance_threshold_cny: None,
                     collection_interval_minutes: 5,
                     note: None,
+
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                 },
                 Some(&data_key),
             )
@@ -1379,6 +1399,9 @@ mod tests {
                     low_balance_threshold_cny: None,
                     collection_interval_minutes: 5,
                     note: None,
+
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                 },
                 Some(&data_key),
             )
@@ -1450,6 +1473,9 @@ mod tests {
                     low_balance_threshold_cny: None,
                     collection_interval_minutes: 5,
                     note: None,
+
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
                 },
                 Some(&data_key),
             )
@@ -1560,6 +1586,8 @@ mod tests {
                 name: "disabled key station".to_string(),
                 station_type: "openai-compatible".to_string(),
                 base_url: "https://example.test".to_string(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-disabled-key".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,
@@ -1628,6 +1656,8 @@ mod tests {
                 name: name.to_string(),
                 station_type: "openai-compatible".to_string(),
                 base_url: "https://example.test".to_string(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-test-monitor".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,

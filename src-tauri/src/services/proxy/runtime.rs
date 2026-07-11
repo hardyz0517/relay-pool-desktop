@@ -20,6 +20,7 @@ use crate::{
     },
     services::{
         database::{now_millis_for_services, AppDatabase},
+        outbound::{agent_builder_for_proxy, ProxyConfig},
         proxy::{
             adapters::responses::{
                 extract_responses_metadata, normalize_responses_request, render_responses_response,
@@ -1298,7 +1299,12 @@ fn send_probe_request(
     body: &[u8],
 ) -> Result<(), SwitchProbeError> {
     let url = build_upstream_url(&candidate.upstream_base_url, upstream_path);
-    let agent = ureq::AgentBuilder::new()
+    let proxy = ProxyConfig {
+        mode: candidate.collector_proxy_mode.clone(),
+        url: candidate.collector_proxy_url.clone(),
+    };
+    let agent = agent_builder_for_proxy(&proxy)
+        .map_err(SwitchProbeError::Transport)?
         .timeout(std::time::Duration::from_secs(10))
         .build();
     let result = agent
@@ -1784,7 +1790,11 @@ fn forward_to_candidate_with_body(
     stream: bool,
 ) -> Result<ProxyResponse, String> {
     let url = build_upstream_url(&candidate.upstream_base_url, upstream_path);
-    let agent = ureq::AgentBuilder::new()
+    let proxy = ProxyConfig {
+        mode: candidate.collector_proxy_mode.clone(),
+        url: candidate.collector_proxy_url.clone(),
+    };
+    let agent = agent_builder_for_proxy(&proxy)?
         .timeout(std::time::Duration::from_secs(45))
         .build();
     let mut upstream = agent
@@ -2549,6 +2559,8 @@ mod tests {
                 name: "Streaming station".to_string(),
                 station_type: "openai-compatible".to_string(),
                 base_url: format!("http://127.0.0.1:{upstream_port}"),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-test-streaming".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,
@@ -2661,6 +2673,8 @@ mod tests {
                 name: "Responses streaming station".to_string(),
                 station_type: "openai-compatible".to_string(),
                 base_url: format!("http://127.0.0.1:{upstream_port}"),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-test-responses-streaming".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,
@@ -3047,6 +3061,8 @@ mod tests {
                 name: "First models station".to_string(),
                 station_type: "openai-compatible".to_string(),
                 base_url: format!("http://127.0.0.1:{first_port}"),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-first-models".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,
@@ -3061,6 +3077,8 @@ mod tests {
                 name: "Second models station".to_string(),
                 station_type: "openai-compatible".to_string(),
                 base_url: format!("http://127.0.0.1:{second_port}"),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: "sk-second-models".to_string(),
                 enabled: true,
                 credit_per_cny: 1.0,
@@ -3314,6 +3332,8 @@ mod tests {
                 name: name.to_string(),
                 station_type: "openai-compatible".to_string(),
                 base_url: base_url.to_string(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
                 api_key: format!("sk-{name}"),
                 enabled: true,
                 credit_per_cny: 1.0,

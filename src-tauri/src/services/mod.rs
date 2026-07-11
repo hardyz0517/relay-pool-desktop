@@ -6,6 +6,7 @@ pub mod database;
 pub mod endpoint_ping;
 pub mod health;
 pub mod logs;
+pub mod outbound;
 pub mod pricing;
 pub mod proxy;
 pub mod remote_keys;

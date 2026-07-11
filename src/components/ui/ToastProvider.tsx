@@ -79,7 +79,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div
         aria-live="polite"
         aria-relevant="additions text"
-        className="pointer-events-none fixed bottom-4 right-4 z-[90] grid w-[min(360px,calc(100vw-32px))] gap-2"
+        className="pointer-events-none fixed top-4 left-1/2 z-[90] grid w-[min(360px,calc(100vw-32px))] -translate-x-1/2 gap-2"
       >
         {toasts.map((toast) => (
           <ToastCard key={toast.id} toast={toast} onDismiss={() => dismiss(toast.id)} />

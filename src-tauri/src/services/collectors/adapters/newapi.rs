@@ -11,6 +11,7 @@ use crate::services::{
         url::{collector_base_urls, join_url},
     },
     database::AppDatabase,
+    outbound::{agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
 };
 
 const NEWAPI_REMOTE_KEY_UNSUPPORTED: &str =
@@ -244,6 +245,13 @@ pub fn collect_balance_and_groups(
     task: CollectorTask,
 ) -> Result<AdapterOutput, String> {
     let station = database.station_for_collector(station_id)?;
+    let settings = database.get_settings()?;
+    let proxy = resolve_proxy_config(
+        &station.collector_proxy_mode,
+        station.collector_proxy_url.clone(),
+        &settings.collector_proxy_mode,
+        settings.collector_proxy_url,
+    );
     let credentials = database.get_station_credentials(station_id.to_string())?;
     let Some(user_id) = credentials.newapi_user_id.clone() else {
         return manual_required_output(
@@ -273,14 +281,16 @@ pub fn collect_balance_and_groups(
 
     if matches!(task, CollectorTask::Balance | CollectorTask::Full) {
         let url = join_url(&urls.management_base_url, "/api/user/self");
-        let payload = get_newapi_json(&url, &access_token, &user_id, &mut endpoint_results)?;
+        let payload =
+            get_newapi_json(&url, &access_token, &user_id, &proxy, &mut endpoint_results)?;
         facts
             .balances
             .push(parse_newapi_balance(station_id, &payload));
     }
     if matches!(task, CollectorTask::Groups | CollectorTask::Full) {
         let url = join_url(&urls.management_base_url, "/api/user/self/groups");
-        let payload = get_newapi_json(&url, &access_token, &user_id, &mut endpoint_results)?;
+        let payload =
+            get_newapi_json(&url, &access_token, &user_id, &proxy, &mut endpoint_results)?;
         let group_facts = parse_newapi_group_facts(station_id, &payload);
         facts.groups.extend(group_facts.groups);
         facts.rates.extend(group_facts.rates);
@@ -311,10 +321,26 @@ fn get_newapi_json(
     url: &str,
     access_token: &str,
     user_id: &str,
+    proxy: &ProxyConfig,
     endpoint_results: &mut Vec<Value>,
 ) -> Result<Value, String> {
     let started = std::time::Instant::now();
-    let response = match ureq::get(url)
+    let agent = match agent_builder_for_proxy(proxy) {
+        Ok(builder) => builder.timeout(COLLECTOR_HTTP_TIMEOUT).build(),
+        Err(error) => {
+            let message = crate::services::secrets::mask::redact_text(&error);
+            endpoint_results.push(json!({
+                "url": url,
+                "status": null,
+                "ok": false,
+                "durationMs": started.elapsed().as_millis() as i64,
+                "errorMessage": message,
+            }));
+            return Err(message);
+        }
+    };
+    let response = match agent
+        .get(url)
         .timeout(COLLECTOR_HTTP_TIMEOUT)
         .set("Authorization", &format!("Bearer {access_token}"))
         .set("New-Api-User", user_id)

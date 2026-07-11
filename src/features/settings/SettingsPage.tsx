@@ -1,21 +1,25 @@
-import { useState, type FormEvent, type ReactNode } from "react";
-import { Coins, FolderOpen, Play, RefreshCw, RotateCcw, Save, Square } from "lucide-react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { Coins, Copy, FolderOpen, Play, RefreshCw, RotateCcw, Square, Wand2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { usePageActivation } from "@/components/shell/PageActivity";
-import { Button, MaskedSecret, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
+import { Button, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
+import { cn } from "@/lib/utils";
 import {
   getProxyStatus,
   restartLocalProxy,
   startLocalProxy,
   stopLocalProxy,
 } from "@/lib/api/proxy";
-import { chooseDataDir, getLocalAccessKey, getSettings, SETTINGS_UPDATED_EVENT, updateSettings } from "@/lib/api/settings";
+import { chooseDataDir, getLocalAccessKey, getSettings, SETTINGS_UPDATED_EVENT, updateLocalAccessKey, updateSettings } from "@/lib/api/settings";
 import type { ProxyStatus } from "@/lib/types/proxy";
 import { useUpdater } from "@/features/updater/UpdaterProvider";
+import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import {
+  collectorProxyModeLabels,
   routingStrategyLabels,
   type AppSettings,
+  type CollectorProxyMode,
   type RoutingStrategy,
   type TrayBehavior,
   type UpdateSettingsInput,
@@ -24,6 +28,8 @@ import {
 type SettingsFormState = {
   localProxyPort: string;
   defaultRoutingStrategy: RoutingStrategy;
+  collectorProxyMode: CollectorProxyMode;
+  collectorProxyUrl: string;
   lowBalanceThresholdCny: string;
   collectorIntervalMinutes: string;
   balanceIntervalMinutes: string;
@@ -41,6 +47,8 @@ const fallbackSettings: AppSettings = {
   localProxyPort: 8787,
   localKeyMasked: "未读取",
   defaultRoutingStrategy: "cost_stable_first",
+  collectorProxyMode: "direct",
+  collectorProxyUrl: null,
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   balanceIntervalMinutes: 5,
@@ -81,10 +89,22 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
   const [saving, setSaving] = useState(false);
   const [proxyBusy, setProxyBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [localAccessKeyEditing, setLocalAccessKeyEditing] = useState(false);
+  const [localAccessKeySaving, setLocalAccessKeySaving] = useState(false);
+  const [localAccessKeyDraft, setLocalAccessKeyDraft] = useState("");
+  const [localAccessKeyOriginal, setLocalAccessKeyOriginal] = useState("");
+  const localAccessKeyInputRef = useRef<HTMLInputElement | null>(null);
 
   usePageActivation(({ isInitial }) => {
     void refreshSettings(isInitial);
   });
+
+  useEffect(() => {
+    if (localAccessKeyEditing) {
+      localAccessKeyInputRef.current?.focus();
+      localAccessKeyInputRef.current?.select();
+    }
+  }, [localAccessKeyEditing]);
 
   async function refreshSettings(showLoading = true) {
     if (showLoading) {
@@ -138,30 +158,103 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
     }
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    await persistSettings(form, "设置已保存", false);
-  }
-
   async function handleDeveloperModeToggle() {
     const nextForm = { ...form, developerModeEnabled: !form.developerModeEnabled };
-    setForm(nextForm);
-    await persistSettings(
+    await commitSettingsForm(
       nextForm,
       nextForm.developerModeEnabled ? "开发者模式已开启" : "开发者模式已关闭",
-      true,
     );
   }
 
   async function handleDefaultRoutingStrategyChange(defaultRoutingStrategy: RoutingStrategy) {
     const nextForm = { ...form, defaultRoutingStrategy };
-    setForm(nextForm);
-    await persistSettings(nextForm, "默认路由策略已更新", true);
+    await commitSettingsForm(nextForm, "默认路由策略已更新");
   }
 
-  async function copyLocalAccessKey() {
-    const localAccessKey = await getLocalAccessKey();
+  async function handleCollectorProxyModeChange(collectorProxyMode: CollectorProxyMode) {
+    const nextForm =
+      collectorProxyMode === "manual"
+        ? withManualProxyDefault({ ...form, collectorProxyMode })
+        : { ...form, collectorProxyMode };
+    await commitSettingsForm(nextForm, "默认采集代理已更新");
+  }
+
+  async function handleAllowDepletedFallbackToggle() {
+    const nextForm = { ...form, allowDepletedFallback: !form.allowDepletedFallback };
+    await commitSettingsForm(
+      nextForm,
+      nextForm.allowDepletedFallback ? "余额耗尽兜底已开启" : "余额耗尽兜底已关闭",
+    );
+  }
+
+  async function copyLocalAccessKey(value?: string) {
+    const localAccessKey = value ?? await getLocalAccessKey();
     await navigator.clipboard.writeText(localAccessKey);
+  }
+
+  async function beginLocalAccessKeyEdit(nextValue?: string) {
+    setError(null);
+    try {
+      const localAccessKey = nextValue ?? await getLocalAccessKey();
+      setLocalAccessKeyOriginal(nextValue ? "" : localAccessKey);
+      setLocalAccessKeyDraft(localAccessKey);
+      setLocalAccessKeyEditing(true);
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      toast.error("读取本地访问密钥失败", message);
+    }
+  }
+
+  function handleGenerateLocalAccessKey() {
+    void beginLocalAccessKeyEdit(generateLocalAccessKey());
+  }
+
+  async function handleLocalAccessKeyBlur() {
+    if (!localAccessKeyEditing) {
+      return;
+    }
+    const nextValue = localAccessKeyDraft.trim();
+    setLocalAccessKeyEditing(false);
+    if (!nextValue) {
+      setLocalAccessKeyDraft("");
+      toast.error("保存本地访问密钥失败", "本地访问密钥不能为空。");
+      return;
+    }
+    if (nextValue === localAccessKeyOriginal) {
+      return;
+    }
+
+    setLocalAccessKeySaving(true);
+    setError(null);
+    try {
+      const nextSettings = await updateLocalAccessKey(nextValue);
+      setSettings(nextSettings);
+      setForm(settingsToForm(nextSettings));
+      window.dispatchEvent(new CustomEvent<AppSettings>(SETTINGS_UPDATED_EVENT, { detail: nextSettings }));
+      toast.success("本地访问密钥已更新");
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      toast.error("保存本地访问密钥失败", message);
+    } finally {
+      setLocalAccessKeySaving(false);
+      setLocalAccessKeyDraft("");
+      setLocalAccessKeyOriginal("");
+    }
+  }
+
+  function handleLocalAccessKeyKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setLocalAccessKeyEditing(false);
+      setLocalAccessKeyDraft("");
+      setLocalAccessKeyOriginal("");
+    }
   }
 
   async function handleChooseDataDir() {
@@ -184,11 +277,12 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
     }
   }
 
-  async function persistSettings(
-    nextForm: SettingsFormState,
-    successMessage: string,
-    revertOnFailure: boolean,
-  ) {
+  async function commitSettingsForm(nextForm: SettingsFormState, successMessage: string) {
+    setForm(nextForm);
+    await persistSettings(nextForm, successMessage);
+  }
+
+  async function persistSettings(nextForm: SettingsFormState, successMessage: string) {
     setSaving(true);
     setError(null);
     try {
@@ -200,9 +294,7 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
-      if (revertOnFailure) {
-        setForm(settingsToForm(settings));
-      }
+      setForm(settingsToForm(settings));
       toast.error("保存设置失败", message);
     } finally {
       setSaving(false);
@@ -215,15 +307,10 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
     <PageScaffold
       title="设置"
       width="settings"
-      actions={
-        <Button disabled={saving || loading} form="settings-form" type="submit">
-          <Save className="h-4 w-4" />
-          {saving ? "保存中" : "保存设置"}
-        </Button>
-      }
     >
-      <form id="settings-form" className="grid min-w-0 gap-[var(--shell-page-gap)]" onSubmit={handleSubmit}>
+      <div className="grid min-w-0 gap-[var(--shell-page-gap)]">
         <SectionCard
+          contentClassName="p-0"
           title="本地代理"
           action={
             <StatusBadge tone={proxyStatus.running ? "healthy" : "disabled"}>
@@ -263,7 +350,6 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
                 </Button>
               </div>
             }
-            description={`活动请求 ${proxyStatus.activeRequests} 个；累计请求 ${proxyStatus.requestCount} 次；${proxyStatus.lastError ?? "最近没有运行时错误"}`}
             label="运行状态"
           />
           <SettingRow
@@ -275,24 +361,36 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
                 type="number"
                 value={form.localProxyPort}
                 onChange={(event) => setForm({ ...form, localProxyPort: event.target.value })}
+                onBlur={() => void commitSettingsForm(form, "代理端口已更新")}
               />
             }
-            description="保存后重启代理生效；端口冲突会返回可读错误。"
             label="代理端口"
           />
           <SettingRow
             control={<code className="break-all text-xs text-slate-700">http://127.0.0.1:{settings.localProxyPort}/v1</code>}
-            description="复制到 CCSwitch 或其他兼容客户端。"
             label="基础地址"
           />
           <SettingRow
-            control={<MaskedSecret value={settings.localKeyMasked} onCopy={copyLocalAccessKey} />}
-            description="只展示脱敏值；真实本地访问密钥由加密存储管理。"
+            control={
+              <LocalAccessKeyControl
+                draft={localAccessKeyDraft}
+                editing={localAccessKeyEditing}
+                inputRef={localAccessKeyInputRef}
+                saving={localAccessKeySaving}
+                value={settings.localKeyMasked}
+                onBlur={() => void handleLocalAccessKeyBlur()}
+                onChange={setLocalAccessKeyDraft}
+                onCopy={() => void copyLocalAccessKey(localAccessKeyEditing ? localAccessKeyDraft : undefined)}
+                onEdit={() => void beginLocalAccessKeyEdit()}
+                onGenerate={handleGenerateLocalAccessKey}
+                onKeyDown={handleLocalAccessKeyKeyDown}
+              />
+            }
             label="本地访问密钥"
           />
         </SectionCard>
 
-        <SectionCard title="采集与路由">
+        <SectionCard contentClassName="p-0" title="采集与路由">
           <SettingRow
             control={
               <SelectControl
@@ -311,6 +409,35 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
           />
           <SettingRow
             control={
+              <div className="grid w-full min-w-0 gap-2">
+                <SelectControl
+                  ariaLabel="默认采集代理"
+                  className={inputClassName}
+                  value={form.collectorProxyMode}
+                  options={Object.entries(collectorProxyModeLabels).map(([value, label]) => ({
+                    value: value as CollectorProxyMode,
+                    label,
+                  }))}
+                  onChange={(collectorProxyMode) => void handleCollectorProxyModeChange(collectorProxyMode)}
+                />
+                {form.collectorProxyMode === "manual" && (
+                  <input
+                    className={inputClassName}
+                    placeholder={DEFAULT_MANUAL_PROXY_URL}
+                    value={form.collectorProxyUrl}
+                    onChange={(event) =>
+                      setForm({ ...form, collectorProxyUrl: event.target.value })
+                    }
+                    onBlur={() => void commitSettingsForm(form, "默认采集代理已更新")}
+                  />
+                )}
+              </div>
+            }
+            description="登录刷新、余额/分组采集、远端 Key 读取和本地 key 路由都会使用这里的默认出口；单个中转站可以覆盖。"
+            label="默认采集代理"
+          />
+          <SettingRow
+            control={
               <input
                 className={inputClassName}
                 min="0"
@@ -320,28 +447,29 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
                 onChange={(event) =>
                   setForm({ ...form, lowBalanceThresholdCny: event.target.value })
                 }
+                onBlur={() => void commitSettingsForm(form, "低余额阈值已更新")}
               />
             }
             description="低于该值时，成本策略会降低或跳过低余额候选。"
             label="低余额阈值"
           />
           <SettingRow
-            control={<SettingsNumberInput min="1" value={form.balanceIntervalMinutes} onChange={(balanceIntervalMinutes) => setForm({ ...form, balanceIntervalMinutes })} />}
+            control={<SettingsNumberInput min="1" value={form.balanceIntervalMinutes} onChange={(balanceIntervalMinutes) => setForm({ ...form, balanceIntervalMinutes })} onCommit={() => void commitSettingsForm(form, "余额采集周期已更新")} />}
             description="余额快照采集周期。"
             label="余额采集周期（分钟）"
           />
           <SettingRow
-            control={<SettingsNumberInput min="1" value={form.groupRateIntervalMinutes} onChange={(groupRateIntervalMinutes) => setForm({ ...form, groupRateIntervalMinutes })} />}
+            control={<SettingsNumberInput min="1" value={form.groupRateIntervalMinutes} onChange={(groupRateIntervalMinutes) => setForm({ ...form, groupRateIntervalMinutes })} onCommit={() => void commitSettingsForm(form, "分组 / 倍率采集周期已更新")} />}
             description="分组可见性和倍率事实采集周期。"
             label="分组 / 倍率采集周期（分钟）"
           />
           <SettingRow
-            control={<SettingsNumberInput min="1" value={form.modelListIntervalMinutes} onChange={(modelListIntervalMinutes) => setForm({ ...form, modelListIntervalMinutes })} />}
+            control={<SettingsNumberInput min="1" value={form.modelListIntervalMinutes} onChange={(modelListIntervalMinutes) => setForm({ ...form, modelListIntervalMinutes })} onCommit={() => void commitSettingsForm(form, "模型采集周期已更新")} />}
             description="模型列表刷新周期。"
             label="模型采集周期（分钟）"
           />
           <SettingRow
-            control={<SettingsNumberInput min="1" value={form.pricingRefreshIntervalMinutes} onChange={(pricingRefreshIntervalMinutes) => setForm({ ...form, pricingRefreshIntervalMinutes })} />}
+            control={<SettingsNumberInput min="1" value={form.pricingRefreshIntervalMinutes} onChange={(pricingRefreshIntervalMinutes) => setForm({ ...form, pricingRefreshIntervalMinutes })} onCommit={() => void commitSettingsForm(form, "价格刷新周期已更新")} />}
             description="价格规则和倍率归一化刷新周期。"
             label="价格刷新周期（分钟）"
           />
@@ -356,12 +484,12 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
             label="模型基准价格"
           />
           <SettingRow
-            control={<SettingsNumberInput min="3" value={form.collectorTimeoutSeconds} onChange={(collectorTimeoutSeconds) => setForm({ ...form, collectorTimeoutSeconds })} />}
+            control={<SettingsNumberInput min="3" value={form.collectorTimeoutSeconds} onChange={(collectorTimeoutSeconds) => setForm({ ...form, collectorTimeoutSeconds })} onCommit={() => void commitSettingsForm(form, "采集超时已更新")} />}
             description="单次采集请求超时；后端要求至少 3 秒。"
             label="采集超时（秒）"
           />
           <SettingRow
-            control={<SettingsNumberInput max="8" min="1" value={form.collectorMaxConcurrency} onChange={(collectorMaxConcurrency) => setForm({ ...form, collectorMaxConcurrency })} />}
+            control={<SettingsNumberInput max="8" min="1" value={form.collectorMaxConcurrency} onChange={(collectorMaxConcurrency) => setForm({ ...form, collectorMaxConcurrency })} onCommit={() => void commitSettingsForm(form, "采集并发数已更新")} />}
             description="采集任务最大并发数；后端限制 1 到 8。"
             label="采集并发数"
           />
@@ -372,7 +500,7 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
                 checked={form.allowDepletedFallback}
                 offLabel="关闭"
                 onLabel="开启"
-                onCheckedChange={() => setForm({ ...form, allowDepletedFallback: !form.allowDepletedFallback })}
+                onCheckedChange={() => void handleAllowDepletedFallbackToggle()}
               />
             }
             description="关闭时，余额耗尽的候选默认不参与路由；开启后只作为兜底候选。"
@@ -394,7 +522,7 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
           />
         </SectionCard>
 
-        <SectionCard title="数据与安全">
+        <SectionCard contentClassName="p-0" title="数据与安全">
           <SettingRow
             control={
               <div className="flex min-w-0 flex-col items-start gap-2 sm:items-end">
@@ -421,7 +549,7 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
           />
         </SectionCard>
 
-        <SectionCard title="应用更新">
+        <SectionCard contentClassName="p-0" title="应用更新">
           <SettingRow
             control={
               <Button
@@ -440,8 +568,83 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
         </SectionCard>
 
         {error && <div className="text-sm text-rose-700">{error}</div>}
-      </form>
+      </div>
     </PageScaffold>
+  );
+}
+
+function LocalAccessKeyControl({
+  value,
+  draft,
+  editing,
+  saving,
+  inputRef,
+  onEdit,
+  onGenerate,
+  onCopy,
+  onChange,
+  onBlur,
+  onKeyDown,
+}: {
+  value: string;
+  draft: string;
+  editing: boolean;
+  saving: boolean;
+  inputRef: RefObject<HTMLInputElement>;
+  onEdit: () => void;
+  onGenerate: () => void;
+  onCopy: () => void;
+  onChange: (value: string) => void;
+  onBlur: () => void;
+  onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void;
+}) {
+  const fieldClassName =
+    "local-access-key-field h-8 w-[176px] flex-none rounded-[var(--surface-radius)] border border-border bg-slate-50 px-2 font-mono text-xs text-slate-700 transition";
+  return (
+    <div className="flex w-full min-w-0 items-center justify-start gap-1.5 sm:justify-end">
+      {editing ? (
+        <input
+          ref={inputRef}
+          aria-label="本地访问密钥"
+          className={`${fieldClassName} border-[hsl(var(--accent)/0.45)] bg-white text-slate-800 outline-none ring-2 ring-[hsl(var(--accent)/0.16)]`}
+          value={draft}
+          onBlur={onBlur}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={onKeyDown}
+        />
+      ) : (
+        <button
+          className={`${fieldClassName} cursor-text text-left hover:border-[hsl(var(--accent)/0.45)] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.2)]`}
+          disabled={saving}
+          type="button"
+          onClick={onEdit}
+        >
+          <code className="block truncate">{saving ? "保存中" : value}</code>
+        </button>
+      )}
+      <Button
+        className="h-6 px-1.5 text-xs"
+        disabled={saving}
+        type="button"
+        variant="ghost"
+        onClick={onCopy}
+        onMouseDown={(event) => event.preventDefault()}
+      >
+        <Copy className="h-3.5 w-3.5" />
+        <span className="sr-only">复制</span>
+      </Button>
+      <Button
+        className="h-6 w-6 px-0"
+        disabled={saving}
+        type="button"
+        variant="ghost"
+        onClick={onGenerate}
+        onMouseDown={(event) => event.preventDefault()}
+      >
+        <Wand2 className="h-3.5 w-3.5" />
+        <span className="sr-only">随机生成</span>
+      </Button>
+    </div>
   );
 }
 
@@ -450,11 +653,13 @@ function SettingsNumberInput({
   min,
   max,
   onChange,
+  onCommit,
 }: {
   value: string;
   min?: string;
   max?: string;
   onChange: (value: string) => void;
+  onCommit: () => void;
 }) {
   return (
     <input
@@ -464,6 +669,7 @@ function SettingsNumberInput({
       type="number"
       value={value}
       onChange={(event) => onChange(event.target.value)}
+      onBlur={onCommit}
     />
   );
 }
@@ -478,7 +684,12 @@ function SettingRow({
   control: ReactNode;
 }) {
   return (
-    <div className="grid min-h-14 grid-cols-1 items-start gap-2 border-b border-border py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_minmax(180px,260px)] sm:items-center sm:gap-4">
+    <div
+      className={cn(
+        "grid grid-cols-1 items-start gap-2 border-b border-border last:border-b-0 sm:grid-cols-[minmax(0,1fr)_minmax(180px,260px)] sm:items-center sm:gap-4",
+        description ? "min-h-14 px-3 py-3" : "min-h-12 px-3 py-0",
+      )}
+    >
       <div className="min-w-0">
         <div className="text-sm font-medium text-slate-800">{label}</div>
         {description && (
@@ -494,6 +705,8 @@ function settingsToForm(settings: AppSettings): SettingsFormState {
   return {
     localProxyPort: String(settings.localProxyPort),
     defaultRoutingStrategy: settings.defaultRoutingStrategy,
+    collectorProxyMode: settings.collectorProxyMode,
+    collectorProxyUrl: settings.collectorProxyUrl ?? "",
     lowBalanceThresholdCny: String(settings.lowBalanceThresholdCny),
     collectorIntervalMinutes: String(settings.collectorIntervalMinutes),
     balanceIntervalMinutes: String(settings.balanceIntervalMinutes),
@@ -512,6 +725,10 @@ function formToInput(form: SettingsFormState): UpdateSettingsInput {
   return {
     localProxyPort: Number(form.localProxyPort),
     defaultRoutingStrategy: form.defaultRoutingStrategy,
+    collectorProxyMode: form.collectorProxyMode,
+    collectorProxyUrl: form.collectorProxyMode === "manual" && form.collectorProxyUrl.trim()
+      ? form.collectorProxyUrl.trim()
+      : null,
     lowBalanceThresholdCny: Number(form.lowBalanceThresholdCny),
     collectorIntervalMinutes: Number(form.collectorIntervalMinutes),
     balanceIntervalMinutes: Number(form.balanceIntervalMinutes),
@@ -524,6 +741,19 @@ function formToInput(form: SettingsFormState): UpdateSettingsInput {
     trayBehavior: form.trayBehavior,
     developerModeEnabled: form.developerModeEnabled,
   };
+}
+
+function generateLocalAccessKey() {
+  const bytes = new Uint8Array(24);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  const token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `sk-local-${token}`;
 }
 
 

@@ -7,11 +7,15 @@ export type StationStatus =
   | "disabled"
   | "unchecked";
 
+export type StationProxyMode = "inherit" | "direct" | "system" | "manual";
+
 export type Station = {
   id: string;
   name: string;
   stationType: StationType;
   baseUrl: string;
+  collectorProxyMode: StationProxyMode;
+  collectorProxyUrl: string | null;
   apiKeyMasked: string;
   apiKeyPresent: boolean;
   keyCount: number;
@@ -36,6 +40,8 @@ export type StationInput = {
   stationType: StationType;
   baseUrl: string;
   apiKey: string;
+  collectorProxyMode: StationProxyMode;
+  collectorProxyUrl: string | null;
   enabled: boolean;
   creditPerCny: number;
   lowBalanceThresholdCny: number | null;
@@ -85,4 +91,11 @@ export const stationStatusLabels: Record<StationStatus, string> = {
   error: "采集异常",
   disabled: "禁用",
   unchecked: "未采集",
+};
+
+export const stationProxyModeLabels: Record<StationProxyMode, string> = {
+  inherit: "继承全局",
+  direct: "直连",
+  system: "使用系统代理",
+  manual: "手动代理地址",
 };

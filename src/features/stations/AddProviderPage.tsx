@@ -21,6 +21,7 @@ import {
 } from "@/lib/api/stationKeys";
 import { createStation, listStations, updateStation } from "@/lib/api/stations";
 import { readError } from "@/lib/errors";
+import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import {
   isCollectedStationGroupBinding,
@@ -30,7 +31,13 @@ import {
   type UpsertStationGroupBindingInput,
 } from "@/lib/types/groupFacts";
 import type { RemoteKeyCapability, RemoteStationKey, StationCredentials, StationKey } from "@/lib/types/stationKeys";
-import { stationTypeOptions, type Station, type StationType } from "@/lib/types/stations";
+import {
+  stationProxyModeLabels,
+  stationTypeOptions,
+  type Station,
+  type StationProxyMode,
+  type StationType,
+} from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import {
   createEmptyStationKeyDraft,
@@ -66,6 +73,8 @@ type AddProviderFormState = {
   stationType: StationType;
   baseUrl: string;
   apiKey: string;
+  collectorProxyMode: StationProxyMode;
+  collectorProxyUrl: string;
   enabled: boolean;
   creditPerCny: string;
   loginUsername: string;
@@ -122,6 +131,8 @@ function formFromStation(station: Station, credentials: StationCredentials): Add
     stationType: station.stationType,
     baseUrl: station.baseUrl,
     apiKey: "",
+    collectorProxyMode: station.collectorProxyMode,
+    collectorProxyUrl: station.collectorProxyUrl ?? "",
     enabled: station.enabled,
     creditPerCny: String(station.creditPerCny),
     loginUsername: credentials.loginUsername ?? "",
@@ -701,6 +712,8 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     stationType: defaultPreset.stationType,
     baseUrl: defaultPreset.baseUrl,
     apiKey: "",
+    collectorProxyMode: "inherit",
+    collectorProxyUrl: "",
     enabled: true,
     creditPerCny: "1",
     loginUsername: "",
@@ -892,6 +905,10 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       stationType: remoteActionStationType,
       baseUrl: form.baseUrl.trim(),
       apiKey: stationApiKey,
+      collectorProxyMode: form.collectorProxyMode,
+      collectorProxyUrl: form.collectorProxyMode === "manual" && form.collectorProxyUrl.trim()
+        ? form.collectorProxyUrl.trim()
+        : null,
       enabled: form.enabled,
       creditPerCny: Number(form.creditPerCny),
       lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim()
@@ -967,6 +984,10 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           stationType: form.stationType,
           baseUrl: form.baseUrl.trim(),
           apiKey: form.apiKey.trim() ? form.apiKey.trim() : null,
+          collectorProxyMode: form.collectorProxyMode,
+          collectorProxyUrl: form.collectorProxyMode === "manual" && form.collectorProxyUrl.trim()
+            ? form.collectorProxyUrl.trim()
+            : null,
           enabled: form.enabled,
           creditPerCny: Number(form.creditPerCny),
           lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim()
@@ -1005,6 +1026,10 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         stationType: form.stationType,
         baseUrl: form.baseUrl.trim(),
         apiKey: stationApiKey,
+        collectorProxyMode: form.collectorProxyMode,
+        collectorProxyUrl: form.collectorProxyMode === "manual" && form.collectorProxyUrl.trim()
+          ? form.collectorProxyUrl.trim()
+          : null,
         enabled: form.enabled,
         creditPerCny: Number(form.creditPerCny),
         lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim()
@@ -1616,6 +1641,40 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                     onChange={(event) => setForm({ ...form, collectionIntervalMinutes: event.target.value })}
                     placeholder="5"
                   />
+                </Field>
+                <Field label="采集代理">
+                  <div className="grid gap-2">
+                    <SelectControl
+                      ariaLabel="站点采集代理"
+                      className={inputClassName}
+                      value={form.collectorProxyMode}
+                      options={Object.entries(stationProxyModeLabels).map(([value, label]) => ({
+                        value: value as StationProxyMode,
+                        label,
+                      }))}
+                      onChange={(collectorProxyMode) => {
+                        const nextForm = { ...form, collectorProxyMode };
+                        setForm(
+                          collectorProxyMode === "manual"
+                            ? withManualProxyDefault(nextForm)
+                            : nextForm,
+                        );
+                      }}
+                    />
+                    {form.collectorProxyMode === "manual" && (
+                      <input
+                        className={inputClassName}
+                        placeholder={DEFAULT_MANUAL_PROXY_URL}
+                        value={form.collectorProxyUrl}
+                        onChange={(event) =>
+                          setForm({ ...form, collectorProxyUrl: event.target.value })
+                        }
+                      />
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      登录刷新、余额/分组采集、远端 Key 和本地 key 路由都会使用该站点的有效代理。
+                    </p>
+                  </div>
                 </Field>
                 <Field label="备注">
                   <textarea

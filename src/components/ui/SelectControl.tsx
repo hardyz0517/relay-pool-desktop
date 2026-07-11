@@ -37,6 +37,8 @@ type MenuPosition = {
   maxHeight: number;
 };
 
+const MIN_MENU_WIDTH = 160;
+
 export function SelectControl<T extends string>({
   value,
   options,
@@ -130,14 +132,15 @@ export function SelectControl<T extends string>({
     const maxHeight = Math.max(160, Math.min(280, Math.max(spaceBelow, spaceAbove) - gap));
     const openAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
     const menuHeight = estimateMenuHeight(options, maxHeight);
+    const menuWidth = Math.max(rect.width, MIN_MENU_WIDTH);
     const top = openAbove
       ? Math.max(viewportPadding, rect.top - menuHeight - gap)
       : Math.min(window.innerHeight - viewportPadding, rect.bottom + gap);
 
     setPosition({
-      left: Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - rect.width - viewportPadding)),
+      left: Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - menuWidth - viewportPadding)),
       top,
-      width: rect.width,
+      width: Math.max(rect.width, MIN_MENU_WIDTH),
       maxHeight,
     });
   }
