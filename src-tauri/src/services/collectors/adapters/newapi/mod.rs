@@ -7,7 +7,9 @@ mod test_support;
 use serde_json::{json, Value};
 
 use crate::models::{
-    remote_keys::{CreateRemoteStationKeyInput, RemoteKeyCapability, RemoteStationKey},
+    remote_keys::{
+        CreateRemoteStationKeyInput, RemoteKeyCapability, RemoteKeyMatchStatus, RemoteStationKey,
+    },
     stations::Station,
 };
 use crate::services::{
@@ -20,9 +22,10 @@ use crate::services::{
     outbound::{agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
 };
 
-const NEWAPI_REMOTE_KEY_UNSUPPORTED: &str =
-    "NewAPI 远端 Key 列表/创建接口尚未适配；当前仅支持读取账号分组信息。";
+const NEWAPI_REMOTE_KEY_CREATE_UNSUPPORTED: &str =
+    "NewAPI 远端 Key 创建将在创建后对账阶段适配；当前支持扫描列表和显式同步远端 Key。";
 const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const NEWAPI_REMOTE_KEY_PAGE_SIZE: usize = 100;
 
 fn parse_newapi_balance(station_id: &str, payload: &Value) -> CollectedBalanceFact {
     parsers::parse_balance_fact(station_id, payload, 500000.0, true)
@@ -36,20 +39,61 @@ pub fn remote_key_capability(station: &Station) -> Result<RemoteKeyCapability, S
     Ok(RemoteKeyCapability {
         station_id: station.id.clone(),
         station_type: station.station_type.trim().to_string(),
-        can_list_remote_keys: false,
+        can_list_remote_keys: true,
         can_create_remote_key: false,
         can_read_groups: true,
         requires_manual_session: true,
-        unsupported_reason: Some(NEWAPI_REMOTE_KEY_UNSUPPORTED.to_string()),
+        unsupported_reason: Some(NEWAPI_REMOTE_KEY_CREATE_UNSUPPORTED.to_string()),
     })
 }
 
 pub fn scan_remote_keys(
-    _database: &AppDatabase,
-    _data_key: &[u8; 32],
-    _station_id: &str,
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station_id: &str,
 ) -> Result<Vec<RemoteStationKey>, String> {
-    Ok(Vec::new())
+    let station = database.station_for_collector(station_id)?;
+    let tokens = fetch_newapi_token_items(database, data_key, &station)?;
+    Ok(parse_remote_key_items(&station.id, &tokens))
+}
+
+pub fn scan_remote_key_full_secret(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station_id: &str,
+    remote_key_id: &str,
+) -> Result<(RemoteStationKey, String), String> {
+    let station = database.station_for_collector(station_id)?;
+    let tokens = fetch_newapi_token_items(database, data_key, &station)?;
+    for (index, value) in tokens.iter().enumerate() {
+        let Some(mut remote_key) = remote_key_from_value(&station.id, value, index) else {
+            continue;
+        };
+        if remote_key.id != remote_key_id {
+            continue;
+        }
+        let token_id = string_field(value, &["id", "token_id", "tokenId"])
+            .ok_or_else(|| "NewAPI 远端 Key 缺少 token id，无法读取完整 Key。".to_string())?;
+        let response = client::post_authenticated_json(
+            database,
+            data_key,
+            &station,
+            &format!("/api/token/{token_id}/key"),
+            client::NewApiOperation::RevealToken,
+            json!({}),
+        )
+        .map_err(newapi_request_error_message)?;
+        let full_key = full_key_from_reveal_payload(&response.data).ok_or_else(|| {
+            "NewAPI reveal 响应没有返回完整 Key，无法自动保存到本地。请到网站复制后手动补全。"
+                .to_string()
+        })?;
+        remote_key.api_key_masked = Some(crate::services::secrets::mask::mask_secret(&full_key));
+        remote_key.api_key_fingerprint =
+            crate::services::remote_keys::api_key_fingerprint(&full_key);
+        return Ok((remote_key, full_key));
+    }
+
+    Err("远端 Key 已不存在，无法创建本地 Key。".to_string())
 }
 
 pub fn create_remote_key(
@@ -57,7 +101,246 @@ pub fn create_remote_key(
     _data_key: &[u8; 32],
     _input: CreateRemoteStationKeyInput,
 ) -> Result<CreatedRemoteKey, String> {
-    Err(NEWAPI_REMOTE_KEY_UNSUPPORTED.to_string())
+    Err(NEWAPI_REMOTE_KEY_CREATE_UNSUPPORTED.to_string())
+}
+
+fn fetch_newapi_token_items(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &Station,
+) -> Result<Vec<Value>, String> {
+    let mut page = 1_usize;
+    let mut items = Vec::new();
+    loop {
+        let response = client::get_authenticated_json(
+            database,
+            data_key,
+            station,
+            &format!("/api/token/?p={page}&page_size={NEWAPI_REMOTE_KEY_PAGE_SIZE}"),
+            client::NewApiOperation::ListTokens,
+        )
+        .map_err(newapi_request_error_message)?;
+        let page_items = remote_key_items(&response.data)
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let page_size =
+            page_size_from_payload(&response.data).unwrap_or(NEWAPI_REMOTE_KEY_PAGE_SIZE);
+        let total = total_from_payload(&response.data);
+        let page_item_count = page_items.len();
+        items.extend(page_items);
+        if total.is_some_and(|total| items.len() >= total) {
+            break;
+        }
+        if page_item_count == 0 || page_item_count < page_size {
+            break;
+        }
+        page += 1;
+        if page > 1000 {
+            return Err("NewAPI 远端 Key 分页超过安全上限，已停止扫描。".to_string());
+        }
+    }
+    Ok(items)
+}
+
+fn parse_remote_key_items(station_id: &str, items: &[Value]) -> Vec<RemoteStationKey> {
+    items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| remote_key_from_value(station_id, value, index))
+        .collect()
+}
+
+fn remote_key_items(payload: &Value) -> Vec<&Value> {
+    if let Some(items) = payload.as_array() {
+        return items.iter().collect();
+    }
+    for pointer in [
+        "/items",
+        "/list",
+        "/tokens",
+        "/keys",
+        "/data/items",
+        "/data/list",
+        "/data/tokens",
+        "/data/keys",
+    ] {
+        if let Some(value) = payload.pointer(pointer) {
+            if let Some(items) = value.as_array() {
+                return items.iter().collect();
+            }
+        }
+    }
+    if payload.is_object() {
+        vec![payload]
+    } else {
+        Vec::new()
+    }
+}
+
+fn remote_key_from_value(
+    station_id: &str,
+    value: &Value,
+    index: usize,
+) -> Option<RemoteStationKey> {
+    let remote_key_id = string_field(value, &["id", "token_id", "tokenId"]);
+    let name = string_field(value, &["name", "key_name", "keyName", "label", "remark"]);
+    let key_value = string_field(value, &["key", "api_key", "apiKey", "token"]);
+    let full_key = key_value
+        .as_deref()
+        .filter(|value| looks_like_full_api_key(value))
+        .map(ToString::to_string);
+    let masked = string_field(
+        value,
+        &[
+            "api_key_masked",
+            "apiKeyMasked",
+            "masked_key",
+            "maskedKey",
+            "key_masked",
+        ],
+    )
+    .or_else(|| {
+        full_key
+            .as_deref()
+            .map(crate::services::secrets::mask::mask_secret)
+    })
+    .or_else(|| key_value.filter(|value| !looks_like_full_api_key(value)));
+    let (identity_kind, identity, include_index) = remote_key_identity(
+        remote_key_id.as_deref(),
+        full_key.as_deref(),
+        masked.as_deref(),
+        name.as_deref(),
+    )?;
+    let group_name = string_field(value, &["group", "group_name", "groupName", "group_label"]);
+    let group_id_hash = group_name
+        .as_deref()
+        .map(|group| stable_group_key_hash(station_id, "newapi", Some(group), group));
+    let identity_seed = if include_index {
+        format!("{station_id}:{identity_kind}:{identity}:{index}")
+    } else {
+        format!("{station_id}:{identity_kind}:{identity}")
+    };
+
+    Some(RemoteStationKey {
+        id: format!(
+            "newapi-remote-key-{}",
+            &sha256_hex(identity_seed.as_bytes())[..16]
+        ),
+        station_id: station_id.to_string(),
+        remote_key_id_hash: remote_key_id
+            .as_deref()
+            .map(|value| sha256_hex(value.as_bytes())),
+        remote_key_name: name,
+        api_key_masked: masked,
+        api_key_fingerprint: full_key
+            .as_deref()
+            .and_then(crate::services::remote_keys::api_key_fingerprint),
+        group_id_hash,
+        group_name,
+        tier_label: None,
+        rate_multiplier: None,
+        rate_source: Some("newapi_tokens".to_string()),
+        created_at: string_field(
+            value,
+            &["created_at", "createdAt", "created", "created_time"],
+        ),
+        last_used_at: string_field(
+            value,
+            &["last_used_at", "lastUsedAt", "last_used", "accessed_time"],
+        ),
+        raw_source: "newapi_tokens".to_string(),
+        match_status: RemoteKeyMatchStatus::Unbound,
+        matched_station_key_id: None,
+        match_confidence: 0.0,
+        collected_at: crate::services::database::now_millis_for_services().to_string(),
+    })
+}
+
+fn remote_key_identity<'a>(
+    remote_key_id: Option<&'a str>,
+    full_key: Option<&'a str>,
+    masked: Option<&'a str>,
+    name: Option<&'a str>,
+) -> Option<(&'static str, &'a str, bool)> {
+    remote_key_id
+        .map(|value| ("remote_id", value, false))
+        .or_else(|| full_key.map(|value| ("full_key", value, false)))
+        .or_else(|| masked.map(|value| ("masked_key", value, false)))
+        .or_else(|| name.map(|value| ("name", value, true)))
+}
+
+fn full_key_from_reveal_payload(payload: &Value) -> Option<String> {
+    string_field(payload, &["key", "api_key", "apiKey", "token"])
+        .filter(|value| looks_like_full_api_key(value))
+        .or_else(|| {
+            payload
+                .pointer("/data/key")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| looks_like_full_api_key(value))
+                .map(ToString::to_string)
+        })
+}
+
+fn page_size_from_payload(payload: &Value) -> Option<usize> {
+    payload
+        .get("page_size")
+        .or_else(|| payload.get("pageSize"))
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+}
+
+fn total_from_payload(payload: &Value) -> Option<usize> {
+    payload
+        .get("total")
+        .or_else(|| payload.get("count"))
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+}
+
+fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| value.get(*key))
+        .find_map(scalar_text)
+}
+
+fn scalar_text(value: &Value) -> Option<String> {
+    value
+        .as_str()
+        .map(ToString::to_string)
+        .or_else(|| value.as_i64().map(|item| item.to_string()))
+        .or_else(|| value.as_u64().map(|item| item.to_string()))
+        .or_else(|| value.as_f64().map(|item| item.to_string()))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn looks_like_full_api_key(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.len() < 12 {
+        return false;
+    }
+    let lower = trimmed.to_lowercase();
+    if lower == "[redacted]"
+        || lower == "<redacted>"
+        || lower == "redacted"
+        || lower == "masked"
+        || lower.contains("redacted")
+        || lower.contains("masked")
+        || lower.contains("[redacted]")
+        || lower.contains("<redacted>")
+    {
+        return false;
+    }
+    if trimmed.contains('*') || trimmed.contains("...") || trimmed.contains('…') {
+        return false;
+    }
+    if lower.starts_with("sk-") && lower.contains("xxx") {
+        return false;
+    }
+    true
 }
 
 pub fn collect(
@@ -430,6 +713,14 @@ fn sha256_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        models::{credentials::UpdateStationSessionInput, stations::CreateStationInput},
+        services::{
+            collectors::adapters::newapi::test_support::{json_response, TestHttpServer},
+            database::AppDatabase,
+            secrets::crypto::generate_data_key,
+        },
+    };
     use serde_json::json;
 
     #[test]
@@ -495,5 +786,150 @@ mod tests {
         );
         assert_eq!(output.status, "partial");
         assert_eq!(output.error_code.as_deref(), Some("empty_group_facts"));
+    }
+
+    #[test]
+    fn scan_remote_keys_paginates_newapi_tokens_without_full_secret() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 2,
+                        "total": 3,
+                        "items": [
+                            {
+                                "id": 101,
+                                "name": "primary",
+                                "key": "sk-abc**********7890",
+                                "group": "default",
+                                "created_time": 1760000000,
+                                "accessed_time": 1760000100
+                            },
+                            {
+                                "id": 102,
+                                "name": "secondary",
+                                "key": "sk-def**********4567",
+                                "group": "vip"
+                            }
+                        ]
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 2,
+                        "page_size": 2,
+                        "total": 3,
+                        "items": [
+                            {
+                                "id": 103,
+                                "name": "third",
+                                "key": "sk-ghi**********1234",
+                                "group": "vip"
+                            }
+                        ]
+                    }
+                }),
+            )),
+        ]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let keys = scan_remote_keys(&database, &data_key, &station.id).expect("scan keys");
+        let requests = server.finish();
+
+        assert_eq!(keys.len(), 3);
+        assert_eq!(keys[0].remote_key_name.as_deref(), Some("primary"));
+        assert_eq!(
+            keys[0].api_key_masked.as_deref(),
+            Some("sk-abc**********7890")
+        );
+        assert_eq!(keys[0].api_key_fingerprint, None);
+        assert_eq!(keys[0].group_name.as_deref(), Some("default"));
+        assert_eq!(keys[0].raw_source, "newapi_tokens");
+        assert!(requests[0].starts_with("GET /api/token/?p=1&page_size=100 "));
+        assert!(requests[1].starts_with("GET /api/token/?p=2&page_size=100 "));
+        assert!(requests[0].contains("New-Api-User: 42"));
+    }
+
+    #[test]
+    fn scan_remote_keys_errors_before_returning_partial_pages() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 2,
+                        "total": 3,
+                        "items": [
+                            { "id": 101, "name": "primary", "key": "sk-abc**********7890" },
+                            { "id": 102, "name": "secondary", "key": "sk-def**********4567" }
+                        ]
+                    }
+                }),
+            )),
+            Some(json_response(
+                502,
+                json!({"success": false, "message": "bad gateway"}),
+            )),
+            Some(json_response(
+                502,
+                json!({"success": false, "message": "bad gateway"}),
+            )),
+        ]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let error = scan_remote_keys(&database, &data_key, &station.id).unwrap_err();
+        let requests = server.finish();
+
+        assert!(!error.trim().is_empty());
+        assert_eq!(requests.len(), 3);
+    }
+
+    fn test_station(database: &AppDatabase, base_url: &str) -> Station {
+        database
+            .create_station(CreateStationInput {
+                name: "newapi station".to_string(),
+                station_type: "newapi".to_string(),
+                base_url: base_url.to_string(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                api_key: String::new(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station")
+    }
+
+    fn persist_access_token_session(database: &AppDatabase, data_key: &[u8; 32], station_id: &str) {
+        database
+            .update_station_session_with_data_key(
+                UpdateStationSessionInput {
+                    station_id: station_id.to_string(),
+                    access_token: Some("newapi-access-token".to_string()),
+                    refresh_token: None,
+                    cookie: None,
+                    newapi_user_id: Some("42".to_string()),
+                    token_expires_at: None,
+                },
+                data_key,
+            )
+            .expect("session");
     }
 }

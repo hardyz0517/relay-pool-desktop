@@ -17,7 +17,6 @@ pub(super) const NEWAPI_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum NewApiOperation {
-    Status,
     SelfInfo,
     Groups,
     Models,
@@ -98,6 +97,28 @@ pub(super) fn get_authenticated_json(
     path: &str,
     operation: NewApiOperation,
 ) -> Result<NewApiResponse, NewApiRequestError> {
+    authenticated_json(database, data_key, station, path, operation, None)
+}
+
+pub(super) fn post_authenticated_json(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &Station,
+    path: &str,
+    operation: NewApiOperation,
+    body: Value,
+) -> Result<NewApiResponse, NewApiRequestError> {
+    authenticated_json(database, data_key, station, path, operation, Some(body))
+}
+
+fn authenticated_json(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &Station,
+    path: &str,
+    operation: NewApiOperation,
+    body: Option<Value>,
+) -> Result<NewApiResponse, NewApiRequestError> {
     let settings = database.get_settings().map_err(permanent_error)?;
     let proxy = resolve_proxy_config(
         &station.collector_proxy_mode,
@@ -113,7 +134,7 @@ pub(super) fn get_authenticated_json(
             path,
             &auth_context,
             operation,
-            None,
+            body.clone(),
             &proxy,
         ) {
             Ok(response) => return Ok(response),

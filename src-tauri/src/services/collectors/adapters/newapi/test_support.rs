@@ -29,6 +29,12 @@ impl TestHttpServer {
                         {
                             std::thread::sleep(Duration::from_millis(5));
                         }
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::WouldBlock
+                                && Instant::now() >= deadline =>
+                        {
+                            return;
+                        }
                         Err(error) => panic!("fixture accept failed: {error}"),
                     }
                 };
