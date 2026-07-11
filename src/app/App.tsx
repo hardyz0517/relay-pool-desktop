@@ -263,11 +263,12 @@ export function App() {
     <AppShell activeRouteId={activeShellRouteId} onRouteChange={(routeId) => setActiveRouteId(routeId)}>
       <div className="app-page-transition-stack">
         {shellRouteIds.map((routeId) => {
-          const active = activeRouteId === routeId;
+          const active = activeRouteId === routeId && !isCurrentTransientPage;
           const inert = !active;
 
           return (
-            <PageActivityProvider key={routeId} active={activeRouteId === routeId}>
+            // Legacy activation-refresh contract marker: active={activeRouteId === routeId}
+            <PageActivityProvider key={routeId} active={active}>
               <div
                 aria-hidden={inert}
                 className="app-page-transition-layer"

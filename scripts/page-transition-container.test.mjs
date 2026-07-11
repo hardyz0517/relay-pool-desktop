@@ -37,6 +37,12 @@ assert.ok(
 );
 
 assert.ok(
+  appSource.includes("const active = activeRouteId === routeId && !isCurrentTransientPage") &&
+    appSource.includes("<PageActivityProvider key={routeId} active={active}>"),
+  "shell PageActivityProvider should be inactive while a transient overlay is current",
+);
+
+assert.ok(
   appSource.includes("onTransitionEnd={handleTransientExitComplete}") &&
     appSource.includes("window.setTimeout(handleTransientExitComplete"),
   "outgoing transient cleanup should use transitionend and timeout fallback",
