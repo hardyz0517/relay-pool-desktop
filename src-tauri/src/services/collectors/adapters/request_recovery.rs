@@ -97,18 +97,19 @@ pub struct EndpointJsonResult {
 }
 
 #[derive(Debug, Clone)]
-pub struct RequestExecution {
+pub struct RequestExecution<C> {
     pub path: String,
     pub result: EndpointJsonResult,
     pub attempts: Vec<AttemptRecord>,
     pub failure_kind: Option<FailureKind>,
     pub recovery_actions: Vec<RecoveryAction>,
+    pub latest_credential: Option<C>,
     pub duration_ms: i64,
 }
 
-impl RequestExecution {
+impl<C> RequestExecution<C> {
     pub fn to_redacted_json(&self) -> Value {
-        json!({
+        let mut value = json!({
             "url": self.result.url,
             "status": self.result.status,
             "ok": self.result.ok,
@@ -116,7 +117,6 @@ impl RequestExecution {
             "path": self.path,
             "attemptCount": self.attempts.len(),
             "failureKind": self.failure_kind.map(FailureKind::as_str),
-            "recoveryActions": self.recovery_actions.iter().map(|action| action.as_str()).collect::<Vec<_>>(),
             "attempts": self.attempts.iter().map(|attempt| json!({
                 "attempt": attempt.attempt,
                 "status": attempt.status,
@@ -125,7 +125,21 @@ impl RequestExecution {
                 "failureKind": attempt.failure_kind.map(FailureKind::as_str),
                 "action": attempt.action,
             })).collect::<Vec<_>>(),
-        })
+        });
+        if !self.recovery_actions.is_empty() {
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "recoveryActions".to_string(),
+                    Value::Array(
+                        self.recovery_actions
+                            .iter()
+                            .map(|action| Value::String(action.as_str().to_string()))
+                            .collect(),
+                    ),
+                );
+            }
+        }
+        value
     }
 }
 
@@ -138,8 +152,9 @@ pub fn execute_json_request<C, R>(
     request: &mut R,
     policy: &RequestPolicy,
     budget: &CollectionAttemptBudget,
-) -> RequestExecution
+) -> RequestExecution<C>
 where
+    C: Clone,
     R: FnMut(&C, Duration) -> EndpointJsonResult,
 {
     let started_at = Instant::now();
@@ -151,6 +166,7 @@ where
     let mut malformed_attempts = 0;
     let mut last_result = budget_exhausted_result(path);
     let mut final_failure = None;
+    let mut latest_credential = None;
 
     while attempts.len() < max_attempts {
         let Some(timeout) = budget.remaining() else {
@@ -182,6 +198,9 @@ where
             if attempts.len() >= max_attempts {
                 break;
             }
+            if auth_refresh.is_none() {
+                break;
+            }
             if auth_refreshed {
                 break;
             }
@@ -198,6 +217,7 @@ where
                     if let Some(attempt) = attempts.last_mut() {
                         attempt.action = "auth_refresh";
                     }
+                    latest_credential = Some(refreshed.clone());
                     credential = refreshed;
                     actions.push(RecoveryAction::AuthRefresh);
                     continue;
@@ -251,6 +271,7 @@ where
         attempts,
         failure_kind: final_failure,
         recovery_actions: actions,
+        latest_credential,
         duration_ms: started_at.elapsed().as_millis() as i64,
     }
 }
@@ -639,5 +660,71 @@ mod tests {
         let redacted = execution.to_redacted_json();
         assert_eq!(redacted["attempts"][0]["action"], "transient_retry");
         assert_eq!(redacted["attempts"][2]["action"], "complete");
+    }
+
+    #[test]
+    fn request_recovery_keeps_auth_rejected_when_no_refresh_is_configured() {
+        let mut calls = 0;
+        let mut request = |_: &String, _: Duration| {
+            calls += 1;
+            result(Some(401), None)
+        };
+
+        let execution = execute_json_request(
+            "/v1/usage",
+            "api-key".to_string(),
+            None,
+            &mut request,
+            &policy(),
+            &CollectionAttemptBudget::new(Duration::from_millis(50)),
+        );
+
+        assert_eq!(calls, 1);
+        assert_eq!(execution.failure_kind, Some(FailureKind::AuthRejected));
+        assert!(execution.recovery_actions.is_empty());
+    }
+
+    #[test]
+    fn request_recovery_returns_latest_credential_after_refresh() {
+        let mut calls = 0;
+        let mut refresh = |_: &String, _: Duration| Some("fresh-token".to_string());
+        let mut request = |credential: &String, _: Duration| {
+            calls += 1;
+            if credential == "fresh-token" {
+                result(Some(200), Some(json!({ "ok": true })))
+            } else {
+                result(Some(401), None)
+            }
+        };
+
+        let execution = execute_json_request(
+            "/api/v1/user/profile",
+            "stale-token".to_string(),
+            Some(&mut refresh),
+            &mut request,
+            &policy(),
+            &CollectionAttemptBudget::new(Duration::from_millis(50)),
+        );
+
+        assert_eq!(calls, 2);
+        assert_eq!(execution.latest_credential.as_deref(), Some("fresh-token"));
+    }
+
+    #[test]
+    fn request_recovery_omits_recovery_actions_when_none_ran() {
+        let mut request =
+            |_: &String, _: Duration| result(Some(200), Some(json!({ "ok": true })));
+
+        let execution = execute_json_request(
+            "/api/v1/groups/available",
+            "token".to_string(),
+            None,
+            &mut request,
+            &policy(),
+            &CollectionAttemptBudget::new(Duration::from_millis(50)),
+        );
+        let redacted = execution.to_redacted_json();
+
+        assert!(redacted.get("recoveryActions").is_none());
     }
 }
