@@ -3,8 +3,10 @@ import { Circle } from "lucide-react";
 import { appRoutes } from "@/app/routes";
 import { shellLayout } from "@/components/ui/layout";
 import { CHANGE_EVENTS_UPDATED_EVENT, listChangeEvents } from "@/lib/api/changeEvents";
+import { getProxyStatus } from "@/lib/api/proxy";
 import { getSettings, SETTINGS_UPDATED_EVENT } from "@/lib/api/settings";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
+import type { ProxyStatus } from "@/lib/types/proxy";
 import type { AppSettings } from "@/lib/types/settings";
 import { cn } from "@/lib/utils";
 import { unreadChangeCount } from "@/features/changes/changeEventViewModels";
@@ -24,6 +26,7 @@ export function AppShell({
   onRouteChange,
 }: AppShellProps) {
   const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
+  const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
 
   useEffect(() => {
@@ -40,6 +43,16 @@ export function AppShell({
       window.clearInterval(refreshInterval);
       window.removeEventListener(CHANGE_EVENTS_UPDATED_EVENT, refreshChangeEvents);
     };
+  }, []);
+
+  useEffect(() => {
+    function refreshProxyStatus() {
+      void getProxyStatus().then(setProxyStatus).catch(() => {});
+    }
+
+    refreshProxyStatus();
+    const intervalId = window.setInterval(refreshProxyStatus, 2_000);
+    return () => window.clearInterval(intervalId);
   }, []);
 
   useEffect(() => {
@@ -76,6 +89,7 @@ export function AppShell({
   }, [activeRouteId, onRouteChange, settings]);
 
   const changeUnreadCount = useMemo(() => unreadChangeCount(changeEvents), [changeEvents]);
+  const proxyRunning = proxyStatus?.running ?? false;
 
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background text-foreground">
@@ -116,10 +130,15 @@ export function AppShell({
         <div className="flex flex-col items-center gap-2 border-t border-border px-2 py-3">
           <span
             className="flex h-10 w-10 items-center justify-center rounded-[var(--surface-radius)] border border-border bg-white"
-            title="本地代理未启动"
-            aria-label="本地代理未启动"
+            title={proxyRunning ? "本地代理运行中" : "本地代理未启动"}
+            aria-label={proxyRunning ? "本地代理运行中" : "本地代理未启动"}
           >
-            <Circle className="h-2.5 w-2.5 fill-current text-amber-500" />
+            <Circle
+              className={cn(
+                "h-2.5 w-2.5 fill-current",
+                proxyRunning ? "text-emerald-500" : "text-amber-500",
+              )}
+            />
           </span>
         </div>
       </aside>
