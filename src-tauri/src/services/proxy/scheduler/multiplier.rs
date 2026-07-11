@@ -44,7 +44,9 @@ pub fn resolve_effective_multiplier(
             let collected_at_ms = facts
                 .collected_rate_collected_at_ms
                 .ok_or(MultiplierRejectReason::Missing)?;
-            collected_at_ms + (3 * group_rate_interval_ms).max(ONE_HOUR_MS)
+            let interval_ms = group_rate_interval_ms.max(0);
+            let fallback_window_ms = interval_ms.saturating_mul(3).max(ONE_HOUR_MS);
+            collected_at_ms.saturating_add(fallback_window_ms)
         }
     };
     if now_ms > valid_until_ms {
@@ -141,6 +143,30 @@ mod tests {
                 .expect_err("expired fact should reject");
 
         assert_eq!(rejected, MultiplierRejectReason::Expired);
+    }
+
+    #[test]
+    fn fallback_valid_until_saturates_instead_of_overflowing() {
+        let mut facts = collected_facts();
+        facts.collected_rate_collected_at_ms = Some(i64::MAX - 10);
+        facts.collected_rate_valid_until_ms = None;
+
+        let resolved = resolve_effective_multiplier(facts, i64::MAX, MIN_CONFIDENCE, i64::MAX)
+            .expect("saturated fallback validity should resolve");
+
+        assert_eq!(resolved.valid_until_ms, Some(i64::MAX));
+    }
+
+    #[test]
+    fn fallback_valid_until_normalizes_non_positive_interval_to_one_hour() {
+        let mut facts = collected_facts();
+        facts.collected_rate_collected_at_ms = Some(1_000);
+        facts.collected_rate_valid_until_ms = None;
+
+        let resolved = resolve_effective_multiplier(facts, NOW_MS, MIN_CONFIDENCE, 0)
+            .expect("zero interval should use minimum fallback freshness");
+
+        assert_eq!(resolved.valid_until_ms, Some(1_000 + ONE_HOUR_MS));
     }
 
     #[test]

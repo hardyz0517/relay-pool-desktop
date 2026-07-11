@@ -4874,11 +4874,13 @@ fn load_multiplier_source_facts_from_connection(
 ) -> Result<MultiplierSourceFacts, String> {
     connection
         .query_row(
-            "SELECT id, manual_rate_multiplier, manual_rate_updated_at,
-                    group_binding_id, group_id_hash, group_name,
-                    rate_multiplier, rate_source, rate_collected_at
-               FROM station_keys
-              WHERE id = ?1",
+            "SELECT k.id, k.manual_rate_multiplier, k.manual_rate_updated_at,
+                    k.group_binding_id, k.group_id_hash, k.group_name,
+                    k.rate_multiplier, k.rate_source, k.rate_collected_at,
+                    COALESCE(b.confidence, 0.8)
+               FROM station_keys k
+               LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
+              WHERE k.id = ?1",
             params![station_key_id],
             |row| {
                 let manual_rate_updated_at: Option<String> = row.get(2)?;
@@ -4892,7 +4894,7 @@ fn load_multiplier_source_facts_from_connection(
                     group_name: row.get(5)?,
                     collected_rate_multiplier: row.get(6)?,
                     collected_rate_source: row.get(7)?,
-                    collected_rate_confidence: None,
+                    collected_rate_confidence: row.get(9)?,
                     collected_rate_collected_at_ms: parse_optional_millisecond_timestamp(
                         rate_collected_at.as_deref(),
                     ),
@@ -10082,6 +10084,66 @@ mod tests {
             (actual - expected).abs() < 0.000000001,
             "expected {expected}, got {actual}"
         );
+    }
+
+    #[test]
+    fn load_multiplier_source_facts_preserves_binding_confidence_for_collected_rate() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "multiplier-confidence");
+        let binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:pro".to_string(),
+                group_id_hash: Some("hash-pro".to_string()),
+                group_name: "pro".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(1.25),
+                effective_rate_multiplier: Some(1.25),
+                rate_source: Some("group_rates".to_string()),
+                confidence: 0.86,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("binding");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "collected key".to_string(),
+                api_key: "sk-collected".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
+                group_name: Some("pro".to_string()),
+                tier_label: None,
+                group_binding_id: Some(binding.id.clone()),
+                group_id_hash: Some("hash-pro".to_string()),
+                rate_multiplier: Some(1.25),
+                manual_rate_multiplier: None,
+                rate_source: Some("group_rates".to_string()),
+                balance_scope: None,
+                note: None,
+            })
+            .expect("key");
+
+        let facts = database
+            .load_multiplier_source_facts(&key.id)
+            .expect("multiplier source facts");
+
+        assert_eq!(facts.group_binding_id.as_deref(), Some(binding.id.as_str()));
+        assert_option_f64_close(facts.collected_rate_confidence, 0.86);
+        crate::services::proxy::scheduler::multiplier::resolve_effective_multiplier(
+            facts,
+            0,
+            0.8,
+            20 * 60 * 1000,
+        )
+        .expect("binding confidence should satisfy default multiplier threshold");
     }
 
     #[test]
