@@ -6,10 +6,11 @@ const stylesSource = await readFile("src/styles.css", "utf8");
 assert.ok(
   stylesSource.includes(".app-page-transition-stack") &&
     stylesSource.includes("[data-page-transition-layer]") &&
+    stylesSource.includes("min-height: 100%") &&
     stylesSource.includes('data-page-transition-state="active"') &&
     stylesSource.includes('data-page-transition-state="inactive"') &&
     stylesSource.includes('data-page-transition-state="exiting"'),
-  "styles should define stack, layer, active, inactive, and exiting selectors",
+  "styles should define stack, full-height layer, active, inactive, and exiting selectors",
 );
 
 assert.ok(

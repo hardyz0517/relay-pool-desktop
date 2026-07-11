@@ -76,6 +76,7 @@ textarea {
 
 .app-page-transition-layer,
 [data-page-transition-layer] {
+  min-height: 100%;
   min-width: 0;
   transform: translateY(0);
   opacity: 1;
