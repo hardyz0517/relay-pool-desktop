@@ -65,6 +65,7 @@ Relay Pool 的方案应组合两者优点：使用 Cockpit 式页面保活思路
 - 子页面容器负责 transient page 的 push/return 方向。
 - CSS 类集中定义在现有全局样式或靠近 App 的样式层，避免每个业务页面单独处理动画。
 - 过渡状态集中在一个小型 view state 中，例如记录 `currentPageId`、`previousPageId`、`transitionKind`、`transitionDirection` 和 `isTransitioning`，避免各页面自行判断动效。
+- 页面分类集中成一个小型策略表或 helper，例如 `getPageTransitionPolicy(pageId)`，统一返回 shell/transient、父级 route、进入方向和返回方向。避免在 JSX、CSS class 和测试里重复硬编码页面分类。
 
 显示策略应避免继续使用 active 为 `contents`、inactive 为 `hidden` 的瞬时切换。可改为稳定叠放容器：
 
@@ -74,6 +75,7 @@ Relay Pool 的方案应组合两者优点：使用 Cockpit 式页面保活思路
 - active 页面设置 `opacity: 1`、`pointer-events: auto`、`visibility: visible`。
 - active 页面应保持在正常文档流中，继续决定 `main` 的滚动高度；已经不可见且不参与过渡的页面可以 `display: none` 但保持 React 挂载，避免叠放页面把滚动高度撑乱。
 - 如果需要显示退出动画，只在过渡期间短暂保留 outgoing 页面为 overlay，动画结束或超时后隐藏，避免长期叠放造成点击、焦点或滚动问题。
+- hidden 或 outgoing overlay 不得参与键盘导航。优先使用 `inert`，并保留 `aria-hidden`、`pointer-events: none` 和清理后的 `display: none` 作为兜底。
 
 需要注意滚动行为：
 
@@ -99,6 +101,8 @@ Relay Pool 的方案应组合两者优点：使用 Cockpit 式页面保活思路
 - 页面容器根据当前 page id 是否为 transient 决定 push 动效。
 - 子页面返回时不能立即卸载 outgoing transient page。需要保留上一帧的 transient 页面直到退出动画结束，或使用一个固定超时兜底清理。
 - 如果用户连续快速点击导航，新的 `activeRouteId` 以最后一次点击为准，正在退出的 transient page 应被安全清理，不阻塞后续页面进入。
+- `PageActivityProvider` 只能对当前真实 active 的 shell 页面传入 `active=true`。用于退出动画的 outgoing 页面必须处于 inactive 上下文，不能触发 `usePageActivation()` 刷新或重新加载。
+- transient 页面建议也显式包一层 `PageActivityProvider`，当前 transient active 时为 true，outgoing transient 退出动画期间为 false，避免依赖 context 默认值。
 
 ## 错误与降级
 
@@ -106,6 +110,7 @@ Relay Pool 的方案应组合两者优点：使用 Cockpit 式页面保活思路
 - 如果用户系统设置减少动画，位移动效必须关闭。
 - 页面加载失败、Toast、后端错误保持原页面行为，不额外包装错误状态。
 - 不依赖 WebView2 的特定新 API，因此不同 Windows 环境下行为更稳定。
+- 清理 outgoing overlay 应同时依赖 `transitionend` 和定时器兜底。若 transition 被 reduced-motion、display 切换或快速导航打断，也必须能释放 overlay。
 
 ## 测试与验证
 
@@ -123,6 +128,8 @@ Relay Pool 的方案应组合两者优点：使用 Cockpit 式页面保活思路
 - 如果已有前端回归脚本可复用，可增加 class/state 级断言，确认 active/inactive 页面标记正确。
 - 增加快速切换回归：连续从主页面进入子页面、返回、再切到另一个主页面时，不应留下可点击的隐藏 overlay。
 - 增加减少动态效果回归：模拟 `prefers-reduced-motion` 后，位移动效关闭，页面仍正常切换。
+- 增加页面激活回归：从 shell 页面进入 transient，再返回时，父级 shell 页面只在真正恢复 active 时触发一次 `usePageActivation()`，outgoing overlay 不触发激活。
+- 增加可访问性回归：inactive 或 outgoing 页面不能通过 Tab 聚焦，不能响应点击。
 
 ## 可靠性、可拓展性、可维护性复查
 
@@ -132,11 +139,14 @@ Relay Pool 的方案应组合两者优点：使用 Cockpit 式页面保活思路
 - 子页面退出动画需要显式保留 outgoing 页面并在动画结束或超时后清理，否则返回时无法产生反向动画。
 - active 页面必须保持正常文档流，避免叠放页面影响 `main` 滚动高度。
 - 需要处理快速连续导航，防止隐藏 overlay 残留或阻挡点击。
+- 页面激活上下文必须跟视觉 active 状态一致，避免隐藏页面触发刷新或后端请求。
+- hidden/outgoing 页面必须焦点隔离，避免键盘用户进入不可见内容。
 
 可拓展性：
 
 - 主页面和内部子页面通过 `transitionKind`、`transitionDirection` 这类元数据区分，后续新增页面只需补路由分类，不需要在业务页面里写动画。
 - `getShellRouteId()` 继续承担父级高亮映射，新增 transient page 时沿用同一模型。
+- 页面分类、父级 route 和 transition 策略集中维护，新增页面时只改一处策略定义。
 - Motion 或 View Transition API 可作为未来增强，但基础实现不依赖它们。
 
 可维护性：
@@ -144,9 +154,10 @@ Relay Pool 的方案应组合两者优点：使用 Cockpit 式页面保活思路
 - 动效逻辑集中在 App 页面容器和少量样式中，业务页面不感知。
 - CSS 参数集中定义，后续调整时长、位移和 reduced-motion 策略不需要逐页修改。
 - 过渡状态机必须保持小而明确，不应引入通用路由框架或复杂历史栈。
+- `PageActivityProvider`、可见性 class、overlay 清理和 transition policy 之间的职责要清晰分层，避免把动画状态散落到业务页面。
 
 ## 自查结果
 
 本设计没有引入新动画库，没有依赖 View Transition API，没有复制 Cockpit iframe 架构。范围集中在页面容器和样式层，符合当前本地桌面工具的轻量 UI 方向。
 
-复查后补充了 outgoing transient 保留、overlay 清理、滚动高度约束和快速切换回归要求。补强后的设计满足可靠性、可拓展性和可维护性要求，可以进入实施计划阶段。
+复查后补充了 outgoing transient 保留、overlay 清理、滚动高度约束、快速切换、页面激活、焦点隔离和集中策略表要求。补强后的设计满足可靠性、可拓展性和可维护性要求，可以进入实施计划阶段。
