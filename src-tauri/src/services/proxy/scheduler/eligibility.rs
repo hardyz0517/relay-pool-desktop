@@ -211,6 +211,111 @@ mod tests {
     }
 
     #[test]
+    fn group_id_hash_filter_matches_exact_hash_only() {
+        let request = request(|request| {
+            request.routing_group_filter = RoutingGroupFilter::GroupIdHash("hash-pro".to_string());
+        });
+        let matching = candidate(|candidate| {
+            candidate.group_id_hash = Some("hash-pro".to_string());
+        });
+        let different = candidate(|candidate| {
+            candidate.group_id_hash = Some("hash-pro-extra".to_string());
+        });
+
+        assert!(group_matches(&request.routing_group_filter, &matching));
+        evaluate_candidate(&request, &matching).expect("exact hash candidate should pass");
+
+        let rejection = evaluate_candidate(&request, &different)
+            .expect_err("different hash candidate should reject");
+        assert_eq!(
+            rejection.primary_code,
+            CandidateRejectionCode::RoutingGroupMismatch
+        );
+    }
+
+    #[test]
+    fn individual_candidate_gates_reject_with_expected_primary_reason() {
+        assert_rejection_code(
+            |request| {
+                request.excluded_key_ids = vec!["key-1".to_string()];
+            },
+            |_| {},
+            CandidateRejectionCode::AssetUnavailable,
+        );
+        assert_rejection_code(
+            |request| {
+                request.endpoint = RouteEndpointKind::Responses;
+                request.stream = true;
+                request.uses_tools = true;
+            },
+            |candidate| {
+                candidate.supports_responses = false;
+                candidate.supports_stream = false;
+                candidate.supports_tools = false;
+            },
+            CandidateRejectionCode::CapabilityMismatch,
+        );
+        assert_rejection_code(
+            |request| {
+                request.mapped_model = Some("gpt-4o".to_string());
+            },
+            |candidate| {
+                candidate.model_allowlist = vec!["claude-3-5-sonnet".to_string()];
+            },
+            CandidateRejectionCode::ModelMismatch,
+        );
+        assert_rejection_code(
+            |_| {},
+            |candidate| {
+                candidate.health_blocked = true;
+            },
+            CandidateRejectionCode::HealthBlocked,
+        );
+        assert_rejection_code(
+            |_| {},
+            |candidate| {
+                candidate.balance_depleted = true;
+            },
+            CandidateRejectionCode::BalanceDepleted,
+        );
+    }
+
+    #[test]
+    fn primary_reason_is_first_reason_and_all_simultaneous_failures_are_reported() {
+        let request = request(|request| {
+            request.routing_group_filter = RoutingGroupFilter::GroupType(PricingGroupType::Gpt);
+            request.endpoint = RouteEndpointKind::Responses;
+            request.mapped_model = Some("gpt-4o".to_string());
+        });
+        let candidate = candidate(|candidate| {
+            candidate.station_enabled = false;
+            candidate.group_type = Some(PricingGroupType::Claude);
+            candidate.supports_responses = false;
+            candidate.model_blocklist = vec!["gpt-4o".to_string()];
+            candidate.health_blocked = true;
+            candidate.balance_depleted = true;
+            candidate.effective_multiplier = None;
+        });
+
+        let rejection = evaluate_candidate(&request, &candidate)
+            .expect_err("candidate with multiple gate failures should reject");
+
+        assert_eq!(rejection.primary_code, rejection.reasons[0]);
+        assert_eq!(
+            rejection.reasons,
+            vec![
+                CandidateRejectionCode::AssetUnavailable,
+                CandidateRejectionCode::RoutingGroupMismatch,
+                CandidateRejectionCode::CapabilityMismatch,
+                CandidateRejectionCode::ModelMismatch,
+                CandidateRejectionCode::HealthBlocked,
+                CandidateRejectionCode::BalanceDepleted,
+                CandidateRejectionCode::NoMultiplierEvidence,
+            ]
+        );
+    }
+
+    #[test]
     fn missing_multiplier_evidence_rejects() {
         let request = request(|request| {
             request.routing_group_filter = RoutingGroupFilter::AllGroups;
@@ -286,5 +391,19 @@ mod tests {
             confidence: 1.0,
             group_binding_id: None,
         }
+    }
+
+    fn assert_rejection_code(
+        customize_request: impl FnMut(&mut ScheduleRequest),
+        customize_candidate: impl FnMut(&mut SchedulerCandidate),
+        expected: CandidateRejectionCode,
+    ) {
+        let request = request(customize_request);
+        let candidate = candidate(customize_candidate);
+
+        let rejection =
+            evaluate_candidate(&request, &candidate).expect_err("candidate should reject");
+        assert_eq!(rejection.primary_code, expected);
+        assert_eq!(rejection.reasons, vec![expected]);
     }
 }

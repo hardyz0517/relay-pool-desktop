@@ -38,8 +38,7 @@ use crate::models::{
     routing::{
         ModelAlias, PricingGroupType, RouteSimulationInput, RouteSimulationResult,
         RoutingGroupFilter, RoutingPolicy, SchedulerAdvancedSettings, StationKeyCapabilities,
-        StationKeyHealth,
-        UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
+        StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
     },
     secrets::{SecretMigrationReport, SecretScanFinding},
     settings::{AppSettings, UpdateSettingsInput},
@@ -5011,8 +5010,14 @@ fn load_scheduler_candidates_from_connection(
             sql_params.push(group_id_hash.clone());
         }
         RoutingGroupFilter::GroupType(group_type) => {
-            sql.push_str(" WHERE LOWER(COALESCE(b.group_name, k.group_name, '')) = ?1");
-            sql_params.push(pricing_group_type_slug(group_type).to_string());
+            let aliases = pricing_group_type_aliases(group_type);
+            let placeholders = std::iter::repeat_n("?", aliases.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            sql.push_str(&format!(
+                " WHERE LOWER(TRIM(COALESCE(b.group_name, k.group_name, ''))) IN ({placeholders})"
+            ));
+            sql_params.extend(aliases.iter().map(|alias| alias.to_string()));
         }
     }
     sql.push_str(" ORDER BY COALESCE(k.routing_order, k.priority) ASC, k.priority ASC, k.created_at ASC, k.id ASC");
@@ -5098,13 +5103,15 @@ fn load_scheduler_candidates_from_connection(
         .collect()
 }
 
-fn pricing_group_type_slug(group_type: &PricingGroupType) -> &'static str {
+fn pricing_group_type_aliases(group_type: &PricingGroupType) -> &'static [&'static str] {
     match group_type {
-        PricingGroupType::Gpt => "gpt",
-        PricingGroupType::Claude => "claude",
-        PricingGroupType::Gemini => "gemini",
-        PricingGroupType::Grok => "grok",
-        PricingGroupType::ImageGeneration => "image_generation",
+        PricingGroupType::Gpt => &["gpt"],
+        PricingGroupType::Claude => &["claude"],
+        PricingGroupType::Gemini => &["gemini"],
+        PricingGroupType::Grok => &["grok"],
+        PricingGroupType::ImageGeneration => {
+            &["image_generation", "image-generation", "image generation"]
+        }
     }
 }
 
@@ -10253,7 +10260,7 @@ mod tests {
     use crate::models::pricing::{
         UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
     };
-    use crate::models::routing::RouteEndpointKind;
+    use crate::models::routing::{PricingGroupType, RouteEndpointKind, RoutingGroupFilter};
 
     fn test_station(database: &AppDatabase, name: &str) -> Station {
         database
@@ -10305,6 +10312,57 @@ mod tests {
             .iter()
             .map(|candidate| candidate.station_key_id.clone())
             .collect()
+    }
+
+    fn scheduler_group_candidate(
+        database: &AppDatabase,
+        station_id: &str,
+        key_name: &str,
+        group_name: &str,
+        group_id_hash: &str,
+        priority: i64,
+    ) -> StationKey {
+        let binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station_id.to_string(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: format!("station:{group_id_hash}"),
+                group_id_hash: Some(group_id_hash.to_string()),
+                group_name: group_name.to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(1.0),
+                effective_rate_multiplier: Some(1.0),
+                rate_source: Some("group_rates".to_string()),
+                confidence: 0.9,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("group binding");
+
+        database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station_id.to_string(),
+                name: key_name.to_string(),
+                api_key: format!("sk-{group_id_hash}"),
+                enabled: true,
+                priority: Some(priority),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: Some(true),
+                group_name: Some(group_name.to_string()),
+                tier_label: None,
+                group_binding_id: Some(binding.id),
+                group_id_hash: Some(group_id_hash.to_string()),
+                rate_multiplier: Some(1.0),
+                manual_rate_multiplier: None,
+                rate_source: Some("group_rates".to_string()),
+                balance_scope: None,
+                note: None,
+            })
+            .expect("scheduler group candidate key")
     }
 
     #[test]
@@ -10464,6 +10522,65 @@ mod tests {
         assert!(
             missing.is_empty(),
             "specific group filters must not fall back to all groups"
+        );
+    }
+
+    #[test]
+    fn load_scheduler_candidates_group_type_filter_uses_canonical_aliases_without_fallback() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-candidates-group-type-aliases");
+
+        let image_generation_key = scheduler_group_candidate(
+            &database,
+            &station.id,
+            "image-generation key",
+            "image-generation",
+            "hash-image-generation",
+            0,
+        );
+        let image_generation_space_key = scheduler_group_candidate(
+            &database,
+            &station.id,
+            "image generation key",
+            "image generation",
+            "hash-image-generation-space",
+            1,
+        );
+        let image_generation_slug_key = scheduler_group_candidate(
+            &database,
+            &station.id,
+            "image_generation key",
+            "image_generation",
+            "hash-image-generation-slug",
+            2,
+        );
+        scheduler_group_candidate(&database, &station.id, "gpt key", "gpt", "hash-gpt", 3);
+
+        let candidates = database
+            .load_scheduler_candidates(
+                &RoutingGroupFilter::GroupType(PricingGroupType::ImageGeneration),
+                0,
+            )
+            .expect("scheduler candidates");
+
+        assert_eq!(
+            candidate_key_ids(&candidates),
+            vec![
+                image_generation_key.id,
+                image_generation_space_key.id,
+                image_generation_slug_key.id,
+            ]
+        );
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.group_type == Some(PricingGroupType::ImageGeneration)));
+
+        let missing = database
+            .load_scheduler_candidates(&RoutingGroupFilter::GroupType(PricingGroupType::Grok), 0)
+            .expect("missing group type candidates");
+        assert!(
+            missing.is_empty(),
+            "group type filters must not fall back to unrelated groups"
         );
     }
 
