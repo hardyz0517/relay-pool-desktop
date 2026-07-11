@@ -2271,7 +2271,7 @@ fn add_column_if_missing(
     table: &str,
     column: &str,
     column_type: &str,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<bool> {
     let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
     let rows = statement
         .query_map([], |row| row.get::<_, String>(1))?
@@ -2282,9 +2282,10 @@ fn add_column_if_missing(
             &format!("ALTER TABLE {table} ADD COLUMN {column} {column_type}"),
             [],
         )?;
+        return Ok(true);
     }
 
-    Ok(())
+    Ok(false)
 }
 
 fn migrate_automatic_scheduler_schema(connection: &Connection) -> rusqlite::Result<()> {
@@ -2295,7 +2296,7 @@ fn migrate_automatic_scheduler_schema(connection: &Connection) -> rusqlite::Resu
         "INTEGER NOT NULL DEFAULT 3",
     )?;
     add_column_if_missing(connection, "station_keys", "load_factor", "INTEGER")?;
-    add_column_if_missing(
+    let schedulable_column_added = add_column_if_missing(
         connection,
         "station_keys",
         "schedulable",
@@ -2303,15 +2304,18 @@ fn migrate_automatic_scheduler_schema(connection: &Connection) -> rusqlite::Resu
     )?;
     add_column_if_missing(connection, "station_keys", "manual_rate_multiplier", "REAL")?;
     add_column_if_missing(connection, "station_keys", "manual_rate_updated_at", "TEXT")?;
-    // Existing disabled keys received the ADD COLUMN default of 1. Flip only those
-    // default-looking rows; repeated runs leave already-migrated rows unchanged.
-    connection.execute(
-        "UPDATE station_keys
-            SET schedulable = enabled
-          WHERE enabled = 0
-            AND schedulable = 1",
-        [],
-    )?;
+    if schedulable_column_added {
+        // Existing disabled keys received the ADD COLUMN default of 1. Flip only
+        // those rows during the one migration run that creates the column, so a
+        // later user edit on an already-migrated database is preserved.
+        connection.execute(
+            "UPDATE station_keys
+                SET schedulable = enabled
+              WHERE enabled = 0
+                AND schedulable = 1",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -10115,6 +10119,70 @@ mod tests {
 
         assert_eq!(enabled_schedulable, 1);
         assert_eq!(disabled_schedulable, 0);
+    }
+
+    #[test]
+    fn migrate_automatic_scheduler_schema_preserves_later_schedulable_user_edit() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE stations (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    station_type TEXT NOT NULL,
+                    base_url TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    credit_per_cny REAL NOT NULL DEFAULT 1,
+                    collection_interval_minutes INTEGER NOT NULL DEFAULT 5,
+                    status TEXT NOT NULL DEFAULT 'unchecked',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE station_keys (
+                    id TEXT PRIMARY KEY,
+                    station_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'unchecked',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                INSERT INTO stations (
+                    id, name, station_type, base_url, enabled, priority, credit_per_cny,
+                    collection_interval_minutes, status, created_at, updated_at
+                ) VALUES
+                    ('station-disabled', 'disabled', 'sub2api', 'https://example.test', 0, 1, 1, 5, 'unchecked', '1000', '1000');
+                INSERT INTO station_keys (
+                    id, station_id, name, api_key, enabled, priority, status, created_at, updated_at
+                ) VALUES
+                    ('key-disabled', 'station-disabled', 'disabled key', 'sk-b', 0, 0, 'unchecked', '1000', '1000');
+                ",
+            )
+            .expect("legacy schema");
+
+        migrate_automatic_scheduler_schema(&connection).expect("initial scheduler migration");
+        connection
+            .execute(
+                "UPDATE station_keys SET schedulable = 1 WHERE id = 'key-disabled'",
+                [],
+            )
+            .expect("simulate user schedulable edit");
+
+        migrate_automatic_scheduler_schema(&connection).expect("repeat scheduler migration");
+
+        let schedulable: i64 = connection
+            .query_row(
+                "SELECT schedulable FROM station_keys WHERE id = 'key-disabled'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schedulable");
+
+        assert_eq!(schedulable, 1);
     }
 
     #[test]
