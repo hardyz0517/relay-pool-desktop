@@ -1,7 +1,7 @@
 # Sub2API Adaptive Collection Recovery Design
 
 Date: 2026-07-11
-Status: Approved for implementation planning
+Status: Reviewed and approved for implementation planning
 
 ## Context
 
@@ -49,7 +49,7 @@ This is preferred over adding separate loops to each collector function because 
 - At most one authentication recovery sequence per collection task.
 - A 30-second budget shared by all endpoints in one balance or group task.
 - Retry delays of approximately 300 ms and 1 second, with small jitter in production.
-- At most one additional login HTTP attempt when the login request itself fails with a network error or `5xx` and sufficient task budget remains.
+- One budget-aware authentication recovery sequence. The sequence may try the existing login path and username-field candidates, but it cannot restart from the beginning.
 
 Three attempts are an upper bound, not a required count. Permanent failures, rejected refreshed credentials, missing credentials, and exhausted budgets stop earlier.
 
@@ -60,6 +60,10 @@ Tests use an injected policy with zero delays and a controllable clock so the su
 One budget instance is created at the start of each balance or group task and passed through every endpoint execution. It tracks the deadline and prevents a sequence of individually bounded requests from creating an unbounded task.
 
 Before an attempt, the executor derives its request timeout from the lesser of the existing request timeout and the remaining task budget. When no useful budget remains, it returns `task_budget_exhausted` without sending another request.
+
+The budget also applies to login transport. The existing login transport can probe up to three paths with three username-field variants. Those probes are candidate compatibility checks inside the single recovery sequence, not separate authentication recovery sequences. Candidate requests use the remaining task budget. A network failure or `5xx` may retry the same candidate once and then ends recovery if that candidate still fails transiently. A login `429` follows `Retry-After` only when the delay fits the remaining budget. Permanent candidate-level responses may continue to the next compatible path or field while budget remains.
+
+For stations with multiple routeable keys, budget allocation must preserve first-attempt fairness. The collector sends one `/v1/usage` attempt for every key that can be reached within the budget before starting transient retry rounds. Transiently failed keys are queued for at most two later retry rounds. A failing early key therefore cannot consume all three attempts before a later healthy key receives its first attempt.
 
 ### RequestExecution
 
@@ -75,7 +79,7 @@ It returns:
 - The final redacted endpoint result.
 - Attempt count and attempt records.
 - The final failure kind, when any.
-- The recovery action that produced success, when any.
+- The ordered recovery actions that produced success, when any.
 - The latest credential after authentication recovery.
 
 The executor never logs or returns a password, token, Cookie, Authorization header, or unredacted response body.
@@ -84,7 +88,7 @@ The executor never logs or returns a password, token, Cookie, Authorization head
 
 Account-level balance endpoints and group endpoints use a mutable task-local login state. If one endpoint refreshes the access token, all later endpoints in that task use the refreshed token. The refreshed token is also stored through the existing credential persistence boundary.
 
-The task may start login recovery only once. That recovery sequence may make one additional login HTTP attempt for a transient network error or `5xx`, but it can accept and persist at most one replacement token. A refreshed token that is rejected again ends as `auth_rejected`; it cannot trigger another recovery sequence.
+The task may start login recovery only once. The recovery sequence can accept and persist at most one replacement token. A refreshed token that is rejected again ends as `auth_rejected`; it cannot trigger another recovery sequence.
 
 ## Error Classification
 
@@ -108,10 +112,11 @@ Other `4xx` responses default to non-retryable unless a future adapter-specific 
 
 For each routeable station key, `/v1/usage` executes with transient recovery but without login recovery:
 
-1. A successful response with a usable balance creates a key balance fact.
-2. A transient failure may retry within the shared balance-task budget.
-3. A key `401/403` is not retried with the same key.
-4. Permanent key endpoint failures proceed to the existing account-level fallback when no key balance facts were collected.
+1. The first pass gives every reachable key one attempt before any key receives a transient retry.
+2. A successful response with a usable balance creates a key balance fact.
+3. Transiently failed keys enter at most two later retry rounds within the shared balance-task budget.
+4. A key `401/403` is not retried with the same key.
+5. Permanent key endpoint failures proceed to the existing account-level fallback when no key balance facts were collected.
 
 The account-level fallback uses a shared login state:
 
@@ -139,6 +144,16 @@ Each collection task creates one final snapshot. Intermediate attempts are embed
 - `manual_required`: user-resolvable credentials or station-side action are required.
 - `failed`: meaningful recovery was exhausted without usable facts.
 
+When no usable facts exist, final error precedence is explicit:
+
+1. `task_budget_exhausted` wins when the task stops because no budget remains.
+2. A replacement token that is also rejected finishes as `auth_rejected`.
+3. A login transport failure finishes as `auth_refresh_failed` and retains a redacted cause such as `network_timeout`, `rate_limited`, or `upstream_5xx` in diagnostics.
+4. Missing or undecryptable saved credentials produce `manual_required/credential_unavailable` only when authentication recovery is the remaining user-resolvable path.
+5. Exhausted transient endpoint failures keep their endpoint classification.
+
+For multi-key balance collection, any usable balance fact preserves the existing overall `success` behavior. Failed sibling keys remain visible in endpoint diagnostics; this design does not redefine the task as partial.
+
 A retry or authentication refresh that succeeds within the same task finishes as `success` or `partial` and does not create a `collector_failed` or `collector_recovered` event. The snapshot records the internal recovery.
 
 Only a final `failed` snapshot creates `collector_failed`. Existing deduplication remains responsible for merging repeated failures. When the previous finished run for the same station and task was failed and the next run finishes as success or partial, the existing `collector_recovered` behavior remains unchanged.
@@ -149,11 +164,14 @@ Endpoint diagnostics remain in the existing JSON fields; no schema migration is 
 
 ```json
 {
+  "url": "https://redacted.example/api/v1/user/profile",
   "path": "/api/v1/user/profile",
   "attemptCount": 2,
-  "finalStatus": 200,
+  "status": 200,
+  "ok": true,
+  "durationMs": 1428,
   "failureKind": null,
-  "recoveredBy": "auth_refresh",
+  "recoveryActions": ["auth_refresh"],
   "attempts": [
     {
       "attempt": 1,
@@ -171,7 +189,9 @@ Endpoint diagnostics remain in the existing JSON fields; no schema migration is 
 }
 ```
 
-Allowed `recoveredBy` values are `auth_refresh`, `transient_retry`, or absent. Stable final error codes include:
+The top-level endpoint result remains one record per logical endpoint, not one record per attempt. It must retain the existing `status`, `ok`, and `durationMs` fields, plus the existing `url` or `endpoint` field used by that collector path. `durationMs` is total wall-clock time for the logical endpoint, including retry delays and authentication recovery; each nested attempt keeps its own request duration. `endpoint_counts_from_summary` depends on top-level `ok`; nested attempts must not inflate endpoint, success, or failure counts. New `path`, `attemptCount`, `failureKind`, `recoveryActions`, and `attempts` fields are additive.
+
+Allowed `recoveryActions` entries are `auth_refresh` and `transient_retry`, in execution order. The array is absent when no recovery action ran and can contain both values when authentication recovery is followed by a transient retry. Stable final error codes include:
 
 - `auth_rejected`
 - `auth_refresh_failed`
@@ -190,7 +210,7 @@ Attempt records contain only endpoint paths, attempt numbers, status codes, dura
 Focused Rust tests use the existing local flaky HTTP fixture and synthetic credentials. They must cover:
 
 1. Account balance receives `401`, login succeeds, the retried endpoint returns `200`, the new token is persisted, and the final result is success without a failure event.
-2. A refreshed token is also rejected, login occurs exactly once, and the final result is `auth_rejected`.
+2. A refreshed token is also rejected, the authentication recovery sequence starts exactly once, and the final result is `auth_rejected`.
 3. Missing saved credentials produce `manual_required` without repeated endpoint requests.
 4. `502` followed by `200` succeeds through `transient_retry`.
 5. A network error followed by success is retried within budget.
@@ -199,10 +219,14 @@ Focused Rust tests use the existing local flaky HTTP fixture and synthetic crede
 8. `400`, `404`, and `422` are attempted once.
 9. Malformed JSON retries once; a valid payload without a required field does not repeat the same endpoint.
 10. A token refreshed during `/user/profile` is reused by `/auth/me` and later group requests.
-11. Budget exhaustion prevents further endpoint requests and produces `task_budget_exhausted`.
-12. Snapshot and error serialization contain no supplied token, password, Cookie, or Authorization value.
-13. A successful internal retry records attempt diagnostics but emits no failure or recovery change event.
-14. A final success after a previous failed run retains the existing task-specific recovery event behavior.
+11. An endpoint that refreshes authentication, then receives `502`, then succeeds records both recovery actions in order.
+12. With multiple station keys, every reachable key receives one initial attempt before an earlier transient failure receives its second attempt.
+13. Login candidate probing and any candidate retry consume the same collection-task budget and cannot restart the recovery sequence.
+14. Budget exhaustion prevents further endpoint requests and produces `task_budget_exhausted`.
+15. Top-level endpoint `ok` remains accurate, nested attempts do not inflate run counts, and a recovered endpoint contributes one successful endpoint.
+16. Snapshot and error serialization contain no supplied token, password, Cookie, or Authorization value.
+17. A successful internal retry records attempt diagnostics but emits no failure or recovery change event.
+18. A final success after a previous failed run retains the existing task-specific recovery event behavior.
 
 Verification commands:
 
@@ -219,6 +243,7 @@ The implementation plan should keep the production change narrowly scoped to:
 
 - A small request-recovery module under the collector adapter boundary.
 - Sub2API balance and group integration.
+- A budget-aware extension to the existing Sub2API login transport in `src-tauri/src/services/collectors/sub2api.rs`.
 - Focused Rust regression tests and any required update to the existing station auto-collector script.
 
 It must not introduce UI controls, database migrations, scheduler concurrency, circuit breakers, unrelated adapter migrations, or unrelated collector refactors.
@@ -230,5 +255,7 @@ It must not introduce UI controls, database migrations, scheduler concurrency, c
 - Permanent failures are not retried.
 - Persistent network failures cannot exceed the task-level time budget.
 - Refreshed credentials are shared within a task and never refreshed in a loop.
+- Multiple routeable keys receive a fair initial attempt before transient retries.
+- Existing endpoint success and failure counts remain compatible.
 - Attempt diagnostics explain the final decision without exposing secrets.
 - Existing group partial semantics and collector recovery events remain compatible.
