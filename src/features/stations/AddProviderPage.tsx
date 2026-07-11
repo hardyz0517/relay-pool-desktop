@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ArrowLeft, Check, KeyRound, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
+import { Button, ConfirmDialog, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
 import { collectStationTask, testStationLoginInput } from "@/lib/api/collector";
 import { listGroupRateRecords, listStationGroupBindings, upsertStationGroupBinding } from "@/lib/api/groupFacts";
 import {
@@ -90,6 +90,13 @@ type ConnectionTestState = {
   message: string | null;
 };
 
+type RemoteCreateInput = {
+  name: string;
+  groupBindingId: string | null;
+  groupIdHash: string | null;
+  groupName: string | null;
+};
+
 const defaultPreset = providerPresets[0];
 
 const inputClassName =
@@ -101,12 +108,12 @@ function getPresetDefaultStationName(preset: (typeof providerPresets)[number]) {
 }
 
 function draftRemoteCapability(stationType: StationType): RemoteKeyCapability {
-  if (stationType === "sub2api") {
+  if (stationType === "sub2api" || stationType === "newapi") {
     return {
       stationId: "",
       stationType,
       canListRemoteKeys: true,
-      canCreateRemoteKey: false,
+      canCreateRemoteKey: true,
       canReadGroups: true,
       requiresManualSession: true,
       unsupportedReason: null,
@@ -743,6 +750,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   const [remoteCreatedLocalKeyIds, setRemoteCreatedLocalKeyIds] = useState<Record<string, string>>({});
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [createRemoteOpen, setCreateRemoteOpen] = useState(false);
+  const [newapiRemoteCreateConfirm, setNewapiRemoteCreateConfirm] = useState<RemoteCreateInput | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const editableGroupOptions = useMemo(() => {
@@ -776,10 +784,15 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     remoteLoading ||
     Boolean(remoteCapabilityError) ||
     (activeStationId ? remoteCapability?.canListRemoteKeys !== true : !createPageRemoteDraftReady);
+  const savedStationCreateRemoteUnavailable = activeStationId
+    ? remoteCapability?.canCreateRemoteKey !== true
+    : false;
+  const createPageCreateRemoteUnavailable = activeStationId ? false : !createPageRemoteDraftReady;
   const createRemoteDisabled =
     remoteLoading ||
     Boolean(remoteCapabilityError) ||
-    (activeStationId ? remoteCapability?.canCreateRemoteKey !== true : !createPageRemoteDraftReady);
+    savedStationCreateRemoteUnavailable ||
+    createPageCreateRemoteUnavailable;
 
   useEffect(() => {
     setActiveStationId(stationId ?? null);
@@ -1204,12 +1217,16 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     }
   }
 
-  async function handleCreateRemoteKey(input: {
-    name: string;
-    groupBindingId: string | null;
-    groupIdHash: string | null;
-    groupName: string | null;
-  }) {
+  function handleCreateRemoteKey(input: RemoteCreateInput) {
+    const stationType = remoteCapability?.stationType ?? form.stationType;
+    if (stationType === "newapi") {
+      setNewapiRemoteCreateConfirm(input);
+      return;
+    }
+    void submitCreateRemoteKey(input);
+  }
+
+  async function submitCreateRemoteKey(input: RemoteCreateInput) {
     setRemoteLoading(true);
     setError(null);
     setRemoteListError(null);
@@ -1695,7 +1712,22 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         open={createRemoteOpen}
         saving={remoteLoading}
         onClose={() => setCreateRemoteOpen(false)}
-        onSubmit={(input) => void handleCreateRemoteKey(input)}
+        onSubmit={handleCreateRemoteKey}
+      />
+      <ConfirmDialog
+        open={newapiRemoteCreateConfirm !== null}
+        title="确认创建 NewAPI 远端 Key"
+        description="NewAPI 创建远端 Key 后不会在界面展示完整 Key；Relay Pool 会在后端读取一次完整 Key 并仅保存到本地密钥库。请确认当前登录会话就是目标 NewAPI 账号。"
+        confirmLabel="确认创建"
+        confirming={remoteLoading}
+        onCancel={() => setNewapiRemoteCreateConfirm(null)}
+        onConfirm={() => {
+          const input = newapiRemoteCreateConfirm;
+          setNewapiRemoteCreateConfirm(null);
+          if (input) {
+            void submitCreateRemoteKey(input);
+          }
+        }}
       />
     </PageScaffold>
   );
