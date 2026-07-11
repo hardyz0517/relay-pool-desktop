@@ -14,7 +14,13 @@ use crate::{
     },
     services::{
         collectors::{
-            adapters::{AdapterOutput, CollectorTask, CreatedRemoteKey},
+            adapters::{
+                request_recovery::{
+                    execute_json_request, CollectionAttemptBudget,
+                    EndpointJsonResult as RecoverableEndpointJsonResult, RequestPolicy,
+                },
+                AdapterOutput, CollectorTask, CreatedRemoteKey,
+            },
             facts::{CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts},
             url::{collector_base_urls, join_url},
         },
@@ -23,6 +29,7 @@ use crate::{
 };
 
 const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const COLLECTOR_TASK_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub fn parse_usage_balance(
     station_id: &str,
@@ -796,22 +803,53 @@ pub fn collect_groups(
     let urls = collector_base_urls(&station.base_url);
     let available_url = join_url(&urls.management_base_url, "/api/v1/groups/available");
     let rates_url = join_url(&urls.management_base_url, "/api/v1/groups/rates");
-    let mut available_result = fetch_json_with_bearer(&available_url, &access_token);
-    let mut rates_result = fetch_json_with_bearer(&rates_url, &access_token);
-    if available_result.is_auth_failure() || rates_result.is_auth_failure() {
-        if let Some(refreshed_access_token) =
-            login_and_store_access_token(database, data_key, &station)?
-        {
-            access_token = refreshed_access_token;
-            available_result = fetch_json_with_bearer(&available_url, &access_token);
-            rates_result = fetch_json_with_bearer(&rates_url, &access_token);
+    let policy = collector_request_policy();
+    let budget = CollectionAttemptBudget::new(policy.task_budget);
+    let mut auth_refresh_started = false;
+    let mut auth_refresh = |_: &String, remaining: std::time::Duration| {
+        if auth_refresh_started {
+            return None;
         }
+        auth_refresh_started = true;
+        login_and_store_access_token_with_budget(database, data_key, &station, remaining)
+            .ok()
+            .flatten()
+    };
+    let mut available_request = |token: &String, timeout: std::time::Duration| {
+        fetch_recoverable_json_with_bearer(&available_url, token, timeout)
+    };
+    let available_execution = execute_json_request(
+        "/api/v1/groups/available",
+        access_token.clone(),
+        Some(&mut auth_refresh),
+        &mut available_request,
+        &policy,
+        &budget,
+    );
+    if let Some(refreshed) = available_execution.latest_credential.clone() {
+        access_token = refreshed;
     }
-    available_result =
-        retry_transient_fetch_json_with_bearer(&available_url, &access_token, available_result);
-    rates_result = retry_transient_fetch_json_with_bearer(&rates_url, &access_token, rates_result);
-    let available_payload = available_result.payload.clone().unwrap_or(Value::Null);
-    let rates_payload = rates_result.payload.clone().unwrap_or(Value::Null);
+    let mut rates_request = |token: &String, timeout: std::time::Duration| {
+        fetch_recoverable_json_with_bearer(&rates_url, token, timeout)
+    };
+    let rates_execution = execute_json_request(
+        "/api/v1/groups/rates",
+        access_token.clone(),
+        Some(&mut auth_refresh),
+        &mut rates_request,
+        &policy,
+        &budget,
+    );
+    let available_payload = available_execution
+        .result
+        .payload
+        .clone()
+        .unwrap_or(Value::Null);
+    let rates_payload = rates_execution
+        .result
+        .payload
+        .clone()
+        .unwrap_or(Value::Null);
     let mut facts = parse_group_rate_facts(
         &station.id,
         &available_payload,
@@ -822,13 +860,16 @@ pub fn collect_groups(
     add_single_group_key_bindings(&mut facts, &keys);
 
     let endpoint_results = json!([
-        available_result.to_redacted_json(),
-        rates_result.to_redacted_json(),
+        available_execution.to_redacted_json(),
+        rates_execution.to_redacted_json(),
     ]);
-    let success_count = [available_result.ok, rates_result.ok]
-        .into_iter()
-        .filter(|ok| *ok)
-        .count();
+    let success_count = [
+        available_execution.result.ok && available_execution.failure_kind.is_none(),
+        rates_execution.result.ok && rates_execution.failure_kind.is_none(),
+    ]
+    .into_iter()
+    .filter(|ok| *ok)
+    .count();
     let status = match success_count {
         2 => "success",
         1 if !facts.groups.is_empty() => "partial",
@@ -928,6 +969,66 @@ fn login_and_store_access_token(
     Ok(Some(access_token))
 }
 
+fn login_and_store_access_token_with_budget(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &crate::models::stations::Station,
+    budget: std::time::Duration,
+) -> Result<Option<String>, String> {
+    let credentials = database.get_station_credentials(station.id.clone())?;
+    let Some(username) = credentials
+        .login_username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    if !credentials.password_present {
+        return Ok(None);
+    }
+    let Some(password) =
+        database.get_station_login_password_with_data_key(station.id.clone(), data_key)?
+    else {
+        return Ok(None);
+    };
+    let login = crate::services::collectors::sub2api::login_access_token_with_budget(
+        &station.base_url,
+        username,
+        &password,
+        budget,
+    )?;
+    let Some(access_token) = login.access_token else {
+        return Ok(None);
+    };
+
+    database.update_station_session_with_data_key(
+        UpdateStationSessionInput {
+            station_id: station.id.clone(),
+            access_token: Some(access_token.clone()),
+            refresh_token: None,
+            cookie: None,
+            newapi_user_id: credentials.newapi_user_id,
+            token_expires_at: None,
+        },
+        data_key,
+    )?;
+
+    Ok(Some(access_token))
+}
+
+fn collector_request_policy() -> RequestPolicy {
+    RequestPolicy {
+        max_attempts: 3,
+        malformed_json_max_attempts: 2,
+        task_budget: COLLECTOR_TASK_BUDGET,
+        retry_delays: vec![
+            std::time::Duration::from_millis(300),
+            std::time::Duration::from_secs(1),
+        ],
+    }
+}
+
 #[derive(Debug, Clone)]
 struct EndpointJsonResult {
     url: String,
@@ -947,26 +1048,6 @@ impl EndpointJsonResult {
             "durationMs": self.duration_ms,
             "errorMessage": self.error_message,
         })
-    }
-
-    fn is_auth_failure(&self) -> bool {
-        matches!(self.status, Some(401 | 403))
-    }
-
-    fn is_transient_failure(&self) -> bool {
-        matches!(self.status, None | Some(408 | 429 | 500..=599))
-    }
-}
-
-fn retry_transient_fetch_json_with_bearer(
-    url: &str,
-    access_token: &str,
-    result: EndpointJsonResult,
-) -> EndpointJsonResult {
-    if result.is_transient_failure() {
-        fetch_json_with_bearer(url, access_token)
-    } else {
-        result
     }
 }
 
@@ -1003,6 +1084,58 @@ fn fetch_json_with_bearer(url: &str, access_token: &str) -> EndpointJsonResult {
         duration_ms: started.elapsed().as_millis() as i64,
         payload,
         error_message: None,
+    }
+}
+
+fn fetch_recoverable_json_with_bearer(
+    url: &str,
+    access_token: &str,
+    timeout: std::time::Duration,
+) -> RecoverableEndpointJsonResult {
+    let started = std::time::Instant::now();
+    let response = match ureq::get(url)
+        .timeout(timeout.min(COLLECTOR_HTTP_TIMEOUT))
+        .set("Authorization", &format!("Bearer {access_token}"))
+        .call()
+    {
+        Ok(response) => response,
+        Err(ureq::Error::Status(_, response)) => response,
+        Err(error) => {
+            return RecoverableEndpointJsonResult {
+                url: url.to_string(),
+                status: None,
+                ok: false,
+                duration_ms: started.elapsed().as_millis() as i64,
+                payload: None,
+                error_message: Some(crate::services::secrets::mask::redact_text(
+                    &error.to_string(),
+                )),
+                retry_after: None,
+            };
+        }
+    };
+    let status = response.status();
+    let retry_after = response
+        .header("retry-after")
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(std::time::Duration::from_secs);
+    let text = response.into_string().unwrap_or_default();
+    let payload = serde_json::from_str::<Value>(&text).ok();
+    let ok = (200..400).contains(&status) && payload.is_some();
+    let error_message = if ok {
+        None
+    } else {
+        Some(crate::services::secrets::mask::redact_text(&text))
+    };
+
+    RecoverableEndpointJsonResult {
+        url: url.to_string(),
+        status: Some(status),
+        ok,
+        duration_ms: started.elapsed().as_millis() as i64,
+        payload,
+        error_message,
+        retry_after,
     }
 }
 
@@ -1895,6 +2028,61 @@ mod tests {
     }
 
     #[test]
+    fn sub2api_groups_record_auth_then_transient_recovery() {
+        let server = AuthThenTransientGroupServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station(CreateStationInput {
+                name: "auth then transient group station".to_string(),
+                station_type: "sub2api".to_string(),
+                base_url: server.base_url.clone(),
+                api_key: "sk-station".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+        database
+            .update_station_credentials_with_data_key(
+                UpdateStationCredentialsInput {
+                    station_id: station.id.clone(),
+                    login_username: Some("user@example.test".to_string()),
+                    login_password: Some("correct-password".to_string()),
+                    remember_password: true,
+                },
+                &data_key,
+            )
+            .expect("credentials");
+        database
+            .update_station_session_with_data_key(
+                UpdateStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: Some("stale-token".to_string()),
+                    refresh_token: None,
+                    cookie: None,
+                    newapi_user_id: None,
+                    token_expires_at: None,
+                },
+                &data_key,
+            )
+            .expect("stale session");
+
+        let output = collect_groups(&database, &data_key, &station.id).expect("groups");
+        let endpoint = &output.summary_json["endpointResults"][0];
+
+        assert_eq!(output.status, "success");
+        assert_eq!(endpoint["ok"], true);
+        assert_eq!(
+            endpoint["recoveryActions"],
+            json!(["auth_refresh", "transient_retry"])
+        );
+        assert_eq!(endpoint["attemptCount"], 3);
+    }
+
+    #[test]
     fn sub2api_balance_falls_back_to_account_profile_when_usage_is_unauthorized() {
         let server = TestBalanceFallbackServer::start();
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
@@ -1948,6 +2136,10 @@ mod tests {
         rate_requests: Arc<AtomicUsize>,
     }
 
+    struct AuthThenTransientGroupServer {
+        base_url: String,
+    }
+
     struct TestCreateKeyServer {
         base_url: String,
         request_rx: mpsc::Receiver<Value>,
@@ -1989,6 +2181,24 @@ mod tests {
 
         fn rate_request_count(&self) -> usize {
             self.rate_requests.load(Ordering::Relaxed)
+        }
+    }
+
+    impl AuthThenTransientGroupServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            let available_requests = Arc::new(AtomicUsize::new(0));
+            let handler_available_requests = Arc::clone(&available_requests);
+            thread::spawn(move || {
+                for stream in listener.incoming().take(6).flatten() {
+                    handle_auth_then_transient_group_request(
+                        stream,
+                        Arc::clone(&handler_available_requests),
+                    );
+                }
+            });
+            Self { base_url }
         }
     }
 
@@ -2165,6 +2375,70 @@ mod tests {
                 } else {
                     ("200 OK", json!({ "data": { "default": 0.8, "pro": 1.2 } }))
                 }
+            }
+            _ => ("401 Unauthorized", json!({ "message": "unauthorized" })),
+        };
+        let text = response.to_string();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
+    }
+
+    fn handle_auth_then_transient_group_request(
+        mut stream: TcpStream,
+        available_requests: Arc<AtomicUsize>,
+    ) {
+        let request = read_http_request(&mut stream);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
+        let fresh_authorized = request
+            .to_lowercase()
+            .contains("authorization: bearer fresh-group-token");
+
+        let (status, response) = match path {
+            "/api/v1/auth/login" => {
+                let parsed = serde_json::from_str::<Value>(body).expect("login json");
+                if parsed.get("password").and_then(Value::as_str) == Some("correct-password") {
+                    (
+                        "200 OK",
+                        json!({ "data": { "access_token": "fresh-group-token" } }),
+                    )
+                } else {
+                    (
+                        "401 Unauthorized",
+                        json!({ "message": "invalid credentials" }),
+                    )
+                }
+            }
+            "/api/v1/groups/available" if fresh_authorized => {
+                let request_index = available_requests.fetch_add(1, Ordering::Relaxed);
+                if request_index == 0 {
+                    (
+                        "502 Bad Gateway",
+                        json!({ "message": "temporary upstream failure" }),
+                    )
+                } else {
+                    (
+                        "200 OK",
+                        json!({
+                            "data": [
+                                { "id": "default", "name": "Default", "rate_multiplier": 1.0 },
+                                { "id": "pro", "name": "Pro", "rate_multiplier": 1.5 }
+                            ]
+                        }),
+                    )
+                }
+            }
+            "/api/v1/groups/rates" if fresh_authorized => {
+                ("200 OK", json!({ "data": { "default": 0.8, "pro": 1.2 } }))
             }
             _ => ("401 Unauthorized", json!({ "message": "unauthorized" })),
         };
