@@ -15,6 +15,7 @@ type DataTableLiteProps<T> = {
   selectedKey?: string;
   onRowClick?: (row: T) => void;
   className?: string;
+  headerVariant?: "default" | "plain";
 };
 
 export function DataTableLite<T>({
@@ -24,11 +25,18 @@ export function DataTableLite<T>({
   selectedKey,
   onRowClick,
   className,
+  headerVariant = "default",
 }: DataTableLiteProps<T>) {
   return (
     <div className={cn("overflow-auto rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]", className)}>
       <table className="w-full border-collapse bg-white text-left text-[13px]">
-        <thead className="bg-teal-50/70 text-[11px] font-medium uppercase tracking-wide text-slate-500">
+        <thead
+          className={cn(
+            headerVariant === "plain"
+              ? "border-b border-border bg-white text-xs font-medium text-slate-500"
+              : "bg-teal-50/70 text-[11px] font-medium uppercase tracking-wide text-slate-500",
+          )}
+        >
           <tr>
             {columns.map((column) => (
               <th key={column.key} className={cn("h-8 whitespace-nowrap px-2.5", column.className)}>

@@ -134,6 +134,8 @@ assert.ok(!pageSource.includes("官方输入"), "PricingPage should not display 
 assert.ok(!pageSource.includes("官方输出"), "PricingPage should not display official model output prices");
 assert.ok(!pageSource.includes("输入价"), "PricingPage should not render model-derived input price columns");
 assert.ok(!pageSource.includes("输出价"), "PricingPage should not render model-derived output price columns");
+assert.ok(!pageSource.includes(">Key<"), "PricingPage should not render a standalone key column");
+assert.ok(!pageSource.includes("全站分组"), "PricingPage should not render the all-station key placeholder");
 assert.ok(pageSource.includes("分组倍率比较"), "PricingPage should describe the page as group multiplier comparison");
 assert.ok(!pageSource.includes("覆盖分组类型"), "PricingPage should not show the covered group-type metric card");
 assert.ok(!pageSource.includes("已有可比较倍率的分组类型"), "PricingPage should not show covered group-type metric detail copy");

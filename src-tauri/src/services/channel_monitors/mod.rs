@@ -263,7 +263,7 @@ fn run_monitor_for_key(
     let context = MonitorTemplateContext {
         model: model.clone(),
         max_tokens: 1,
-        stream: false,
+        stream: true,
         challenge: DEFAULT_MONITOR_CHALLENGE.to_string(),
     };
 
@@ -339,6 +339,7 @@ fn insert_probe_run(
         )?;
     }
     let error_message = result.error_summary.map(|error| short_error(&error));
+    let first_token_ms = result.first_token_ms;
     let run = database.insert_channel_monitor_run(CreateChannelMonitorRunInput {
         monitor_id: monitor.id.clone(),
         template_id: monitor.template_id.clone(),
@@ -365,6 +366,7 @@ fn insert_probe_run(
         request,
         result.status_code,
         result.latency_ms,
+        first_token_ms,
         error_message,
         result.usage,
     )?;
@@ -382,6 +384,7 @@ fn insert_monitor_request_log(
     request: &RenderedMonitorRequest,
     status_code: Option<u16>,
     latency_ms: i64,
+    first_token_ms: Option<i64>,
     error_message: Option<String>,
     usage: Option<MonitorProbeUsage>,
 ) -> Result<(), String> {
@@ -390,7 +393,7 @@ fn insert_monitor_request_log(
         method: request.method.clone(),
         path: request.path.clone(),
         model: Some(model.to_string()),
-        stream: false,
+        stream: request.stream,
         status: if error_message.is_some() {
             "failed".to_string()
         } else {
@@ -408,10 +411,16 @@ fn insert_monitor_request_log(
         prompt_tokens: request_cost.prompt_tokens,
         completion_tokens: request_cost.completion_tokens,
         total_tokens: request_cost.total_tokens,
-        cache_creation_tokens: request_cost.cache_creation_tokens,
-        cache_read_tokens: request_cost.cache_read_tokens,
-        reasoning_effort: None,
-        first_token_ms: None,
+        cache_creation_tokens: usage
+            .as_ref()
+            .and_then(|usage| usage.cache_creation_tokens)
+            .or(request_cost.cache_creation_tokens),
+        cache_read_tokens: usage
+            .as_ref()
+            .and_then(|usage| usage.cache_read_tokens)
+            .or(request_cost.cache_read_tokens),
+        reasoning_effort: request.reasoning_effort.clone(),
+        first_token_ms,
         billing_mode: request_cost.billing_mode,
         estimated_input_cost: request_cost.estimated_input_cost,
         estimated_output_cost: request_cost.estimated_output_cost,
@@ -424,11 +433,7 @@ fn insert_monitor_request_log(
         pricing_rule_id: request_cost.pricing_rule_id,
         pricing_source: request_cost.pricing_source,
         cost_status: Some(request_cost.cost_status),
-        group_binding_id: database
-            .route_candidate_economics(target.id.clone())
-            .ok()
-            .flatten()
-            .and_then(|economics| economics.group_binding_id),
+        group_binding_id: target.group_binding_id.clone(),
         normalization_status: None,
         balance_scope: None,
         economic_context_json: Some(
@@ -649,6 +654,10 @@ mod tests {
     use crate::{
         models::{
             channel_monitors::{CreateChannelMonitorInput, CreateChannelMonitorTemplateInput},
+            group_facts::{
+                UpdateStationKeyGroupBindingInput, UpsertStationGroupBindingInput,
+                BINDING_KIND_STATION_GROUP, BINDING_STATUS_AVAILABLE,
+            },
             pricing::UpsertPricingRuleInput,
             station_keys::{CreateStationKeyInput, UpdateStationKeyInput},
             stations::CreateStationInput,
@@ -726,6 +735,8 @@ mod tests {
                 prompt_tokens: Some(4),
                 completion_tokens: Some(6),
                 total_tokens: Some(10),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             }),
         );
 
@@ -820,7 +831,7 @@ mod tests {
         assert!(raw_request.contains("Authorization: Bearer sk-manual-monitor"));
         assert!(raw_request.contains(r#""model":"gpt-test""#));
         assert!(raw_request.contains(r#""max_tokens":1"#));
-        assert!(raw_request.contains(r#""stream":false"#));
+        assert!(raw_request.contains(r#""stream":true"#));
     }
 
     #[test]
@@ -828,7 +839,7 @@ mod tests {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let data_key = [7_u8; 32];
         let (base_url, _received) = spawn_upstream(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 88\r\n\r\n{\"model\":\"gpt-test\",\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":6,\"total_tokens\":10}}",
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"O\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":4,\"output_tokens\":6,\"input_tokens_details\":{\"cached_tokens\":2}}}}\n\n",
         );
         let station = database
             .create_station_with_data_key(
@@ -850,6 +861,31 @@ mod tests {
             .list_station_keys(station.id.clone())
             .expect("keys")
             .remove(0);
+        let binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "monitor-group-hash".to_string(),
+                group_id_hash: Some("monitor-group-id-hash".to_string()),
+                group_name: "monitor-group".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: None,
+                effective_rate_multiplier: Some(1.0),
+                rate_source: Some("test".to_string()),
+                confidence: 1.0,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("group binding");
+        let key = database
+            .update_station_key_group_binding(UpdateStationKeyGroupBindingInput {
+                station_key_id: key.id,
+                group_binding_id: binding.id.clone(),
+            })
+            .expect("bind key group");
         let pricing_rule = database
             .upsert_pricing_rule(UpsertPricingRuleInput {
                 id: None,
@@ -880,14 +916,15 @@ mod tests {
         let template = database
             .create_channel_monitor_template(CreateChannelMonitorTemplateInput {
                 name: "Usage monitor template".to_string(),
-                endpoint_kind: "chat_completions".to_string(),
+                endpoint_kind: "responses".to_string(),
                 method: "POST".to_string(),
-                path: "/v1/chat/completions".to_string(),
+                path: "/v1/responses".to_string(),
                 request_body_json: r#"{
                     "model": "{{model}}",
-                    "max_tokens": "{{max_tokens}}",
+                    "max_output_tokens": "{{max_tokens}}",
                     "stream": "{{stream}}",
-                    "messages": [{ "role": "user", "content": "{{challenge}}" }]
+                    "reasoning": { "effort": "minimal" },
+                    "input": "{{challenge}}"
                 }"#
                 .to_string(),
                 enabled: true,
@@ -918,7 +955,7 @@ mod tests {
         assert_eq!(logs.len(), 1);
         let log = &logs[0];
         assert_eq!(log.method, "POST");
-        assert_eq!(log.path, "/v1/chat/completions");
+        assert_eq!(log.path, "/v1/responses");
         assert_eq!(log.model.as_deref(), Some("gpt-test"));
         assert_eq!(log.status, "success");
         assert_eq!(log.station_key_id.as_deref(), Some(key.id.as_str()));
@@ -927,6 +964,11 @@ mod tests {
         assert_eq!(log.prompt_tokens, Some(4));
         assert_eq!(log.completion_tokens, Some(6));
         assert_eq!(log.total_tokens, Some(10));
+        assert_eq!(log.cache_read_tokens, Some(2));
+        assert!(log.stream);
+        assert_eq!(log.reasoning_effort.as_deref(), Some("minimal"));
+        assert!(log.first_token_ms.is_some());
+        assert_eq!(log.group_binding_id.as_deref(), Some(binding.id.as_str()));
         assert_eq!(log.estimated_input_cost, Some(0.000004));
         assert_eq!(log.estimated_output_cost, Some(0.000012));
         assert_eq!(log.estimated_total_cost, Some(0.000016));
@@ -1257,7 +1299,8 @@ mod tests {
         assert!(raw_request.contains(r#""instructions":"Reply with OK only.""#));
         assert!(raw_request.contains(r#""max_output_tokens":1"#));
         assert!(raw_request.contains(r#""store":false"#));
-        assert!(raw_request.contains(r#""stream":false"#));
+        assert!(raw_request.contains(r#""stream":true"#));
+        assert!(raw_request.contains(r#""reasoning":{"effort":"minimal"}"#));
     }
 
     #[test]

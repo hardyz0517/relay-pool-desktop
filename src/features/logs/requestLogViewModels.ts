@@ -7,19 +7,20 @@ export const requestLogFieldLabels = {
 } as const;
 
 const reasoningLabels: Record<string, string> = {
-  none: "无",
-  minimal: "极低",
-  low: "低",
-  medium: "中",
-  high: "高",
-  xhigh: "超高",
+  none: "None",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "XHigh",
+  max: "Max",
 };
 
 const billingModeLabels: Record<string, string> = {
-  token: "按 Token",
-  per_request: "按请求",
-  image: "按图像",
-  video: "按视频",
+  token: "按量",
+  per_request: "按次",
+  image: "按量",
+  video: "按量",
 };
 
 export function formatLogTime(value: string, includeDate = false) {
@@ -57,6 +58,12 @@ export function formatStationName(log: RequestLog, keyById: Map<string, KeyPoolI
   return log.stationId ?? "未选择";
 }
 
+export function formatGroupName(log: RequestLog, keyById: Map<string, KeyPoolItem>) {
+  const key = log.stationKeyId ? keyById.get(log.stationKeyId) : undefined;
+  if (key?.groupName) return key.groupName;
+  return log.groupBindingId ?? "未分组";
+}
+
 export function reasoningEffortLabel(value: string | null) {
   if (!value) return "-";
   return reasoningLabels[value] ?? value;
@@ -64,7 +71,7 @@ export function reasoningEffortLabel(value: string | null) {
 
 export function billingModeLabel(value: string | null) {
   if (!value) return "-";
-  return billingModeLabels[value] ?? value;
+  return billingModeLabels[value] ?? "-";
 }
 
 export function tokenBreakdown(log: RequestLog) {
@@ -88,6 +95,38 @@ export function latencyBreakdown(log: RequestLog) {
   ];
 }
 
+export function formatCompactTokenCount(value: number | null) {
+  if (value == null) return "-";
+  if (Math.abs(value) < 10_000) return value.toLocaleString("en-US");
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+export function formatRequestTokenCount(log: RequestLog, value: number | null) {
+  if (value == null && log.status === "failed") return "0";
+  return formatCompactTokenCount(value);
+}
+
+export function paginateRequestLogs(logs: RequestLog[], page: number, pageSize: number) {
+  const safePageSize = Math.max(1, pageSize);
+  const totalPages = Math.max(1, Math.ceil(logs.length / safePageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const startOffset = (safePage - 1) * safePageSize;
+  const pageLogs = logs.slice(startOffset, startOffset + safePageSize);
+
+  return {
+    logs: pageLogs,
+    page: safePage,
+    pageSize: safePageSize,
+    totalPages,
+    startIndex: pageLogs.length === 0 ? 0 : startOffset + 1,
+    endIndex: startOffset + pageLogs.length,
+    totalCount: logs.length,
+  };
+}
+
 export function formatTokenTotal(log: RequestLog) {
   if (log.totalTokens == null) {
     return log.costStatus === "unknown_usage" ? "用量未知" : "暂无";
@@ -97,7 +136,7 @@ export function formatTokenTotal(log: RequestLog) {
 
 export function formatRequestCost(log: RequestLog) {
   if (log.estimatedTotalCost == null) return pricingStatusLabel(log.costStatus);
-  return `${log.costCurrency ?? "USD"} ${log.estimatedTotalCost.toFixed(6)}`;
+  return `$${log.estimatedTotalCost.toFixed(6)}`;
 }
 
 export function pricingStatusLabel(value: string | null | undefined) {

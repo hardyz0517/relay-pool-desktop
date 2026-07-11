@@ -250,17 +250,15 @@ function PricingRowsTable({ rows }: { rows: PricingComparisonRow[] }) {
     <div className={tableScrollClassName}>
       <table className={tableClassName}>
         <colgroup>
-          <col className="w-[22%]" />
           <col className="w-[28%]" />
-          <col className="w-[20%]" />
-          <col className="w-[14%]" />
+          <col className="w-[38%]" />
           <col className="w-[16%]" />
+          <col className="w-[18%]" />
         </colgroup>
         <thead>
           <tr className="border-b border-border">
             <th className={tableHeaderClassName}>中转站</th>
             <th className={tableHeaderClassName}>分组</th>
-            <th className={tableHeaderClassName}>Key</th>
             <th className={tableHeaderClassName}>倍率</th>
             <th className={updatedAtHeaderClassName}>更新时间</th>
           </tr>
@@ -276,9 +274,6 @@ function PricingRowsTable({ rows }: { rows: PricingComparisonRow[] }) {
                 {row.isCheapest && (
                   <div className="mt-0.5 text-xs font-medium text-emerald-700">当前最低</div>
                 )}
-              </td>
-              <td className={`${tableCellClassName} truncate text-muted-foreground`}>
-                {row.stationKeyName ?? "全站分组"}
               </td>
               <td className={`${tableCellClassName} tabular-nums font-semibold text-slate-800`}>
                 {formatNullableMultiplier(row.effectiveMultiplier)}

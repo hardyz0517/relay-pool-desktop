@@ -497,14 +497,16 @@ export function DashboardPage() {
                   <FlaskConical className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-slate-900">
-                    {request.model ?? request.path}
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900">
+                      {request.model ?? request.path}
+                    </span>
+                    <span className="max-w-[45%] shrink truncate text-xs text-slate-500">
+                      Key：{requestKeyName}
+                    </span>
                   </div>
                   <div className="mt-0.5 truncate text-xs text-slate-500">
                     {formatDateTime(request.startedAt)}
-                  </div>
-                  <div className="mt-0.5 truncate text-xs text-slate-500">
-                    Key：{requestKeyName}
                   </div>
                 </div>
                 <div className="min-w-[118px] text-right">

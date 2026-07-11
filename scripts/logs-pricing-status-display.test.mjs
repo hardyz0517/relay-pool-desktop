@@ -33,6 +33,8 @@ assert(
 );
 
 assert(
-  tableSource.includes("formatRequestCost") && tableSource.includes("pricingStatusTone"),
-  "logs table should show both cost value and pricing status tone in the cost column",
+  tableSource.includes("formatRequestCost") &&
+    !tableSource.includes("pricingStatusTone") &&
+    !tableSource.includes("<StatusBadge"),
+  "logs table should show a single cost value without a pricing status badge",
 );

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     models::channel_monitors::ChannelMonitorRequestTemplate,
-    services::database::now_millis_for_services,
+    services::{database::now_millis_for_services, proxy::observability::RequestObservation},
 };
 use serde_json::{Number, Value};
 
@@ -20,6 +20,8 @@ pub struct RenderedMonitorRequest {
     pub path: String,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
+    pub stream: bool,
+    pub reasoning_effort: Option<String>,
 }
 
 pub fn render_monitor_request(
@@ -29,6 +31,11 @@ pub fn render_monitor_request(
     let template_value: Value = serde_json::from_str(&template.request_body_json)
         .map_err(|error| format!("Monitor request template must be valid JSON: {error}"))?;
     let body_value = render_json_value(&template_value, context);
+    let stream = body_value
+        .get("stream")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let observation = RequestObservation::from_json(&body_value);
     let body = serde_json::to_vec(&body_value)
         .map_err(|error| format!("Monitor request body could not be encoded as JSON: {error}"))?;
     let mut headers = HashMap::new();
@@ -39,6 +46,8 @@ pub fn render_monitor_request(
         path: template.path.clone(),
         headers,
         body,
+        stream,
+        reasoning_effort: observation.reasoning_effort,
     })
 }
 
@@ -166,15 +175,14 @@ mod tests {
     fn renders_whole_string_placeholders_to_json_types() {
         let template = template(
             "POST",
-            "/v1/chat/completions",
+            "/v1/responses",
             r#"{
                 "model": "{{model}}",
                 "max_tokens": "{{max_tokens}}",
                 "stream": "{{stream}}",
+                "reasoning": { "effort": "minimal" },
                 "created_at": "{{timestamp}}",
-                "messages": [
-                    { "role": "user", "content": "{{challenge}}" }
-                ]
+                "input": "{{challenge}}"
             }"#,
         );
         let context = MonitorTemplateContext {
@@ -193,6 +201,8 @@ mod tests {
         assert_eq!(body["stream"], true);
         assert!(body["stream"].is_boolean());
         assert!(body["created_at"].is_number());
+        assert!(rendered.stream);
+        assert_eq!(rendered.reasoning_effort.as_deref(), Some("minimal"));
     }
 
     #[test]

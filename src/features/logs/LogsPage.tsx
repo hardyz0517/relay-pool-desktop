@@ -21,7 +21,7 @@ import { getSettings } from "@/lib/api/settings";
 import { loadRequestLogWorkspace } from "@/lib/queries/logQueries";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
-import { RequestLogTable } from "./RequestLogTable";
+import { RequestLogPagination, RequestLogTable } from "./RequestLogTable";
 import {
   formatKeyName,
   formatLogTime,
@@ -29,6 +29,7 @@ import {
   formatStationName,
   formatTokenTotal,
   normalizationLabel,
+  paginateRequestLogs,
   pricingStatusLabel,
   statusFallback,
 } from "./requestLogViewModels";
@@ -41,6 +42,8 @@ export function LogsPage() {
   const [keys, setKeys] = useState<KeyPoolItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<LogFilter>("all");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
@@ -61,10 +64,15 @@ export function LogsPage() {
     return logs;
   }, [filter, logs]);
 
-  const selected = filteredLogs.find((log) => log.id === selectedId) ?? filteredLogs[0] ?? null;
+  const pageInfo = useMemo(
+    () => paginateRequestLogs(filteredLogs, page, pageSize),
+    [filteredLogs, page, pageSize],
+  );
+  const selected = pageInfo.logs.find((log) => log.id === selectedId) ?? pageInfo.logs[0] ?? null;
   const keyById = useMemo(() => new Map(keys.map((key) => [key.id, key] as const)), [keys]);
 
   async function refreshLogs(showSuccess = false, showLoading = true) {
+    setPage(1);
     if (showLoading) {
       setLoading(true);
     }
@@ -101,6 +109,7 @@ export function LogsPage() {
     try {
       await clearRequestLogs();
       setLogs([]);
+      setPage(1);
       setSelectedId(null);
       setClearConfirmOpen(false);
       toast.success("请求日志已清空");
@@ -113,43 +122,76 @@ export function LogsPage() {
     }
   }
 
+  function handleFilterChange(value: string) {
+    setFilter(value as LogFilter);
+    setPage(1);
+    setSelectedId(null);
+  }
+
+  function handlePageSizeChange(value: number) {
+    setPageSize(value);
+    setPage(1);
+    setSelectedId(null);
+  }
+
   return (
     <PageScaffold title="请求日志">
       <div className="grid gap-[var(--shell-page-gap)]">
-        <div className="min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
-          <Toolbar>
-            <SegmentedControl
-              value={filter}
-              onChange={(value) => setFilter(value as LogFilter)}
-              options={[
-                { value: "all", label: "全部" },
-                { value: "failed", label: "失败" },
-                { value: "fallback", label: "兜底" },
-              ]}
-            />
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => void refreshLogs(true)}>
-                <RefreshCw className="h-4 w-4" />
-                刷新
-              </Button>
-              <Button variant="danger" onClick={handleClear}>
-                <Trash2 className="h-4 w-4" />
-                清空
-              </Button>
-            </div>
-          </Toolbar>
-          {error && <div className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
-          {filteredLogs.length === 0 ? (
-            <EmptyState
-              title={loading ? "正在读取请求日志" : "暂无请求日志"}
-              description="启动本地代理并从外部工具发起请求后，这里会出现记录。"
-            />
-          ) : (
-            <RequestLogTable
-              rows={filteredLogs}
-              keyById={keyById}
-              selectedId={selected?.id ?? null}
-              onSelect={setSelectedId}
+        <div className="min-w-0">
+          <div
+            data-testid="request-log-toolbar-surface"
+            className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]"
+          >
+            <Toolbar>
+              <SegmentedControl
+                value={filter}
+                onChange={handleFilterChange}
+                options={[
+                  { value: "all", label: "全部" },
+                  { value: "failed", label: "失败" },
+                  { value: "fallback", label: "兜底" },
+                ]}
+              />
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => void refreshLogs(true)}>
+                  <RefreshCw className="h-4 w-4" />
+                  刷新
+                </Button>
+                <Button variant="danger" onClick={handleClear}>
+                  <Trash2 className="h-4 w-4" />
+                  清空
+                </Button>
+              </div>
+            </Toolbar>
+          </div>
+          <div
+            data-testid="request-log-table-surface"
+            className="mt-3 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]"
+          >
+            {error && <div className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+            {filteredLogs.length === 0 ? (
+              <EmptyState
+                title={loading ? "正在读取请求日志" : "暂无请求日志"}
+                description="启动本地代理并从外部工具发起请求后，这里会出现记录。"
+              />
+            ) : (
+              <RequestLogTable
+                rows={pageInfo.logs}
+                keyById={keyById}
+                selectedId={selected?.id ?? null}
+                onSelect={setSelectedId}
+              />
+            )}
+          </div>
+          {filteredLogs.length > 0 && (
+            <RequestLogPagination
+              pageInfo={pageInfo}
+              pageSize={pageSize}
+              onPageChange={(nextPage) => {
+                setPage(nextPage);
+                setSelectedId(null);
+              }}
+              onPageSizeChange={handlePageSizeChange}
             />
           )}
         </div>

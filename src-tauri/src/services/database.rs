@@ -3055,6 +3055,7 @@ fn seed_builtin_channel_monitor_templates_in_connection(
                 "messages": [
                     { "role": "user", "content": "{{challenge}}" }
                 ],
+                "stream": "{{stream}}",
                 "temperature": 0
             }),
         ),
@@ -3069,6 +3070,7 @@ fn seed_builtin_channel_monitor_templates_in_connection(
                     { "role": "user", "content": "{{challenge}}" }
                 ],
                 "max_tokens": 1,
+                "stream": "{{stream}}",
                 "temperature": 0
             }),
         ),
@@ -3082,7 +3084,8 @@ fn seed_builtin_channel_monitor_templates_in_connection(
                 "instructions": "Reply with OK only.",
                 "input": "{{challenge}}",
                 "store": false,
-                "stream": false,
+                "stream": "{{stream}}",
+                "reasoning": { "effort": "minimal" },
                 "temperature": 0
             }),
         ),
@@ -3097,7 +3100,8 @@ fn seed_builtin_channel_monitor_templates_in_connection(
                 "input": "{{challenge}}",
                 "max_output_tokens": 1,
                 "store": false,
-                "stream": false,
+                "stream": "{{stream}}",
+                "reasoning": { "effort": "minimal" },
                 "temperature": 0
             }),
         ),
@@ -9953,6 +9957,19 @@ mod tests {
                 "{expected_id} should be seeded"
             );
         }
+        for template in templates.iter().filter(|template| template.built_in) {
+            let body: Value =
+                serde_json::from_str(&template.request_body_json).expect("built-in request body");
+            assert_eq!(body["stream"], "{{stream}}", "{} stream", template.id);
+            if template.endpoint_kind == "responses" {
+                assert_eq!(
+                    body.pointer("/reasoning/effort").and_then(Value::as_str),
+                    Some("minimal"),
+                    "{} reasoning effort",
+                    template.id
+                );
+            }
+        }
         let responses_low_token = templates
             .iter()
             .find(|template| template.id == "builtin-openai-responses-low-token")
@@ -9963,7 +9980,7 @@ mod tests {
         assert_eq!(responses_body["input"], "{{challenge}}");
         assert_eq!(responses_body["max_output_tokens"], 1);
         assert_eq!(responses_body["store"], false);
-        assert_eq!(responses_body["stream"], false);
+        assert_eq!(responses_body["stream"], "{{stream}}");
     }
 
     #[test]
