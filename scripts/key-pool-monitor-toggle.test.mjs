@@ -67,6 +67,16 @@ assert.equal(
   "key-pool monitor switch should not choose a blocked model",
 );
 
+assert.equal(
+  selectStationKeyMonitorModel({
+    modelAllowlist: [],
+    modelBlocklist: [],
+    preferredModels: [],
+  }),
+  "gpt-4.1-mini",
+  "key-pool monitor switch should use the current lightweight default model when no explicit model is configured",
+);
+
 assert.deepEqual(
   createStationKeyMonitorInput(key, template, capabilities),
   {

@@ -46,7 +46,7 @@ type StationKeyMonitorTemplatePreference = {
 
 export type ChannelMonitorProtocol = "chat_completions" | "responses";
 
-export const DEFAULT_STATION_KEY_MONITOR_MODEL = "gpt-4o-mini";
+export const DEFAULT_STATION_KEY_MONITOR_MODEL = "gpt-4.1-mini";
 export const DEFAULT_STATION_KEY_MONITOR_TEMPLATE_ID = "builtin-openai-responses-low-token";
 export const STATION_KEY_MONITOR_NOTE = "由密钥池监控开关创建";
 

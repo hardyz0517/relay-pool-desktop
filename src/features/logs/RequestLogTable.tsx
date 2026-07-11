@@ -100,7 +100,7 @@ export function RequestLogPagination({
         </label>
       </div>
 
-      <div className="flex items-center" aria-label="请求日志分页">
+      <div className="flex items-center" aria-label="使用记录分页">
         <button
           type="button"
           aria-label="上一页"

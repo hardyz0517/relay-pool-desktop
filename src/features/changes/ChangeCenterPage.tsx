@@ -39,6 +39,7 @@ export function ChangeCenterPage() {
   const [stationNamesById, setStationNamesById] = useState<Map<string, string>>(new Map());
   const [filter, setFilter] = useState<ChangeFilter>({ severity: "all", status: "active", objectType: "all", query: "" });
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(CHANGE_EVENTS_DEFAULT_PAGE_SIZE);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -111,7 +112,7 @@ export function ChangeCenterPage() {
     () => filterChangeEvents(events, filter, { stationNamesById }),
     [events, filter, stationNamesById],
   );
-  const pageInfo = useMemo(() => paginateChangeEvents(filteredEvents, page, CHANGE_EVENTS_PAGE_SIZE), [filteredEvents, page]);
+  const pageInfo = useMemo(() => paginateChangeEvents(filteredEvents, page, pageSize), [filteredEvents, page, pageSize]);
   const unreadCount = events.filter((event) => event.status === "unread").length;
   const riskCount = unreadRiskCount(events);
   const objectOptions = useMemo(() => {
@@ -148,7 +149,10 @@ export function ChangeCenterPage() {
         </div>
 
         <div className="min-w-0">
-          <div className="min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+          <div
+            data-testid="change-center-toolbar-surface"
+            className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]"
+          >
             <Toolbar>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <SegmentedControl
@@ -206,6 +210,11 @@ export function ChangeCenterPage() {
                 </div>
               </div>
             </Toolbar>
+          </div>
+          <div
+            data-testid="change-center-list-surface"
+            className="mt-3 min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]"
+          >
             {error && <div className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
             {filteredEvents.length === 0 ? (
               <EmptyState
@@ -223,37 +232,63 @@ export function ChangeCenterPage() {
                     />
                   ))}
                 </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-slate-50 px-3 py-2 text-xs text-slate-500">
-                  <span>
-                    第 {pageInfo.startIndex}-{pageInfo.endIndex} 条 / 共 {pageInfo.totalCount} 条
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setPage((current) => Math.max(1, current - 1))}
-                      disabled={loading || saving || pageInfo.page <= 1}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                      上一页
-                    </Button>
-                    <span className="min-w-[64px] text-center font-medium text-slate-700">
-                      {pageInfo.page} / {pageInfo.totalPages}
-                    </span>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setPage((current) => Math.min(pageInfo.totalPages, current + 1))}
-                      disabled={loading || saving || pageInfo.page >= pageInfo.totalPages}
-                    >
-                      下一页
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
               </>
             )}
           </div>
+          {filteredEvents.length > 0 && (
+            <div
+              data-testid="change-center-pagination-surface"
+              className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-white px-3 py-2 text-xs text-slate-500"
+            >
+              <div className="flex flex-wrap items-center gap-3">
+                <span>
+                  第 {pageInfo.startIndex}-{pageInfo.endIndex} 条 / 共 {pageInfo.totalCount} 条
+                </span>
+                <label className="flex items-center gap-2">
+                  <span>每页</span>
+                  <select
+                    aria-label="每页记录数"
+                    value={pageSize}
+                    onChange={(event) => {
+                      setPageSize(Number(event.target.value));
+                      setPage(1);
+                    }}
+                    className="h-8 rounded-[4px] border border-border bg-white px-2 text-sm text-slate-700 outline-none transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+                  >
+                    {[20, 50, 100].map((size) => (
+                      <option key={size} value={size}>{size}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="flex items-center" aria-label="变更中心分页">
+                <button
+                  type="button"
+                  aria-label="上一页"
+                  title="上一页"
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  disabled={loading || saving || pageInfo.page <= 1}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-l-[4px] border border-border bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-200 disabled:cursor-not-allowed disabled:text-slate-300"
+                >
+                  <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                </button>
+                <span className="inline-flex h-8 min-w-9 items-center justify-center border-y border-teal-400 bg-teal-50 px-2 font-medium text-teal-700">
+                  {pageInfo.page}
+                </span>
+                <button
+                  type="button"
+                  aria-label="下一页"
+                  title="下一页"
+                  onClick={() => setPage((current) => Math.min(pageInfo.totalPages, current + 1))}
+                  disabled={loading || saving || pageInfo.page >= pageInfo.totalPages}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-r-[4px] border border-border bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-200 disabled:cursor-not-allowed disabled:text-slate-300"
+                >
+                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
         <ConfirmDialog
           open={clearConfirmOpen}
@@ -305,4 +340,4 @@ function SummaryTile({ label, value, tone = "text-slate-800" }: { label: string;
 const inputClassName =
   "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
 
-const CHANGE_EVENTS_PAGE_SIZE = 20;
+const CHANGE_EVENTS_DEFAULT_PAGE_SIZE = 20;

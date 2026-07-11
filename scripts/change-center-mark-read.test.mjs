@@ -231,6 +231,7 @@ assert.equal(keyInvalidWithoutName.metaLabel, "密钥 / station-key-abc...");
 
 const changeEventsApiSource = await readFile("src/lib/api/changeEvents.ts", "utf8");
 const changeCenterSource = await readFile("src/features/changes/ChangeCenterPage.tsx", "utf8");
+const requestLogTableSource = await readFile("src/features/logs/RequestLogTable.tsx", "utf8");
 const appShellSource = await readFile("src/components/shell/AppShell.tsx", "utf8");
 const mockChangeEventsSource = await readFile("src/lib/mock/changeEvents.ts", "utf8");
 const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
@@ -300,6 +301,43 @@ assert.ok(
     changeCenterSource.includes("上一页") &&
     changeCenterSource.includes("下一页"),
   "change center page should render one-line event rows, a clear-history action, and paginate the filtered event list",
+);
+
+assert.ok(
+  changeCenterSource.includes('data-testid="change-center-toolbar-surface"') &&
+    changeCenterSource.includes('data-testid="change-center-list-surface"') &&
+    changeCenterSource.includes('data-testid="change-center-toolbar-surface"\n            className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]"') &&
+    changeCenterSource.includes('data-testid="change-center-list-surface"\n            className="mt-3 min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]"'),
+  "change center filters and event rows should be separate surfaces like the usage records page",
+);
+
+assert.ok(
+  changeCenterSource.includes('data-testid="change-center-pagination-surface"') &&
+    changeCenterSource.includes('aria-label="变更中心分页"') &&
+    changeCenterSource.includes('className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-white px-3 py-2 text-xs text-slate-500"') &&
+    changeCenterSource.includes(")}\n          </div>\n          {filteredEvents.length > 0 && (") &&
+    requestLogTableSource.includes('data-testid="request-log-pagination-surface"') &&
+    requestLogTableSource.includes('className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-white px-3 py-2 text-xs text-slate-500"'),
+  "change center pagination should use the same separate standalone white footer surface as request logs",
+);
+
+assert.ok(
+  changeCenterSource.includes('rounded-l-[4px] border border-border bg-white text-slate-500') &&
+    changeCenterSource.includes('rounded-r-[4px] border border-border bg-white text-slate-500') &&
+    changeCenterSource.includes('inline-flex h-8 min-w-9 items-center justify-center border-y border-teal-400 bg-teal-50 px-2 font-medium text-teal-700') &&
+    !changeCenterSource.includes('{pageInfo.page} / {pageInfo.totalPages}'),
+  "change center pagination should use icon buttons and a compact current-page pill like request logs",
+);
+
+assert.ok(
+  changeCenterSource.includes("const [pageSize, setPageSize] = useState(CHANGE_EVENTS_DEFAULT_PAGE_SIZE)") &&
+    changeCenterSource.includes("paginateChangeEvents(filteredEvents, page, pageSize)") &&
+    changeCenterSource.includes("<span>每页</span>") &&
+    changeCenterSource.includes('aria-label="每页记录数"') &&
+    changeCenterSource.includes("setPageSize(Number(event.target.value))") &&
+    changeCenterSource.includes("setPage(1);") &&
+    changeCenterSource.includes("[20, 50, 100]"),
+  "change center pagination should expose the same page-size selector behavior as usage records",
 );
 
 assert.ok(

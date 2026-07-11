@@ -70,6 +70,9 @@ use crate::{
 const STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const STATION_KEY_CONNECTIVITY_CANDIDATE_LIMIT: usize = 2;
+const DEFAULT_STATION_KEY_CONNECTIVITY_MODEL: &str = "gpt-4.1-mini";
+const UPDATE_MANIFEST_URL: &str =
+    "https://github.com/hardyz0517/relay-pool-desktop/releases/latest/download/latest.json";
 
 #[tauri::command]
 pub fn app_status() -> AppStatus {
@@ -180,6 +183,27 @@ pub fn import_relay_pool_to_ccswitch(
 pub fn open_external_url(url: String) -> Result<(), String> {
     let url = validate_external_http_url(&url)?;
     open_url_with_system(url)
+}
+
+#[tauri::command]
+pub fn latest_update_manifest_version() -> Result<Option<String>, String> {
+    let response = ureq::get(UPDATE_MANIFEST_URL)
+        .timeout(Duration::from_secs(10))
+        .set("Accept", "application/json")
+        .call()
+        .map_err(|error| format!("读取更新清单失败: {error}"))?;
+    if !(200..300).contains(&response.status()) {
+        return Ok(None);
+    }
+    let body = response
+        .into_string()
+        .map_err(|error| format!("读取更新清单内容失败: {error}"))?;
+    let value = serde_json::from_str::<Value>(&body)
+        .map_err(|error| format!("解析更新清单失败: {error}"))?;
+    Ok(value
+        .get("version")
+        .and_then(Value::as_str)
+        .map(str::to_string))
 }
 
 #[tauri::command]
@@ -1628,7 +1652,7 @@ fn station_key_connectivity_model_candidates(
         );
     }
     if candidates.is_empty() {
-        candidates.push("gpt-4o-mini".to_string());
+        candidates.push(DEFAULT_STATION_KEY_CONNECTIVITY_MODEL.to_string());
     }
     candidates.truncate(STATION_KEY_CONNECTIVITY_CANDIDATE_LIMIT);
     candidates
@@ -1693,7 +1717,7 @@ where
 {
     let fallback_candidates;
     let candidates = if candidates.is_empty() {
-        fallback_candidates = vec!["gpt-4o-mini".to_string()];
+        fallback_candidates = vec![DEFAULT_STATION_KEY_CONNECTIVITY_MODEL.to_string()];
         fallback_candidates.as_slice()
     } else {
         candidates
@@ -1708,7 +1732,7 @@ where
     }
     last.unwrap_or_else(|| {
         (
-            "gpt-4o-mini".to_string(),
+            DEFAULT_STATION_KEY_CONNECTIVITY_MODEL.to_string(),
             StationKeyConnectivityProbeResult::failure(0, 0, "未执行连通性探测".to_string()),
         )
     })
@@ -2004,6 +2028,13 @@ mod tests {
             station_key_connectivity_model_candidates(None, None, discovered.as_slice());
 
         assert_eq!(candidates, vec!["claude-test"]);
+    }
+
+    #[test]
+    fn station_key_connectivity_candidates_do_not_default_to_retired_gpt_4o_mini() {
+        let candidates = station_key_connectivity_model_candidates(None, None, &[]);
+
+        assert_eq!(candidates, vec!["gpt-4.1-mini"]);
     }
 
     #[test]

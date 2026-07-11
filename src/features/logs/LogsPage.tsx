@@ -86,12 +86,12 @@ export function LogsPage() {
       setDeveloperModeEnabled(settings.developerModeEnabled);
       setSelectedId((current) => current ?? workspace.requestLogs[0]?.id ?? null);
       if (showSuccess) {
-        toast.success("请求日志已刷新");
+        toast.success("使用记录已刷新");
       }
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
-      toast.error("刷新请求日志失败", message);
+      toast.error("刷新使用记录失败", message);
     } finally {
       if (showLoading) {
         setLoading(false);
@@ -112,11 +112,11 @@ export function LogsPage() {
       setPage(1);
       setSelectedId(null);
       setClearConfirmOpen(false);
-      toast.success("请求日志已清空");
+      toast.success("使用记录已清空");
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
-      toast.error("清空请求日志失败", message);
+      toast.error("清空使用记录失败", message);
     } finally {
       setClearing(false);
     }
@@ -135,7 +135,7 @@ export function LogsPage() {
   }
 
   return (
-    <PageScaffold title="请求日志">
+    <PageScaffold title="使用记录">
       <div className="grid gap-[var(--shell-page-gap)]">
         <div className="min-w-0">
           <div
@@ -171,7 +171,7 @@ export function LogsPage() {
             {error && <div className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
             {filteredLogs.length === 0 ? (
               <EmptyState
-                title={loading ? "正在读取请求日志" : "暂无请求日志"}
+                title={loading ? "正在读取使用记录" : "暂无使用记录"}
                 description="启动本地代理并从外部工具发起请求后，这里会出现记录。"
               />
             ) : (
@@ -234,14 +234,14 @@ export function LogsPage() {
                 <EconomicContextPreview json={selected.economicContextJson} />
               </div>
             ) : (
-              <EmptyState title="暂无详情" description="选择一条请求日志查看路由解释和成本元数据。" />
+              <EmptyState title="暂无详情" description="选择一条使用记录查看路由解释和成本元数据。" />
             )}
           </InspectorPanel>
         )}
         <ConfirmDialog
           open={clearConfirmOpen}
-          title="清空请求日志"
-          description="确定要清空本地请求日志吗？此操作无法撤销。"
+          title="清空使用记录"
+          description="确定要清空本地使用记录吗？此操作无法撤销。"
           confirmLabel="清空"
           confirming={clearing}
           onCancel={() => setClearConfirmOpen(false)}

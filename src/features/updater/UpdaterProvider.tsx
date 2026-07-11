@@ -21,6 +21,7 @@ import {
 } from "@/lib/api/updater";
 import { normalizeUpdaterError } from "@/lib/api/updaterErrors";
 import { readError } from "@/lib/errors";
+import { useToast } from "@/components/ui";
 
 type UpdaterContextValue = {
   state: UpdaterState;
@@ -30,6 +31,7 @@ type UpdaterContextValue = {
 const UpdaterContext = createContext<UpdaterContextValue | null>(null);
 
 export function UpdaterProvider({ children }: { children: ReactNode }) {
+  const toast = useToast();
   const [state, dispatch] = useReducer(reduceUpdaterState, initialUpdaterState);
   const [dialogOpen, setDialogOpen] = useState(false);
   const checkingRef = useRef(false);
@@ -47,6 +49,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
           version: result.update.version,
           notes: result.update.notes,
         });
+        toast.info(`发现新版本 ${result.update.version}`);
         setDialogOpen(true);
       } else {
         dispatch({
@@ -54,14 +57,17 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
           currentVersion: result.currentVersion,
           checkedAt: new Date().toISOString(),
         });
+        toast.success("已是最新");
         setDialogOpen(false);
       }
     } catch (error) {
-      dispatch({ type: "FAILED", message: normalizeUpdaterError(error) });
+      const message = normalizeUpdaterError(error);
+      dispatch({ type: "FAILED", message });
+      toast.error("检查更新未完成", message);
     } finally {
       checkingRef.current = false;
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     void currentAppVersion()

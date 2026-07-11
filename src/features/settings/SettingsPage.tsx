@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
-import { Coins, Copy, FolderOpen, Play, RefreshCw, RotateCcw, Square, Wand2 } from "lucide-react";
+import { Coins, Copy, ExternalLink, FolderOpen, Github, Play, RefreshCw, RotateCcw, Square, Wand2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
@@ -11,6 +11,7 @@ import {
   startLocalProxy,
   stopLocalProxy,
 } from "@/lib/api/proxy";
+import { openExternalUrl } from "@/lib/api/external";
 import { chooseDataDir, getLocalAccessKey, getSettings, SETTINGS_UPDATED_EVENT, updateLocalAccessKey, updateSettings } from "@/lib/api/settings";
 import type { ProxyStatus } from "@/lib/types/proxy";
 import { useUpdater } from "@/features/updater/UpdaterProvider";
@@ -78,6 +79,8 @@ const fallbackProxyStatus: ProxyStatus = {
 type SettingsPageProps = {
   onOpenModelBasePrices: () => void;
 };
+
+const REPOSITORY_URL = "https://github.com/hardyz0517/relay-pool-desktop";
 
 export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
   const toast = useToast();
@@ -549,27 +552,60 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
           />
         </SectionCard>
 
-        <SectionCard contentClassName="p-0" title="应用更新">
-          <SettingRow
-            control={
-              <Button
-                disabled={updaterState.phase === "checking"}
-                type="button"
-                variant="outline"
-                onClick={() => void checkForUpdates()}
-              >
-                <RefreshCw className={updaterState.phase === "checking" ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-                检查更新
-              </Button>
-            }
-            description={updaterStatusDescription(updaterState)}
-            label={`当前版本 ${updaterState.currentVersion}`}
+        <SectionCard title="关于">
+          <UpdateSettingsCard
+            state={updaterState}
+            onCheckForUpdates={() => void checkForUpdates()}
+            onOpenGitHub={() => void openExternalUrl(REPOSITORY_URL)}
+            onOpenReleaseLog={() => void openExternalUrl(currentReleaseUrl(updaterState.currentVersion))}
           />
         </SectionCard>
 
         {error && <div className="text-sm text-rose-700">{error}</div>}
       </div>
     </PageScaffold>
+  );
+}
+
+function UpdateSettingsCard({
+  state,
+  onCheckForUpdates,
+  onOpenGitHub,
+  onOpenReleaseLog,
+}: {
+  state: ReturnType<typeof useUpdater>["state"];
+  onCheckForUpdates: () => void;
+  onOpenGitHub: () => void;
+  onOpenReleaseLog: () => void;
+}) {
+  return (
+    <div className="flex min-h-[88px] flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-50 text-sm text-cyan-700">
+            ✺
+          </span>
+          <div className="truncate text-base font-semibold text-slate-950">Relay Pool</div>
+        </div>
+        <div className="mt-2 inline-flex h-6 items-center rounded-full border border-border bg-white px-2 text-xs font-medium text-slate-700">
+          版本 v{state.currentVersion}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+        <Button type="button" variant="outline" onClick={onOpenGitHub}>
+          <Github className="h-4 w-4" />
+          GitHub
+        </Button>
+        <Button type="button" variant="outline" onClick={onOpenReleaseLog}>
+          <ExternalLink className="h-4 w-4" />
+          更新日志
+        </Button>
+        <Button disabled={state.phase === "checking"} type="button" onClick={onCheckForUpdates}>
+          <RefreshCw className={state.phase === "checking" ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+          检查更新
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -760,10 +796,7 @@ function generateLocalAccessKey() {
 const inputClassName =
   "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:bg-white focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";
 
-function updaterStatusDescription(state: ReturnType<typeof useUpdater>["state"]) {
-  if (state.phase === "checking") return "正在检查 GitHub Releases。";
-  if (state.phase === "available") return `发现新版本 ${state.version}。`;
-  if (state.phase === "failed") return state.error ?? "检查更新失败。";
-  if (state.lastCheckedAt) return "当前已是最新版本。";
-  return "启动后会自动检查，也可以在这里手动检查。";
+function currentReleaseUrl(currentVersion: string) {
+  const normalizedVersion = currentVersion.trim().replace(/^v/i, "");
+  return `${REPOSITORY_URL}/releases/tag/v${normalizedVersion || "0.0.0"}`;
 }

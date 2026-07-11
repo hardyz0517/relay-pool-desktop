@@ -1465,7 +1465,7 @@ function DetailBody({
       </SectionBlock>
 
       <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs leading-5 text-slate-700 shadow-[var(--surface-shadow)]">
-        登录账号用于信息采集；保存的密码会加密存储，采集快照和请求日志会统一脱敏。
+        登录账号用于信息采集；保存的密码会加密存储，采集快照和使用记录会统一脱敏。
       </div>
     </div>
   );

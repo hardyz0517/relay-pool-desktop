@@ -80,7 +80,7 @@ export function StationDetailPanel({
 
         <SectionCard title="健康状态" contentClassName="space-y-2">
           <KeyValueRow label="最近检测" value={station.lastCheckedAt ?? "未检测"} />
-          <KeyValueRow label="最近错误" value={station.status === "error" ? "请查看渠道状态或请求日志" : "无"} />
+          <KeyValueRow label="最近错误" value={station.status === "error" ? "请查看渠道状态或使用记录" : "无"} />
         </SectionCard>
       </div>
 

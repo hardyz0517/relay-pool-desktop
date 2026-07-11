@@ -63,7 +63,7 @@ export const appRoutes: AppRoute[] = [
   },
   {
     id: "logs",
-    label: "请求日志",
+    label: "使用记录",
     description: "请求、耗时、成本和重试轨迹",
     icon: ClipboardList,
   },

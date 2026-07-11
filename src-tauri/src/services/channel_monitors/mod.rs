@@ -35,7 +35,7 @@ use crate::{
 
 const RUNNER_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const RUNNER_STOP_SLICE: Duration = Duration::from_millis(250);
-const DEFAULT_MONITOR_MODEL: &str = "gpt-4o-mini";
+const DEFAULT_MONITOR_MODEL: &str = "gpt-4.1-mini";
 const DEFAULT_MONITOR_CHALLENGE: &str = "ping";
 const MONITOR_ALREADY_RUNNING_ERROR: &str = "Channel monitor is already running";
 static ACTIVE_MONITOR_RUNS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();

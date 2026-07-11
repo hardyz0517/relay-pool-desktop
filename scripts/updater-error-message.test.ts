@@ -8,7 +8,7 @@ test("network update check errors are shown as actionable Chinese text", async (
 
   assert.equal(
     normalizeUpdaterError(new Error("error sending request for url (https://github.com/hardyz0517/relay-pool-desktop/releases/latest/download/latest.json)")),
-    "\u68c0\u67e5\u66f4\u65b0\u5931\u8d25\uff1a\u65e0\u6cd5\u8fde\u63a5\u5230 GitHub \u66f4\u65b0\u6e90\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u6216\u7a0d\u540e\u91cd\u8bd5\u3002",
+    "\u68c0\u67e5\u66f4\u65b0\u672a\u5b8c\u6210\uff1a\u65e0\u6cd5\u8bfb\u53d6 GitHub \u66f4\u65b0\u6e90\uff1b\u5982\u679c\u66f4\u65b0\u65e5\u5fd7\u4e0e\u5f53\u524d\u7248\u672c\u4e00\u81f4\uff0c\u8bf4\u660e\u5df2\u662f\u6700\u65b0\u7248\u672c\u3002",
   );
 });
 
