@@ -22,7 +22,8 @@ The following decisions are fixed:
 - Do not silently route above the ceiling.
 - Do not replace the requested model with a cheaper model.
 - Model mapping may translate the same logical model to an upstream name only.
-- Use Sub2API-style normalized factors, TopK selection, weighted ordering, affinity, concurrency slots, bounded waiting, fresh-load retry, and result feedback.
+- Preserve Sub2API's scheduler control flow and defaults for priority/load/queue/error/TTFT scoring, TopK selection, weighted ordering, affinity, concurrency slots, bounded waiting, fresh-load retry, and result feedback.
+- Add the multiplier ceiling and multiplier factor as an explicit Relay Pool product extension. Sub2API's reviewed scheduler stores an account billing multiplier but does not use it as a scheduler score factor or ceiling.
 - Implement the behavior independently in Rust. Do not copy or link Sub2API core code.
 - Add fields and supporting capabilities where Relay Pool does not currently have the required facts.
 - Do not distort the algorithm merely to preserve the current `candidate_score()` implementation.
@@ -44,6 +45,25 @@ Relevant reference areas:
 - `backend/internal/service/gateway_service.go`
 - `backend/internal/config/config.go`
 - scheduler and sticky-session tests under `backend/internal/service/*_test.go`
+
+The reviewed commit is the normative source for "Sub2API-compatible" behavior in this document. Later upstream changes may be evaluated separately but must not silently change this contract.
+
+Compatibility boundary:
+
+- Exact Sub2API behavior: eligibility rechecks, lower-number priority, effective load capacity, queue/error/TTFT factors, TopK tie-breaks, weighted ordering, direct and weighted affinity, concurrency acquisition, fresh-load retry, wait plans, and EWMA defaults.
+- Relay Pool extension: hard effective-multiplier evidence and ceiling, multiplier normalization/weight, Station/Key capability and balance gates, local-only storage, and decision explanations.
+- Omitted Sub2API-specific behavior: subscription-priority pools, reset-window scoring, quota-headroom scoring until equivalent facts exist, Redis coordination, and OpenAI compact/transport special cases that do not map to Relay Pool protocols.
+
+Normative source map at the reviewed commit:
+
+| Contract | Sub2API source |
+|---|---|
+| Scheduler layer order and direct/weighted affinity | `openai_account_scheduler.go`: `Select`, `selectBySessionHash`, `buildOpenAISelectionOrder` |
+| Factors, TopK, tie-breaks, and weighted order | `openai_account_scheduler.go`: `buildOpenAIAccountLoadPlan`, `selectTopKOpenAICandidates`, `buildOpenAIWeightedSelectionOrder` |
+| Immediate acquisition, fresh-load retry, sticky/fallback wait | `openai_account_scheduler.go`: `tryAcquireOpenAISelectionOrder`, `trySelectByLoadBalancePool`, `finishLoadBalanceSelectionFallback` |
+| Runtime EWMA and sticky escape | `openai_account_scheduler.go`: `ReportResult`, `shouldEscapeStickyAccount` |
+| Numeric defaults and validation | `config.go`: OpenAI WS scheduler and gateway scheduling defaults |
+| Unlimited slots versus effective load capacity | `concurrency_service.go`: `AcquireAccountSlot`; `account.go`: `EffectiveLoadFactor` |
 
 Relay Pool will reuse behavioral ideas and numeric defaults where appropriate, while using its own Rust types, storage, error model, and tests. The implementation should add an attribution note in project documentation that identifies the upstream repository, reviewed commit, and the fact that the scheduler is an independent implementation inspired by Sub2API.
 
@@ -182,7 +202,7 @@ Add or formalize these fields on `station_keys`:
 | Field | Type | Default | Purpose |
 |---|---|---:|---|
 | `max_concurrency` | integer | `3` | Maximum simultaneous requests for the key. `0` means unlimited, matching Sub2API account semantics. |
-| `load_factor` | nullable integer | `NULL` | Optional scheduling capacity used to calculate load. When absent, use `max_concurrency`; when both are non-positive, use neutral load. |
+| `load_factor` | nullable integer | `NULL` | Optional scheduling capacity used only to calculate scheduler load. When absent or non-positive, use positive `max_concurrency`; when both are non-positive, use `1`, matching Sub2API `EffectiveLoadFactor()`. |
 | `schedulable` | boolean | `true` | Automatic scheduling switch distinct from manual asset enablement. |
 | `manual_rate_multiplier` | nullable real | `NULL` | Explicit user-owned multiplier override for stations that cannot provide a trustworthy collected multiplier. |
 | `manual_rate_updated_at` | nullable timestamp | `NULL` | Audit timestamp for the manual multiplier override. |
@@ -200,6 +220,13 @@ Existing fields remain inputs:
 - secret availability
 
 `enabled` means the key asset is manually enabled. `schedulable` means the scheduler may choose it. Both must be true.
+
+Field validation:
+
+- `max_concurrency` must be `>= 0`; `0` means unlimited slot acquisition.
+- `load_factor` must be `NULL` or an integer in `[1, 10000]`, matching Sub2API's administrative bound.
+- `manual_rate_multiplier` must be `NULL` or finite and `>= 0`.
+- `manual_rate_updated_at` is written by the application whenever the override is created, changed, or cleared; clients do not supply it directly.
 
 ### 6.2 Effective Multiplier Fact
 
@@ -222,6 +249,8 @@ Resolution order:
 1. Explicit manual Station Key multiplier override.
 2. Explicit trusted Station Key group binding effective multiplier.
 3. Current collected key/group effective multiplier projection.
+
+Manual overrides produce confidence `1.0`. Collected/binding facts retain their group-rate confidence and are trusted only when their source and binding status are eligible and `confidence >= multiplier_min_confidence`. Do not reuse combined model-pricing confidence as multiplier confidence; model-price completeness is unrelated to whether a group multiplier is trustworthy. The effective fact resolver is the only component allowed to apply this precedence; scoring, affinity, simulation, and forwarding must consume its result instead of reading raw multiplier columns independently.
 
 Do not invent a multiplier from model prices. Do not assume missing multiplier is `1.0`.
 
@@ -320,7 +349,7 @@ Rules:
 
 ### 7.2 Advanced Scheduler Settings
 
-Defaults based on the reviewed Sub2API implementation:
+Defaults use the reviewed Sub2API values except `scheduler_weight_multiplier` and `multiplier_min_confidence`, which are Relay Pool cost-safety extensions:
 
 | Setting | Default |
 |---|---:|
@@ -334,6 +363,7 @@ Defaults based on the reviewed Sub2API implementation:
 | `scheduler_weight_quota_headroom` | `0.0` |
 | `scheduler_weight_previous_response` | `5.0` |
 | `scheduler_weight_session_sticky` | `3.0` |
+| `multiplier_min_confidence` | `0.8` |
 | `sticky_weighted_enabled` | `false` |
 | `sticky_escape_enabled` | `true` |
 | `sticky_escape_ttft_ms` | `15000` |
@@ -350,6 +380,7 @@ Validation:
 - TopK must be positive.
 - Weights must be non-negative.
 - The base weights from multiplier through quota headroom must not all be zero.
+- Multiplier confidence threshold must be finite and in `[0, 1]`.
 - Error-rate threshold must be in `[0, 1]`.
 - TTL, queue, and timeout values must be positive.
 
@@ -425,7 +456,7 @@ Eligibility is ordered and produces structured decision facts.
 7. Budget gate:
    - `effective_multiplier <= max_rate_multiplier`.
 
-The hard budget rule must be asserted again immediately before upstream forwarding using the request snapshot. A candidate cannot be admitted through a later fallback path if it failed any hard gate.
+The hard budget rule must be asserted again immediately before upstream forwarding. Keep the request's configured ceiling immutable for its lifetime, but re-resolve the selected key's latest effective multiplier fact and recheck trust, freshness, binding, and `value <= request_ceiling`. If that fact changed or expired, exclude the key and reschedule; never rely only on the earlier candidate snapshot. A candidate cannot be admitted through affinity, weighted-sticky fallback, fresh-load retry, or a wait plan if it failed any hard gate.
 
 ## 10. Scoring Formula
 
@@ -465,7 +496,7 @@ load_rate = in_flight / effective_capacity
 load_factor_score = 1 - clamp(load_rate, 0, 1)
 ```
 
-When capacity is unlimited or cannot be determined, use a neutral load factor rather than claiming the key is empty.
+If both `load_factor` and `max_concurrency` are non-positive, set `effective_capacity = 1`, matching Sub2API. This is intentionally separate from slot acquisition: `max_concurrency <= 0` still means unlimited real concurrency, while the effective capacity used for load scoring is never below `1`.
 
 ### 10.4 Queue Factor
 
@@ -500,6 +531,8 @@ else:
 Default weight is `0`. This implementation does not derive quota headroom. Enabling it requires a separate future specification backed by trustworthy key-scoped limit facts; station-only balance must not pretend to be key-specific headroom.
 
 ### 10.8 Base Score
+
+Sub2API's reviewed base score starts at priority and does not contain multiplier. Relay Pool prepends the multiplier term below to satisfy the approved low-cost objective after the hard ceiling has already filtered candidates. All remaining terms and defaults mirror Sub2API.
 
 ```text
 base_score =
@@ -539,10 +572,12 @@ weight = (score - minimum_score_in_top_k) + 1
 
 The generated order is the immediate slot-acquisition order. It is not merely a display order.
 
-Deterministic sorting before weighted selection:
+TopK ranking and deterministic tie-breaks match Sub2API:
 
 - score descending;
 - priority ascending;
+- load rate ascending;
+- waiting count ascending;
 - Station Key ID ascending.
 
 This makes tests and explanations stable while retaining weighted distribution.
@@ -560,12 +595,16 @@ Behavior:
 3. Re-run every hard eligibility gate against the bound key.
 4. Apply sticky-escape checks.
 5. If the key has a free slot, select it immediately.
-6. If it is full and sticky waiting is available, return a sticky wait plan.
-7. If its sticky queue is full or it escapes, continue into normal scoring without deleting a still-valid binding unless the underlying eligibility failure requires clearing it.
+6. If it is full and sticky escape is enabled, escape immediately with reason `concurrency_full` and continue into normal scoring.
+7. If it is full and sticky escape is disabled, return the Sub2API sticky wait plan.
+8. If its sticky queue is full at wait-plan execution, fall through to normal load-aware scheduling.
+9. Escaping for TTFT, error rate, or concurrency does not delete a still-valid binding. A hard eligibility failure may clear an invalid binding according to the affinity invalidation rules.
 
 ### 12.2 Weighted Affinity Mode
 
-When enabled, affinity adds the Sub2API-style bonuses instead of hard-preselecting the key. The key still must enter the TopK set to receive traffic.
+When enabled, affinity adds the Sub2API-style bonuses before TopK selection. A sticky key must still enter the TopK set. If a previous-response or session sticky key is in TopK, Sub2API moves the first matching sticky key to the front of the immediate acquisition order instead of applying weighted sampling to that first choice; previous-response affinity has precedence over session affinity.
+
+Previous-response affinity is weighted only when the request can safely rebuild/move its context. If it cannot move, previous-response affinity remains a hard direct selection even when weighted affinity is enabled. When every TopK candidate is full, weighted mode rechecks previous-response then session sticky candidates and may return their sticky wait plan before constructing the normal fallback wait plan.
 
 ### 12.3 Sticky Escape
 
@@ -573,8 +612,9 @@ Escape the bound key when any hard gate fails or when:
 
 - TTFT EWMA exceeds `15000 ms`; or
 - error-rate EWMA exceeds `0.5`.
+- the direct-affinity key has no free concurrency slot while sticky escape is enabled.
 
-Record the escape reason as `ttft`, `error_rate`, or the relevant hard-gate reason.
+Record the escape reason as `ttft`, `error_rate`, `concurrency_full`, or the relevant hard-gate reason.
 
 ## 13. Capacity And Waiting
 
@@ -592,14 +632,14 @@ This prevents a stale load cache from forcing an unnecessary queue.
 
 ### 13.2 Sticky Wait Plan
 
-When a direct-affinity key is full:
+When a direct-affinity key is full and sticky escape is disabled, or when weighted-sticky fallback reaches a full sticky key:
 
 - maximum waiting requests: `3`;
 - timeout: `120 seconds`;
 - queue admission must be atomic;
 - queue counter must decrement on acquisition, timeout, cancellation, or error.
 
-If the sticky queue is full, fall through to normal load-aware scheduling.
+If the sticky queue is full, fall through to normal load-aware scheduling. With the default `sticky_escape_enabled = true`, a full direct-session-affinity key escapes before this wait plan is built.
 
 ### 13.3 Fallback Wait Plan
 
@@ -640,6 +680,8 @@ For a retryable pre-output failure:
 5. Do not retry the same key within the request.
 6. Preserve the original requested model.
 7. Stop when no candidate remains or retry budget is exhausted.
+
+Every newly selected attempt, including one obtained after waiting, must repeat the forward-time multiplier and hard-eligibility recheck before any upstream bytes are sent.
 
 ### 14.3 Failure Classification
 
@@ -753,9 +795,10 @@ Use a collapsed advanced section for:
 - sticky weighted mode;
 - sticky escape thresholds;
 - affinity TTLs;
-- sticky/fallback queue sizes and timeouts.
+- sticky/fallback queue sizes and timeouts;
+- multiplier evidence confidence threshold.
 
-Provide a reset-to-Sub2API-defaults command.
+Provide a reset-to-recommended-defaults command. It restores Sub2API's reviewed defaults for mirrored settings plus Relay Pool's multiplier weight and confidence defaults.
 
 ### 17.3 Station Key Editing
 
@@ -824,12 +867,15 @@ No long-lived dual scheduler is allowed.
 - requested model is never substituted;
 - priority normalization matches lower-number-is-better behavior;
 - load, queue, error, and TTFT factors match formulas;
+- non-positive load and concurrency capacity uses `1` for load scoring while concurrency `0` remains unlimited for slot acquisition;
 - missing TTFT uses `0.5`;
 - EWMA uses alpha `0.2`;
 - TopK size is bounded;
+- TopK ties resolve by priority, load rate, waiting count, then Key ID;
 - weighted order uses `(score - min_score) + 1`;
 - seeded selection is stable for the same affinity input;
 - unseeded requests do not permanently hit one key;
+- multiplier scoring is covered as a Relay Pool extension and does not get confused with an upstream Sub2API factor;
 - sticky bonuses match defaults;
 - sticky escape thresholds match defaults.
 
@@ -838,9 +884,10 @@ No long-lived dual scheduler is allowed.
 - free key acquires immediately;
 - full first key tries the next key;
 - stale-load failure triggers one fresh snapshot retry;
-- sticky queue admits at most 3 waiters;
+- sticky queue admits at most 3 waiters when the sticky wait path is reachable;
 - fallback queue admits at most 100 waiters;
-- sticky wait times out at 120 seconds using fake time;
+- direct sticky full escapes without waiting when sticky escape is enabled;
+- sticky wait times out at 120 seconds using fake time when sticky escape is disabled or weighted-sticky fallback is used;
 - fallback wait times out at 30 seconds using fake time;
 - cancellation decrements waiting count;
 - every acquired permit releases exactly once;
@@ -859,8 +906,11 @@ No long-lived dual scheduler is allowed.
 ### 19.4 Affinity Tests
 
 - previous response affinity has precedence;
+- immovable previous-response affinity remains direct even in weighted mode;
 - session affinity works within TTL;
 - affinity cannot bypass hard gates;
+- a weighted sticky key outside TopK receives no traffic;
+- a weighted sticky key inside TopK is attempted first, previous-response before session affinity;
 - model mismatch clears or ignores invalid affinity;
 - unhealthy sticky key escapes;
 - sticky queue full falls back to load-aware scheduling;
@@ -884,7 +934,8 @@ No long-lived dual scheduler is allowed.
 - route simulator and real proxy use the same scheduler path;
 - request logs display scheduler facts;
 - Station Key concurrency and schedulable fields round-trip;
-- local proxy returns stable error codes for budget/capacity failures.
+- local proxy returns stable error codes for budget/capacity failures;
+- a multiplier fact that changes, expires, or rises above the request ceiling after planning is rejected by the forward-time recheck.
 
 ### 19.7 Verification Commands
 
@@ -921,6 +972,7 @@ These invariants are release blockers:
 8. Affinity cannot bypass budget, model, capability, health, or schedulable gates.
 9. Route simulation and real routing use the same scheduler implementation.
 10. Explanations contain no secrets.
+11. The selected key's latest multiplier fact is revalidated immediately before each upstream attempt, including after waiting.
 
 ## 22. Acceptance Criteria
 
