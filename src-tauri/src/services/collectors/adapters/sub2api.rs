@@ -1136,6 +1136,36 @@ fn result_to_balance_endpoint_json(
     })
 }
 
+fn append_balance_endpoint_attempt(endpoint: &mut Value, result: &RecoverableEndpointJsonResult) {
+    let attempt = json!({
+        "url": result.url,
+        "status": result.status,
+        "durationMs": result.duration_ms,
+        "ok": result.ok,
+        "errorMessage": result.error_message,
+    });
+    if endpoint.get("attempts").is_none() {
+        let first_attempt = json!({
+            "url": endpoint.get("url").cloned().unwrap_or(Value::Null),
+            "status": endpoint.get("status").cloned().unwrap_or(Value::Null),
+            "durationMs": endpoint.get("durationMs").cloned().unwrap_or(Value::Null),
+            "ok": endpoint.get("ok").cloned().unwrap_or(Value::Null),
+            "errorMessage": endpoint.get("errorMessage").cloned().unwrap_or(Value::Null),
+        });
+        endpoint["attempts"] = json!([first_attempt]);
+    }
+    if let Some(attempts) = endpoint["attempts"].as_array_mut() {
+        attempts.push(attempt);
+        endpoint["attemptCount"] = json!(attempts.len());
+    }
+    endpoint["url"] = json!(result.url);
+    endpoint["status"] = json!(result.status);
+    endpoint["durationMs"] = json!(result.duration_ms);
+    endpoint["ok"] = json!(result.ok);
+    endpoint["errorMessage"] = json!(result.error_message);
+    endpoint["recoveryActions"] = json!(["transient_retry"]);
+}
+
 fn balance_request_timeout(budget: &CollectionAttemptBudget) -> std::time::Duration {
     budget
         .remaining()
@@ -1229,7 +1259,7 @@ pub fn collect_balance(
     let mut endpoint_results = Vec::new();
     let policy = collector_request_policy();
     let budget = CollectionAttemptBudget::new(policy.task_budget);
-    let mut transient_retry_keys: Vec<(StationKey, String)> = Vec::new();
+    let mut transient_retry_keys: Vec<(StationKey, String, usize)> = Vec::new();
 
     for key in keys {
         let api_key = match database.resolve_station_key_secret_with_data_key(data_key, &key.id) {
@@ -1249,6 +1279,7 @@ pub fn collect_balance(
         let mut redacted = result_to_balance_endpoint_json(&result, &url, &key.id);
         redacted["attemptCount"] = json!(1);
         endpoint_results.push(redacted);
+        let endpoint_index = endpoint_results.len() - 1;
         if result.ok {
             let parsed = result.payload.clone().unwrap_or(Value::Null);
             facts.balances.push(parse_usage_balance(
@@ -1258,7 +1289,7 @@ pub fn collect_balance(
                 station.credit_per_cny,
             ));
         } else if matches!(result.status, None | Some(408 | 429 | 500..=599)) {
-            transient_retry_keys.push((key, api_key));
+            transient_retry_keys.push((key, api_key, endpoint_index));
         }
     }
     for _round in 0..2 {
@@ -1266,7 +1297,7 @@ pub fn collect_balance(
             break;
         }
         let retrying = std::mem::take(&mut transient_retry_keys);
-        for (key, api_key) in retrying {
+        for (key, api_key, endpoint_index) in retrying {
             if budget.remaining().is_none() {
                 break;
             }
@@ -1275,10 +1306,9 @@ pub fn collect_balance(
                 &api_key,
                 balance_request_timeout(&budget),
             );
-            let mut redacted = result_to_balance_endpoint_json(&result, &url, &key.id);
-            redacted["attemptCount"] = json!(2);
-            redacted["recoveryActions"] = json!(["transient_retry"]);
-            endpoint_results.push(redacted);
+            if let Some(endpoint) = endpoint_results.get_mut(endpoint_index) {
+                append_balance_endpoint_attempt(endpoint, &result);
+            }
             if result.ok {
                 let parsed = result.payload.clone().unwrap_or(Value::Null);
                 facts.balances.push(parse_usage_balance(
@@ -1288,7 +1318,7 @@ pub fn collect_balance(
                     station.credit_per_cny,
                 ));
             } else if matches!(result.status, None | Some(408 | 429 | 500..=599)) {
-                transient_retry_keys.push((key, api_key));
+                transient_retry_keys.push((key, api_key, endpoint_index));
             }
         }
     }
@@ -1352,10 +1382,16 @@ fn collect_account_balance_fallback(
     )?;
     let access_token = match session.access_token {
         Some(access_token) => access_token,
-        None => match login_and_store_access_token(database, data_key, station)? {
-            Some(access_token) => access_token,
-            None => return Ok(None),
-        },
+        None => {
+            let Some(remaining) = budget.remaining() else {
+                return Ok(None);
+            };
+            match login_and_store_access_token_with_budget(database, data_key, station, remaining)?
+            {
+                Some(access_token) => access_token,
+                None => return Ok(None),
+            }
+        }
     };
 
     let urls = collector_base_urls(&station.base_url);
@@ -2281,6 +2317,26 @@ mod tests {
 
         assert_eq!(output.status, "success");
         assert_eq!(server.request_order(), vec!["A", "B", "A"]);
+        let routeable_key_count = routeable_keys_for_station(&database, &station.id)
+            .expect("routeable keys")
+            .len();
+        let endpoint_results = output.summary_json["endpointResults"]
+            .as_array()
+            .expect("endpoint results");
+        assert_eq!(
+            endpoint_results.len(),
+            routeable_key_count,
+            "transient retries should update the original key endpoint result instead of adding top-level rows"
+        );
+        let retried_endpoint = endpoint_results
+            .iter()
+            .find(|endpoint| endpoint["recoveryActions"] == json!(["transient_retry"]))
+            .expect("retried endpoint");
+        assert_eq!(retried_endpoint["attemptCount"], json!(2));
+        assert_eq!(
+            retried_endpoint["attempts"].as_array().map(Vec::len),
+            Some(2)
+        );
     }
 
     struct TestGroupServer {
