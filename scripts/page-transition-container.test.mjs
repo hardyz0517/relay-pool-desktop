@@ -37,6 +37,26 @@ assert.ok(
 );
 
 assert.ok(
+  appSource.includes('inert?: "" | undefined'),
+  "React inert typing should allow the empty string attribute value",
+);
+
+assert.ok(
+  appSource.includes('inert={inert ? "" : undefined}'),
+  "inactive shell layers should render inert as an empty string attribute",
+);
+
+assert.ok(
+  appSource.includes('inert={!isCurrentTransientPage ? "" : undefined}'),
+  "inactive transient layers should render inert as an empty string attribute",
+);
+
+assert.ok(
+  appSource.includes('inert=""'),
+  "exiting transient overlays should explicitly render the inert attribute",
+);
+
+assert.ok(
   appSource.includes("<PageActivityProvider active={isCurrentTransientPage}>") &&
     appSource.includes("<PageActivityProvider active={false}>"),
   "transient pages should have explicit active/inactive PageActivityProvider contexts",

@@ -27,7 +27,7 @@ import type { Station } from "@/lib/types/stations";
 
 declare module "react" {
   interface HTMLAttributes<T> {
-    inert?: boolean | undefined;
+    inert?: "" | undefined;
   }
 }
 
@@ -279,7 +279,7 @@ export function App() {
                 data-page-transition-kind="shell"
                 data-page-transition-direction="none"
                 data-page-transition-state={active ? "active" : "inactive"}
-                inert={inert || undefined}
+                inert={inert ? "" : undefined}
               >
                 {renderShellPage(routeId)}
               </div>
@@ -296,7 +296,7 @@ export function App() {
               data-page-transition-kind="transient"
               data-page-transition-direction={activeTransitionPolicy.enterDirection}
               data-page-transition-state="active"
-              inert={!isCurrentTransientPage || undefined}
+              inert={!isCurrentTransientPage ? "" : undefined}
             >
               {activeTransientPage.node}
             </div>
@@ -314,7 +314,7 @@ export function App() {
                 getPageTransitionPolicy(exitingTransientPage.pageId).exitDirection
               }
               data-page-transition-state="exiting"
-              inert
+              inert=""
               onAnimationEnd={handleTransientExitAnimationEnd}
             >
               {exitingTransientPage.node}
