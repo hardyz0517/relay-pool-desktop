@@ -272,9 +272,16 @@ fn execute_json_with_auth_context(
                     return Err(permanent_error(text));
                 }
                 let payload = serde_json::from_str::<Value>(&text).unwrap_or(Value::Null);
-                let data = parsers::envelope_data(&payload)
-                    .map_err(|error| permanent_error(error.message))?
-                    .clone();
+                let data = match parsers::envelope_data(&payload) {
+                    Ok(data) => data.clone(),
+                    Err(_error)
+                        if operation == NewApiOperation::CreateToken
+                            && payload.get("success").and_then(Value::as_bool) == Some(true) =>
+                    {
+                        Value::Null
+                    }
+                    Err(error) => return Err(permanent_error(error.message)),
+                };
                 return Ok(NewApiResponse {
                     data,
                     endpoint_result,

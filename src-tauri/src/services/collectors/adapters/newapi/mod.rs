@@ -22,8 +22,6 @@ use crate::services::{
     outbound::{agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
 };
 
-const NEWAPI_REMOTE_KEY_CREATE_UNSUPPORTED: &str =
-    "NewAPI 远端 Key 创建将在创建后对账阶段适配；当前支持扫描列表和显式同步远端 Key。";
 const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const NEWAPI_REMOTE_KEY_PAGE_SIZE: usize = 100;
 
@@ -40,10 +38,10 @@ pub fn remote_key_capability(station: &Station) -> Result<RemoteKeyCapability, S
         station_id: station.id.clone(),
         station_type: station.station_type.trim().to_string(),
         can_list_remote_keys: true,
-        can_create_remote_key: false,
+        can_create_remote_key: true,
         can_read_groups: true,
         requires_manual_session: true,
-        unsupported_reason: Some(NEWAPI_REMOTE_KEY_CREATE_UNSUPPORTED.to_string()),
+        unsupported_reason: None,
     })
 }
 
@@ -66,42 +64,63 @@ pub fn scan_remote_key_full_secret(
     let station = database.station_for_collector(station_id)?;
     let tokens = fetch_newapi_token_items(database, data_key, &station)?;
     for (index, value) in tokens.iter().enumerate() {
-        let Some(mut remote_key) = remote_key_from_value(&station.id, value, index) else {
+        let Some(remote_key) = remote_key_from_value(&station.id, value, index) else {
             continue;
         };
         if remote_key.id != remote_key_id {
             continue;
         }
-        let token_id = string_field(value, &["id", "token_id", "tokenId"])
-            .ok_or_else(|| "NewAPI 远端 Key 缺少 token id，无法读取完整 Key。".to_string())?;
-        let response = client::post_authenticated_json(
-            database,
-            data_key,
-            &station,
-            &format!("/api/token/{token_id}/key"),
-            client::NewApiOperation::RevealToken,
-            json!({}),
-        )
-        .map_err(newapi_request_error_message)?;
-        let full_key = full_key_from_reveal_payload(&response.data).ok_or_else(|| {
-            "NewAPI reveal 响应没有返回完整 Key，无法自动保存到本地。请到网站复制后手动补全。"
-                .to_string()
-        })?;
-        remote_key.api_key_masked = Some(crate::services::secrets::mask::mask_secret(&full_key));
-        remote_key.api_key_fingerprint =
-            crate::services::remote_keys::api_key_fingerprint(&full_key);
-        return Ok((remote_key, full_key));
+        return reveal_full_key_for_token_value(database, data_key, &station, value, index);
     }
 
     Err("远端 Key 已不存在，无法创建本地 Key。".to_string())
 }
 
 pub fn create_remote_key(
-    _database: &AppDatabase,
-    _data_key: &[u8; 32],
-    _input: CreateRemoteStationKeyInput,
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    input: CreateRemoteStationKeyInput,
 ) -> Result<CreatedRemoteKey, String> {
-    Err(NEWAPI_REMOTE_KEY_CREATE_UNSUPPORTED.to_string())
+    let station = database.station_for_collector(&input.station_id)?;
+    let mut body = json!({
+        "name": input.name,
+    });
+    if let Some(group_name) = input
+        .group_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        body["group"] = json!(group_name);
+    }
+    client::post_authenticated_json(
+        database,
+        data_key,
+        &station,
+        "/api/token/",
+        client::NewApiOperation::CreateToken,
+        body,
+    )
+    .map_err(newapi_request_error_message)?;
+
+    let tokens = fetch_newapi_token_items(database, data_key, &station)?;
+    for (index, value) in tokens.iter().enumerate() {
+        if !created_token_matches(value, &input.name) {
+            continue;
+        }
+        let (remote_key, full_key_once) =
+            reveal_full_key_for_token_value(database, data_key, &station, value, index)?;
+        return Ok(CreatedRemoteKey {
+            remote_key,
+            full_key_once: Some(full_key_once),
+            message: "NewAPI 远端 Key 已创建。".to_string(),
+        });
+    }
+
+    Err(
+        "NewAPI 远端 Key 已创建，但未能在列表中对账找到新 Key。请扫描远端 Key 后手动同步。"
+            .to_string(),
+    )
 }
 
 fn fetch_newapi_token_items(
@@ -149,6 +168,43 @@ fn parse_remote_key_items(station_id: &str, items: &[Value]) -> Vec<RemoteStatio
         .enumerate()
         .filter_map(|(index, value)| remote_key_from_value(station_id, value, index))
         .collect()
+}
+
+fn created_token_matches(value: &Value, expected_name: &str) -> bool {
+    let expected_name = expected_name.trim();
+    string_field(value, &["name", "key_name", "keyName", "label", "remark"])
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|name| !expected_name.is_empty() && name == expected_name)
+}
+
+fn reveal_full_key_for_token_value(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &Station,
+    value: &Value,
+    index: usize,
+) -> Result<(RemoteStationKey, String), String> {
+    let mut remote_key = remote_key_from_value(&station.id, value, index)
+        .ok_or_else(|| "NewAPI 远端 Key 响应缺少可识别身份。".to_string())?;
+    let token_id = string_field(value, &["id", "token_id", "tokenId"])
+        .ok_or_else(|| "NewAPI 远端 Key 缺少 token id，无法读取完整 Key。".to_string())?;
+    let response = client::post_authenticated_json(
+        database,
+        data_key,
+        station,
+        &format!("/api/token/{token_id}/key"),
+        client::NewApiOperation::RevealToken,
+        json!({}),
+    )
+    .map_err(newapi_request_error_message)?;
+    let full_key = full_key_from_reveal_payload(&response.data).ok_or_else(|| {
+        "NewAPI reveal 响应没有返回完整 Key，无法自动保存到本地。请到网站复制后手动补全。"
+            .to_string()
+    })?;
+    remote_key.api_key_masked = Some(crate::services::secrets::mask::mask_secret(&full_key));
+    remote_key.api_key_fingerprint = crate::services::remote_keys::api_key_fingerprint(&full_key);
+    Ok((remote_key, full_key))
 }
 
 fn remote_key_items(payload: &Value) -> Vec<&Value> {
@@ -897,6 +953,70 @@ mod tests {
 
         assert!(!error.trim().is_empty());
         assert_eq!(requests.len(), 3);
+    }
+
+    #[test]
+    fn create_remote_key_posts_token_then_reconciles_and_reveals_secret() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(200, json!({"success": true, "message": ""}))),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 1,
+                        "items": [{
+                            "id": 301,
+                            "name": "relay-created",
+                            "key": "sk-crt**********f260",
+                            "group": "vip"
+                        }]
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "key": "sk-created-secret-f260" }
+                }),
+            )),
+        ]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let created = create_remote_key(
+            &database,
+            &data_key,
+            CreateRemoteStationKeyInput {
+                station_id: station.id.clone(),
+                name: "relay-created".to_string(),
+                group_binding_id: None,
+                group_id_hash: None,
+                group_name: Some("vip".to_string()),
+            },
+        )
+        .expect("created remote key");
+        let requests = server.finish();
+
+        assert_eq!(
+            created.remote_key.remote_key_name.as_deref(),
+            Some("relay-created")
+        );
+        assert_eq!(created.remote_key.group_name.as_deref(), Some("vip"));
+        assert_eq!(
+            created.full_key_once.as_deref(),
+            Some("sk-created-secret-f260")
+        );
+        assert!(requests[0].starts_with("POST /api/token/ "));
+        assert!(requests[0].contains("\"name\":\"relay-created\""));
+        assert!(requests[0].contains("\"group\":\"vip\""));
+        assert!(requests[1].starts_with("GET /api/token/?p=1&page_size=100 "));
+        assert!(requests[2].starts_with("POST /api/token/301/key "));
     }
 
     fn test_station(database: &AppDatabase, base_url: &str) -> Station {

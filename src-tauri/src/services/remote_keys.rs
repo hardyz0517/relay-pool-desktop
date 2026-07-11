@@ -104,7 +104,14 @@ pub fn create_remote_key(
     let full_key = full_key_once
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "远端站点未返回完整 Key，无法保存到本地 Station Key。".to_string())?;
-    save_created_remote_key(database, data_key, remote_key, full_key, message)
+    save_created_remote_key(
+        database,
+        data_key,
+        remote_key,
+        full_key,
+        message,
+        capability.station_type != "newapi",
+    )
 }
 
 pub fn create_local_key_from_remote_key(
@@ -133,6 +140,7 @@ pub fn create_local_key_from_remote_key(
         remote_key,
         full_key,
         "远端 Key 已同步为本地 Station Key。".to_string(),
+        false,
     )?;
     Ok(CreateLocalStationKeyFromRemoteResult {
         remote_key: result.remote_key,
@@ -210,6 +218,7 @@ fn save_created_remote_key(
     remote_key: RemoteStationKey,
     full_key: String,
     adapter_message: String,
+    expose_full_key_once: bool,
 ) -> Result<CreateRemoteStationKeyResult, String> {
     if full_key.trim().is_empty() {
         return Err("远端站点未返回完整 Key，无法保存到本地 Station Key。".to_string());
@@ -232,7 +241,7 @@ fn save_created_remote_key(
         return Ok(CreateRemoteStationKeyResult {
             remote_key,
             station_key,
-            full_key_once: Some(full_key),
+            full_key_once: expose_full_key_once.then(|| full_key.clone()),
             message: if adapter_message.trim().is_empty() {
                 "远端 Key 已创建，并已关联到已有本地 Station Key。".to_string()
             } else {
@@ -276,7 +285,7 @@ fn save_created_remote_key(
     Ok(CreateRemoteStationKeyResult {
         remote_key,
         station_key,
-        full_key_once: Some(full_key),
+        full_key_once: expose_full_key_once.then_some(full_key),
         message: if adapter_message.trim().is_empty() {
             "远端 Key 已创建，并已保存为启用的本地 Station Key。".to_string()
         } else {
@@ -930,6 +939,65 @@ mod tests {
     }
 
     #[test]
+    fn newapi_remote_key_create_saves_secret_without_returning_full_key_once() {
+        let full_key = "sk-newapi-created-secret-f260";
+        let server = TestNewApiCreateKeyServer::start(full_key, 4);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station(CreateStationInput {
+                name: "newapi create key station".to_string(),
+                station_type: "newapi".to_string(),
+                base_url: server.base_url,
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                api_key: String::new(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+        database
+            .update_station_session_with_data_key(
+                UpdateStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: Some("newapi-create-token".to_string()),
+                    refresh_token: None,
+                    cookie: None,
+                    newapi_user_id: Some("42".to_string()),
+                    token_expires_at: None,
+                },
+                &data_key,
+            )
+            .expect("session");
+
+        let result = create_remote_key(
+            &database,
+            &data_key,
+            CreateRemoteStationKeyInput {
+                station_id: station.id.clone(),
+                name: "relay-created".to_string(),
+                group_binding_id: None,
+                group_id_hash: None,
+                group_name: Some("vip".to_string()),
+            },
+        )
+        .expect("create newapi remote key");
+        let saved_secret = database
+            .resolve_station_key_secret_with_data_key(&data_key, &result.station_key.id)
+            .expect("saved secret");
+
+        assert_eq!(saved_secret, full_key);
+        assert_eq!(result.full_key_once, None);
+        assert_eq!(
+            result.remote_key.matched_station_key_id.as_deref(),
+            Some(result.station_key.id.as_str())
+        );
+    }
+
+    #[test]
     fn capability_allows_remote_key_actions_for_supported_station_types() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let station = test_station(&database, "sub2api");
@@ -945,7 +1013,7 @@ mod tests {
     }
 
     #[test]
-    fn capability_does_not_advertise_newapi_remote_key_creation() {
+    fn capability_advertises_newapi_remote_key_actions() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let station = test_station(&database, "newapi");
 
@@ -953,14 +1021,10 @@ mod tests {
 
         assert_eq!(capability.station_type, "newapi");
         assert!(capability.can_list_remote_keys);
-        assert!(!capability.can_create_remote_key);
+        assert!(capability.can_create_remote_key);
         assert!(capability.can_read_groups);
         assert!(capability.requires_manual_session);
-        assert!(capability
-            .unsupported_reason
-            .as_deref()
-            .unwrap_or_default()
-            .contains("创建"));
+        assert_eq!(capability.unsupported_reason, None);
     }
 
     #[test]
@@ -1093,6 +1157,76 @@ mod tests {
                             .to_string(),
                         )
                     } else if authorized && request.starts_with("POST /api/token/201/key") {
+                        (
+                            "200 OK",
+                            serde_json::json!({
+                                "success": true,
+                                "data": { "key": full_key }
+                            })
+                            .to_string(),
+                        )
+                    } else {
+                        (
+                            "401 Unauthorized",
+                            serde_json::json!({ "message": "unauthorized" }).to_string(),
+                        )
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    stream
+                        .write_all(response.as_bytes())
+                        .expect("write response");
+                }
+            });
+            Self { base_url }
+        }
+    }
+
+    struct TestNewApiCreateKeyServer {
+        base_url: String,
+    }
+
+    impl TestNewApiCreateKeyServer {
+        fn start(full_key: &'static str, requests: usize) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            thread::spawn(move || {
+                for stream in listener.incoming().take(requests).flatten() {
+                    let mut stream = stream;
+                    let mut buffer = [0_u8; 4096];
+                    let read = stream.read(&mut buffer).expect("read request");
+                    let request = String::from_utf8_lossy(&buffer[..read]);
+                    let authorized = request
+                        .to_lowercase()
+                        .contains("authorization: bearer newapi-create-token")
+                        && request.contains("New-Api-User: 42");
+                    let (status, body) = if authorized && request.starts_with("POST /api/token/ ") {
+                        (
+                            "200 OK",
+                            serde_json::json!({"success": true, "message": ""}).to_string(),
+                        )
+                    } else if authorized && request.starts_with("GET /api/token/") {
+                        (
+                            "200 OK",
+                            serde_json::json!({
+                                "success": true,
+                                "data": {
+                                    "page": 1,
+                                    "page_size": 100,
+                                    "total": 1,
+                                    "items": [{
+                                        "id": 401,
+                                        "name": "relay-created",
+                                        "key": "sk-new**********f260",
+                                        "group": "vip"
+                                    }]
+                                }
+                            })
+                            .to_string(),
+                        )
+                    } else if authorized && request.starts_with("POST /api/token/401/key") {
                         (
                             "200 OK",
                             serde_json::json!({
