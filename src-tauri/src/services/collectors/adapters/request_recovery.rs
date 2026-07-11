@@ -712,8 +712,7 @@ mod tests {
 
     #[test]
     fn request_recovery_omits_recovery_actions_when_none_ran() {
-        let mut request =
-            |_: &String, _: Duration| result(Some(200), Some(json!({ "ok": true })));
+        let mut request = |_: &String, _: Duration| result(Some(200), Some(json!({ "ok": true })));
 
         let execution = execute_json_request(
             "/api/v1/groups/available",
