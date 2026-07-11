@@ -425,7 +425,12 @@ fn adapter_name_for_station_type(station_type: &str) -> Result<&'static str, Str
 
 fn full_child_tasks(adapter: &str) -> Vec<adapters::CollectorTask> {
     match adapter {
-        "sub2api" | "newapi" => vec![
+        "newapi" => vec![
+            adapters::CollectorTask::Balance,
+            adapters::CollectorTask::Groups,
+            adapters::CollectorTask::Models,
+        ],
+        "sub2api" => vec![
             adapters::CollectorTask::Balance,
             adapters::CollectorTask::Groups,
         ],
@@ -868,6 +873,18 @@ mod tests {
                 .and_then(Value::as_array)
                 .map(Vec::len),
             Some(2)
+        );
+    }
+
+    #[test]
+    fn newapi_full_child_tasks_include_models_after_groups() {
+        assert_eq!(
+            full_child_tasks("newapi"),
+            vec![
+                adapters::CollectorTask::Balance,
+                adapters::CollectorTask::Groups,
+                adapters::CollectorTask::Models,
+            ]
         );
     }
 

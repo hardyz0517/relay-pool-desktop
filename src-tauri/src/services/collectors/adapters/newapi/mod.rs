@@ -86,14 +86,9 @@ pub fn collect(
             error_message: None,
             facts: CollectorFacts::default(),
         }),
-        CollectorTask::Balance | CollectorTask::Groups => {
+        CollectorTask::Balance | CollectorTask::Groups | CollectorTask::Models => {
             collect_balance_and_groups(database, data_key, station_id, task)
         }
-        CollectorTask::Models => unsupported_output(
-            task,
-            "unsupported_task",
-            "NewAPI adapter 暂不支持模型列表采集。",
-        ),
         CollectorTask::Full => {
             unsupported_output(task, "internal_task", "Full 采集由父任务拆分为子任务执行。")
         }
@@ -123,13 +118,202 @@ fn unsupported_output(
     })
 }
 
+fn build_balance_output(
+    station_id: &str,
+    data: &Value,
+    status: &parsers::NewApiStatus,
+    endpoint_result: Value,
+) -> AdapterOutput {
+    let mut facts = CollectorFacts::default();
+    facts.balances.push(parsers::parse_balance_fact(
+        station_id,
+        data,
+        status.quota_per_unit,
+        status.used_fallback,
+    ));
+    let balance_count = facts.balances.len();
+    AdapterOutput {
+        adapter: "newapi".to_string(),
+        task: CollectorTask::Balance,
+        status: if balance_count == 0 {
+            "partial"
+        } else {
+            "success"
+        }
+        .to_string(),
+        summary_json: json!({
+            "adapter": "newapi",
+            "task": "balance",
+            "quotaPerUnit": status.quota_per_unit,
+            "quotaPerUnitFallback": status.used_fallback,
+            "endpointResults": [endpoint_result],
+        }),
+        normalized_json: json!({
+            "balanceCount": balance_count,
+            "models": [],
+        }),
+        raw_json_redacted: None,
+        error_code: (balance_count == 0).then(|| "empty_balance_facts".to_string()),
+        error_message: (balance_count == 0)
+            .then(|| "NewAPI balance response did not contain quota facts".to_string()),
+        facts,
+    }
+}
+
+fn build_groups_output(station_id: &str, data: &Value, endpoint_result: Value) -> AdapterOutput {
+    let facts = parsers::parse_group_facts(station_id, data);
+    let group_count = facts.groups.len();
+    let rate_count = facts.rates.len();
+    AdapterOutput {
+        adapter: "newapi".to_string(),
+        task: CollectorTask::Groups,
+        status: if group_count == 0 {
+            "partial"
+        } else {
+            "success"
+        }
+        .to_string(),
+        summary_json: json!({
+            "adapter": "newapi",
+            "task": "groups",
+            "endpointResults": [endpoint_result],
+        }),
+        normalized_json: json!({
+            "groupCount": group_count,
+            "rateCount": rate_count,
+            "groups": facts.groups.iter().map(|group| json!({
+                "groupId": group.group_id,
+                "groupIdHash": group.group_key_hash,
+                "groupName": group.group_name,
+            })).collect::<Vec<_>>(),
+            "rateMultipliers": facts.rates.iter().map(|rate| json!({
+                "groupId": rate.group_id,
+                "groupIdHash": rate.group_key_hash,
+                "groupName": rate.group_name,
+                "effectiveRateMultiplier": rate.effective_rate_multiplier,
+            })).collect::<Vec<_>>(),
+            "models": [],
+        }),
+        raw_json_redacted: None,
+        error_code: (group_count == 0).then(|| "empty_group_facts".to_string()),
+        error_message: (group_count == 0)
+            .then(|| "NewAPI groups response did not contain group facts".to_string()),
+        facts,
+    }
+}
+
+fn build_models_output(station_id: &str, data: &Value, endpoint_result: Value) -> AdapterOutput {
+    let mut facts = CollectorFacts::default();
+    facts.models = parsers::parse_models(station_id, data);
+    let model_names = facts
+        .models
+        .iter()
+        .map(|model| model.model.clone())
+        .collect::<Vec<_>>();
+    AdapterOutput {
+        adapter: "newapi".to_string(),
+        task: CollectorTask::Models,
+        status: if model_names.is_empty() {
+            "partial"
+        } else {
+            "success"
+        }
+        .to_string(),
+        summary_json: json!({
+            "adapter": "newapi",
+            "task": "models",
+            "endpointResults": [endpoint_result],
+        }),
+        normalized_json: json!({
+            "models": model_names,
+        }),
+        raw_json_redacted: None,
+        error_code: facts
+            .models
+            .is_empty()
+            .then(|| "empty_model_facts".to_string()),
+        error_message: facts
+            .models
+            .is_empty()
+            .then(|| "NewAPI models response did not contain model facts".to_string()),
+        facts,
+    }
+}
+
 pub fn collect_balance_and_groups(
     database: &AppDatabase,
     data_key: &[u8; 32],
     station_id: &str,
     task: CollectorTask,
 ) -> Result<AdapterOutput, String> {
+    collect_authenticated_task(database, data_key, station_id, task)
+}
+
+fn collect_authenticated_task(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station_id: &str,
+    task: CollectorTask,
+) -> Result<AdapterOutput, String> {
     let station = database.station_for_collector(station_id)?;
+    if task == CollectorTask::Balance {
+        let (status, _) = fetch_status(database, &station)?;
+        let response = client::get_authenticated_json(
+            database,
+            data_key,
+            &station,
+            "/api/user/self",
+            client::NewApiOperation::SelfInfo,
+        )
+        .map_err(newapi_request_error_message)?;
+        return Ok(build_balance_output(
+            station_id,
+            &response.data,
+            &status,
+            response.endpoint_result,
+        ));
+    }
+    if task == CollectorTask::Groups {
+        let response = client::get_authenticated_json(
+            database,
+            data_key,
+            &station,
+            "/api/user/self/groups",
+            client::NewApiOperation::Groups,
+        )
+        .map_err(newapi_request_error_message)?;
+        return Ok(build_groups_output(
+            station_id,
+            &response.data,
+            response.endpoint_result,
+        ));
+    }
+    if task == CollectorTask::Models {
+        let response = client::get_authenticated_json(
+            database,
+            data_key,
+            &station,
+            "/api/user/models",
+            client::NewApiOperation::Models,
+        )
+        .map_err(newapi_request_error_message)?;
+        return Ok(build_models_output(
+            station_id,
+            &response.data,
+            response.endpoint_result,
+        ));
+    }
+    unsupported_output(
+        task,
+        "unsupported_task",
+        "NewAPI adapter does not run this task directly.",
+    )
+}
+
+fn fetch_status(
+    database: &AppDatabase,
+    station: &Station,
+) -> Result<(parsers::NewApiStatus, Value), String> {
     let settings = database.get_settings()?;
     let proxy = resolve_proxy_config(
         &station.collector_proxy_mode,
@@ -137,75 +321,33 @@ pub fn collect_balance_and_groups(
         &settings.collector_proxy_mode,
         settings.collector_proxy_url,
     );
-    let credentials = database.get_station_credentials(station_id.to_string())?;
-    let Some(user_id) = credentials.newapi_user_id.clone() else {
-        return manual_required_output(
-            "newapi",
-            task,
-            "newapi_user_id_required",
-            "NewAPI 采集需要 User ID。",
-        );
-    };
-    let session = database.resolve_station_session_with_data_key(
-        station_id.to_string(),
-        data_key,
-        crate::services::database::now_millis_for_services() as i64,
-    )?;
-    let Some(access_token) = session.access_token else {
-        return manual_required_output(
-            "newapi",
-            task,
-            "manual_session_required",
-            "NewAPI 采集需要 access token。",
-        );
-    };
-
     let urls = collector_base_urls(&station.base_url);
-    let mut facts = CollectorFacts::default();
+    let url = join_url(&urls.management_base_url, "/api/status");
     let mut endpoint_results = Vec::new();
-
-    if matches!(task, CollectorTask::Balance | CollectorTask::Full) {
-        let url = join_url(&urls.management_base_url, "/api/user/self");
-        let payload =
-            get_newapi_json(&url, &access_token, &user_id, &proxy, &mut endpoint_results)?;
-        let data = parsers::envelope_data(&payload).map_err(|error| error.message)?;
-        facts.balances.push(parse_newapi_balance(station_id, data));
-    }
-    if matches!(task, CollectorTask::Groups | CollectorTask::Full) {
-        let url = join_url(&urls.management_base_url, "/api/user/self/groups");
-        let payload =
-            get_newapi_json(&url, &access_token, &user_id, &proxy, &mut endpoint_results)?;
-        let data = parsers::envelope_data(&payload).map_err(|error| error.message)?;
-        let group_facts = parse_newapi_group_facts(station_id, data);
-        facts.groups.extend(group_facts.groups);
-        facts.rates.extend(group_facts.rates);
-    }
-
-    Ok(AdapterOutput {
-        adapter: "newapi".to_string(),
-        task,
-        status: "success".to_string(),
-        summary_json: json!({
-            "adapter": "newapi",
-            "task": task.as_str(),
-            "endpointResults": endpoint_results,
-        }),
-        normalized_json: json!({
-            "balanceCount": facts.balances.len(),
-            "groupCount": facts.groups.len(),
-            "rateCount": facts.rates.len(),
-        }),
-        raw_json_redacted: Some(json!({ "endpointResults": endpoint_results })),
-        error_code: None,
-        error_message: None,
-        facts,
-    })
+    let payload = get_newapi_public_json(&url, &proxy, &mut endpoint_results)?;
+    let data = parsers::envelope_data(&payload).unwrap_or(&payload);
+    let endpoint_result = endpoint_results.into_iter().next().unwrap_or_else(|| {
+        json!({
+            "url": url,
+            "status": null,
+            "ok": false,
+        })
+    });
+    Ok((parsers::parse_status(data), endpoint_result))
 }
 
-fn get_newapi_json(
+fn newapi_request_error_message(error: client::NewApiRequestError) -> String {
+    match error {
+        client::NewApiRequestError::AuthRequired { message, .. }
+        | client::NewApiRequestError::ManualRequired { message, .. }
+        | client::NewApiRequestError::Transient { message, .. }
+        | client::NewApiRequestError::OutcomeUnknown { message, .. }
+        | client::NewApiRequestError::Permanent { message, .. } => message,
+    }
+}
+
+fn get_newapi_public_json(
     url: &str,
-    access_token: &str,
-    user_id: &str,
     proxy: &ProxyConfig,
     endpoint_results: &mut Vec<Value>,
 ) -> Result<Value, String> {
@@ -227,8 +369,6 @@ fn get_newapi_json(
     let response = match agent
         .get(url)
         .timeout(COLLECTOR_HTTP_TIMEOUT)
-        .set("Authorization", &format!("Bearer {access_token}"))
-        .set("New-Api-User", user_id)
         .set("Content-Type", "application/json")
         .call()
     {
@@ -260,25 +400,6 @@ fn get_newapi_json(
     } else {
         Err(crate::services::secrets::mask::redact_text(&text))
     }
-}
-
-fn manual_required_output(
-    adapter: &str,
-    task: CollectorTask,
-    code: &str,
-    message: &str,
-) -> Result<AdapterOutput, String> {
-    Ok(AdapterOutput {
-        adapter: adapter.to_string(),
-        task,
-        status: "manual_required".to_string(),
-        summary_json: json!({ "adapter": adapter, "task": task.as_str(), "message": message }),
-        normalized_json: json!({ "balanceCount": 0, "groupCount": 0, "rateCount": 0 }),
-        raw_json_redacted: None,
-        error_code: Some(code.to_string()),
-        error_message: Some(message.to_string()),
-        facts: CollectorFacts::default(),
-    })
 }
 
 fn stable_group_key_hash(
@@ -346,5 +467,33 @@ mod tests {
         assert!(facts.rates.iter().any(|rate| {
             rate.group_name == "vip" && rate.effective_rate_multiplier == Some(0.8)
         }));
+    }
+
+    #[test]
+    fn models_snapshot_keeps_top_level_models_contract() {
+        let output = build_models_output(
+            "station-1",
+            parsers::envelope_data(
+                &json!({"success": true, "data": ["gpt-4.1-mini", "claude-sonnet"]}),
+            )
+            .expect("model data"),
+            json!({"path": "/api/user/models", "status": 200, "ok": true}),
+        );
+        assert_eq!(
+            output.normalized_json["models"],
+            json!(["gpt-4.1-mini", "claude-sonnet"])
+        );
+        assert_eq!(output.facts.models.len(), 2);
+    }
+
+    #[test]
+    fn empty_successful_group_payload_is_partial() {
+        let output = build_groups_output(
+            "station-1",
+            parsers::envelope_data(&json!({"success": true, "data": {}})).expect("group data"),
+            json!({"path": "/api/user/self/groups", "status": 200, "ok": true}),
+        );
+        assert_eq!(output.status, "partial");
+        assert_eq!(output.error_code.as_deref(), Some("empty_group_facts"));
     }
 }
