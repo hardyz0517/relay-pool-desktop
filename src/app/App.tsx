@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageActivityProvider } from "@/components/shell/PageActivity";
+import { getShellRouteId, isShellPage } from "@/app/pageTransitionPolicy";
 import { CollectorsPage } from "@/features/collectors/CollectorsPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { LogsPage } from "@/features/logs/LogsPage";
@@ -185,30 +186,3 @@ export function App() {
   );
 }
 
-function isShellPage(pageId: AppPageId): pageId is AppRouteId {
-  return (
-    pageId === "dashboard" ||
-    pageId === "stations" ||
-    pageId === "keyPool" ||
-    pageId === "routing" ||
-    pageId === "pricing" ||
-    pageId === "channels" ||
-    pageId === "collectors" ||
-    pageId === "changes" ||
-    pageId === "logs" ||
-    pageId === "settings"
-  );
-}
-
-function getShellRouteId(pageId: AppPageId): AppRouteId {
-  if (pageId === "addProvider" || pageId === "editProvider" || pageId === "stationDetail") {
-    return "stations";
-  }
-  if (pageId === "addKey" || pageId === "editKey") {
-    return "keyPool";
-  }
-  if (pageId === "modelBasePrices") {
-    return "pricing";
-  }
-  return pageId;
-}
