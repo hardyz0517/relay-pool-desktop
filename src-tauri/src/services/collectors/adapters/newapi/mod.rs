@@ -798,6 +798,56 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    #[ignore = "requires RELAY_POOL_LIVE_NEWAPI_RUN=1 plus live NewAPI credentials in env"]
+    fn live_newapi_password_login_and_collects_core_facts_from_env() {
+        if std::env::var("RELAY_POOL_LIVE_NEWAPI_RUN").as_deref() != Ok("1") {
+            return;
+        }
+        let base_url = std::env::var("RELAY_POOL_LIVE_NEWAPI_BASE_URL")
+            .expect("RELAY_POOL_LIVE_NEWAPI_BASE_URL");
+        let username = std::env::var("RELAY_POOL_LIVE_NEWAPI_USERNAME")
+            .expect("RELAY_POOL_LIVE_NEWAPI_USERNAME");
+        let password = std::env::var("RELAY_POOL_LIVE_NEWAPI_PASSWORD")
+            .expect("RELAY_POOL_LIVE_NEWAPI_PASSWORD");
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station(CreateStationInput {
+                name: "live newapi smoke".to_string(),
+                station_type: "newapi".to_string(),
+                base_url,
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                api_key: String::new(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+
+        let login = login_with_password(&database, &data_key, &station, &username, &password)
+            .expect("login");
+        assert!(
+            login.cookie_present,
+            "NewAPI live login did not return a usable cookie session"
+        );
+
+        for task in [
+            CollectorTask::Balance,
+            CollectorTask::Groups,
+            CollectorTask::Models,
+        ] {
+            let output = collect(&database, &data_key, &station.id, task).expect("collect task");
+            assert!(
+                output.status == "success" || output.status == "partial",
+                "live NewAPI task returned unexpected status"
+            );
+        }
+    }
+
+    #[test]
     fn newapi_quota_converts_to_usd_units() {
         let fact = parse_newapi_balance(
             "station-1",
