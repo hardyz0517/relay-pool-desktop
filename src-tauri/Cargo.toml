@@ -1,6 +1,6 @@
 [package]
 name = "relay-pool-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local desktop AI relay pool manager"
 authors = ["Relay Pool Desktop contributors"]
 edition = "2021"
