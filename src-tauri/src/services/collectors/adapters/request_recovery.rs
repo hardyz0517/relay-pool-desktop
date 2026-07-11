@@ -82,6 +82,7 @@ pub struct AttemptRecord {
     pub ok: bool,
     pub duration_ms: i64,
     pub failure_kind: Option<FailureKind>,
+    pub action: &'static str,
 }
 
 #[derive(Debug, Clone)]
@@ -111,7 +112,7 @@ impl RequestExecution {
             "url": self.result.url,
             "status": self.result.status,
             "ok": self.result.ok,
-            "durationMs": self.result.duration_ms,
+            "durationMs": self.duration_ms,
             "path": self.path,
             "attemptCount": self.attempts.len(),
             "failureKind": self.failure_kind.map(FailureKind::as_str),
@@ -122,25 +123,26 @@ impl RequestExecution {
                 "ok": attempt.ok,
                 "durationMs": attempt.duration_ms,
                 "failureKind": attempt.failure_kind.map(FailureKind::as_str),
+                "action": attempt.action,
             })).collect::<Vec<_>>(),
         })
     }
 }
 
-pub type AuthRefresh<'a, C> = &'a mut dyn FnMut(&C) -> Option<C>;
+pub type AuthRefresh<'a, C> = &'a mut dyn FnMut(&C, Duration) -> Option<C>;
 
 pub fn execute_json_request<C, R>(
     path: &str,
     mut credential: C,
     mut auth_refresh: Option<AuthRefresh<'_, C>>,
     request: &mut R,
-    policy: RequestPolicy,
+    policy: &RequestPolicy,
+    budget: &CollectionAttemptBudget,
 ) -> RequestExecution
 where
     R: FnMut(&C, Duration) -> EndpointJsonResult,
 {
     let started_at = Instant::now();
-    let budget = CollectionAttemptBudget::new(policy.task_budget);
     let max_attempts = policy.max_attempts.min(3);
     let malformed_max = policy.malformed_json_max_attempts.min(2);
     let mut attempts = Vec::new();
@@ -167,6 +169,7 @@ where
             ok: result.ok && failure.is_none(),
             duration_ms: result.duration_ms,
             failure_kind: failure,
+            action: "complete",
         });
         last_result = result;
 
@@ -183,11 +186,18 @@ where
                 break;
             }
             auth_refreshed = true;
+            let Some(remaining) = budget.remaining() else {
+                final_failure = Some(FailureKind::TaskBudgetExhausted);
+                break;
+            };
             match auth_refresh
                 .as_mut()
-                .and_then(|refresh| refresh(&credential))
+                .and_then(|refresh| refresh(&credential, remaining))
             {
                 Some(refreshed) => {
+                    if let Some(attempt) = attempts.last_mut() {
+                        attempt.action = "auth_refresh";
+                    }
                     credential = refreshed;
                     actions.push(RecoveryAction::AuthRefresh);
                     continue;
@@ -224,6 +234,9 @@ where
             break;
         }
         actions.push(RecoveryAction::TransientRetry);
+        if let Some(attempt) = attempts.last_mut() {
+            attempt.action = "transient_retry";
+        }
         if !delay.is_zero() {
             thread::sleep(delay);
         }
@@ -246,6 +259,7 @@ fn classify(result: &EndpointJsonResult) -> Option<FailureKind> {
     match result.status {
         None => Some(FailureKind::NetworkTimeout),
         Some(401 | 403) => Some(FailureKind::AuthRejected),
+        Some(408) => Some(FailureKind::NetworkTimeout),
         Some(429) => Some(FailureKind::RateLimited),
         Some(500..=599) => Some(FailureKind::Upstream5xx),
         Some(400..=499) => Some(FailureKind::PermanentHttp),
@@ -296,7 +310,7 @@ mod tests {
     #[test]
     fn request_recovery_refreshes_auth_once_then_succeeds() {
         let mut refreshes = 0;
-        let mut refresh = |_: &String| {
+        let mut refresh = |_: &String, _: Duration| {
             refreshes += 1;
             Some("fresh-secret".to_string())
         };
@@ -313,7 +327,8 @@ mod tests {
             "stale-secret".to_string(),
             Some(&mut refresh),
             &mut request,
-            policy(),
+            &policy(),
+            &CollectionAttemptBudget::new(Duration::from_millis(50)),
         );
 
         assert!(execution.result.ok);
@@ -345,7 +360,8 @@ mod tests {
             "secret".to_string(),
             None,
             &mut request,
-            policy(),
+            &policy(),
+            &CollectionAttemptBudget::new(Duration::from_millis(50)),
         );
 
         assert_eq!(calls, 1);
@@ -380,7 +396,8 @@ mod tests {
                 "secret".to_string(),
                 None,
                 &mut request,
-                policy,
+                &policy,
+                &CollectionAttemptBudget::new(Duration::from_millis(50)),
             );
             assert_eq!(execution.failure_kind, expected, "status {status:?}");
         }
@@ -401,7 +418,8 @@ mod tests {
             "secret".to_string(),
             None,
             &mut request,
-            policy,
+            &policy,
+            &CollectionAttemptBudget::new(Duration::from_millis(50)),
         );
 
         assert_eq!(calls, 3);
@@ -422,7 +440,8 @@ mod tests {
             "secret".to_string(),
             None,
             &mut request,
-            policy(),
+            &policy(),
+            &CollectionAttemptBudget::new(Duration::from_millis(50)),
         );
 
         assert_eq!(calls, 2);
@@ -444,7 +463,8 @@ mod tests {
             "secret".to_string(),
             None,
             &mut request,
-            policy,
+            &policy,
+            &CollectionAttemptBudget::new(Duration::ZERO),
         );
 
         assert_eq!(calls, 0);
@@ -458,7 +478,7 @@ mod tests {
     #[test]
     fn request_recovery_stops_when_refreshed_credential_is_rejected() {
         let mut refreshes = 0;
-        let mut refresh = |_: &String| {
+        let mut refresh = |_: &String, _: Duration| {
             refreshes += 1;
             Some("fresh-secret".to_string())
         };
@@ -469,7 +489,8 @@ mod tests {
             "stale-secret".to_string(),
             Some(&mut refresh),
             &mut request,
-            policy(),
+            &policy(),
+            &CollectionAttemptBudget::new(Duration::from_millis(50)),
         );
 
         assert_eq!(refreshes, 1);
@@ -494,7 +515,8 @@ mod tests {
             "secret".to_string(),
             None,
             &mut request,
-            policy(),
+            &policy(),
+            &CollectionAttemptBudget::new(Duration::from_millis(50)),
         );
         let redacted = execution.to_redacted_json();
 
@@ -504,14 +526,14 @@ mod tests {
         );
         assert_eq!(redacted["status"], 200);
         assert_eq!(redacted["ok"], true);
-        assert_eq!(redacted["durationMs"], 37);
+        assert_eq!(redacted["durationMs"], execution.duration_ms);
         assert!(!redacted.to_string().contains("must-not-appear"));
     }
 
     #[test]
     fn request_recovery_does_not_refresh_auth_after_final_attempt() {
         let mut refreshes = 0;
-        let mut refresh = |_: &String| {
+        let mut refresh = |_: &String, _: Duration| {
             refreshes += 1;
             Some("fresh-secret".to_string())
         };
@@ -524,11 +546,98 @@ mod tests {
             "stale-secret".to_string(),
             Some(&mut refresh),
             &mut request,
-            policy,
+            &policy,
+            &CollectionAttemptBudget::new(Duration::from_millis(50)),
         );
 
         assert_eq!(refreshes, 0);
         assert!(execution.recovery_actions.is_empty());
         assert_eq!(execution.failure_kind, Some(FailureKind::AuthRejected));
+    }
+
+    #[test]
+    fn request_recovery_shares_budget_across_executions() {
+        let shared_budget = CollectionAttemptBudget::new(Duration::from_millis(5));
+        std::thread::sleep(Duration::from_millis(10));
+        let mut calls = 0;
+        let mut request = |_: &String, _: Duration| {
+            calls += 1;
+            result(Some(200), Some(json!({"ok": true})))
+        };
+
+        let execution = execute_json_request(
+            "/v1/models",
+            "secret".to_string(),
+            None,
+            &mut request,
+            &policy(),
+            &shared_budget,
+        );
+
+        assert_eq!(calls, 0);
+        assert_eq!(
+            execution.failure_kind,
+            Some(FailureKind::TaskBudgetExhausted)
+        );
+    }
+
+    #[test]
+    fn request_recovery_passes_remaining_budget_to_auth_refresh() {
+        let budget = CollectionAttemptBudget::new(Duration::from_millis(50));
+        let mut observed = None;
+        let mut refresh = |_: &String, remaining: Duration| {
+            observed = Some(remaining);
+            Some("fresh-secret".to_string())
+        };
+        let mut request = |credential: &String, _: Duration| {
+            if credential == "stale-secret" {
+                result(Some(401), None)
+            } else {
+                result(Some(200), Some(json!({"ok": true})))
+            }
+        };
+
+        execute_json_request(
+            "/v1/models",
+            "stale-secret".to_string(),
+            Some(&mut refresh),
+            &mut request,
+            &policy(),
+            &budget,
+        );
+
+        assert!(observed.is_some_and(|remaining| remaining > Duration::ZERO));
+    }
+
+    #[test]
+    fn request_recovery_classifies_408_as_network_timeout() {
+        let mut policy = policy();
+        policy.max_attempts = 1;
+        let mut request = |_: &String, _: Duration| result(Some(408), None);
+        let execution = execute_json_request(
+            "/v1/models",
+            "secret".to_string(),
+            None,
+            &mut request,
+            &policy,
+            &CollectionAttemptBudget::new(Duration::from_millis(50)),
+        );
+        assert_eq!(execution.failure_kind, Some(FailureKind::NetworkTimeout));
+    }
+
+    #[test]
+    fn request_recovery_serializes_attempt_action() {
+        let mut request = |_: &String, _: Duration| result(Some(502), None);
+        let execution = execute_json_request(
+            "/v1/models",
+            "secret".to_string(),
+            None,
+            &mut request,
+            &policy(),
+            &CollectionAttemptBudget::new(Duration::from_millis(50)),
+        );
+        let redacted = execution.to_redacted_json();
+        assert_eq!(redacted["attempts"][0]["action"], "transient_retry");
+        assert_eq!(redacted["attempts"][2]["action"], "complete");
     }
 }
