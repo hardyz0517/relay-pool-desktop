@@ -118,6 +118,19 @@ fn candidate_row(index: usize, candidate: &LocalRoutingReadCandidate) -> LocalRo
                 severity: DecisionFactSeverity::Info,
             });
         }
+        if let Some(multiplier) = economics.rate_multiplier {
+            facts.push(DecisionFact {
+                kind: DecisionFactKind::Pricing,
+                label: "Multiplier".to_string(),
+                value: match economics.group_binding_id.as_deref() {
+                    Some(group_binding_id) => {
+                        format!("{multiplier:.4}x via group {group_binding_id}")
+                    }
+                    None => format!("{multiplier:.4}x"),
+                },
+                severity: DecisionFactSeverity::Info,
+            });
+        }
         if let Some(status) = economics.balance_status.as_deref() {
             facts.push(DecisionFact {
                 kind: DecisionFactKind::Balance,

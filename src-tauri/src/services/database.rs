@@ -58,7 +58,11 @@ use crate::services::proxy::{
     router::{select_route_candidates, RichRouteCandidate, RouteCandidateEconomics, RouteRequest},
     routing_snapshot::LocalRoutingReadCandidate,
     scheduler::{
+        affinity::AffinityStore,
+        capacity::CapacityRegistry,
+        metrics::RuntimeMetricsRegistry,
         multiplier::resolve_effective_multiplier,
+        schedule_once,
         types::{MultiplierSourceFacts, SchedulerCandidate},
     },
     RouteCandidate,
@@ -6205,6 +6209,10 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                     updated_at: row.get(31).unwrap_or_else(|_| "0".to_string()),
                 }),
                 economics: None,
+                scheduler_group_binding_id: None,
+                scheduler_group_id_hash: None,
+                scheduler_group_type: None,
+                scheduler_effective_multiplier: None,
             })
         })
         .map_err(|error| format!("查询富路由候选失败: {error}"))?
@@ -7549,14 +7557,119 @@ fn simulate_route_in_connection(
     data_dir: &str,
     input: RouteSimulationInput,
 ) -> Result<RouteSimulationResult, String> {
+    let settings = settings_from_connection(connection, data_dir, None).ok();
     let policy = input.policy.unwrap_or_else(|| {
-        settings_from_connection(connection, data_dir, None)
+        settings
+            .as_ref()
             .map(|settings| parse_routing_policy_value(&settings.default_routing_strategy))
             .unwrap_or(RoutingPolicy::PriorityFallback)
     });
-    let allow_depleted_fallback = settings_from_connection(connection, data_dir, None)
+    let allow_depleted_fallback = settings
+        .as_ref()
         .map(|settings| settings.allow_depleted_fallback)
         .unwrap_or(false);
+    let now_ms = now_millis_for_services() as i64;
+    let routing_group_filter = input
+        .routing_group_filter
+        .clone()
+        .or_else(|| {
+            settings
+                .as_ref()
+                .map(|settings| settings.default_routing_group_filter.clone())
+        })
+        .unwrap_or_default();
+    let max_rate_multiplier = input.max_rate_multiplier.or_else(|| {
+        settings
+            .as_ref()
+            .and_then(|settings| settings.max_rate_multiplier)
+    });
+    if matches!(policy, RoutingPolicy::AutomaticBalanced) {
+        let max_rate_multiplier = max_rate_multiplier
+            .ok_or_else(|| "routing_multiplier_limit_not_configured".to_string())?;
+        if !max_rate_multiplier.is_finite() || max_rate_multiplier < 0.0 {
+            return Err("routing_multiplier_limit_not_configured".to_string());
+        }
+        let scheduler_request = crate::services::proxy::scheduler::types::ScheduleRequest {
+            endpoint: input.endpoint,
+            requested_model: input.model.clone(),
+            mapped_model: None,
+            routing_group_filter: routing_group_filter.clone(),
+            stream: input.stream,
+            uses_tools: input.uses_tools,
+            uses_vision: input.uses_vision,
+            uses_reasoning: input.uses_reasoning,
+            max_rate_multiplier,
+            session_hash: input.session_hash.clone(),
+            previous_response_id: input.previous_response_id.clone(),
+            excluded_key_ids: Vec::new(),
+            now_ms,
+        };
+        let scheduler_candidates =
+            load_scheduler_candidates_from_connection(connection, &routing_group_filter, now_ms)?;
+        let metrics = RuntimeMetricsRegistry::default();
+        let capacity = CapacityRegistry::default();
+        let mut affinity = AffinityStore::default();
+        let advanced = settings
+            .as_ref()
+            .map(|settings| settings.scheduler_advanced_settings.clone())
+            .unwrap_or_else(SchedulerAdvancedSettings::default);
+        let local_candidates = local_routing_read_candidates_from_connection(connection)?;
+        let decision = schedule_once(
+            &scheduler_request,
+            &scheduler_candidates,
+            &metrics,
+            &capacity,
+            &mut affinity,
+            &advanced,
+        );
+        let (selected_station_key_id, candidates, scheduler_error_code) = match decision {
+            Ok(decision) => (
+                decision.selected_station_key_id.clone(),
+                automatic_simulation_explanations(
+                    &routing_group_filter,
+                    &scheduler_candidates,
+                    &local_candidates,
+                    &decision.candidate_decisions,
+                ),
+                None,
+            ),
+            Err(error) => {
+                let candidates = automatic_simulation_explanations(
+                    &routing_group_filter,
+                    &scheduler_candidates,
+                    &local_candidates,
+                    &error.candidate_decisions,
+                );
+                return Err(if candidates.is_empty() {
+                    error.code.to_string()
+                } else {
+                    error.code.to_string()
+                });
+            }
+        };
+        let selected_station_id = selected_station_key_id.as_ref().and_then(|station_key_id| {
+            scheduler_candidates
+                .iter()
+                .find(|candidate| &candidate.station_key_id == station_key_id)
+                .map(|candidate| candidate.station_id.clone())
+        });
+        let message = selected_station_key_id
+            .as_ref()
+            .map(|station_key_id| format!("Automatic scheduler selected {station_key_id}"))
+            .unwrap_or_else(|| "Automatic scheduler found no eligible route".to_string());
+
+        return Ok(RouteSimulationResult {
+            selected_station_key_id,
+            selected_station_id,
+            mapped_model: None,
+            policy,
+            max_rate_multiplier: Some(max_rate_multiplier),
+            routing_group_filter,
+            scheduler_error_code,
+            candidates,
+            message,
+        });
+    }
     let request = RouteRequest {
         endpoint: input.endpoint,
         model: input.model,
@@ -7565,9 +7678,13 @@ fn simulate_route_in_connection(
         uses_vision: input.uses_vision,
         uses_reasoning: input.uses_reasoning,
         policy: policy.clone(),
+        max_rate_multiplier,
+        routing_group_filter: routing_group_filter.clone(),
+        session_hash: input.session_hash,
+        previous_response_id: input.previous_response_id,
         current_station_key_id: None,
         allow_depleted_fallback,
-        now_ms: now_millis_for_services() as i64,
+        now_ms,
     };
     let candidates = proxy_rich_route_candidates_from_connection(connection)?;
     let aliases = enabled_model_alias_pairs_from_connection(connection)?;
@@ -7595,6 +7712,9 @@ fn simulate_route_in_connection(
         selected_station_id,
         mapped_model: selection.mapped_model,
         policy,
+        max_rate_multiplier,
+        routing_group_filter,
+        scheduler_error_code: None,
         candidates: selection.explanations,
         message,
     })
@@ -7602,12 +7722,94 @@ fn simulate_route_in_connection(
 
 fn parse_routing_policy_value(value: &str) -> RoutingPolicy {
     match value {
+        "automatic_balanced" | "automatic" => RoutingPolicy::AutomaticBalanced,
         "stable_first" | "stable" => RoutingPolicy::StableFirst,
         "backup_only" => RoutingPolicy::BackupOnly,
         "cheap_first" => RoutingPolicy::CheapFirst,
         "cost_stable_first" => RoutingPolicy::CostStableFirst,
         _ => RoutingPolicy::PriorityFallback,
     }
+}
+
+fn automatic_simulation_explanations(
+    routing_group_filter: &RoutingGroupFilter,
+    scheduler_candidates: &[SchedulerCandidate],
+    local_candidates: &[LocalRoutingReadCandidate],
+    decisions: &[crate::services::proxy::scheduler::types::SchedulerCandidateDecision],
+) -> Vec<crate::models::routing::RouteCandidateExplanation> {
+    let local_by_key = local_candidates
+        .iter()
+        .map(|candidate| (candidate.station_key_id.as_str(), candidate))
+        .collect::<std::collections::HashMap<_, _>>();
+    let scheduler_by_key = scheduler_candidates
+        .iter()
+        .map(|candidate| (candidate.station_key_id.as_str(), candidate))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    decisions
+        .iter()
+        .filter_map(|decision| {
+            let scheduler_candidate = scheduler_by_key.get(decision.station_key_id.as_str())?;
+            let local_candidate = local_by_key.get(decision.station_key_id.as_str());
+            let economics = local_candidate.and_then(|candidate| candidate.economics.as_ref());
+            Some(crate::models::routing::RouteCandidateExplanation {
+                station_key_id: decision.station_key_id.clone(),
+                station_id: decision.station_id.clone(),
+                station_name: local_candidate
+                    .map(|candidate| candidate.station_name.clone())
+                    .unwrap_or_else(|| decision.station_id.clone()),
+                key_name: local_candidate
+                    .map(|candidate| candidate.key_name.clone())
+                    .unwrap_or_else(|| decision.station_key_id.clone()),
+                accepted: decision.accepted,
+                score: decision
+                    .score
+                    .map(|score| (score * 1000.0).round() as i64)
+                    .unwrap_or(i64::MAX),
+                reasons: crate::services::proxy::scheduler::explanation::decision_reasons(decision),
+                rejection_reasons:
+                    crate::services::proxy::scheduler::explanation::rejection_reason_codes(decision),
+                mapped_model: None,
+                pricing_rule_id: economics.and_then(|economics| economics.pricing_rule_id.clone()),
+                group_binding_id: scheduler_candidate.group_binding_id.clone(),
+                rate_multiplier: decision
+                    .effective_multiplier
+                    .as_ref()
+                    .map(|multiplier| multiplier.value),
+                normalization_status: economics
+                    .and_then(|economics| economics.normalization_status.clone()),
+                price_confidence: economics.and_then(|economics| economics.price_confidence),
+                estimated_input_price: economics.and_then(|economics| economics.estimated_input_price),
+                estimated_output_price: economics
+                    .and_then(|economics| economics.estimated_output_price),
+                price_currency: economics.and_then(|economics| economics.price_currency.clone()),
+                balance_status: economics.and_then(|economics| economics.balance_status.clone()),
+                balance_value: economics.and_then(|economics| economics.balance_value),
+                balance_scope: economics.and_then(|economics| economics.balance_scope.clone()),
+                balance_collected_at: economics
+                    .and_then(|economics| economics.balance_collected_at.clone()),
+                economic_freshness: economics
+                    .and_then(|economics| economics.economic_freshness.clone()),
+                economic_reasons: Vec::new(),
+                routing_group_scope: Some(routing_group_filter.clone()),
+                routing_group_match: decision.routing_group_match,
+                group_id_hash: scheduler_candidate.group_id_hash.clone(),
+                group_type: scheduler_candidate.group_type.clone(),
+                effective_multiplier_source: decision
+                    .effective_multiplier
+                    .as_ref()
+                    .map(|multiplier| multiplier.source.clone()),
+                effective_multiplier_confidence: decision
+                    .effective_multiplier
+                    .as_ref()
+                    .map(|multiplier| multiplier.confidence),
+                scheduler_score: decision.score,
+                scheduler_factors: decision.factors.clone(),
+                top_k_rank: decision.top_k_rank.map(|rank| rank as i64),
+                slot_result: decision.slot_result.clone(),
+            })
+        })
+        .collect()
 }
 
 fn insert_request_log_in_connection(
@@ -13531,6 +13733,10 @@ mod tests {
                 uses_vision: false,
                 uses_reasoning: false,
                 policy: Some(RoutingPolicy::PriorityFallback),
+                max_rate_multiplier: None,
+                routing_group_filter: None,
+                session_hash: None,
+                previous_response_id: None,
             })
             .expect("simulate");
 
@@ -13586,6 +13792,10 @@ mod tests {
                 uses_vision: false,
                 uses_reasoning: false,
                 policy: Some(RoutingPolicy::PriorityFallback),
+                max_rate_multiplier: None,
+                routing_group_filter: None,
+                session_hash: None,
+                previous_response_id: None,
             })
             .expect("simulate");
 

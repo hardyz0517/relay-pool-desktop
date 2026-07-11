@@ -16,7 +16,9 @@ use crate::{
     models::{
         pricing::{BalanceSnapshot, RequestCostEstimate, RequestUsage},
         proxy::{CreateRequestLogInput, ProxyStatus},
-        routing::{RouteCandidateExplanation, RouteEndpointKind, RoutingPolicy},
+        routing::{
+            RouteCandidateExplanation, RouteEndpointKind, RoutingGroupFilter, RoutingPolicy,
+        },
     },
     services::{
         database::{now_millis_for_services, AppDatabase},
@@ -871,6 +873,10 @@ fn route_request_for_chat(
         uses_vision: uses_vision(body),
         uses_reasoning: uses_reasoning(body, model.as_deref()),
         policy,
+        max_rate_multiplier: None,
+        routing_group_filter: RoutingGroupFilter::AllGroups,
+        session_hash: None,
+        previous_response_id: None,
         current_station_key_id,
         allow_depleted_fallback,
         now_ms: now_millis_for_services() as i64,
@@ -893,6 +899,10 @@ fn route_request_for_responses(
         uses_vision: uses_vision(body),
         uses_reasoning: uses_reasoning(body, model.as_deref()),
         policy,
+        max_rate_multiplier: None,
+        routing_group_filter: RoutingGroupFilter::AllGroups,
+        session_hash: None,
+        previous_response_id: None,
         current_station_key_id,
         allow_depleted_fallback,
         now_ms: now_millis_for_services() as i64,
@@ -1026,6 +1036,7 @@ fn route_log_metadata(
 
 fn routing_policy_label(policy: &RoutingPolicy) -> &'static str {
     match policy {
+        RoutingPolicy::AutomaticBalanced => "automatic_balanced",
         RoutingPolicy::PriorityFallback => "priority_fallback",
         RoutingPolicy::StableFirst => "stable_first",
         RoutingPolicy::BackupOnly => "backup_only",

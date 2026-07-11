@@ -106,6 +106,16 @@ pub fn select_route_candidates(
                 .as_ref()
                 .and_then(|economics| economics.economic_freshness.clone()),
             economic_reasons: candidate_economic_reasons(&candidate, request),
+            routing_group_scope: Some(request.routing_group_filter.clone()),
+            routing_group_match: true,
+            group_id_hash: None,
+            group_type: None,
+            effective_multiplier_source: None,
+            effective_multiplier_confidence: None,
+            scheduler_score: None,
+            scheduler_factors: Vec::new(),
+            top_k_rank: None,
+            slot_result: None,
         };
 
         if explanation.accepted {

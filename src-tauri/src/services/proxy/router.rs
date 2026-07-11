@@ -1,12 +1,22 @@
+use std::collections::HashMap;
+
 use crate::{
     models::routing::{
-        RouteCandidateExplanation, RouteEndpointKind, RoutingPolicy, StationKeyCapabilities,
-        StationKeyHealth,
+        RouteCandidateExplanation, RouteEndpointKind, RoutingGroupFilter, RoutingPolicy,
+        StationKeyCapabilities, StationKeyHealth,
     },
     services::proxy::RouteCandidate,
 };
 
-pub use crate::services::proxy::routing_policy::select_route_candidates;
+use crate::services::proxy::scheduler::{
+    affinity::AffinityStore,
+    capacity::CapacityRegistry,
+    metrics::RuntimeMetricsRegistry,
+    schedule_once,
+    types::{
+        EffectiveMultiplierFact, ScheduleRequest, SchedulerCandidate, SchedulerCandidateDecision,
+    },
+};
 
 #[derive(Debug, Clone)]
 pub struct RouteRequest {
@@ -17,6 +27,10 @@ pub struct RouteRequest {
     pub uses_vision: bool,
     pub uses_reasoning: bool,
     pub policy: RoutingPolicy,
+    pub max_rate_multiplier: Option<f64>,
+    pub routing_group_filter: RoutingGroupFilter,
+    pub session_hash: Option<String>,
+    pub previous_response_id: Option<String>,
     pub current_station_key_id: Option<String>,
     pub allow_depleted_fallback: bool,
     pub now_ms: i64,
@@ -30,6 +44,10 @@ pub struct RichRouteCandidate {
     pub capabilities: StationKeyCapabilities,
     pub health: Option<StationKeyHealth>,
     pub economics: Option<RouteCandidateEconomics>,
+    pub scheduler_group_binding_id: Option<String>,
+    pub scheduler_group_id_hash: Option<String>,
+    pub scheduler_group_type: Option<crate::models::routing::PricingGroupType>,
+    pub scheduler_effective_multiplier: Option<EffectiveMultiplierFact>,
 }
 
 #[allow(dead_code)]
@@ -65,10 +83,226 @@ pub struct RouteSelection {
     pub mapped_model: Option<String>,
 }
 
+pub fn select_route_candidates(
+    request: &RouteRequest,
+    candidates: Vec<RichRouteCandidate>,
+    aliases: &[(String, String)],
+) -> Result<RouteSelection, String> {
+    if !matches!(request.policy, RoutingPolicy::AutomaticBalanced) {
+        return crate::services::proxy::routing_policy::select_route_candidates(
+            request, candidates, aliases,
+        );
+    }
+
+    let max_rate_multiplier = request
+        .max_rate_multiplier
+        .ok_or_else(|| "routing_multiplier_limit_not_configured".to_string())?;
+    if !max_rate_multiplier.is_finite() || max_rate_multiplier < 0.0 {
+        return Err("routing_multiplier_limit_not_configured".to_string());
+    }
+
+    let scheduler_request = ScheduleRequest {
+        endpoint: request.endpoint.clone(),
+        requested_model: request.model.clone(),
+        mapped_model: None,
+        routing_group_filter: request.routing_group_filter.clone(),
+        stream: request.stream,
+        uses_tools: request.uses_tools,
+        uses_vision: request.uses_vision,
+        uses_reasoning: request.uses_reasoning,
+        max_rate_multiplier,
+        session_hash: request.session_hash.clone(),
+        previous_response_id: request.previous_response_id.clone(),
+        excluded_key_ids: Vec::new(),
+        now_ms: request.now_ms,
+    };
+    let scheduler_candidates = candidates
+        .iter()
+        .map(rich_candidate_to_scheduler_candidate)
+        .collect::<Vec<_>>();
+    let metrics = RuntimeMetricsRegistry::default();
+    let capacity = CapacityRegistry::default();
+    let mut affinity = AffinityStore::default();
+    let advanced = crate::models::routing::SchedulerAdvancedSettings::default();
+
+    let decision = schedule_once(
+        &scheduler_request,
+        &scheduler_candidates,
+        &metrics,
+        &capacity,
+        &mut affinity,
+        &advanced,
+    )
+    .map_err(|error| error.code.to_string())?;
+
+    let candidates_by_id = candidates
+        .iter()
+        .map(|candidate| {
+            (
+                candidate.candidate.station_key_id.clone(),
+                candidate.clone(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let scheduler_candidates_by_id = scheduler_candidates
+        .iter()
+        .map(|candidate| (candidate.station_key_id.clone(), candidate.clone()))
+        .collect::<HashMap<_, _>>();
+    let accepted = decision
+        .ordered_station_key_ids
+        .iter()
+        .filter_map(|station_key_id| candidates_by_id.get(station_key_id).cloned())
+        .collect::<Vec<_>>();
+    let explanations = decision
+        .candidate_decisions
+        .iter()
+        .filter_map(|candidate_decision| {
+            let rich_candidate = candidates_by_id.get(&candidate_decision.station_key_id)?;
+            let scheduler_candidate =
+                scheduler_candidates_by_id.get(&candidate_decision.station_key_id)?;
+            Some(automatic_candidate_explanation(
+                request,
+                rich_candidate,
+                scheduler_candidate,
+                candidate_decision,
+            ))
+        })
+        .collect();
+
+    Ok(RouteSelection {
+        accepted,
+        explanations,
+        mapped_model: None,
+    })
+}
+
+fn rich_candidate_to_scheduler_candidate(candidate: &RichRouteCandidate) -> SchedulerCandidate {
+    SchedulerCandidate {
+        station_key_id: candidate.candidate.station_key_id.clone(),
+        station_id: candidate.candidate.station_id.clone(),
+        priority: candidate.candidate.priority,
+        group_binding_id: candidate.scheduler_group_binding_id.clone().or_else(|| {
+            candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.group_binding_id.clone())
+        }),
+        group_id_hash: candidate.scheduler_group_id_hash.clone(),
+        group_type: candidate.scheduler_group_type.clone(),
+        station_enabled: true,
+        key_enabled: true,
+        schedulable: true,
+        supports_chat_completions: candidate.capabilities.supports_chat_completions,
+        supports_responses: candidate.capabilities.supports_responses,
+        supports_embeddings: candidate.capabilities.supports_embeddings,
+        supports_stream: candidate.capabilities.supports_stream,
+        supports_tools: candidate.capabilities.supports_tools,
+        supports_vision: candidate.capabilities.supports_vision,
+        supports_reasoning: candidate.capabilities.supports_reasoning,
+        model_allowlist: candidate.capabilities.model_allowlist.clone(),
+        model_blocklist: candidate.capabilities.model_blocklist.clone(),
+        health_blocked: candidate
+            .health
+            .as_ref()
+            .and_then(|health| health.cooldown_until.as_deref())
+            .and_then(|value| value.parse::<i64>().ok())
+            .is_some_and(|cooldown_until| cooldown_until > 1_800_000_000_000),
+        balance_depleted: candidate
+            .economics
+            .as_ref()
+            .and_then(|economics| economics.balance_status.as_deref())
+            .map(|status| matches!(status, "depleted" | "insufficient" | "blocked"))
+            .unwrap_or(false),
+        effective_multiplier: candidate
+            .scheduler_effective_multiplier
+            .clone()
+            .or_else(|| {
+                let economics = candidate.economics.as_ref()?;
+                let value = economics.rate_multiplier?;
+                Some(EffectiveMultiplierFact {
+                    station_key_id: candidate.candidate.station_key_id.clone(),
+                    value,
+                    source: economics
+                        .pricing_source
+                        .clone()
+                        .unwrap_or_else(|| "economics".to_string()),
+                    collected_at_ms: economics
+                        .balance_collected_at
+                        .as_deref()
+                        .and_then(|value| value.parse::<i64>().ok()),
+                    valid_until_ms: None,
+                    confidence: economics.price_confidence.unwrap_or(1.0),
+                    group_binding_id: economics.group_binding_id.clone(),
+                })
+            }),
+    }
+}
+
+fn automatic_candidate_explanation(
+    request: &RouteRequest,
+    candidate: &RichRouteCandidate,
+    scheduler_candidate: &SchedulerCandidate,
+    decision: &SchedulerCandidateDecision,
+) -> RouteCandidateExplanation {
+    let economics = candidate.economics.as_ref();
+    RouteCandidateExplanation {
+        station_key_id: candidate.candidate.station_key_id.clone(),
+        station_id: candidate.candidate.station_id.clone(),
+        station_name: candidate.station_name.clone(),
+        key_name: candidate.key_name.clone(),
+        accepted: decision.accepted,
+        score: decision
+            .score
+            .map(|score| (score * 1000.0).round() as i64)
+            .unwrap_or(i64::MAX),
+        reasons: crate::services::proxy::scheduler::explanation::decision_reasons(decision),
+        rejection_reasons: crate::services::proxy::scheduler::explanation::rejection_reason_codes(
+            decision,
+        ),
+        mapped_model: None,
+        pricing_rule_id: economics.and_then(|economics| economics.pricing_rule_id.clone()),
+        group_binding_id: scheduler_candidate.group_binding_id.clone(),
+        rate_multiplier: decision
+            .effective_multiplier
+            .as_ref()
+            .map(|multiplier| multiplier.value),
+        normalization_status: economics
+            .and_then(|economics| economics.normalization_status.clone()),
+        price_confidence: economics.and_then(|economics| economics.price_confidence),
+        estimated_input_price: economics.and_then(|economics| economics.estimated_input_price),
+        estimated_output_price: economics.and_then(|economics| economics.estimated_output_price),
+        price_currency: economics.and_then(|economics| economics.price_currency.clone()),
+        balance_status: economics.and_then(|economics| economics.balance_status.clone()),
+        balance_value: economics.and_then(|economics| economics.balance_value),
+        balance_scope: economics.and_then(|economics| economics.balance_scope.clone()),
+        balance_collected_at: economics
+            .and_then(|economics| economics.balance_collected_at.clone()),
+        economic_freshness: economics.and_then(|economics| economics.economic_freshness.clone()),
+        economic_reasons: Vec::new(),
+        routing_group_scope: Some(request.routing_group_filter.clone()),
+        routing_group_match: decision.routing_group_match,
+        group_id_hash: scheduler_candidate.group_id_hash.clone(),
+        group_type: scheduler_candidate.group_type.clone(),
+        effective_multiplier_source: decision
+            .effective_multiplier
+            .as_ref()
+            .map(|multiplier| multiplier.source.clone()),
+        effective_multiplier_confidence: decision
+            .effective_multiplier
+            .as_ref()
+            .map(|multiplier| multiplier.confidence),
+        scheduler_score: decision.score,
+        scheduler_factors: decision.factors.clone(),
+        top_k_rank: decision.top_k_rank.map(|rank| rank as i64),
+        slot_result: decision.slot_result.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::proxy::UpstreamApiFormat;
+    use crate::models::routing::{PricingGroupType, RoutingGroupFilter};
 
     #[test]
     fn selector_rejects_protocol_mismatch() {
@@ -454,6 +688,154 @@ mod tests {
         assert_eq!(selected.accepted[0].candidate.station_key_id, "cheaper");
     }
 
+    #[test]
+    fn automatic_router_rejects_all_keys_above_multiplier_ceiling() {
+        let request = automatic_route_request(|request| {
+            request.max_rate_multiplier = None;
+        });
+
+        let error = select_route_candidates(&request, selected_candidate_fixture(), &[])
+            .expect_err("missing route/request multiplier limit should reject");
+
+        assert_eq!(error, "routing_multiplier_limit_not_configured");
+
+        let request = automatic_route_request(|request| {
+            request.max_rate_multiplier = Some(1.0);
+        });
+        let candidates = vec![
+            rich_scheduler_candidate("expensive-a", 0, Some(2.0), Some(PricingGroupType::Gpt)),
+            rich_scheduler_candidate("expensive-b", 1, Some(3.0), Some(PricingGroupType::Gpt)),
+        ];
+
+        let error = select_route_candidates(&request, candidates, &[])
+            .expect_err("over-ceiling automatic candidates should reject");
+
+        assert_eq!(error, "routing_no_candidate_within_multiplier_limit");
+    }
+
+    #[test]
+    fn automatic_router_group_type_filter_does_not_cross_groups() {
+        let request = automatic_route_request(|request| {
+            request.max_rate_multiplier = Some(2.0);
+            request.routing_group_filter = RoutingGroupFilter::GroupType(PricingGroupType::Gpt);
+        });
+        let candidates = vec![
+            rich_scheduler_candidate("claude-cheap", 0, Some(0.1), Some(PricingGroupType::Claude)),
+            rich_scheduler_candidate("gpt-ok", 1, Some(1.0), Some(PricingGroupType::Gpt)),
+        ];
+
+        let selected = select_route_candidates(&request, candidates, &[]).expect("selection");
+
+        assert_eq!(selected.accepted[0].candidate.station_key_id, "gpt-ok");
+        assert!(selected.explanations.iter().any(|candidate| {
+            candidate.station_key_id == "claude-cheap"
+                && !candidate.accepted
+                && !candidate.routing_group_match
+                && candidate
+                    .rejection_reasons
+                    .iter()
+                    .any(|reason| reason == "routing_group_mismatch")
+        }));
+    }
+
+    #[test]
+    fn automatic_router_unknown_multiplier_evidence_rejects() {
+        let request = automatic_route_request(|request| {
+            request.max_rate_multiplier = Some(1.0);
+        });
+        let candidates = vec![rich_scheduler_candidate(
+            "unknown-multiplier",
+            0,
+            None,
+            Some(PricingGroupType::Gpt),
+        )];
+
+        let error = select_route_candidates(&request, candidates, &[])
+            .expect_err("missing multiplier evidence should reject");
+
+        assert_eq!(error, "routing_no_multiplier_evidence");
+    }
+
+    #[test]
+    fn automatic_router_simulation_explanation_contains_scheduler_facts_without_api_key() {
+        let request = automatic_route_request(|request| {
+            request.max_rate_multiplier = Some(2.0);
+            request.routing_group_filter = RoutingGroupFilter::GroupType(PricingGroupType::Gpt);
+        });
+        let candidates = vec![rich_scheduler_candidate(
+            "secret-bearing",
+            0,
+            Some(0.5),
+            Some(PricingGroupType::Gpt),
+        )];
+
+        let selected = select_route_candidates(&request, candidates, &[]).expect("selection");
+        let explanation = selected
+            .explanations
+            .iter()
+            .find(|candidate| candidate.station_key_id == "secret-bearing")
+            .expect("candidate explanation");
+
+        assert!(explanation.accepted);
+        assert!(explanation.routing_group_match);
+        assert_eq!(explanation.rate_multiplier, Some(0.5));
+        assert_eq!(
+            explanation.effective_multiplier_source.as_deref(),
+            Some("test")
+        );
+        assert!(explanation.scheduler_score.is_some());
+        assert!(explanation.top_k_rank.is_some());
+
+        let serialized = serde_json::to_string(explanation).expect("serialize explanation");
+        assert!(!serialized.contains("sk-secret-bearing"));
+        assert!(!serialized.contains("api_key"));
+    }
+
+    #[test]
+    fn automatic_router_group_scope_without_matching_candidate_rejects_stable_code() {
+        let request = automatic_route_request(|request| {
+            request.max_rate_multiplier = Some(2.0);
+            request.routing_group_filter = RoutingGroupFilter::GroupType(PricingGroupType::Gpt);
+        });
+        let candidates = vec![rich_scheduler_candidate(
+            "claude-only",
+            0,
+            Some(0.1),
+            Some(PricingGroupType::Claude),
+        )];
+
+        let error = select_route_candidates(&request, candidates, &[])
+            .expect_err("group-scoped automatic routing should distinguish no candidate in scope");
+
+        assert_eq!(error, "routing_no_candidate_in_group_scope");
+    }
+
+    #[test]
+    fn automatic_router_keeps_requested_model_unsubstituted() {
+        let request = automatic_route_request(|request| {
+            request.max_rate_multiplier = Some(2.0);
+            request.model = Some("client-model".to_string());
+        });
+        let aliases = vec![("client-model".to_string(), "upstream-model".to_string())];
+        let candidates = vec![rich_scheduler_candidate_with_capabilities(
+            "client-allowlisted",
+            0,
+            Some(0.5),
+            Some(PricingGroupType::Gpt),
+            capabilities(|capabilities| {
+                capabilities.model_allowlist = vec!["client-model".to_string()];
+            }),
+        )];
+
+        let selected = select_route_candidates(&request, candidates, &aliases).expect("selection");
+
+        assert_eq!(
+            selected.accepted[0].candidate.station_key_id,
+            "client-allowlisted"
+        );
+        assert_eq!(selected.mapped_model, None);
+    }
+
     fn route_request(
         endpoint: RouteEndpointKind,
         model: Option<&str>,
@@ -468,10 +850,66 @@ mod tests {
             uses_vision: false,
             uses_reasoning: false,
             policy,
+            max_rate_multiplier: None,
+            routing_group_filter: RoutingGroupFilter::AllGroups,
+            session_hash: None,
+            previous_response_id: None,
             current_station_key_id: None,
             allow_depleted_fallback: false,
             now_ms: 1_800_000_000_000,
         }
+    }
+
+    fn automatic_route_request(configure: impl FnOnce(&mut RouteRequest)) -> RouteRequest {
+        let mut request = route_request(
+            RouteEndpointKind::ChatCompletions,
+            Some("gpt-4o"),
+            false,
+            RoutingPolicy::AutomaticBalanced,
+        );
+        request.max_rate_multiplier = Some(1.0);
+        request.routing_group_filter = RoutingGroupFilter::AllGroups;
+        configure(&mut request);
+        request
+    }
+
+    fn rich_scheduler_candidate(
+        id: &str,
+        priority: i64,
+        multiplier: Option<f64>,
+        group_type: Option<PricingGroupType>,
+    ) -> RichRouteCandidate {
+        rich_scheduler_candidate_with_capabilities(
+            id,
+            priority,
+            multiplier,
+            group_type,
+            capabilities(|_| {}),
+        )
+    }
+
+    fn rich_scheduler_candidate_with_capabilities(
+        id: &str,
+        priority: i64,
+        multiplier: Option<f64>,
+        group_type: Option<PricingGroupType>,
+        capabilities: StationKeyCapabilities,
+    ) -> RichRouteCandidate {
+        let mut candidate = rich_candidate_with_health(id, priority, capabilities, None);
+        candidate.scheduler_group_binding_id = Some(format!("binding-{id}"));
+        candidate.scheduler_group_id_hash = Some(format!("hash-{id}"));
+        candidate.scheduler_group_type = group_type;
+        candidate.scheduler_effective_multiplier =
+            multiplier.map(|value| EffectiveMultiplierFact {
+                station_key_id: id.to_string(),
+                value,
+                source: "test".to_string(),
+                collected_at_ms: Some(1_700_000_000_000),
+                valid_until_ms: Some(1_900_000_000_000),
+                confidence: 1.0,
+                group_binding_id: Some(format!("binding-{id}")),
+            });
+        candidate
     }
 
     fn rich_candidate(
@@ -502,6 +940,10 @@ mod tests {
             capabilities,
             health,
             economics: None,
+            scheduler_group_binding_id: None,
+            scheduler_group_id_hash: None,
+            scheduler_group_type: None,
+            scheduler_effective_multiplier: None,
         }
     }
 

@@ -1,4 +1,5 @@
 export type RoutingPolicy =
+  | "automatic_balanced"
   | "priority_fallback"
   | "stable_first"
   | "backup_only"
@@ -97,6 +98,10 @@ export type RouteSimulationInput = {
   usesVision: boolean;
   usesReasoning: boolean;
   policy: RoutingPolicy | null;
+  maxRateMultiplier?: number | null;
+  routingGroupFilter?: RoutingGroupFilter | null;
+  sessionHash?: string | null;
+  previousResponseId?: string | null;
 };
 
 export type RouteCandidateExplanation = {
@@ -123,6 +128,16 @@ export type RouteCandidateExplanation = {
   balanceCollectedAt: string | null;
   economicFreshness: string | null;
   economicReasons: string[];
+  routingGroupScope: RoutingGroupFilter | null;
+  routingGroupMatch: boolean;
+  groupIdHash: string | null;
+  groupType: PricingGroupType | null;
+  effectiveMultiplierSource: string | null;
+  effectiveMultiplierConfidence: number | null;
+  schedulerScore: number | null;
+  schedulerFactors: string[];
+  topKRank: number | null;
+  slotResult: string | null;
 };
 
 export type RouteSimulationResult = {
@@ -130,6 +145,9 @@ export type RouteSimulationResult = {
   selectedStationId: string | null;
   mappedModel: string | null;
   policy: RoutingPolicy;
+  maxRateMultiplier: number | null;
+  routingGroupFilter: RoutingGroupFilter;
+  schedulerErrorCode: string | null;
   candidates: RouteCandidateExplanation[];
   message: string;
 };

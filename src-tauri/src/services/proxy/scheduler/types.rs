@@ -95,3 +95,39 @@ pub enum MultiplierRejectReason {
     UnboundGroup,
     LowConfidence,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScheduleDecision {
+    pub selected_station_key_id: Option<String>,
+    pub ordered_station_key_ids: Vec<String>,
+    pub candidate_decisions: Vec<SchedulerCandidateDecision>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SchedulerCandidateDecision {
+    pub station_key_id: String,
+    pub station_id: String,
+    pub accepted: bool,
+    pub rejection: Option<CandidateRejection>,
+    pub routing_group_match: bool,
+    pub effective_multiplier: Option<EffectiveMultiplierFact>,
+    pub score: Option<f64>,
+    pub factors: Vec<String>,
+    pub top_k_rank: Option<usize>,
+    pub slot_result: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScheduleError {
+    pub code: &'static str,
+    pub candidate_decisions: Vec<SchedulerCandidateDecision>,
+}
+
+impl ScheduleError {
+    pub fn new(code: &'static str, candidate_decisions: Vec<SchedulerCandidateDecision>) -> Self {
+        Self {
+            code,
+            candidate_decisions,
+        }
+    }
+}

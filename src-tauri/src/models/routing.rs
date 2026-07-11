@@ -4,6 +4,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RoutingPolicy {
+    AutomaticBalanced,
     PriorityFallback,
     StableFirst,
     BackupOnly,
@@ -370,6 +371,14 @@ pub struct RouteSimulationInput {
     pub uses_vision: bool,
     pub uses_reasoning: bool,
     pub policy: Option<RoutingPolicy>,
+    #[serde(default)]
+    pub max_rate_multiplier: Option<f64>,
+    #[serde(default)]
+    pub routing_group_filter: Option<RoutingGroupFilter>,
+    #[serde(default)]
+    pub session_hash: Option<String>,
+    #[serde(default)]
+    pub previous_response_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -398,6 +407,16 @@ pub struct RouteCandidateExplanation {
     pub balance_collected_at: Option<String>,
     pub economic_freshness: Option<String>,
     pub economic_reasons: Vec<String>,
+    pub routing_group_scope: Option<RoutingGroupFilter>,
+    pub routing_group_match: bool,
+    pub group_id_hash: Option<String>,
+    pub group_type: Option<PricingGroupType>,
+    pub effective_multiplier_source: Option<String>,
+    pub effective_multiplier_confidence: Option<f64>,
+    pub scheduler_score: Option<f64>,
+    pub scheduler_factors: Vec<String>,
+    pub top_k_rank: Option<i64>,
+    pub slot_result: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -407,6 +426,9 @@ pub struct RouteSimulationResult {
     pub selected_station_id: Option<String>,
     pub mapped_model: Option<String>,
     pub policy: RoutingPolicy,
+    pub max_rate_multiplier: Option<f64>,
+    pub routing_group_filter: RoutingGroupFilter,
+    pub scheduler_error_code: Option<String>,
     pub candidates: Vec<RouteCandidateExplanation>,
     pub message: String,
 }
