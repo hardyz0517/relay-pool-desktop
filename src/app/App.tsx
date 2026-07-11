@@ -1,6 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type AnimationEvent, type ReactNode } from "react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageActivityProvider } from "@/components/shell/PageActivity";
+import {
+  getPageTransitionPolicy,
+  getShellRouteId,
+  isShellPage,
+} from "@/app/pageTransitionPolicy";
 import { CollectorsPage } from "@/features/collectors/CollectorsPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { LogsPage } from "@/features/logs/LogsPage";
@@ -20,6 +25,19 @@ import type { AppPageId } from "@/lib/types/navigation";
 import type { AppRouteId } from "@/lib/types/navigation";
 import type { Station } from "@/lib/types/stations";
 
+declare module "react" {
+  interface HTMLAttributes<T> {
+    inert?: "" | undefined;
+  }
+}
+
+const TRANSIENT_EXIT_TIMEOUT_MS = 240;
+
+type RenderedTransientPage = {
+  pageId: AppPageId;
+  node: ReactNode;
+};
+
 export function App() {
   const [activeRouteId, setActiveRouteId] = useState<AppPageId>("dashboard");
   const [mountedRouteIds, setMountedRouteIds] = useState<Set<AppRouteId>>(
@@ -30,6 +48,11 @@ export function App() {
   const [detailStationPreview, setDetailStationPreview] = useState<Station | null>(null);
   const [initialKeyStationId, setInitialKeyStationId] = useState<string | null>(null);
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
+  const previousRouteIdRef = useRef<AppPageId>(activeRouteId);
+  const lastActiveTransientPageRef = useRef<RenderedTransientPage | null>(null);
+  const transientExitTimeoutRef = useRef<number | null>(null);
+  const [exitingTransientPage, setExitingTransientPage] =
+    useState<RenderedTransientPage | null>(null);
   const activeShellRouteId = getShellRouteId(activeRouteId);
 
   useEffect(() => {
@@ -163,52 +186,142 @@ export function App() {
     }
   }
 
-  const transientPage = renderTransientPage();
+  const activeTransitionPolicy = getPageTransitionPolicy(activeRouteId);
+  const activeTransientPage = useMemo<RenderedTransientPage | null>(() => {
+    if (activeTransitionPolicy.kind !== "transient") {
+      return null;
+    }
+    return {
+      pageId: activeRouteId,
+      node: renderTransientPage(),
+    };
+  }, [
+    activeRouteId,
+    activeTransitionPolicy.kind,
+    detailStationId,
+    detailStationPreview,
+    editingKeyId,
+    editingStationId,
+    initialKeyStationId,
+  ]);
+  const isCurrentTransientPage = activeTransitionPolicy.kind === "transient";
+
+  useEffect(() => {
+    const previousRouteId = previousRouteIdRef.current;
+    const previousPolicy = getPageTransitionPolicy(previousRouteId);
+    const previousTransientPage = lastActiveTransientPageRef.current;
+
+    if (previousRouteId !== activeRouteId && previousPolicy.kind === "transient") {
+      setExitingTransientPage(
+        previousTransientPage?.pageId === previousRouteId ? previousTransientPage : null,
+      );
+    }
+
+    previousRouteIdRef.current = activeRouteId;
+    if (activeTransientPage) {
+      lastActiveTransientPageRef.current = activeTransientPage;
+    }
+  }, [activeRouteId, activeTransientPage]);
+
+  useEffect(() => {
+    if (!exitingTransientPage) {
+      return;
+    }
+
+    if (transientExitTimeoutRef.current !== null) {
+      window.clearTimeout(transientExitTimeoutRef.current);
+    }
+
+    transientExitTimeoutRef.current = window.setTimeout(handleTransientExitComplete,
+      TRANSIENT_EXIT_TIMEOUT_MS,
+    );
+
+    return () => {
+      if (transientExitTimeoutRef.current !== null) {
+        window.clearTimeout(transientExitTimeoutRef.current);
+        transientExitTimeoutRef.current = null;
+      }
+    };
+  }, [exitingTransientPage]);
+
+  function handleTransientExitComplete() {
+    if (transientExitTimeoutRef.current !== null) {
+      window.clearTimeout(transientExitTimeoutRef.current);
+      transientExitTimeoutRef.current = null;
+    }
+    setExitingTransientPage(null);
+  }
+
+  function handleTransientExitAnimationEnd(event: AnimationEvent<HTMLDivElement>) {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+    handleTransientExitComplete();
+  }
+
   const shellRouteIds = isShellPage(activeRouteId) && !mountedRouteIds.has(activeRouteId)
     ? [...mountedRouteIds, activeRouteId]
     : [...mountedRouteIds];
 
   return (
     <AppShell activeRouteId={activeShellRouteId} onRouteChange={(routeId) => setActiveRouteId(routeId)}>
-      {shellRouteIds.map((routeId) => (
-        <PageActivityProvider key={routeId} active={activeRouteId === routeId}>
-          <div
-            aria-hidden={activeRouteId !== routeId}
-            className={activeRouteId === routeId ? "contents" : "hidden"}
-          >
-            {renderShellPage(routeId)}
-          </div>
-        </PageActivityProvider>
-      ))}
-      {transientPage}
+      <div className="app-page-transition-stack">
+        {shellRouteIds.map((routeId) => {
+          const active = activeRouteId === routeId && !isCurrentTransientPage;
+          const inert = !active;
+
+          return (
+            <PageActivityProvider key={routeId} active={active}>
+              <div
+                aria-hidden={inert}
+                className="app-page-transition-layer"
+                data-page-transition-layer
+                data-page-transition-kind="shell"
+                data-page-transition-direction="none"
+                data-page-transition-state={active ? "active" : "inactive"}
+                inert={inert ? "" : undefined}
+              >
+                {renderShellPage(routeId)}
+              </div>
+            </PageActivityProvider>
+          );
+        })}
+
+        {activeTransientPage && (
+          <PageActivityProvider active={isCurrentTransientPage}>
+            <div
+              aria-hidden={!isCurrentTransientPage}
+              className="app-page-transition-layer app-page-transition-overlay"
+              data-page-transition-layer
+              data-page-transition-kind="transient"
+              data-page-transition-direction={activeTransitionPolicy.enterDirection}
+              data-page-transition-state="active"
+              inert={!isCurrentTransientPage ? "" : undefined}
+            >
+              {activeTransientPage.node}
+            </div>
+          </PageActivityProvider>
+        )}
+
+        {exitingTransientPage && (
+          <PageActivityProvider active={false}>
+            <div
+              aria-hidden
+              className="app-page-transition-layer app-page-transition-overlay"
+              data-page-transition-layer
+              data-page-transition-kind="transient"
+              data-page-transition-direction={
+                getPageTransitionPolicy(exitingTransientPage.pageId).exitDirection
+              }
+              data-page-transition-state="exiting"
+              inert=""
+              onAnimationEnd={handleTransientExitAnimationEnd}
+            >
+              {exitingTransientPage.node}
+            </div>
+          </PageActivityProvider>
+        )}
+      </div>
     </AppShell>
   );
-}
-
-function isShellPage(pageId: AppPageId): pageId is AppRouteId {
-  return (
-    pageId === "dashboard" ||
-    pageId === "stations" ||
-    pageId === "keyPool" ||
-    pageId === "routing" ||
-    pageId === "pricing" ||
-    pageId === "channels" ||
-    pageId === "collectors" ||
-    pageId === "changes" ||
-    pageId === "logs" ||
-    pageId === "settings"
-  );
-}
-
-function getShellRouteId(pageId: AppPageId): AppRouteId {
-  if (pageId === "addProvider" || pageId === "editProvider" || pageId === "stationDetail") {
-    return "stations";
-  }
-  if (pageId === "addKey" || pageId === "editKey") {
-    return "keyPool";
-  }
-  if (pageId === "modelBasePrices") {
-    return "pricing";
-  }
-  return pageId;
 }

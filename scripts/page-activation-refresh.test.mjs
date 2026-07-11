@@ -5,8 +5,10 @@ const appSource = await readFile("src/app/App.tsx", "utf8");
 const activitySource = await readFile("src/components/shell/PageActivity.tsx", "utf8").catch(() => "");
 
 assert.ok(
-  appSource.includes("PageActivityProvider") && appSource.includes("active={activeRouteId === routeId}"),
-  "every kept-alive shell page should receive an explicit active/inactive lifecycle",
+  appSource.includes("PageActivityProvider") &&
+    appSource.includes("const active = activeRouteId === routeId && !isCurrentTransientPage") &&
+    appSource.includes("<PageActivityProvider key={routeId} active={active}>"),
+  "every kept-alive shell page should receive an explicit active/inactive lifecycle without firing during transient overlays",
 );
 
 assert.ok(
