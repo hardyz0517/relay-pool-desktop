@@ -1,3 +1,4 @@
+pub mod affinity;
 pub mod capacity;
 pub mod eligibility;
 pub mod metrics;
