@@ -34,7 +34,7 @@ pub fn resolve_effective_multiplier(
         .ok_or(MultiplierRejectReason::UnboundGroup)?;
 
     let confidence = facts.collected_rate_confidence.unwrap_or(0.0);
-    if confidence < min_confidence {
+    if !(confidence >= min_confidence) {
         return Err(MultiplierRejectReason::LowConfidence);
     }
 
@@ -115,6 +115,18 @@ mod tests {
         let rejected =
             resolve_effective_multiplier(facts, NOW_MS, MIN_CONFIDENCE, GROUP_RATE_INTERVAL_MS)
                 .expect_err("low confidence should reject");
+
+        assert_eq!(rejected, MultiplierRejectReason::LowConfidence);
+    }
+
+    #[test]
+    fn collected_fact_nan_confidence_rejects_low_confidence() {
+        let mut facts = collected_facts();
+        facts.collected_rate_confidence = Some(f64::NAN);
+
+        let rejected =
+            resolve_effective_multiplier(facts, NOW_MS, MIN_CONFIDENCE, GROUP_RATE_INTERVAL_MS)
+                .expect_err("NaN confidence should reject");
 
         assert_eq!(rejected, MultiplierRejectReason::LowConfidence);
     }
