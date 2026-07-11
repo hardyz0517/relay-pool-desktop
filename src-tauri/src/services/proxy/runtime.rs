@@ -241,6 +241,10 @@ impl ProxyRuntimeState {
         Ok(self.status(default_port))
     }
 
+    pub fn cleanup_before_update(&self, default_port: u16) -> Result<ProxyStatus, String> {
+        self.stop(default_port)
+    }
+
     pub fn restart(
         &self,
         database: AppDatabase,
@@ -2286,6 +2290,31 @@ mod tests {
 
         assert_eq!(status.bind_addr, "127.0.0.1");
         assert_ne!(status.bind_addr, "0.0.0.0");
+    }
+
+    #[test]
+    fn cleanup_before_update_stops_the_running_proxy() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let probe = TcpListener::bind(("127.0.0.1", 0)).expect("bind probe");
+        let port = probe.local_addr().expect("probe addr").port();
+        drop(probe);
+        let proxy = ProxyRuntimeState::default();
+
+        let started = proxy
+            .start(
+                database,
+                crate::services::secrets::crypto::generate_data_key(),
+                port,
+            )
+            .expect("start proxy");
+        assert!(started.running);
+
+        let stopped = proxy
+            .cleanup_before_update(port)
+            .expect("cleanup before update");
+
+        assert!(!stopped.running);
+        assert!(TcpStream::connect(("127.0.0.1", port)).is_err());
     }
 
     #[test]

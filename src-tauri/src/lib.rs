@@ -6,6 +6,8 @@ use tauri::Manager;
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let secret_manager = services::secrets::SecretManager::initialize()?;
             let database = services::database::AppDatabase::initialize(app.handle())?;
@@ -50,6 +52,7 @@ pub fn run() {
             commands::reorder_local_routing_keys,
             commands::start_local_proxy,
             commands::stop_local_proxy,
+            commands::cleanup_before_update,
             commands::restart_local_proxy,
             commands::list_request_logs,
             commands::clear_request_logs,

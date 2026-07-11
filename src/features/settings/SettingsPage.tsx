@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react";
-import { Coins, FolderOpen, Play, RotateCcw, Save, Square } from "lucide-react";
+import { Coins, FolderOpen, Play, RefreshCw, RotateCcw, Save, Square } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, MaskedSecret, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
@@ -12,6 +12,7 @@ import {
 } from "@/lib/api/proxy";
 import { chooseDataDir, getLocalAccessKey, getSettings, SETTINGS_UPDATED_EVENT, updateSettings } from "@/lib/api/settings";
 import type { ProxyStatus } from "@/lib/types/proxy";
+import { useUpdater } from "@/features/updater/UpdaterProvider";
 import {
   routingStrategyLabels,
   type AppSettings,
@@ -72,6 +73,7 @@ type SettingsPageProps = {
 
 export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
   const toast = useToast();
+  const { state: updaterState, checkNow: checkForUpdates } = useUpdater();
   const [settings, setSettings] = useState<AppSettings>(fallbackSettings);
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus>(fallbackProxyStatus);
   const [form, setForm] = useState<SettingsFormState>(settingsToForm(fallbackSettings));
@@ -419,6 +421,24 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
           />
         </SectionCard>
 
+        <SectionCard title="应用更新">
+          <SettingRow
+            control={
+              <Button
+                disabled={updaterState.phase === "checking"}
+                type="button"
+                variant="outline"
+                onClick={() => void checkForUpdates()}
+              >
+                <RefreshCw className={updaterState.phase === "checking" ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+                检查更新
+              </Button>
+            }
+            description={updaterStatusDescription(updaterState)}
+            label={`当前版本 ${updaterState.currentVersion}`}
+          />
+        </SectionCard>
+
         {error && <div className="text-sm text-rose-700">{error}</div>}
       </form>
     </PageScaffold>
@@ -509,3 +529,11 @@ function formToInput(form: SettingsFormState): UpdateSettingsInput {
 
 const inputClassName =
   "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:bg-white focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";
+
+function updaterStatusDescription(state: ReturnType<typeof useUpdater>["state"]) {
+  if (state.phase === "checking") return "正在检查 GitHub Releases。";
+  if (state.phase === "available") return `发现新版本 ${state.version}。`;
+  if (state.phase === "failed") return state.error ?? "检查更新失败。";
+  if (state.lastCheckedAt) return "当前已是最新版本。";
+  return "启动后会自动检查，也可以在这里手动检查。";
+}
