@@ -7005,6 +7005,8 @@ fn upsert_change_event_in_connection(
                 event_type = excluded.event_type,
                 status = CASE
                     WHEN excluded.event_type = 'balance_depleted' THEN change_events.status
+                    WHEN excluded.event_type = 'collector_failed'
+                     AND change_events.status != 'resolved' THEN change_events.status
                     WHEN change_events.status = 'dismissed' THEN change_events.status
                     ELSE 'unread'
                 END,
@@ -7022,14 +7024,20 @@ fn upsert_change_event_in_connection(
                 source = excluded.source,
                 detected_at = CASE
                     WHEN excluded.event_type = 'balance_depleted' THEN change_events.detected_at
+                    WHEN excluded.event_type = 'collector_failed'
+                     AND change_events.status != 'resolved' THEN change_events.detected_at
                     ELSE excluded.detected_at
                 END,
                 resolved_at = CASE
                     WHEN excluded.event_type = 'balance_depleted' THEN change_events.resolved_at
+                    WHEN excluded.event_type = 'collector_failed'
+                     AND change_events.status != 'resolved' THEN change_events.resolved_at
                     ELSE NULL
                 END,
                 updated_at = CASE
                     WHEN excluded.event_type = 'balance_depleted' THEN change_events.updated_at
+                    WHEN excluded.event_type = 'collector_failed'
+                     AND change_events.status != 'resolved' THEN change_events.updated_at
                     ELSE excluded.updated_at
                 END",
             params![
@@ -7127,6 +7135,22 @@ fn resolve_change_event_in_connection(
         return Err("变更事件不存在".to_string());
     }
     change_event_by_id(connection, id)
+}
+
+fn resolve_change_event_by_dedupe_key_in_connection(
+    connection: &Connection,
+    dedupe_key: &str,
+) -> Result<(), String> {
+    let now = now_string();
+    connection
+        .execute(
+            "UPDATE change_events
+                SET status = ?2, resolved_at = ?3, updated_at = ?3
+              WHERE dedupe_key = ?1 AND status != ?2",
+            params![dedupe_key, STATUS_RESOLVED, now],
+        )
+        .map_err(|error| format!("解决去重变更事件失败: {error}"))?;
+    Ok(())
 }
 
 fn row_to_change_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChangeEvent> {
@@ -9269,6 +9293,12 @@ fn finish_collector_run_in_connection(
     if matches!(saved.status.as_str(), "success" | "partial")
         && previous_run_status.as_deref() == Some("failed")
     {
+        let failed_dedupe_key = crate::services::change_events::collector_dedupe_key(
+            &saved.station_id,
+            "collector_failed",
+            &saved.task_type,
+        );
+        resolve_change_event_by_dedupe_key_in_connection(connection, &failed_dedupe_key)?;
         let event = crate::services::change_events::collector_recovered_event(
             &saved.station_id,
             &saved.id,
@@ -9910,6 +9940,35 @@ mod tests {
                 note: None,
             })
             .expect("station")
+    }
+
+    fn finish_test_collector_run(
+        database: &AppDatabase,
+        station_id: &str,
+        task_type: &str,
+        status: &str,
+    ) {
+        let run = database
+            .create_collector_run(CreateCollectorRunInput {
+                station_id: station_id.to_string(),
+                parent_run_id: None,
+                adapter: "sub2api".to_string(),
+                task_type: task_type.to_string(),
+            })
+            .expect("create collector run");
+        database
+            .finish_collector_run(FinishCollectorRunInput {
+                id: run.id,
+                status: status.to_string(),
+                endpoint_count: 1,
+                success_count: i64::from(status == "success"),
+                failure_count: i64::from(status == "failed"),
+                manual_action_required: false,
+                error_code: None,
+                error_message: None,
+                snapshot_id: None,
+            })
+            .expect("finish collector run");
     }
 
     fn test_channel_monitor(database: &AppDatabase, name: &str) -> ChannelMonitor {
@@ -13389,6 +13448,158 @@ mod tests {
 
         assert_eq!(updated.status, "healthy");
         assert!(updated.last_pricing_fetched_at.is_some());
+    }
+
+    #[test]
+    fn repeated_collector_failure_preserves_active_event_read_state() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "collector-repeat-failure");
+
+        database
+            .insert_collector_snapshot(
+                &station.id,
+                "sub2api-groups",
+                "failed",
+                json!({}),
+                json!({}),
+                None,
+                Some("first failure".to_string()),
+            )
+            .expect("first failed snapshot");
+        let first = database
+            .list_change_events()
+            .expect("events")
+            .into_iter()
+            .find(|event| event.event_type == "collector_failed")
+            .expect("collector failed event");
+        let read = database
+            .mark_change_event_read(first.id.clone())
+            .expect("mark failure read");
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        database
+            .insert_collector_snapshot(
+                &station.id,
+                "sub2api-groups",
+                "failed",
+                json!({}),
+                json!({}),
+                None,
+                Some("second failure".to_string()),
+            )
+            .expect("second failed snapshot");
+
+        let repeated = database
+            .list_change_events()
+            .expect("events")
+            .into_iter()
+            .find(|event| event.event_type == "collector_failed")
+            .expect("repeated collector failed event");
+        assert_eq!(repeated.id, first.id);
+        assert_eq!(repeated.status, "read");
+        assert_eq!(repeated.detected_at, first.detected_at);
+        assert_eq!(repeated.updated_at, read.updated_at);
+    }
+
+    #[test]
+    fn collector_failure_reactivates_after_recovery() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "collector-failure-recovery");
+        database
+            .insert_collector_snapshot(
+                &station.id,
+                "sub2api-groups",
+                "failed",
+                json!({}),
+                json!({}),
+                None,
+                Some("first failure".to_string()),
+            )
+            .expect("failed snapshot");
+        let first = database
+            .list_change_events()
+            .expect("events")
+            .into_iter()
+            .find(|event| event.event_type == "collector_failed")
+            .expect("collector failed event");
+
+        finish_test_collector_run(&database, &station.id, "groups", "failed");
+        finish_test_collector_run(&database, &station.id, "groups", "success");
+        let resolved = database
+            .list_change_events()
+            .expect("events")
+            .into_iter()
+            .find(|event| event.event_type == "collector_failed")
+            .expect("resolved collector failed event");
+        assert_eq!(resolved.status, "resolved");
+        assert!(resolved.resolved_at.is_some());
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        database
+            .insert_collector_snapshot(
+                &station.id,
+                "sub2api-groups",
+                "failed",
+                json!({}),
+                json!({}),
+                None,
+                Some("second failure".to_string()),
+            )
+            .expect("failed snapshot after recovery");
+        let reactivated = database
+            .list_change_events()
+            .expect("events")
+            .into_iter()
+            .find(|event| event.event_type == "collector_failed")
+            .expect("reactivated collector failed event");
+        assert_eq!(reactivated.id, first.id);
+        assert_eq!(reactivated.status, "unread");
+        assert!(reactivated.resolved_at.is_none());
+        assert_ne!(reactivated.detected_at, first.detected_at);
+    }
+
+    #[test]
+    fn collector_failure_recovery_is_scoped_to_task_type() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "collector-failure-task-scope");
+        for task_type in ["groups", "balance"] {
+            database
+                .insert_collector_snapshot(
+                    &station.id,
+                    &format!("sub2api-{task_type}"),
+                    "failed",
+                    json!({}),
+                    json!({}),
+                    None,
+                    Some(format!("{task_type} failure")),
+                )
+                .expect("failed snapshot");
+        }
+
+        finish_test_collector_run(&database, &station.id, "groups", "failed");
+        finish_test_collector_run(&database, &station.id, "groups", "success");
+
+        let events = database.list_change_events().expect("events");
+        let groups_key = crate::services::change_events::collector_dedupe_key(
+            &station.id,
+            "collector_failed",
+            "groups",
+        );
+        let balance_key = crate::services::change_events::collector_dedupe_key(
+            &station.id,
+            "collector_failed",
+            "balance",
+        );
+        let groups_failure = events
+            .iter()
+            .find(|event| event.dedupe_key == groups_key)
+            .expect("groups failure event");
+        let balance_failure = events
+            .iter()
+            .find(|event| event.dedupe_key == balance_key)
+            .expect("balance failure event");
+        assert_eq!(groups_failure.status, "resolved");
+        assert_eq!(balance_failure.status, "unread");
     }
 
     #[test]
