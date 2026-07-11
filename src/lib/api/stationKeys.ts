@@ -220,15 +220,26 @@ export function createStationKey(input: CreateStationKeyInput) {
 }
 
 export function updateStationKey(input: UpdateStationKeyInput) {
-  return withKeyPoolItemsInvalidation(invoke<StationKey>("update_station_key", { input }).catch((error) => {
+  const normalizedInput = normalizeUpdateStationKeyInput(input);
+  return withKeyPoolItemsInvalidation(invoke<StationKey>("update_station_key", { input: normalizedInput }).catch((error) => {
     if (isInvokeUnavailable(error)) {
-      const keys = memoryKeys.get(input.stationId) ?? [];
-      const nextKeys = keys.map((key) => key.id === input.id ? { ...key, ...input, apiKeyPresent: input.apiKey ? true : key.apiKeyPresent } : key);
-      memoryKeys.set(input.stationId, nextKeys);
-      return nextKeys.find((key) => key.id === input.id) ?? keys[0];
+      const keys = memoryKeys.get(normalizedInput.stationId) ?? [];
+      const nextKeys = keys.map((key) => key.id === normalizedInput.id ? { ...key, ...normalizedInput, apiKeyPresent: normalizedInput.apiKey ? true : key.apiKeyPresent } : key);
+      memoryKeys.set(normalizedInput.stationId, nextKeys);
+      return nextKeys.find((key) => key.id === normalizedInput.id) ?? keys[0];
     }
     throw error;
   }));
+}
+
+function normalizeUpdateStationKeyInput(input: UpdateStationKeyInput): UpdateStationKeyInput {
+  return {
+    ...input,
+    maxConcurrency: input.maxConcurrency ?? 3,
+    loadFactor: input.loadFactor ?? null,
+    schedulable: input.schedulable ?? true,
+    manualRateMultiplier: input.manualRateMultiplier ?? null,
+  };
 }
 
 export function saveStationKeyWithDefaults(
@@ -527,11 +538,16 @@ function memoryKeyFromInput(input: CreateStationKeyInput): StationKey {
     apiKeyPresent: Boolean(input.apiKey),
     enabled: input.enabled,
     priority: input.priority ?? (memoryKeys.get(input.stationId)?.length ?? 0),
+    maxConcurrency: input.maxConcurrency ?? 3,
+    loadFactor: input.loadFactor ?? null,
+    schedulable: input.schedulable ?? true,
     groupBindingId: input.groupBindingId ?? null,
     groupIdHash: input.groupIdHash ?? null,
     groupName: input.groupName,
     tierLabel: input.tierLabel,
     rateMultiplier: input.rateMultiplier ?? null,
+    manualRateMultiplier: input.manualRateMultiplier ?? null,
+    manualRateUpdatedAt: input.manualRateMultiplier == null ? null : now,
     rateSource: input.rateSource ?? null,
     rateCollectedAt: null,
     balanceScope: input.balanceScope ?? null,

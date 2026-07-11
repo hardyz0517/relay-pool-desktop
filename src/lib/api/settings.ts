@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppSettings, CcswitchImportResult, UpdateSettingsInput } from "@/lib/types/settings";
+import {
+  DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
+  type AppSettings,
+  type CcswitchImportResult,
+  type UpdateSettingsInput,
+} from "@/lib/types/settings";
 
 export const SETTINGS_UPDATED_EVENT = "relay-pool-settings-updated";
 
@@ -7,6 +12,9 @@ let memorySettings: AppSettings = {
   localProxyPort: 8787,
   localKeyMasked: "未读取",
   defaultRoutingStrategy: "cost_stable_first",
+  maxRateMultiplier: null,
+  defaultRoutingGroupFilter: "all_groups",
+  schedulerAdvancedSettings: DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   balanceIntervalMinutes: 5,
@@ -76,6 +84,10 @@ function normalizeSettings(settings: AppSettings): AppSettings {
     pendingDataDir: typeof maybeSettings.pendingDataDir === "string" ? maybeSettings.pendingDataDir : null,
     dataDirChangeRequiresRestart: normalizeBoolean(maybeSettings.dataDirChangeRequiresRestart),
     defaultRoutingStrategy: normalizeRoutingStrategy(settings.defaultRoutingStrategy),
+    maxRateMultiplier: normalizeNullableNumber(maybeSettings.maxRateMultiplier),
+    defaultRoutingGroupFilter: maybeSettings.defaultRoutingGroupFilter ?? "all_groups",
+    schedulerAdvancedSettings:
+      maybeSettings.schedulerAdvancedSettings ?? DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
     balanceIntervalMinutes: normalizeNumber(maybeSettings.balanceIntervalMinutes, 5),
     groupRateIntervalMinutes: normalizeNumber(maybeSettings.groupRateIntervalMinutes, 20),
     modelListIntervalMinutes: normalizeNumber(maybeSettings.modelListIntervalMinutes, 60),
@@ -118,4 +130,12 @@ function normalizeBoolean(value: unknown) {
 function normalizeNumber(value: unknown, fallback: number) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeNullableNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 }

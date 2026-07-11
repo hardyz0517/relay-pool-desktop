@@ -6,6 +6,39 @@ export type RoutingPolicy =
   | "cost_stable_first";
 export type RouteEndpointKind = "models" | "chat_completions" | "responses" | "embeddings";
 
+export type PricingGroupType = "gpt" | "claude" | "gemini" | "grok" | "image_generation";
+
+export type RoutingGroupFilter =
+  | "all_groups"
+  | "ungrouped_only"
+  | { group_binding_id: string }
+  | { group_id_hash: string }
+  | { group_type: PricingGroupType };
+
+export type SchedulerAdvancedSettings = {
+  topK: number;
+  multiplier: number;
+  priority: number;
+  load: number;
+  queue: number;
+  errorRate: number;
+  ttft: number;
+  quotaHeadroom: number;
+  previousResponse: number;
+  sessionSticky: number;
+  multiplierMinConfidence: number;
+  stickyWeighted: boolean;
+  stickyEscape: boolean;
+  stickyEscapeTtftMs: number;
+  stickyEscapeErrorRate: number;
+  stickySessionTtlSeconds: number;
+  stickyResponseTtlSeconds: number;
+  stickyMaxWaiting: number;
+  stickyWaitTimeoutSeconds: number;
+  fallbackMaxWaiting: number;
+  fallbackWaitTimeoutSeconds: number;
+};
+
 export type StationKeyCapabilities = {
   stationKeyId: string;
   supportsChatCompletions: boolean;

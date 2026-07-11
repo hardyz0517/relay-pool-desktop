@@ -36,9 +36,9 @@ use crate::models::{
     proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
     remote_keys::{RemoteKeyMatchStatus, RemoteStationKey},
     routing::{
-        ModelAlias, RouteSimulationInput, RouteSimulationResult, RoutingPolicy,
-        StationKeyCapabilities, StationKeyHealth, UpdateStationKeyCapabilitiesInput,
-        UpsertModelAliasInput,
+        ModelAlias, RouteSimulationInput, RouteSimulationResult, RoutingGroupFilter, RoutingPolicy,
+        SchedulerAdvancedSettings, StationKeyCapabilities, StationKeyHealth,
+        UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
     },
     secrets::{SecretMigrationReport, SecretScanFinding},
     settings::{AppSettings, UpdateSettingsInput},
@@ -144,6 +144,8 @@ impl AppDatabase {
             .map_err(|error| format!("初始化默认设置失败: {error}"))?;
         migrate_default_routing_strategy(&connection)
             .map_err(|error| format!("migrate default routing strategy failed: {error}"))?;
+        migrate_automatic_scheduler_schema(&connection)
+            .map_err(|error| format!("migrate automatic scheduler schema failed: {error}"))?;
         migrate_default_station_keys(&connection)
             .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
         migrate_legacy_group_facts(&connection)
@@ -188,6 +190,8 @@ impl AppDatabase {
             .map_err(|error| format!("初始化默认设置失败: {error}"))?;
         migrate_default_routing_strategy(&connection)
             .map_err(|error| format!("migrate default routing strategy failed: {error}"))?;
+        migrate_automatic_scheduler_schema(&connection)
+            .map_err(|error| format!("migrate automatic scheduler schema failed: {error}"))?;
         migrate_default_station_keys(&connection)
             .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
         migrate_legacy_group_facts(&connection)
@@ -424,10 +428,36 @@ impl AppDatabase {
             return Err("采集并发数必须在 1 到 8 之间".to_string());
         }
 
+        if let Some(max_rate_multiplier) = input.max_rate_multiplier {
+            if !max_rate_multiplier.is_finite() || max_rate_multiplier < 0.0 {
+                return Err("invalid max_rate_multiplier".to_string());
+            }
+        }
+        input
+            .scheduler_advanced_settings
+            .validate()
+            .map_err(|error| format!("invalid scheduler advanced settings: {error:?}"))?;
+
         let connection = self.connection()?;
+        let default_routing_group_filter =
+            serialize_routing_group_filter_setting(&input.default_routing_group_filter)?;
+        let scheduler_advanced_settings = serde_json::to_string(&input.scheduler_advanced_settings)
+            .map_err(|error| format!("serialize scheduler advanced settings failed: {error}"))?;
         let values = [
             ("local_proxy_port", input.local_proxy_port.to_string()),
             ("default_routing_strategy", input.default_routing_strategy),
+            (
+                "max_rate_multiplier",
+                input
+                    .max_rate_multiplier
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+            ),
+            ("default_routing_group_filter", default_routing_group_filter),
+            (
+                "scheduler_advanced_settings_json",
+                scheduler_advanced_settings,
+            ),
             (
                 "low_balance_threshold_cny",
                 input.low_balance_threshold_cny.to_string(),
@@ -1645,9 +1675,14 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             enabled INTEGER NOT NULL DEFAULT 1,
             priority INTEGER NOT NULL DEFAULT 0,
             routing_order INTEGER,
+            max_concurrency INTEGER NOT NULL DEFAULT 3,
+            load_factor INTEGER,
+            schedulable INTEGER NOT NULL DEFAULT 1,
             group_name TEXT,
             tier_label TEXT,
             status TEXT NOT NULL DEFAULT 'unchecked',
+            manual_rate_multiplier REAL,
+            manual_rate_updated_at TEXT,
             last_checked_at TEXT,
             last_used_at TEXT,
             note TEXT,
@@ -2243,6 +2278,25 @@ fn add_column_if_missing(
     Ok(())
 }
 
+fn migrate_automatic_scheduler_schema(connection: &Connection) -> rusqlite::Result<()> {
+    add_column_if_missing(
+        connection,
+        "station_keys",
+        "max_concurrency",
+        "INTEGER NOT NULL DEFAULT 3",
+    )?;
+    add_column_if_missing(connection, "station_keys", "load_factor", "INTEGER")?;
+    add_column_if_missing(
+        connection,
+        "station_keys",
+        "schedulable",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
+    add_column_if_missing(connection, "station_keys", "manual_rate_multiplier", "REAL")?;
+    add_column_if_missing(connection, "station_keys", "manual_rate_updated_at", "TEXT")?;
+    Ok(())
+}
+
 fn initialize_local_routing_order(connection: &Connection) -> rusqlite::Result<()> {
     let missing_count = connection.query_row(
         "SELECT COUNT(*) FROM station_keys WHERE routing_order IS NULL",
@@ -2759,6 +2813,9 @@ fn seed_default_settings(connection: &Connection) -> rusqlite::Result<()> {
         ("local_proxy_port", "8787"),
         ("local_key", "sk-local-pool-change-me"),
         ("default_routing_strategy", "cost_stable_first"),
+        ("max_rate_multiplier", ""),
+        ("default_routing_group_filter", "all_groups"),
+        ("scheduler_advanced_settings_json", ""),
         ("low_balance_threshold_cny", "15"),
         ("collector_interval_minutes", "30"),
         ("balance_interval_minutes", "5"),
@@ -4123,11 +4180,15 @@ fn create_station_in_connection(
                 api_key: input.api_key,
                 enabled: input.enabled,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: Some("由站点默认 API Key 创建。".to_string()),
@@ -4684,8 +4745,8 @@ fn migrate_default_station_keys(connection: &Connection) -> rusqlite::Result<()>
 
 fn row_to_station_key(row: &rusqlite::Row<'_>) -> rusqlite::Result<StationKey> {
     let api_key: String = row.get(3)?;
-    let secret_masked: Option<String> = row.get(20)?;
-    let api_key_secret_id: Option<String> = row.get(21)?;
+    let secret_masked: Option<String> = row.get(25)?;
+    let api_key_secret_id: Option<String> = row.get(26)?;
     let api_key_masked = secret_masked.unwrap_or_else(|| mask_secret(&api_key));
     let api_key_present = api_key_secret_id.is_some() || !api_key.trim().is_empty();
 
@@ -4697,20 +4758,25 @@ fn row_to_station_key(row: &rusqlite::Row<'_>) -> rusqlite::Result<StationKey> {
         api_key_present,
         enabled: i64_to_bool(row.get(4)?),
         priority: row.get(5)?,
-        group_name: row.get(6)?,
-        tier_label: row.get(7)?,
-        group_binding_id: row.get(8)?,
-        group_id_hash: row.get(9)?,
-        rate_multiplier: row.get(10)?,
-        rate_source: row.get(11)?,
-        rate_collected_at: row.get(12)?,
-        balance_scope: row.get(13)?,
-        status: row.get(14)?,
-        last_checked_at: row.get(15)?,
-        last_used_at: row.get(16)?,
-        note: row.get(17)?,
-        created_at: row.get(18)?,
-        updated_at: row.get(19)?,
+        max_concurrency: row.get(6)?,
+        load_factor: row.get(7)?,
+        schedulable: i64_to_bool(row.get(8)?),
+        group_name: row.get(9)?,
+        tier_label: row.get(10)?,
+        group_binding_id: row.get(11)?,
+        group_id_hash: row.get(12)?,
+        rate_multiplier: row.get(13)?,
+        manual_rate_multiplier: row.get(14)?,
+        manual_rate_updated_at: row.get(15)?,
+        rate_source: row.get(16)?,
+        rate_collected_at: row.get(17)?,
+        balance_scope: row.get(18)?,
+        status: row.get(19)?,
+        last_checked_at: row.get(20)?,
+        last_used_at: row.get(21)?,
+        note: row.get(22)?,
+        created_at: row.get(23)?,
+        updated_at: row.get(24)?,
     })
 }
 
@@ -4720,8 +4786,11 @@ fn list_station_keys_from_connection(
 ) -> Result<Vec<StationKey>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, station_id, name, api_key, enabled, priority, group_name, tier_label,
-                    group_binding_id, group_id_hash, rate_multiplier, rate_source,
+            "SELECT id, station_id, name, api_key, enabled, priority,
+                    max_concurrency, load_factor, schedulable,
+                    group_name, tier_label,
+                    group_binding_id, group_id_hash, rate_multiplier,
+                    manual_rate_multiplier, manual_rate_updated_at, rate_source,
                     rate_collected_at, balance_scope,
                     status, last_checked_at, last_used_at, note, created_at, updated_at,
                     (SELECT masked_value FROM secrets WHERE secrets.id = station_keys.api_key_secret_id),
@@ -4874,11 +4943,16 @@ fn list_key_pool_items_from_connection(
                 k.api_key_secret_id,
                 k.enabled,
                 k.priority,
+                k.max_concurrency,
+                k.load_factor,
+                k.schedulable,
                 k.group_name,
                 k.tier_label,
                 k.group_binding_id,
                 k.group_id_hash,
                 k.rate_multiplier,
+                k.manual_rate_multiplier,
+                k.manual_rate_updated_at,
                 k.rate_source,
                 k.rate_collected_at,
                 k.balance_scope,
@@ -4926,42 +5000,47 @@ fn list_key_pool_items_from_connection(
             let api_key_secret_id: Option<String> = row.get(8)?;
             let api_key_masked = secret_masked.unwrap_or_else(|| mask_secret(&api_key));
             let api_key_present = api_key_secret_id.is_some() || !api_key.trim().is_empty();
-            let supports_chat = i64_to_bool(row.get(25)?);
-            let supports_responses = i64_to_bool(row.get(26)?);
-            let supports_embeddings = i64_to_bool(row.get(27)?);
-            let supports_stream = i64_to_bool(row.get(28)?);
-            let supports_tools = i64_to_bool(row.get(29)?);
-            let supports_vision = i64_to_bool(row.get(30)?);
-            let supports_reasoning = i64_to_bool(row.get(31)?);
-            let allowlist = parse_json_string_list(row.get::<_, String>(32)?.as_str());
-            let blocklist = parse_json_string_list(row.get::<_, String>(33)?.as_str());
-            let preferred_models = parse_json_string_list(row.get::<_, String>(34)?.as_str());
-            let success_count = row.get::<_, Option<i64>>(37)?.unwrap_or(0);
-            let failure_count = row.get::<_, Option<i64>>(38)?.unwrap_or(0);
+            let supports_chat = i64_to_bool(row.get(30)?);
+            let supports_responses = i64_to_bool(row.get(31)?);
+            let supports_embeddings = i64_to_bool(row.get(32)?);
+            let supports_stream = i64_to_bool(row.get(33)?);
+            let supports_tools = i64_to_bool(row.get(34)?);
+            let supports_vision = i64_to_bool(row.get(35)?);
+            let supports_reasoning = i64_to_bool(row.get(36)?);
+            let allowlist = parse_json_string_list(row.get::<_, String>(37)?.as_str());
+            let blocklist = parse_json_string_list(row.get::<_, String>(38)?.as_str());
+            let preferred_models = parse_json_string_list(row.get::<_, String>(39)?.as_str());
+            let success_count = row.get::<_, Option<i64>>(42)?.unwrap_or(0);
+            let failure_count = row.get::<_, Option<i64>>(43)?.unwrap_or(0);
             Ok(KeyPoolItem {
                 id: row.get(0)?,
                 station_id: row.get(1)?,
                 station_name: row.get(2)?,
                 station_type: row.get(3)?,
                 station_base_url: row.get(4)?,
-                station_upstream_api_format: row.get(42)?,
+                station_upstream_api_format: row.get(47)?,
                 name: row.get(5)?,
                 api_key_masked,
                 api_key_present,
                 enabled: i64_to_bool(row.get(9)?),
                 priority: row.get(10)?,
-                group_name: row.get(11)?,
-                tier_label: row.get(12)?,
-                group_binding_id: row.get(13)?,
-                group_id_hash: row.get(14)?,
-                rate_multiplier: row.get(15)?,
-                rate_source: row.get(16)?,
-                rate_collected_at: row.get(17)?,
-                balance_scope: row.get(18)?,
-                status: row.get(19)?,
-                last_checked_at: row.get(20)?,
-                last_used_at: row.get(21)?,
-                note: row.get(22)?,
+                max_concurrency: row.get(11)?,
+                load_factor: row.get(12)?,
+                schedulable: i64_to_bool(row.get(13)?),
+                group_name: row.get(14)?,
+                tier_label: row.get(15)?,
+                group_binding_id: row.get(16)?,
+                group_id_hash: row.get(17)?,
+                rate_multiplier: row.get(18)?,
+                manual_rate_multiplier: row.get(19)?,
+                manual_rate_updated_at: row.get(20)?,
+                rate_source: row.get(21)?,
+                rate_collected_at: row.get(22)?,
+                balance_scope: row.get(23)?,
+                status: row.get(24)?,
+                last_checked_at: row.get(25)?,
+                last_used_at: row.get(26)?,
+                note: row.get(27)?,
                 capability_summary: summarize_capabilities(
                     supports_chat,
                     supports_responses,
@@ -4976,18 +5055,18 @@ fn list_key_pool_items_from_connection(
                     blocklist.len(),
                     preferred_models.len(),
                 ),
-                only_use_as_backup: i64_to_bool(row.get(35)?),
-                cooldown_until: row.get(36)?,
+                only_use_as_backup: i64_to_bool(row.get(40)?),
+                cooldown_until: row.get(41)?,
                 success_rate: success_rate(success_count, failure_count),
-                avg_latency_ms: row.get(39)?,
-                consecutive_failures: row.get(40)?,
-                last_error_summary: row.get(41)?,
-                endpoint_ping_status: row.get(43)?,
-                endpoint_ping_ms: row.get(44)?,
-                endpoint_ping_checked_at: row.get(45)?,
-                endpoint_ping_error: row.get(46)?,
-                created_at: row.get(23)?,
-                updated_at: row.get(24)?,
+                avg_latency_ms: row.get(44)?,
+                consecutive_failures: row.get(45)?,
+                last_error_summary: row.get(46)?,
+                endpoint_ping_status: row.get(48)?,
+                endpoint_ping_ms: row.get(49)?,
+                endpoint_ping_checked_at: row.get(50)?,
+                endpoint_ping_error: row.get(51)?,
+                created_at: row.get(28)?,
+                updated_at: row.get(29)?,
             })
         })
         .map_err(|error| format!("查询 Key 池失败: {error}"))?
@@ -7493,16 +7572,22 @@ pub(super) fn create_station_key_in_connection_with_data_key(
         Some(priority) => priority,
         None => next_station_key_priority(connection, &input.station_id)?,
     };
+    let max_concurrency = input.max_concurrency.unwrap_or(3);
+    if max_concurrency <= 0 {
+        return Err("max_concurrency must be positive".to_string());
+    }
     let routing_order = next_local_routing_order(connection)?;
 
     connection
         .execute(
             "INSERT INTO station_keys (
                 id, station_id, name, api_key, api_key_secret_id, enabled, priority, routing_order,
+                max_concurrency, load_factor, schedulable,
                 group_name, tier_label, group_binding_id, group_id_hash, rate_multiplier,
+                manual_rate_multiplier, manual_rate_updated_at,
                 rate_source, rate_collected_at, balance_scope,
                 status, last_checked_at, last_used_at, note, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'unchecked', NULL, NULL, ?17, ?18, ?19)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 'unchecked', NULL, NULL, ?22, ?23, ?24)",
             params![
                 id,
                 input.station_id,
@@ -7512,11 +7597,16 @@ pub(super) fn create_station_key_in_connection_with_data_key(
                 bool_to_i64(input.enabled),
                 priority,
                 routing_order,
+                max_concurrency,
+                input.load_factor,
+                bool_to_i64(input.schedulable.unwrap_or(true)),
                 normalize_optional_string(input.group_name),
                 normalize_optional_string(input.tier_label),
                 normalize_optional_string(input.group_binding_id),
                 normalize_optional_string(input.group_id_hash),
                 input.rate_multiplier,
+                input.manual_rate_multiplier,
+                input.manual_rate_multiplier.map(|_| now.clone()),
                 normalize_optional_string(input.rate_source),
                 input.rate_multiplier.map(|_| now.clone()),
                 normalize_optional_string(input.balance_scope),
@@ -7581,6 +7671,9 @@ pub(super) fn update_station_key_in_connection_with_data_key(
     } else {
         (new_api_key.unwrap_or(existing_api_key), existing_secret_id)
     };
+    if input.max_concurrency <= 0 {
+        return Err("max_concurrency must be positive".to_string());
+    }
     let now = now_string();
 
     connection
@@ -7591,34 +7684,46 @@ pub(super) fn update_station_key_in_connection_with_data_key(
                     api_key_secret_id = ?3,
                     enabled = ?4,
                     priority = ?5,
-                    group_name = ?6,
-                    tier_label = ?7,
-                    group_binding_id = COALESCE(?8, group_binding_id),
-                    group_id_hash = COALESCE(?9, group_id_hash),
-                    rate_multiplier = COALESCE(?10, rate_multiplier),
-                    rate_source = COALESCE(?11, rate_source),
+                    max_concurrency = ?6,
+                    load_factor = ?7,
+                    schedulable = ?8,
+                    group_name = ?9,
+                    tier_label = ?10,
+                    group_binding_id = COALESCE(?11, group_binding_id),
+                    group_id_hash = COALESCE(?12, group_id_hash),
+                    rate_multiplier = COALESCE(?13, rate_multiplier),
+                    manual_rate_multiplier = COALESCE(?14, manual_rate_multiplier),
+                    manual_rate_updated_at = CASE
+                        WHEN ?14 IS NOT NULL THEN ?15
+                        ELSE manual_rate_updated_at
+                    END,
+                    rate_source = COALESCE(?16, rate_source),
                     rate_collected_at = CASE
-                        WHEN ?10 IS NOT NULL THEN ?12
+                        WHEN ?13 IS NOT NULL THEN ?15
                         ELSE rate_collected_at
                     END,
-                    balance_scope = COALESCE(?13, balance_scope),
-                    status = ?14,
-                    note = ?15,
-                    updated_at = ?16
-              WHERE id = ?17 AND station_id = ?18",
+                    balance_scope = COALESCE(?17, balance_scope),
+                    status = ?18,
+                    note = ?19,
+                    updated_at = ?20
+              WHERE id = ?21 AND station_id = ?22",
             params![
                 input.name.trim(),
                 next_api_key,
                 next_secret_id,
                 bool_to_i64(input.enabled),
                 input.priority,
+                input.max_concurrency,
+                input.load_factor,
+                bool_to_i64(input.schedulable),
                 normalize_optional_string(input.group_name),
                 normalize_optional_string(input.tier_label),
                 normalize_optional_string(input.group_binding_id),
                 normalize_optional_string(input.group_id_hash),
                 input.rate_multiplier,
-                normalize_optional_string(input.rate_source),
+                input.manual_rate_multiplier,
                 now.clone(),
+                normalize_optional_string(input.rate_source),
                 normalize_optional_string(input.balance_scope),
                 input.status,
                 normalize_optional_string(input.note),
@@ -7737,8 +7842,11 @@ fn touch_station_key_usage_in_connection(
 pub(super) fn station_key_by_id(connection: &Connection, id: &str) -> Result<StationKey, String> {
     connection
         .query_row(
-            "SELECT id, station_id, name, api_key, enabled, priority, group_name, tier_label,
-                    group_binding_id, group_id_hash, rate_multiplier, rate_source,
+            "SELECT id, station_id, name, api_key, enabled, priority,
+                    max_concurrency, load_factor, schedulable,
+                    group_name, tier_label,
+                    group_binding_id, group_id_hash, rate_multiplier,
+                    manual_rate_multiplier, manual_rate_updated_at, rate_source,
                     rate_collected_at, balance_scope,
                     status, last_checked_at, last_used_at, note, created_at, updated_at,
                     (SELECT masked_value FROM secrets WHERE secrets.id = station_keys.api_key_secret_id),
@@ -9489,6 +9597,50 @@ fn parse_upstream_api_format(value: String) -> UpstreamApiFormat {
     }
 }
 
+fn serialize_routing_group_filter_setting(filter: &RoutingGroupFilter) -> Result<String, String> {
+    match serde_json::to_value(filter)
+        .map_err(|error| format!("serialize routing group filter failed: {error}"))?
+    {
+        Value::String(value) => Ok(value),
+        value => serde_json::to_string(&value)
+            .map_err(|error| format!("serialize routing group filter failed: {error}")),
+    }
+}
+
+fn parse_routing_group_filter_setting(value: &str) -> Result<RoutingGroupFilter, String> {
+    if value.trim().is_empty() {
+        return Ok(RoutingGroupFilter::AllGroups);
+    }
+    serde_json::from_str::<RoutingGroupFilter>(value)
+        .or_else(|_| serde_json::from_value::<RoutingGroupFilter>(Value::String(value.to_string())))
+        .map_err(|error| format!("parse routing group filter failed: {error}"))
+}
+
+fn parse_optional_f64_setting(value: &str, key: &str) -> Result<Option<f64>, String> {
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|_| format!("setting {key} has invalid number format"))?;
+    if !parsed.is_finite() {
+        return Err(format!("setting {key} must be finite"));
+    }
+    Ok(Some(parsed))
+}
+
+fn parse_scheduler_advanced_settings(value: &str) -> Result<SchedulerAdvancedSettings, String> {
+    if value.trim().is_empty() {
+        return Ok(SchedulerAdvancedSettings::default());
+    }
+    let settings: SchedulerAdvancedSettings = serde_json::from_str(value)
+        .map_err(|error| format!("parse scheduler advanced settings failed: {error}"))?;
+    settings
+        .validate()
+        .map_err(|error| format!("scheduler advanced settings invalid: {error:?}"))?;
+    Ok(settings)
+}
+
 fn settings_from_connection(
     connection: &Connection,
     data_dir: &str,
@@ -9504,6 +9656,18 @@ fn settings_from_connection(
         local_proxy_port: parse_setting(connection, "local_proxy_port")?,
         local_key_masked: mask_secret(&local_key),
         default_routing_strategy: read_setting(connection, "default_routing_strategy")?,
+        max_rate_multiplier: parse_optional_f64_setting(
+            &read_setting_or_default(connection, "max_rate_multiplier", "")?,
+            "max_rate_multiplier",
+        )?,
+        default_routing_group_filter: parse_routing_group_filter_setting(
+            &read_setting_or_default(connection, "default_routing_group_filter", "all_groups")?,
+        )?,
+        scheduler_advanced_settings: parse_scheduler_advanced_settings(&read_setting_or_default(
+            connection,
+            "scheduler_advanced_settings_json",
+            "",
+        )?)?,
         low_balance_threshold_cny: parse_setting(connection, "low_balance_threshold_cny")?,
         collector_interval_minutes: parse_setting(connection, "collector_interval_minutes")?,
         balance_interval_minutes: parse_setting_or_default(
@@ -10375,11 +10539,15 @@ mod tests {
                 api_key: "sk-local-bind".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -10488,11 +10656,15 @@ mod tests {
                 api_key: "sk-local-unmatch".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -10558,11 +10730,15 @@ mod tests {
                 api_key: "sk-foreign-local".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -11269,11 +11445,15 @@ mod tests {
                 api_key: "sk-unresolved".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -11409,11 +11589,15 @@ mod tests {
                 api_key: "sk-legacy".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: Some("legacy-group".to_string()),
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -11942,11 +12126,15 @@ mod tests {
                 api_key: "sk-new-appended".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -12788,11 +12976,15 @@ mod tests {
                 api_key: "sk-not-the-canary".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -12829,11 +13021,15 @@ mod tests {
                 api_key: "sk-p8-secret-plaintext-canary".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -12886,11 +13082,15 @@ mod tests {
                 api_key: "sk-p8-secret-plaintext-canary".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -12926,11 +13126,15 @@ mod tests {
                 api_key: "sk-p8-secret-plaintext-canary".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -12972,11 +13176,15 @@ mod tests {
                     api_key: "sk-p8-secret-plaintext-canary".to_string(),
                     enabled: true,
                     priority: Some(0),
+                    max_concurrency: None,
+                    load_factor: None,
+                    schedulable: None,
                     group_name: None,
                     tier_label: None,
                     group_binding_id: None,
                     group_id_hash: None,
                     rate_multiplier: None,
+                    manual_rate_multiplier: None,
                     rate_source: None,
                     balance_scope: None,
                     note: None,
@@ -13018,11 +13226,15 @@ mod tests {
                     api_key: "sk-p8-secret-plaintext-canary".to_string(),
                     enabled: true,
                     priority: Some(0),
+                    max_concurrency: None,
+                    load_factor: None,
+                    schedulable: None,
                     group_name: None,
                     tier_label: None,
                     group_binding_id: None,
                     group_id_hash: None,
                     rate_multiplier: None,
+                    manual_rate_multiplier: None,
                     rate_source: None,
                     balance_scope: None,
                     note: None,
@@ -13040,11 +13252,15 @@ mod tests {
                     api_key: Some("   ".to_string()),
                     enabled: true,
                     priority: key.priority,
+                    max_concurrency: 3,
+                    load_factor: None,
+                    schedulable: true,
                     group_name: None,
                     tier_label: None,
                     group_binding_id: None,
                     group_id_hash: None,
                     rate_multiplier: None,
+                    manual_rate_multiplier: None,
                     rate_source: None,
                     balance_scope: None,
                     status: key.status,

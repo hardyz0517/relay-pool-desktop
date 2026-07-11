@@ -14,6 +14,7 @@ import { chooseDataDir, getLocalAccessKey, getSettings, SETTINGS_UPDATED_EVENT, 
 import type { ProxyStatus } from "@/lib/types/proxy";
 import { useUpdater } from "@/features/updater/UpdaterProvider";
 import {
+  DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   routingStrategyLabels,
   type AppSettings,
   type RoutingStrategy,
@@ -41,6 +42,9 @@ const fallbackSettings: AppSettings = {
   localProxyPort: 8787,
   localKeyMasked: "未读取",
   defaultRoutingStrategy: "cost_stable_first",
+  maxRateMultiplier: null,
+  defaultRoutingGroupFilter: "all_groups",
+  schedulerAdvancedSettings: DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   balanceIntervalMinutes: 5,
@@ -512,6 +516,9 @@ function formToInput(form: SettingsFormState): UpdateSettingsInput {
   return {
     localProxyPort: Number(form.localProxyPort),
     defaultRoutingStrategy: form.defaultRoutingStrategy,
+    maxRateMultiplier: null,
+    defaultRoutingGroupFilter: "all_groups",
+    schedulerAdvancedSettings: DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
     lowBalanceThresholdCny: Number(form.lowBalanceThresholdCny),
     collectorIntervalMinutes: Number(form.collectorIntervalMinutes),
     balanceIntervalMinutes: Number(form.balanceIntervalMinutes),

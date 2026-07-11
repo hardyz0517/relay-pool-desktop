@@ -1,11 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+use super::routing::{RoutingGroupFilter, SchedulerAdvancedSettings};
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub local_proxy_port: u16,
     pub local_key_masked: String,
     pub default_routing_strategy: String,
+    pub max_rate_multiplier: Option<f64>,
+    pub default_routing_group_filter: RoutingGroupFilter,
+    pub scheduler_advanced_settings: SchedulerAdvancedSettings,
     pub low_balance_threshold_cny: f64,
     pub collector_interval_minutes: u16,
     pub balance_interval_minutes: u16,
@@ -27,6 +32,9 @@ pub struct AppSettings {
 pub struct UpdateSettingsInput {
     pub local_proxy_port: u16,
     pub default_routing_strategy: String,
+    pub max_rate_multiplier: Option<f64>,
+    pub default_routing_group_filter: RoutingGroupFilter,
+    pub scheduler_advanced_settings: SchedulerAdvancedSettings,
     pub low_balance_threshold_cny: f64,
     pub collector_interval_minutes: u16,
     pub balance_interval_minutes: u16,
