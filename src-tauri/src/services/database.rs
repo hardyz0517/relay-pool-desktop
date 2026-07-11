@@ -24,7 +24,10 @@ use crate::models::{
     },
     collector::CollectorSnapshot,
     collector_runs::{CollectorRun, CreateCollectorRunInput, FinishCollectorRunInput},
-    credentials::{StationCredentials, UpdateStationCredentialsInput, UpdateStationSessionInput},
+    credentials::{
+        PersistStationSessionInput, StationCredentials, StationSessionCredentialKind,
+        UpdateStationCredentialsInput, UpdateStationSessionInput,
+    },
     group_facts::{
         GroupRateRecord, InsertGroupRateRecordInput, StationGroupBinding,
         UpdateStationKeyGroupBindingInput, UpsertStationGroupBindingInput,
@@ -1054,6 +1057,24 @@ impl AppDatabase {
         station_credentials_from_connection(&connection, &station_id)
     }
 
+    pub fn persist_station_session_with_data_key(
+        &self,
+        input: PersistStationSessionInput,
+        data_key: &[u8; 32],
+    ) -> Result<StationCredentials, String> {
+        let mut connection = self.connection()?;
+        validate_station_exists(&connection, &input.station_id)?;
+        let station_id = input.station_id.clone();
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始保存 session 事务失败: {error}"))?;
+        persist_station_session_from_connection(&transaction, input, data_key)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("提交保存 session 事务失败: {error}"))?;
+        station_credentials_from_connection(&connection, &station_id)
+    }
+
     pub fn resolve_station_session_with_data_key(
         &self,
         station_id: String,
@@ -1063,6 +1084,22 @@ impl AppDatabase {
         let connection = self.connection()?;
         validate_station_exists(&connection, &station_id)?;
         resolve_station_session_from_connection(&connection, &station_id, data_key, now_ms)
+    }
+
+    pub fn invalidate_station_session_credential(
+        &self,
+        station_id: &str,
+        kind: StationSessionCredentialKind,
+    ) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        validate_station_exists(&connection, station_id)?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始失效 session 事务失败: {error}"))?;
+        invalidate_station_session_credential_from_connection(&transaction, station_id, kind)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("提交失效 session 事务失败: {error}"))
     }
 
     pub fn clear_station_credentials(
@@ -8115,6 +8152,22 @@ fn resolve_station_session_from_connection(
         });
     }
 
+    if cookie.is_some()
+        && newapi_user_id
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+    {
+        return Ok(ResolvedSession {
+            status: SessionResolveStatus::Ready,
+            access_token,
+            refresh_token,
+            cookie,
+            newapi_user_id,
+            message: None,
+        });
+    }
+
     if refresh_token.is_some() || password_login_available {
         return Ok(ResolvedSession {
             status: SessionResolveStatus::Ready,
@@ -8231,11 +8284,34 @@ fn upsert_station_session_with_data_key(
     input: UpdateStationSessionInput,
     data_key: &[u8; 32],
 ) -> Result<(), String> {
+    persist_station_session_from_connection(
+        connection,
+        PersistStationSessionInput {
+            station_id: input.station_id,
+            access_token: input.access_token,
+            refresh_token: input.refresh_token,
+            cookie: input.cookie,
+            newapi_user_id: input.newapi_user_id,
+            session_expires_at: input.token_expires_at.clone(),
+            token_expires_at: input.token_expires_at,
+            session_source: "manual_token".to_string(),
+        },
+        data_key,
+    )
+}
+
+fn persist_station_session_from_connection(
+    connection: &Connection,
+    input: PersistStationSessionInput,
+    data_key: &[u8; 32],
+) -> Result<(), String> {
     let access_token = normalize_optional_string(input.access_token);
     let refresh_token = normalize_optional_string(input.refresh_token);
     let cookie = normalize_optional_string(input.cookie);
     let newapi_user_id = normalize_optional_string(input.newapi_user_id);
     let token_expires_at = normalize_optional_string(input.token_expires_at);
+    let session_expires_at = normalize_optional_string(input.session_expires_at);
+    let session_source = normalize_required_string(input.session_source, "manual_token");
 
     let existing: (Option<String>, Option<String>, Option<String>) = connection
         .query_row(
@@ -8294,7 +8370,7 @@ fn upsert_station_session_with_data_key(
                 session_expires_at, access_token_secret_id, refresh_token_secret_id,
                 cookie_secret_id, newapi_user_id, token_expires_at, token_refreshed_at,
                 session_source, created_at, updated_at
-             ) VALUES (?1, ?2, 0, 'saved', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'manual_token', ?11, ?12)
+             ) VALUES (?1, ?2, 0, 'saved', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
              ON CONFLICT(station_id) DO UPDATE SET
                 session_status = excluded.session_status,
                 session_expires_at = excluded.session_expires_at,
@@ -8309,20 +8385,128 @@ fn upsert_station_session_with_data_key(
             params![
                 generate_id("credentials"),
                 input.station_id,
-                if has_session { "valid" } else { "manual_required" },
-                token_expires_at.clone(),
+                if has_session {
+                    "valid"
+                } else {
+                    "manual_required"
+                },
+                session_expires_at,
                 access_token_secret_id,
                 refresh_token_secret_id,
                 cookie_secret_id,
                 newapi_user_id,
                 token_expires_at,
                 now,
+                session_source,
                 now,
                 now,
             ],
         )
         .map_err(|error| format!("保存 session 凭据失败: {error}"))?;
 
+    Ok(())
+}
+
+fn invalidate_station_session_credential_from_connection(
+    connection: &Connection,
+    station_id: &str,
+    kind: StationSessionCredentialKind,
+) -> Result<(), String> {
+    let (column, label) = match kind {
+        StationSessionCredentialKind::AccessToken => ("access_token_secret_id", "access token"),
+        StationSessionCredentialKind::RefreshToken => ("refresh_token_secret_id", "refresh token"),
+        StationSessionCredentialKind::Cookie => ("cookie_secret_id", "Cookie"),
+    };
+    let secret_id: Option<String> = connection
+        .query_row(
+            &format!("SELECT {column} FROM station_credentials WHERE station_id = ?1"),
+            params![station_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取待失效 {label} 凭据失败: {error}"))?
+        .flatten();
+
+    connection
+        .execute(
+            &format!(
+                "UPDATE station_credentials
+                    SET {column} = NULL,
+                        updated_at = ?1
+                  WHERE station_id = ?2"
+            ),
+            params![now_string(), station_id],
+        )
+        .map_err(|error| format!("失效 {label} 凭据失败: {error}"))?;
+    refresh_station_session_status_from_connection(connection, station_id)?;
+    if let Some(secret_id) = secret_id {
+        delete_unreferenced_secret_by_id(connection, &secret_id)?;
+    }
+    Ok(())
+}
+
+fn refresh_station_session_status_from_connection(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<(), String> {
+    let has_session = connection
+        .query_row(
+            "SELECT access_token_secret_id IS NOT NULL
+                    OR refresh_token_secret_id IS NOT NULL
+                    OR cookie_secret_id IS NOT NULL
+               FROM station_credentials
+              WHERE station_id = ?1",
+            params![station_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取 session 状态失败: {error}"))?
+        .map(i64_to_bool)
+        .unwrap_or(false);
+    connection
+        .execute(
+            "UPDATE station_credentials
+                SET session_status = ?1,
+                    updated_at = ?2
+              WHERE station_id = ?3",
+            params![
+                if has_session {
+                    "valid"
+                } else {
+                    "manual_required"
+                },
+                now_string(),
+                station_id
+            ],
+        )
+        .map_err(|error| format!("更新 session 状态失败: {error}"))?;
+    Ok(())
+}
+
+fn delete_unreferenced_secret_by_id(
+    connection: &Connection,
+    secret_id: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "DELETE FROM secrets
+              WHERE id = ?1
+                AND NOT EXISTS (
+                    SELECT 1 FROM station_credentials
+                     WHERE login_password_secret_id = ?1
+                        OR access_token_secret_id = ?1
+                        OR refresh_token_secret_id = ?1
+                        OR cookie_secret_id = ?1
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM station_keys WHERE api_key_secret_id = ?1
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM stations WHERE api_key_secret_id = ?1
+                )",
+            params![secret_id],
+        )
+        .map_err(|error| format!("删除未引用加密凭据失败: {error}"))?;
     Ok(())
 }
 
@@ -9870,6 +10054,15 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|item| item.trim().to_string())
         .filter(|item| !item.is_empty())
+}
+
+fn normalize_required_string(value: String, fallback: &str) -> String {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        fallback.to_string()
+    } else {
+        normalized.to_string()
+    }
 }
 
 fn redact_optional_text(value: Option<String>) -> Option<String> {
@@ -13410,6 +13603,81 @@ mod tests {
             resolved.access_token.as_deref(),
             Some("p9-access-token-canary")
         );
+    }
+
+    #[test]
+    fn newapi_session_cookie_only_is_ready() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "newapi-cookie-only");
+        let data_key = [37_u8; 32];
+
+        database
+            .persist_station_session_with_data_key(
+                PersistStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: None,
+                    refresh_token: None,
+                    cookie: Some("session=encrypted-at-rest".to_string()),
+                    newapi_user_id: Some("42".to_string()),
+                    token_expires_at: None,
+                    session_expires_at: None,
+                    session_source: "password_login".to_string(),
+                },
+                &data_key,
+            )
+            .expect("persist session");
+        let station_id = station.id.clone();
+        let session = database
+            .resolve_station_session_with_data_key(station.id, &data_key, 100_000)
+            .expect("resolve session");
+        let credentials = database
+            .get_station_credentials(station_id)
+            .expect("credentials");
+
+        assert_eq!(session.status, SessionResolveStatus::Ready);
+        assert_eq!(session.cookie.as_deref(), Some("session=encrypted-at-rest"));
+        assert_eq!(session.newapi_user_id.as_deref(), Some("42"));
+        assert_eq!(credentials.session_source, "password_login");
+    }
+
+    #[test]
+    fn newapi_session_invalidating_cookie_keeps_manual_access_token() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "newapi-scoped-invalidation");
+        let data_key = [41_u8; 32];
+
+        persist_dual_newapi_session(&database, &station.id, &data_key);
+        database
+            .invalidate_station_session_credential(
+                &station.id,
+                StationSessionCredentialKind::Cookie,
+            )
+            .expect("invalidate cookie");
+        let credentials = database
+            .get_station_credentials(station.id)
+            .expect("credentials");
+
+        assert!(credentials.access_token_present);
+        assert!(!credentials.cookie_present);
+        assert_eq!(credentials.session_source, "manual_token");
+    }
+
+    fn persist_dual_newapi_session(database: &AppDatabase, station_id: &str, data_key: &[u8; 32]) {
+        database
+            .persist_station_session_with_data_key(
+                PersistStationSessionInput {
+                    station_id: station_id.to_string(),
+                    access_token: Some("manual-access-token".to_string()),
+                    refresh_token: None,
+                    cookie: Some("session=login-cookie".to_string()),
+                    newapi_user_id: Some("42".to_string()),
+                    token_expires_at: None,
+                    session_expires_at: None,
+                    session_source: "manual_token".to_string(),
+                },
+                data_key,
+            )
+            .expect("persist dual session");
     }
 
     #[test]

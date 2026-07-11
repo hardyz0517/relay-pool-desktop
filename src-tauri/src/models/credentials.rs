@@ -41,3 +41,22 @@ pub struct UpdateStationSessionInput {
     pub newapi_user_id: Option<String>,
     pub token_expires_at: Option<String>,
 }
+
+#[derive(Debug, Clone)]
+pub struct PersistStationSessionInput {
+    pub station_id: String,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub cookie: Option<String>,
+    pub newapi_user_id: Option<String>,
+    pub token_expires_at: Option<String>,
+    pub session_expires_at: Option<String>,
+    pub session_source: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StationSessionCredentialKind {
+    AccessToken,
+    RefreshToken,
+    Cookie,
+}
