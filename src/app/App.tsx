@@ -207,24 +207,21 @@ export function App() {
   const isCurrentTransientPage = activeTransitionPolicy.kind === "transient";
 
   useEffect(() => {
-    if (activeTransientPage) {
-      lastActiveTransientPageRef.current = activeTransientPage;
-    }
-  }, [activeTransientPage]);
-
-  useEffect(() => {
     const previousRouteId = previousRouteIdRef.current;
     const previousPolicy = getPageTransitionPolicy(previousRouteId);
+    const previousTransientPage = lastActiveTransientPageRef.current;
 
     if (previousRouteId !== activeRouteId && previousPolicy.kind === "transient") {
-      const previousTransientPage = lastActiveTransientPageRef.current;
       setExitingTransientPage(
         previousTransientPage?.pageId === previousRouteId ? previousTransientPage : null,
       );
     }
 
     previousRouteIdRef.current = activeRouteId;
-  }, [activeRouteId]);
+    if (activeTransientPage) {
+      lastActiveTransientPageRef.current = activeTransientPage;
+    }
+  }, [activeRouteId, activeTransientPage]);
 
   useEffect(() => {
     if (!exitingTransientPage) {
@@ -267,7 +264,6 @@ export function App() {
           const inert = !active;
 
           return (
-            // Legacy activation-refresh contract marker: active={activeRouteId === routeId}
             <PageActivityProvider key={routeId} active={active}>
               <div
                 aria-hidden={inert}

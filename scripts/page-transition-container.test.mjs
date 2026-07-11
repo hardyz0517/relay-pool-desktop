@@ -3,6 +3,12 @@ import { readFile } from "node:fs/promises";
 
 const appSource = await readFile("src/app/App.tsx", "utf8");
 
+function sourceIndex(snippet, message) {
+  const index = appSource.indexOf(snippet);
+  assert.notEqual(index, -1, message);
+  return index;
+}
+
 assert.ok(
   appSource.includes("TRANSIENT_EXIT_TIMEOUT_MS"),
   "App should define a bounded timeout for outgoing transient cleanup",
@@ -40,6 +46,31 @@ assert.ok(
   appSource.includes("const active = activeRouteId === routeId && !isCurrentTransientPage") &&
     appSource.includes("<PageActivityProvider key={routeId} active={active}>"),
   "shell PageActivityProvider should be inactive while a transient overlay is current",
+);
+
+assert.ok(
+  !appSource.includes("}, [activeTransientPage]);"),
+  "last active transient page should not be updated in a standalone earlier effect",
+);
+
+const previousTransientReadIndex = sourceIndex(
+  "const previousTransientPage = lastActiveTransientPageRef.current",
+  "App should read the previous transient page before updating refs",
+);
+const previousRouteWriteIndex = sourceIndex(
+  "previousRouteIdRef.current = activeRouteId",
+  "App should update the previous route ref inside the combined transient preservation effect",
+);
+const activeTransientWriteIndex = sourceIndex(
+  "lastActiveTransientPageRef.current = activeTransientPage",
+  "App should update the last active transient ref after preserving the outgoing page",
+);
+
+assert.ok(
+  previousTransientReadIndex < activeTransientWriteIndex &&
+    previousRouteWriteIndex < activeTransientWriteIndex &&
+    appSource.includes("}, [activeRouteId, activeTransientPage]);"),
+  "App should preserve outgoing transient pages before updating the last active transient ref",
 );
 
 assert.ok(
