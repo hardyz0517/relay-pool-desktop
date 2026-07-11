@@ -30,7 +30,7 @@ import {
 import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
 import { listBalanceSnapshots } from "@/lib/api/economics";
-import { startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
+import { getProxyStatus, listRequestLogs, startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
 import { getLocalAccessKey, importRelayPoolToCCSwitch } from "@/lib/api/settings";
 import { loadDashboardWorkspace } from "@/lib/queries/dashboardQueries";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
@@ -57,6 +57,8 @@ const healthTone = {
 } as const;
 
 const DASHBOARD_BALANCE_REFRESH_INTERVAL_MS = 30_000;
+const DASHBOARD_RUNTIME_REFRESH_INTERVAL_MS = 2_000;
+const RECENT_PERFORMANCE_WINDOW_MINUTES = 5;
 
 const dashboardMetricToneClassName: Record<MetricTone, string> = {
   neutral: "text-slate-700",
@@ -101,6 +103,15 @@ export function DashboardPage() {
       });
   });
 
+  async function refreshDashboardRuntimeFacts() {
+    const [nextProxyStatus, nextRequestLogs] = await Promise.all([
+      getProxyStatus(),
+      listRequestLogs(),
+    ]);
+    setProxyStatus(nextProxyStatus);
+    setRequestLogs(nextRequestLogs);
+  }
+
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       void listBalanceSnapshots()
@@ -108,6 +119,13 @@ export function DashboardPage() {
         .catch(() => {});
     }, DASHBOARD_BALANCE_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    const runtimeRefreshIntervalId = window.setInterval(() => {
+      void refreshDashboardRuntimeFacts().catch(() => {});
+    }, DASHBOARD_RUNTIME_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(runtimeRefreshIntervalId);
   }, []);
 
   async function copyText(value: string, label = "内容") {
@@ -180,8 +198,6 @@ export function DashboardPage() {
   }, [requestLogs]);
 
   const todayRequests = todayLogs.length;
-  const todayFailedRequests = todayLogs.filter((log) => log.status === "failed").length;
-  const todaySuccessRate = todayRequests > 0 ? (todayRequests - todayFailedRequests) / todayRequests : null;
   const recentError = requestLogs.find((log) => log.status === "failed")?.errorMessage ?? "最近没有代理错误。";
   const proxyRunning = proxyStatus?.running ?? false;
   const proxyBaseUrl = proxyStatus
@@ -202,7 +218,7 @@ export function DashboardPage() {
   const totalCompletionTokens = requestLogs.reduce((sum, log) => sum + (log.completionTokens ?? 0), 0);
   const requestCostSummary = useMemo(() => summarizeDashboardRequestCosts(requestLogs), [requestLogs]);
   const averageResponseMs = averageDurationMs(todayLogs);
-  const todayTpm = getTodayAverageTpm(todayTokens);
+  const recentPerformance = getRecentPerformanceMetrics(requestLogs);
   const activeRequests = proxyStatus?.activeRequests ?? 0;
   const balanceSummary = useMemo(() => summarizeDashboardBalances(balanceSnapshots), [balanceSnapshots]);
   const { lowBalanceStations, primaryBalanceCurrency, totalBalance } = balanceSummary;
@@ -376,10 +392,10 @@ export function DashboardPage() {
             },
             {
               label: "性能概览",
-              value: formatPercent(todaySuccessRate),
-              detail: `${formatCompactNumber(todayTpm)} TPM · ${activeRequests} 活跃`,
+              value: `${formatCompactNumber(recentPerformance.rpm)} RPM`,
+              detail: `${formatCompactNumber(recentPerformance.tpm)} TPM · ${activeRequests} 活跃`,
               icon: Gauge,
-              tone: todaySuccessRate === null ? "neutral" : todaySuccessRate < 0.9 ? "warning" : "good",
+              tone: recentPerformance.rpm > 0 || activeRequests > 0 ? "good" : "neutral",
               accent: "violet",
             },
           ]}
@@ -623,16 +639,18 @@ function averageDurationMs(logs: RequestLog[]) {
   return durations.reduce((sum, duration) => sum + duration, 0) / durations.length;
 }
 
-function getTodayAverageTpm(tokens: number) {
-  if (tokens <= 0) {
-    return 0;
-  }
-
+function getRecentPerformanceMetrics(logs: RequestLog[]) {
   const now = new Date();
-  const startOfDay = new Date(now);
-  startOfDay.setHours(0, 0, 0, 0);
-  const elapsedMinutes = Math.max(1, (now.getTime() - startOfDay.getTime()) / 60000);
-  return tokens / elapsedMinutes;
+  const windowStart = now.getTime() - RECENT_PERFORMANCE_WINDOW_MINUTES * 60_000;
+  const recentLogs = logs.filter((log) => {
+    const startedAt = parseLogDate(log.startedAt).getTime();
+    return Number.isFinite(startedAt) && startedAt >= windowStart && startedAt <= now.getTime();
+  });
+  const recentTokens = recentLogs.reduce((sum, log) => sum + (log.totalTokens ?? 0), 0);
+  return {
+    rpm: recentLogs.length / RECENT_PERFORMANCE_WINDOW_MINUTES,
+    tpm: recentTokens / RECENT_PERFORMANCE_WINDOW_MINUTES,
+  };
 }
 
 function formatBalance(value: number, currency?: string) {
@@ -715,13 +733,6 @@ function formatDuration(value: number | null) {
     return `${trimFixed(value / 1000)}s`;
   }
   return `${Math.round(value)}ms`;
-}
-
-function formatPercent(value: number | null) {
-  if (value === null) {
-    return "-";
-  }
-  return `${(value * 100).toFixed(1)}%`;
 }
 
 function trimFixed(value: number) {

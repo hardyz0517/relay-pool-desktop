@@ -6,6 +6,7 @@ const editablePriceCellSource = source.slice(
   source.indexOf("function EditablePriceCell"),
   source.indexOf("function Field"),
 );
+const createDialogSource = source.slice(source.indexOf("<Dialog"), source.indexOf("function TableColumnHeaderRow"));
 
 assert.ok(
   source.includes("providerFilterOptions"),
@@ -93,4 +94,34 @@ assert.ok(
 assert.ok(
   source.includes("showLabel={false}"),
   "status switches should render as bare toggles without the extra enabled/disabled pill label",
+);
+
+assert.ok(
+  source.includes("currencyOptions") &&
+    createDialogSource.includes('<SelectField label="币种"') &&
+    createDialogSource.includes("options={currencyOptions}"),
+  "new base price dialog should use a dropdown for currency instead of a free text input",
+);
+
+assert.ok(
+  source.includes("unitOptions") &&
+    createDialogSource.includes('<SelectField label="单位"') &&
+    createDialogSource.includes("options={unitOptions}") &&
+    source.includes('{ value: "M", label: "M" }') &&
+    !source.includes('unit: "per_1m_tokens"') &&
+    !source.includes('|| "per_1m_tokens"'),
+  "new base price dialog should use short unit choices such as K/M/B instead of per_1m_tokens",
+);
+
+assert.ok(
+  source.includes("function createEmptyDraft") &&
+    source.includes("formatLocalDate(new Date())") &&
+    source.includes("setCreateDraft(createEmptyDraft())"),
+  "new base price dialog should default checked date to the current local computer date each time it opens",
+);
+
+assert.ok(
+  !createDialogSource.includes("启用模型基准价格") &&
+    !createDialogSource.includes("onCheckedChange={() => setCreateDraft({ ...createDraft, enabled: !createDraft.enabled })}"),
+  "new base price dialog should omit the enabled switch while keeping new rows enabled by default",
 );

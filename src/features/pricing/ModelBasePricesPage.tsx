@@ -40,20 +40,36 @@ const providerFilterOptions: Array<{ value: ProviderFilter; label: string }> = [
 
 const knownProviderOrder = ["openai", "google", "anthropic", "xai"];
 
-const emptyDraft: DraftRow = {
-  provider: "custom",
-  model: "",
-  inputPrice: "",
-  outputPrice: "",
-  currency: "USD",
-  unit: "per_1m_tokens",
-  sourceUrl: "",
-  sourceLabel: "Manual",
-  sourceCheckedAt: new Date().toISOString().slice(0, 10),
-  enabled: true,
-  builtIn: false,
-  note: "",
-};
+const currencyOptions = [
+  { value: "USD", label: "USD" },
+  { value: "CNY", label: "CNY" },
+  { value: "EUR", label: "EUR" },
+  { value: "JPY", label: "JPY" },
+  { value: "HKD", label: "HKD" },
+];
+
+const unitOptions = [
+  { value: "K", label: "K" },
+  { value: "M", label: "M" },
+  { value: "B", label: "B" },
+];
+
+function createEmptyDraft(): DraftRow {
+  return {
+    provider: "custom",
+    model: "",
+    inputPrice: "",
+    outputPrice: "",
+    currency: "USD",
+    unit: "M",
+    sourceUrl: "",
+    sourceLabel: "Manual",
+    sourceCheckedAt: formatLocalDate(new Date()),
+    enabled: true,
+    builtIn: false,
+    note: "",
+  };
+}
 
 export function ModelBasePricesPage({ onBack }: ModelBasePricesPageProps) {
   const toast = useToast();
@@ -61,7 +77,7 @@ export function ModelBasePricesPage({ onBack }: ModelBasePricesPageProps) {
   const [query, setQuery] = useState("");
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [createDraft, setCreateDraft] = useState<DraftRow>(emptyDraft);
+  const [createDraft, setCreateDraft] = useState<DraftRow>(() => createEmptyDraft());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingKeys, setSavingKeys] = useState<Set<string>>(() => new Set());
@@ -116,7 +132,7 @@ export function ModelBasePricesPage({ onBack }: ModelBasePricesPageProps) {
       const saved = await upsertModelBasePrice(draftToInput(createDraft));
       setRows((currentRows) => upsertRow(currentRows, saved));
       setCreateDialogOpen(false);
-      setCreateDraft(emptyDraft);
+      setCreateDraft(createEmptyDraft());
       toast.success("模型基准价格已新增");
     } catch (requestError) {
       const message = readError(requestError);
@@ -183,7 +199,7 @@ export function ModelBasePricesPage({ onBack }: ModelBasePricesPageProps) {
   const groupedRows = useMemo(() => groupRowsByProvider(visibleRows), [visibleRows]);
 
   function openCreateDialog() {
-    setCreateDraft(emptyDraft);
+    setCreateDraft(createEmptyDraft());
     setCreateDialogOpen(true);
   }
 
@@ -334,25 +350,15 @@ export function ModelBasePricesPage({ onBack }: ModelBasePricesPageProps) {
           <Field label="模型" value={createDraft.model} onChange={(model) => setCreateDraft({ ...createDraft, model })} />
           <Field label="输入价" numeric value={createDraft.inputPrice} onChange={(inputPrice) => setCreateDraft({ ...createDraft, inputPrice })} />
           <Field label="输出价" numeric value={createDraft.outputPrice} onChange={(outputPrice) => setCreateDraft({ ...createDraft, outputPrice })} />
-          <Field label="币种" value={createDraft.currency} onChange={(currency) => setCreateDraft({ ...createDraft, currency })} />
-          <Field label="单位" value={createDraft.unit} onChange={(unit) => setCreateDraft({ ...createDraft, unit })} />
+          <SelectField label="币种" options={currencyOptions} value={createDraft.currency} onChange={(currency) => setCreateDraft({ ...createDraft, currency })} />
+          <SelectField label="单位" options={unitOptions} value={createDraft.unit} onChange={(unit) => setCreateDraft({ ...createDraft, unit })} />
           <Field label="来源名称" value={createDraft.sourceLabel} onChange={(sourceLabel) => setCreateDraft({ ...createDraft, sourceLabel })} />
-          <Field label="检查日期" value={createDraft.sourceCheckedAt} onChange={(sourceCheckedAt) => setCreateDraft({ ...createDraft, sourceCheckedAt })} />
+          <Field label="检查日期" inputType="date" value={createDraft.sourceCheckedAt} onChange={(sourceCheckedAt) => setCreateDraft({ ...createDraft, sourceCheckedAt })} />
           <div className="md:col-span-2">
             <Field label="来源 URL" value={createDraft.sourceUrl} onChange={(sourceUrl) => setCreateDraft({ ...createDraft, sourceUrl })} />
           </div>
           <div className="md:col-span-2">
             <Field label="备注" value={createDraft.note} onChange={(note) => setCreateDraft({ ...createDraft, note })} />
-          </div>
-          <div className="flex items-center justify-between rounded-[var(--surface-radius)] border border-border bg-slate-50 px-3 py-2">
-            <div className="text-sm font-medium text-slate-800">启用</div>
-            <SwitchControl
-              ariaLabel="启用模型基准价格"
-              checked={createDraft.enabled}
-              offLabel="停用"
-              onLabel="启用"
-              onCheckedChange={() => setCreateDraft({ ...createDraft, enabled: !createDraft.enabled })}
-            />
           </div>
         </div>
       </Dialog>
@@ -464,15 +470,42 @@ function EditablePriceCell({
   );
 }
 
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="grid gap-1 text-xs font-medium text-slate-600">
+      <span>{label}</span>
+      <SelectControl
+        ariaLabel={label}
+        className="w-full"
+        options={options}
+        value={value}
+        onChange={onChange}
+      />
+    </label>
+  );
+}
+
 function Field({
   label,
   value,
   numeric,
+  inputType,
   onChange,
 }: {
   label: string;
   value: string;
   numeric?: boolean;
+  inputType?: "text" | "date";
   onChange: (value: string) => void;
 }) {
   return (
@@ -482,7 +515,7 @@ function Field({
         className="h-8 min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]"
         min={numeric ? "0" : undefined}
         step={numeric ? "0.0001" : undefined}
-        type={numeric ? "number" : "text"}
+        type={numeric ? "number" : inputType ?? "text"}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
@@ -498,7 +531,7 @@ function draftToInput(draft: DraftRow) {
     inputPrice: draft.inputPrice.trim() === "" ? null : Number(draft.inputPrice),
     outputPrice: draft.outputPrice.trim() === "" ? null : Number(draft.outputPrice),
     currency: draft.currency.trim() || "USD",
-    unit: draft.unit.trim() || "per_1m_tokens",
+    unit: draft.unit.trim() || "M",
     sourceUrl: draft.sourceUrl.trim(),
     sourceLabel: draft.sourceLabel.trim() || "Manual",
     sourceCheckedAt: draft.sourceCheckedAt.trim() === "" ? null : draft.sourceCheckedAt,
@@ -594,4 +627,11 @@ function formatPrice(value: number | null) {
     return "未设";
   }
   return Number.isInteger(value) ? value.toFixed(0) : value.toString();
+}
+
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
