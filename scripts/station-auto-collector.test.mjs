@@ -8,6 +8,7 @@ const stationCollectorSource = await readFile("src-tauri/src/services/station_co
 );
 const collectorsSource = await readFile("src-tauri/src/services/collectors/mod.rs", "utf8");
 const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
+const sub2apiLoginSource = await readFile("src-tauri/src/services/collectors/sub2api.rs", "utf8");
 const sub2apiAdapterSource = await readFile("src-tauri/src/services/collectors/adapters/sub2api.rs", "utf8");
 const newapiAdapterSource = await readFile("src-tauri/src/services/collectors/adapters/newapi.rs", "utf8");
 const openaiCompatibleAdapterSource = await readFile(
@@ -69,6 +70,27 @@ assert.ok(
     openaiCompatibleAdapterSource.includes("COLLECTOR_HTTP_TIMEOUT") &&
     openaiCompatibleAdapterSource.includes(".timeout(COLLECTOR_HTTP_TIMEOUT)"),
   "collector HTTP requests should have a bounded timeout so one station cannot block the scheduled runner",
+);
+
+assert.ok(
+  sub2apiAdapterSource.includes("CollectionAttemptBudget") &&
+    sub2apiAdapterSource.includes("recoveryActions"),
+  "Sub2API scheduled collection should use bounded adaptive recovery diagnostics",
+);
+
+assert.ok(
+  sub2apiLoginSource.includes("login_access_token_with_budget"),
+  "Sub2API auth recovery should share the collection task budget",
+);
+
+const accountBalanceFallbackSource = sub2apiAdapterSource.match(
+  /fn collect_account_balance_fallback[\s\S]*?\n}\n\nfn parse_account_balance/,
+)?.[0];
+assert.ok(accountBalanceFallbackSource, "Sub2API account balance fallback should exist");
+assert.ok(
+  accountBalanceFallbackSource.includes("login_and_store_access_token_with_budget") &&
+    !accountBalanceFallbackSource.includes("login_and_store_access_token(database"),
+  "Sub2API account balance fallback login should use the shared collection task budget",
 );
 
 assert.ok(
