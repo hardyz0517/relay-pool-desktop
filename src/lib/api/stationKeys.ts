@@ -118,8 +118,8 @@ export function createRemoteStationKey(input: CreateRemoteStationKeyInput): Prom
       return {
         remoteKey,
         stationKey,
-        fullKeyOnce,
         message: "浏览器预览模式：已创建本地临时密钥，真实远端创建将在桌面端执行。",
+        fullKeyOnce: null,
       };
     }
     throw error;
@@ -459,11 +459,11 @@ async function memoryRemoteKeyCapability(stationId: string): Promise<RemoteKeyCa
     return {
       stationId,
       stationType: station.stationType,
-      canListRemoteKeys: false,
-      canCreateRemoteKey: false,
+      canListRemoteKeys: true,
+      canCreateRemoteKey: true,
       canReadGroups: true,
       requiresManualSession: true,
-      unsupportedReason: "NewAPI 远端 Key 管理尚未适配。",
+      unsupportedReason: null,
     };
   }
 

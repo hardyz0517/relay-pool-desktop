@@ -18,6 +18,12 @@ use crate::{
     services::remote_keys,
 };
 
+struct LoginTestAttempt {
+    token_present: bool,
+    login_message: Option<String>,
+    manual_required: Option<String>,
+}
+
 pub fn detect_station_info(
     database: &AppDatabase,
     station_id: String,
@@ -425,7 +431,12 @@ fn adapter_name_for_station_type(station_type: &str) -> Result<&'static str, Str
 
 fn full_child_tasks(adapter: &str) -> Vec<adapters::CollectorTask> {
     match adapter {
-        "sub2api" | "newapi" => vec![
+        "newapi" => vec![
+            adapters::CollectorTask::Balance,
+            adapters::CollectorTask::Groups,
+            adapters::CollectorTask::Models,
+        ],
+        "sub2api" => vec![
             adapters::CollectorTask::Balance,
             adapters::CollectorTask::Groups,
         ],
@@ -498,8 +509,35 @@ pub fn test_station_login(
     };
 
     let login_username = credentials.login_username.clone().unwrap_or_default();
-    let login_attempt =
-        sub2api::test_login_credentials(&station.base_url, &login_username, &login_password)?;
+    let station_type = station.station_type.trim();
+    let login_attempt = match station_type {
+        "newapi" => {
+            let attempt = adapters::newapi::login_with_password(
+                database,
+                data_key,
+                &station,
+                &login_username,
+                &login_password,
+            )?;
+            LoginTestAttempt {
+                token_present: attempt.cookie_present,
+                login_message: attempt.login_message,
+                manual_required: attempt.manual_required,
+            }
+        }
+        _ => {
+            let attempt = sub2api::test_login_credentials(
+                &station.base_url,
+                &login_username,
+                &login_password,
+            )?;
+            LoginTestAttempt {
+                token_present: attempt.token_present,
+                login_message: attempt.login_message,
+                manual_required: attempt.manual_required,
+            }
+        }
+    };
     let login_succeeded = login_attempt.token_present;
     let conclusion = if login_succeeded {
         "登录成功"
@@ -616,7 +654,27 @@ pub fn test_station_login_input(
         });
     }
 
-    let login_attempt = sub2api::test_login_credentials(base_url, login_username, login_password)?;
+    let station_type = input.station_type.as_deref().unwrap_or("sub2api").trim();
+    let login_attempt = match station_type {
+        "newapi" => {
+            let attempt =
+                adapters::newapi::test_login_credentials(base_url, login_username, login_password)?;
+            LoginTestAttempt {
+                token_present: attempt.cookie_present,
+                login_message: attempt.login_message,
+                manual_required: attempt.manual_required,
+            }
+        }
+        _ => {
+            let attempt =
+                sub2api::test_login_credentials(base_url, login_username, login_password)?;
+            LoginTestAttempt {
+                token_present: attempt.token_present,
+                login_message: attempt.login_message,
+                manual_required: attempt.manual_required,
+            }
+        }
+    };
     let token_present = login_attempt.token_present;
     Ok(StationLoginTestResult {
         status: if token_present {
@@ -792,6 +850,77 @@ mod tests {
     }
 
     #[test]
+    fn test_station_login_dispatches_newapi_password_login() {
+        let server = TestNewApiLoginServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = database
+            .create_station(CreateStationInput {
+                name: "newapi login test".to_string(),
+                station_type: "newapi".to_string(),
+                base_url: server.base_url.clone(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                api_key: "sk-test-routing".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+        let data_key = generate_data_key();
+        database
+            .update_station_credentials_with_data_key(
+                UpdateStationCredentialsInput {
+                    station_id: station.id.clone(),
+                    login_username: Some("user@example.test".to_string()),
+                    login_password: Some("correct-password".to_string()),
+                    remember_password: true,
+                },
+                &data_key,
+            )
+            .expect("credentials");
+
+        let result =
+            test_station_login(&database, &data_key, station.id.clone()).expect("login test");
+        let session = database
+            .resolve_station_session_with_data_key(station.id.clone(), &data_key, 100_000)
+            .expect("session");
+
+        assert_eq!(result.snapshot.status, "success");
+        assert_eq!(
+            server.last_login_password(),
+            Some("correct-password".to_string())
+        );
+        assert_eq!(session.newapi_user_id.as_deref(), Some("42"));
+        assert_eq!(
+            session.status,
+            crate::services::collectors::session::SessionResolveStatus::Ready
+        );
+        assert_eq!(session.cookie.as_deref(), Some("session=newapi-login"));
+    }
+
+    #[test]
+    fn test_station_login_input_dispatches_newapi_when_station_type_is_present() {
+        let server = TestNewApiLoginServer::start();
+
+        let result = test_station_login_input(StationLoginTestInput {
+            station_type: Some("newapi".to_string()),
+            base_url: server.base_url.clone(),
+            login_username: "user@example.test".to_string(),
+            login_password: "correct-password".to_string(),
+        })
+        .expect("login input test");
+
+        assert_eq!(result.status, "success");
+        assert_eq!(
+            server.last_login_password(),
+            Some("correct-password".to_string())
+        );
+        assert!(result.token_present);
+    }
+
+    #[test]
     fn full_snapshot_summarizes_child_business_facts() {
         let server = TestFullServer::start();
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
@@ -872,6 +1001,18 @@ mod tests {
     }
 
     #[test]
+    fn newapi_full_child_tasks_include_models_after_groups() {
+        assert_eq!(
+            full_child_tasks("newapi"),
+            vec![
+                adapters::CollectorTask::Balance,
+                adapters::CollectorTask::Groups,
+                adapters::CollectorTask::Models,
+            ]
+        );
+    }
+
+    #[test]
     fn group_collection_refreshes_remote_key_discoveries() {
         let server = TestGroupsAndKeysServer::start();
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
@@ -936,6 +1077,11 @@ mod tests {
         last_login_password: Arc<Mutex<Option<String>>>,
     }
 
+    struct TestNewApiLoginServer {
+        base_url: String,
+        last_login_password: Arc<Mutex<Option<String>>>,
+    }
+
     struct TestFullServer {
         base_url: String,
     }
@@ -954,6 +1100,33 @@ mod tests {
             thread::spawn(move || {
                 for stream in listener.incoming().take(3).flatten() {
                     handle_login_request(stream, Arc::clone(&captured_password));
+                }
+            });
+
+            Self {
+                base_url,
+                last_login_password,
+            }
+        }
+
+        fn last_login_password(&self) -> Option<String> {
+            self.last_login_password
+                .lock()
+                .ok()
+                .and_then(|value| value.clone())
+        }
+    }
+
+    impl TestNewApiLoginServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            let last_login_password = Arc::new(Mutex::new(None));
+            let captured_password = Arc::clone(&last_login_password);
+
+            thread::spawn(move || {
+                for stream in listener.incoming().take(3).flatten() {
+                    handle_newapi_login_request(stream, Arc::clone(&captured_password));
                 }
             });
 
@@ -1037,6 +1210,58 @@ mod tests {
         let text = response.to_string();
         let response = format!(
             "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
+    }
+
+    fn handle_newapi_login_request(
+        mut stream: TcpStream,
+        last_login_password: Arc<Mutex<Option<String>>>,
+    ) {
+        let request = read_http_request(&mut stream);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
+
+        let (status, response, set_cookie) = if path == "/api/user/login" {
+            let parsed = serde_json::from_str::<Value>(body).expect("login json");
+            let password = parsed
+                .get("password")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if let Ok(mut captured) = last_login_password.lock() {
+                *captured = Some(password.clone());
+            }
+            if password == "correct-password" {
+                (
+                    "200 OK",
+                    json!({ "success": true, "data": { "id": 42 } }),
+                    Some("session=newapi-login; Path=/; HttpOnly"),
+                )
+            } else {
+                (
+                    "401 Unauthorized",
+                    json!({ "message": "invalid credentials" }),
+                    None,
+                )
+            }
+        } else {
+            ("404 Not Found", json!({ "message": "not found" }), None)
+        };
+
+        let text = response.to_string();
+        let cookie_header = set_cookie
+            .map(|cookie| format!("Set-Cookie: {cookie}\r\n"))
+            .unwrap_or_default();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n{cookie_header}Content-Length: {}\r\nConnection: close\r\n\r\n{text}",
             text.len()
         );
         stream
