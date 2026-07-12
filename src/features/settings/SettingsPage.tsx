@@ -12,7 +12,7 @@ import {
   stopLocalProxy,
 } from "@/lib/api/proxy";
 import { openExternalUrl } from "@/lib/api/external";
-import { chooseDataDir, getLocalAccessKey, getSettings, SETTINGS_UPDATED_EVENT, updateLocalAccessKey, updateSettings } from "@/lib/api/settings";
+import { chooseDataDir, getLocalAccessKey, getSettings, resetDataDir, SETTINGS_UPDATED_EVENT, updateLocalAccessKey, updateSettings } from "@/lib/api/settings";
 import type { ProxyStatus } from "@/lib/types/proxy";
 import { useUpdater } from "@/features/updater/UpdaterProvider";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
@@ -282,6 +282,28 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
     }
   }
 
+  async function handleResetDataDir() {
+    setSaving(true);
+    setError(null);
+    try {
+      const nextSettings = await resetDataDir();
+      setSettings(nextSettings);
+      setForm(settingsToForm(nextSettings));
+      window.dispatchEvent(new CustomEvent<AppSettings>(SETTINGS_UPDATED_EVENT, { detail: nextSettings }));
+      if (nextSettings.dataDirChangeRequiresRestart) {
+        toast.success("数据保存位置已恢复默认", "重启后使用默认数据目录。");
+      } else {
+        toast.success("数据保存位置已是默认目录");
+      }
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      toast.error("恢复默认数据保存位置失败", message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function commitSettingsForm(nextForm: SettingsFormState, successMessage: string) {
     setForm(nextForm);
     await persistSettings(nextForm, successMessage);
@@ -307,6 +329,7 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
   }
 
   const restartRequired = settings.dataDirChangeRequiresRestart;
+  const displayedDataDir = settings.pendingDataDir ?? settings.dataDir;
 
   return (
     <PageScaffold
@@ -549,18 +572,37 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
         <SectionCard contentClassName="p-0" title="数据与安全">
           <SettingRow
             control={
-              <div className="flex min-w-0 flex-col items-start gap-2 sm:items-end">
-                <code className="break-all text-xs text-slate-700">
-                  {settings.pendingDataDir ?? settings.dataDir}
-                </code>
+              <div className="flex w-full min-w-0 items-center gap-1.5">
+                <div
+                  aria-label="当前数据目录"
+                  className="data-dir-path-field flex h-8 min-w-0 flex-1 items-center rounded-[var(--surface-radius)] border border-border bg-white px-3 text-left font-mono text-xs text-slate-700"
+                  title={displayedDataDir}
+                >
+                  <span className="block truncate">{displayedDataDir}</span>
+                </div>
                 <Button
+                  aria-label="选择数据目录位置"
+                  className="shrink-0"
                   disabled={saving || loading}
+                  size="icon"
+                  title="选择位置"
                   type="button"
                   variant="outline"
                   onClick={() => void handleChooseDataDir()}
                 >
                   <FolderOpen className="h-4 w-4" />
-                  选择位置
+                </Button>
+                <Button
+                  aria-label="恢复默认数据目录"
+                  className="shrink-0"
+                  disabled={saving || loading}
+                  size="icon"
+                  title="恢复默认位置"
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleResetDataDir()}
+                >
+                  <RotateCcw className="h-4 w-4" />
                 </Button>
               </div>
             }

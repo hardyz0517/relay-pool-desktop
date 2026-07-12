@@ -32,7 +32,7 @@ assertExcludes(appPage, "<RoutingPage onOpenPage=", "App");
 
 assertIncludes(
   statusTab,
-  'className="grid items-start gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]"',
+  'className="grid items-stretch gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] lg:[&>*]:h-full"',
   "routing summary grid",
 );
 

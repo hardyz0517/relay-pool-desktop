@@ -24,9 +24,13 @@ for (const label of ["加密存储", "凭据迁移", "安全扫描"]) {
 assert.ok(
   settingsPageSource.includes("选择位置") &&
     settingsPageSource.includes("handleChooseDataDir") &&
+    settingsPageSource.includes("handleResetDataDir") &&
+    settingsPageSource.includes('aria-label="选择数据目录位置"') &&
+    settingsPageSource.includes('aria-label="恢复默认数据目录"') &&
+    settingsPageSource.includes('className="data-dir-path-field') &&
     settingsPageSource.includes("restartRequired") &&
     settingsPageSource.includes("重启后使用新的数据目录"),
-  "settings page should expose a choose-data-directory action and tell the user it takes effect after restart",
+  "settings page should expose compact choose/reset data-directory actions and tell the user changes take effect after restart",
 );
 
 assert.ok(
@@ -38,28 +42,34 @@ assert.ok(
 assert.ok(
   settingsApiSource.includes("chooseDataDir") &&
     settingsApiSource.includes('invoke<AppSettings>("choose_data_dir"') &&
+    settingsApiSource.includes("resetDataDir") &&
+    settingsApiSource.includes('invoke<AppSettings>("reset_data_dir"') &&
     settingsApiSource.includes("normalizeSettings"),
-  "settings API should expose a desktop command for choosing a data directory",
+  "settings API should expose desktop commands for choosing and resetting the data directory",
 );
 
 assert.ok(
   tauriCommandsSource.includes("pub fn choose_data_dir") &&
+    tauriCommandsSource.includes("pub fn reset_data_dir") &&
     tauriCommandsSource.includes("rfd::FileDialog::new()") &&
-    tauriCommandsSource.includes("database.set_pending_data_dir"),
-  "Tauri commands should choose a folder and persist it as the pending data directory",
+    tauriCommandsSource.includes("database.set_pending_data_dir") &&
+    tauriCommandsSource.includes("database.reset_data_dir_to_default"),
+  "Tauri commands should choose a folder or reset to the default data directory",
 );
 
 assert.ok(
-  tauriLibSource.includes("commands::choose_data_dir"),
-  "Tauri command handler should register choose_data_dir",
+  tauriLibSource.includes("commands::choose_data_dir") &&
+    tauriLibSource.includes("commands::reset_data_dir"),
+  "Tauri command handler should register choose_data_dir and reset_data_dir",
 );
 
 assert.ok(
   databaseSource.includes("relay-pool-data-dir.json") &&
     databaseSource.includes("configured_data_dir") &&
     databaseSource.includes("set_pending_data_dir") &&
+    databaseSource.includes("reset_data_dir_to_default") &&
     databaseSource.includes("data_dir_change_requires_restart"),
-  "database service should load an external data-dir config before opening SQLite and report pending restart state",
+  "database service should load, set, and clear external data-dir config before opening SQLite and report pending restart state",
 );
 
 assert.ok(

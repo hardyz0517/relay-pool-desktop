@@ -49,6 +49,7 @@ pub fn run() {
             commands::latest_update_manifest_version,
             commands::update_settings,
             commands::choose_data_dir,
+            commands::reset_data_dir,
             commands::get_proxy_status,
             commands::load_local_routing_workspace,
             commands::reorder_local_routing_keys,

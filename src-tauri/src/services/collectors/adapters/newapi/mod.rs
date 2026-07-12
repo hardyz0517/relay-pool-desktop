@@ -866,6 +866,106 @@ mod tests {
     }
 
     #[test]
+    fn newapi_balance_collects_usage_logs_for_request_cost_and_tokens() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota_per_unit": 500000 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota": 1000000,
+                        "used_quota": 500000,
+                        "request_count": 1200
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 375000, "rpm": 0, "tpm": 0 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 2,
+                        "items": [
+                            { "prompt_tokens": 30000, "completion_tokens": 4567 },
+                            { "prompt_tokens": 10000, "completion_tokens": 5000 }
+                        ]
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 9250000, "rpm": 0, "tpm": 0 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 3,
+                        "items": [
+                            { "prompt_tokens": 30000, "completion_tokens": 4567 },
+                            { "prompt_tokens": 10000, "completion_tokens": 5000 },
+                            { "prompt_tokens": 250000, "completion_tokens": 123323 }
+                        ]
+                    }
+                }),
+            )),
+        ]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let output = collect(&database, &data_key, &station.id, CollectorTask::Balance)
+            .expect("balance collect");
+        let requests = server.finish();
+        let balance = output.facts.balances.first().expect("balance fact");
+
+        assert_eq!(output.status, "success");
+        assert_eq!(balance.today_request_count, Some(2));
+        assert_eq!(balance.total_request_count, Some(1200));
+        assert_eq!(balance.today_consumption, Some(0.75));
+        assert_eq!(balance.total_consumption, Some(18.5));
+        assert_eq!(balance.today_input_token_count, Some(40000));
+        assert_eq!(balance.today_output_token_count, Some(9567));
+        assert_eq!(balance.today_token_count, Some(49567));
+        assert_eq!(balance.total_input_token_count, Some(290000));
+        assert_eq!(balance.total_output_token_count, Some(132890));
+        assert_eq!(balance.total_token_count, Some(422890));
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.starts_with("GET /api/log/self/stat?type=2&"))
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.starts_with("GET /api/log/self/?p=1&page_size=100&type=2&"))
+        );
+    }
+
+    #[test]
     fn newapi_groups_parse_list_and_rate_fields() {
         let facts = parse_newapi_group_facts(
             "station-1",

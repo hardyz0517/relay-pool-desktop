@@ -92,6 +92,15 @@ export function chooseDataDir() {
   });
 }
 
+export function resetDataDir() {
+  return invoke<AppSettings>("reset_data_dir").then(normalizeSettings).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      throw new Error("只有桌面端可以恢复默认数据保存位置");
+    }
+    throw error;
+  });
+}
+
 function normalizeSettings(settings: AppSettings): AppSettings {
   const maybeSettings = settings as AppSettings & Partial<Record<keyof AppSettings, unknown>>;
   return {

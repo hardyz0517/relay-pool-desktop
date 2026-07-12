@@ -223,6 +223,11 @@ pub fn choose_data_dir(database: State<'_, AppDatabase>) -> Result<AppSettings, 
 }
 
 #[tauri::command]
+pub fn reset_data_dir(database: State<'_, AppDatabase>) -> Result<AppSettings, String> {
+    database.reset_data_dir_to_default()
+}
+
+#[tauri::command]
 pub fn get_proxy_status(
     database: State<'_, AppDatabase>,
     proxy: State<'_, ProxyRuntimeState>,

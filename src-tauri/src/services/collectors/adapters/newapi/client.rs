@@ -20,6 +20,8 @@ pub(super) enum NewApiOperation {
     SelfInfo,
     Groups,
     Models,
+    LogStat,
+    ListLogs,
     ListTokens,
     RevealToken,
     CreateToken,

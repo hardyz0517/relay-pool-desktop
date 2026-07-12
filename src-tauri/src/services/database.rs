@@ -92,6 +92,7 @@ struct DataDirConfig {
 #[derive(Clone)]
 pub struct AppDatabase {
     connection: Arc<Mutex<Connection>>,
+    data_dir: PathBuf,
     db_path: PathBuf,
     default_data_dir: PathBuf,
     data_dir_config_path: PathBuf,
@@ -184,6 +185,7 @@ impl AppDatabase {
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
+            data_dir: configured_data_dir,
             db_path,
             default_data_dir,
             data_dir_config_path,
@@ -230,6 +232,7 @@ impl AppDatabase {
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
+            data_dir: PathBuf::from(":memory:"),
             db_path: PathBuf::from(":memory:"),
             default_data_dir: PathBuf::from(":memory:"),
             data_dir_config_path: PathBuf::from(":memory:"),
@@ -577,6 +580,24 @@ impl AppDatabase {
         self.get_settings()
     }
 
+    pub fn reset_data_dir_to_default(&self) -> Result<AppSettings, String> {
+        fs::create_dir_all(&self.default_data_dir).map_err(|error| {
+            format!(
+                "无法创建默认数据目录 {}: {error}",
+                self.default_data_dir.display()
+            )
+        })?;
+        write_data_dir_config(&self.data_dir_config_path, &self.default_data_dir)?;
+        {
+            let mut pending = self
+                .pending_data_dir
+                .lock()
+                .map_err(|_| "数据目录配置锁已损坏".to_string())?;
+            *pending = Some(self.default_data_dir.clone());
+        }
+        self.get_settings()
+    }
+
     fn settings_from_open_connection(
         &self,
         connection: &Connection,
@@ -584,7 +605,7 @@ impl AppDatabase {
         let pending_data_dir = self.pending_data_dir_path()?;
         settings_from_connection(
             connection,
-            self.db_path.to_string_lossy().as_ref(),
+            self.data_dir.to_string_lossy().as_ref(),
             pending_data_dir
                 .as_ref()
                 .map(|path| path.to_string_lossy().to_string()),
@@ -596,10 +617,7 @@ impl AppDatabase {
             .pending_data_dir
             .lock()
             .map_err(|_| "数据目录配置锁已损坏".to_string())?;
-        Ok(pending
-            .as_ref()
-            .filter(|path| path != &&self.default_data_dir)
-            .cloned())
+        Ok(pending.as_ref().cloned())
     }
 
     pub fn list_station_keys(&self, station_id: String) -> Result<Vec<StationKey>, String> {
