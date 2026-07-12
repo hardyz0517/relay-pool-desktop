@@ -1,5 +1,5 @@
 import type { ProxyStatus } from "@/lib/types/proxy";
-import type { RouteEndpointKind } from "@/lib/types/routing";
+import type { RouteEndpointKind, RoutingGroupFilter } from "@/lib/types/routing";
 
 export type RouteHealthState = "ready" | "cooldown" | "degraded" | "offline" | "unknown";
 
@@ -24,12 +24,15 @@ export type LocalRoutingSettings = {
   port: number;
   endpoint: RouteEndpointKind;
   policy: string;
+  maxRateMultiplier: number | null;
+  routingGroupFilter: RoutingGroupFilter;
   fallbackEnabled: boolean;
 };
 
 export type LocalRoutingSummary = {
   enabledCandidateCount: number;
   healthyCandidateCount: number;
+  eligibleUnderMultiplierLimitCount: number;
   degradedCandidateCount: number;
   cooldownCandidateCount: number;
   lastDecisionAt: string | null;
@@ -48,6 +51,12 @@ export type LocalRoutingCandidateRow = {
   lastFailureAt: string | null;
   cooldownUntil: string | null;
   score: number | null;
+  effectiveMultiplier: number | null;
+  effectiveMultiplierSource: string | null;
+  effectiveMultiplierConfidence: number | null;
+  routingGroupScope: RoutingGroupFilter;
+  routingGroupMatch: boolean;
+  schedulerRejectReason: string | null;
   facts: DecisionFact[];
 };
 

@@ -1,14 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppSettings, CcswitchImportResult, UpdateSettingsInput } from "@/lib/types/settings";
+import {
+  DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
+  type AppSettings,
+  type CcswitchImportResult,
+  type UpdateSettingsInput,
+} from "@/lib/types/settings";
 
 export const SETTINGS_UPDATED_EVENT = "relay-pool-settings-updated";
 
 let memorySettings: AppSettings = {
   localProxyPort: 8787,
   localKeyMasked: "未读取",
-  defaultRoutingStrategy: "cost_stable_first",
+  defaultRoutingStrategy: "automatic_balanced",
   collectorProxyMode: "direct",
   collectorProxyUrl: null,
+  maxRateMultiplier: null,
+  defaultRoutingGroupFilter: "all_groups",
+  schedulerAdvancedSettings: DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   balanceIntervalMinutes: 5,
@@ -94,6 +102,10 @@ function normalizeSettings(settings: AppSettings): AppSettings {
       typeof maybeSettings.collectorProxyUrl === "string" && maybeSettings.collectorProxyUrl.trim()
         ? maybeSettings.collectorProxyUrl.trim()
         : null,
+    maxRateMultiplier: normalizeNullableNumber(maybeSettings.maxRateMultiplier),
+    defaultRoutingGroupFilter: maybeSettings.defaultRoutingGroupFilter ?? "all_groups",
+    schedulerAdvancedSettings:
+      maybeSettings.schedulerAdvancedSettings ?? DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
     balanceIntervalMinutes: normalizeNumber(maybeSettings.balanceIntervalMinutes, 5),
     groupRateIntervalMinutes: normalizeNumber(maybeSettings.groupRateIntervalMinutes, 20),
     modelListIntervalMinutes: normalizeNumber(maybeSettings.modelListIntervalMinutes, 60),
@@ -117,6 +129,9 @@ function normalizeCollectorProxyMode(value: unknown): AppSettings["collectorProx
 }
 
 function normalizeRoutingStrategy(value: AppSettings["defaultRoutingStrategy"] | string) {
+  if (value === "automatic" || value === "automatic_balanced") {
+    return "automatic_balanced";
+  }
   if (value === "stable" || value === "stable_first") {
     return "stable_first";
   }
@@ -129,7 +144,7 @@ function normalizeRoutingStrategy(value: AppSettings["defaultRoutingStrategy"] |
   if (value === "cost_stable_first") {
     return "cost_stable_first";
   }
-  return "cost_stable_first";
+  return "automatic_balanced";
 }
 
 function isInvokeUnavailable(error: unknown) {
@@ -154,4 +169,12 @@ function maskSecret(value: string) {
     return "****";
   }
   return `${trimmed.slice(0, 4)}****${trimmed.slice(-4)}`;
+}
+
+function normalizeNullableNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 }

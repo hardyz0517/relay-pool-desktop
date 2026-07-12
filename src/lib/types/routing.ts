@@ -1,10 +1,44 @@
 export type RoutingPolicy =
+  | "automatic_balanced"
   | "priority_fallback"
   | "stable_first"
   | "backup_only"
   | "cheap_first"
   | "cost_stable_first";
 export type RouteEndpointKind = "models" | "chat_completions" | "responses" | "embeddings";
+
+export type PricingGroupType = "gpt" | "claude" | "gemini" | "grok" | "image_generation";
+
+export type RoutingGroupFilter =
+  | "all_groups"
+  | "ungrouped_only"
+  | { group_binding_id: string }
+  | { group_id_hash: string }
+  | { group_type: PricingGroupType };
+
+export type SchedulerAdvancedSettings = {
+  topK: number;
+  multiplier: number;
+  priority: number;
+  load: number;
+  queue: number;
+  errorRate: number;
+  ttft: number;
+  quotaHeadroom: number;
+  previousResponse: number;
+  sessionSticky: number;
+  multiplierMinConfidence: number;
+  stickyWeighted: boolean;
+  stickyEscape: boolean;
+  stickyEscapeTtftMs: number;
+  stickyEscapeErrorRate: number;
+  stickySessionTtlSeconds: number;
+  stickyResponseTtlSeconds: number;
+  stickyMaxWaiting: number;
+  stickyWaitTimeoutSeconds: number;
+  fallbackMaxWaiting: number;
+  fallbackWaitTimeoutSeconds: number;
+};
 
 export type StationKeyCapabilities = {
   stationKeyId: string;
@@ -64,6 +98,10 @@ export type RouteSimulationInput = {
   usesVision: boolean;
   usesReasoning: boolean;
   policy: RoutingPolicy | null;
+  maxRateMultiplier?: number | null;
+  routingGroupFilter?: RoutingGroupFilter | null;
+  sessionHash?: string | null;
+  previousResponseId?: string | null;
 };
 
 export type RouteCandidateExplanation = {
@@ -90,6 +128,16 @@ export type RouteCandidateExplanation = {
   balanceCollectedAt: string | null;
   economicFreshness: string | null;
   economicReasons: string[];
+  routingGroupScope: RoutingGroupFilter | null;
+  routingGroupMatch: boolean;
+  groupIdHash: string | null;
+  groupType: PricingGroupType | null;
+  effectiveMultiplierSource: string | null;
+  effectiveMultiplierConfidence: number | null;
+  schedulerScore: number | null;
+  schedulerFactors: string[];
+  topKRank: number | null;
+  slotResult: string | null;
 };
 
 export type RouteSimulationResult = {
@@ -97,6 +145,9 @@ export type RouteSimulationResult = {
   selectedStationId: string | null;
   mappedModel: string | null;
   policy: RoutingPolicy;
+  maxRateMultiplier: number | null;
+  routingGroupFilter: RoutingGroupFilter;
+  schedulerErrorCode: string | null;
   candidates: RouteCandidateExplanation[];
   message: string;
 };

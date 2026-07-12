@@ -10,7 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{params, types::Type, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, types::Type, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
@@ -39,9 +39,9 @@ use crate::models::{
     proxy::{CreateRequestLogInput, RequestLog, UpstreamApiFormat},
     remote_keys::{RemoteKeyMatchStatus, RemoteStationKey},
     routing::{
-        ModelAlias, RouteSimulationInput, RouteSimulationResult, RoutingPolicy,
-        StationKeyCapabilities, StationKeyHealth, UpdateStationKeyCapabilitiesInput,
-        UpsertModelAliasInput,
+        ModelAlias, PricingGroupType, RouteSimulationInput, RouteSimulationResult,
+        RoutingGroupFilter, RoutingPolicy, SchedulerAdvancedSettings, StationKeyCapabilities,
+        StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
     },
     secrets::{SecretMigrationReport, SecretScanFinding},
     settings::{AppSettings, UpdateSettingsInput},
@@ -62,6 +62,14 @@ use crate::services::pricing::sanitize_pricing_rule_input;
 use crate::services::proxy::{
     router::{select_route_candidates, RichRouteCandidate, RouteCandidateEconomics, RouteRequest},
     routing_snapshot::LocalRoutingReadCandidate,
+    scheduler::{
+        affinity::AffinityStore,
+        capacity::CapacityRegistry,
+        metrics::RuntimeMetricsRegistry,
+        multiplier::resolve_effective_multiplier,
+        schedule_once,
+        types::{MultiplierSourceFacts, SchedulerCandidate},
+    },
     RouteCandidate,
 };
 use crate::services::secrets::{
@@ -149,6 +157,8 @@ impl AppDatabase {
             .map_err(|error| format!("初始化默认设置失败: {error}"))?;
         migrate_default_routing_strategy(&connection)
             .map_err(|error| format!("migrate default routing strategy failed: {error}"))?;
+        migrate_automatic_scheduler_schema(&connection)
+            .map_err(|error| format!("migrate automatic scheduler schema failed: {error}"))?;
         migrate_default_station_keys(&connection)
             .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
         migrate_legacy_group_facts(&connection)
@@ -193,6 +203,8 @@ impl AppDatabase {
             .map_err(|error| format!("初始化默认设置失败: {error}"))?;
         migrate_default_routing_strategy(&connection)
             .map_err(|error| format!("migrate default routing strategy failed: {error}"))?;
+        migrate_automatic_scheduler_schema(&connection)
+            .map_err(|error| format!("migrate automatic scheduler schema failed: {error}"))?;
         migrate_default_station_keys(&connection)
             .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
         migrate_legacy_group_facts(&connection)
@@ -458,6 +470,30 @@ impl AppDatabase {
         let collector_proxy_url = normalize_proxy_url(input.collector_proxy_url);
 
         let connection = self.connection()?;
+        let current_settings = self.settings_from_open_connection(&connection)?;
+        let max_rate_multiplier = input
+            .max_rate_multiplier
+            .unwrap_or(current_settings.max_rate_multiplier);
+        let default_routing_group_filter = input
+            .default_routing_group_filter
+            .unwrap_or(current_settings.default_routing_group_filter);
+        let scheduler_advanced_settings = input
+            .scheduler_advanced_settings
+            .unwrap_or(current_settings.scheduler_advanced_settings);
+
+        if let Some(max_rate_multiplier) = max_rate_multiplier {
+            if !max_rate_multiplier.is_finite() || max_rate_multiplier < 0.0 {
+                return Err("invalid max_rate_multiplier".to_string());
+            }
+        }
+        scheduler_advanced_settings
+            .validate()
+            .map_err(|error| format!("invalid scheduler advanced settings: {error:?}"))?;
+
+        let default_routing_group_filter =
+            serialize_routing_group_filter_setting(&default_routing_group_filter)?;
+        let scheduler_advanced_settings = serde_json::to_string(&scheduler_advanced_settings)
+            .map_err(|error| format!("serialize scheduler advanced settings failed: {error}"))?;
         let values = [
             ("local_proxy_port", input.local_proxy_port.to_string()),
             ("default_routing_strategy", input.default_routing_strategy),
@@ -465,6 +501,17 @@ impl AppDatabase {
             (
                 "collector_proxy_url",
                 collector_proxy_url.unwrap_or_default(),
+            ),
+            (
+                "max_rate_multiplier",
+                max_rate_multiplier
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+            ),
+            ("default_routing_group_filter", default_routing_group_filter),
+            (
+                "scheduler_advanced_settings_json",
+                scheduler_advanced_settings,
             ),
             (
                 "low_balance_threshold_cny",
@@ -558,6 +605,23 @@ impl AppDatabase {
     pub fn list_station_keys(&self, station_id: String) -> Result<Vec<StationKey>, String> {
         let connection = self.connection()?;
         list_station_keys_from_connection(&connection, &station_id)
+    }
+
+    pub fn load_multiplier_source_facts(
+        &self,
+        station_key_id: &str,
+    ) -> Result<MultiplierSourceFacts, String> {
+        let connection = self.connection()?;
+        load_multiplier_source_facts_from_connection(&connection, station_key_id)
+    }
+
+    pub fn load_scheduler_candidates(
+        &self,
+        filter: &RoutingGroupFilter,
+        now_ms: i64,
+    ) -> Result<Vec<SchedulerCandidate>, String> {
+        let connection = self.connection()?;
+        load_scheduler_candidates_from_connection(&connection, filter, now_ms)
     }
 
     pub fn list_remote_station_keys(
@@ -1719,9 +1783,14 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             enabled INTEGER NOT NULL DEFAULT 1,
             priority INTEGER NOT NULL DEFAULT 0,
             routing_order INTEGER,
+            max_concurrency INTEGER NOT NULL DEFAULT 3,
+            load_factor INTEGER,
+            schedulable INTEGER NOT NULL DEFAULT 1,
             group_name TEXT,
             tier_label TEXT,
             status TEXT NOT NULL DEFAULT 'unchecked',
+            manual_rate_multiplier REAL,
+            manual_rate_updated_at TEXT,
             last_checked_at TEXT,
             last_used_at TEXT,
             note TEXT,
@@ -2322,7 +2391,7 @@ fn add_column_if_missing(
     table: &str,
     column: &str,
     column_type: &str,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<bool> {
     let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
     let rows = statement
         .query_map([], |row| row.get::<_, String>(1))?
@@ -2333,8 +2402,61 @@ fn add_column_if_missing(
             &format!("ALTER TABLE {table} ADD COLUMN {column} {column_type}"),
             [],
         )?;
+        return Ok(true);
     }
 
+    Ok(false)
+}
+
+fn migrate_automatic_scheduler_schema(connection: &Connection) -> rusqlite::Result<()> {
+    add_column_if_missing(
+        connection,
+        "station_keys",
+        "max_concurrency",
+        "INTEGER NOT NULL DEFAULT 3",
+    )?;
+    add_column_if_missing(connection, "station_keys", "load_factor", "INTEGER")?;
+    let schedulable_column_added = add_column_if_missing(
+        connection,
+        "station_keys",
+        "schedulable",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
+    add_column_if_missing(connection, "station_keys", "manual_rate_multiplier", "REAL")?;
+    add_column_if_missing(connection, "station_keys", "manual_rate_updated_at", "TEXT")?;
+    if schedulable_column_added {
+        // Existing disabled keys received the ADD COLUMN default of 1. Flip only
+        // those rows during the one migration run that creates the column, so a
+        // later user edit on an already-migrated database is preserved.
+        connection.execute(
+            "UPDATE station_keys
+                SET schedulable = enabled
+              WHERE enabled = 0
+                AND schedulable = 1",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_station_key_scheduler_values(
+    max_concurrency: i64,
+    load_factor: Option<i64>,
+    manual_rate_multiplier: Option<f64>,
+) -> Result<(), String> {
+    if max_concurrency < 0 {
+        return Err("max_concurrency must be >= 0".to_string());
+    }
+    if let Some(load_factor) = load_factor {
+        if !(1..=10_000).contains(&load_factor) {
+            return Err("load_factor must be between 1 and 10000".to_string());
+        }
+    }
+    if let Some(manual_rate_multiplier) = manual_rate_multiplier {
+        if !manual_rate_multiplier.is_finite() || manual_rate_multiplier < 0.0 {
+            return Err("manual_rate_multiplier must be finite and >= 0".to_string());
+        }
+    }
     Ok(())
 }
 
@@ -2856,6 +2978,9 @@ fn seed_default_settings(connection: &Connection) -> rusqlite::Result<()> {
         ("default_routing_strategy", "cost_stable_first"),
         ("collector_proxy_mode", "direct"),
         ("collector_proxy_url", ""),
+        ("max_rate_multiplier", ""),
+        ("default_routing_group_filter", "all_groups"),
+        ("scheduler_advanced_settings_json", ""),
         ("low_balance_threshold_cny", "15"),
         ("collector_interval_minutes", "30"),
         ("balance_interval_minutes", "5"),
@@ -5449,6 +5574,13 @@ fn parse_channel_monitor_run_time(value: &str, field_name: &str) -> Result<i64, 
     Ok(timestamp)
 }
 
+fn parse_optional_millisecond_timestamp(value: Option<&str>) -> Option<i64> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<i64>().ok())
+}
+
 fn create_channel_monitor_in_connection(
     connection: &Connection,
     input: CreateChannelMonitorInput,
@@ -6001,11 +6133,15 @@ fn create_station_in_connection(
                 api_key: input.api_key,
                 enabled: input.enabled,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: Some("由站点默认 API Key 创建。".to_string()),
@@ -6580,8 +6716,8 @@ fn migrate_default_station_keys(connection: &Connection) -> rusqlite::Result<()>
 
 fn row_to_station_key(row: &rusqlite::Row<'_>) -> rusqlite::Result<StationKey> {
     let api_key: String = row.get(3)?;
-    let secret_masked: Option<String> = row.get(20)?;
-    let api_key_secret_id: Option<String> = row.get(21)?;
+    let secret_masked: Option<String> = row.get(25)?;
+    let api_key_secret_id: Option<String> = row.get(26)?;
     let api_key_masked = secret_masked.unwrap_or_else(|| mask_secret(&api_key));
     let api_key_present = api_key_secret_id.is_some() || !api_key.trim().is_empty();
 
@@ -6593,20 +6729,25 @@ fn row_to_station_key(row: &rusqlite::Row<'_>) -> rusqlite::Result<StationKey> {
         api_key_present,
         enabled: i64_to_bool(row.get(4)?),
         priority: row.get(5)?,
-        group_name: row.get(6)?,
-        tier_label: row.get(7)?,
-        group_binding_id: row.get(8)?,
-        group_id_hash: row.get(9)?,
-        rate_multiplier: row.get(10)?,
-        rate_source: row.get(11)?,
-        rate_collected_at: row.get(12)?,
-        balance_scope: row.get(13)?,
-        status: row.get(14)?,
-        last_checked_at: row.get(15)?,
-        last_used_at: row.get(16)?,
-        note: row.get(17)?,
-        created_at: row.get(18)?,
-        updated_at: row.get(19)?,
+        max_concurrency: row.get(6)?,
+        load_factor: row.get(7)?,
+        schedulable: i64_to_bool(row.get(8)?),
+        group_name: row.get(9)?,
+        tier_label: row.get(10)?,
+        group_binding_id: row.get(11)?,
+        group_id_hash: row.get(12)?,
+        rate_multiplier: row.get(13)?,
+        manual_rate_multiplier: row.get(14)?,
+        manual_rate_updated_at: row.get(15)?,
+        rate_source: row.get(16)?,
+        rate_collected_at: row.get(17)?,
+        balance_scope: row.get(18)?,
+        status: row.get(19)?,
+        last_checked_at: row.get(20)?,
+        last_used_at: row.get(21)?,
+        note: row.get(22)?,
+        created_at: row.get(23)?,
+        updated_at: row.get(24)?,
     })
 }
 
@@ -6616,8 +6757,11 @@ fn list_station_keys_from_connection(
 ) -> Result<Vec<StationKey>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, station_id, name, api_key, enabled, priority, group_name, tier_label,
-                    group_binding_id, group_id_hash, rate_multiplier, rate_source,
+            "SELECT id, station_id, name, api_key, enabled, priority,
+                    max_concurrency, load_factor, schedulable,
+                    group_name, tier_label,
+                    group_binding_id, group_id_hash, rate_multiplier,
+                    manual_rate_multiplier, manual_rate_updated_at, rate_source,
                     rate_collected_at, balance_scope,
                     status, last_checked_at, last_used_at, note, created_at, updated_at,
                     (SELECT masked_value FROM secrets WHERE secrets.id = station_keys.api_key_secret_id),
@@ -6634,6 +6778,311 @@ fn list_station_keys_from_connection(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析 Station Key 失败: {error}"))?;
     Ok(rows)
+}
+
+fn load_multiplier_source_facts_from_connection(
+    connection: &Connection,
+    station_key_id: &str,
+) -> Result<MultiplierSourceFacts, String> {
+    connection
+        .query_row(
+            "SELECT k.id, k.manual_rate_multiplier, k.manual_rate_updated_at,
+                    k.group_binding_id, k.group_id_hash, k.group_name,
+                    k.rate_multiplier, k.rate_source, k.rate_collected_at,
+                    COALESCE(b.confidence, 0.8)
+               FROM station_keys k
+               LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
+              WHERE k.id = ?1",
+            params![station_key_id],
+            |row| {
+                let manual_rate_updated_at: Option<String> = row.get(2)?;
+                let rate_collected_at: Option<String> = row.get(8)?;
+                Ok(MultiplierSourceFacts {
+                    station_key_id: row.get(0)?,
+                    manual_rate_multiplier: row.get(1)?,
+                    manual_rate_updated_at,
+                    group_binding_id: row.get(3)?,
+                    group_id_hash: row.get(4)?,
+                    group_name: row.get(5)?,
+                    collected_rate_multiplier: row.get(6)?,
+                    collected_rate_source: row.get(7)?,
+                    collected_rate_confidence: row.get(9)?,
+                    collected_rate_collected_at_ms: parse_optional_millisecond_timestamp(
+                        rate_collected_at.as_deref(),
+                    ),
+                    collected_rate_valid_until_ms: None,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| format!("读取 Key 倍率事实失败: {error}"))?
+        .ok_or_else(|| "Station Key 不存在，无法读取倍率事实".to_string())
+}
+
+struct SchedulerCandidateBaseRow {
+    station_key_id: String,
+    station_id: String,
+    priority: i64,
+    group_binding_id: Option<String>,
+    group_id_hash: Option<String>,
+    group_name: Option<String>,
+    station_enabled: bool,
+    key_enabled: bool,
+    schedulable: bool,
+    supports_chat_completions: bool,
+    supports_responses: bool,
+    supports_embeddings: bool,
+    supports_stream: bool,
+    supports_tools: bool,
+    supports_vision: bool,
+    supports_reasoning: bool,
+    model_allowlist: Vec<String>,
+    model_blocklist: Vec<String>,
+    health_blocked: bool,
+    balance_depleted: bool,
+}
+
+fn load_scheduler_candidates_from_connection(
+    connection: &Connection,
+    filter: &RoutingGroupFilter,
+    now_ms: i64,
+) -> Result<Vec<SchedulerCandidate>, String> {
+    let advanced_settings = parse_scheduler_advanced_settings(&read_setting_or_default(
+        connection,
+        "scheduler_advanced_settings_json",
+        "",
+    )?)?;
+    let group_rate_interval_minutes: u16 =
+        parse_setting_or_default(connection, "group_rate_interval_minutes", "20")?;
+    let group_rate_interval_ms = i64::from(group_rate_interval_minutes) * 60 * 1000;
+
+    let mut sql = String::from(
+        "SELECT
+            k.id,
+            k.station_id,
+            COALESCE(k.routing_order, k.priority),
+            k.group_binding_id,
+            COALESCE(b.group_id_hash, k.group_id_hash),
+            COALESCE(b.group_name, k.group_name),
+            s.enabled,
+            k.enabled,
+            k.schedulable,
+            COALESCE(c.supports_chat_completions, 1),
+            COALESCE(c.supports_responses, 1),
+            COALESCE(c.supports_embeddings, 0),
+            COALESCE(c.supports_stream, 1),
+            COALESCE(c.supports_tools, 0),
+            COALESCE(c.supports_vision, 0),
+            COALESCE(c.supports_reasoning, 0),
+            COALESCE(c.model_allowlist_json, '[]'),
+            COALESCE(c.model_blocklist_json, '[]'),
+            h.cooldown_until,
+            COALESCE(bs.status, '')
+         FROM station_keys k
+         JOIN stations s ON s.id = k.station_id
+         LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
+         LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
+         LEFT JOIN station_key_health h ON h.station_key_id = k.id
+         LEFT JOIN balance_snapshots bs ON bs.id = (
+             SELECT latest_balance.id
+               FROM balance_snapshots latest_balance
+              WHERE latest_balance.station_key_id = k.id
+                 OR (
+                    latest_balance.station_key_id IS NULL
+                    AND latest_balance.station_id = k.station_id
+                    AND latest_balance.scope = 'station'
+                 )
+              ORDER BY latest_balance.updated_at DESC, latest_balance.created_at DESC
+              LIMIT 1
+         )",
+    );
+    let mut where_clauses =
+        vec!["(TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)".to_string()];
+    let mut sql_params = Vec::new();
+    let mut group_type_filter = None;
+    match filter {
+        RoutingGroupFilter::AllGroups => {}
+        RoutingGroupFilter::UngroupedOnly => {
+            where_clauses
+                .push("k.group_binding_id IS NULL AND k.group_id_hash IS NULL".to_string());
+        }
+        RoutingGroupFilter::GroupBindingId(group_binding_id) => {
+            where_clauses.push("k.group_binding_id = ?".to_string());
+            sql_params.push(group_binding_id.clone());
+        }
+        RoutingGroupFilter::GroupIdHash(group_id_hash) => {
+            where_clauses.push("COALESCE(b.group_id_hash, k.group_id_hash) = ?".to_string());
+            sql_params.push(group_id_hash.clone());
+        }
+        RoutingGroupFilter::GroupType(group_type) => {
+            group_type_filter = Some(group_type.clone());
+        }
+    }
+    sql.push_str(" WHERE ");
+    sql.push_str(&where_clauses.join(" AND "));
+    sql.push_str(" ORDER BY COALESCE(k.routing_order, k.priority) ASC, k.priority ASC, k.created_at ASC, k.id ASC");
+
+    let rows = {
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| format!("read scheduler candidates failed: {error}"))?;
+        let rows = statement
+            .query_map(params_from_iter(sql_params.iter()), |row| {
+                let cooldown_until: Option<String> = row.get(18)?;
+                let balance_status: String = row.get(19)?;
+                Ok(SchedulerCandidateBaseRow {
+                    station_key_id: row.get(0)?,
+                    station_id: row.get(1)?,
+                    priority: row.get(2)?,
+                    group_binding_id: row.get(3)?,
+                    group_id_hash: row.get(4)?,
+                    group_name: row.get(5)?,
+                    station_enabled: i64_to_bool(row.get(6)?),
+                    key_enabled: i64_to_bool(row.get(7)?),
+                    schedulable: i64_to_bool(row.get(8)?),
+                    supports_chat_completions: i64_to_bool(row.get(9)?),
+                    supports_responses: i64_to_bool(row.get(10)?),
+                    supports_embeddings: i64_to_bool(row.get(11)?),
+                    supports_stream: i64_to_bool(row.get(12)?),
+                    supports_tools: i64_to_bool(row.get(13)?),
+                    supports_vision: i64_to_bool(row.get(14)?),
+                    supports_reasoning: i64_to_bool(row.get(15)?),
+                    model_allowlist: parse_json_string_list(row.get::<_, String>(16)?.as_str()),
+                    model_blocklist: parse_json_string_list(row.get::<_, String>(17)?.as_str()),
+                    health_blocked: cooldown_until
+                        .as_deref()
+                        .and_then(|value| parse_optional_millisecond_timestamp(Some(value)))
+                        .is_some_and(|cooldown_until_ms| now_ms < cooldown_until_ms),
+                    balance_depleted: matches!(
+                        balance_status.trim().to_ascii_lowercase().as_str(),
+                        "depleted" | "insufficient" | "blocked"
+                    ),
+                })
+            })
+            .map_err(|error| format!("query scheduler candidates failed: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("parse scheduler candidates failed: {error}"))?;
+        rows
+    };
+
+    rows.into_iter()
+        .filter(|row| {
+            group_type_filter
+                .as_ref()
+                .map(|expected| {
+                    parse_pricing_group_type(row.group_name.as_deref()).as_ref() == Some(expected)
+                })
+                .unwrap_or(true)
+        })
+        .map(|row| {
+            let multiplier_facts =
+                load_multiplier_source_facts_from_connection(connection, &row.station_key_id)?;
+            let multiplier_result = resolve_effective_multiplier(
+                multiplier_facts,
+                now_ms,
+                advanced_settings.multiplier_min_confidence,
+                group_rate_interval_ms,
+            );
+            let (effective_multiplier, multiplier_reject_reason) = match multiplier_result {
+                Ok(fact) => (Some(fact), None),
+                Err(reason) => (None, Some(reason)),
+            };
+            Ok(SchedulerCandidate {
+                station_key_id: row.station_key_id,
+                station_id: row.station_id,
+                priority: row.priority,
+                group_binding_id: row.group_binding_id,
+                group_id_hash: row.group_id_hash,
+                group_type: parse_pricing_group_type(row.group_name.as_deref()),
+                station_enabled: row.station_enabled,
+                key_enabled: row.key_enabled,
+                schedulable: row.schedulable,
+                supports_chat_completions: row.supports_chat_completions,
+                supports_responses: row.supports_responses,
+                supports_embeddings: row.supports_embeddings,
+                supports_stream: row.supports_stream,
+                supports_tools: row.supports_tools,
+                supports_vision: row.supports_vision,
+                supports_reasoning: row.supports_reasoning,
+                model_allowlist: row.model_allowlist,
+                model_blocklist: row.model_blocklist,
+                health_blocked: row.health_blocked,
+                balance_depleted: row.balance_depleted,
+                effective_multiplier,
+                multiplier_reject_reason,
+            })
+        })
+        .collect()
+}
+
+fn parse_pricing_group_type(value: Option<&str>) -> Option<PricingGroupType> {
+    let normalized = normalize_group_type_text(value?);
+    if text_matches_any_group_type_matcher(
+        &normalized,
+        &[
+            "图",
+            "画图",
+            "绘图",
+            "image",
+            "images",
+            "picture",
+            "pictures",
+            "dall-e",
+            "midjourney",
+        ],
+    ) {
+        return Some(PricingGroupType::ImageGeneration);
+    }
+    if text_matches_any_group_type_matcher(
+        &normalized,
+        &[
+            "claude",
+            "anthropic",
+            "sonnet",
+            "opus",
+            "haiku",
+            "yellow",
+            "amber",
+        ],
+    ) {
+        return Some(PricingGroupType::Claude);
+    }
+    if text_matches_any_group_type_matcher(&normalized, &["gemini", "google"]) {
+        return Some(PricingGroupType::Gemini);
+    }
+    if text_matches_any_group_type_matcher(&normalized, &["grok", "xai", "x-ai"]) {
+        return Some(PricingGroupType::Grok);
+    }
+    if text_matches_any_group_type_matcher(
+        &normalized,
+        &["openai", "gpt", "codex", "default", "green"],
+    ) {
+        return Some(PricingGroupType::Gpt);
+    }
+    None
+}
+
+fn text_matches_any_group_type_matcher(value: &str, matchers: &[&str]) -> bool {
+    matchers
+        .iter()
+        .map(|matcher| normalize_group_type_text(matcher))
+        .filter(|matcher| !matcher.is_empty())
+        .any(|matcher| value.contains(&matcher))
+}
+
+fn normalize_group_type_text(value: &str) -> String {
+    value
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|character| {
+            if character == '_' || character.is_whitespace() {
+                '-'
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 fn list_remote_station_keys_from_connection(
@@ -6770,11 +7219,16 @@ fn list_key_pool_items_from_connection(
                 k.api_key_secret_id,
                 k.enabled,
                 k.priority,
+                k.max_concurrency,
+                k.load_factor,
+                k.schedulable,
                 k.group_name,
                 k.tier_label,
                 k.group_binding_id,
                 k.group_id_hash,
                 k.rate_multiplier,
+                k.manual_rate_multiplier,
+                k.manual_rate_updated_at,
                 k.rate_source,
                 k.rate_collected_at,
                 k.balance_scope,
@@ -6822,42 +7276,47 @@ fn list_key_pool_items_from_connection(
             let api_key_secret_id: Option<String> = row.get(8)?;
             let api_key_masked = secret_masked.unwrap_or_else(|| mask_secret(&api_key));
             let api_key_present = api_key_secret_id.is_some() || !api_key.trim().is_empty();
-            let supports_chat = i64_to_bool(row.get(25)?);
-            let supports_responses = i64_to_bool(row.get(26)?);
-            let supports_embeddings = i64_to_bool(row.get(27)?);
-            let supports_stream = i64_to_bool(row.get(28)?);
-            let supports_tools = i64_to_bool(row.get(29)?);
-            let supports_vision = i64_to_bool(row.get(30)?);
-            let supports_reasoning = i64_to_bool(row.get(31)?);
-            let allowlist = parse_json_string_list(row.get::<_, String>(32)?.as_str());
-            let blocklist = parse_json_string_list(row.get::<_, String>(33)?.as_str());
-            let preferred_models = parse_json_string_list(row.get::<_, String>(34)?.as_str());
-            let success_count = row.get::<_, Option<i64>>(37)?.unwrap_or(0);
-            let failure_count = row.get::<_, Option<i64>>(38)?.unwrap_or(0);
+            let supports_chat = i64_to_bool(row.get(30)?);
+            let supports_responses = i64_to_bool(row.get(31)?);
+            let supports_embeddings = i64_to_bool(row.get(32)?);
+            let supports_stream = i64_to_bool(row.get(33)?);
+            let supports_tools = i64_to_bool(row.get(34)?);
+            let supports_vision = i64_to_bool(row.get(35)?);
+            let supports_reasoning = i64_to_bool(row.get(36)?);
+            let allowlist = parse_json_string_list(row.get::<_, String>(37)?.as_str());
+            let blocklist = parse_json_string_list(row.get::<_, String>(38)?.as_str());
+            let preferred_models = parse_json_string_list(row.get::<_, String>(39)?.as_str());
+            let success_count = row.get::<_, Option<i64>>(42)?.unwrap_or(0);
+            let failure_count = row.get::<_, Option<i64>>(43)?.unwrap_or(0);
             Ok(KeyPoolItem {
                 id: row.get(0)?,
                 station_id: row.get(1)?,
                 station_name: row.get(2)?,
                 station_type: row.get(3)?,
                 station_base_url: row.get(4)?,
-                station_upstream_api_format: row.get(42)?,
+                station_upstream_api_format: row.get(47)?,
                 name: row.get(5)?,
                 api_key_masked,
                 api_key_present,
                 enabled: i64_to_bool(row.get(9)?),
                 priority: row.get(10)?,
-                group_name: row.get(11)?,
-                tier_label: row.get(12)?,
-                group_binding_id: row.get(13)?,
-                group_id_hash: row.get(14)?,
-                rate_multiplier: row.get(15)?,
-                rate_source: row.get(16)?,
-                rate_collected_at: row.get(17)?,
-                balance_scope: row.get(18)?,
-                status: row.get(19)?,
-                last_checked_at: row.get(20)?,
-                last_used_at: row.get(21)?,
-                note: row.get(22)?,
+                max_concurrency: row.get(11)?,
+                load_factor: row.get(12)?,
+                schedulable: i64_to_bool(row.get(13)?),
+                group_name: row.get(14)?,
+                tier_label: row.get(15)?,
+                group_binding_id: row.get(16)?,
+                group_id_hash: row.get(17)?,
+                rate_multiplier: row.get(18)?,
+                manual_rate_multiplier: row.get(19)?,
+                manual_rate_updated_at: row.get(20)?,
+                rate_source: row.get(21)?,
+                rate_collected_at: row.get(22)?,
+                balance_scope: row.get(23)?,
+                status: row.get(24)?,
+                last_checked_at: row.get(25)?,
+                last_used_at: row.get(26)?,
+                note: row.get(27)?,
                 capability_summary: summarize_capabilities(
                     supports_chat,
                     supports_responses,
@@ -6872,18 +7331,18 @@ fn list_key_pool_items_from_connection(
                     blocklist.len(),
                     preferred_models.len(),
                 ),
-                only_use_as_backup: i64_to_bool(row.get(35)?),
-                cooldown_until: row.get(36)?,
+                only_use_as_backup: i64_to_bool(row.get(40)?),
+                cooldown_until: row.get(41)?,
                 success_rate: success_rate(success_count, failure_count),
-                avg_latency_ms: row.get(39)?,
-                consecutive_failures: row.get(40)?,
-                last_error_summary: row.get(41)?,
-                endpoint_ping_status: row.get(43)?,
-                endpoint_ping_ms: row.get(44)?,
-                endpoint_ping_checked_at: row.get(45)?,
-                endpoint_ping_error: row.get(46)?,
-                created_at: row.get(23)?,
-                updated_at: row.get(24)?,
+                avg_latency_ms: row.get(44)?,
+                consecutive_failures: row.get(45)?,
+                last_error_summary: row.get(46)?,
+                endpoint_ping_status: row.get(48)?,
+                endpoint_ping_ms: row.get(49)?,
+                endpoint_ping_checked_at: row.get(50)?,
+                endpoint_ping_error: row.get(51)?,
+                created_at: row.get(28)?,
+                updated_at: row.get(29)?,
             })
         })
         .map_err(|error| format!("查询 Key 池失败: {error}"))?
@@ -7683,11 +8142,26 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                     updated_at: row.get(31).unwrap_or_else(|_| "0".to_string()),
                 }),
                 economics: None,
+                scheduler_group_binding_id: None,
+                scheduler_group_id_hash: None,
+                scheduler_group_type: None,
+                scheduler_effective_multiplier: None,
+                scheduler_multiplier_reject_reason: None,
             })
         })
         .map_err(|error| format!("查询富路由候选失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析富路由候选失败: {error}"))?;
+
+    let advanced_settings = parse_scheduler_advanced_settings(&read_setting_or_default(
+        connection,
+        "scheduler_advanced_settings_json",
+        "",
+    )?)?;
+    let group_rate_interval_minutes: u16 =
+        parse_setting_or_default(connection, "group_rate_interval_minutes", "20")?;
+    let group_rate_interval_ms = i64::from(group_rate_interval_minutes) * 60 * 1000;
+    let now_ms = now_millis_for_services() as i64;
 
     let mut enriched_rows = Vec::with_capacity(rows.len());
     for mut row in rows {
@@ -7704,6 +8178,28 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
             &row.candidate.station_id,
             None,
         )?;
+        let multiplier_facts = load_multiplier_source_facts_from_connection(
+            connection,
+            &row.candidate.station_key_id,
+        )?;
+        row.scheduler_group_binding_id = multiplier_facts.group_binding_id.clone();
+        row.scheduler_group_id_hash = multiplier_facts.group_id_hash.clone();
+        row.scheduler_group_type = parse_pricing_group_type(multiplier_facts.group_name.as_deref());
+        match resolve_effective_multiplier(
+            multiplier_facts,
+            now_ms,
+            advanced_settings.multiplier_min_confidence,
+            group_rate_interval_ms,
+        ) {
+            Ok(fact) => {
+                row.scheduler_effective_multiplier = Some(fact);
+                row.scheduler_multiplier_reject_reason = None;
+            }
+            Err(reason) => {
+                row.scheduler_effective_multiplier = None;
+                row.scheduler_multiplier_reject_reason = Some(reason);
+            }
+        }
         enriched_rows.push(row);
     }
 
@@ -7796,11 +8292,26 @@ fn local_routing_read_candidates_from_connection(
                     updated_at: row.get(26).unwrap_or_else(|_| "0".to_string()),
                 }),
                 economics: None,
+                scheduler_group_binding_id: None,
+                scheduler_group_id_hash: None,
+                scheduler_group_type: None,
+                scheduler_effective_multiplier: None,
+                scheduler_multiplier_reject_reason: None,
             })
         })
         .map_err(|error| format!("查询本地路由读模型候选失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析本地路由读模型候选失败: {error}"))?;
+
+    let advanced_settings = parse_scheduler_advanced_settings(&read_setting_or_default(
+        connection,
+        "scheduler_advanced_settings_json",
+        "",
+    )?)?;
+    let group_rate_interval_minutes: u16 =
+        parse_setting_or_default(connection, "group_rate_interval_minutes", "20")?;
+    let group_rate_interval_ms = i64::from(group_rate_interval_minutes) * 60 * 1000;
+    let now_ms = now_millis_for_services() as i64;
 
     let mut enriched_rows = Vec::with_capacity(rows.len());
     for mut row in rows {
@@ -7810,6 +8321,26 @@ fn local_routing_read_candidates_from_connection(
             &row.station_id,
             None,
         )?;
+        let multiplier_facts =
+            load_multiplier_source_facts_from_connection(connection, &row.station_key_id)?;
+        row.scheduler_group_binding_id = multiplier_facts.group_binding_id.clone();
+        row.scheduler_group_id_hash = multiplier_facts.group_id_hash.clone();
+        row.scheduler_group_type = parse_pricing_group_type(multiplier_facts.group_name.as_deref());
+        match resolve_effective_multiplier(
+            multiplier_facts,
+            now_ms,
+            advanced_settings.multiplier_min_confidence,
+            group_rate_interval_ms,
+        ) {
+            Ok(fact) => {
+                row.scheduler_effective_multiplier = Some(fact);
+                row.scheduler_multiplier_reject_reason = None;
+            }
+            Err(reason) => {
+                row.scheduler_effective_multiplier = None;
+                row.scheduler_multiplier_reject_reason = Some(reason);
+            }
+        }
         enriched_rows.push(row);
     }
 
@@ -9051,14 +9582,130 @@ fn simulate_route_in_connection(
     data_dir: &str,
     input: RouteSimulationInput,
 ) -> Result<RouteSimulationResult, String> {
+    let settings = settings_from_connection(connection, data_dir, None).ok();
     let policy = input.policy.unwrap_or_else(|| {
-        settings_from_connection(connection, data_dir, None)
+        settings
+            .as_ref()
             .map(|settings| parse_routing_policy_value(&settings.default_routing_strategy))
             .unwrap_or(RoutingPolicy::PriorityFallback)
     });
-    let allow_depleted_fallback = settings_from_connection(connection, data_dir, None)
+    let allow_depleted_fallback = settings
+        .as_ref()
         .map(|settings| settings.allow_depleted_fallback)
         .unwrap_or(false);
+    let now_ms = now_millis_for_services() as i64;
+    let routing_group_filter = input
+        .routing_group_filter
+        .clone()
+        .or_else(|| {
+            settings
+                .as_ref()
+                .map(|settings| settings.default_routing_group_filter.clone())
+        })
+        .unwrap_or_default();
+    let max_rate_multiplier = input.max_rate_multiplier.or_else(|| {
+        settings
+            .as_ref()
+            .and_then(|settings| settings.max_rate_multiplier)
+    });
+    let aliases = enabled_model_alias_pairs_from_connection(connection)?;
+    if matches!(policy, RoutingPolicy::AutomaticBalanced) {
+        let max_rate_multiplier = max_rate_multiplier
+            .ok_or_else(|| "routing_multiplier_limit_not_configured".to_string())?;
+        if !max_rate_multiplier.is_finite() || max_rate_multiplier < 0.0 {
+            return Err("routing_multiplier_limit_not_configured".to_string());
+        }
+        let mapped_model =
+            crate::services::proxy::routing_policy::mapped_model(input.model.as_deref(), &aliases);
+        let scheduler_request = crate::services::proxy::scheduler::types::ScheduleRequest {
+            endpoint: input.endpoint,
+            requested_model: input.model.clone(),
+            mapped_model: mapped_model.clone(),
+            routing_group_filter: routing_group_filter.clone(),
+            stream: input.stream,
+            uses_tools: input.uses_tools,
+            uses_vision: input.uses_vision,
+            uses_reasoning: input.uses_reasoning,
+            max_rate_multiplier,
+            session_hash: input.session_hash.clone(),
+            previous_response_id: input.previous_response_id.clone(),
+            excluded_key_ids: Vec::new(),
+            now_ms,
+        };
+        let scheduler_candidates =
+            load_scheduler_candidates_from_connection(connection, &routing_group_filter, now_ms)?;
+        let metrics = RuntimeMetricsRegistry::default();
+        let capacity = CapacityRegistry::default();
+        let mut affinity = AffinityStore::default();
+        let advanced = settings
+            .as_ref()
+            .map(|settings| settings.scheduler_advanced_settings.clone())
+            .unwrap_or_else(SchedulerAdvancedSettings::default);
+        let local_candidates = local_routing_read_candidates_from_connection(connection)?;
+        let decision = schedule_once(
+            &scheduler_request,
+            &scheduler_candidates,
+            &metrics,
+            &capacity,
+            &mut affinity,
+            &advanced,
+        );
+        let (selected_station_key_id, candidates, scheduler_error_code) = match decision {
+            Ok(decision) => (
+                decision.selected_station_key_id.clone(),
+                automatic_simulation_explanations(
+                    &routing_group_filter,
+                    &scheduler_candidates,
+                    &local_candidates,
+                    &decision.candidate_decisions,
+                    mapped_model.clone(),
+                ),
+                None,
+            ),
+            Err(error) => {
+                let candidates = automatic_simulation_explanations(
+                    &routing_group_filter,
+                    &scheduler_candidates,
+                    &local_candidates,
+                    &error.candidate_decisions,
+                    mapped_model.clone(),
+                );
+                return Ok(RouteSimulationResult {
+                    selected_station_key_id: None,
+                    selected_station_id: None,
+                    mapped_model,
+                    policy,
+                    max_rate_multiplier: Some(max_rate_multiplier),
+                    routing_group_filter,
+                    scheduler_error_code: Some(error.code.to_string()),
+                    candidates,
+                    message: format!("Automatic scheduler rejected request: {}", error.code),
+                });
+            }
+        };
+        let selected_station_id = selected_station_key_id.as_ref().and_then(|station_key_id| {
+            scheduler_candidates
+                .iter()
+                .find(|candidate| &candidate.station_key_id == station_key_id)
+                .map(|candidate| candidate.station_id.clone())
+        });
+        let message = selected_station_key_id
+            .as_ref()
+            .map(|station_key_id| format!("Automatic scheduler selected {station_key_id}"))
+            .unwrap_or_else(|| "Automatic scheduler found no eligible route".to_string());
+
+        return Ok(RouteSimulationResult {
+            selected_station_key_id,
+            selected_station_id,
+            mapped_model,
+            policy,
+            max_rate_multiplier: Some(max_rate_multiplier),
+            routing_group_filter,
+            scheduler_error_code,
+            candidates,
+            message,
+        });
+    }
     let request = RouteRequest {
         endpoint: input.endpoint,
         model: input.model,
@@ -9067,12 +9714,16 @@ fn simulate_route_in_connection(
         uses_vision: input.uses_vision,
         uses_reasoning: input.uses_reasoning,
         policy: policy.clone(),
+        max_rate_multiplier,
+        routing_group_filter: routing_group_filter.clone(),
+        session_hash: input.session_hash,
+        previous_response_id: input.previous_response_id,
+        excluded_key_ids: Vec::new(),
         current_station_key_id: None,
         allow_depleted_fallback,
-        now_ms: now_millis_for_services() as i64,
+        now_ms,
     };
     let candidates = proxy_rich_route_candidates_from_connection(connection)?;
-    let aliases = enabled_model_alias_pairs_from_connection(connection)?;
     let selection = select_route_candidates(&request, candidates, &aliases)?;
     let selected = selection.accepted.first();
     let selected_station_key_id =
@@ -9097,6 +9748,9 @@ fn simulate_route_in_connection(
         selected_station_id,
         mapped_model: selection.mapped_model,
         policy,
+        max_rate_multiplier,
+        routing_group_filter,
+        scheduler_error_code: None,
         candidates: selection.explanations,
         message,
     })
@@ -9104,12 +9758,95 @@ fn simulate_route_in_connection(
 
 fn parse_routing_policy_value(value: &str) -> RoutingPolicy {
     match value {
+        "automatic_balanced" | "automatic" => RoutingPolicy::AutomaticBalanced,
         "stable_first" | "stable" => RoutingPolicy::StableFirst,
         "backup_only" => RoutingPolicy::BackupOnly,
         "cheap_first" => RoutingPolicy::CheapFirst,
         "cost_stable_first" => RoutingPolicy::CostStableFirst,
         _ => RoutingPolicy::PriorityFallback,
     }
+}
+
+fn automatic_simulation_explanations(
+    routing_group_filter: &RoutingGroupFilter,
+    scheduler_candidates: &[SchedulerCandidate],
+    local_candidates: &[LocalRoutingReadCandidate],
+    decisions: &[crate::services::proxy::scheduler::types::SchedulerCandidateDecision],
+    mapped_model: Option<String>,
+) -> Vec<crate::models::routing::RouteCandidateExplanation> {
+    let local_by_key = local_candidates
+        .iter()
+        .map(|candidate| (candidate.station_key_id.as_str(), candidate))
+        .collect::<std::collections::HashMap<_, _>>();
+    let scheduler_by_key = scheduler_candidates
+        .iter()
+        .map(|candidate| (candidate.station_key_id.as_str(), candidate))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    decisions
+        .iter()
+        .filter_map(|decision| {
+            let scheduler_candidate = scheduler_by_key.get(decision.station_key_id.as_str())?;
+            let local_candidate = local_by_key.get(decision.station_key_id.as_str());
+            let economics = local_candidate.and_then(|candidate| candidate.economics.as_ref());
+            Some(crate::models::routing::RouteCandidateExplanation {
+                station_key_id: decision.station_key_id.clone(),
+                station_id: decision.station_id.clone(),
+                station_name: local_candidate
+                    .map(|candidate| candidate.station_name.clone())
+                    .unwrap_or_else(|| decision.station_id.clone()),
+                key_name: local_candidate
+                    .map(|candidate| candidate.key_name.clone())
+                    .unwrap_or_else(|| decision.station_key_id.clone()),
+                accepted: decision.accepted,
+                score: decision
+                    .score
+                    .map(|score| (score * 1000.0).round() as i64)
+                    .unwrap_or(i64::MAX),
+                reasons: crate::services::proxy::scheduler::explanation::decision_reasons(decision),
+                rejection_reasons:
+                    crate::services::proxy::scheduler::explanation::rejection_reason_codes(decision),
+                mapped_model: mapped_model.clone(),
+                pricing_rule_id: economics.and_then(|economics| economics.pricing_rule_id.clone()),
+                group_binding_id: scheduler_candidate.group_binding_id.clone(),
+                rate_multiplier: decision
+                    .effective_multiplier
+                    .as_ref()
+                    .map(|multiplier| multiplier.value),
+                normalization_status: economics
+                    .and_then(|economics| economics.normalization_status.clone()),
+                price_confidence: economics.and_then(|economics| economics.price_confidence),
+                estimated_input_price: economics.and_then(|economics| economics.estimated_input_price),
+                estimated_output_price: economics
+                    .and_then(|economics| economics.estimated_output_price),
+                price_currency: economics.and_then(|economics| economics.price_currency.clone()),
+                balance_status: economics.and_then(|economics| economics.balance_status.clone()),
+                balance_value: economics.and_then(|economics| economics.balance_value),
+                balance_scope: economics.and_then(|economics| economics.balance_scope.clone()),
+                balance_collected_at: economics
+                    .and_then(|economics| economics.balance_collected_at.clone()),
+                economic_freshness: economics
+                    .and_then(|economics| economics.economic_freshness.clone()),
+                economic_reasons: Vec::new(),
+                routing_group_scope: Some(routing_group_filter.clone()),
+                routing_group_match: decision.routing_group_match,
+                group_id_hash: scheduler_candidate.group_id_hash.clone(),
+                group_type: scheduler_candidate.group_type.clone(),
+                effective_multiplier_source: decision
+                    .effective_multiplier
+                    .as_ref()
+                    .map(|multiplier| multiplier.source.clone()),
+                effective_multiplier_confidence: decision
+                    .effective_multiplier
+                    .as_ref()
+                    .map(|multiplier| multiplier.confidence),
+                scheduler_score: decision.score,
+                scheduler_factors: decision.factors.clone(),
+                top_k_rank: decision.top_k_rank.map(|rank| rank as i64),
+                slot_result: decision.slot_result.clone(),
+            })
+        })
+        .collect()
 }
 
 fn insert_request_log_in_connection(
@@ -9446,16 +10183,26 @@ pub(super) fn create_station_key_in_connection_with_data_key(
         Some(priority) => priority,
         None => next_station_key_priority(connection, &input.station_id)?,
     };
+    let max_concurrency = input.max_concurrency.unwrap_or(3);
+    let load_factor = input.load_factor;
+    let schedulable = input.schedulable.unwrap_or(input.enabled);
+    validate_station_key_scheduler_values(
+        max_concurrency,
+        load_factor,
+        input.manual_rate_multiplier,
+    )?;
     let routing_order = next_local_routing_order(connection)?;
 
     connection
         .execute(
             "INSERT INTO station_keys (
                 id, station_id, name, api_key, api_key_secret_id, enabled, priority, routing_order,
+                max_concurrency, load_factor, schedulable,
                 group_name, tier_label, group_binding_id, group_id_hash, rate_multiplier,
+                manual_rate_multiplier, manual_rate_updated_at,
                 rate_source, rate_collected_at, balance_scope,
                 status, last_checked_at, last_used_at, note, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'unchecked', NULL, NULL, ?17, ?18, ?19)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 'unchecked', NULL, NULL, ?22, ?23, ?24)",
             params![
                 id,
                 input.station_id,
@@ -9465,11 +10212,16 @@ pub(super) fn create_station_key_in_connection_with_data_key(
                 bool_to_i64(input.enabled),
                 priority,
                 routing_order,
+                max_concurrency,
+                load_factor,
+                bool_to_i64(schedulable),
                 normalize_optional_string(input.group_name),
                 normalize_optional_string(input.tier_label),
                 normalize_optional_string(input.group_binding_id),
                 normalize_optional_string(input.group_id_hash),
                 input.rate_multiplier,
+                input.manual_rate_multiplier,
+                input.manual_rate_multiplier.map(|_| now.clone()),
                 normalize_optional_string(input.rate_source),
                 input.rate_multiplier.map(|_| now.clone()),
                 normalize_optional_string(input.balance_scope),
@@ -9534,6 +10286,17 @@ pub(super) fn update_station_key_in_connection_with_data_key(
     } else {
         (new_api_key.unwrap_or(existing_api_key), existing_secret_id)
     };
+    let manual_rate_multiplier_update = input.manual_rate_multiplier;
+    let (manual_rate_multiplier_present, manual_rate_multiplier) =
+        match manual_rate_multiplier_update {
+            Some(value) => (1_i64, value),
+            None => (0_i64, None),
+        };
+    validate_station_key_scheduler_values(
+        input.max_concurrency,
+        input.load_factor,
+        manual_rate_multiplier,
+    )?;
     let now = now_string();
 
     connection
@@ -9544,34 +10307,50 @@ pub(super) fn update_station_key_in_connection_with_data_key(
                     api_key_secret_id = ?3,
                     enabled = ?4,
                     priority = ?5,
-                    group_name = ?6,
-                    tier_label = ?7,
-                    group_binding_id = COALESCE(?8, group_binding_id),
-                    group_id_hash = COALESCE(?9, group_id_hash),
-                    rate_multiplier = COALESCE(?10, rate_multiplier),
-                    rate_source = COALESCE(?11, rate_source),
+                    max_concurrency = ?6,
+                    load_factor = ?7,
+                    schedulable = ?8,
+                    group_name = ?9,
+                    tier_label = ?10,
+                    group_binding_id = COALESCE(?11, group_binding_id),
+                    group_id_hash = COALESCE(?12, group_id_hash),
+                    rate_multiplier = COALESCE(?13, rate_multiplier),
+                    manual_rate_multiplier = CASE
+                        WHEN ?14 = 1 THEN ?15
+                        ELSE manual_rate_multiplier
+                    END,
+                    manual_rate_updated_at = CASE
+                        WHEN ?14 = 1 THEN ?16
+                        ELSE manual_rate_updated_at
+                    END,
+                    rate_source = COALESCE(?17, rate_source),
                     rate_collected_at = CASE
-                        WHEN ?10 IS NOT NULL THEN ?12
+                        WHEN ?13 IS NOT NULL THEN ?16
                         ELSE rate_collected_at
                     END,
-                    balance_scope = COALESCE(?13, balance_scope),
-                    status = ?14,
-                    note = ?15,
-                    updated_at = ?16
-              WHERE id = ?17 AND station_id = ?18",
+                    balance_scope = COALESCE(?18, balance_scope),
+                    status = ?19,
+                    note = ?20,
+                    updated_at = ?21
+              WHERE id = ?22 AND station_id = ?23",
             params![
                 input.name.trim(),
                 next_api_key,
                 next_secret_id,
                 bool_to_i64(input.enabled),
                 input.priority,
+                input.max_concurrency,
+                input.load_factor,
+                bool_to_i64(input.schedulable),
                 normalize_optional_string(input.group_name),
                 normalize_optional_string(input.tier_label),
                 normalize_optional_string(input.group_binding_id),
                 normalize_optional_string(input.group_id_hash),
                 input.rate_multiplier,
-                normalize_optional_string(input.rate_source),
+                manual_rate_multiplier_present,
+                manual_rate_multiplier,
                 now.clone(),
+                normalize_optional_string(input.rate_source),
                 normalize_optional_string(input.balance_scope),
                 input.status,
                 normalize_optional_string(input.note),
@@ -9690,8 +10469,11 @@ fn touch_station_key_usage_in_connection(
 pub(super) fn station_key_by_id(connection: &Connection, id: &str) -> Result<StationKey, String> {
     connection
         .query_row(
-            "SELECT id, station_id, name, api_key, enabled, priority, group_name, tier_label,
-                    group_binding_id, group_id_hash, rate_multiplier, rate_source,
+            "SELECT id, station_id, name, api_key, enabled, priority,
+                    max_concurrency, load_factor, schedulable,
+                    group_name, tier_label,
+                    group_binding_id, group_id_hash, rate_multiplier,
+                    manual_rate_multiplier, manual_rate_updated_at, rate_source,
                     rate_collected_at, balance_scope,
                     status, last_checked_at, last_used_at, note, created_at, updated_at,
                     (SELECT masked_value FROM secrets WHERE secrets.id = station_keys.api_key_secret_id),
@@ -11621,6 +12403,50 @@ fn parse_upstream_api_format(value: String) -> UpstreamApiFormat {
     }
 }
 
+fn serialize_routing_group_filter_setting(filter: &RoutingGroupFilter) -> Result<String, String> {
+    match serde_json::to_value(filter)
+        .map_err(|error| format!("serialize routing group filter failed: {error}"))?
+    {
+        Value::String(value) => Ok(value),
+        value => serde_json::to_string(&value)
+            .map_err(|error| format!("serialize routing group filter failed: {error}")),
+    }
+}
+
+fn parse_routing_group_filter_setting(value: &str) -> Result<RoutingGroupFilter, String> {
+    if value.trim().is_empty() {
+        return Ok(RoutingGroupFilter::AllGroups);
+    }
+    serde_json::from_str::<RoutingGroupFilter>(value)
+        .or_else(|_| serde_json::from_value::<RoutingGroupFilter>(Value::String(value.to_string())))
+        .map_err(|error| format!("parse routing group filter failed: {error}"))
+}
+
+fn parse_optional_f64_setting(value: &str, key: &str) -> Result<Option<f64>, String> {
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|_| format!("setting {key} has invalid number format"))?;
+    if !parsed.is_finite() {
+        return Err(format!("setting {key} must be finite"));
+    }
+    Ok(Some(parsed))
+}
+
+fn parse_scheduler_advanced_settings(value: &str) -> Result<SchedulerAdvancedSettings, String> {
+    if value.trim().is_empty() {
+        return Ok(SchedulerAdvancedSettings::default());
+    }
+    let settings: SchedulerAdvancedSettings = serde_json::from_str(value)
+        .map_err(|error| format!("parse scheduler advanced settings failed: {error}"))?;
+    settings
+        .validate()
+        .map_err(|error| format!("scheduler advanced settings invalid: {error:?}"))?;
+    Ok(settings)
+}
+
 fn settings_from_connection(
     connection: &Connection,
     data_dir: &str,
@@ -11645,6 +12471,18 @@ fn settings_from_connection(
             "collector_proxy_url",
             "",
         )?)),
+        max_rate_multiplier: parse_optional_f64_setting(
+            &read_setting_or_default(connection, "max_rate_multiplier", "")?,
+            "max_rate_multiplier",
+        )?,
+        default_routing_group_filter: parse_routing_group_filter_setting(
+            &read_setting_or_default(connection, "default_routing_group_filter", "all_groups")?,
+        )?,
+        scheduler_advanced_settings: parse_scheduler_advanced_settings(&read_setting_or_default(
+            connection,
+            "scheduler_advanced_settings_json",
+            "",
+        )?)?,
         low_balance_threshold_cny: parse_setting(connection, "low_balance_threshold_cny")?,
         collector_interval_minutes: parse_setting(connection, "collector_interval_minutes")?,
         balance_interval_minutes: parse_setting_or_default(
@@ -11934,7 +12772,7 @@ mod tests {
     use crate::models::pricing::{
         UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
     };
-    use crate::models::routing::RouteEndpointKind;
+    use crate::models::routing::{PricingGroupType, RouteEndpointKind, RoutingGroupFilter};
 
     fn test_station(database: &AppDatabase, name: &str) -> Station {
         database
@@ -12012,6 +12850,431 @@ mod tests {
         );
     }
 
+    fn candidate_key_ids(candidates: &[SchedulerCandidate]) -> Vec<String> {
+        candidates
+            .iter()
+            .map(|candidate| candidate.station_key_id.clone())
+            .collect()
+    }
+
+    fn scheduler_group_candidate(
+        database: &AppDatabase,
+        station_id: &str,
+        key_name: &str,
+        group_name: &str,
+        group_id_hash: &str,
+        priority: i64,
+    ) -> StationKey {
+        let binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station_id.to_string(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: format!("station:{group_id_hash}"),
+                group_id_hash: Some(group_id_hash.to_string()),
+                group_name: group_name.to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(1.0),
+                effective_rate_multiplier: Some(1.0),
+                rate_source: Some("group_rates".to_string()),
+                confidence: 0.9,
+                inferred_group_category: None,
+                group_category_override: None,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("group binding");
+
+        database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station_id.to_string(),
+                name: key_name.to_string(),
+                api_key: format!("sk-{group_id_hash}"),
+                enabled: true,
+                priority: Some(priority),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: Some(true),
+                group_name: Some(group_name.to_string()),
+                tier_label: None,
+                group_binding_id: Some(binding.id),
+                group_id_hash: Some(group_id_hash.to_string()),
+                rate_multiplier: Some(1.0),
+                manual_rate_multiplier: None,
+                rate_source: Some("group_rates".to_string()),
+                balance_scope: None,
+                note: None,
+            })
+            .expect("scheduler group candidate key")
+    }
+
+    #[test]
+    fn load_multiplier_source_facts_preserves_binding_confidence_for_collected_rate() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "multiplier-confidence");
+        let binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:pro".to_string(),
+                group_id_hash: Some("hash-pro".to_string()),
+                group_name: "pro".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(1.25),
+                effective_rate_multiplier: Some(1.25),
+                rate_source: Some("group_rates".to_string()),
+                confidence: 0.86,
+                inferred_group_category: None,
+                group_category_override: None,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("binding");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "collected key".to_string(),
+                api_key: "sk-collected".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
+                group_name: Some("pro".to_string()),
+                tier_label: None,
+                group_binding_id: Some(binding.id.clone()),
+                group_id_hash: Some("hash-pro".to_string()),
+                rate_multiplier: Some(1.25),
+                manual_rate_multiplier: None,
+                rate_source: Some("group_rates".to_string()),
+                balance_scope: None,
+                note: None,
+            })
+            .expect("key");
+
+        let facts = database
+            .load_multiplier_source_facts(&key.id)
+            .expect("multiplier source facts");
+
+        assert_eq!(facts.group_binding_id.as_deref(), Some(binding.id.as_str()));
+        assert_option_f64_close(facts.collected_rate_confidence, 0.86);
+        crate::services::proxy::scheduler::multiplier::resolve_effective_multiplier(
+            facts,
+            0,
+            0.8,
+            20 * 60 * 1000,
+        )
+        .expect("binding confidence should satisfy default multiplier threshold");
+    }
+
+    #[test]
+    fn load_scheduler_candidates_applies_specific_group_filter_without_fallback() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-candidates-filter");
+        let gpt_binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:gpt".to_string(),
+                group_id_hash: Some("hash-gpt".to_string()),
+                group_name: "gpt".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(1.0),
+                effective_rate_multiplier: Some(1.0),
+                rate_source: Some("group_rates".to_string()),
+                confidence: 0.9,
+                inferred_group_category: None,
+                group_category_override: None,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("gpt binding");
+        let claude_binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:claude".to_string(),
+                group_id_hash: Some("hash-claude".to_string()),
+                group_name: "claude".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(0.1),
+                user_rate_multiplier: Some(0.1),
+                effective_rate_multiplier: Some(0.1),
+                rate_source: Some("group_rates".to_string()),
+                confidence: 0.9,
+                inferred_group_category: None,
+                group_category_override: None,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("claude binding");
+        let gpt_key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id.clone(),
+                name: "gpt key".to_string(),
+                api_key: "sk-gpt".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: Some(true),
+                group_name: Some("gpt".to_string()),
+                tier_label: None,
+                group_binding_id: Some(gpt_binding.id.clone()),
+                group_id_hash: Some("hash-gpt".to_string()),
+                rate_multiplier: Some(1.0),
+                manual_rate_multiplier: None,
+                rate_source: Some("group_rates".to_string()),
+                balance_scope: None,
+                note: None,
+            })
+            .expect("gpt key");
+        database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "claude key".to_string(),
+                api_key: "sk-claude".to_string(),
+                enabled: true,
+                priority: Some(1),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: Some(true),
+                group_name: Some("claude".to_string()),
+                tier_label: None,
+                group_binding_id: Some(claude_binding.id),
+                group_id_hash: Some("hash-claude".to_string()),
+                rate_multiplier: Some(0.1),
+                manual_rate_multiplier: None,
+                rate_source: Some("group_rates".to_string()),
+                balance_scope: None,
+                note: None,
+            })
+            .expect("claude key");
+
+        let candidates = database
+            .load_scheduler_candidates(&RoutingGroupFilter::GroupBindingId(gpt_binding.id), 0)
+            .expect("scheduler candidates");
+
+        assert_eq!(candidate_key_ids(&candidates), vec![gpt_key.id]);
+
+        let missing = database
+            .load_scheduler_candidates(&RoutingGroupFilter::GroupIdHash("missing".to_string()), 0)
+            .expect("missing group filter candidates");
+        assert!(
+            missing.is_empty(),
+            "specific group filters must not fall back to all groups"
+        );
+    }
+
+    #[test]
+    fn load_scheduler_candidates_group_type_filter_uses_canonical_aliases_without_fallback() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-candidates-group-type-aliases");
+
+        let image_generation_key = scheduler_group_candidate(
+            &database,
+            &station.id,
+            "image-generation key",
+            "image-generation",
+            "hash-image-generation",
+            0,
+        );
+        let image_generation_space_key = scheduler_group_candidate(
+            &database,
+            &station.id,
+            "image generation key",
+            "image generation",
+            "hash-image-generation-space",
+            1,
+        );
+        let image_generation_slug_key = scheduler_group_candidate(
+            &database,
+            &station.id,
+            "image_generation key",
+            "image_generation",
+            "hash-image-generation-slug",
+            2,
+        );
+        let image_generation_chinese_key = scheduler_group_candidate(
+            &database,
+            &station.id,
+            "gpt image key",
+            "GPT画图分组",
+            "hash-gpt-image",
+            3,
+        );
+        scheduler_group_candidate(&database, &station.id, "gpt key", "gpt", "hash-gpt", 4);
+
+        let candidates = database
+            .load_scheduler_candidates(
+                &RoutingGroupFilter::GroupType(PricingGroupType::ImageGeneration),
+                0,
+            )
+            .expect("scheduler candidates");
+
+        assert_eq!(
+            candidate_key_ids(&candidates),
+            vec![
+                image_generation_key.id,
+                image_generation_space_key.id,
+                image_generation_slug_key.id,
+                image_generation_chinese_key.id,
+            ]
+        );
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.group_type == Some(PricingGroupType::ImageGeneration)));
+
+        let missing = database
+            .load_scheduler_candidates(&RoutingGroupFilter::GroupType(PricingGroupType::Grok), 0)
+            .expect("missing group type candidates");
+        assert!(
+            missing.is_empty(),
+            "group type filters must not fall back to unrelated groups"
+        );
+    }
+
+    #[test]
+    fn load_scheduler_candidates_requires_plaintext_or_encrypted_secret_material() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-candidates-secret-material");
+        {
+            let connection = database.connection().expect("connection");
+            connection
+                .execute(
+                    "UPDATE station_keys SET api_key = '', api_key_secret_id = NULL WHERE station_id = ?1",
+                    params![station.id],
+                )
+                .expect("clear default key secret material");
+        }
+
+        let missing_secret_key = scheduler_group_candidate(
+            &database,
+            &station.id,
+            "missing secret key",
+            "gpt",
+            "hash-missing-secret",
+            0,
+        );
+        {
+            let connection = database.connection().expect("connection");
+            connection
+                .execute(
+                    "UPDATE station_keys SET api_key = '', api_key_secret_id = NULL WHERE id = ?1",
+                    params![missing_secret_key.id],
+                )
+                .expect("clear key secret material");
+        }
+
+        let secret_binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:secret".to_string(),
+                group_id_hash: Some("hash-secret".to_string()),
+                group_name: "gpt".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(1.0),
+                user_rate_multiplier: Some(1.0),
+                effective_rate_multiplier: Some(1.0),
+                rate_source: Some("group_rates".to_string()),
+                confidence: 0.9,
+                inferred_group_category: None,
+                group_category_override: None,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("secret binding");
+        let data_key = [7_u8; 32];
+        let encrypted_secret_key = database
+            .create_station_key_with_data_key(
+                CreateStationKeyInput {
+                    station_id: station.id,
+                    name: "encrypted secret key".to_string(),
+                    api_key: "sk-encrypted-secret".to_string(),
+                    enabled: true,
+                    priority: Some(1),
+                    max_concurrency: None,
+                    load_factor: None,
+                    schedulable: Some(true),
+                    group_name: Some("gpt".to_string()),
+                    tier_label: None,
+                    group_binding_id: Some(secret_binding.id),
+                    group_id_hash: Some("hash-secret".to_string()),
+                    rate_multiplier: Some(1.0),
+                    manual_rate_multiplier: None,
+                    rate_source: Some("group_rates".to_string()),
+                    balance_scope: None,
+                    note: None,
+                },
+                &data_key,
+            )
+            .expect("encrypted secret key");
+
+        let candidates = database
+            .load_scheduler_candidates(&RoutingGroupFilter::AllGroups, 0)
+            .expect("scheduler candidates");
+
+        assert_eq!(
+            candidate_key_ids(&candidates),
+            vec![encrypted_secret_key.id]
+        );
+    }
+
+    #[test]
+    fn load_scheduler_candidates_ignores_null_key_balance_snapshots_unless_station_scoped() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-candidates-balance-scope");
+        let key = scheduler_group_candidate(
+            &database,
+            &station.id,
+            "balance scoped key",
+            "gpt",
+            "hash-balance-scope",
+            0,
+        );
+        database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: None,
+                station_id: station.id,
+                station_key_id: None,
+                scope: "station_key".to_string(),
+                value: Some(0.0),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                low_balance_threshold: None,
+                status: "depleted".to_string(),
+                source: "test".to_string(),
+                confidence: 1.0,
+                collected_at: Some("2026-07-11T00:00:00Z".to_string()),
+            })
+            .expect("balance snapshot");
+
+        let candidates = database
+            .load_scheduler_candidates(&RoutingGroupFilter::AllGroups, 0)
+            .expect("scheduler candidates");
+
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.station_key_id == key.id)
+            .expect("candidate");
+        assert!(!candidate.balance_depleted);
+    }
+
     #[test]
     fn migrate_default_routing_strategy_replaces_legacy_manual_placeholder() {
         let connection = Connection::open_in_memory().expect("connection");
@@ -12043,9 +13306,12 @@ mod tests {
         let settings = database
             .update_settings(UpdateSettingsInput {
                 local_proxy_port: 8787,
-                default_routing_strategy: "cost_stable_first".to_string(),
+                default_routing_strategy: "automatic_balanced".to_string(),
                 collector_proxy_mode: "manual".to_string(),
                 collector_proxy_url: Some("http://127.0.0.1:7890".to_string()),
+                max_rate_multiplier: None,
+                default_routing_group_filter: None,
+                scheduler_advanced_settings: None,
                 low_balance_threshold_cny: 15.0,
                 collector_interval_minutes: 30,
                 balance_interval_minutes: 5,
@@ -12097,6 +13363,136 @@ mod tests {
             candidate.collector_proxy_url.as_deref(),
             Some("http://127.0.0.1:7890")
         );
+    }
+
+    #[test]
+    fn migrate_automatic_scheduler_schema_sets_disabled_keys_unschedulable() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE stations (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    station_type TEXT NOT NULL,
+                    base_url TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    credit_per_cny REAL NOT NULL DEFAULT 1,
+                    collection_interval_minutes INTEGER NOT NULL DEFAULT 5,
+                    status TEXT NOT NULL DEFAULT 'unchecked',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE station_keys (
+                    id TEXT PRIMARY KEY,
+                    station_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'unchecked',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                INSERT INTO stations (
+                    id, name, station_type, base_url, enabled, priority, credit_per_cny,
+                    collection_interval_minutes, status, created_at, updated_at
+                ) VALUES
+                    ('station-enabled', 'enabled', 'sub2api', 'https://example.test', 1, 0, 1, 5, 'unchecked', '1000', '1000'),
+                    ('station-disabled', 'disabled', 'sub2api', 'https://example.test', 0, 1, 1, 5, 'unchecked', '1000', '1000');
+                INSERT INTO station_keys (
+                    id, station_id, name, api_key, enabled, priority, status, created_at, updated_at
+                ) VALUES
+                    ('key-enabled', 'station-enabled', 'enabled key', 'sk-a', 1, 0, 'unchecked', '1000', '1000'),
+                    ('key-disabled', 'station-disabled', 'disabled key', 'sk-b', 0, 0, 'unchecked', '1000', '1000');
+                ",
+            )
+            .expect("legacy schema");
+
+        migrate_automatic_scheduler_schema(&connection).expect("migrate scheduler schema");
+
+        let enabled_schedulable: i64 = connection
+            .query_row(
+                "SELECT schedulable FROM station_keys WHERE id = 'key-enabled'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("enabled schedulable");
+        let disabled_schedulable: i64 = connection
+            .query_row(
+                "SELECT schedulable FROM station_keys WHERE id = 'key-disabled'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("disabled schedulable");
+
+        assert_eq!(enabled_schedulable, 1);
+        assert_eq!(disabled_schedulable, 0);
+    }
+
+    #[test]
+    fn migrate_automatic_scheduler_schema_preserves_later_schedulable_user_edit() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE stations (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    station_type TEXT NOT NULL,
+                    base_url TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    credit_per_cny REAL NOT NULL DEFAULT 1,
+                    collection_interval_minutes INTEGER NOT NULL DEFAULT 5,
+                    status TEXT NOT NULL DEFAULT 'unchecked',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE station_keys (
+                    id TEXT PRIMARY KEY,
+                    station_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'unchecked',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                INSERT INTO stations (
+                    id, name, station_type, base_url, enabled, priority, credit_per_cny,
+                    collection_interval_minutes, status, created_at, updated_at
+                ) VALUES
+                    ('station-disabled', 'disabled', 'sub2api', 'https://example.test', 0, 1, 1, 5, 'unchecked', '1000', '1000');
+                INSERT INTO station_keys (
+                    id, station_id, name, api_key, enabled, priority, status, created_at, updated_at
+                ) VALUES
+                    ('key-disabled', 'station-disabled', 'disabled key', 'sk-b', 0, 0, 'unchecked', '1000', '1000');
+                ",
+            )
+            .expect("legacy schema");
+
+        migrate_automatic_scheduler_schema(&connection).expect("initial scheduler migration");
+        connection
+            .execute(
+                "UPDATE station_keys SET schedulable = 1 WHERE id = 'key-disabled'",
+                [],
+            )
+            .expect("simulate user schedulable edit");
+
+        migrate_automatic_scheduler_schema(&connection).expect("repeat scheduler migration");
+
+        let schedulable: i64 = connection
+            .query_row(
+                "SELECT schedulable FROM station_keys WHERE id = 'key-disabled'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schedulable");
+
+        assert_eq!(schedulable, 1);
     }
 
     #[test]
@@ -12158,6 +13554,152 @@ mod tests {
 
         assert!(!station.api_key_present);
         assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn station_key_create_accepts_unlimited_max_concurrency_and_valid_ranges() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-ranges");
+
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "scheduler key".to_string(),
+                api_key: "sk-scheduler".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: Some(0),
+                load_factor: Some(10_000),
+                schedulable: Some(true),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                manual_rate_multiplier: Some(1.25),
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect("station key");
+
+        assert_eq!(key.max_concurrency, 0);
+        assert_eq!(key.load_factor, Some(10_000));
+        assert_eq!(key.manual_rate_multiplier, Some(1.25));
+    }
+
+    #[test]
+    fn station_key_create_rejects_invalid_load_factor() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-load-factor");
+
+        let error = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "scheduler key".to_string(),
+                api_key: "sk-scheduler".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: Some(1),
+                load_factor: Some(0),
+                schedulable: Some(true),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                manual_rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect_err("load factor must be rejected");
+
+        assert!(error.contains("load_factor"));
+    }
+
+    #[test]
+    fn station_key_create_rejects_invalid_manual_rate_multiplier() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-manual-rate-invalid");
+
+        let error = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "scheduler key".to_string(),
+                api_key: "sk-scheduler".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: Some(1),
+                load_factor: Some(1),
+                schedulable: Some(true),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                manual_rate_multiplier: Some(-1.0),
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect_err("manual multiplier must be rejected");
+
+        assert!(error.contains("manual_rate_multiplier"));
+    }
+
+    #[test]
+    fn station_key_update_can_clear_manual_rate_multiplier() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-manual-rate");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id.clone(),
+                name: "scheduler key".to_string(),
+                api_key: "sk-scheduler".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: Some(1),
+                load_factor: Some(1),
+                schedulable: Some(true),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                manual_rate_multiplier: Some(2.5),
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect("station key");
+
+        let cleared = database
+            .update_station_key(UpdateStationKeyInput {
+                id: key.id.clone(),
+                station_id: station.id,
+                name: key.name,
+                api_key: None,
+                enabled: key.enabled,
+                priority: key.priority,
+                max_concurrency: key.max_concurrency,
+                load_factor: key.load_factor,
+                schedulable: key.schedulable,
+                group_name: key.group_name,
+                tier_label: key.tier_label,
+                group_binding_id: key.group_binding_id,
+                group_id_hash: key.group_id_hash,
+                rate_multiplier: key.rate_multiplier,
+                manual_rate_multiplier: Some(None),
+                rate_source: key.rate_source,
+                balance_scope: key.balance_scope,
+                status: key.status,
+                note: key.note,
+            })
+            .expect("clear manual rate");
+
+        assert_eq!(cleared.manual_rate_multiplier, None);
+        assert!(cleared.manual_rate_updated_at.is_some());
     }
 
     #[test]
@@ -12644,11 +14186,15 @@ mod tests {
                 api_key: "sk-local-bind".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -12757,11 +14303,15 @@ mod tests {
                 api_key: "sk-local-unmatch".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -12827,11 +14377,15 @@ mod tests {
                 api_key: "sk-foreign-local".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -13556,11 +15110,15 @@ mod tests {
                 api_key: "sk-unresolved".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -13703,11 +15261,15 @@ mod tests {
                 api_key: "sk-legacy".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: Some("legacy-group".to_string()),
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -14236,11 +15798,15 @@ mod tests {
                 api_key: "sk-new-appended".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -14558,6 +16124,10 @@ mod tests {
                 uses_vision: false,
                 uses_reasoning: false,
                 policy: Some(RoutingPolicy::PriorityFallback),
+                max_rate_multiplier: None,
+                routing_group_filter: None,
+                session_hash: None,
+                previous_response_id: None,
             })
             .expect("simulate");
 
@@ -14576,6 +16146,71 @@ mod tests {
                     .rejection_reasons
                     .iter()
                     .any(|reason| reason.contains("allowlist"))
+        }));
+    }
+
+    #[test]
+    fn automatic_simulate_route_returns_structured_rejection_when_over_multiplier_limit() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "automatic-over-limit");
+        let key = database
+            .list_station_keys(station.id)
+            .expect("keys")
+            .remove(0);
+
+        database
+            .update_station_key(UpdateStationKeyInput {
+                id: key.id.clone(),
+                station_id: key.station_id.clone(),
+                name: key.name.clone(),
+                api_key: None,
+                enabled: true,
+                priority: key.priority,
+                max_concurrency: key.max_concurrency,
+                load_factor: key.load_factor,
+                schedulable: true,
+                group_name: key.group_name.clone(),
+                tier_label: key.tier_label.clone(),
+                group_binding_id: key.group_binding_id.clone(),
+                group_id_hash: key.group_id_hash.clone(),
+                rate_multiplier: key.rate_multiplier,
+                manual_rate_multiplier: Some(Some(2.0)),
+                rate_source: key.rate_source.clone(),
+                balance_scope: key.balance_scope.clone(),
+                status: key.status.clone(),
+                note: key.note.clone(),
+            })
+            .expect("manual multiplier");
+
+        let result = database
+            .simulate_route(RouteSimulationInput {
+                endpoint: RouteEndpointKind::ChatCompletions,
+                model: Some("gpt-5.4".to_string()),
+                stream: false,
+                uses_tools: false,
+                uses_vision: false,
+                uses_reasoning: false,
+                policy: Some(RoutingPolicy::AutomaticBalanced),
+                max_rate_multiplier: Some(1.0),
+                routing_group_filter: None,
+                session_hash: None,
+                previous_response_id: None,
+            })
+            .expect("automatic hard rejection should still return explanation");
+
+        assert_eq!(result.selected_station_key_id, None);
+        assert_eq!(
+            result.scheduler_error_code.as_deref(),
+            Some("routing_no_candidate_within_multiplier_limit")
+        );
+        assert!(result.candidates.iter().any(|candidate| {
+            candidate.station_key_id == key.id
+                && !candidate.accepted
+                && candidate.rate_multiplier == Some(2.0)
+                && candidate
+                    .rejection_reasons
+                    .iter()
+                    .any(|reason| reason == "multiplier_over_ceiling")
         }));
     }
 
@@ -14613,6 +16248,10 @@ mod tests {
                 uses_vision: false,
                 uses_reasoning: false,
                 policy: Some(RoutingPolicy::PriorityFallback),
+                max_rate_multiplier: None,
+                routing_group_filter: None,
+                session_hash: None,
+                previous_response_id: None,
             })
             .expect("simulate");
 
@@ -14826,10 +16465,10 @@ mod tests {
             .find(|candidate| candidate.id == log.id)
             .expect("listed log");
 
-        assert_option_f64_close(listed_log.estimated_input_cost, 0.00000375);
-        assert_option_f64_close(listed_log.estimated_output_cost, 0.00002475);
-        assert_option_f64_close(listed_log.estimated_total_cost, 0.0000285);
-        assert_option_f64_close(listed_log.base_total_cost, 0.0000285);
+        assert_option_f64_close(listed_log.estimated_input_cost, 0.0000075);
+        assert_option_f64_close(listed_log.estimated_output_cost, 0.0000495);
+        assert_option_f64_close(listed_log.estimated_total_cost, 0.000057);
+        assert_option_f64_close(listed_log.base_total_cost, 0.000057);
         assert_eq!(listed_log.cost_currency.as_deref(), Some("USD"));
         assert_eq!(
             listed_log.pricing_source.as_deref(),
@@ -14959,7 +16598,7 @@ mod tests {
             .expect("listed log");
 
         assert_option_f64_close(listed_log.estimated_total_cost, 0.75);
-        assert_option_f64_close(listed_log.base_total_cost, 0.0000285);
+        assert_option_f64_close(listed_log.base_total_cost, 0.000057);
         assert_eq!(listed_log.cost_status.as_deref(), Some("base_price_only"));
     }
 
@@ -15082,11 +16721,15 @@ mod tests {
                 api_key: "sk-not-the-canary".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -15123,11 +16766,15 @@ mod tests {
                 api_key: "sk-p8-secret-plaintext-canary".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -15180,11 +16827,15 @@ mod tests {
                 api_key: "sk-p8-secret-plaintext-canary".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -15220,11 +16871,15 @@ mod tests {
                 api_key: "sk-p8-secret-plaintext-canary".to_string(),
                 enabled: true,
                 priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: None,
                 note: None,
@@ -15266,11 +16921,15 @@ mod tests {
                     api_key: "sk-p8-secret-plaintext-canary".to_string(),
                     enabled: true,
                     priority: Some(0),
+                    max_concurrency: None,
+                    load_factor: None,
+                    schedulable: None,
                     group_name: None,
                     tier_label: None,
                     group_binding_id: None,
                     group_id_hash: None,
                     rate_multiplier: None,
+                    manual_rate_multiplier: None,
                     rate_source: None,
                     balance_scope: None,
                     note: None,
@@ -15312,11 +16971,15 @@ mod tests {
                     api_key: "sk-p8-secret-plaintext-canary".to_string(),
                     enabled: true,
                     priority: Some(0),
+                    max_concurrency: None,
+                    load_factor: None,
+                    schedulable: None,
                     group_name: None,
                     tier_label: None,
                     group_binding_id: None,
                     group_id_hash: None,
                     rate_multiplier: None,
+                    manual_rate_multiplier: None,
                     rate_source: None,
                     balance_scope: None,
                     note: None,
@@ -15334,11 +16997,15 @@ mod tests {
                     api_key: Some("   ".to_string()),
                     enabled: true,
                     priority: key.priority,
+                    max_concurrency: 3,
+                    load_factor: None,
+                    schedulable: true,
                     group_name: None,
                     tier_label: None,
                     group_binding_id: None,
                     group_id_hash: None,
                     rate_multiplier: None,
+                    manual_rate_multiplier: None,
                     rate_source: None,
                     balance_scope: None,
                     status: key.status,
@@ -16119,8 +17786,8 @@ mod tests {
         assert_eq!(economics.pricing_rule_id.as_deref(), None);
         assert_eq!(economics.pricing_model.as_deref(), Some("gpt-5.4-mini"));
         assert_eq!(economics.rate_multiplier, Some(1.0));
-        assert_eq!(economics.estimated_input_price, Some(0.375));
-        assert_eq!(economics.estimated_output_price, Some(2.25));
+        assert_eq!(economics.estimated_input_price, Some(0.75));
+        assert_eq!(economics.estimated_output_price, Some(4.5));
         assert_eq!(
             economics.normalization_status.as_deref(),
             Some("base_price_only")
@@ -16175,8 +17842,8 @@ mod tests {
 
         assert_eq!(economics.pricing_rule_id.as_deref(), None);
         assert_eq!(economics.pricing_model.as_deref(), Some("gpt-5.4-mini"));
-        assert_eq!(economics.estimated_input_price, Some(0.375));
-        assert_eq!(economics.estimated_output_price, Some(2.25));
+        assert_eq!(economics.estimated_input_price, Some(0.75));
+        assert_eq!(economics.estimated_output_price, Some(4.5));
         assert_eq!(
             economics.normalization_status.as_deref(),
             Some("base_price_only")
