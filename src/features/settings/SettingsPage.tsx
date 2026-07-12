@@ -545,9 +545,8 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
               <SwitchControl
                 ariaLabel="允许余额耗尽兜底"
                 checked={form.allowDepletedFallback}
-                offLabel="关闭"
-                onLabel="开启"
                 onCheckedChange={() => void handleAllowDepletedFallbackToggle()}
+                showLabel={false}
               />
             }
             description="关闭时，余额耗尽的候选默认不参与路由；开启后只作为兜底候选。"
@@ -559,9 +558,8 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
                 ariaLabel="开发者模式"
                 checked={form.developerModeEnabled}
                 disabled={saving || loading}
-                offLabel="关闭"
-                onLabel="开启"
                 onCheckedChange={() => void handleDeveloperModeToggle()}
+                showLabel={false}
               />
             }
             description="打开后侧边栏显示采集中心。"
@@ -606,11 +604,7 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
                 </Button>
               </div>
             }
-            description={
-              restartRequired
-                ? "重启后使用新的数据目录；当前运行仍使用原数据库。"
-                : "本地数据库不在仓库目录。"
-            }
+            description={restartRequired ? "重启后使用新的数据目录；当前运行仍使用原数据库。" : undefined}
             label="数据目录"
           />
         </SectionCard>

@@ -31,6 +31,14 @@ assert(
 );
 
 assert(
+  /label:\s*"站点今日请求"[\s\S]*?valueClassName:\s*"text-slate-900"[\s\S]*?accent:\s*"green"/.test(dashboardSource) &&
+    /label:\s*"站点今日消费"[\s\S]*?valueClassName:\s*"text-purple-700"[\s\S]*?accent:\s*"purple"/.test(dashboardSource) &&
+    /label:\s*"站点今日 Token"[\s\S]*?valueClassName:\s*"text-slate-900"[\s\S]*?accent:\s*"amber"/.test(dashboardSource) &&
+    /label:\s*"站点累计 Token"[\s\S]*?valueClassName:\s*"text-slate-900"[\s\S]*?accent:\s*"indigo"/.test(dashboardSource),
+  "dashboard station usage metric cards should align their primary value colors with the matching local routing metric cards",
+);
+
+assert(
   stationDetailViewModelSource.includes("function formatTokenBreakdown") &&
     stationDetailViewModelSource.includes("todayInputTokenCount") &&
     stationDetailViewModelSource.includes("todayOutputTokenCount") &&

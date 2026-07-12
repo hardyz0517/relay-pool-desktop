@@ -49,6 +49,8 @@ assertIncludes(statusTab, "当前秘钥", "LocalRoutingStatusTab");
 assertIncludes(statusTab, "lg:[&>*]:h-full", "LocalRoutingStatusTab");
 assertOccurrenceCount(statusTab, "grid-rows-[auto_minmax(0,1fr)]", 2, "LocalRoutingStatusTab");
 assertIncludes(statusTab, 'contentClassName="grid h-full content-center gap-3"', "LocalRoutingStatusTab");
+assertIncludes(statusTab, "formatDecisionTime(workspace.summary.lastDecisionAt)", "LocalRoutingStatusTab");
+assertExcludes(statusTab, "{workspace.summary.lastDecisionAt ??", "LocalRoutingStatusTab");
 assertExcludes(statusTab, "latestDecision?.reason", "LocalRoutingStatusTab");
 assertIncludes(statusTab, "倍率上限", "LocalRoutingStatusTab");
 assertIncludes(statusTab, "分组筛选", "LocalRoutingStatusTab");

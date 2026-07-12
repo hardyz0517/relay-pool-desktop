@@ -365,6 +365,7 @@ export function DashboardPage() {
               detail: `${lowBalanceStations} 个余额告警`,
               icon: Wallet,
               tone: lowBalanceStations > 0 ? "warning" : "good",
+              valueClassName: "text-emerald-700",
               accent: "emerald",
             },
             {
@@ -381,6 +382,7 @@ export function DashboardPage() {
               detail: `累计 ${formatCompactNumber(proxyRequestCount)}`,
               icon: Activity,
               tone: todayRequests > 0 ? "good" : "neutral",
+              valueClassName: "text-slate-900",
               accent: "green",
             },
             {
@@ -396,6 +398,7 @@ export function DashboardPage() {
               detail: `输入 ${formatCompactNumber(todayPromptTokens)} / 输出 ${formatCompactNumber(todayCompletionTokens)}`,
               icon: BarChart3,
               tone: todayTokens > 0 ? "good" : "neutral",
+              valueClassName: "text-slate-900",
               accent: "amber",
             },
             {
@@ -404,6 +407,7 @@ export function DashboardPage() {
               detail: `输入 ${formatCompactNumber(totalPromptTokens)} / 输出 ${formatCompactNumber(totalCompletionTokens)}`,
               icon: Server,
               tone: totalTokens > 0 ? "good" : "neutral",
+              valueClassName: "text-slate-900",
               accent: "indigo",
             },
             {
@@ -412,14 +416,27 @@ export function DashboardPage() {
               detail: averageResponseMs === null ? "暂无今日样本" : "今日平均",
               icon: Clock3,
               tone: averageResponseMs !== null && averageResponseMs > 15000 ? "warning" : "neutral",
+              valueClassName: "text-slate-900",
               accent: "rose",
             },
             {
               label: "性能概览",
-              value: `${formatCompactNumber(recentPerformance.rpm)} RPM`,
-              detail: `${formatCompactNumber(recentPerformance.tpm)} TPM · ${activeRequests} 活跃`,
+              value: (
+                <>
+                  <span className="text-slate-900">{formatCompactNumber(recentPerformance.rpm)}</span>
+                  <span className="ml-1 text-sm font-medium text-muted-foreground">RPM</span>
+                </>
+              ),
+              detail: (
+                <>
+                  <span className="font-semibold text-slate-900">{formatCompactNumber(recentPerformance.tpm)}</span>
+                  <span className="ml-1 text-muted-foreground">TPM</span>
+                  <span className="text-muted-foreground">· {activeRequests} 活跃</span>
+                </>
+              ),
               icon: Gauge,
               tone: recentPerformance.rpm > 0 || activeRequests > 0 ? "good" : "neutral",
+              valueClassName: "inline-flex items-baseline text-slate-900",
               accent: "violet",
             },
           ]}
@@ -433,6 +450,7 @@ export function DashboardPage() {
               detail: `累计 ${formatCompactNumber(stationUsage.totalRequestCount)}`,
               icon: Activity,
               tone: stationUsage.todayRequestCount > 0 ? "good" : "neutral",
+              valueClassName: "text-slate-900",
               accent: "green",
             },
             {
@@ -441,6 +459,7 @@ export function DashboardPage() {
               detail: `累计 ${formatUsdAmount(stationUsage.totalConsumption)}`,
               icon: BadgeDollarSign,
               tone: stationUsage.todayConsumption > 0 ? "good" : "neutral",
+              valueClassName: "text-purple-700",
               accent: "purple",
             },
             {
@@ -449,6 +468,7 @@ export function DashboardPage() {
               detail: `输入: ${formatCompactNumber(stationUsage.todayInputTokenCount)} / 输出: ${formatCompactNumber(stationUsage.todayOutputTokenCount)}`,
               icon: BarChart3,
               tone: stationUsage.todayTokenCount > 0 ? "good" : "neutral",
+              valueClassName: "text-slate-900",
               accent: "amber",
             },
             {
@@ -457,6 +477,7 @@ export function DashboardPage() {
               detail: `输入: ${formatCompactNumber(stationUsage.totalInputTokenCount)} / 输出: ${formatCompactNumber(stationUsage.totalOutputTokenCount)}`,
               icon: Server,
               tone: stationUsage.totalTokenCount > 0 ? "good" : "neutral",
+              valueClassName: "text-slate-900",
               accent: "indigo",
             },
           ]}
@@ -545,7 +566,7 @@ export function DashboardPage() {
                   </StatusBadge>
                 }
                 metrics={[
-                  { label: "优先级", value: `${key.priority}` },
+                  { label: "顺位", value: `${key.priority + 1}` },
                   {
                     label: "成功率",
                     value: key.successRate === null ? "-" : `${Math.round(key.successRate * 100)}%`,

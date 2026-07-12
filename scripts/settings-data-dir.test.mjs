@@ -14,6 +14,11 @@ assert.ok(
   "settings data/security section should remove the old cyan data-safety note",
 );
 
+assert.ok(
+  !settingsPageSource.includes("本地数据库不在仓库目录。"),
+  "settings data-directory row should not show the static explanatory copy under the title",
+);
+
 for (const label of ["加密存储", "凭据迁移", "安全扫描"]) {
   assert.ok(
     !settingsPageSource.includes(`label="${label}"`),

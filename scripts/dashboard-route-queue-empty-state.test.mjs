@@ -28,3 +28,18 @@ assert(
   /keyPoolItems\.slice\(0,\s*6\)\.map/.test(dashboardSource),
   "dashboard route queue should keep rendering existing key rows when keys are available",
 );
+
+assert(
+  dashboardSource.includes('label: "顺位"'),
+  "dashboard route queue should call the visible order 顺位 instead of exposing internal priority",
+);
+
+assert(
+  dashboardSource.includes("`${key.priority + 1}`"),
+  "dashboard route queue should display the same 1-based order users see in routing views",
+);
+
+assert(
+  !dashboardSource.includes('label: "优先级"'),
+  "dashboard route queue should not label the rendered order as 优先级",
+);

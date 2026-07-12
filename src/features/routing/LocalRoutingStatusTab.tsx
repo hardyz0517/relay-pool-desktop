@@ -1,5 +1,6 @@
 import { Clock3, Server, ShieldCheck } from "lucide-react";
 import { EmptyState, SectionCard, StatusBadge } from "@/components/ui";
+import { parseTimestampLikeDate } from "@/lib/time";
 import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
 import type { RouteEndpointKind, RoutingGroupFilter } from "@/lib/types/routing";
 import { LocalRoutingCandidateRow } from "./LocalRoutingCandidateRow";
@@ -34,6 +35,7 @@ export function LocalRoutingStatusTab({ workspace, loading }: LocalRoutingStatus
   }
 
   const currentKey = workspace.latestDecision?.selectedStationName ?? "未选择";
+  const decisionTimeLabel = formatDecisionTime(workspace.summary.lastDecisionAt);
 
   return (
     <div className="grid gap-3">
@@ -79,7 +81,7 @@ export function LocalRoutingStatusTab({ workspace, loading }: LocalRoutingStatus
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Clock3 className="h-3.5 w-3.5" />
-            {workspace.summary.lastDecisionAt ?? "暂无决策时间"}
+            {decisionTimeLabel}
           </div>
         </SectionCard>
       </div>
@@ -88,8 +90,8 @@ export function LocalRoutingStatusTab({ workspace, loading }: LocalRoutingStatus
         {workspace.candidates.length === 0 ? (
           <EmptyState title="暂无候选 Key" description="后续任务会接入可编辑的本地路由候选列表。" />
         ) : (
-          workspace.candidates.map((candidate) => (
-            <LocalRoutingCandidateRow key={candidate.stationKeyId} candidate={candidate} />
+          workspace.candidates.map((candidate, index) => (
+            <LocalRoutingCandidateRow key={candidate.stationKeyId} candidate={candidate} order={index + 1} />
           ))
         )}
       </SectionCard>
@@ -108,6 +110,25 @@ function formatRoutingGroupFilter(filter: RoutingGroupFilter) {
   if ("group_binding_id" in filter) return "指定绑定";
   if ("group_id_hash" in filter) return "指定分组";
   return "全部分组";
+}
+
+function formatDecisionTime(value: string | null) {
+  if (!value) {
+    return "暂无决策时间";
+  }
+  const date = parseTimestampLikeDate(value);
+  if (Number.isNaN(date.getTime())) {
+    return "决策时间异常";
+  }
+  return `最近决策 ${date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  })}`;
 }
 
 function Metric({ label, value }: { label: string; value: number | string }) {

@@ -21,6 +21,7 @@ export type MetricItem = {
   icon?: LucideIcon;
   tone?: MetricTone;
   accent?: MetricAccent;
+  valueClassName?: string;
 };
 
 type MetricPanelProps = {
@@ -106,7 +107,7 @@ export function MetricPanel({
         </header>
       )}
       <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
-        {metrics.map(({ label, value, detail, icon: Icon, tone = "neutral", accent }) => {
+        {metrics.map(({ label, value, detail, icon: Icon, tone = "neutral", accent, valueClassName }) => {
           const metricAccent = accent ?? toneAccent[tone];
           const shouldUseToneValue = tone === "warning" || tone === "danger";
 
@@ -132,9 +133,10 @@ export function MetricPanel({
                 <div
                   className={cn(
                     "mt-0.5 truncate text-[22px] font-semibold leading-7",
-                    shouldUseToneValue
-                      ? toneClassName[tone]
-                      : accentClassName[metricAccent].value,
+                    valueClassName ??
+                      (shouldUseToneValue
+                        ? toneClassName[tone]
+                        : accentClassName[metricAccent].value),
                   )}
                 >
                   {value}

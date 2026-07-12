@@ -22,7 +22,8 @@ assert.match(
 );
 
 assert.ok(
-  addProviderSource.includes("newapiRemoteCreateConfirm") &&
-    addProviderSource.includes("NewAPI 创建远端 Key 后不会在界面展示完整 Key"),
-  "NewAPI remote-key creation should require an explicit truthfulness confirmation",
+  !addProviderSource.includes("newapiRemoteCreateConfirm") &&
+    !addProviderSource.includes("确认创建 NewAPI 远端 Key") &&
+    !addProviderSource.includes("NewAPI 创建远端 Key 后不会在界面展示完整 Key"),
+  "NewAPI remote-key creation should submit directly without an extra confirmation dialog",
 );

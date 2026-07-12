@@ -9,13 +9,16 @@ assert.ok(
 );
 
 assert.ok(
-  dashboardSource.includes('value: `${formatCompactNumber(recentPerformance.rpm)} RPM`'),
-  "dashboard performance overview should show RPM as the primary value",
+  dashboardSource.includes('<span className="text-slate-900">{formatCompactNumber(recentPerformance.rpm)}</span>') &&
+    dashboardSource.includes('<span className="ml-1 text-sm font-medium text-muted-foreground">RPM</span>'),
+  "dashboard performance overview should show RPM as the primary value with a separated unit label",
 );
 
 assert.ok(
-  dashboardSource.includes("`${formatCompactNumber(recentPerformance.tpm)} TPM · ${activeRequests} 活跃`"),
-  "dashboard performance overview should show TPM in the detail line",
+  dashboardSource.includes('<span className="font-semibold text-slate-900">{formatCompactNumber(recentPerformance.tpm)}</span>') &&
+    dashboardSource.includes('<span className="ml-1 text-muted-foreground">TPM</span>') &&
+    dashboardSource.includes('<span className="text-muted-foreground">· {activeRequests} 活跃</span>'),
+  "dashboard performance overview should show TPM in the detail line with a separated unit label",
 );
 
 assert.doesNotMatch(

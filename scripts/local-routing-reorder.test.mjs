@@ -50,6 +50,16 @@ assert.match(editTabSource, /disabled=\{syncState === "saving"\}/);
 assert.match(editTabSource, /useSortable\(\{\s*id: candidate\.stationKeyId,\s*disabled,\s*\}\)/s);
 assert.match(candidateRowSource, /const isSortable = Boolean\(/);
 assert.match(candidateRowSource, /draggable=\{isSortable\}/);
+assert.match(
+  statusTabSource,
+  /workspace\.candidates\.map\(\(candidate, index\) =>/,
+  "status candidate rows should derive visible order from the rendered list position",
+);
+assert.match(
+  statusTabSource,
+  /<LocalRoutingCandidateRow\s+key=\{candidate\.stationKeyId\}\s+candidate=\{candidate\}\s+order=\{index \+ 1\}/s,
+  "status candidate rows should pass the same 1-based visible order as the edit preview",
+);
 assert.doesNotMatch(statusTabSource, /dragAttributes|dragListeners|dragDisabled/);
 assert.doesNotMatch(statusTabSource, /DndContext|SortableContext|useSortable|reorderLocalRoutingKeys/);
 assert.equal(editTabSource.includes("权重"), false, "local routing edit UI must not expose 权重 copy");

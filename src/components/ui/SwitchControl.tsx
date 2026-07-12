@@ -26,8 +26,10 @@ export function SwitchControl({
       aria-checked={checked}
       aria-label={ariaLabel}
       className={cn(
-        "inline-flex h-8 items-center justify-between gap-2 rounded-full border border-border bg-white px-2 text-xs font-medium text-slate-700 shadow-[var(--surface-shadow)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)] disabled:cursor-default disabled:opacity-60",
-        showLabel && "min-w-[96px]",
+        "inline-flex items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)] disabled:cursor-default disabled:opacity-60",
+        showLabel
+          ? "h-8 min-w-[96px] justify-between gap-2 border border-border bg-white px-2 text-xs font-medium text-slate-700 shadow-[var(--surface-shadow)]"
+          : "h-5 w-10 justify-center bg-transparent p-0",
         className,
       )}
       disabled={disabled}
