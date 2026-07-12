@@ -25,7 +25,7 @@ vm.runInNewContext(compiled.outputText, {
 
 const { summarizeDashboardBalances } = module.exports;
 
-const summary = summarizeDashboardBalances([
+const balances = [
   {
     id: "key-raw-newer",
     stationId: "station-a",
@@ -91,7 +91,24 @@ const summary = summarizeDashboardBalances([
     status: "depleted",
     updatedAt: "3000",
   },
-]);
+];
+
+const stations = [
+  {
+    id: "station-a",
+    creditPerCny: 10,
+  },
+  {
+    id: "station-b",
+    creditPerCny: 5,
+  },
+  {
+    id: "station-c",
+    creditPerCny: 1,
+  },
+];
+
+const summary = summarizeDashboardBalances(balances, stations);
 
 assert.equal(summary.totalBalance, 18);
 assert.equal(summary.lowBalanceStations, 1);
@@ -99,8 +116,8 @@ assert.equal(summary.primaryBalanceCurrency, "CNY");
 assert.deepEqual(JSON.parse(JSON.stringify(summary.stationUsage)), {
   todayRequestCount: 20,
   totalRequestCount: 200,
-  todayConsumption: 1,
-  totalConsumption: 11,
+  todayConsumption: 0.125,
+  totalConsumption: 1.35,
   todayTokenCount: 35567,
   totalTokenCount: 458789,
   todayInputTokenCount: 28800,

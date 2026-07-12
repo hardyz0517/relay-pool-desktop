@@ -40,6 +40,7 @@ import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 import type { AppSettings } from "@/lib/types/settings";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
+import type { Station } from "@/lib/types/stations";
 import { stationKeyStatusLabels } from "@/lib/types/stationKeys";
 import { formatChangeTime, severityLabels, severityTone, unreadRiskCount } from "@/features/changes/changeEventViewModels";
 import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
@@ -83,6 +84,7 @@ export function DashboardPage() {
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
   const [keyPoolItems, setKeyPoolItems] = useState<KeyPoolItem[]>([]);
+  const [stations, setStations] = useState<Station[]>([]);
   const [balanceSnapshots, setBalanceSnapshots] = useState<BalanceSnapshot[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
@@ -97,6 +99,7 @@ export function DashboardPage() {
         setProxyStatus(workspace.proxyStatus);
         setRequestLogs(workspace.requestLogs);
         setKeyPoolItems(workspace.keyPoolItems);
+        setStations(workspace.stations);
         setBalanceSnapshots(workspace.balanceSnapshots);
         setSettings(workspace.settings);
         setChangeEvents(workspace.changeEvents);
@@ -227,7 +230,10 @@ export function DashboardPage() {
   const averageResponseMs = averageDurationMs(todayLogs);
   const recentPerformance = getRecentPerformanceMetrics(requestLogs);
   const activeRequests = proxyStatus?.activeRequests ?? 0;
-  const balanceSummary = useMemo(() => summarizeDashboardBalances(balanceSnapshots), [balanceSnapshots]);
+  const balanceSummary = useMemo(
+    () => summarizeDashboardBalances(balanceSnapshots, stations),
+    [balanceSnapshots, stations],
+  );
   const { lowBalanceStations, primaryBalanceCurrency, stationUsage, totalBalance } = balanceSummary;
   const activeRiskEvents = useMemo(
     () =>
