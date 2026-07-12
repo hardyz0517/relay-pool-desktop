@@ -105,7 +105,7 @@ export function MetricPanel({
           )}
         </header>
       )}
-      <div className="grid gap-2 rounded-[var(--surface-radius)] bg-white p-3 shadow-[var(--surface-shadow)] sm:grid-cols-2 md:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
         {metrics.map(({ label, value, detail, icon: Icon, tone = "neutral", accent }) => {
           const metricAccent = accent ?? toneAccent[tone];
           const shouldUseToneValue = tone === "warning" || tone === "danger";
@@ -113,16 +113,16 @@ export function MetricPanel({
           return (
             <div
               key={label}
-              className="flex min-h-[64px] items-center gap-2.5 rounded-[8px] border border-border bg-white px-2.5 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
+              className="flex min-h-[96px] items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_8px_rgba(15,23,42,0.08)]"
             >
               {Icon && (
                 <div
                   className={cn(
-                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px]",
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px]",
                     accentClassName[metricAccent].icon,
                   )}
                 >
-                  <Icon className="h-3.5 w-3.5" />
+                  <Icon className="h-4 w-4" />
                 </div>
               )}
               <div className="min-w-0 flex-1">
@@ -131,7 +131,7 @@ export function MetricPanel({
                 </div>
                 <div
                   className={cn(
-                    "mt-0.5 truncate text-[18px] font-semibold leading-6",
+                    "mt-0.5 truncate text-[22px] font-semibold leading-7",
                     shouldUseToneValue
                       ? toneClassName[tone]
                       : accentClassName[metricAccent].value,

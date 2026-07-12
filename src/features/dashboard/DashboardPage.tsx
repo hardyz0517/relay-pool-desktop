@@ -441,7 +441,7 @@ export function DashboardPage() {
             {
               label: "站点今日 Token",
               value: formatCompactNumber(stationUsage.todayTokenCount),
-              detail: "后台采集口径",
+              detail: `输入: ${formatCompactNumber(stationUsage.todayInputTokenCount)} / 输出: ${formatCompactNumber(stationUsage.todayOutputTokenCount)}`,
               icon: BarChart3,
               tone: stationUsage.todayTokenCount > 0 ? "good" : "neutral",
               accent: "amber",
@@ -449,7 +449,7 @@ export function DashboardPage() {
             {
               label: "站点累计 Token",
               value: formatCompactNumber(stationUsage.totalTokenCount),
-              detail: "全部中转站总计",
+              detail: `输入: ${formatCompactNumber(stationUsage.totalInputTokenCount)} / 输出: ${formatCompactNumber(stationUsage.totalOutputTokenCount)}`,
               icon: Server,
               tone: stationUsage.totalTokenCount > 0 ? "good" : "neutral",
               accent: "indigo",

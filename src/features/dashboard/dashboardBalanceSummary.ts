@@ -15,6 +15,10 @@ export type DashboardStationUsageSummary = {
   totalConsumption: number;
   todayTokenCount: number;
   totalTokenCount: number;
+  todayInputTokenCount: number;
+  todayOutputTokenCount: number;
+  totalInputTokenCount: number;
+  totalOutputTokenCount: number;
 };
 
 export function summarizeDashboardBalances(balances: BalanceSnapshot[]): DashboardBalanceSummary {
@@ -50,6 +54,10 @@ function summarizeStationUsage(snapshots: BalanceSnapshot[]): DashboardStationUs
     totalConsumption: sumNumbers(snapshots.map((snapshot) => snapshot.totalConsumption)),
     todayTokenCount: sumNumbers(snapshots.map((snapshot) => snapshot.todayTokenCount)),
     totalTokenCount: sumNumbers(snapshots.map((snapshot) => snapshot.totalTokenCount)),
+    todayInputTokenCount: sumNumbers(snapshots.map((snapshot) => snapshot.todayInputTokenCount)),
+    todayOutputTokenCount: sumNumbers(snapshots.map((snapshot) => snapshot.todayOutputTokenCount)),
+    totalInputTokenCount: sumNumbers(snapshots.map((snapshot) => snapshot.totalInputTokenCount)),
+    totalOutputTokenCount: sumNumbers(snapshots.map((snapshot) => snapshot.totalOutputTokenCount)),
   };
 }
 

@@ -127,6 +127,10 @@ pub fn apply_collector_facts(
             total_consumption: balance.total_consumption,
             today_token_count: balance.today_token_count,
             total_token_count: balance.total_token_count,
+            today_input_token_count: balance.today_input_token_count,
+            today_output_token_count: balance.today_output_token_count,
+            total_input_token_count: balance.total_input_token_count,
+            total_output_token_count: balance.total_output_token_count,
             low_balance_threshold: None,
             status: balance.status,
             source: balance.source,
@@ -296,6 +300,10 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
             total_consumption,
             today_token_count,
             total_token_count,
+            today_input_token_count,
+            today_output_token_count,
+            total_input_token_count,
+            total_output_token_count,
             currency,
             credit_unit,
             confidence,
@@ -331,6 +339,26 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
                 let total_token_count = sum_present_i64_values(
                     key_balances.iter().map(|balance| balance.total_token_count),
                 );
+                let today_input_token_count = sum_present_i64_values(
+                    key_balances
+                        .iter()
+                        .map(|balance| balance.today_input_token_count),
+                );
+                let today_output_token_count = sum_present_i64_values(
+                    key_balances
+                        .iter()
+                        .map(|balance| balance.today_output_token_count),
+                );
+                let total_input_token_count = sum_present_i64_values(
+                    key_balances
+                        .iter()
+                        .map(|balance| balance.total_input_token_count),
+                );
+                let total_output_token_count = sum_present_i64_values(
+                    key_balances
+                        .iter()
+                        .map(|balance| balance.total_output_token_count),
+                );
                 let currency =
                     shared_text_value(key_balances.iter().map(|balance| balance.currency.as_str()))
                         .unwrap_or("CNY")
@@ -361,6 +389,10 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
                         total_consumption,
                         today_token_count,
                         total_token_count,
+                        today_input_token_count,
+                        today_output_token_count,
+                        total_input_token_count,
+                        total_output_token_count,
                         currency,
                         credit_unit,
                         confidence,
@@ -385,6 +417,10 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
             total_consumption,
             today_token_count,
             total_token_count,
+            today_input_token_count,
+            today_output_token_count,
+            total_input_token_count,
+            total_output_token_count,
             currency,
             credit_unit,
             status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
@@ -541,6 +577,10 @@ mod tests {
             total_consumption: None,
             today_token_count: None,
             total_token_count: None,
+            today_input_token_count: None,
+            today_output_token_count: None,
+            total_input_token_count: None,
+            total_output_token_count: None,
             currency: "CNY".to_string(),
             credit_unit: None,
             status: "normal".to_string(),
