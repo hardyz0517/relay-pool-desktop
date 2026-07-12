@@ -171,14 +171,40 @@ assert.ok(
   "a transient should prefer explicit autofocus, then focus its first actionable control without scrolling",
 );
 assert.ok(
-  hostSource.includes('<AnimatePresence initial={false} mode="wait">') &&
-    hostSource.includes("cloneElement(transientPresence, {") &&
-    hostSource.includes("onExitComplete: () =>") &&
-    hostSource.includes("if (!page)") &&
-    hostSource.includes("onExitComplete?.()") &&
-    hostSource.includes('initial={false}') &&
-    hostSource.includes('mode="wait"'),
-  "presence completion should restore focus only after closing to a shell, not during transient replacement",
+  !/\bcloneElement\b/.test(hostSource),
+  "the host should pass lifecycle props directly to AnimatePresence without cloneElement",
+);
+assert.ok(
+  hostSource.includes("completeTransientPageExit(page, onExitComplete)"),
+  "the AnimatePresence exit callback should delegate to the executable exit policy",
+);
+
+const { completeTransientPageExit } = await import(
+  "../src/app/transientPageExitPolicy.ts"
+);
+
+let exitCompleteCalls = 0;
+const recordExitComplete = () => {
+  exitCompleteCalls += 1;
+};
+
+completeTransientPageExit({ instanceKey: "transient-b" }, recordExitComplete);
+assert.equal(
+  exitCompleteCalls,
+  0,
+  "a transient replacement should not restore shell focus",
+);
+
+completeTransientPageExit(null, recordExitComplete);
+assert.equal(
+  exitCompleteCalls,
+  1,
+  "closing the final transient should restore shell focus exactly once",
+);
+
+assert.doesNotThrow(
+  () => completeTransientPageExit(null),
+  "closing without an optional host callback should remain safe",
 );
 
 assert.ok(

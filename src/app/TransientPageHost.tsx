@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, MotionConfig, useIsPresent } from "framer-motion";
-import { cloneElement, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { completeTransientPageExit } from "@/app/transientPageExitPolicy";
 import { PageActivityProvider } from "@/components/shell/PageActivity";
 import type { TransientPageId } from "@/lib/types/navigation";
 
@@ -76,21 +77,15 @@ function TransientPageLayer({ page }: { page: TransientPageDescriptor }) {
 }
 
 export function TransientPageHost({ page, onExitComplete }: TransientPageHostProps) {
-  const transientPresence = (
-    <AnimatePresence initial={false} mode="wait">
-      {page ? <TransientPageLayer key={page.instanceKey} page={page} /> : null}
-    </AnimatePresence>
-  );
-
   return (
     <MotionConfig reducedMotion="user">
-      {cloneElement(transientPresence, {
-        onExitComplete: () => {
-          if (!page) {
-            onExitComplete?.();
-          }
-        },
-      })}
+      <AnimatePresence
+        initial={false}
+        mode="wait"
+        onExitComplete={() => completeTransientPageExit(page, onExitComplete)}
+      >
+        {page ? <TransientPageLayer key={page.instanceKey} page={page} /> : null}
+      </AnimatePresence>
     </MotionConfig>
   );
 }

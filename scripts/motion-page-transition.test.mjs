@@ -119,6 +119,40 @@ function findForbiddenObjectLiteralProperties(source, fileName = "fixture.tsx") 
   return forbiddenProperties;
 }
 
+function findJsxOpeningElements(source, tagName, fileName = "fixture.tsx") {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  const openingElements = [];
+
+  function visit(node) {
+    if (
+      (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
+      ts.isIdentifier(node.tagName) &&
+      node.tagName.text === tagName
+    ) {
+      openingElements.push(node);
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return openingElements;
+}
+
+function getJsxAttribute(openingElement, attributeName) {
+  return openingElement.attributes.properties.find(
+    (property) =>
+      ts.isJsxAttribute(property) &&
+      ts.isIdentifier(property.name) &&
+      property.name.text === attributeName,
+  );
+}
+
 const forbiddenPropertyFixture = `
   const scale = 1;
   const backdropFilter = "blur(2px)";
@@ -215,10 +249,41 @@ assert.deepEqual(
   [hostPath],
   "TransientPageHost should be the only source module importing framer-motion",
 );
+assert.doesNotMatch(
+  hostSource,
+  /\bcloneElement\b/,
+  "the Motion host should declare presence lifecycle props directly",
+);
+
+const animatePresenceElements = findJsxOpeningElements(
+  hostSource,
+  "AnimatePresence",
+  hostPath,
+);
+assert.equal(
+  animatePresenceElements.length,
+  1,
+  "the host should render exactly one AnimatePresence boundary",
+);
+const animatePresenceElement = animatePresenceElements[0];
+const initialAttribute = getJsxAttribute(animatePresenceElement, "initial");
+const modeAttribute = getJsxAttribute(animatePresenceElement, "mode");
+const exitCompleteAttribute = getJsxAttribute(
+  animatePresenceElement,
+  "onExitComplete",
+);
 assert.ok(
   hostSource.includes('<MotionConfig reducedMotion="user">') &&
-    hostSource.includes('<AnimatePresence initial={false} mode="wait">'),
-  "the host should centralize reduced-motion and wait-mode presence behavior",
+    initialAttribute?.initializer &&
+    ts.isJsxExpression(initialAttribute.initializer) &&
+    initialAttribute.initializer.expression?.kind === ts.SyntaxKind.FalseKeyword &&
+    modeAttribute?.initializer &&
+    ts.isStringLiteral(modeAttribute.initializer) &&
+    modeAttribute.initializer.text === "wait" &&
+    exitCompleteAttribute?.initializer &&
+    ts.isJsxExpression(exitCompleteAttribute.initializer) &&
+    exitCompleteAttribute.initializer.expression,
+  "the host should directly declare reduced-motion, wait-mode, and exit completion behavior",
 );
 assert.ok(
   hostSource.includes("useIsPresent()") &&
