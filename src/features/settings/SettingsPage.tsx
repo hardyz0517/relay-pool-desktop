@@ -17,6 +17,7 @@ import type { ProxyStatus } from "@/lib/types/proxy";
 import { useUpdater } from "@/features/updater/UpdaterProvider";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import {
+  appSettingsToUpdateInput,
   collectorProxyModeLabels,
   DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   type AppSettings,
@@ -406,16 +407,16 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
                 onChange={(event) =>
                   setForm({ ...form, maxRateMultiplier: event.target.value })
                 }
-                onBlur={() => void commitSettingsForm(form, "???????")}
+                onBlur={() => void commitSettingsForm(form, "倍率上限已更新")}
               />
             }
-            description="??????????????????????? Key ?????????????????????????????"
-            label="????"
+            description="自动路由不会选择超过该倍率的 Key；留空时自动路由不可用。"
+            label="倍率上限"
           />
           <SettingRow
             control={
               <SelectControl
-                ariaLabel="??????"
+                ariaLabel="默认路由分组"
                 className={inputClassName}
                 value={form.defaultRoutingGroupFilter}
                 options={routingGroupPresetOptions}
@@ -427,8 +428,8 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
                 }
               />
             }
-            description="????????????? Key????????????? GPT ???? GPT ?????"
-            label="??????"
+            description="自动路由仅使用匹配分组的 Key。"
+            label="默认路由分组"
           />
           <SettingRow
             control={
@@ -780,6 +781,7 @@ function settingsToForm(settings: AppSettings): SettingsFormState {
 
 function formToInput(form: SettingsFormState, settings: AppSettings): UpdateSettingsInput {
   return {
+    ...appSettingsToUpdateInput(settings),
     localProxyPort: Number(form.localProxyPort),
     defaultRoutingStrategy: "automatic_balanced",
     collectorProxyMode: form.collectorProxyMode,
@@ -817,13 +819,13 @@ function generateLocalAccessKey() {
 }
 
 const routingGroupPresetOptions: Array<{ value: RoutingGroupPreset; label: string }> = [
-  { value: "all_groups", label: "????" },
-  { value: "gpt", label: "GPT ??" },
-  { value: "claude", label: "Claude ??" },
-  { value: "gemini", label: "Gemini ??" },
-  { value: "grok", label: "Grok ??" },
-  { value: "image_generation", label: "????" },
-  { value: "ungrouped_only", label: "?????" },
+  { value: "all_groups", label: "全部分组" },
+  { value: "gpt", label: "GPT 分组" },
+  { value: "claude", label: "Claude 分组" },
+  { value: "gemini", label: "Gemini 分组" },
+  { value: "grok", label: "Grok 分组" },
+  { value: "image_generation", label: "图像生成" },
+  { value: "ungrouped_only", label: "仅未分组" },
 ];
 
 function routingGroupFilterToPreset(filter: RoutingGroupFilter): RoutingGroupPreset {

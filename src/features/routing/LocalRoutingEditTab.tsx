@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   closestCenter,
   DndContext,
@@ -15,13 +15,13 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { BadgeCheck, ListOrdered, LockKeyhole } from "lucide-react";
 import { EmptyState, SectionCard, StatusBadge, useToast } from "@/components/ui";
 import { reorderLocalRoutingKeys } from "@/lib/api/localRouting";
 import { readError } from "@/lib/errors";
 import type { LocalRoutingCandidateRow as LocalRoutingCandidate, LocalRoutingWorkspace } from "@/lib/types/localRouting";
 import { cn } from "@/lib/utils";
 import { LocalRoutingCandidateRow } from "./LocalRoutingCandidateRow";
+import { LocalRoutingSettingsEditor } from "./LocalRoutingSettingsEditor";
 
 type LocalRoutingEditTabProps = {
   workspace: LocalRoutingWorkspace | null;
@@ -73,22 +73,6 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
     setSyncState("idle");
     setSyncError(null);
   }, [workspace]);
-
-  if (loading && !workspace) {
-    return (
-      <SectionCard title="编辑预览">
-        <div className="text-sm text-muted-foreground">正在加载本地路由工作区...</div>
-      </SectionCard>
-    );
-  }
-
-  if (!workspace) {
-    return (
-      <SectionCard title="编辑预览">
-        <EmptyState title="暂无可编辑数据" description="当前仅展示本地路由编辑骨架。" />
-      </SectionCard>
-    );
-  }
 
   async function handleDragEnd(event: DragEndEvent) {
     if (syncState === "saving") {
@@ -144,33 +128,10 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
 
   return (
     <div className="grid gap-3">
-      <SectionCard title="自动调度" contentClassName="grid gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-blue-50 text-blue-700">
-              <BadgeCheck className="h-5 w-5" />
-            </span>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-slate-900">自动选择倍率上限内综合最优 Key</div>
-              <div className="truncate text-xs text-muted-foreground">
-                倍率上限：{workspace.settings.maxRateMultiplier == null ? "未设置" : `${workspace.settings.maxRateMultiplier}x`}；分组筛选：{formatRoutingGroupFilter(workspace.settings.routingGroupFilter)}
-              </div>
-            </div>
-          </div>
-          {syncLabel && syncState !== "idle" ? (
-            <StatusBadge tone={reorderSyncTones[syncState]}>{syncLabel}</StatusBadge>
-          ) : (
-            <StatusBadge tone="info">自动保存</StatusBadge>
-          )}
-        </div>
-        <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
-          <EditHint icon={<ListOrdered className="h-4 w-4" />} title="Sub2API 风格调度" body="运行时会综合低倍率、低负载、低错误率和低延迟重新选择，不会超过倍率上限。" />
-          <EditHint icon={<LockKeyhole className="h-4 w-4" />} title="硬边界" body="分组筛选不会跨组兜底；倍率未知或过期的 Key 不参与路由。" />
-        </div>
-      </SectionCard>
+      <LocalRoutingSettingsEditor />
 
       <SectionCard
-        title="候选编辑列表"
+        title="候选预览与顺序修正"
         action={syncLabel && syncState !== "idle" ? <StatusBadge tone={reorderSyncTones[syncState]}>{syncLabel}</StatusBadge> : null}
         contentClassName="grid gap-2"
       >
@@ -179,8 +140,10 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
             {syncError}
           </div>
         )}
-        {candidates.length === 0 ? (
-          <EmptyState title="暂无候选 Key" description="候选列表会随本地路由工作区加载后显示。" />
+        {loading && !workspace ? (
+          <div className="text-sm text-muted-foreground">正在加载候选 Key...</div>
+        ) : candidates.length === 0 ? (
+          <EmptyState title="暂无候选 Key" description="尚未发现可用候选。" />
         ) : (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={candidateIds} strategy={verticalListSortingStrategy}>
@@ -202,7 +165,6 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
     </div>
   );
 }
-
 function SortableLocalRoutingCandidateRow({
   candidate,
   order,
@@ -239,25 +201,4 @@ function SortableLocalRoutingCandidateRow({
       />
     </div>
   );
-}
-
-function EditHint({ icon, title, body }: { icon: ReactNode; title: string; body: string }) {
-  return (
-    <div className="flex items-start gap-2 rounded-[var(--surface-radius)] border border-slate-200 bg-slate-50 px-3 py-2">
-      <span className="mt-0.5 shrink-0 text-slate-500">{icon}</span>
-      <span className="min-w-0">
-        <span className="block text-xs font-semibold text-slate-800">{title}</span>
-        <span className="block text-xs leading-5 text-muted-foreground">{body}</span>
-      </span>
-    </div>
-  );
-}
-
-function formatRoutingGroupFilter(filter: LocalRoutingWorkspace["settings"]["routingGroupFilter"]) {
-  if (filter === "all_groups") return "全部分组";
-  if (filter === "ungrouped_only") return "未绑定分组";
-  if ("group_type" in filter) return `${filter.group_type} 分组`;
-  if ("group_binding_id" in filter) return "指定绑定";
-  if ("group_id_hash" in filter) return "指定分组";
-  return "全部分组";
 }

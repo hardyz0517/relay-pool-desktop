@@ -11,6 +11,9 @@ const settingsApi = read("src/lib/api/settings.ts");
 const settingsPage = read("src/features/settings/SettingsPage.tsx");
 const statusTab = read("src/features/routing/LocalRoutingStatusTab.tsx");
 const editTab = read("src/features/routing/LocalRoutingEditTab.tsx");
+const settingsEditor = read("src/features/routing/LocalRoutingSettingsEditor.tsx");
+const settingsFields = read("src/features/routing/LocalRoutingSettingsFields.tsx");
+const editSurface = editTab + settingsEditor + settingsFields;
 const candidateRow = read("src/features/routing/LocalRoutingCandidateRow.tsx");
 const rustRoutingTypes = read("src-tauri/src/services/proxy/routing_types.rs");
 const rustSnapshot = read("src-tauri/src/services/proxy/routing_snapshot.rs");
@@ -43,10 +46,12 @@ assert.match(statusTab, /倍率未知或过期不参与路由/);
 assert.match(statusTab, /分组筛选/);
 assert.match(statusTab, /自动路由/);
 
-assert.match(editTab, /自动调度/);
-assert.match(editTab, /倍率上限/);
-assert.doesNotMatch(editTab, /低价稳定优先/);
-assert.doesNotMatch(editTab, /策略草稿/);
+assert.match(editSurface, /自动调度/);
+assert.match(editSurface, /倍率上限/);
+assert.match(editTab, /LocalRoutingSettingsEditor/);
+assert.doesNotMatch(editSurface, /低价稳定优先/);
+assert.doesNotMatch(editSurface, /策略草稿/);
+assert.doesNotMatch(editSurface, /运行时会综合/);
 
 assert.match(candidateRow, /effectiveMultiplier/);
 assert.match(candidateRow, /effectiveMultiplierSource/);

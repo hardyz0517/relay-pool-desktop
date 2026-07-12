@@ -66,14 +66,18 @@ First visible group:
 - `queue`
 - `errorRate`
 - `ttft`
+- `quotaHeadroom`
 
 Second visible group:
 
 - `previousResponse`
 - `sessionSticky`
+- `stickyWeighted`
 - `stickyEscape`
 - `stickyEscapeTtftMs`
 - `stickyEscapeErrorRate`
+- `stickySessionTtlSeconds`
+- `stickyResponseTtlSeconds`
 - `stickyMaxWaiting`
 - `stickyWaitTimeoutSeconds`
 - `fallbackMaxWaiting`
@@ -89,9 +93,13 @@ Controls:
 Validation:
 
 - Numeric fields must reject non-finite values.
-- `topK` and waiting/count fields must be non-negative integers where appropriate.
+- `topK`, TTL, waiting, and timeout fields must be positive safe integers; `topK` must also fit the backend `u16` range.
 - Weight fields must be finite and non-negative.
+- Confidence and error-rate thresholds must stay within `0..=1`.
+- At least one base score weight must be greater than zero, matching the Rust scheduler validator.
 - Invalid local input should block save and show a focused inline error near the field group.
+
+All fields already present in `SchedulerAdvancedSettings` must be reachable from this editor. Adding a new backend field must produce a TypeScript compile-time gap until its default, field kind, form metadata, and UI control are defined.
 
 ### 3. Candidate preview and manual order
 
@@ -119,6 +127,7 @@ Read:
 Write:
 
 - Settings form writes through `updateSettings()`.
+- The form derives a complete `UpdateSettingsInput` from the latest `AppSettings` snapshot before applying routing overrides, so unrelated settings are preserved.
 - Candidate order continues to write through `reorderLocalRoutingKeys()`.
 
 Event sync:
@@ -142,6 +151,8 @@ Add or update focused tests/scripts to verify:
 - The edit tab renders scheduler parameter controls.
 - Old explanatory copy is not present in the edit tab.
 - Saving settings calls the typed settings API path, not direct `invoke` from UI.
+- Scheduler validation mirrors the Rust `SchedulerAdvancedSettings::validate` boundary.
+- Older or partial scheduler settings are merged with typed defaults when read.
 - Existing candidate reorder test still passes.
 
 Manual verification:
