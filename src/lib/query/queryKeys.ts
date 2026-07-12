@@ -1,0 +1,14 @@
+export const queryKeys = {
+  settings: ["settings"] as const,
+  proxyStatus: ["proxyStatus"] as const,
+  requestLogs: ["requestLogs"] as const,
+  stations: ["stations"] as const,
+  stationAssets: ["stationAssets"] as const,
+  stationAsset: (stationId: string) => ["stationAssets", stationId] as const,
+  keyPool: ["keyPool"] as const,
+  balanceSnapshots: ["balanceSnapshots"] as const,
+  changeEvents: ["changeEvents"] as const,
+  localRoutingWorkspace: ["localRoutingWorkspace"] as const,
+  pricing: ["pricing"] as const,
+  channelStatus: ["channelStatus"] as const,
+} as const;
