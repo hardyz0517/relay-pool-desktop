@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useMemo } from "react";
 import {
   useQuery,
   type DefaultError,
@@ -26,16 +26,26 @@ export function useActivityQuery<
   active: boolean,
   options: ActivityQueryOptions<TQueryFnData, TError, TData, TQueryKey>,
 ): UseQueryResult<TData, TError> {
-  const queryEnabled = active && options.enabled !== false;
+  const requestedEnabled = options.enabled !== false;
+  const queryEnabled = active && requestedEnabled;
+  const guardedQueryFn = useMemo(() => {
+    const queryFn = options.queryFn;
+    if (typeof queryFn !== "function") {
+      return queryFn;
+    }
+    return ((context: Parameters<typeof queryFn>[0]) => {
+      if (!active) {
+        recordHiddenPageQueryStart();
+      }
+      return queryFn(context);
+    }) as typeof queryFn;
+  }, [active, options.queryFn]);
   const result = useQuery({
     ...options,
+    queryFn: guardedQueryFn,
     enabled: queryEnabled,
     subscribed: active,
   });
-
-  useEffect(() => {
-    if (!active && queryEnabled && result.fetchStatus === "fetching") recordHiddenPageQueryStart();
-  }, [active, queryEnabled, result.fetchStatus]);
 
   return result;
 }

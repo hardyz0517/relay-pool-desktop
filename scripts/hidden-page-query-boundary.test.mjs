@@ -21,4 +21,12 @@ for (const path of pages) {
   assert.ok(!source.includes("window.setInterval"), `${path} must not own an unconditional interval`);
 }
 
+const keyPoolSource = await readFile("src/features/key-pool/KeyPoolPage.tsx", "utf8");
+assert.ok(
+  /function handleKeyPoolItemsUpdated\(\) \{\s*if \(!refreshEnabled\) \{\s*return;\s*\}\s*void refresh\(false\);/s.test(
+    keyPoolSource,
+  ),
+  "KeyPool update events should not refresh while the retained page is hidden",
+);
+
 console.log("hidden page query boundary contract passed");

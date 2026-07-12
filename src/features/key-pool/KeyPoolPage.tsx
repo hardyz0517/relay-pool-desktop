@@ -110,6 +110,9 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
 
   useEffect(() => {
     function handleKeyPoolItemsUpdated() {
+      if (!refreshEnabled) {
+        return;
+      }
       void refresh(false);
     }
 
@@ -117,7 +120,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     return () => {
       window.removeEventListener(KEY_POOL_ITEMS_UPDATED_EVENT, handleKeyPoolItemsUpdated);
     };
-  }, []);
+  }, [refreshEnabled]);
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
