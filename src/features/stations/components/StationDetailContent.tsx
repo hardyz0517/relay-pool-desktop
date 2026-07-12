@@ -1,6 +1,8 @@
 import {
+  Activity,
   AlertTriangle,
   ArrowLeft,
+  BadgeDollarSign,
   BarChart3,
   Clock3,
   Database,
@@ -9,7 +11,9 @@ import {
   Layers3,
   RefreshCw,
   RotateCw,
+  Server,
   WalletCards,
+  type LucideIcon,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, IconButton, StatusBadge, type StatusTone } from "@/components/ui";
@@ -56,6 +60,29 @@ const surfaceToneClassName: Record<DetailTone, string> = {
   error: "border-rose-100 bg-rose-50/70",
   muted: "border-border bg-slate-50",
 };
+
+const usageCardVisualMeta = {
+  request: {
+    Icon: Activity,
+    iconClassName: "bg-green-100 text-green-700",
+    valueClassName: "text-green-700",
+  },
+  consumption: {
+    Icon: BadgeDollarSign,
+    iconClassName: "bg-purple-100 text-purple-700",
+    valueClassName: "text-purple-700",
+  },
+  todayToken: {
+    Icon: BarChart3,
+    iconClassName: "bg-amber-100 text-amber-700",
+    valueClassName: "text-amber-700",
+  },
+  totalToken: {
+    Icon: Server,
+    iconClassName: "bg-indigo-100 text-indigo-700",
+    valueClassName: "text-indigo-700",
+  },
+} satisfies Record<string, { Icon: LucideIcon; iconClassName: string; valueClassName: string }>;
 
 export function StationDetailContent({
   viewModel,
@@ -177,21 +204,31 @@ export function StationDetailContent({
           <h2 className="text-sm font-semibold text-slate-900">中转站用量</h2>
         </div>
         <div className="grid gap-3 p-4 md:grid-cols-4">
-          {viewModel.usageCards.map((card) => (
-            <div
-              key={card.label}
-              className={cn(
-                "min-h-[84px] rounded-[var(--surface-radius)] border px-3 py-2.5",
-                surfaceToneClassName[card.tone],
-              )}
-            >
-              <div className="text-xs text-muted-foreground">{card.label}</div>
-              <div className={cn("mt-1 truncate text-lg font-semibold", textToneClassName[card.tone])}>
-                {card.value}
+          {viewModel.usageCards.map((card) => {
+            const visual = usageCardVisualFor(card.label);
+            return (
+              <div
+                key={card.label}
+                className="flex min-h-[96px] items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_8px_rgba(15,23,42,0.08)]"
+              >
+                <div
+                  className={cn(
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px]",
+                    visual.iconClassName,
+                  )}
+                >
+                  <visual.Icon className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs text-muted-foreground">{card.label}</div>
+                  <div className={cn("mt-0.5 truncate text-[22px] font-semibold leading-7", visual.valueClassName)}>
+                    {card.value}
+                  </div>
+                  <div className="mt-0.5 truncate text-xs text-muted-foreground">{card.helper}</div>
+                </div>
               </div>
-              <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{card.helper}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -282,6 +319,22 @@ export function StationDetailContent({
       </div>
     </PageScaffold>
   );
+}
+
+function usageCardVisualFor(label: string) {
+  if (label.includes("请求")) {
+    return usageCardVisualMeta.request;
+  }
+  if (label.includes("消费")) {
+    return usageCardVisualMeta.consumption;
+  }
+  if (label.includes("今日 Token")) {
+    return usageCardVisualMeta.todayToken;
+  }
+  if (label.includes("累计 Token")) {
+    return usageCardVisualMeta.totalToken;
+  }
+  return usageCardVisualMeta.request;
 }
 
 function GroupNameBadge({
