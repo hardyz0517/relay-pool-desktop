@@ -308,98 +308,99 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
             credit_unit,
             confidence,
             collected_at,
-        )) =
-            ({
-                let key_balances = balances
-                    .iter()
-                    .filter(|balance| {
-                        balance.station_id == station_id && balance.scope == "station_key"
-                    })
-                    .collect::<Vec<_>>();
-                let value = sum_present_values(key_balances.iter().map(|balance| balance.value));
-                let used_value =
-                    sum_present_values(key_balances.iter().map(|balance| balance.used_value));
-                let total_value =
-                    sum_present_values(key_balances.iter().map(|balance| balance.total_value));
-                let today_request_count = sum_present_i64_values(
-                    key_balances.iter().map(|balance| balance.today_request_count),
-                );
-                let total_request_count = sum_present_i64_values(
-                    key_balances.iter().map(|balance| balance.total_request_count),
-                );
-                let today_consumption = sum_present_values(
-                    key_balances.iter().map(|balance| balance.today_consumption),
-                );
-                let total_consumption = sum_present_values(
-                    key_balances.iter().map(|balance| balance.total_consumption),
-                );
-                let today_token_count = sum_present_i64_values(
-                    key_balances.iter().map(|balance| balance.today_token_count),
-                );
-                let total_token_count = sum_present_i64_values(
-                    key_balances.iter().map(|balance| balance.total_token_count),
-                );
-                let today_input_token_count = sum_present_i64_values(
-                    key_balances
-                        .iter()
-                        .map(|balance| balance.today_input_token_count),
-                );
-                let today_output_token_count = sum_present_i64_values(
-                    key_balances
-                        .iter()
-                        .map(|balance| balance.today_output_token_count),
-                );
-                let total_input_token_count = sum_present_i64_values(
-                    key_balances
-                        .iter()
-                        .map(|balance| balance.total_input_token_count),
-                );
-                let total_output_token_count = sum_present_i64_values(
-                    key_balances
-                        .iter()
-                        .map(|balance| balance.total_output_token_count),
-                );
-                let currency =
-                    shared_text_value(key_balances.iter().map(|balance| balance.currency.as_str()))
-                        .unwrap_or("CNY")
-                        .to_string();
-                let credit_unit = shared_optional_text_value(
-                    key_balances
-                        .iter()
-                        .map(|balance| balance.credit_unit.as_deref()),
-                )
-                .map(ToString::to_string);
-                let confidence = key_balances
-                    .iter()
-                    .map(|balance| balance.confidence)
-                    .fold(1.0_f64, f64::min);
-                let collected_at = key_balances
-                    .iter()
-                    .filter_map(|balance| balance.collected_at.as_ref())
-                    .max()
-                    .cloned();
-                value.map(|value| {
-                    (
-                        value,
-                        used_value,
-                        total_value,
-                        today_request_count,
-                        total_request_count,
-                        today_consumption,
-                        total_consumption,
-                        today_token_count,
-                        total_token_count,
-                        today_input_token_count,
-                        today_output_token_count,
-                        total_input_token_count,
-                        total_output_token_count,
-                        currency,
-                        credit_unit,
-                        confidence,
-                        collected_at,
-                    )
+        )) = ({
+            let key_balances = balances
+                .iter()
+                .filter(|balance| {
+                    balance.station_id == station_id && balance.scope == "station_key"
                 })
+                .collect::<Vec<_>>();
+            let value = sum_present_values(key_balances.iter().map(|balance| balance.value));
+            let used_value =
+                sum_present_values(key_balances.iter().map(|balance| balance.used_value));
+            let total_value =
+                sum_present_values(key_balances.iter().map(|balance| balance.total_value));
+            let today_request_count = sum_present_i64_values(
+                key_balances
+                    .iter()
+                    .map(|balance| balance.today_request_count),
+            );
+            let total_request_count = sum_present_i64_values(
+                key_balances
+                    .iter()
+                    .map(|balance| balance.total_request_count),
+            );
+            let today_consumption =
+                sum_present_values(key_balances.iter().map(|balance| balance.today_consumption));
+            let total_consumption =
+                sum_present_values(key_balances.iter().map(|balance| balance.total_consumption));
+            let today_token_count = sum_present_i64_values(
+                key_balances.iter().map(|balance| balance.today_token_count),
+            );
+            let total_token_count = sum_present_i64_values(
+                key_balances.iter().map(|balance| balance.total_token_count),
+            );
+            let today_input_token_count = sum_present_i64_values(
+                key_balances
+                    .iter()
+                    .map(|balance| balance.today_input_token_count),
+            );
+            let today_output_token_count = sum_present_i64_values(
+                key_balances
+                    .iter()
+                    .map(|balance| balance.today_output_token_count),
+            );
+            let total_input_token_count = sum_present_i64_values(
+                key_balances
+                    .iter()
+                    .map(|balance| balance.total_input_token_count),
+            );
+            let total_output_token_count = sum_present_i64_values(
+                key_balances
+                    .iter()
+                    .map(|balance| balance.total_output_token_count),
+            );
+            let currency =
+                shared_text_value(key_balances.iter().map(|balance| balance.currency.as_str()))
+                    .unwrap_or("CNY")
+                    .to_string();
+            let credit_unit = shared_optional_text_value(
+                key_balances
+                    .iter()
+                    .map(|balance| balance.credit_unit.as_deref()),
+            )
+            .map(ToString::to_string);
+            let confidence = key_balances
+                .iter()
+                .map(|balance| balance.confidence)
+                .fold(1.0_f64, f64::min);
+            let collected_at = key_balances
+                .iter()
+                .filter_map(|balance| balance.collected_at.as_ref())
+                .max()
+                .cloned();
+            value.map(|value| {
+                (
+                    value,
+                    used_value,
+                    total_value,
+                    today_request_count,
+                    total_request_count,
+                    today_consumption,
+                    total_consumption,
+                    today_token_count,
+                    total_token_count,
+                    today_input_token_count,
+                    today_output_token_count,
+                    total_input_token_count,
+                    total_output_token_count,
+                    currency,
+                    credit_unit,
+                    confidence,
+                    collected_at,
+                )
             })
+        })
         else {
             continue;
         };

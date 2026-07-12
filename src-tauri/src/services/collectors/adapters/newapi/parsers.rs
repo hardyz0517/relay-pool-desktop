@@ -70,7 +70,12 @@ pub(super) fn parse_balance_fact(
         total_value: remaining.zip(used).map(|(left, right)| left + right),
         today_request_count: parse_i64_field(
             data,
-            &["today_request_count", "today_requests", "todayRequestCount", "todayRequests"],
+            &[
+                "today_request_count",
+                "today_requests",
+                "todayRequestCount",
+                "todayRequests",
+            ],
         ),
         total_request_count: parse_i64_field(
             data,
@@ -106,7 +111,12 @@ pub(super) fn parse_balance_fact(
         ),
         today_token_count: parse_i64_field(
             data,
-            &["today_token_count", "today_tokens", "todayTokenCount", "todayTokens"],
+            &[
+                "today_token_count",
+                "today_tokens",
+                "todayTokenCount",
+                "todayTokens",
+            ],
         ),
         total_token_count: parse_i64_field(
             data,

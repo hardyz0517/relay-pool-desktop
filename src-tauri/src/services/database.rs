@@ -2349,12 +2349,32 @@ fn migrate_p9_fact_schema(connection: &Connection) -> rusqlite::Result<()> {
         "inferred_group_category",
         "TEXT",
     )?;
-    add_column_if_missing(connection, "balance_snapshots", "today_request_count", "INTEGER")?;
-    add_column_if_missing(connection, "balance_snapshots", "total_request_count", "INTEGER")?;
+    add_column_if_missing(
+        connection,
+        "balance_snapshots",
+        "today_request_count",
+        "INTEGER",
+    )?;
+    add_column_if_missing(
+        connection,
+        "balance_snapshots",
+        "total_request_count",
+        "INTEGER",
+    )?;
     add_column_if_missing(connection, "balance_snapshots", "today_consumption", "REAL")?;
     add_column_if_missing(connection, "balance_snapshots", "total_consumption", "REAL")?;
-    add_column_if_missing(connection, "balance_snapshots", "today_token_count", "INTEGER")?;
-    add_column_if_missing(connection, "balance_snapshots", "total_token_count", "INTEGER")?;
+    add_column_if_missing(
+        connection,
+        "balance_snapshots",
+        "today_token_count",
+        "INTEGER",
+    )?;
+    add_column_if_missing(
+        connection,
+        "balance_snapshots",
+        "total_token_count",
+        "INTEGER",
+    )?;
     add_column_if_missing(
         connection,
         "balance_snapshots",

@@ -1149,7 +1149,7 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
             let base_url = format!("http://{}", listener.local_addr().expect("addr"));
             thread::spawn(move || {
-                for stream in listener.incoming().take(4).flatten() {
+                for stream in listener.incoming().take(5).flatten() {
                     handle_full_request(stream);
                 }
             });
@@ -1319,6 +1319,23 @@ mod tests {
             "/api/v1/groups/rates" if authorized => {
                 ("200 OK", json!({ "data": { "default": 0.8, "pro": 1.2 } }))
             }
+            "/api/v1/usage/dashboard/stats" if authorized => (
+                "200 OK",
+                json!({
+                    "data": {
+                        "today_requests": 12,
+                        "total_requests": 1200,
+                        "today_actual_cost": 0.75,
+                        "total_actual_cost": 18.5,
+                        "today_tokens": 34567,
+                        "total_tokens": 4567890,
+                        "today_prompt_tokens": 30000,
+                        "today_completion_tokens": 4567,
+                        "prompt_tokens": 4300000,
+                        "completion_tokens": 267890
+                    }
+                }),
+            ),
             _ => ("404 Not Found", json!({ "message": "not found" })),
         };
         let text = response.to_string();
