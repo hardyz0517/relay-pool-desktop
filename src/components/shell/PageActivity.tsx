@@ -1,17 +1,23 @@
-import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+import {
+  InteractionActivityProvider,
+  useInteractionActivity,
+} from "@/components/ui/InteractionActivity";
 
 type PageActivation = {
   isInitial: boolean;
 };
 
-const PageActivityContext = createContext(true);
-
 export function PageActivityProvider({ active, children }: { active: boolean; children: ReactNode }) {
-  return <PageActivityContext.Provider value={active}>{children}</PageActivityContext.Provider>;
+  return (
+    <InteractionActivityProvider active={active}>
+      {children}
+    </InteractionActivityProvider>
+  );
 }
 
 export function usePageActivation(onActivate: (activation: PageActivation) => void) {
-  const active = useContext(PageActivityContext);
+  const active = useInteractionActivity();
   const onActivateRef = useRef(onActivate);
   const wasActiveRef = useRef(false);
   const hasActivatedRef = useRef(false);

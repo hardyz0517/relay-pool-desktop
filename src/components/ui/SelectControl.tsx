@@ -10,6 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
+import { useInteractionActivity } from "@/components/ui/InteractionActivity";
 import { cn } from "@/lib/utils";
 
 export type SelectOption<T extends string = string> = {
@@ -49,6 +50,7 @@ export function SelectControl<T extends string>({
   className,
   menuClassName,
 }: SelectControlProps<T>) {
+  const interactionActive = useInteractionActivity();
   const id = useId();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -62,6 +64,14 @@ export function SelectControl<T extends string>({
     [options, value],
   );
   const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : null;
+
+  useLayoutEffect(() => {
+    if (interactionActive) {
+      return;
+    }
+    setOpen(false);
+    setPosition(null);
+  }, [interactionActive]);
 
   useLayoutEffect(() => {
     if (!open) {
