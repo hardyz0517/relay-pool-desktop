@@ -24,6 +24,8 @@ pub struct RouteCandidate {
     pub collector_proxy_url: Option<String>,
     pub upstream_api_format: UpstreamApiFormat,
     pub priority: i64,
+    pub max_concurrency: i64,
+    pub load_factor: Option<i64>,
 }
 
 pub fn enabled_candidates(mut candidates: Vec<RouteCandidate>) -> Vec<RouteCandidate> {
@@ -203,6 +205,8 @@ mod tests {
             collector_proxy_url: None,
             upstream_api_format: UpstreamApiFormat::Auto,
             priority,
+            max_concurrency: 0,
+            load_factor: None,
         }
     }
 }

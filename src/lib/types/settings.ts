@@ -11,6 +11,36 @@ export type RoutingStrategy =
 export type TrayBehavior = "minimize-to-tray" | "close-to-tray" | "disabled";
 export type CollectorProxyMode = "direct" | "system" | "manual";
 
+export type SchedulerAdvancedFieldKind =
+  | "positiveInteger"
+  | "nonNegativeWeight"
+  | "ratio"
+  | "boolean";
+
+export const SCHEDULER_ADVANCED_FIELD_KINDS = {
+  topK: "positiveInteger",
+  multiplier: "nonNegativeWeight",
+  priority: "nonNegativeWeight",
+  load: "nonNegativeWeight",
+  queue: "nonNegativeWeight",
+  errorRate: "nonNegativeWeight",
+  ttft: "nonNegativeWeight",
+  quotaHeadroom: "nonNegativeWeight",
+  previousResponse: "nonNegativeWeight",
+  sessionSticky: "nonNegativeWeight",
+  multiplierMinConfidence: "ratio",
+  stickyWeighted: "boolean",
+  stickyEscape: "boolean",
+  stickyEscapeTtftMs: "positiveInteger",
+  stickyEscapeErrorRate: "ratio",
+  stickySessionTtlSeconds: "positiveInteger",
+  stickyResponseTtlSeconds: "positiveInteger",
+  stickyMaxWaiting: "positiveInteger",
+  stickyWaitTimeoutSeconds: "positiveInteger",
+  fallbackMaxWaiting: "positiveInteger",
+  fallbackWaitTimeoutSeconds: "positiveInteger",
+} as const satisfies Record<keyof SchedulerAdvancedSettings, SchedulerAdvancedFieldKind>;
+
 export const DEFAULT_SCHEDULER_ADVANCED_SETTINGS: SchedulerAdvancedSettings = {
   topK: 7,
   multiplier: 1.0,
@@ -86,6 +116,29 @@ export type UpdateSettingsInput = {
   trayBehavior: TrayBehavior;
   developerModeEnabled: boolean;
 };
+
+export function appSettingsToUpdateInput(settings: AppSettings): UpdateSettingsInput {
+  return {
+    localProxyPort: settings.localProxyPort,
+    defaultRoutingStrategy: settings.defaultRoutingStrategy,
+    collectorProxyMode: settings.collectorProxyMode,
+    collectorProxyUrl: settings.collectorProxyUrl,
+    maxRateMultiplier: settings.maxRateMultiplier,
+    defaultRoutingGroupFilter: settings.defaultRoutingGroupFilter,
+    schedulerAdvancedSettings: settings.schedulerAdvancedSettings,
+    lowBalanceThresholdCny: settings.lowBalanceThresholdCny,
+    collectorIntervalMinutes: settings.collectorIntervalMinutes,
+    balanceIntervalMinutes: settings.balanceIntervalMinutes,
+    groupRateIntervalMinutes: settings.groupRateIntervalMinutes,
+    modelListIntervalMinutes: settings.modelListIntervalMinutes,
+    pricingRefreshIntervalMinutes: settings.pricingRefreshIntervalMinutes,
+    collectorTimeoutSeconds: settings.collectorTimeoutSeconds,
+    collectorMaxConcurrency: settings.collectorMaxConcurrency,
+    allowDepletedFallback: settings.allowDepletedFallback,
+    trayBehavior: settings.trayBehavior,
+    developerModeEnabled: settings.developerModeEnabled,
+  };
+}
 
 export const routingStrategyLabels: Record<RoutingStrategy, string> = {
   automatic_balanced: "自动路由",

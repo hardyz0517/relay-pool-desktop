@@ -9,13 +9,10 @@ use crate::{
 };
 
 use crate::services::proxy::scheduler::{
-    affinity::AffinityStore,
-    capacity::CapacityRegistry,
-    metrics::RuntimeMetricsRegistry,
-    schedule_once,
     types::{
         EffectiveMultiplierFact, ScheduleRequest, SchedulerCandidate, SchedulerCandidateDecision,
     },
+    SchedulerRuntimeState,
 };
 
 #[derive(Debug, Clone)]
@@ -92,6 +89,22 @@ pub fn select_route_candidates(
     candidates: Vec<RichRouteCandidate>,
     aliases: &[(String, String)],
 ) -> Result<RouteSelection, String> {
+    select_route_candidates_with_scheduler(
+        request,
+        candidates,
+        aliases,
+        &SchedulerRuntimeState::default(),
+        &crate::models::routing::SchedulerAdvancedSettings::default(),
+    )
+}
+
+pub fn select_route_candidates_with_scheduler(
+    request: &RouteRequest,
+    candidates: Vec<RichRouteCandidate>,
+    aliases: &[(String, String)],
+    scheduler: &SchedulerRuntimeState,
+    advanced: &crate::models::routing::SchedulerAdvancedSettings,
+) -> Result<RouteSelection, String> {
     if !matches!(request.policy, RoutingPolicy::AutomaticBalanced) {
         return crate::services::proxy::routing_policy::select_route_candidates(
             request, candidates, aliases,
@@ -126,19 +139,7 @@ pub fn select_route_candidates(
         .iter()
         .map(rich_candidate_to_scheduler_candidate)
         .collect::<Vec<_>>();
-    let metrics = RuntimeMetricsRegistry::default();
-    let capacity = CapacityRegistry::default();
-    let mut affinity = AffinityStore::default();
-    let advanced = crate::models::routing::SchedulerAdvancedSettings::default();
-
-    let decision = schedule_once(
-        &scheduler_request,
-        &scheduler_candidates,
-        &metrics,
-        &capacity,
-        &mut affinity,
-        &advanced,
-    );
+    let decision = scheduler.schedule(&scheduler_request, &scheduler_candidates, advanced);
 
     let candidates_by_id = candidates
         .iter()
@@ -198,6 +199,8 @@ fn rich_candidate_to_scheduler_candidate(candidate: &RichRouteCandidate) -> Sche
         station_key_id: candidate.candidate.station_key_id.clone(),
         station_id: candidate.candidate.station_id.clone(),
         priority: candidate.candidate.priority,
+        max_concurrency: candidate.candidate.max_concurrency,
+        load_factor: candidate.candidate.load_factor,
         group_binding_id: candidate.scheduler_group_binding_id.clone().or_else(|| {
             candidate
                 .economics
@@ -907,6 +910,32 @@ mod tests {
             .all(|explanation| { explanation.mapped_model.as_deref() == Some("upstream-model") }));
     }
 
+    #[test]
+    fn automatic_router_uses_supplied_runtime_state_for_sticky_escape() {
+        let mut request = automatic_route_request(|request| {
+            request.session_hash = Some("session".to_string());
+        });
+        request.now_ms = 1_001;
+        let candidates = vec![
+            rich_scheduler_candidate("sticky", 100, Some(1.0), None),
+            rich_scheduler_candidate("healthy", 0, Some(1.0), None),
+        ];
+        let scheduler = crate::services::proxy::scheduler::SchedulerRuntimeState::default();
+        scheduler.bind_session("all_groups", "session", "sticky", 1_000, 3_600);
+        scheduler.report_result("sticky", true, Some(20_000));
+
+        let selection = select_route_candidates_with_scheduler(
+            &request,
+            candidates,
+            &[],
+            &scheduler,
+            &crate::models::routing::SchedulerAdvancedSettings::default(),
+        )
+        .expect("selection");
+
+        assert_eq!(selection.accepted[0].candidate.station_key_id, "healthy");
+    }
+
     fn route_request(
         endpoint: RouteEndpointKind,
         model: Option<&str>,
@@ -1006,6 +1035,8 @@ mod tests {
                 api_key: format!("sk-{id}"),
                 upstream_api_format: UpstreamApiFormat::Auto,
                 priority,
+                max_concurrency: 0,
+                load_factor: None,
                 collector_proxy_mode: "direct".to_string(),
                 collector_proxy_url: None,
             },

@@ -1,30 +1,32 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getSettings } from "@/lib/api/settings";
 import type { LocalRoutingWorkspace, ReorderLocalRoutingKeysInput } from "@/lib/types/localRouting";
+import type { AppSettings } from "@/lib/types/settings";
 
 export function loadLocalRoutingWorkspaceApi() {
-  return invoke<LocalRoutingWorkspace>("load_local_routing_workspace").catch((error) => {
+  return invoke<LocalRoutingWorkspace>("load_local_routing_workspace").catch(async (error) => {
     if (isInvokeUnavailable(error)) {
-      return previewWorkspace();
+      return previewWorkspace(await getSettings());
     }
     throw error;
   });
 }
 
 export function reorderLocalRoutingKeys(input: ReorderLocalRoutingKeysInput) {
-  return invoke<LocalRoutingWorkspace>("reorder_local_routing_keys", { input }).catch((error) => {
+  return invoke<LocalRoutingWorkspace>("reorder_local_routing_keys", { input }).catch(async (error) => {
     if (isInvokeUnavailable(error)) {
-      return previewWorkspace();
+      return previewWorkspace(await getSettings());
     }
     throw error;
   });
 }
 
-function previewWorkspace(): LocalRoutingWorkspace {
+function previewWorkspace(settings: AppSettings): LocalRoutingWorkspace {
   return {
     proxyStatus: {
       running: false,
       bindAddr: "127.0.0.1",
-      port: 8787,
+      port: settings.localProxyPort,
       startedAt: null,
       lastError: null,
       activeRequests: 0,
@@ -33,11 +35,11 @@ function previewWorkspace(): LocalRoutingWorkspace {
     settings: {
       enabled: false,
       bindAddr: "127.0.0.1",
-      port: 8787,
+      port: settings.localProxyPort,
       endpoint: "chat_completions",
       policy: "automatic_balanced",
-      maxRateMultiplier: null,
-      routingGroupFilter: "all_groups",
+      maxRateMultiplier: settings.maxRateMultiplier,
+      routingGroupFilter: settings.defaultRoutingGroupFilter,
       fallbackEnabled: true,
     },
     summary: {

@@ -31,7 +31,7 @@ use crate::{
             build_upstream_url, enabled_candidates, extract_chat_request_metadata,
             observability::{ObservedUsage, RequestObservation, SseUsageObserver},
             openai_error, redact_error_message,
-            router::{select_route_candidates, RouteRequest},
+            router::{select_route_candidates_with_scheduler, RouteRequest},
             routing_affinity::RouteAffinityStore,
             routing_failure::{
                 classify_route_failure, RouteFailureAction, RouteFailureInput, RouteFailureScope,
@@ -42,6 +42,7 @@ use crate::{
             scheduler::{
                 eligibility::evaluate_candidate,
                 types::{CandidateRejectionCode, ScheduleRequest},
+                SchedulerRuntimeState,
             },
             should_fallback, RouteCandidate,
         },
@@ -70,6 +71,7 @@ struct ProxyServerContext {
     data_key: [u8; 32],
     active_requests: Arc<AtomicU32>,
     request_count: Arc<AtomicU64>,
+    scheduler: Arc<SchedulerRuntimeState>,
     route_affinity: Arc<Mutex<RouteAffinityStore>>,
     probe_cache: Arc<Mutex<ProbeConfirmationCache>>,
 }
@@ -114,11 +116,25 @@ struct PendingCandidateSuccess {
     duration_ms: i64,
     endpoint: RouteEndpointKind,
     model: Option<String>,
+    routing_group_scope: Option<String>,
+    session_hash: Option<String>,
+    response_id: Option<String>,
 }
 
 enum ProxyResponseBody {
     Buffered(Vec<u8>),
     Streamed(Box<dyn Read + Send>),
+}
+
+struct CapacityGuardedReader {
+    inner: Box<dyn Read + Send>,
+    _guard: crate::services::proxy::scheduler::capacity::CapacityGuard,
+}
+
+impl Read for CapacityGuardedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buffer)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -203,6 +219,7 @@ impl ProxyRuntimeState {
             data_key,
             active_requests: Arc::clone(&active_requests),
             request_count: Arc::clone(&request_count),
+            scheduler: Arc::new(SchedulerRuntimeState::default()),
             route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
             probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
         });
@@ -375,6 +392,7 @@ fn handle_connection(mut stream: TcpStream, context: &ProxyServerContext) {
             &pending_successes,
             Some(&completed_at),
             Some(started.elapsed().as_millis() as i64),
+            write_result.first_token_ms,
         );
     }
     let _ = context.database.insert_request_log(build_request_log_input(
@@ -393,10 +411,19 @@ fn commit_pending_successes(
     pending_successes: &[PendingCandidateSuccess],
     completed_at: Option<&str>,
     completed_duration_ms: Option<i64>,
+    first_token_ms: Option<i64>,
 ) {
+    let advanced = context
+        .database
+        .get_settings()
+        .map(|settings| settings.scheduler_advanced_settings)
+        .unwrap_or_default();
     for success in pending_successes {
         let checked_at = completed_at.unwrap_or(success.checked_at.as_str());
         let duration_ms = completed_duration_ms.unwrap_or(success.duration_ms);
+        let now_ms = checked_at
+            .parse::<i64>()
+            .unwrap_or_else(|_| now_millis_for_services() as i64);
         let _ = context.database.touch_station_key_usage(
             &success.station_key_id,
             &success.status_label,
@@ -413,9 +440,34 @@ fn commit_pending_successes(
                 success.endpoint.clone(),
                 success.model.as_deref(),
                 &success.station_key_id,
-                checked_at
-                    .parse::<i64>()
-                    .unwrap_or_else(|_| now_millis_for_services() as i64),
+                now_ms,
+            );
+        }
+        context
+            .scheduler
+            .report_result(&success.station_key_id, true, first_token_ms);
+        if let (Some(routing_group_scope), Some(session_hash)) = (
+            success.routing_group_scope.as_deref(),
+            success.session_hash.as_deref(),
+        ) {
+            context.scheduler.bind_session(
+                routing_group_scope,
+                session_hash,
+                &success.station_key_id,
+                now_ms,
+                advanced.sticky_session_ttl_seconds as i64,
+            );
+        }
+        if let (Some(routing_group_scope), Some(response_id)) = (
+            success.routing_group_scope.as_deref(),
+            success.response_id.as_deref(),
+        ) {
+            context.scheduler.bind_response(
+                routing_group_scope,
+                response_id,
+                &success.station_key_id,
+                now_ms,
+                advanced.sticky_response_ttl_seconds as i64,
             );
         }
     }
@@ -843,8 +895,19 @@ fn select_proxy_route(
         .database
         .enabled_model_alias_pairs()
         .map_err(|error| ProxyResponse::json_error(500, "database_error", &error))?;
-    let route = select_route_candidates(route_request, rich_candidates, &aliases)
-        .map_err(|error| ProxyResponse::json_error(500, "route_selector_error", &error))?;
+    let advanced = context
+        .database
+        .get_settings()
+        .map_err(|error| ProxyResponse::json_error(500, "database_error", &error))?
+        .scheduler_advanced_settings;
+    let route = select_route_candidates_with_scheduler(
+        route_request,
+        rich_candidates,
+        &aliases,
+        &context.scheduler,
+        &advanced,
+    )
+    .map_err(|error| ProxyResponse::json_error(500, "route_selector_error", &error))?;
     if route.accepted.is_empty() {
         let log_context = route_log_context(&route_request.policy, &route.explanations);
         let error_code = route
@@ -1284,6 +1347,9 @@ fn record_candidate_failure(
     {
         return;
     }
+    context
+        .scheduler
+        .report_result(&candidate.station_key_id, false, None);
 
     let current_health = context
         .database
@@ -1725,6 +1791,24 @@ fn forward_automatic_chat_request(
             }
             continue;
         }
+        let capacity_guard = context
+            .scheduler
+            .try_acquire(&candidate.station_key_id, candidate.max_concurrency);
+        if !capacity_guard.acquired() {
+            excluded_key_ids.insert(candidate.station_key_id);
+            fallback_count += 1;
+            if fallback_count > 32 {
+                return ProxyResponse::json_error(
+                    503,
+                    "routing_capacity_exhausted",
+                    "自动路由候选并发已满，且已达到重试上限",
+                )
+                .with_fallback_count(fallback_count)
+                .with_request_meta(model, stream)
+                .with_route_metadata(route_log_metadata(&route_context, None));
+            }
+            continue;
+        }
         let rewritten_request = rewrite_request_model(
             request,
             body_value,
@@ -1752,12 +1836,14 @@ fn forward_automatic_chat_request(
                         extract_request_cost(context, &candidate, &routed_response, stream);
                     return routed_response
                         .with_request_cost(request_cost)
+                        .with_capacity_guard(capacity_guard)
                         .with_pending_success(
                             &candidate,
                             RouteEndpointKind::ChatCompletions,
                             model.clone(),
                             attempt_started.elapsed().as_millis() as i64,
                             checked_at,
+                            Some(&route_request),
                         );
                 }
 
@@ -1886,6 +1972,24 @@ fn forward_automatic_responses_request(
             }
             continue;
         }
+        let capacity_guard = context
+            .scheduler
+            .try_acquire(&candidate.station_key_id, candidate.max_concurrency);
+        if !capacity_guard.acquired() {
+            excluded_key_ids.insert(candidate.station_key_id);
+            fallback_count += 1;
+            if fallback_count > 32 {
+                return ProxyResponse::json_error(
+                    503,
+                    "routing_capacity_exhausted",
+                    "自动路由候选并发已满，且已达到重试上限",
+                )
+                .with_fallback_count(fallback_count)
+                .with_request_meta(model, stream)
+                .with_route_metadata(route_log_metadata(&route_context, None));
+            }
+            continue;
+        }
         let rewritten_request = rewrite_request_model(
             request,
             body_value,
@@ -1921,12 +2025,14 @@ fn forward_automatic_responses_request(
                         extract_request_cost(context, &candidate, &routed_response, false);
                     return routed_response
                         .with_request_cost(request_cost)
+                        .with_capacity_guard(capacity_guard)
                         .with_pending_success(
                             &candidate,
                             RouteEndpointKind::Responses,
                             model.clone(),
                             attempt_started.elapsed().as_millis() as i64,
                             checked_at,
+                            Some(&route_request),
                         );
                 }
 
@@ -2049,6 +2155,7 @@ fn forward_responses_with_fallback(
                             model.clone(),
                             attempt_started.elapsed().as_millis() as i64,
                             checked_at,
+                            None,
                         );
                 } else {
                     record_candidate_failure(
@@ -2242,6 +2349,7 @@ fn forward_with_fallback(
                             model.clone(),
                             attempt_started.elapsed().as_millis() as i64,
                             checked_at,
+                            None,
                         );
                 } else {
                     record_candidate_failure(
@@ -2612,6 +2720,26 @@ impl ProxyResponse {
         self
     }
 
+    fn with_capacity_guard(
+        mut self,
+        guard: crate::services::proxy::scheduler::capacity::CapacityGuard,
+    ) -> Self {
+        let body = std::mem::replace(&mut self.body, ProxyResponseBody::Buffered(Vec::new()));
+        self.body = match body {
+            ProxyResponseBody::Streamed(inner) => {
+                ProxyResponseBody::Streamed(Box::new(CapacityGuardedReader {
+                    inner,
+                    _guard: guard,
+                }))
+            }
+            ProxyResponseBody::Buffered(body) => {
+                drop(guard);
+                ProxyResponseBody::Buffered(body)
+            }
+        };
+        self
+    }
+
     fn with_pending_success(
         mut self,
         candidate: &RouteCandidate,
@@ -2619,7 +2747,15 @@ impl ProxyResponse {
         model: Option<String>,
         duration_ms: i64,
         checked_at: String,
+        route_request: Option<&RouteRequest>,
     ) -> Self {
+        let response_id = buffered_response_id(&self.body);
+        let routing_group_scope = route_request.map(|request| {
+            crate::services::proxy::scheduler::explanation::routing_group_scope_key(
+                &request.routing_group_filter,
+            )
+        });
+        let session_hash = route_request.and_then(|request| request.session_hash.clone());
         self.pending_successes.push(PendingCandidateSuccess {
             station_key_id: candidate.station_key_id.clone(),
             status_label: self.status_label.clone(),
@@ -2627,9 +2763,24 @@ impl ProxyResponse {
             duration_ms,
             endpoint,
             model,
+            routing_group_scope,
+            session_hash,
+            response_id,
         });
         self
     }
+}
+
+fn buffered_response_id(body: &ProxyResponseBody) -> Option<String> {
+    let ProxyResponseBody::Buffered(body) = body else {
+        return None;
+    };
+    serde_json::from_slice::<Value>(body)
+        .ok()?
+        .get("id")?
+        .as_str()
+        .and_then(non_empty)
+        .map(ToString::to_string)
 }
 
 fn read_http_request(stream: &mut TcpStream) -> Result<ParsedRequest, String> {
@@ -3110,6 +3261,7 @@ mod tests {
             data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
+            scheduler: Arc::new(SchedulerRuntimeState::default()),
             route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
             probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
         };
@@ -3224,6 +3376,7 @@ mod tests {
             data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
+            scheduler: Arc::new(SchedulerRuntimeState::default()),
             route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
             probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
         };
@@ -3462,7 +3615,7 @@ mod tests {
 
         let context = proxy_context(database);
         let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
-        commit_pending_successes(&context, &response.pending_successes, None, None);
+        commit_pending_successes(&context, &response.pending_successes, None, None, None);
         let health = context
             .database
             .get_station_key_health(key.id.clone())
@@ -3620,6 +3773,144 @@ mod tests {
     }
 
     #[test]
+    fn streamed_response_holds_capacity_guard_until_response_drop() {
+        let scheduler = SchedulerRuntimeState::default();
+        let guard = scheduler.try_acquire("key", 1);
+        assert!(guard.acquired());
+        let mut response = ProxyResponse::json_error(200, "ok", "ok");
+        response.body = ProxyResponseBody::Streamed(Box::new(std::io::Cursor::new(Vec::new())));
+        let response = response.with_capacity_guard(guard);
+
+        let blocked = scheduler.try_acquire("key", 1);
+        assert!(!blocked.acquired());
+
+        drop(response);
+        let acquired = scheduler.try_acquire("key", 1);
+        assert!(acquired.acquired());
+    }
+
+    #[test]
+    fn automatic_runtime_selection_reuses_scheduler_state_for_sticky_escape() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        enable_automatic_routing(&database, 1.0);
+        let healthy = create_test_station_key(&database, "healthy", "http://127.0.0.1:2");
+        let sticky = create_test_station_key(&database, "sticky", "http://127.0.0.1:1");
+        set_manual_multiplier_with_priority(&database, &sticky, 1.0, 100);
+        set_manual_multiplier_with_priority(&database, &healthy, 1.0, 0);
+        let context = proxy_context(database);
+        context
+            .scheduler
+            .bind_session("all_groups", "session", &sticky.id, 1_000, 3_600);
+        context
+            .scheduler
+            .report_result(&sticky.id, true, Some(20_000));
+        let request = RouteRequest {
+            endpoint: RouteEndpointKind::ChatCompletions,
+            model: Some("gpt-5.4".to_string()),
+            stream: false,
+            uses_tools: false,
+            uses_vision: false,
+            uses_reasoning: false,
+            policy: RoutingPolicy::AutomaticBalanced,
+            max_rate_multiplier: Some(1.0),
+            routing_group_filter: RoutingGroupFilter::AllGroups,
+            session_hash: Some("session".to_string()),
+            previous_response_id: None,
+            excluded_key_ids: Vec::new(),
+            current_station_key_id: None,
+            allow_depleted_fallback: false,
+            now_ms: 1_001,
+        };
+
+        let selection = match select_proxy_route(&context, &request) {
+            Ok(selection) => selection,
+            Err(error) => panic!("selection failed with status {}", error.status_code),
+        };
+
+        assert_eq!(
+            selection.accepted[0].candidate.station_key_id, healthy.id,
+            "{:#?}",
+            selection.explanations
+        );
+    }
+
+    #[test]
+    fn scheduler_runtime_feedback_updates_metrics_and_scoped_affinity() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key = create_test_station_key(&database, "feedback", "http://127.0.0.1:1");
+        let context = proxy_context(database);
+        let candidate = context
+            .database
+            .proxy_route_candidates_with_data_key(&context.data_key)
+            .expect("candidates")
+            .into_iter()
+            .find(|candidate| candidate.station_key_id == key.id)
+            .expect("feedback candidate");
+
+        record_candidate_failure(
+            &context,
+            &candidate,
+            "error",
+            "1000",
+            "upstream 500",
+            RouteFailureInput::http_status(500, false),
+        );
+        assert_eq!(
+            context.scheduler.metrics_snapshot(&key.id).error_rate_ewma,
+            1.0
+        );
+
+        commit_pending_successes(
+            &context,
+            &[PendingCandidateSuccess {
+                station_key_id: key.id.clone(),
+                status_label: "success".to_string(),
+                checked_at: "1001".to_string(),
+                duration_ms: 20_000,
+                endpoint: RouteEndpointKind::Responses,
+                model: Some("gpt-5.4".to_string()),
+                routing_group_scope: Some("all_groups".to_string()),
+                session_hash: Some("session".to_string()),
+                response_id: Some("resp-1".to_string()),
+            }],
+            Some("1001"),
+            Some(20_000),
+            Some(20_000),
+        );
+
+        let snapshot = context.scheduler.metrics_snapshot(&key.id);
+        assert_eq!(snapshot.error_rate_ewma, 0.8);
+        assert_eq!(snapshot.ttft_ewma_ms, Some(20_000.0));
+        assert_eq!(
+            context.scheduler.resolve_affinity(
+                "all_groups",
+                Some("resp-1"),
+                Some("session"),
+                1_002,
+            ),
+            Some(key.id)
+        );
+    }
+
+    #[test]
+    fn runtime_route_candidates_preserve_scheduler_capacity_fields() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key = create_test_station_key(&database, "capacity", "http://127.0.0.1:1");
+        let context = proxy_context(database);
+
+        let candidate = context
+            .database
+            .proxy_rich_route_candidates_with_data_key(&context.data_key)
+            .expect("rich candidates")
+            .into_iter()
+            .find(|candidate| candidate.candidate.station_key_id == key.id)
+            .expect("capacity candidate");
+
+        assert_eq!(candidate.candidate.max_concurrency, key.max_concurrency);
+        assert_eq!(candidate.candidate.load_factor, key.load_factor);
+    }
+
+    #[test]
     fn automatic_runtime_revalidates_multiplier_immediately_before_forward() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         enable_automatic_routing(&database, 1.0);
@@ -3714,6 +4005,7 @@ mod tests {
             data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
+            scheduler: Arc::new(SchedulerRuntimeState::default()),
             route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
             probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
         };
@@ -4051,6 +4343,7 @@ mod tests {
             data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
+            scheduler: Arc::new(SchedulerRuntimeState::default()),
             route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
             probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
         }
@@ -4238,6 +4531,7 @@ mod tests {
             data_key: crate::services::secrets::crypto::generate_data_key(),
             active_requests: Arc::new(AtomicU32::new(0)),
             request_count: Arc::new(AtomicU64::new(0)),
+            scheduler: Arc::new(SchedulerRuntimeState::default()),
             route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
             probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
         };

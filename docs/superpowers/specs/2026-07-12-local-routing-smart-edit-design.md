@@ -66,14 +66,16 @@ First visible group:
 - `queue`
 - `errorRate`
 - `ttft`
+- `quotaHeadroom`
 
 Second visible group:
 
 - `previousResponse`
 - `sessionSticky`
-- `stickyEscape`
 - `stickyEscapeTtftMs`
 - `stickyEscapeErrorRate`
+- `stickySessionTtlSeconds`
+- `stickyResponseTtlSeconds`
 - `stickyMaxWaiting`
 - `stickyWaitTimeoutSeconds`
 - `fallbackMaxWaiting`
@@ -82,16 +84,23 @@ Second visible group:
 Controls:
 
 - Numeric inputs for numeric fields.
-- Switches for boolean fields.
+- `stickyWeighted` is the only user-facing scheduler boolean. Sub2API keeps sticky escape enabled by default as an internal gateway safeguard rather than exposing it as an admin UI switch.
+- `stickyWeighted` is promoted to a standalone full-width row above all scheduler parameter groups, matching the Sub2API gateway layout.
+- The promoted `stickyWeighted` switch shows only the switch track and thumb; it keeps an accessible label but does not show `开启` / `关闭` text or an outer button surface.
+- `stickyEscape` remains an internal persisted compatibility field with a default of `true`; the editor does not render or mutate it. The TTFT and error-rate thresholds remain editable advanced parameters.
 - Reset-to-default action for scheduler settings.
 - Save state visible as a compact badge: idle/saving/saved/error.
 
 Validation:
 
 - Numeric fields must reject non-finite values.
-- `topK` and waiting/count fields must be non-negative integers where appropriate.
+- `topK`, TTL, waiting, and timeout fields must be positive safe integers; `topK` must also fit the backend `u16` range.
 - Weight fields must be finite and non-negative.
+- Confidence and error-rate thresholds must stay within `0..=1`.
+- At least one base score weight must be greater than zero, matching the Rust scheduler validator.
 - Invalid local input should block save and show a focused inline error near the field group.
+
+All fields already present in `SchedulerAdvancedSettings` must be reachable from this editor. Adding a new backend field must produce a TypeScript compile-time gap until its default, field kind, form metadata, and UI control are defined.
 
 ### 3. Candidate preview and manual order
 
@@ -119,6 +128,7 @@ Read:
 Write:
 
 - Settings form writes through `updateSettings()`.
+- The form derives a complete `UpdateSettingsInput` from the latest `AppSettings` snapshot before applying routing overrides, so unrelated settings are preserved.
 - Candidate order continues to write through `reorderLocalRoutingKeys()`.
 
 Event sync:
@@ -131,8 +141,15 @@ Event sync:
 - This is an editor, not an intro page.
 - No long explanation cards.
 - Use concise labels and compact inline status.
+- Scheduler group titles use normal document flow with 12px space above and below; titles must not sit on divider lines.
 - Do not hide required routing controls in Settings only; the routing edit page must be the main place to tune automatic routing.
 - Keep keyboard accessibility: labels must map to inputs, focus states remain visible, and disabled/saving states must be explicit.
+
+Runtime parity requirement:
+
+- Scheduler metrics, capacity, and scoped affinity live for the lifetime of the local proxy server rather than being recreated for each selection.
+- A valid sticky binding is ignored for the current selection when TTFT EWMA exceeds the configured threshold, error-rate EWMA exceeds the configured threshold, or its concurrency capacity is full.
+- Soft escape does not delete the binding. Hard eligibility failures continue to prevent affinity from bypassing group, multiplier, model, health, or capability gates.
 
 ## Test Plan
 
@@ -142,6 +159,8 @@ Add or update focused tests/scripts to verify:
 - The edit tab renders scheduler parameter controls.
 - Old explanatory copy is not present in the edit tab.
 - Saving settings calls the typed settings API path, not direct `invoke` from UI.
+- Scheduler validation mirrors the Rust `SchedulerAdvancedSettings::validate` boundary.
+- Older or partial scheduler settings are merged with typed defaults when read.
 - Existing candidate reorder test still passes.
 
 Manual verification:
