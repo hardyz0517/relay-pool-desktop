@@ -1,111 +1,106 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const appSource = await readFile("src/app/App.tsx", "utf8");
+function normalizeSource(source) {
+  return source.replace(/\r\n?/g, "\n");
+}
 
-function sourceIndex(snippet, message) {
-  const index = appSource.indexOf(snippet);
-  assert.notEqual(index, -1, message);
-  return index;
+const appSource = normalizeSource(await readFile("src/app/App.tsx", "utf8"));
+const hostSource = normalizeSource(await readFile("src/app/TransientPageHost.tsx", "utf8"));
+
+assert.ok(
+  appSource.includes('from "@/app/TransientPageHost"') &&
+    appSource.includes("<TransientPageHost page={activeTransientPage} />"),
+  "App should delegate transient rendering and presence cleanup to one host",
+);
+assert.equal(
+  appSource.match(/<TransientPageHost\b/g)?.length ?? 0,
+  1,
+  "App should render exactly one transient host",
+);
+
+for (const legacyIdentifier of [
+  "TRANSIENT_EXIT_TIMEOUT_MS",
+  "RenderedTransientPage",
+  "lastActiveTransientPageRef",
+  "transientExitTimeoutRef",
+  "exitingTransientPage",
+  "pendingExitingTransientPage",
+  "handleTransientExitComplete",
+  "handleTransientExitAnimationEnd",
+  "useLayoutEffect",
+  "onAnimationEnd",
+]) {
+  assert.ok(
+    !appSource.includes(legacyIdentifier),
+    `App should remove the manual transient lifecycle: ${legacyIdentifier}`,
+  );
 }
 
 assert.ok(
-  appSource.includes("TRANSIENT_EXIT_TIMEOUT_MS"),
-  "App should define a bounded timeout for outgoing transient cleanup",
+  appSource.includes("type TransientPageId = Exclude<AppPageId, AppRouteId>;") &&
+    appSource.includes(
+      "function renderTransientPage(pageId: TransientPageId): TransientPageDescriptor",
+    ) &&
+    appSource.includes("switch (pageId)"),
+  "transient descriptors should be typed separately from retained shell routes",
+);
+assert.ok(
+  appSource.includes(
+    `const activeTransientPage = isShellPage(activeRouteId)
+    ? null
+    : renderTransientPage(activeRouteId);`,
+  ) && !/\buseMemo\b/.test(appSource),
+  "App should construct the active descriptor directly so callbacks stay fresh without mirrored dependencies",
+);
+assert.match(
+  appSource,
+  /default:\s*\{\s*const exhaustivePageId: never = pageId;\s*return exhaustivePageId;\s*\}/,
+  "transient route rendering should fail TypeScript exhaustiveness when a future page is unhandled",
 );
 
 assert.ok(
-  appSource.includes("exitingTransientPage") &&
-    appSource.includes("setExitingTransientPage") &&
-    appSource.includes("lastActiveTransientPageRef") &&
-    appSource.includes("handleTransientExitComplete"),
-  "App should remember the last rendered transient page and clean it after exit animation",
+  appSource.includes('type ShellPageState = "active" | "background" | "inactive";') &&
+    appSource.includes('isCurrentTransientPage ? "background" : "active"') &&
+    appSource.includes('const active = shellPageState === "active";') &&
+    appSource.includes('const inert = shellPageState !== "active";'),
+  "shell pages should have explicit active, visible-background, and inactive states",
 );
+assert.ok(
+  appSource.includes("<PageActivityProvider key={routeId} active={active}>") &&
+    appSource.includes("data-page-transition-state={shellPageState}") &&
+    appSource.includes('inert={inert ? "" : undefined}') &&
+    appSource.includes("aria-hidden={inert}"),
+  "background and inactive shells should remain mounted without refreshing or accepting focus",
+);
+assert.ok(
+  appSource.includes("mountedRouteIds.has(activeShellRouteId)") &&
+    appSource.includes("[...mountedRouteIds, activeShellRouteId]"),
+  "a transient route should always have its retained parent shell rendered beneath it",
+);
+assert.ok(
+  appSource.includes("const isReturningFromTransient") &&
+    appSource.includes(
+      'data-page-transition-handoff={isReturningFromTransient ? "transient-exit" : "none"}',
+    ),
+  "returning from a transient page should not retrigger the shell entry animation",
+);
+
+for (const instanceKey of [
+  'instanceKey: "addProvider"',
+  'instanceKey: `editProvider:${editingStationId ?? "edit-provider-empty"}`',
+  'instanceKey: `stationDetail:${detailStationId ?? "station-detail-empty"}`',
+  'instanceKey: `addKey:${initialKeyStationId ?? "add-key-unscoped"}`',
+  'instanceKey: `editKey:${editingKeyId ?? "edit-key-empty"}`',
+  'instanceKey: "modelBasePrices"',
+]) {
+  assert.ok(appSource.includes(instanceKey), `App should define stable identity: ${instanceKey}`);
+}
 
 assert.ok(
-  appSource.includes("data-page-transition-layer") &&
-    appSource.includes("data-page-transition-state") &&
-    appSource.includes("data-page-transition-kind") &&
-    appSource.includes("data-page-transition-direction"),
-  "App should expose stable transition data attributes for styling and tests",
-);
-
-assert.ok(
-  appSource.includes("inert={") &&
-    appSource.includes("aria-hidden={"),
-  "App should isolate inactive and outgoing pages from focus and screen readers",
-);
-
-assert.ok(
-  appSource.includes('inert?: "" | undefined'),
-  "React inert typing should allow the empty string attribute value",
-);
-
-assert.ok(
-  appSource.includes('inert={inert ? "" : undefined}'),
-  "inactive shell layers should render inert as an empty string attribute",
-);
-
-assert.ok(
-  appSource.includes('inert={!isCurrentTransientPage ? "" : undefined}'),
-  "inactive transient layers should render inert as an empty string attribute",
-);
-
-assert.ok(
-  appSource.includes('inert=""'),
-  "exiting transient overlays should explicitly render the inert attribute",
-);
-
-assert.ok(
-  appSource.includes("<PageActivityProvider active={isCurrentTransientPage}>") &&
-    appSource.includes("<PageActivityProvider active={false}>"),
-  "transient pages should have explicit active/inactive PageActivityProvider contexts",
-);
-
-assert.ok(
-  appSource.includes("const active = activeRouteId === routeId && !isCurrentTransientPage") &&
-    appSource.includes("<PageActivityProvider key={routeId} active={active}>"),
-  "shell PageActivityProvider should be inactive while a transient overlay is current",
-);
-
-assert.ok(
-  !appSource.includes("}, [activeTransientPage]);"),
-  "last active transient page should not be updated in a standalone earlier effect",
-);
-
-const previousTransientReadIndex = sourceIndex(
-  "const previousTransientPage = lastActiveTransientPageRef.current",
-  "App should read the previous transient page before updating refs",
-);
-const previousRouteWriteIndex = sourceIndex(
-  "previousRouteIdRef.current = activeRouteId",
-  "App should update the previous route ref inside the combined transient preservation effect",
-);
-const activeTransientWriteIndex = sourceIndex(
-  "lastActiveTransientPageRef.current = activeTransientPage",
-  "App should update the last active transient ref after preserving the outgoing page",
-);
-
-assert.ok(
-  previousTransientReadIndex < activeTransientWriteIndex &&
-    previousRouteWriteIndex < activeTransientWriteIndex &&
-    appSource.includes("}, [activeRouteId, activeTransientPage]);"),
-  "App should preserve outgoing transient pages before updating the last active transient ref",
-);
-
-assert.ok(
-  appSource.includes("handleTransientExitAnimationEnd") &&
-    appSource.includes("event.target !== event.currentTarget") &&
-    appSource.includes("onAnimationEnd={handleTransientExitAnimationEnd}") &&
-    appSource.includes("window.setTimeout(handleTransientExitComplete"),
-  "outgoing transient cleanup should ignore bubbled animationend events and keep timeout fallback",
-);
-
-assert.ok(
-  appSource.includes("app-page-transition-stack") &&
-    appSource.includes("app-page-transition-layer") &&
-    appSource.includes("app-page-transition-overlay"),
-  "App should wire the transition stack, layer, and overlay classes",
+  hostSource.includes("key={page.instanceKey}") &&
+    hostSource.includes('data-page-transition-state={isPresent ? "active" : "exiting"}'),
+  "the host should use descriptor identity and Motion presence as its only exit state",
 );
 
 console.log("page transition container contract ok");

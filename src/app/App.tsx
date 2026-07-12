@@ -1,6 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type AnimationEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageActivityProvider } from "@/components/shell/PageActivity";
+import {
+  TransientPageHost,
+  type TransientPageDescriptor,
+} from "@/app/TransientPageHost";
 import {
   getPageTransitionPolicy,
   getShellRouteId,
@@ -25,21 +29,20 @@ import type { AppPageId } from "@/lib/types/navigation";
 import type { AppRouteId } from "@/lib/types/navigation";
 import type { Station } from "@/lib/types/stations";
 
-declare module "react" {
-  interface HTMLAttributes<T> {
-    inert?: "" | undefined;
-  }
-}
-
-const TRANSIENT_EXIT_TIMEOUT_MS = 240;
-
-type RenderedTransientPage = {
-  pageId: AppPageId;
-  node: ReactNode;
+type NavigationState = {
+  activeRouteId: AppPageId;
+  previousRouteId: AppPageId | null;
 };
 
+type TransientPageId = Exclude<AppPageId, AppRouteId>;
+
+type ShellPageState = "active" | "background" | "inactive";
+
 export function App() {
-  const [activeRouteId, setActiveRouteId] = useState<AppPageId>("dashboard");
+  const [{ activeRouteId, previousRouteId }, setNavigation] = useState<NavigationState>({
+    activeRouteId: "dashboard",
+    previousRouteId: null,
+  });
   const [mountedRouteIds, setMountedRouteIds] = useState<Set<AppRouteId>>(
     () => new Set(["dashboard"]),
   );
@@ -48,12 +51,19 @@ export function App() {
   const [detailStationPreview, setDetailStationPreview] = useState<Station | null>(null);
   const [initialKeyStationId, setInitialKeyStationId] = useState<string | null>(null);
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
-  const previousRouteIdRef = useRef<AppPageId>(activeRouteId);
-  const lastActiveTransientPageRef = useRef<RenderedTransientPage | null>(null);
-  const transientExitTimeoutRef = useRef<number | null>(null);
-  const [exitingTransientPage, setExitingTransientPage] =
-    useState<RenderedTransientPage | null>(null);
   const activeShellRouteId = getShellRouteId(activeRouteId);
+
+  const navigateTo = useCallback((routeId: AppPageId) => {
+    setNavigation((current) => {
+      if (current.activeRouteId === routeId) {
+        return current;
+      }
+      return {
+        activeRouteId: routeId,
+        previousRouteId: current.activeRouteId,
+      };
+    });
+  }, []);
 
   useEffect(() => {
     if (!isShellPage(activeRouteId)) {
@@ -73,36 +83,36 @@ export function App() {
     setEditingStationId(null);
     setDetailStationId(null);
     setDetailStationPreview(null);
-    setActiveRouteId("stations");
+    navigateTo("stations");
   }
 
   function returnToKeyPool() {
     setInitialKeyStationId(null);
     setEditingKeyId(null);
-    setActiveRouteId("keyPool");
+    navigateTo("keyPool");
   }
 
   function openEditProvider(stationId: string) {
     setEditingStationId(stationId);
-    setActiveRouteId("editProvider");
+    navigateTo("editProvider");
   }
 
   function openStationDetail(station: Station) {
     setDetailStationId(station.id);
     setDetailStationPreview(station);
-    setActiveRouteId("stationDetail");
+    navigateTo("stationDetail");
   }
 
   function openAddKey(stationId: string | null) {
     setInitialKeyStationId(stationId);
     setEditingKeyId(null);
-    setActiveRouteId("addKey");
+    navigateTo("addKey");
   }
 
   function openEditKey(stationKeyId: string) {
     setEditingKeyId(stationKeyId);
     setInitialKeyStationId(null);
-    setActiveRouteId("editKey");
+    navigateTo("editKey");
   }
 
   function renderShellPage(routeId: AppRouteId) {
@@ -110,7 +120,7 @@ export function App() {
       case "stations":
         return (
           <StationsPage
-            onAddProvider={() => setActiveRouteId("addProvider")}
+            onAddProvider={() => navigateTo("addProvider")}
             onEditProvider={openEditProvider}
             onOpenStation={openStationDetail}
           />
@@ -124,151 +134,118 @@ export function App() {
       case "changes":
         return <ChangeCenterPage />;
       case "pricing":
-        return <PricingPage onOpenModelBasePrices={() => setActiveRouteId("modelBasePrices")} />;
+        return <PricingPage onOpenModelBasePrices={() => navigateTo("modelBasePrices")} />;
       case "routing":
         return <RoutingPage />;
       case "logs":
         return <LogsPage />;
       case "settings":
-        return <SettingsPage onOpenModelBasePrices={() => setActiveRouteId("modelBasePrices")} />;
+        return <SettingsPage onOpenModelBasePrices={() => navigateTo("modelBasePrices")} />;
       case "dashboard":
       default:
         return <DashboardPage />;
     }
   }
 
-  function renderTransientPage(): ReactNode {
-    switch (activeRouteId) {
+  function renderTransientPage(pageId: TransientPageId): TransientPageDescriptor {
+    switch (pageId) {
       case "addProvider":
-        return (
-          <AddProviderPage
-            onBack={returnToStations}
-            onCreated={returnToStations}
-          />
-        );
+        return {
+          pageId: "addProvider",
+          instanceKey: "addProvider",
+          node: (
+            <AddProviderPage onBack={returnToStations} onCreated={returnToStations} />
+          ),
+        };
       case "editProvider":
-        return (
-          <AddProviderPage
-            stationId={editingStationId}
-            onBack={returnToStations}
-            onUpdated={returnToStations}
-          />
-        );
+        return {
+          pageId: "editProvider",
+          instanceKey: `editProvider:${editingStationId ?? "edit-provider-empty"}`,
+          node: (
+            <AddProviderPage
+              stationId={editingStationId}
+              onBack={returnToStations}
+              onUpdated={returnToStations}
+            />
+          ),
+        };
       case "stationDetail":
-        return (
-          <StationDetailPage
-            stationId={detailStationId}
-            initialStation={detailStationPreview}
-            onBack={returnToStations}
-            onEditProvider={openEditProvider}
-          />
-        );
+        return {
+          pageId: "stationDetail",
+          instanceKey: `stationDetail:${detailStationId ?? "station-detail-empty"}`,
+          node: (
+            <StationDetailPage
+              stationId={detailStationId}
+              initialStation={detailStationPreview}
+              onBack={returnToStations}
+              onEditProvider={openEditProvider}
+            />
+          ),
+        };
       case "addKey":
-        return (
-          <AddKeyPage
-            initialStationId={initialKeyStationId}
-            onBack={returnToKeyPool}
-            onCreated={returnToKeyPool}
-          />
-        );
+        return {
+          pageId: "addKey",
+          instanceKey: `addKey:${initialKeyStationId ?? "add-key-unscoped"}`,
+          node: (
+            <AddKeyPage
+              initialStationId={initialKeyStationId}
+              onBack={returnToKeyPool}
+              onCreated={returnToKeyPool}
+            />
+          ),
+        };
       case "editKey":
-        return (
-          <EditKeyPage
-            stationKeyId={editingKeyId}
-            onBack={returnToKeyPool}
-            onUpdated={returnToKeyPool}
-          />
-        );
+        return {
+          pageId: "editKey",
+          instanceKey: `editKey:${editingKeyId ?? "edit-key-empty"}`,
+          node: (
+            <EditKeyPage
+              stationKeyId={editingKeyId}
+              onBack={returnToKeyPool}
+              onUpdated={returnToKeyPool}
+            />
+          ),
+        };
       case "modelBasePrices":
-        return <ModelBasePricesPage onBack={() => setActiveRouteId("pricing")} />;
-      default:
-        return null;
+        return {
+          pageId: "modelBasePrices",
+          instanceKey: "modelBasePrices",
+          node: <ModelBasePricesPage onBack={() => navigateTo("pricing")} />,
+        };
+      default: {
+        const exhaustivePageId: never = pageId;
+        return exhaustivePageId;
+      }
     }
   }
 
   const activeTransitionPolicy = getPageTransitionPolicy(activeRouteId);
-  const activeTransientPage = useMemo<RenderedTransientPage | null>(() => {
-    if (activeTransitionPolicy.kind !== "transient") {
-      return null;
-    }
-    return {
-      pageId: activeRouteId,
-      node: renderTransientPage(),
-    };
-  }, [
-    activeRouteId,
-    activeTransitionPolicy.kind,
-    detailStationId,
-    detailStationPreview,
-    editingKeyId,
-    editingStationId,
-    initialKeyStationId,
-  ]);
+  const activeTransientPage = isShellPage(activeRouteId)
+    ? null
+    : renderTransientPage(activeRouteId);
   const isCurrentTransientPage = activeTransitionPolicy.kind === "transient";
-
-  useEffect(() => {
-    const previousRouteId = previousRouteIdRef.current;
-    const previousPolicy = getPageTransitionPolicy(previousRouteId);
-    const previousTransientPage = lastActiveTransientPageRef.current;
-
-    if (previousRouteId !== activeRouteId && previousPolicy.kind === "transient") {
-      setExitingTransientPage(
-        previousTransientPage?.pageId === previousRouteId ? previousTransientPage : null,
-      );
-    }
-
-    previousRouteIdRef.current = activeRouteId;
-    if (activeTransientPage) {
-      lastActiveTransientPageRef.current = activeTransientPage;
-    }
-  }, [activeRouteId, activeTransientPage]);
-
-  useEffect(() => {
-    if (!exitingTransientPage) {
-      return;
-    }
-
-    if (transientExitTimeoutRef.current !== null) {
-      window.clearTimeout(transientExitTimeoutRef.current);
-    }
-
-    transientExitTimeoutRef.current = window.setTimeout(handleTransientExitComplete,
-      TRANSIENT_EXIT_TIMEOUT_MS,
-    );
-
-    return () => {
-      if (transientExitTimeoutRef.current !== null) {
-        window.clearTimeout(transientExitTimeoutRef.current);
-        transientExitTimeoutRef.current = null;
-      }
-    };
-  }, [exitingTransientPage]);
-
-  function handleTransientExitComplete() {
-    if (transientExitTimeoutRef.current !== null) {
-      window.clearTimeout(transientExitTimeoutRef.current);
-      transientExitTimeoutRef.current = null;
-    }
-    setExitingTransientPage(null);
-  }
-
-  function handleTransientExitAnimationEnd(event: AnimationEvent<HTMLDivElement>) {
-    if (event.target !== event.currentTarget) {
-      return;
-    }
-    handleTransientExitComplete();
-  }
-
-  const shellRouteIds = isShellPage(activeRouteId) && !mountedRouteIds.has(activeRouteId)
-    ? [...mountedRouteIds, activeRouteId]
-    : [...mountedRouteIds];
+  const previousTransitionPolicy = previousRouteId
+    ? getPageTransitionPolicy(previousRouteId)
+    : null;
+  const isReturningFromTransient =
+    activeTransitionPolicy.kind === "shell" && previousTransitionPolicy?.kind === "transient";
+  const shellRouteIds = mountedRouteIds.has(activeShellRouteId)
+    ? [...mountedRouteIds]
+    : [...mountedRouteIds, activeShellRouteId];
 
   return (
-    <AppShell activeRouteId={activeShellRouteId} onRouteChange={(routeId) => setActiveRouteId(routeId)}>
-      <div className="app-page-transition-stack">
+    <AppShell activeRouteId={activeShellRouteId} onRouteChange={navigateTo}>
+      <div
+        className="app-page-transition-stack"
+        data-page-transition-handoff={isReturningFromTransient ? "transient-exit" : "none"}
+      >
         {shellRouteIds.map((routeId) => {
-          const active = activeRouteId === routeId && !isCurrentTransientPage;
-          const inert = !active;
+          const shellPageState: ShellPageState =
+            routeId !== activeShellRouteId
+              ? "inactive"
+              : isCurrentTransientPage ? "background" : "active";
+          const active = shellPageState === "active";
+          const inert = shellPageState !== "active";
 
           return (
             <PageActivityProvider key={routeId} active={active}>
@@ -277,8 +254,7 @@ export function App() {
                 className="app-page-transition-layer"
                 data-page-transition-layer
                 data-page-transition-kind="shell"
-                data-page-transition-direction="none"
-                data-page-transition-state={active ? "active" : "inactive"}
+                data-page-transition-state={shellPageState}
                 inert={inert ? "" : undefined}
               >
                 {renderShellPage(routeId)}
@@ -287,40 +263,7 @@ export function App() {
           );
         })}
 
-        {activeTransientPage && (
-          <PageActivityProvider active={isCurrentTransientPage}>
-            <div
-              aria-hidden={!isCurrentTransientPage}
-              className="app-page-transition-layer app-page-transition-overlay"
-              data-page-transition-layer
-              data-page-transition-kind="transient"
-              data-page-transition-direction={activeTransitionPolicy.enterDirection}
-              data-page-transition-state="active"
-              inert={!isCurrentTransientPage ? "" : undefined}
-            >
-              {activeTransientPage.node}
-            </div>
-          </PageActivityProvider>
-        )}
-
-        {exitingTransientPage && (
-          <PageActivityProvider active={false}>
-            <div
-              aria-hidden
-              className="app-page-transition-layer app-page-transition-overlay"
-              data-page-transition-layer
-              data-page-transition-kind="transient"
-              data-page-transition-direction={
-                getPageTransitionPolicy(exitingTransientPage.pageId).exitDirection
-              }
-              data-page-transition-state="exiting"
-              inert=""
-              onAnimationEnd={handleTransientExitAnimationEnd}
-            >
-              {exitingTransientPage.node}
-            </div>
-          </PageActivityProvider>
-        )}
+        <TransientPageHost page={activeTransientPage} />
       </div>
     </AppShell>
   );

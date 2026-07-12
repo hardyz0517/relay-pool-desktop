@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Button, EmptyState, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
@@ -178,7 +178,7 @@ export function StationDetailPage({
     }
   }, [isLoadCurrent]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     activeStationIdRef.current = stationId;
     refreshRequestRef.current += 1;
     setLoadingAction(null);

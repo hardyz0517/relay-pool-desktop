@@ -6,9 +6,10 @@ const activitySource = await readFile("src/components/shell/PageActivity.tsx", "
 
 assert.ok(
   appSource.includes("PageActivityProvider") &&
-    appSource.includes("const active = activeRouteId === routeId && !isCurrentTransientPage") &&
+    appSource.includes('const active = shellPageState === "active";') &&
+    appSource.includes('isCurrentTransientPage ? "background" : "active"') &&
     appSource.includes("<PageActivityProvider key={routeId} active={active}>"),
-  "every kept-alive shell page should receive an explicit active/inactive lifecycle without firing during transient overlays",
+  "kept-alive shell pages should refresh only in active state, never while serving as a transient background",
 );
 
 assert.ok(
