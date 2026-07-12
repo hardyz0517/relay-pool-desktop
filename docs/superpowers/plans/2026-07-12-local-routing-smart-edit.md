@@ -128,7 +128,7 @@ Render labeled controls for strategy, multiplier ceiling, group filter, strict r
 
 - [ ] **Step 3: Render every scheduler field from metadata**
 
-Promote `stickyWeighted` to a standalone row before the score section and render its `SwitchControl` with `showLabel={false}` plus borderless outer chrome. Exclude it from the generic boolean grid so it appears exactly once. Group all remaining fields into score, stickiness, and waiting sections. Numeric fields use field-kind-derived `min`, `max`, and `step`; booleans use `SwitchControl`. Invalid fields use `aria-invalid` and compact inline errors.
+Promote `stickyWeighted` to a standalone row before the score section and render its `SwitchControl` with `showLabel={false}` plus borderless outer chrome. Exclude it from the generic boolean grid so it appears exactly once. Group all remaining fields into score, stickiness, and waiting sections. Render each group with `role="group"`, `aria-label={title}`, and a normal-flow `h3` using 12px top/bottom spacing instead of a divider-overlapping `legend`. Numeric fields use field-kind-derived `min`, `max`, and `step`; booleans use `SwitchControl`. Invalid fields use `aria-invalid` and compact inline errors.
 
 - [ ] **Step 4: Save atomically through the typed API**
 

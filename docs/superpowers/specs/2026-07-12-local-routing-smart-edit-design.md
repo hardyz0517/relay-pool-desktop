@@ -141,6 +141,7 @@ Event sync:
 - This is an editor, not an intro page.
 - No long explanation cards.
 - Use concise labels and compact inline status.
+- Scheduler group titles use normal document flow with 12px space above and below; titles must not sit on divider lines.
 - Do not hide required routing controls in Settings only; the routing edit page must be the main place to tune automatic routing.
 - Keep keyboard accessibility: labels must map to inputs, focus states remain visible, and disabled/saving states must be explicit.
 

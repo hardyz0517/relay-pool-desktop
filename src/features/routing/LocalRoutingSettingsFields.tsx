@@ -233,9 +233,13 @@ function SchedulerFieldGroup({
   );
 
   return (
-    <fieldset className="border-b border-border px-4 py-3 last:border-b-0" disabled={disabled}>
-      <legend className="px-0 text-xs font-semibold text-slate-700">{title}</legend>
-      <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <div
+      role="group"
+      aria-label={title}
+      className="border-b border-border px-4 py-3 last:border-b-0"
+    >
+      <h3 className="mb-3 text-xs font-semibold text-slate-700">{title}</h3>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {numericFields.map(([field]) => (
           <SchedulerNumberInput
             key={field}
@@ -258,7 +262,7 @@ function SchedulerFieldGroup({
           </label>
         ))}
       </div>
-    </fieldset>
+    </div>
   );
 }
 

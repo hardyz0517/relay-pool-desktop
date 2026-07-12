@@ -82,6 +82,9 @@ assert.match(
   fields,
   /function PromotedBooleanSettingRow[\s\S]*showLabel=\{false\}[\s\S]*border-0[\s\S]*bg-transparent/,
 );
+assert.doesNotMatch(fields, /<legend/);
+assert.match(fields, /role="group"[\s\S]*aria-label=\{title\}/);
+assert.match(fields, /<h3 className="mb-3 text-xs font-semibold text-slate-700">\{title\}<\/h3>/);
 
 assert.match(settingsApi, /normalizeSchedulerAdvancedSettings/);
 assert.match(settingsApi, /SCHEDULER_ADVANCED_FIELD_KINDS/);
