@@ -1,0 +1,151 @@
+# Local Routing Smart Edit Page Design
+
+Date: 2026-07-12
+
+## Goal
+
+Upgrade the Local Routing `编辑` tab from a mostly read-only/reorder surface into a real automatic-routing configuration panel.
+
+The page should feel like an editor, not an introduction page: compact labels, editable fields, short status values, and minimal explanatory copy.
+
+## Scope
+
+In scope:
+
+- Add editable global automatic-routing controls to `LocalRoutingEditTab`.
+- Reuse existing settings fields:
+  - `maxRateMultiplier`
+  - `defaultRoutingGroupFilter`
+  - `schedulerAdvancedSettings`
+- Preserve the existing draggable candidate ordering as a lower-priority preview/manual correction area.
+- Keep the UI aligned with Relay Pool Desktop's light, compact desktop-tool style.
+
+Out of scope for this slice:
+
+- New Rust database fields unless implementation proves an existing required field is missing.
+- Changing the routing algorithm itself.
+- Adding a marketing/onboarding explanation block.
+- Reworking the `状态` tab beyond any small consistency fixes needed by shared formatting helpers.
+
+## Page Structure
+
+### 1. Hard-boundary controls
+
+The top card is a compact form, not an explainer.
+
+Fields:
+
+- Strategy: fixed display value `automatic_balanced`.
+- Multiplier limit: editable numeric field; empty means no configured ceiling.
+- Default group filter: select control with:
+  - All groups
+  - GPT
+  - Claude
+  - Gemini
+  - Grok
+  - Image generation
+  - Ungrouped only
+- No-candidate policy: fixed display value `严格拒绝`.
+- Evidence threshold: editable `multiplierMinConfidence`.
+
+Copy rule:
+
+- Use labels and short values only.
+- Avoid long descriptions such as “运行时会综合...” or “当所有健康 Key...”.
+
+### 2. Sub2API-style scheduler parameters
+
+The middle card exposes scheduler settings in a dense grid.
+
+First visible group:
+
+- `topK`
+- `multiplier`
+- `priority`
+- `load`
+- `queue`
+- `errorRate`
+- `ttft`
+
+Second visible group:
+
+- `previousResponse`
+- `sessionSticky`
+- `stickyEscape`
+- `stickyEscapeTtftMs`
+- `stickyEscapeErrorRate`
+- `stickyMaxWaiting`
+- `stickyWaitTimeoutSeconds`
+- `fallbackMaxWaiting`
+- `fallbackWaitTimeoutSeconds`
+
+Controls:
+
+- Numeric inputs for numeric fields.
+- Switches for boolean fields.
+- Reset-to-default action for scheduler settings.
+- Save state visible as a compact badge: idle/saving/saved/error.
+
+Validation:
+
+- Numeric fields must reject non-finite values.
+- `topK` and waiting/count fields must be non-negative integers where appropriate.
+- Weight fields must be finite and non-negative.
+- Invalid local input should block save and show a focused inline error near the field group.
+
+### 3. Candidate preview and manual order
+
+Keep the existing candidate row list and drag sorting, but title it as preview/manual correction.
+
+Candidate rows continue to show:
+
+- Key/station identity.
+- Enabled/health/group-match badges.
+- Order.
+- Effective multiplier.
+- Source/confidence.
+- Balance.
+- Cooldown.
+
+The list should not be the only editable area.
+
+## Data Flow
+
+Read:
+
+- `LocalRoutingEditTab` receives workspace data for preview and candidate order.
+- The edit tab also reads app settings through `getSettings()`.
+
+Write:
+
+- Settings form writes through `updateSettings()`.
+- Candidate order continues to write through `reorderLocalRoutingKeys()`.
+
+Event sync:
+
+- After `updateSettings()` succeeds, dispatch `SETTINGS_UPDATED_EVENT` so other surfaces can refresh consistently.
+- If the parent routing page already refreshes workspace after settings changes, reuse that mechanism. Otherwise, add a narrow refresh hook.
+
+## UX Rules
+
+- This is an editor, not an intro page.
+- No long explanation cards.
+- Use concise labels and compact inline status.
+- Do not hide required routing controls in Settings only; the routing edit page must be the main place to tune automatic routing.
+- Keep keyboard accessibility: labels must map to inputs, focus states remain visible, and disabled/saving states must be explicit.
+
+## Test Plan
+
+Add or update focused tests/scripts to verify:
+
+- The edit tab renders multiplier limit and group filter controls.
+- The edit tab renders scheduler parameter controls.
+- Old explanatory copy is not present in the edit tab.
+- Saving settings calls the typed settings API path, not direct `invoke` from UI.
+- Existing candidate reorder test still passes.
+
+Manual verification:
+
+- `pnpm.cmd build`
+- Relevant local routing UI contract scripts.
+- If Rust code changes become necessary, run `cargo check` and focused Rust tests.

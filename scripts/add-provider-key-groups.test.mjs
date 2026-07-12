@@ -24,6 +24,32 @@ const stationDetailViewModelSource = await readFile(
   "utf8",
 );
 
+function functionSource(source, name) {
+  const match = source.match(new RegExp(`function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`));
+  assert.ok(match, `${name} should exist`);
+  return match[0];
+}
+
+const optionalRateParserSource = functionSource(addProviderSource, "parseOptionalRateMultiplier");
+const draftRateParserSource = functionSource(addProviderSource, "parseDraftRateMultiplier");
+
+assert.match(
+  optionalRateParserSource,
+  /rate < 0/,
+  "manual key and group rate multiplier validation should accept zero and reject only negative values",
+);
+
+assert.ok(
+  !optionalRateParserSource.includes("rate <= 0"),
+  "manual key and group rate multiplier validation must not reject zero",
+);
+
+assert.match(
+  draftRateParserSource,
+  /rate >= 0/,
+  "draft group options should preserve zero rate multipliers instead of dropping them",
+);
+
 assert.ok(
   !addProviderSource.includes("璇峰～鍐欓粯璁ゅ瘑閽ユ垨鏈湴瀵嗛挜"),
   "supplier creation should not force a default key or local key before saving",

@@ -2,12 +2,13 @@ import {
   buildPricingGroupCandidates,
   type PricingGroupCandidate,
 } from "../../lib/projections/pricingFacts";
+import { groupCategoryDefinitions, type StationGroupCategory } from "../../lib/groupCategories";
 import type { GroupRateRecord, StationGroupBinding } from "../../lib/types/groupFacts";
 import type { PricingRule } from "../../lib/types/economics";
 import type { StationKey } from "../../lib/types/stationKeys";
 import type { Station } from "../../lib/types/stations";
 
-export type PricingGroupType = "gpt" | "claude" | "gemini" | "grok" | "image_generation";
+export type PricingGroupType = StationGroupCategory;
 
 export type PricingComparisonFilters = {
   groupType?: PricingGroupType | "all";
@@ -21,6 +22,7 @@ export type PricingComparisonInput = {
   groupBindings: StationGroupBinding[];
   groupRates: GroupRateRecord[];
   pricingRules: PricingRule[];
+  developerModeEnabled?: boolean;
   filters?: PricingComparisonFilters;
 };
 
@@ -62,13 +64,11 @@ export type PricingComparisonViewModel = {
   emptyReason: "no_group_rates" | "filtered_empty" | null;
 };
 
-const groupTypeDefinitions: Array<{ groupType: PricingGroupType; title: string }> = [
-  { groupType: "gpt", title: "GPT" },
-  { groupType: "claude", title: "Claude" },
-  { groupType: "gemini", title: "Gemini" },
-  { groupType: "grok", title: "Grok" },
-  { groupType: "image_generation", title: "生成图片" },
-];
+const groupTypeDefinitions: Array<{ groupType: PricingGroupType; title: string }> =
+  groupCategoryDefinitions.map((definition) => ({
+    groupType: definition.value,
+    title: definition.label,
+  }));
 
 const structuredProviderGroupTypesByStation: Record<
   string,
@@ -124,7 +124,7 @@ export function buildPricingComparisonViewModel(
     };
   }
 
-  const sections = groupTypeDefinitions
+  const sections = visibleGroupTypeDefinitions(input.developerModeEnabled === true)
     .filter((definition) => filters.groupType === "all" || filters.groupType === definition.groupType)
     .map((definition) => {
       const sectionRows = markCheapestRows(
@@ -152,6 +152,13 @@ export function buildPricingComparisonViewModel(
     metrics: buildMetrics(sections),
     emptyReason: null,
   };
+}
+
+function visibleGroupTypeDefinitions(developerModeEnabled: boolean) {
+  return groupTypeDefinitions.filter(
+    (definition) =>
+      developerModeEnabled || (definition.groupType !== "embedding" && definition.groupType !== "rerank"),
+  );
 }
 
 function normalizeFilters(filters: PricingComparisonFilters | undefined): Required<PricingComparisonFilters> {
@@ -191,27 +198,11 @@ function createRowFromCandidate(candidate: PricingGroupCandidate): PricingCompar
   };
 }
 
-function groupTypeFromCandidate(candidate: PricingGroupCandidate): PricingGroupType | null {
-  if (isImageGenerationGroupName(candidate.groupName)) {
-    return "image_generation";
+function groupTypeFromCandidate(candidate: PricingGroupCandidate): PricingGroupType {
+  if (candidate.currentFact.effectiveGroupCategory !== "unknown") {
+    return candidate.currentFact.effectiveGroupCategory;
   }
-
-  const platform = groupPlatformFromRawJson(candidate.groupRawJsonRedacted);
-  if (platform) {
-    const platformType = groupTypeFromPlatform(platform);
-    if (platformType) {
-      return platformType;
-    }
-  }
-
-  const structuredGroupType = structuredGroupTypeForCandidate(candidate);
-  if (structuredGroupType) {
-    return structuredGroupType;
-  }
-
-  return groupTypeFromText(
-    [candidate.groupIdHash ?? "", candidate.groupName, searchableJsonText(candidate.groupRawJsonRedacted)].join(" "),
-  );
+  return structuredGroupTypeForCandidate(candidate) ?? "unknown";
 }
 
 function structuredGroupTypeForCandidate(candidate: PricingGroupCandidate): PricingGroupType | null {
@@ -230,39 +221,6 @@ function structuredGroupTypeForCandidate(candidate: PricingGroupCandidate): Pric
     if (stationTypes[definition.groupType]?.includes(groupIdHash)) {
       return definition.groupType;
     }
-  }
-  return null;
-}
-
-function groupTypeFromPlatform(platform: string): PricingGroupType | null {
-  const normalized = normalizeText(platform);
-  if (["openai", "gpt"].includes(normalized)) {
-    return "gpt";
-  }
-  if (["anthropic", "claude"].includes(normalized)) {
-    return "claude";
-  }
-  if (["google", "gemini"].includes(normalized)) {
-    return "gemini";
-  }
-  if (["grok", "xai", "x-ai"].includes(normalized)) {
-    return "grok";
-  }
-  return null;
-}
-
-function groupTypeFromText(value: string): PricingGroupType | null {
-  if (textMatchesAnyMatcher(value, ["claude", "anthropic", "sonnet", "opus", "haiku", "yellow", "amber"])) {
-    return "claude";
-  }
-  if (textMatchesAnyMatcher(value, ["gemini", "google"])) {
-    return "gemini";
-  }
-  if (textMatchesAnyMatcher(value, ["grok", "xai", "x-ai"])) {
-    return "grok";
-  }
-  if (textMatchesAnyMatcher(value, ["openai", "gpt", "codex", "default", "green"])) {
-    return "gpt";
   }
   return null;
 }
@@ -288,65 +246,8 @@ function rowMatchesQuery(row: PricingComparisonRow, query: string, sectionTitle:
     .some((value) => value.includes(query));
 }
 
-function groupPlatformFromRawJson(value: Record<string, unknown> | null) {
-  const platform = stringFieldFromRecord(value, [
-    "platform",
-    "provider",
-    "model_provider",
-    "modelProvider",
-  ]);
-  return platform?.trim().toLowerCase() ?? null;
-}
-
-function isImageGenerationGroupName(value: string) {
-  return textMatchesAnyMatcher(value, imageGenerationGroupMatchers);
-}
-
-const imageGenerationGroupMatchers = ["图", "image", "images", "picture", "pictures", "dall-e", "midjourney"];
-
-function textMatchesAnyMatcher(value: string, matchers: string[]) {
-  const normalizedValue = normalizeText(value);
-  return matchers.map(normalizeText).filter(Boolean).some((matcher) => normalizedValue.includes(matcher));
-}
-
 function normalizeText(value: string) {
   return value.trim().toLowerCase().replace(/[_\s]+/g, "-");
-}
-
-function searchableJsonText(value: Record<string, unknown> | null) {
-  if (!value) {
-    return "";
-  }
-  return collectJsonText(value).join(" ");
-}
-
-function collectJsonText(value: unknown): string[] {
-  if (value === null || value === undefined) {
-    return [];
-  }
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return [String(value)];
-  }
-  if (Array.isArray(value)) {
-    return value.flatMap(collectJsonText);
-  }
-  if (typeof value === "object") {
-    return Object.entries(value).flatMap(([key, nestedValue]) => [key, ...collectJsonText(nestedValue)]);
-  }
-  return [];
-}
-
-function stringFieldFromRecord(value: Record<string, unknown> | null, keys: string[]) {
-  if (!value) {
-    return null;
-  }
-  for (const key of keys) {
-    const fieldValue = value[key];
-    if (typeof fieldValue === "string" && fieldValue.trim()) {
-      return fieldValue;
-    }
-  }
-  return null;
 }
 
 function safeCreditPerCny(value: number) {

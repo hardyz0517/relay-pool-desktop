@@ -121,6 +121,12 @@ pub fn apply_collector_facts(
             credit_unit: balance.credit_unit,
             used_value: balance.used_value,
             total_value: balance.total_value,
+            today_request_count: balance.today_request_count,
+            total_request_count: balance.total_request_count,
+            today_consumption: balance.today_consumption,
+            total_consumption: balance.total_consumption,
+            today_token_count: balance.today_token_count,
+            total_token_count: balance.total_token_count,
             low_balance_threshold: None,
             status: balance.status,
             source: balance.source,
@@ -142,6 +148,8 @@ pub fn apply_collector_facts(
             default_rate_multiplier: None,
             user_rate_multiplier: None,
             effective_rate_multiplier: None,
+            inferred_group_category: group.inferred_group_category,
+            group_category_override: None,
             rate_source: Some(group.source),
             confidence: group.confidence,
             last_seen_at: None,
@@ -166,6 +174,8 @@ pub fn apply_collector_facts(
             default_rate_multiplier: rate.default_rate_multiplier,
             user_rate_multiplier: rate.user_rate_multiplier,
             effective_rate_multiplier: rate.effective_rate_multiplier,
+            inferred_group_category: rate.inferred_group_category.clone(),
+            group_category_override: None,
             rate_source: Some(rate.source.clone()),
             confidence: rate.confidence,
             binding_status: if is_key_binding {
@@ -186,6 +196,7 @@ pub fn apply_collector_facts(
             default_rate_multiplier: rate.default_rate_multiplier,
             user_rate_multiplier: rate.user_rate_multiplier,
             effective_rate_multiplier: rate.effective_rate_multiplier,
+            inferred_group_category: rate.inferred_group_category,
             source: rate.source,
             confidence: rate.confidence,
             raw_json_redacted: rate.raw_json_redacted,
@@ -275,7 +286,21 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
             continue;
         }
 
-        let Some((value, used_value, total_value, currency, credit_unit, confidence, collected_at)) =
+        let Some((
+            value,
+            used_value,
+            total_value,
+            today_request_count,
+            total_request_count,
+            today_consumption,
+            total_consumption,
+            today_token_count,
+            total_token_count,
+            currency,
+            credit_unit,
+            confidence,
+            collected_at,
+        )) =
             ({
                 let key_balances = balances
                     .iter()
@@ -288,6 +313,24 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
                     sum_present_values(key_balances.iter().map(|balance| balance.used_value));
                 let total_value =
                     sum_present_values(key_balances.iter().map(|balance| balance.total_value));
+                let today_request_count = sum_present_i64_values(
+                    key_balances.iter().map(|balance| balance.today_request_count),
+                );
+                let total_request_count = sum_present_i64_values(
+                    key_balances.iter().map(|balance| balance.total_request_count),
+                );
+                let today_consumption = sum_present_values(
+                    key_balances.iter().map(|balance| balance.today_consumption),
+                );
+                let total_consumption = sum_present_values(
+                    key_balances.iter().map(|balance| balance.total_consumption),
+                );
+                let today_token_count = sum_present_i64_values(
+                    key_balances.iter().map(|balance| balance.today_token_count),
+                );
+                let total_token_count = sum_present_i64_values(
+                    key_balances.iter().map(|balance| balance.total_token_count),
+                );
                 let currency =
                     shared_text_value(key_balances.iter().map(|balance| balance.currency.as_str()))
                         .unwrap_or("CNY")
@@ -312,6 +355,12 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
                         value,
                         used_value,
                         total_value,
+                        today_request_count,
+                        total_request_count,
+                        today_consumption,
+                        total_consumption,
+                        today_token_count,
+                        total_token_count,
                         currency,
                         credit_unit,
                         confidence,
@@ -330,6 +379,12 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
             value: Some(value),
             used_value,
             total_value,
+            today_request_count,
+            total_request_count,
+            today_consumption,
+            total_consumption,
+            today_token_count,
+            total_token_count,
             currency,
             credit_unit,
             status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
@@ -342,6 +397,16 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
 
 fn sum_present_values(values: impl Iterator<Item = Option<f64>>) -> Option<f64> {
     let mut total = 0.0;
+    let mut has_value = false;
+    for value in values.flatten() {
+        total += value;
+        has_value = true;
+    }
+    has_value.then_some(total)
+}
+
+fn sum_present_i64_values(values: impl Iterator<Item = Option<i64>>) -> Option<i64> {
+    let mut total = 0_i64;
     let mut has_value = false;
     for value in values.flatten() {
         total += value;
@@ -442,11 +507,15 @@ mod tests {
                 api_key: format!("sk-{name}"),
                 enabled: true,
                 priority: None,
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
                 group_name: None,
                 tier_label: None,
                 group_binding_id: None,
                 group_id_hash: None,
                 rate_multiplier: None,
+                manual_rate_multiplier: None,
                 rate_source: None,
                 balance_scope: Some("station_key".to_string()),
                 note: None,
@@ -466,6 +535,12 @@ mod tests {
             value: Some(value),
             used_value: None,
             total_value: None,
+            today_request_count: None,
+            total_request_count: None,
+            today_consumption: None,
+            total_consumption: None,
+            today_token_count: None,
+            total_token_count: None,
             currency: "CNY".to_string(),
             credit_unit: None,
             status: "normal".to_string(),
@@ -518,6 +593,8 @@ mod tests {
                 default_rate_multiplier: Some(0.5),
                 user_rate_multiplier: None,
                 effective_rate_multiplier: Some(0.5),
+                inferred_group_category: Some("unknown".to_string()),
+                group_category_override: None,
                 rate_source: Some("sub2api_groups_rates".to_string()),
                 confidence: 0.9,
                 last_seen_at: Some("1000".to_string()),
@@ -534,6 +611,7 @@ mod tests {
                 group_key_hash: "fresh-hash".to_string(),
                 group_name: "fresh".to_string(),
                 visibility: "available".to_string(),
+                inferred_group_category: Some("unknown".to_string()),
                 source: "sub2api_groups_rates".to_string(),
                 confidence: 0.9,
                 raw_json_redacted: None,
@@ -576,6 +654,7 @@ mod tests {
                 group_key_hash: "group-image-universal".to_string(),
                 group_name: "万能生图".to_string(),
                 visibility: "available".to_string(),
+                inferred_group_category: Some("image_generation".to_string()),
                 source: "sub2api_groups_available".to_string(),
                 confidence: 0.9,
                 raw_json_redacted: None,
@@ -591,6 +670,7 @@ mod tests {
                 default_rate_multiplier: Some(1.0),
                 user_rate_multiplier: None,
                 effective_rate_multiplier: Some(1.0),
+                inferred_group_category: Some("image_generation".to_string()),
                 source: "sub2api_groups_rates".to_string(),
                 confidence: 0.9,
                 checked_at: Some("1000".to_string()),
@@ -630,6 +710,8 @@ mod tests {
                 default_rate_multiplier: Some(0.22),
                 user_rate_multiplier: None,
                 effective_rate_multiplier: Some(0.22),
+                inferred_group_category: Some("claude".to_string()),
+                group_category_override: None,
                 rate_source: Some("remote_scan".to_string()),
                 confidence: 0.9,
                 last_seen_at: Some("1000".to_string()),
@@ -646,6 +728,7 @@ mod tests {
                 group_key_hash: "latest-codex-0".to_string(),
                 group_name: "codex-0号池".to_string(),
                 visibility: "available".to_string(),
+                inferred_group_category: Some("gpt".to_string()),
                 source: "sub2api_groups_available".to_string(),
                 confidence: 0.9,
                 raw_json_redacted: Some(serde_json::json!({

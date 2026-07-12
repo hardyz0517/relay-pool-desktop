@@ -64,6 +64,8 @@ export function upsertStationGroupBinding(input: UpsertStationGroupBindingInput)
       defaultRateMultiplier: input.defaultRateMultiplier,
       userRateMultiplier: input.userRateMultiplier,
       effectiveRateMultiplier: input.effectiveRateMultiplier,
+      inferredGroupCategory: input.inferredGroupCategory,
+      groupCategoryOverride: input.groupCategoryOverride,
       rateSource: input.rateSource,
       confidence: input.confidence,
       lastSeenAt: input.lastSeenAt,
@@ -91,6 +93,9 @@ function stationGroupOptionFromBinding(binding: StationGroupBinding): StationGro
     groupIdHash: binding.groupIdHash,
     groupName: binding.groupName,
     rateMultiplier: binding.effectiveRateMultiplier ?? binding.defaultRateMultiplier,
+    inferredGroupCategory: binding.inferredGroupCategory ?? "unknown",
+    groupCategoryOverride: binding.groupCategoryOverride,
+    effectiveGroupCategory: binding.groupCategoryOverride ?? binding.inferredGroupCategory ?? "unknown",
     rateSource: binding.rateSource,
     selectableForRemoteKey: Boolean(binding.groupIdHash),
   };

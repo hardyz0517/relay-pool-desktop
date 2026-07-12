@@ -1,4 +1,10 @@
 import type { GroupRateRecord, StationGroupBinding, StationGroupOption } from "@/lib/types/groupFacts";
+import {
+  effectiveGroupCategory,
+  inferGroupCategoryFromEvidence,
+  normalizeGroupCategory,
+  type StationGroupCategory,
+} from "@/lib/groupCategories";
 
 export type StationGroupCurrentFact = {
   identityKey: string;
@@ -12,6 +18,9 @@ export type StationGroupCurrentFact = {
   bindingStatus: string;
   available: boolean;
   rateMultiplier: number | null;
+  inferredGroupCategory: StationGroupCategory;
+  groupCategoryOverride: StationGroupCategory | null;
+  effectiveGroupCategory: StationGroupCategory;
   rateSource: string | null;
   rateEvidenceId: string | null;
   rateCheckedAt: string | null;
@@ -56,7 +65,9 @@ function buildBindingIndex(bindings: StationGroupBinding[]) {
   return {
     ids: new Set(bindings.map((binding) => binding.id).filter(Boolean)),
     groupKeyHashes: new Set(bindings.map((binding) => binding.groupKeyHash).filter(Boolean)),
-    groupNames: new Set(bindings.map((binding) => normalizedName(binding.groupName)).filter(Boolean)),
+    stationGroupNames: new Set(
+      bindings.map((binding) => stationGroupNameKey(binding.stationId, binding.groupName)).filter(Boolean),
+    ),
   };
 }
 
@@ -70,7 +81,8 @@ function rateIsCoveredByBinding(
   if (rate.groupKeyHash && bindingIndex.groupKeyHashes.has(rate.groupKeyHash)) {
     return true;
   }
-  return !rate.groupBindingId && !rate.groupKeyHash && bindingIndex.groupNames.has(normalizedName(rate.groupName));
+  const stationGroupName = stationGroupNameKey(rate.stationId, rate.groupName);
+  return stationGroupName !== null && bindingIndex.stationGroupNames.has(stationGroupName);
 }
 
 export function latestGroupRatesByBindingOrHash(
@@ -105,6 +117,9 @@ export function buildStationGroupOptionsFromCurrentFacts(
       groupIdHash: fact.groupIdHash,
       groupName: fact.groupName,
       rateMultiplier: fact.rateMultiplier,
+      inferredGroupCategory: fact.inferredGroupCategory,
+      groupCategoryOverride: fact.groupCategoryOverride,
+      effectiveGroupCategory: fact.effectiveGroupCategory,
       rateSource: fact.rateSource,
       selectableForRemoteKey: Boolean(fact.groupIdHash),
     }));
@@ -143,6 +158,12 @@ function factFromBinding(
       binding.defaultRateMultiplier,
       latestRate?.defaultRateMultiplier,
     ),
+    inferredGroupCategory: inferCurrentGroupCategory(binding, latestRate),
+    groupCategoryOverride: normalizeGroupCategory(binding.groupCategoryOverride),
+    effectiveGroupCategory: effectiveGroupCategory(
+      inferCurrentGroupCategory(binding, latestRate),
+      binding.groupCategoryOverride,
+    ),
     rateSource: latestRate?.source ?? binding.rateSource ?? null,
     rateEvidenceId: latestRate?.id ?? null,
     rateCheckedAt: latestRate?.checkedAt ?? binding.lastCheckedAt,
@@ -168,12 +189,29 @@ function factFromRate(rate: GroupRateRecord, identityKey: string): StationGroupC
       rate.effectiveRateMultiplier,
       rate.defaultRateMultiplier,
     ),
+    inferredGroupCategory: inferCurrentGroupCategory(null, rate),
+    groupCategoryOverride: null,
+    effectiveGroupCategory: effectiveGroupCategory(inferCurrentGroupCategory(null, rate), null),
     rateSource: rate.source,
     rateEvidenceId: rate.id,
     rateCheckedAt: rate.checkedAt,
     sourceBinding: null,
     sourceRate: rate,
   };
+}
+
+function inferCurrentGroupCategory(
+  binding: StationGroupBinding | null,
+  rate: GroupRateRecord | null,
+): StationGroupCategory {
+  return (
+    normalizeGroupCategory(binding?.inferredGroupCategory) ??
+    normalizeGroupCategory(rate?.inferredGroupCategory) ??
+    inferGroupCategoryFromEvidence({
+      groupName: binding?.groupName ?? rate?.groupName ?? "",
+      rawJsonRedacted: rate?.rawJsonRedacted ?? binding?.rawJsonRedacted ?? null,
+    })
+  );
 }
 
 function identityKeyForBinding(binding: StationGroupBinding) {
@@ -200,4 +238,9 @@ function firstNumber(...values: Array<number | null | undefined>) {
 
 function normalizedName(value: string) {
   return value.trim().toLowerCase();
+}
+
+function stationGroupNameKey(stationId: string, groupName: string) {
+  const normalizedGroupName = normalizedName(groupName);
+  return normalizedGroupName ? `${stationId}:${normalizedGroupName}` : null;
 }

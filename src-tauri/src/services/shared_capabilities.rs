@@ -17,7 +17,10 @@ use crate::{
         },
         station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
     },
-    services::database::{self, AppDatabase},
+    services::{
+        database::{self, AppDatabase},
+        group_categories::{infer_group_category, normalize_group_category},
+    },
 };
 
 pub fn default_station_key_capabilities_input(
@@ -128,6 +131,24 @@ pub fn station_group_options_from_facts(
                 .group_id_hash
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty());
+            let inferred_group_category = normalize_group_category(
+                binding
+                    .inferred_group_category
+                    .as_deref()
+                    .or_else(|| rate.and_then(|record| record.inferred_group_category.as_deref())),
+            )
+            .unwrap_or_else(|| {
+                infer_group_category(
+                    &binding.group_name,
+                    rate.and_then(|record| record.raw_json_redacted.as_ref())
+                        .or(binding.raw_json_redacted.as_ref()),
+                )
+            });
+            let group_category_override =
+                normalize_group_category(binding.group_category_override.as_deref());
+            let effective_group_category = group_category_override
+                .clone()
+                .unwrap_or_else(|| inferred_group_category.clone());
 
             Some(StationGroupOption {
                 value,
@@ -135,6 +156,9 @@ pub fn station_group_options_from_facts(
                 group_id_hash,
                 group_name: binding.group_name,
                 rate_multiplier,
+                inferred_group_category: Some(inferred_group_category),
+                group_category_override,
+                effective_group_category,
                 rate_source,
                 selectable_for_remote_key,
             })
@@ -222,11 +246,15 @@ fn create_station_key(
             api_key: api_key.to_string(),
             enabled: input.enabled,
             priority: input.priority,
+            max_concurrency: None,
+            load_factor: None,
+            schedulable: None,
             group_name: None,
             tier_label: input.tier_label.clone(),
             group_binding_id: None,
             group_id_hash: None,
             rate_multiplier: None,
+            manual_rate_multiplier: None,
             rate_source: None,
             balance_scope: input.balance_scope.clone(),
             note: input.note.clone(),
@@ -244,11 +272,15 @@ fn create_station_key(
                 api_key: None,
                 enabled: created.enabled,
                 priority: created.priority,
+                max_concurrency: created.max_concurrency,
+                load_factor: created.load_factor,
+                schedulable: created.schedulable,
                 group_name: created.group_name.clone(),
                 tier_label: created.tier_label.clone(),
                 group_binding_id: created.group_binding_id.clone(),
                 group_id_hash: created.group_id_hash.clone(),
                 rate_multiplier: created.rate_multiplier,
+                manual_rate_multiplier: None,
                 rate_source: created.rate_source.clone(),
                 balance_scope: created.balance_scope.clone(),
                 status,
@@ -283,11 +315,15 @@ fn update_station_key(
             api_key: input.api_key.clone(),
             enabled: input.enabled,
             priority: input.priority.unwrap_or(existing.priority),
+            max_concurrency: existing.max_concurrency,
+            load_factor: existing.load_factor,
+            schedulable: existing.schedulable,
             group_name: existing.group_name.clone(),
             tier_label: input.tier_label.clone(),
             group_binding_id: existing.group_binding_id.clone(),
             group_id_hash: existing.group_id_hash.clone(),
             rate_multiplier: existing.rate_multiplier,
+            manual_rate_multiplier: None,
             rate_source: existing.rate_source.clone(),
             balance_scope: input.balance_scope.clone().or(existing.balance_scope),
             status: input.status.clone().unwrap_or(existing.status),
@@ -418,6 +454,8 @@ mod tests {
             last_seen_at: Some("1000".to_string()),
             last_checked_at: Some("1000".to_string()),
             last_rate_changed_at: None,
+            inferred_group_category: Some("gpt".to_string()),
+            group_category_override: None,
             raw_json_redacted: None,
             created_at: "1000".to_string(),
             updated_at: "1000".to_string(),
@@ -438,6 +476,7 @@ mod tests {
             effective_rate_multiplier: Some(1.1),
             source: "rate_api".to_string(),
             confidence: 1.0,
+            inferred_group_category: Some("gpt".to_string()),
             raw_json_redacted: None,
             checked_at: "1000".to_string(),
             created_at: "1000".to_string(),

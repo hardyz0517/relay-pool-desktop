@@ -21,7 +21,8 @@ assert.ok(
 
 assert.ok(
   source.includes("void refreshStationAssetEnrichment(nextStations") &&
-    source.indexOf("setStations(nextStations)") < source.indexOf("void refreshStationAssetEnrichment(nextStations"),
+    source.indexOf("setStations((currentStations)") <
+      source.indexOf("void refreshStationAssetEnrichment(nextStations"),
   "station asset enrichment should start only after the station list has been committed",
 );
 
@@ -31,4 +32,17 @@ assert.ok(
     source.includes("listChangeEvents()") &&
     source.includes("getLatestCollectorSnapshot(station.id)"),
   "station asset enrichment should tolerate partial failures across balances, changes, and collector snapshots",
+);
+
+assert.ok(
+  source.includes("areStationAssetListsEqual(currentStations, nextStations)") &&
+    source.includes("return currentStations;"),
+  "silent station asset refresh should keep the existing station array when list data is unchanged",
+);
+
+assert.ok(
+  source.includes("shouldAnimateStationAssetLayoutChanges") &&
+    source.includes("animateLayoutChanges: shouldAnimateStationAssetLayoutChanges") &&
+    source.includes("isSorting || wasDragging"),
+  "station rows should not run sortable layout animations for background refreshes or return-navigation reactivation",
 );

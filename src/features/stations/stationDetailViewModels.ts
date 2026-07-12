@@ -11,6 +11,7 @@ import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
+import type { StationGroupCategory } from "@/lib/groupCategories";
 import type { StationKey } from "@/lib/types/stationKeys";
 import type { StationCredentials } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
@@ -28,6 +29,7 @@ export type StationDetailGroupRow = {
   id: string;
   groupName: string;
   rawJsonRedacted: Record<string, unknown> | null;
+  effectiveGroupCategory: StationGroupCategory;
   effectiveRate: string;
   defaultRate: string;
   userRate: string;
@@ -51,6 +53,7 @@ export type StationDetailViewModel = {
   statusTone: DetailTone;
   lastActivityLabel: string;
   balanceCards: StationDetailBalanceCard[];
+  usageCards: StationDetailBalanceCard[];
   groupRows: StationDetailGroupRow[];
   groupEmptyMessage: string;
   loginItems: StationDetailDiagnosticItem[];
@@ -210,6 +213,40 @@ export function buildBalanceCards(station: Station, balances: BalanceSnapshot[])
   ];
 }
 
+export function buildUsageCards(station: Station, balances: BalanceSnapshot[]): StationDetailBalanceCard[] {
+  const currentBalance = currentStationBalanceFor({ station, balances });
+  const hasUsage = hasCollectedUsage(currentBalance.sourceSnapshot);
+
+  return [
+    {
+      label: "今日请求",
+      value: formatUsageCount(currentBalance.sourceSnapshot?.todayRequestCount),
+      helper: `累计 ${formatUsageCount(currentBalance.sourceSnapshot?.totalRequestCount)}`,
+      tone: hasUsage ? "good" : "muted",
+    },
+    {
+      label: "今日消费",
+      value: formatUsageMoney(currentBalance.sourceSnapshot?.todayConsumption),
+      helper: `累计 ${formatUsageMoney(currentBalance.sourceSnapshot?.totalConsumption)}`,
+      tone: hasUsage ? "neutral" : "muted",
+    },
+    {
+      label: "今日 Token",
+      value: formatUsageCount(currentBalance.sourceSnapshot?.todayTokenCount),
+      helper: "中转站后台统计",
+      tone: hasUsage ? "neutral" : "muted",
+    },
+    {
+      label: "累计 Token",
+      value: formatUsageCount(currentBalance.sourceSnapshot?.totalTokenCount),
+      helper: currentBalance.collectedAt
+        ? `采集时间：${formatDetailDate(currentBalance.collectedAt)}`
+        : "等待采集器写入用量快照",
+      tone: hasUsage ? "neutral" : "muted",
+    },
+  ];
+}
+
 export function buildGroupRows(
   bindings: StationGroupBinding[],
   rates: GroupRateRecord[],
@@ -227,6 +264,7 @@ function groupRowFromCurrentFact(fact: StationGroupCurrentFact): StationDetailGr
     id: fact.groupBindingId ?? fact.identityKey,
     groupName: fact.groupName || "未命名分组",
     rawJsonRedacted: fact.sourceRate?.rawJsonRedacted ?? fact.sourceBinding?.rawJsonRedacted ?? null,
+    effectiveGroupCategory: fact.effectiveGroupCategory,
     effectiveRate: formatRate(fact.rateMultiplier, "未确定"),
     defaultRate: formatRate(defaultRate),
     userRate: formatRate(userRate, "未覆盖"),
@@ -286,6 +324,7 @@ export function buildStationDetailViewModel({
     statusTone: statusTone(station),
     lastActivityLabel: formatDetailDate(latestActivity),
     balanceCards: buildBalanceCards(station, balances),
+    usageCards: buildUsageCards(station, balances),
     groupRows: buildGroupRows(
       groupBindings.filter((binding) => binding.stationId === station.id),
       groupRates.filter((rate) => rate.stationId === station.id),
@@ -398,6 +437,34 @@ function balanceToneFor(
     return "warning";
   }
   return "good";
+}
+
+function hasCollectedUsage(snapshot: BalanceSnapshot | null) {
+  return Boolean(
+    snapshot &&
+      [
+        snapshot.todayRequestCount,
+        snapshot.totalRequestCount,
+        snapshot.todayConsumption,
+        snapshot.totalConsumption,
+        snapshot.todayTokenCount,
+        snapshot.totalTokenCount,
+      ].some((value) => typeof value === "number" && Number.isFinite(value)),
+  );
+}
+
+function formatUsageCount(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) {
+    return "未采集";
+  }
+  return value.toLocaleString("zh-CN");
+}
+
+function formatUsageMoney(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) {
+    return "未采集";
+  }
+  return `$${value.toFixed(value >= 100 ? 2 : 4)}`;
 }
 
 function groupWarningForFact(fact: StationGroupCurrentFact) {

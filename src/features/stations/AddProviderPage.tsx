@@ -20,7 +20,9 @@ import {
   updateStationKey,
 } from "@/lib/api/stationKeys";
 import { createStation, listStations, updateStation } from "@/lib/api/stations";
+import { getSettings } from "@/lib/api/settings";
 import { readError } from "@/lib/errors";
+import { inferGroupCategoryFromEvidence, normalizeGroupCategory } from "@/lib/groupCategories";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import {
@@ -203,6 +205,13 @@ function groupBindingToDraft(
     latestRate?.userRateMultiplier ??
     latestRate?.effectiveRateMultiplier ??
     latestRate?.defaultRateMultiplier;
+  const inferredGroupCategory =
+    normalizeGroupCategory(binding.inferredGroupCategory) ??
+    normalizeGroupCategory(latestRate?.inferredGroupCategory) ??
+    inferGroupCategoryFromEvidence({
+      groupName: binding.groupName || latestRate?.groupName || "",
+      rawJsonRedacted: latestRate?.rawJsonRedacted ?? binding.rawJsonRedacted,
+    });
   return {
     clientId: binding.id,
     groupBindingId: binding.id,
@@ -210,6 +219,8 @@ function groupBindingToDraft(
     groupIdHash: binding.groupIdHash,
     groupName: binding.groupName || latestRate?.groupName || "",
     rateMultiplier: rateMultiplier == null ? "" : String(rateMultiplier),
+    inferredGroupCategory,
+    groupCategoryOverride: normalizeGroupCategory(binding.groupCategoryOverride),
     source: isRemoteGroupSource(binding.rateSource ?? latestRate?.source ?? null) ? "remote" : "manual",
     deleteRequested: false,
   };
@@ -259,6 +270,9 @@ function groupDraftToOption(row: StationGroupDraft): StationKeyGroupOption | nul
     groupIdHash: row.groupIdHash,
     groupName: row.groupName.trim(),
     rateMultiplier: parseDraftRateMultiplier(row.rateMultiplier),
+    inferredGroupCategory: row.inferredGroupCategory,
+    groupCategoryOverride: row.groupCategoryOverride,
+    effectiveGroupCategory: row.groupCategoryOverride ?? row.inferredGroupCategory,
     rateSource: null,
     selectableForRemoteKey: Boolean(row.groupBindingId || row.groupIdHash),
   };
@@ -282,6 +296,8 @@ function mergeKeyRowsWithSavedGroupOptions(
       groupIdHash: group.groupIdHash,
       groupName: group.groupName,
       rateMultiplier: group.rateMultiplier === null ? row.rateMultiplier : formatMultiplier(group.rateMultiplier),
+      inferredGroupCategory: group.inferredGroupCategory,
+      groupCategoryOverride: group.groupCategoryOverride,
     };
   });
 }
@@ -305,6 +321,8 @@ function mergeGroupRowsWithSavedOptions(
         groupIdHash: group.groupIdHash,
         groupName: group.groupName,
         rateMultiplier: group.rateMultiplier === null ? row.rateMultiplier : formatMultiplier(group.rateMultiplier),
+        inferredGroupCategory: normalizeGroupCategory(group.inferredGroupCategory) ?? "unknown",
+        groupCategoryOverride: group.groupCategoryOverride,
       };
     }),
   );
@@ -353,6 +371,9 @@ function mergeDuplicateGroupRow(existing: StationGroupDraft, incoming: StationGr
     groupIdHash: incoming.groupIdHash ?? existing.groupIdHash,
     groupName: incoming.groupName.trim() || existing.groupName,
     rateMultiplier: incoming.rateMultiplier.trim() || existing.rateMultiplier || fallback.rateMultiplier,
+    inferredGroupCategory:
+      incoming.inferredGroupCategory === "unknown" ? existing.inferredGroupCategory : incoming.inferredGroupCategory,
+    groupCategoryOverride: incoming.groupCategoryOverride ?? existing.groupCategoryOverride,
     source: incoming.source === "remote" ? "remote" : existing.source,
     deleteRequested: existing.deleteRequested && incoming.deleteRequested,
   };
@@ -383,10 +404,10 @@ function parseOptionalRateMultiplier(value: string) {
   }
   const rate = Number(value);
   if (!Number.isFinite(rate)) {
-    throw new Error("密钥倍率必须是大于 0 的有效数字");
+    throw new Error("倍率必须是大于等于 0 的有效数字");
   }
-  if (rate <= 0) {
-    throw new Error("密钥倍率必须大于 0");
+  if (rate < 0) {
+    throw new Error("倍率不能小于 0");
   }
   return rate;
 }
@@ -396,7 +417,7 @@ function parseDraftRateMultiplier(value: string) {
     return null;
   }
   const rate = Number(value);
-  return Number.isFinite(rate) && rate > 0 ? rate : null;
+  return Number.isFinite(rate) && rate >= 0 ? rate : null;
 }
 
 function validateKeyRows(rows: StationKeyDraft[]) {
@@ -521,6 +542,8 @@ async function saveGroupRows(targetStationId: string, rows: StationGroupDraft[])
       defaultRateMultiplier: row.source === "remote" ? rateMultiplier : null,
       userRateMultiplier: row.source === "manual" ? rateMultiplier : null,
       effectiveRateMultiplier: rateMultiplier,
+      inferredGroupCategory: row.inferredGroupCategory,
+      groupCategoryOverride: row.groupCategoryOverride,
       rateSource: row.source === "remote" ? "remote_scan" : "manual",
       confidence: row.source === "remote" ? 0.95 : 1,
       lastSeenAt: row.source === "remote" ? new Date().toISOString() : null,
@@ -538,6 +561,9 @@ async function saveGroupRows(targetStationId: string, rows: StationGroupDraft[])
       groupName: saved.groupName,
       rateMultiplier:
         saved.userRateMultiplier ?? saved.effectiveRateMultiplier ?? saved.defaultRateMultiplier,
+      inferredGroupCategory: saved.inferredGroupCategory ?? "unknown",
+      groupCategoryOverride: saved.groupCategoryOverride,
+      effectiveGroupCategory: saved.groupCategoryOverride ?? saved.inferredGroupCategory ?? "unknown",
       rateSource: saved.rateSource,
       selectableForRemoteKey: Boolean(saved.id || saved.groupIdHash),
     });
@@ -567,6 +593,8 @@ async function disableMatchingGroupBindings(
       defaultRateMultiplier: null,
       userRateMultiplier: null,
       effectiveRateMultiplier: null,
+      inferredGroupCategory: binding.inferredGroupCategory,
+      groupCategoryOverride: binding.groupCategoryOverride,
       rateSource: binding.rateSource,
       confidence: binding.confidence,
       lastSeenAt: binding.lastSeenAt,
@@ -618,6 +646,9 @@ function collectRemoteGroupOptions(remoteKeys: RemoteStationKey[]) {
       groupIdHash: key.groupIdHash,
       groupName,
       rateMultiplier: key.rateMultiplier,
+      inferredGroupCategory: inferGroupCategoryFromEvidence({ groupName, rawJsonRedacted: null }),
+      groupCategoryOverride: null,
+      effectiveGroupCategory: inferGroupCategoryFromEvidence({ groupName, rawJsonRedacted: null }),
       rateSource: null,
       selectableForRemoteKey: Boolean(key.groupIdHash),
     });
@@ -648,6 +679,9 @@ function mergeRemoteGroupOptions(
       groupIdHash: group.groupIdHash,
       groupName,
       rateMultiplier: group.rateMultiplier,
+      inferredGroupCategory: group.inferredGroupCategory,
+      groupCategoryOverride: group.groupCategoryOverride,
+      effectiveGroupCategory: group.effectiveGroupCategory,
       rateSource: group.rateSource,
       selectableForRemoteKey: group.selectableForRemoteKey,
     });
@@ -751,6 +785,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [createRemoteOpen, setCreateRemoteOpen] = useState(false);
   const [newapiRemoteCreateConfirm, setNewapiRemoteCreateConfirm] = useState<RemoteCreateInput | null>(null);
+  const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const editableGroupOptions = useMemo(() => {
@@ -793,6 +828,20 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     Boolean(remoteCapabilityError) ||
     savedStationCreateRemoteUnavailable ||
     createPageCreateRemoteUnavailable;
+
+  useEffect(() => {
+    let alive = true;
+    void getSettings()
+      .then((settings) => {
+        if (alive) {
+          setDeveloperModeEnabled(settings.developerModeEnabled);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     setActiveStationId(stationId ?? null);
@@ -1541,6 +1590,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
               }
             >
               <StationGroupRowsEditor
+                developerModeEnabled={developerModeEnabled}
                 disabled={saving || loading}
                 rows={groupRows}
                 onRowsChange={(rows) => setGroupRows(dedupeGroupRows(rows))}

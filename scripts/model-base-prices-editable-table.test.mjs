@@ -121,6 +121,27 @@ assert.ok(
 );
 
 assert.ok(
+  createDialogSource.includes('<DateField label="检查日期"') &&
+    source.includes("CalendarDays") &&
+    source.includes("function DateField") &&
+    source.includes("function DatePickerPanel") &&
+    source.includes("createPortal(") &&
+    source.includes('className="fixed z-[70] w-[236px]') &&
+    !createDialogSource.includes('inputType="date"') &&
+    !source.includes('type={numeric ? "number" : inputType ?? "text"}'),
+  "checked date should use a compact app-styled date picker instead of the browser-native date input",
+);
+
+assert.ok(
+    source.includes("const canOpenBelow = spaceBelow >= panelHeight;") &&
+    source.includes("const canOpenAbove = spaceAbove >= panelHeight;") &&
+    source.includes("const openBelow = canOpenBelow || !canOpenAbove;") &&
+    source.includes("const preferredLeft = rect.right - panelWidth;") &&
+    !source.includes("spaceAbove > spaceBelow"),
+  "date picker should prefer opening below whenever there is enough viewport space and align to the trigger instead of drifting left",
+);
+
+assert.ok(
   !createDialogSource.includes("启用模型基准价格") &&
     !createDialogSource.includes("onCheckedChange={() => setCreateDraft({ ...createDraft, enabled: !createDraft.enabled })}"),
   "new base price dialog should omit the enabled switch while keeping new rows enabled by default",

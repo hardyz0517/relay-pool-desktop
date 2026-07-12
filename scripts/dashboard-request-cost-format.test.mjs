@@ -19,8 +19,7 @@ async function importRequestCostFormat() {
   return import(`file://${outputPath.replaceAll("\\", "/")}`);
 }
 
-const { formatRequestCost } = await importRequestCostFormat();
-const { requestBaseCostValue } = await importRequestCostFormat();
+const { formatRequestCost, formatRecentRequestCost, requestBaseCostValue } = await importRequestCostFormat();
 
 assert.equal(
   formatRequestCost(0.00001725, "USD", "base_price_only"),
@@ -37,6 +36,19 @@ assert.equal(
 assert.equal(formatRequestCost(1.25, "USD", "priced"), "$1.2500");
 assert.equal(formatRequestCost(null, "USD", "usage_only"), "未定价");
 assert.equal(formatRequestCost(null, "USD", null), "-");
+
+assert.equal(
+  formatRecentRequestCost(0.00001725, "USD", "base_price_only"),
+  "< $0.0001",
+  "recent usage costs should show at most four decimal places without hiding non-zero costs",
+);
+assert.equal(
+  formatRecentRequestCost(0.000000001, "USD", "priced"),
+  "< $0.0001",
+  "recent usage costs below the four-decimal precision should stay compact",
+);
+assert.equal(formatRecentRequestCost(1.25, "USD", "priced"), "$1.2500");
+assert.equal(formatRecentRequestCost(null, "USD", "usage_only"), "未定价");
 
 assert.equal(
   requestBaseCostValue({

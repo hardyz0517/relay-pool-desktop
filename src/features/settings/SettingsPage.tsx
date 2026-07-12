@@ -18,19 +18,20 @@ import { useUpdater } from "@/features/updater/UpdaterProvider";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import {
   collectorProxyModeLabels,
-  routingStrategyLabels,
+  DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   type AppSettings,
   type CollectorProxyMode,
-  type RoutingStrategy,
   type TrayBehavior,
   type UpdateSettingsInput,
 } from "@/lib/types/settings";
+import type { RoutingGroupFilter, PricingGroupType } from "@/lib/types/routing";
 
 type SettingsFormState = {
   localProxyPort: string;
-  defaultRoutingStrategy: RoutingStrategy;
   collectorProxyMode: CollectorProxyMode;
   collectorProxyUrl: string;
+  maxRateMultiplier: string;
+  defaultRoutingGroupFilter: RoutingGroupPreset;
   lowBalanceThresholdCny: string;
   collectorIntervalMinutes: string;
   balanceIntervalMinutes: string;
@@ -44,12 +45,17 @@ type SettingsFormState = {
   developerModeEnabled: boolean;
 };
 
+type RoutingGroupPreset = "all_groups" | "ungrouped_only" | PricingGroupType;
+
 const fallbackSettings: AppSettings = {
   localProxyPort: 8787,
   localKeyMasked: "未读取",
-  defaultRoutingStrategy: "cost_stable_first",
+  defaultRoutingStrategy: "automatic_balanced",
   collectorProxyMode: "direct",
   collectorProxyUrl: null,
+  maxRateMultiplier: null,
+  defaultRoutingGroupFilter: "all_groups",
+  schedulerAdvancedSettings: DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   lowBalanceThresholdCny: 15,
   collectorIntervalMinutes: 30,
   balanceIntervalMinutes: 5,
@@ -169,11 +175,6 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
     );
   }
 
-  async function handleDefaultRoutingStrategyChange(defaultRoutingStrategy: RoutingStrategy) {
-    const nextForm = { ...form, defaultRoutingStrategy };
-    await commitSettingsForm(nextForm, "默认路由策略已更新");
-  }
-
   async function handleCollectorProxyModeChange(collectorProxyMode: CollectorProxyMode) {
     const nextForm =
       collectorProxyMode === "manual"
@@ -289,7 +290,7 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
     setSaving(true);
     setError(null);
     try {
-      const nextSettings = await updateSettings(formToInput(nextForm));
+      const nextSettings = await updateSettings(formToInput(nextForm, settings));
       setSettings(nextSettings);
       setForm(settingsToForm(nextSettings));
       window.dispatchEvent(new CustomEvent<AppSettings>(SETTINGS_UPDATED_EVENT, { detail: nextSettings }));
@@ -396,19 +397,38 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
         <SectionCard contentClassName="p-0" title="采集与路由">
           <SettingRow
             control={
-              <SelectControl
-                ariaLabel="默认路由策略"
+              <input
                 className={inputClassName}
-                value={form.defaultRoutingStrategy}
-                options={Object.entries(routingStrategyLabels).map(([value, label]) => ({
-                  value: value as RoutingStrategy,
-                  label,
-                }))}
-                onChange={(defaultRoutingStrategy) => void handleDefaultRoutingStrategyChange(defaultRoutingStrategy)}
+                min="0"
+                step="0.01"
+                type="number"
+                value={form.maxRateMultiplier}
+                onChange={(event) =>
+                  setForm({ ...form, maxRateMultiplier: event.target.value })
+                }
+                onBlur={() => void commitSettingsForm(form, "???????")}
               />
             }
-            description="当前本地代理会按所选策略对密钥池候选排序。"
-            label="默认路由策略"
+            description="??????????????????????? Key ?????????????????????????????"
+            label="????"
+          />
+          <SettingRow
+            control={
+              <SelectControl
+                ariaLabel="??????"
+                className={inputClassName}
+                value={form.defaultRoutingGroupFilter}
+                options={routingGroupPresetOptions}
+                onChange={(defaultRoutingGroupFilter) =>
+                  setForm({
+                    ...form,
+                    defaultRoutingGroupFilter: defaultRoutingGroupFilter as RoutingGroupPreset,
+                  })
+                }
+              />
+            }
+            description="????????????? Key????????????? GPT ???? GPT ?????"
+            label="??????"
           />
           <SettingRow
             control={
@@ -740,9 +760,10 @@ function SettingRow({
 function settingsToForm(settings: AppSettings): SettingsFormState {
   return {
     localProxyPort: String(settings.localProxyPort),
-    defaultRoutingStrategy: settings.defaultRoutingStrategy,
     collectorProxyMode: settings.collectorProxyMode,
     collectorProxyUrl: settings.collectorProxyUrl ?? "",
+    maxRateMultiplier: settings.maxRateMultiplier == null ? "" : String(settings.maxRateMultiplier),
+    defaultRoutingGroupFilter: routingGroupFilterToPreset(settings.defaultRoutingGroupFilter),
     lowBalanceThresholdCny: String(settings.lowBalanceThresholdCny),
     collectorIntervalMinutes: String(settings.collectorIntervalMinutes),
     balanceIntervalMinutes: String(settings.balanceIntervalMinutes),
@@ -757,14 +778,17 @@ function settingsToForm(settings: AppSettings): SettingsFormState {
   };
 }
 
-function formToInput(form: SettingsFormState): UpdateSettingsInput {
+function formToInput(form: SettingsFormState, settings: AppSettings): UpdateSettingsInput {
   return {
     localProxyPort: Number(form.localProxyPort),
-    defaultRoutingStrategy: form.defaultRoutingStrategy,
+    defaultRoutingStrategy: "automatic_balanced",
     collectorProxyMode: form.collectorProxyMode,
     collectorProxyUrl: form.collectorProxyMode === "manual" && form.collectorProxyUrl.trim()
       ? form.collectorProxyUrl.trim()
       : null,
+    maxRateMultiplier: parseNullableNumber(form.maxRateMultiplier),
+    defaultRoutingGroupFilter: routingGroupPresetToFilter(form.defaultRoutingGroupFilter),
+    schedulerAdvancedSettings: settings.schedulerAdvancedSettings,
     lowBalanceThresholdCny: Number(form.lowBalanceThresholdCny),
     collectorIntervalMinutes: Number(form.collectorIntervalMinutes),
     balanceIntervalMinutes: Number(form.balanceIntervalMinutes),
@@ -792,6 +816,41 @@ function generateLocalAccessKey() {
   return `sk-local-${token}`;
 }
 
+const routingGroupPresetOptions: Array<{ value: RoutingGroupPreset; label: string }> = [
+  { value: "all_groups", label: "????" },
+  { value: "gpt", label: "GPT ??" },
+  { value: "claude", label: "Claude ??" },
+  { value: "gemini", label: "Gemini ??" },
+  { value: "grok", label: "Grok ??" },
+  { value: "image_generation", label: "????" },
+  { value: "ungrouped_only", label: "?????" },
+];
+
+function routingGroupFilterToPreset(filter: RoutingGroupFilter): RoutingGroupPreset {
+  if (filter === "all_groups" || filter === "ungrouped_only") {
+    return filter;
+  }
+  if ("group_type" in filter) {
+    return filter.group_type;
+  }
+  return "all_groups";
+}
+
+function routingGroupPresetToFilter(preset: RoutingGroupPreset): RoutingGroupFilter {
+  if (preset === "all_groups" || preset === "ungrouped_only") {
+    return preset;
+  }
+  return { group_type: preset };
+}
+
+function parseNullableNumber(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const numeric = Number(trimmed);
+  return Number.isFinite(numeric) ? numeric : null;
+}
 
 const inputClassName =
   "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:bg-white focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";

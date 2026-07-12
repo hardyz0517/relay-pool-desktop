@@ -19,6 +19,21 @@ for (const file of sourceFiles) {
   );
 }
 
+const confirmDialogSource = await readFile("src/components/ui/ConfirmDialog.tsx", "utf8");
+
+assert.ok(
+  !confirmDialogSource.includes("bg-slate-900/45") &&
+    !confirmDialogSource.includes("bg-slate-900/40") &&
+    !confirmDialogSource.includes("bg-slate-900/30"),
+  "ConfirmDialog should avoid a heavy dark overlay that makes the underlying page look gray",
+);
+
+assert.ok(
+  confirmDialogSource.includes("bg-white/30") &&
+    confirmDialogSource.includes("backdrop-blur-[1px]"),
+  "ConfirmDialog should use a light veil so destructive confirmations do not visually mute the whole page",
+);
+
 const destructiveSurfaces = [
   "src/features/changes/ChangeCenterPage.tsx",
   "src/features/channels/ChannelMonitoringTab.tsx",

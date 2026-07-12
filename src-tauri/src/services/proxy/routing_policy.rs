@@ -106,6 +106,16 @@ pub fn select_route_candidates(
                 .as_ref()
                 .and_then(|economics| economics.economic_freshness.clone()),
             economic_reasons: candidate_economic_reasons(&candidate, request),
+            routing_group_scope: Some(request.routing_group_filter.clone()),
+            routing_group_match: true,
+            group_id_hash: None,
+            group_type: None,
+            effective_multiplier_source: None,
+            effective_multiplier_confidence: None,
+            scheduler_score: None,
+            scheduler_factors: Vec::new(),
+            top_k_rank: None,
+            slot_result: None,
         };
 
         if explanation.accepted {
@@ -130,6 +140,7 @@ pub fn select_route_candidates(
             .collect(),
         explanations,
         mapped_model,
+        scheduler_error_code: None,
     })
 }
 
@@ -200,7 +211,7 @@ fn add_stability_reason(explanations: &mut [RouteCandidateExplanation], station_
     }
 }
 
-fn mapped_model(model: Option<&str>, aliases: &[(String, String)]) -> Option<String> {
+pub(crate) fn mapped_model(model: Option<&str>, aliases: &[(String, String)]) -> Option<String> {
     let model = model?;
     aliases
         .iter()

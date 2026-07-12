@@ -138,4 +138,26 @@ assert.ok(
   "the host should use descriptor identity and Motion presence as its only exit state",
 );
 
+assert.ok(
+  appSource.includes("data-page-transition-layer") &&
+    appSource.includes("data-page-transition-state") &&
+    appSource.includes("data-page-transition-kind") &&
+    appSource.includes("data-page-transition-handoff") &&
+    !appSource.includes("data-page-transition-direction"),
+  "App and Host should expose stable direction-free transition attributes",
+);
+assert.ok(
+  appSource.includes('inert={inert ? "" : undefined}') &&
+    appSource.includes("aria-hidden={inert}") &&
+    hostSource.includes('inert={isPresent ? undefined : ""}') &&
+    hostSource.includes("aria-hidden={!isPresent}"),
+  "inactive shell and outgoing transient content should be isolated from focus and screen readers",
+);
+assert.ok(
+  appSource.includes("app-page-transition-stack") &&
+    appSource.includes("app-page-transition-layer") &&
+    hostSource.includes("app-page-transition-overlay"),
+  "App and Host should wire the transition stack, shell layer, and overlay classes",
+);
+
 console.log("page transition container contract ok");

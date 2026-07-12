@@ -54,6 +54,12 @@ export type BalanceSnapshot = {
   creditUnit: string | null;
   usedValue: number | null;
   totalValue: number | null;
+  todayRequestCount: number | null;
+  totalRequestCount: number | null;
+  todayConsumption: number | null;
+  totalConsumption: number | null;
+  todayTokenCount: number | null;
+  totalTokenCount: number | null;
   lowBalanceThreshold: number | null;
   status: "unknown" | "normal" | "low" | "depleted" | string;
   source: string;

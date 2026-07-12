@@ -263,11 +263,15 @@ fn save_created_remote_key(
             api_key: full_key.trim().to_string(),
             enabled: true,
             priority: None,
+            max_concurrency: None,
+            load_factor: None,
+            schedulable: None,
             group_name: remote_key.group_name.clone(),
             tier_label: remote_key.tier_label.clone(),
             group_binding_id,
             group_id_hash: remote_key.group_id_hash.clone(),
             rate_multiplier: remote_key.rate_multiplier,
+            manual_rate_multiplier: None,
             rate_source: remote_key.rate_source.clone(),
             balance_scope: None,
             note: Some("由远端站点创建并同步。".to_string()),
@@ -497,6 +501,9 @@ fn sync_station_key_metadata(
             api_key: None,
             enabled: local_key.enabled,
             priority: local_key.priority,
+            max_concurrency: local_key.max_concurrency,
+            load_factor: local_key.load_factor,
+            schedulable: local_key.schedulable,
             group_name: remote_key
                 .group_name
                 .clone()
@@ -511,6 +518,7 @@ fn sync_station_key_metadata(
                 .clone()
                 .or_else(|| local_key.group_id_hash.clone()),
             rate_multiplier: remote_key.rate_multiplier.or(local_key.rate_multiplier),
+            manual_rate_multiplier: None,
             rate_source: remote_key
                 .rate_source
                 .clone()
@@ -703,11 +711,15 @@ mod tests {
                     api_key: Some("sk-live-secret-abcdef".to_string()),
                     enabled: true,
                     priority: local_key.priority,
+                    max_concurrency: 3,
+                    load_factor: None,
+                    schedulable: true,
                     group_name: None,
                     tier_label: None,
                     group_binding_id: None,
                     group_id_hash: None,
                     rate_multiplier: None,
+                    manual_rate_multiplier: None,
                     rate_source: None,
                     balance_scope: local_key.balance_scope,
                     status: local_key.status,
@@ -732,6 +744,8 @@ mod tests {
                 rate_source: Some("sub2api_groups_rates".to_string()),
                 confidence: 0.95,
                 last_seen_at: Some("1000".to_string()),
+                inferred_group_category: Some("gpt".to_string()),
+                group_category_override: None,
                 raw_json_redacted: None,
             })
             .expect("group");
@@ -748,6 +762,12 @@ mod tests {
                 effective_rate_multiplier: Some(1.2),
                 source: "sub2api_groups_rates".to_string(),
                 confidence: 0.95,
+                inferred_group_category: Some(
+                    group
+                        .inferred_group_category
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                ),
                 raw_json_redacted: None,
                 checked_at: "2000".to_string(),
             })
@@ -845,11 +865,15 @@ mod tests {
                     api_key: masked,
                     enabled: true,
                     priority: None,
+                    max_concurrency: None,
+                    load_factor: None,
+                    schedulable: None,
                     group_name: remote_key.group_name.clone(),
                     tier_label: None,
                     group_binding_id: None,
                     group_id_hash: remote_key.group_id_hash.clone(),
                     rate_multiplier: None,
+                    manual_rate_multiplier: None,
                     rate_source: None,
                     balance_scope: Some("station_key".to_string()),
                     note: Some("旧版开关生成的遮罩占位 Key".to_string()),

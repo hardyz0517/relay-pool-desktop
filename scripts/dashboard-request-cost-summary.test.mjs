@@ -137,7 +137,7 @@ assert.doesNotMatch(
 );
 assert.match(
   dashboardSource,
-  /formatRequestCost\(requestBaseCostValue\(request\),\s*request\.costCurrency,\s*request\.costStatus\)/,
+  /formatRecentRequestCost\(requestBaseCostValue\(request\),\s*request\.costCurrency,\s*request\.costStatus\)/,
   "recent usage rows should display the single request 1x base cost after the actual charged cost",
 );
 assert.doesNotMatch(

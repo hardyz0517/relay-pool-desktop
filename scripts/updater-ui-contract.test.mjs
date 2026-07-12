@@ -9,6 +9,7 @@ const settings = await read("src/features/settings/SettingsPage.tsx");
 
 assert.ok(main.includes("UpdaterProvider"), "global updater provider must be mounted");
 assert.ok(provider.includes("setTimeout") && provider.includes("5_000"), "startup check must be delayed");
+assert.ok(provider.includes("checkNow({ notify: false })"), "startup update check must be silent");
 assert.ok(provider.includes("downloadPendingUpdate"));
 assert.ok(provider.includes("cleanupBeforeUpdate"));
 assert.ok(provider.includes("installPendingUpdateAndRelaunch"));
@@ -17,6 +18,8 @@ assert.ok(provider.includes("currentAppVersion()") && provider.includes(".catch(
 assert.ok(!provider.includes("toast.loading"), "update checks should not show loading toast");
 assert.ok(provider.includes('toast.success("已是最新")'), "up-to-date checks should use the exact success toast copy");
 assert.ok(provider.includes("toast.error"), "failed update checks should use toast errors");
+assert.ok(provider.includes("if (shouldNotify) toast.success"), "startup up-to-date checks must not show success toasts");
+assert.ok(provider.includes("if (shouldNotify) toast.error"), "startup failed checks must not show error toasts");
 assert.ok(dialog.includes("立即更新") && dialog.includes("稍后更新"));
 assert.ok(dialog.includes("正在进行的代理请求会被中断"), "dialog must disclose request interruption");
 assert.ok(dialog.includes("downloadedBytes") && dialog.includes("totalBytes"));

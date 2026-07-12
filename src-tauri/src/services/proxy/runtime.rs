@@ -16,7 +16,9 @@ use crate::{
     models::{
         pricing::{BalanceSnapshot, RequestCostEstimate, RequestUsage},
         proxy::{CreateRequestLogInput, ProxyStatus},
-        routing::{RouteCandidateExplanation, RouteEndpointKind, RoutingPolicy},
+        routing::{
+            RouteCandidateExplanation, RouteEndpointKind, RoutingGroupFilter, RoutingPolicy,
+        },
     },
     services::{
         database::{now_millis_for_services, AppDatabase},
@@ -37,6 +39,10 @@ use crate::{
             routing_health::{apply_health_transition, error_summary_for_failure},
             routing_probe::{ProbeCacheKey, ProbeConfirmationCache},
             routing_types::RouteHealthState,
+            scheduler::{
+                eligibility::evaluate_candidate,
+                types::{CandidateRejectionCode, ScheduleRequest},
+            },
             should_fallback, RouteCandidate,
         },
     },
@@ -841,9 +847,13 @@ fn select_proxy_route(
         .map_err(|error| ProxyResponse::json_error(500, "route_selector_error", &error))?;
     if route.accepted.is_empty() {
         let log_context = route_log_context(&route_request.policy, &route.explanations);
+        let error_code = route
+            .scheduler_error_code
+            .as_deref()
+            .unwrap_or("no_route_candidates");
         return Err(ProxyResponse::json_error(
             503,
-            "no_route_candidates",
+            error_code,
             &format!(
                 "没有可用 Station Key 支持该请求：model={} endpoint={:?} stream={}",
                 route_request.model.as_deref().unwrap_or("<none>"),
@@ -856,11 +866,110 @@ fn select_proxy_route(
     Ok(route)
 }
 
+fn revalidate_automatic_candidate_before_forward(
+    context: &ProxyServerContext,
+    route_request: &RouteRequest,
+    station_key_id: &str,
+) -> Result<(), ProxyResponse> {
+    if !matches!(route_request.policy, RoutingPolicy::AutomaticBalanced) {
+        return Ok(());
+    }
+    let max_rate_multiplier = route_request.max_rate_multiplier.ok_or_else(|| {
+        ProxyResponse::json_error(
+            503,
+            "routing_multiplier_limit_not_configured",
+            "自动路由需要先设置倍率上限",
+        )
+    })?;
+    if !max_rate_multiplier.is_finite() || max_rate_multiplier < 0.0 {
+        return Err(ProxyResponse::json_error(
+            503,
+            "routing_multiplier_limit_not_configured",
+            "自动路由倍率上限无效",
+        ));
+    }
+
+    let now_ms = now_millis_for_services() as i64;
+    let candidates = context
+        .database
+        .load_scheduler_candidates(&route_request.routing_group_filter, now_ms)
+        .map_err(|error| ProxyResponse::json_error(500, "database_error", &error))?;
+    let Some(candidate) = candidates
+        .into_iter()
+        .find(|candidate| candidate.station_key_id == station_key_id)
+    else {
+        return Err(ProxyResponse::json_error(
+            503,
+            missing_revalidation_candidate_error_code(&route_request.routing_group_filter),
+            "自动路由转发前预检失败：选中的 Key 已不在当前可调度候选中",
+        ));
+    };
+
+    let schedule_request = ScheduleRequest {
+        endpoint: route_request.endpoint.clone(),
+        requested_model: route_request.model.clone(),
+        mapped_model: route_request.model.clone(),
+        routing_group_filter: route_request.routing_group_filter.clone(),
+        stream: route_request.stream,
+        uses_tools: route_request.uses_tools,
+        uses_vision: route_request.uses_vision,
+        uses_reasoning: route_request.uses_reasoning,
+        max_rate_multiplier,
+        session_hash: route_request.session_hash.clone(),
+        previous_response_id: route_request.previous_response_id.clone(),
+        excluded_key_ids: route_request.excluded_key_ids.clone(),
+        now_ms,
+    };
+    evaluate_candidate(&schedule_request, &candidate).map_err(|rejection| {
+        ProxyResponse::json_error(
+            503,
+            candidate_revalidation_error_code(&rejection.reasons),
+            "自动路由转发前预检失败：选中的 Key 不再满足当前请求的硬约束",
+        )
+    })
+}
+
+fn missing_revalidation_candidate_error_code(filter: &RoutingGroupFilter) -> &'static str {
+    if matches!(filter, RoutingGroupFilter::AllGroups) {
+        "routing_no_eligible_candidate"
+    } else {
+        "routing_no_candidate_in_group_scope"
+    }
+}
+
+fn candidate_revalidation_error_code(reasons: &[CandidateRejectionCode]) -> &'static str {
+    if reasons.contains(&CandidateRejectionCode::MultiplierOverCeiling) {
+        return "routing_no_candidate_within_multiplier_limit";
+    }
+    if reasons.contains(&CandidateRejectionCode::MultiplierEvidenceExpired) {
+        return "routing_multiplier_evidence_expired";
+    }
+    if reasons.iter().any(|reason| {
+        matches!(
+            reason,
+            CandidateRejectionCode::NoMultiplierEvidence
+                | CandidateRejectionCode::MultiplierEvidenceInvalid
+                | CandidateRejectionCode::MultiplierEvidenceNegative
+                | CandidateRejectionCode::MultiplierEvidenceUnboundGroup
+                | CandidateRejectionCode::MultiplierEvidenceLowConfidence
+        )
+    }) {
+        return "routing_no_multiplier_evidence";
+    }
+    if reasons.contains(&CandidateRejectionCode::RoutingGroupMismatch) {
+        return "routing_no_candidate_in_group_scope";
+    }
+    "routing_no_eligible_candidate"
+}
+
 fn route_request_for_chat(
+    request: &ParsedRequest,
     model: Option<String>,
     stream: bool,
     body: &Value,
     policy: RoutingPolicy,
+    max_rate_multiplier: Option<f64>,
+    routing_group_filter: RoutingGroupFilter,
     allow_depleted_fallback: bool,
     current_station_key_id: Option<String>,
 ) -> RouteRequest {
@@ -872,6 +981,11 @@ fn route_request_for_chat(
         uses_vision: uses_vision(body),
         uses_reasoning: uses_reasoning(body, model.as_deref()),
         policy,
+        max_rate_multiplier,
+        routing_group_filter,
+        session_hash: request_session_hash(request, body),
+        previous_response_id: previous_response_id(body),
+        excluded_key_ids: Vec::new(),
         current_station_key_id,
         allow_depleted_fallback,
         now_ms: now_millis_for_services() as i64,
@@ -879,10 +993,13 @@ fn route_request_for_chat(
 }
 
 fn route_request_for_responses(
+    request: &ParsedRequest,
     model: Option<String>,
     stream: bool,
     body: &Value,
     policy: RoutingPolicy,
+    max_rate_multiplier: Option<f64>,
+    routing_group_filter: RoutingGroupFilter,
     allow_depleted_fallback: bool,
     current_station_key_id: Option<String>,
 ) -> RouteRequest {
@@ -894,6 +1011,11 @@ fn route_request_for_responses(
         uses_vision: uses_vision(body),
         uses_reasoning: uses_reasoning(body, model.as_deref()),
         policy,
+        max_rate_multiplier,
+        routing_group_filter,
+        session_hash: request_session_hash(request, body),
+        previous_response_id: previous_response_id(body),
+        excluded_key_ids: Vec::new(),
         current_station_key_id,
         allow_depleted_fallback,
         now_ms: now_millis_for_services() as i64,
@@ -912,26 +1034,9 @@ fn lookup_route_affinity(
         .and_then(|mut affinity| affinity.lookup(endpoint, model, now_millis_for_services() as i64))
 }
 
-fn routing_policy(context: &ProxyServerContext) -> RoutingPolicy {
-    context
-        .database
-        .get_settings()
-        .ok()
-        .map(|settings| parse_routing_policy(&settings.default_routing_strategy))
-        .unwrap_or(RoutingPolicy::PriorityFallback)
-}
-
-fn allow_depleted_fallback(context: &ProxyServerContext) -> bool {
-    context
-        .database
-        .get_settings()
-        .ok()
-        .map(|settings| settings.allow_depleted_fallback)
-        .unwrap_or(false)
-}
-
 fn parse_routing_policy(value: &str) -> RoutingPolicy {
     match value {
+        "automatic_balanced" | "automatic" => RoutingPolicy::AutomaticBalanced,
         "stable_first" | "stable" => RoutingPolicy::StableFirst,
         "backup_only" => RoutingPolicy::BackupOnly,
         "cheap_first" => RoutingPolicy::CheapFirst,
@@ -1027,6 +1132,7 @@ fn route_log_metadata(
 
 fn routing_policy_label(policy: &RoutingPolicy) -> &'static str {
     match policy {
+        RoutingPolicy::AutomaticBalanced => "automatic_balanced",
         RoutingPolicy::PriorityFallback => "priority_fallback",
         RoutingPolicy::StableFirst => "stable_first",
         RoutingPolicy::BackupOnly => "backup_only",
@@ -1088,6 +1194,53 @@ fn uses_vision(body: &Value) -> bool {
 fn uses_reasoning(body: &Value, model: Option<&str>) -> bool {
     RequestObservation::from_json(body).uses_reasoning
         || model.map(|model| model.starts_with('o')).unwrap_or(false)
+}
+
+fn request_session_hash(request: &ParsedRequest, body: &Value) -> Option<String> {
+    request
+        .headers
+        .get("x-relay-session-hash")
+        .or_else(|| request.headers.get("x-session-id"))
+        .and_then(|value| non_empty(value))
+        .map(stable_session_hash)
+        .or_else(|| {
+            body.get("metadata")
+                .and_then(|metadata| metadata.get("session_hash"))
+                .and_then(Value::as_str)
+                .and_then(non_empty)
+                .map(stable_session_hash)
+        })
+        .or_else(|| {
+            body.get("user")
+                .and_then(Value::as_str)
+                .and_then(non_empty)
+                .map(stable_session_hash)
+        })
+}
+
+fn previous_response_id(body: &Value) -> Option<String> {
+    body.get("previous_response_id")
+        .and_then(Value::as_str)
+        .and_then(non_empty)
+        .map(ToString::to_string)
+}
+
+fn non_empty(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn stable_session_hash(value: &str) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 fn record_candidate_success(
@@ -1367,14 +1520,40 @@ fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -
         RouteEndpointKind::ChatCompletions,
         model.as_deref(),
     );
+    let settings = context.database.get_settings().ok();
+    let policy = settings
+        .as_ref()
+        .map(|settings| parse_routing_policy(&settings.default_routing_strategy))
+        .unwrap_or(RoutingPolicy::PriorityFallback);
     let route_request = route_request_for_chat(
+        request,
         model.clone(),
         stream,
         &body_value,
-        routing_policy(context),
-        allow_depleted_fallback(context),
+        policy,
+        settings
+            .as_ref()
+            .and_then(|settings| settings.max_rate_multiplier),
+        settings
+            .as_ref()
+            .map(|settings| settings.default_routing_group_filter.clone())
+            .unwrap_or_default(),
+        settings
+            .as_ref()
+            .map(|settings| settings.allow_depleted_fallback)
+            .unwrap_or(false),
         current_station_key_id,
     );
+    if matches!(route_request.policy, RoutingPolicy::AutomaticBalanced) {
+        return forward_automatic_chat_request(
+            context,
+            request,
+            &body_value,
+            route_request,
+            model,
+            stream,
+        );
+    }
     let route = match select_proxy_route(context, &route_request) {
         Ok(route) => route,
         Err(response) => return response.with_request_meta(model, stream),
@@ -1420,14 +1599,40 @@ fn forward_responses_request(
     let (model, stream) = extract_responses_metadata(&body_value);
     let current_station_key_id =
         lookup_route_affinity(context, RouteEndpointKind::Responses, model.as_deref());
+    let settings = context.database.get_settings().ok();
+    let policy = settings
+        .as_ref()
+        .map(|settings| parse_routing_policy(&settings.default_routing_strategy))
+        .unwrap_or(RoutingPolicy::PriorityFallback);
     let route_request = route_request_for_responses(
+        request,
         model.clone(),
         stream,
         &body_value,
-        routing_policy(context),
-        allow_depleted_fallback(context),
+        policy,
+        settings
+            .as_ref()
+            .and_then(|settings| settings.max_rate_multiplier),
+        settings
+            .as_ref()
+            .map(|settings| settings.default_routing_group_filter.clone())
+            .unwrap_or_default(),
+        settings
+            .as_ref()
+            .map(|settings| settings.allow_depleted_fallback)
+            .unwrap_or(false),
         current_station_key_id,
     );
+    if matches!(route_request.policy, RoutingPolicy::AutomaticBalanced) {
+        return forward_automatic_responses_request(
+            context,
+            request,
+            &body_value,
+            route_request,
+            model,
+            stream,
+        );
+    }
     let route = match select_proxy_route(context, &route_request) {
         Ok(route) => route,
         Err(response) => return response.with_request_meta(model, stream),
@@ -1456,6 +1661,336 @@ fn forward_responses_request(
         stream,
         &route_context,
     )
+}
+
+fn forward_automatic_chat_request(
+    context: &ProxyServerContext,
+    request: &ParsedRequest,
+    body_value: &Value,
+    mut route_request: RouteRequest,
+    model: Option<String>,
+    stream: bool,
+) -> ProxyResponse {
+    let mut excluded_key_ids = HashSet::new();
+    let mut fallback_count = 0_i64;
+    let mut last_error: Option<String>;
+    let mut last_preflight_error: Option<ProxyResponse> = None;
+
+    loop {
+        route_request.excluded_key_ids = excluded_key_ids.iter().cloned().collect();
+        route_request.now_ms = now_millis_for_services() as i64;
+        let route = match select_proxy_route(context, &route_request) {
+            Ok(route) => route,
+            Err(response) => {
+                let response = last_preflight_error.take().unwrap_or(response);
+                return response
+                    .with_fallback_count(fallback_count)
+                    .with_request_meta(model, stream);
+            }
+        };
+        let route_context = route_log_context(&route_request.policy, &route.explanations);
+        let Some(selected) = route.accepted.first() else {
+            return ProxyResponse::json_error(
+                503,
+                "routing_no_eligible_candidate",
+                &format!(
+                    "没有可用 Station Key 支持该请求：model={} endpoint={:?} stream={}",
+                    route_request.model.as_deref().unwrap_or("<none>"),
+                    route_request.endpoint,
+                    route_request.stream
+                ),
+            )
+            .with_fallback_count(fallback_count)
+            .with_request_meta(model, stream)
+            .with_route_metadata(route_log_metadata(&route_context, None));
+        };
+        let candidate = selected.candidate.clone();
+        if let Err(response) = revalidate_automatic_candidate_before_forward(
+            context,
+            &route_request,
+            &candidate.station_key_id,
+        ) {
+            last_preflight_error = Some(response);
+            excluded_key_ids.insert(candidate.station_key_id);
+            fallback_count += 1;
+            if fallback_count > 32 {
+                return ProxyResponse::json_error(
+                    502,
+                    "routing_all_upstreams_failed",
+                    "自动路由转发前预检连续失败，已达到重试上限",
+                )
+                .with_fallback_count(fallback_count)
+                .with_request_meta(model, stream)
+                .with_route_metadata(route_log_metadata(&route_context, None));
+            }
+            continue;
+        }
+        let rewritten_request = rewrite_request_model(
+            request,
+            body_value,
+            model.as_deref(),
+            route.mapped_model.as_deref(),
+        );
+        let checked_at = now_string();
+        let attempt_started = Instant::now();
+
+        match forward_to_candidate(&rewritten_request, &candidate, stream) {
+            Ok(response)
+                if response.status_code < 400 || !should_fallback(response.status_code) =>
+            {
+                let routed_response = response
+                    .with_candidate(&candidate)
+                    .with_fallback_count(fallback_count)
+                    .with_request_meta(model.clone(), stream)
+                    .with_route_metadata(route_log_metadata(
+                        &route_context,
+                        Some(candidate.station_key_id.as_str()),
+                    ));
+                let status_label = routed_response.status_label.clone();
+                if routed_response.status_code < 400 {
+                    let request_cost =
+                        extract_request_cost(context, &candidate, &routed_response, stream);
+                    return routed_response
+                        .with_request_cost(request_cost)
+                        .with_pending_success(
+                            &candidate,
+                            RouteEndpointKind::ChatCompletions,
+                            model.clone(),
+                            attempt_started.elapsed().as_millis() as i64,
+                            checked_at,
+                        );
+                }
+
+                record_candidate_failure(
+                    context,
+                    &candidate,
+                    &status_label,
+                    &checked_at,
+                    &format!("上游返回 HTTP {}", routed_response.status_code),
+                    RouteFailureInput::http_status_with_retry_after(
+                        routed_response.status_code,
+                        false,
+                        routed_response.retry_after_ms,
+                    ),
+                );
+                let request_cost =
+                    extract_request_cost(context, &candidate, &routed_response, stream);
+                return routed_response.with_request_cost(request_cost);
+            }
+            Ok(response) => {
+                let error = format!("上游返回 HTTP {}", response.status_code);
+                last_error = Some(error.clone());
+                record_candidate_failure(
+                    context,
+                    &candidate,
+                    "warning",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::http_status_with_retry_after(
+                        response.status_code,
+                        false,
+                        response.retry_after_ms,
+                    ),
+                );
+            }
+            Err(error) => {
+                last_error = Some(error.clone());
+                record_candidate_failure(
+                    context,
+                    &candidate,
+                    "error",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::transport_error(false, &error),
+                );
+            }
+        }
+
+        excluded_key_ids.insert(candidate.station_key_id);
+        fallback_count += 1;
+        if fallback_count > 32 {
+            return ProxyResponse::json_error(
+                502,
+                "routing_all_upstreams_failed",
+                &format!(
+                    "自动路由重试次数已达上限：{}",
+                    last_error.unwrap_or_else(|| "未知错误".to_string())
+                ),
+            )
+            .with_fallback_count(fallback_count)
+            .with_request_meta(model, stream)
+            .with_route_metadata(route_log_metadata(&route_context, None));
+        }
+    }
+}
+
+fn forward_automatic_responses_request(
+    context: &ProxyServerContext,
+    request: &ParsedRequest,
+    body_value: &Value,
+    mut route_request: RouteRequest,
+    model: Option<String>,
+    stream: bool,
+) -> ProxyResponse {
+    let mut excluded_key_ids = HashSet::new();
+    let mut fallback_count = 0_i64;
+    let mut last_error: Option<String>;
+    let mut last_preflight_error: Option<ProxyResponse> = None;
+
+    loop {
+        route_request.excluded_key_ids = excluded_key_ids.iter().cloned().collect();
+        route_request.now_ms = now_millis_for_services() as i64;
+        let route = match select_proxy_route(context, &route_request) {
+            Ok(route) => route,
+            Err(response) => {
+                let response = last_preflight_error.take().unwrap_or(response);
+                return response
+                    .with_fallback_count(fallback_count)
+                    .with_request_meta(model, stream);
+            }
+        };
+        let route_context = route_log_context(&route_request.policy, &route.explanations);
+        let Some(selected) = route.accepted.first() else {
+            return ProxyResponse::json_error(
+                503,
+                "routing_no_eligible_candidate",
+                &format!(
+                    "没有可用 Station Key 支持该请求：model={} endpoint={:?} stream={}",
+                    route_request.model.as_deref().unwrap_or("<none>"),
+                    route_request.endpoint,
+                    route_request.stream
+                ),
+            )
+            .with_fallback_count(fallback_count)
+            .with_request_meta(model, stream)
+            .with_route_metadata(route_log_metadata(&route_context, None));
+        };
+        let candidate = selected.candidate.clone();
+        if let Err(response) = revalidate_automatic_candidate_before_forward(
+            context,
+            &route_request,
+            &candidate.station_key_id,
+        ) {
+            last_preflight_error = Some(response);
+            excluded_key_ids.insert(candidate.station_key_id);
+            fallback_count += 1;
+            if fallback_count > 32 {
+                return ProxyResponse::json_error(
+                    502,
+                    "routing_all_upstreams_failed",
+                    "自动路由转发前预检连续失败，已达到重试上限",
+                )
+                .with_fallback_count(fallback_count)
+                .with_request_meta(model, stream)
+                .with_route_metadata(route_log_metadata(&route_context, None));
+            }
+            continue;
+        }
+        let rewritten_request = rewrite_request_model(
+            request,
+            body_value,
+            model.as_deref(),
+            route.mapped_model.as_deref(),
+        );
+        let rewritten_body: Value =
+            serde_json::from_slice(&rewritten_request.body).unwrap_or_else(|_| body_value.clone());
+        let checked_at = now_string();
+        let attempt_started = Instant::now();
+
+        match forward_responses_to_candidate(
+            &rewritten_request,
+            &candidate,
+            &rewritten_body,
+            route.mapped_model.as_deref().or(model.as_deref()),
+            stream,
+        ) {
+            Ok(response)
+                if response.status_code < 400 || !should_fallback(response.status_code) =>
+            {
+                let routed_response = response
+                    .with_candidate(&candidate)
+                    .with_fallback_count(fallback_count)
+                    .with_request_meta(model.clone(), stream)
+                    .with_route_metadata(route_log_metadata(
+                        &route_context,
+                        Some(candidate.station_key_id.as_str()),
+                    ));
+                let status_label = routed_response.status_label.clone();
+                if routed_response.status_code < 400 {
+                    let request_cost =
+                        extract_request_cost(context, &candidate, &routed_response, false);
+                    return routed_response
+                        .with_request_cost(request_cost)
+                        .with_pending_success(
+                            &candidate,
+                            RouteEndpointKind::Responses,
+                            model.clone(),
+                            attempt_started.elapsed().as_millis() as i64,
+                            checked_at,
+                        );
+                }
+
+                record_candidate_failure(
+                    context,
+                    &candidate,
+                    &status_label,
+                    &checked_at,
+                    &format!("上游返回 HTTP {}", routed_response.status_code),
+                    RouteFailureInput::http_status_with_retry_after(
+                        routed_response.status_code,
+                        false,
+                        routed_response.retry_after_ms,
+                    ),
+                );
+                let request_cost =
+                    extract_request_cost(context, &candidate, &routed_response, false);
+                return routed_response.with_request_cost(request_cost);
+            }
+            Ok(response) => {
+                let error = format!("上游返回 HTTP {}", response.status_code);
+                last_error = Some(error.clone());
+                record_candidate_failure(
+                    context,
+                    &candidate,
+                    "warning",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::http_status_with_retry_after(
+                        response.status_code,
+                        false,
+                        response.retry_after_ms,
+                    ),
+                );
+            }
+            Err(error) => {
+                last_error = Some(error.clone());
+                record_candidate_failure(
+                    context,
+                    &candidate,
+                    "error",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::transport_error(false, &error),
+                );
+            }
+        }
+
+        excluded_key_ids.insert(candidate.station_key_id);
+        fallback_count += 1;
+        if fallback_count > 32 {
+            return ProxyResponse::json_error(
+                502,
+                "routing_all_upstreams_failed",
+                &format!(
+                    "自动路由重试次数已达上限：{}",
+                    last_error.unwrap_or_else(|| "未知错误".to_string())
+                ),
+            )
+            .with_fallback_count(fallback_count)
+            .with_request_meta(model, stream)
+            .with_route_metadata(route_log_metadata(&route_context, None));
+        }
+    }
 }
 
 fn forward_responses_with_fallback(
@@ -2282,7 +2817,8 @@ mod tests {
     use crate::models::{
         pricing::{UpsertBalanceSnapshotInput, UpsertPricingRuleInput},
         routing::{UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
-        station_keys::StationKey,
+        settings::UpdateSettingsInput,
+        station_keys::{StationKey, UpdateStationKeyInput},
         stations::CreateStationInput,
     };
     use std::{
@@ -3018,7 +3554,6 @@ mod tests {
         database
             .reorder_key_pool(vec![key_a.id.clone(), key_b.id.clone()])
             .expect("reorder");
-
         let context = proxy_context(database);
         let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
         let failed_health = context
@@ -3039,6 +3574,93 @@ mod tests {
 
         rejected.join();
         accepted.join();
+    }
+
+    #[test]
+    fn automatic_runtime_rechecks_multiplier_before_retrying_next_key() {
+        let accepted =
+            test_upstream_json_success_times("automatic-expensive-after-failure", false, None, 1);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        enable_automatic_routing(&database, 1.0);
+        let key_b =
+            create_test_station_key(&database, "automatic-now-too-expensive", &accepted.base_url);
+        set_manual_multiplier_with_priority(&database, &key_b, 2.0, 100);
+        let key_a =
+            create_test_station_key(&database, "automatic-first-fails", "http://127.0.0.1:1");
+        set_manual_multiplier_with_priority(&database, &key_a, 0.5, -100);
+        database
+            .reorder_key_pool(vec![key_a.id.clone(), key_b.id.clone()])
+            .expect("reorder");
+
+        let context = proxy_context(database);
+        let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
+
+        assert_eq!(
+            response.status_code,
+            503,
+            "expected automatic retry to reject over-ceiling fallback; accepted_called={} selected={:?} route_policy={:?} route_reason={:?} rejected={:?}",
+            accepted.was_called(),
+            response.station_key_id,
+            response.route_policy,
+            response.route_reason,
+            response.rejected_candidates_json
+        );
+        let error_body: Value =
+            serde_json::from_slice(response.body_bytes().expect("error body")).expect("error json");
+        assert_eq!(
+            error_body["error"]["code"].as_str(),
+            Some("routing_no_candidate_within_multiplier_limit")
+        );
+        assert_eq!(response.station_key_id, None);
+        assert!(
+            !accepted.was_called(),
+            "candidate that rises above the immutable multiplier ceiling must be rejected before probe or forward"
+        );
+        accepted.join();
+    }
+
+    #[test]
+    fn automatic_runtime_revalidates_multiplier_immediately_before_forward() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        enable_automatic_routing(&database, 1.0);
+        let key =
+            create_test_station_key(&database, "automatic-forward-recheck", "http://127.0.0.1:1");
+        set_manual_multiplier_with_priority(&database, &key, 0.5, 0);
+        let request = chat_request("gpt-5.4", false);
+        let body: Value = serde_json::from_slice(&request.body).expect("request body");
+        let route_request = route_request_for_chat(
+            &request,
+            Some("gpt-5.4".to_string()),
+            false,
+            &body,
+            RoutingPolicy::AutomaticBalanced,
+            Some(1.0),
+            RoutingGroupFilter::AllGroups,
+            false,
+            None,
+        );
+        set_manual_multiplier_with_priority(&database, &key, 2.0, 0);
+        let context = proxy_context(database);
+
+        let response =
+            revalidate_automatic_candidate_before_forward(&context, &route_request, &key.id)
+                .expect_err(
+                    "candidate above immutable request ceiling should reject before forwarding",
+                );
+        let error_body: Value =
+            serde_json::from_slice(response.body_bytes().expect("error body")).expect("error json");
+
+        assert_eq!(response.status_code, 503);
+        assert_eq!(
+            error_body["error"]["code"].as_str(),
+            Some("routing_no_candidate_within_multiplier_limit")
+        );
+    }
+
+    #[test]
+    fn stable_session_hash_uses_explicit_deterministic_hash() {
+        assert_eq!(stable_session_hash("relay-session"), "508467564de2b2cf");
+        assert_eq!(stable_session_hash(" relay-session "), "ca80f260a6db4d47");
     }
 
     #[test]
@@ -3325,6 +3947,63 @@ mod tests {
         }
     }
 
+    fn enable_automatic_routing(database: &AppDatabase, max_rate_multiplier: f64) {
+        let settings = database.get_settings().expect("settings");
+        database
+            .update_settings(UpdateSettingsInput {
+                local_proxy_port: settings.local_proxy_port,
+                default_routing_strategy: "automatic_balanced".to_string(),
+                collector_proxy_mode: settings.collector_proxy_mode,
+                collector_proxy_url: settings.collector_proxy_url,
+                max_rate_multiplier: Some(Some(max_rate_multiplier)),
+                default_routing_group_filter: Some(settings.default_routing_group_filter),
+                scheduler_advanced_settings: Some(settings.scheduler_advanced_settings),
+                low_balance_threshold_cny: settings.low_balance_threshold_cny,
+                collector_interval_minutes: settings.collector_interval_minutes,
+                balance_interval_minutes: settings.balance_interval_minutes,
+                group_rate_interval_minutes: settings.group_rate_interval_minutes,
+                model_list_interval_minutes: settings.model_list_interval_minutes,
+                pricing_refresh_interval_minutes: settings.pricing_refresh_interval_minutes,
+                collector_timeout_seconds: settings.collector_timeout_seconds,
+                collector_max_concurrency: settings.collector_max_concurrency,
+                allow_depleted_fallback: settings.allow_depleted_fallback,
+                tray_behavior: settings.tray_behavior,
+                developer_mode_enabled: settings.developer_mode_enabled,
+            })
+            .expect("enable automatic routing");
+    }
+
+    fn set_manual_multiplier_with_priority(
+        database: &AppDatabase,
+        key: &StationKey,
+        multiplier: f64,
+        priority: i64,
+    ) {
+        database
+            .update_station_key(UpdateStationKeyInput {
+                id: key.id.clone(),
+                station_id: key.station_id.clone(),
+                name: key.name.clone(),
+                api_key: None,
+                enabled: key.enabled,
+                priority,
+                max_concurrency: key.max_concurrency,
+                load_factor: key.load_factor,
+                schedulable: key.schedulable,
+                group_name: key.group_name.clone(),
+                tier_label: key.tier_label.clone(),
+                group_binding_id: key.group_binding_id.clone(),
+                group_id_hash: key.group_id_hash.clone(),
+                rate_multiplier: key.rate_multiplier,
+                manual_rate_multiplier: Some(Some(multiplier)),
+                rate_source: key.rate_source.clone(),
+                balance_scope: key.balance_scope.clone(),
+                status: key.status.clone(),
+                note: key.note.clone(),
+            })
+            .expect("set manual multiplier");
+    }
+
     fn create_test_station_key(database: &AppDatabase, name: &str, base_url: &str) -> StationKey {
         thread::sleep(Duration::from_millis(2));
         let station = database
@@ -3429,6 +4108,12 @@ mod tests {
                 credit_unit: None,
                 used_value: None,
                 total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_token_count: None,
+                total_token_count: None,
                 low_balance_threshold: None,
                 status: "normal".to_string(),
                 source: "test".to_string(),
@@ -3447,6 +4132,12 @@ mod tests {
                 credit_unit: None,
                 used_value: None,
                 total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_token_count: None,
+                total_token_count: None,
                 low_balance_threshold: None,
                 status: "normal".to_string(),
                 source: "test".to_string(),
@@ -3465,6 +4156,12 @@ mod tests {
                 credit_unit: None,
                 used_value: None,
                 total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_token_count: None,
+                total_token_count: None,
                 low_balance_threshold: None,
                 status: "low".to_string(),
                 source: "test".to_string(),
@@ -3483,6 +4180,12 @@ mod tests {
                 credit_unit: None,
                 used_value: None,
                 total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_token_count: None,
+                total_token_count: None,
                 low_balance_threshold: None,
                 status: "normal".to_string(),
                 source: "test".to_string(),

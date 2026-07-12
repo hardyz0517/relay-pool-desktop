@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  ArrowUp,
   BadgeDollarSign,
   BarChart3,
   Clock3,
@@ -20,6 +21,7 @@ import { PageScaffold } from "@/components/shell/PageScaffold";
 import { usePageActivation } from "@/components/shell/PageActivity";
 import {
   Button,
+  IconButton,
   MetricPanel,
   type MetricTone,
   ObjectRow,
@@ -41,7 +43,8 @@ import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { stationKeyStatusLabels } from "@/lib/types/stationKeys";
 import { formatChangeTime, severityLabels, severityTone, unreadRiskCount } from "@/features/changes/changeEventViewModels";
 import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
-import { formatRequestCost, requestBaseCostValue } from "@/features/dashboard/requestCostFormat";
+import { formatRecentRequestCost, formatRequestCost, requestBaseCostValue } from "@/features/dashboard/requestCostFormat";
+import { useUpdater } from "@/features/updater/UpdaterProvider";
 import {
   summarizeDashboardRequestCosts,
   type DashboardCostTotal,
@@ -76,6 +79,7 @@ const dashboardMetricIconClassName: Record<MetricTone, string> = {
 
 export function DashboardPage() {
   const toast = useToast();
+  const { state: updaterState, installNow } = useUpdater();
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
   const [keyPoolItems, setKeyPoolItems] = useState<KeyPoolItem[]>([]);
@@ -209,7 +213,10 @@ export function DashboardPage() {
     () => new Map(keyPoolItems.map((key) => [key.id, key.name])),
     [keyPoolItems],
   );
-  const proxyRequestCount = proxyStatus?.requestCount ?? requestLogs.length;
+  const proxyRequestCount = Math.max(
+    requestLogs.length,
+    proxyStatus?.requestCount ?? 0,
+  );
   const todayTokens = todayLogs.reduce((sum, log) => sum + (log.totalTokens ?? 0), 0);
   const todayPromptTokens = todayLogs.reduce((sum, log) => sum + (log.promptTokens ?? 0), 0);
   const todayCompletionTokens = todayLogs.reduce((sum, log) => sum + (log.completionTokens ?? 0), 0);
@@ -221,7 +228,7 @@ export function DashboardPage() {
   const recentPerformance = getRecentPerformanceMetrics(requestLogs);
   const activeRequests = proxyStatus?.activeRequests ?? 0;
   const balanceSummary = useMemo(() => summarizeDashboardBalances(balanceSnapshots), [balanceSnapshots]);
-  const { lowBalanceStations, primaryBalanceCurrency, totalBalance } = balanceSummary;
+  const { lowBalanceStations, primaryBalanceCurrency, stationUsage, totalBalance } = balanceSummary;
   const activeRiskEvents = useMemo(
     () =>
       changeEvents.filter(
@@ -239,9 +246,20 @@ export function DashboardPage() {
     collectorFailures: activeRiskEvents.filter((event) => event.eventType === "collector_failed").length,
     priceRateIssues: activeRiskEvents.filter((event) => event.eventType === "price_expired" || event.eventType === "price_changed" || event.eventType === "rate_changed").length,
   }), [activeRiskEvents]);
+  const updateAction = updaterState.phase === "available" ? (
+    <IconButton
+      label="升级到新版本"
+      title={`升级到 ${updaterState.version ?? "新版本"}`}
+      variant="outline"
+      className="h-8 w-8 border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 hover:text-cyan-800"
+      onClick={() => void installNow()}
+    >
+      <ArrowUp className="h-4 w-4" />
+    </IconButton>
+  ) : null;
 
   return (
-    <PageScaffold title="总览">
+    <PageScaffold title="总览" actions={updateAction}>
       <div className="grid gap-4">
         <SectionCard
           title="当前路由"
@@ -400,6 +418,44 @@ export function DashboardPage() {
             },
           ]}
         />
+        <MetricPanel
+          title="中转站用量"
+          description="来自中转站后台采集，不含本地代理日志"
+          metrics={[
+            {
+              label: "站点今日请求",
+              value: formatCompactNumber(stationUsage.todayRequestCount),
+              detail: `累计 ${formatCompactNumber(stationUsage.totalRequestCount)}`,
+              icon: Activity,
+              tone: stationUsage.todayRequestCount > 0 ? "good" : "neutral",
+              accent: "green",
+            },
+            {
+              label: "站点今日消费",
+              value: formatUsdAmount(stationUsage.todayConsumption),
+              detail: `累计 ${formatUsdAmount(stationUsage.totalConsumption)}`,
+              icon: BadgeDollarSign,
+              tone: stationUsage.todayConsumption > 0 ? "good" : "neutral",
+              accent: "purple",
+            },
+            {
+              label: "站点今日 Token",
+              value: formatCompactNumber(stationUsage.todayTokenCount),
+              detail: "后台采集口径",
+              icon: BarChart3,
+              tone: stationUsage.todayTokenCount > 0 ? "good" : "neutral",
+              accent: "amber",
+            },
+            {
+              label: "站点累计 Token",
+              value: formatCompactNumber(stationUsage.totalTokenCount),
+              detail: "全部中转站总计",
+              icon: Server,
+              tone: stationUsage.totalTokenCount > 0 ? "good" : "neutral",
+              accent: "indigo",
+            },
+          ]}
+        />
       </div>
 
       <SectionCard
@@ -528,11 +584,11 @@ export function DashboardPage() {
                 <div className="min-w-[118px] text-right">
                   <div className="whitespace-nowrap text-sm font-semibold text-slate-400">
                     <span className="text-emerald-600">
-                      {formatRequestCost(request.estimatedTotalCost, request.costCurrency, request.costStatus)}
+                      {formatRecentRequestCost(request.estimatedTotalCost, request.costCurrency, request.costStatus)}
                     </span>
                     <span className="mx-1">/</span>
                     <span>
-                      {formatRequestCost(requestBaseCostValue(request), request.costCurrency, request.costStatus)}
+                      {formatRecentRequestCost(requestBaseCostValue(request), request.costCurrency, request.costStatus)}
                     </span>
                   </div>
                   <div className="mt-0.5 whitespace-nowrap text-xs text-slate-500">
@@ -656,6 +712,10 @@ function getRecentPerformanceMetrics(logs: RequestLog[]) {
 function formatBalance(value: number, currency?: string) {
   const symbol = currencySymbol(currency);
   return `${symbol}${value.toFixed(2)}`;
+}
+
+function formatUsdAmount(value: number) {
+  return `$${value.toFixed(value >= 100 ? 2 : 4)}`;
 }
 
 function DashboardCostTotals({ totals, compact = false }: { totals: DashboardCostTotal[]; compact?: boolean }) {

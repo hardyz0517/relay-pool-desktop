@@ -17,10 +17,12 @@ import { formatTrimmedDecimal } from "@/lib/formatters";
 import { parseTimestampLikeDate } from "@/lib/time";
 import { listPricingRules } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
+import { getSettings } from "@/lib/api/settings";
 import { listStationKeys } from "@/lib/api/stationKeys";
 import { listStations, openStationBaseUrl } from "@/lib/api/stations";
 import { Sub2ApiPlatformIcon } from "@/features/stations/components/Sub2ApiPlatformIcon";
 import { groupVisualMetaFor } from "@/features/stations/groupVisualMeta";
+import { groupCategoryDefinitions } from "@/lib/groupCategories";
 import { cn } from "@/lib/utils";
 import type { PricingRule } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
@@ -39,12 +41,22 @@ type EmptyReason = PricingComparisonViewModel["emptyReason"];
 
 const groupTypeFilterOptions: Array<{ value: GroupTypeFilter; label: string }> = [
   { value: "all", label: "全部" },
-  { value: "gpt", label: "GPT" },
-  { value: "claude", label: "Claude" },
-  { value: "gemini", label: "Gemini" },
-  { value: "grok", label: "Grok" },
-  { value: "image_generation", label: "生成图片" },
 ];
+
+function visibleGroupTypeFilterOptions(developerModeEnabled: boolean): Array<{ value: GroupTypeFilter; label: string }> {
+  return [
+    ...groupTypeFilterOptions,
+    ...groupCategoryDefinitions
+      .filter(
+        (definition) =>
+          developerModeEnabled || (definition.value !== "embedding" && definition.value !== "rerank"),
+      )
+      .map((definition) => ({
+        value: definition.value,
+        label: definition.label,
+      })),
+  ];
+}
 
 type PricingPageProps = {
   onOpenModelBasePrices: () => void;
@@ -57,6 +69,7 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
   const [stationKeys, setStationKeys] = useState<StationKey[]>([]);
   const [groupBindings, setGroupBindings] = useState<StationGroupBinding[]>([]);
   const [groupRates, setGroupRates] = useState<GroupRateRecord[]>([]);
+  const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [groupTypeFilter, setGroupTypeFilter] = useState<GroupTypeFilter>("all");
@@ -73,9 +86,10 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
     }
     setError(null);
     try {
-      const [nextPricingRules, nextStations] = await Promise.all([
+      const [nextPricingRules, nextStations, nextSettings] = await Promise.all([
         listPricingRules(),
         listStations(),
+        getSettings(),
       ]);
       const [bindingLists, rateRecordLists, stationKeyLists] = await Promise.all([
         Promise.all(nextStations.map((station) => listStationGroupBindings(station.id))),
@@ -88,6 +102,7 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
       setStationKeys(stationKeyLists.flat());
       setGroupBindings(bindingLists.flat());
       setGroupRates(rateRecordLists.flat());
+      setDeveloperModeEnabled(nextSettings.developerModeEnabled);
 
       if (showSuccess) {
         toast.success("价格倍率已刷新");
@@ -111,6 +126,7 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
         groupBindings,
         groupRates,
         pricingRules,
+        developerModeEnabled,
         filters: {
           groupType: groupTypeFilter,
           query,
@@ -121,6 +137,7 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
       groupBindings,
       groupRates,
       groupTypeFilter,
+      developerModeEnabled,
       pricingRules,
       query,
       selectedStationId,
@@ -192,7 +209,7 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
             <SegmentedControl
               ariaLabel="按分组类型筛选"
               value={groupTypeFilter}
-              options={groupTypeFilterOptions}
+              options={visibleGroupTypeFilterOptions(developerModeEnabled)}
               onChange={setGroupTypeFilter}
               className="w-full max-w-[560px] sm:w-auto"
             />
@@ -332,7 +349,7 @@ function PricingRowsTable({
 }
 
 function PricingGroupBadge({ row }: { row: PricingComparisonRow }) {
-  const visualMeta = groupVisualMetaFor(row.groupName, row.groupRawJsonRedacted);
+  const visualMeta = groupVisualMetaFor(row.groupName, row.groupRawJsonRedacted, row.groupType);
 
   return (
     <span

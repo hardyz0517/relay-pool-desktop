@@ -27,7 +27,7 @@ export function ConfirmDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/30 p-4 backdrop-blur-[1px]">
       <div className="w-full max-w-sm rounded-[var(--surface-radius)] border border-border bg-white px-5 py-5 shadow-[0_24px_70px_rgba(15,23,42,0.18)]">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center text-rose-500">

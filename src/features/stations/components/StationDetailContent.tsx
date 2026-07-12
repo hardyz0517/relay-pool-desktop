@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   ArrowLeft,
+  BarChart3,
   Clock3,
   Database,
   Edit3,
@@ -171,6 +172,30 @@ export function StationDetailContent({
       </section>
 
       <section className="rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+          <BarChart3 className="h-4 w-4 text-slate-500" />
+          <h2 className="text-sm font-semibold text-slate-900">中转站用量</h2>
+        </div>
+        <div className="grid gap-3 p-4 md:grid-cols-4">
+          {viewModel.usageCards.map((card) => (
+            <div
+              key={card.label}
+              className={cn(
+                "min-h-[84px] rounded-[var(--surface-radius)] border px-3 py-2.5",
+                surfaceToneClassName[card.tone],
+              )}
+            >
+              <div className="text-xs text-muted-foreground">{card.label}</div>
+              <div className={cn("mt-1 truncate text-lg font-semibold", textToneClassName[card.tone])}>
+                {card.value}
+              </div>
+              <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{card.helper}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
         <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
             <Layers3 className="h-4 w-4 text-slate-500" />
@@ -215,7 +240,11 @@ export function StationDetailContent({
                   {viewModel.groupRows.map((row) => (
                     <tr key={row.id} className="border-t border-border transition-colors hover:bg-slate-50/70">
                       <TableCell className="max-w-[220px] pl-0">
-                        <GroupNameBadge groupName={row.groupName} rawJsonRedacted={row.rawJsonRedacted} />
+                        <GroupNameBadge
+                          groupName={row.groupName}
+                          rawJsonRedacted={row.rawJsonRedacted}
+                          effectiveGroupCategory={row.effectiveGroupCategory}
+                        />
                         {row.warning && (
                           <div className="mt-1 inline-flex items-center gap-1 text-amber-700">
                             <AlertTriangle className="h-3.5 w-3.5" />
@@ -224,7 +253,7 @@ export function StationDetailContent({
                         )}
                       </TableCell>
                       <TableCell>
-                        <span className={cn("inline-flex h-6 items-center rounded-full px-2.5 font-semibold", groupVisualMetaFor(row.groupName, row.rawJsonRedacted).rateBadgeClassName)}>
+                        <span className={cn("inline-flex h-6 items-center rounded-full px-2.5 font-semibold", groupVisualMetaFor(row.groupName, row.rawJsonRedacted, row.effectiveGroupCategory).rateBadgeClassName)}>
                           {row.effectiveRate}
                         </span>
                       </TableCell>
@@ -258,11 +287,13 @@ export function StationDetailContent({
 function GroupNameBadge({
   groupName,
   rawJsonRedacted,
+  effectiveGroupCategory,
 }: {
   groupName: string;
   rawJsonRedacted: Record<string, unknown> | null;
+  effectiveGroupCategory: StationDetailViewModel["groupRows"][number]["effectiveGroupCategory"];
 }) {
-  const visualMeta = groupVisualMetaFor(groupName, rawJsonRedacted);
+  const visualMeta = groupVisualMetaFor(groupName, rawJsonRedacted, effectiveGroupCategory);
 
   return (
     <span

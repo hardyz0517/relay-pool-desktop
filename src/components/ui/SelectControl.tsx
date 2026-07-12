@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useId,
   useLayoutEffect,
@@ -16,7 +17,10 @@ import { cn } from "@/lib/utils";
 export type SelectOption<T extends string = string> = {
   value: T;
   label: ReactNode;
+  triggerLabel?: ReactNode;
   description?: ReactNode;
+  leadingIcon?: ReactNode;
+  sectionLabel?: ReactNode;
   disabled?: boolean;
 };
 
@@ -139,7 +143,7 @@ export function SelectControl<T extends string>({
     const viewportPadding = 10;
     const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
     const spaceAbove = rect.top - viewportPadding;
-    const maxHeight = Math.max(160, Math.min(280, Math.max(spaceBelow, spaceAbove) - gap));
+    const maxHeight = Math.max(160, Math.min(320, Math.max(spaceBelow, spaceAbove) - gap));
     const openAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
     const menuHeight = estimateMenuHeight(options, maxHeight);
     const menuWidth = Math.max(rect.width, MIN_MENU_WIDTH);
@@ -239,7 +243,14 @@ export function SelectControl<T extends string>({
           className,
         )}
       >
-        <span className="min-w-0 truncate">{selectedOption?.label ?? placeholder}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          {selectedOption?.leadingIcon ? (
+            <span className="shrink-0 text-slate-400">{selectedOption.leadingIcon}</span>
+          ) : null}
+          <span className="min-w-0 truncate">
+            {selectedOption?.triggerLabel ?? selectedOption?.label ?? placeholder}
+          </span>
+        </span>
         <ChevronDown
           className={cn(
             "h-4 w-4 shrink-0 text-slate-500 transition-transform duration-150",
@@ -271,34 +282,48 @@ export function SelectControl<T extends string>({
             const selected = option.value === value;
             const active = index === activeIndex;
             return (
-              <button
-                key={option.value}
-                ref={(node) => {
-                  optionRefs.current[index] = node;
-                }}
-                id={`${id}-option-${index}`}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                disabled={option.disabled}
-                onMouseEnter={() => !option.disabled && setActiveIndex(index)}
-                onClick={() => chooseOption(option)}
-                className={cn(
-                  "flex min-h-8 w-full cursor-pointer items-center justify-between gap-3 rounded-[calc(var(--surface-radius)-3px)] px-2.5 py-1.5 text-left transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-45",
-                  active ? "bg-[hsl(var(--accent)/0.08)] text-slate-950" : "hover:bg-slate-50",
-                  selected && "font-medium",
-                )}
-              >
-                <span className="min-w-0">
-                  <span className="block truncate">{option.label}</span>
-                  {option.description ? (
-                    <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
-                      {option.description}
+              <Fragment key={option.value}>
+                {option.sectionLabel ? (
+                  <div
+                    role="presentation"
+                    className="mt-1 border-t border-slate-100 px-2.5 pb-1 pt-2 text-[10px] font-medium text-muted-foreground"
+                  >
+                    {option.sectionLabel}
+                  </div>
+                ) : null}
+                <button
+                  ref={(node) => {
+                    optionRefs.current[index] = node;
+                  }}
+                  id={`${id}-option-${index}`}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  disabled={option.disabled}
+                  onMouseEnter={() => !option.disabled && setActiveIndex(index)}
+                  onClick={() => chooseOption(option)}
+                  className={cn(
+                    "flex min-h-8 w-full cursor-pointer items-center justify-between gap-3 rounded-[calc(var(--surface-radius)-3px)] px-2.5 py-1.5 text-left transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-45",
+                    active ? "bg-[hsl(var(--accent)/0.08)] text-slate-950" : "hover:bg-slate-50",
+                    selected && "font-medium",
+                  )}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    {option.leadingIcon ? (
+                      <span className="shrink-0 text-slate-400">{option.leadingIcon}</span>
+                    ) : null}
+                    <span className="min-w-0">
+                      <span className="block truncate">{option.label}</span>
+                      {option.description ? (
+                        <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
+                          {option.description}
+                        </span>
+                      ) : null}
                     </span>
-                  ) : null}
-                </span>
-                {selected ? <Check className="h-4 w-4 shrink-0 text-[hsl(var(--accent))]" /> : null}
-              </button>
+                  </span>
+                  {selected ? <Check className="h-4 w-4 shrink-0 text-[hsl(var(--accent))]" /> : null}
+                </button>
+              </Fragment>
             );
           })}
         </div>,

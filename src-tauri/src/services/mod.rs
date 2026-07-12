@@ -4,6 +4,7 @@ pub mod channel_monitors;
 pub mod collectors;
 pub mod database;
 pub mod endpoint_ping;
+pub mod group_categories;
 pub mod health;
 pub mod logs;
 pub mod outbound;

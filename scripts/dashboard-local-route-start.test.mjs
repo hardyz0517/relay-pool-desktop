@@ -5,7 +5,7 @@ const dashboardSource = await readFile("src/features/dashboard/DashboardPage.tsx
 
 assert.match(
   dashboardSource,
-  /import\s+\{\s*startLocalProxy,\s*stopLocalProxy\s*\}\s+from\s+"@\/lib\/api\/proxy"/,
+  /import\s+\{[^}]*startLocalProxy[^}]*stopLocalProxy[^}]*\}\s+from\s+"@\/lib\/api\/proxy"/,
   "dashboard should use the typed proxy API boundary when starting and stopping the local route",
 );
 

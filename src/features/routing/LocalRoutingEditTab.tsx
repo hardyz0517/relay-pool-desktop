@@ -144,16 +144,16 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
 
   return (
     <div className="grid gap-3">
-      <SectionCard title="策略草案" contentClassName="grid gap-3">
+      <SectionCard title="自动调度" contentClassName="grid gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-blue-50 text-blue-700">
               <BadgeCheck className="h-5 w-5" />
             </span>
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-slate-900">低价稳定优先</div>
+              <div className="truncate text-sm font-semibold text-slate-900">自动选择倍率上限内综合最优 Key</div>
               <div className="truncate text-xs text-muted-foreground">
-                调整候选顺位后自动写入本地路由工作区。
+                倍率上限：{workspace.settings.maxRateMultiplier == null ? "未设置" : `${workspace.settings.maxRateMultiplier}x`}；分组筛选：{formatRoutingGroupFilter(workspace.settings.routingGroupFilter)}
               </div>
             </div>
           </div>
@@ -164,8 +164,8 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
           )}
         </div>
         <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
-          <EditHint icon={<ListOrdered className="h-4 w-4" />} title="顺位编辑" body="列表编号按当前可见顺序显示为 1、2、3。" />
-          <EditHint icon={<LockKeyhole className="h-4 w-4" />} title="运行边界" body="本页只更新候选顺位，不改变渠道和 Key 本身配置。" />
+          <EditHint icon={<ListOrdered className="h-4 w-4" />} title="Sub2API 风格调度" body="运行时会综合低倍率、低负载、低错误率和低延迟重新选择，不会超过倍率上限。" />
+          <EditHint icon={<LockKeyhole className="h-4 w-4" />} title="硬边界" body="分组筛选不会跨组兜底；倍率未知或过期的 Key 不参与路由。" />
         </div>
       </SectionCard>
 
@@ -251,4 +251,13 @@ function EditHint({ icon, title, body }: { icon: ReactNode; title: string; body:
       </span>
     </div>
   );
+}
+
+function formatRoutingGroupFilter(filter: LocalRoutingWorkspace["settings"]["routingGroupFilter"]) {
+  if (filter === "all_groups") return "全部分组";
+  if (filter === "ungrouped_only") return "未绑定分组";
+  if ("group_type" in filter) return `${filter.group_type} 分组`;
+  if ("group_binding_id" in filter) return "指定绑定";
+  if ("group_id_hash" in filter) return "指定分组";
+  return "全部分组";
 }
