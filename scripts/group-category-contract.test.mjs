@@ -161,6 +161,38 @@ assert.deepEqual(
   "legacy structured station/group-id mappings should still classify old numeric groups when stored category fields are missing",
 );
 
+const categorizedBindingWithStaleRateView = buildPricingComparisonViewModel({
+  stations: [station("station-ghost", "Xueyu Relay", 1)],
+  groupBindings: [
+    group("station-ghost", "current-plus", "plus", 0.0001, {
+      inferredGroupCategory: "unknown",
+      groupCategoryOverride: "gpt",
+    }),
+  ],
+  groupRates: [
+    rate("station-ghost", "stale-plus-rate", "plus", {
+      groupKeyHash: "station-ghost-stale-plus",
+      inferredGroupCategory: "unknown",
+      effectiveRateMultiplier: null,
+    }),
+  ],
+  pricingRules: [],
+  filters: {
+    groupType: "all",
+    query: "",
+    stationId: "all",
+  },
+});
+
+assert.deepEqual(
+  categorizedBindingWithStaleRateView.sections.map((section) => ({
+    groupType: section.groupType,
+    groupNames: section.rows.map((row) => row.groupName),
+  })),
+  [{ groupType: "gpt", groupNames: ["plus"] }],
+  "same-station same-name stale rate-only facts should not create an unknown ghost row after the binding is categorized",
+);
+
 assert.equal(
   groupVisualMetaFor("coding", null, "claude").platform,
   "anthropic",
@@ -285,5 +317,27 @@ function group(stationId, id, groupName, multiplier, categoryFields) {
     createdAt: "2026-07-06T00:00:00.000Z",
     updatedAt: "2026-07-06T00:00:00.000Z",
     ...categoryFields,
+  };
+}
+
+function rate(stationId, id, groupName, fields = {}) {
+  return {
+    id,
+    stationId,
+    stationKeyId: null,
+    groupBindingId: null,
+    bindingKind: "station_group",
+    groupKeyHash: `${stationId}-${id}`,
+    groupName,
+    defaultRateMultiplier: null,
+    userRateMultiplier: null,
+    effectiveRateMultiplier: null,
+    inferredGroupCategory: null,
+    source: "sub2api_groups_rates",
+    confidence: 0.9,
+    rawJsonRedacted: null,
+    checkedAt: "2026-07-06T00:00:00.000Z",
+    createdAt: "2026-07-06T00:00:00.000Z",
+    ...fields,
   };
 }

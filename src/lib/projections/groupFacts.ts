@@ -65,7 +65,9 @@ function buildBindingIndex(bindings: StationGroupBinding[]) {
   return {
     ids: new Set(bindings.map((binding) => binding.id).filter(Boolean)),
     groupKeyHashes: new Set(bindings.map((binding) => binding.groupKeyHash).filter(Boolean)),
-    groupNames: new Set(bindings.map((binding) => normalizedName(binding.groupName)).filter(Boolean)),
+    stationGroupNames: new Set(
+      bindings.map((binding) => stationGroupNameKey(binding.stationId, binding.groupName)).filter(Boolean),
+    ),
   };
 }
 
@@ -79,7 +81,8 @@ function rateIsCoveredByBinding(
   if (rate.groupKeyHash && bindingIndex.groupKeyHashes.has(rate.groupKeyHash)) {
     return true;
   }
-  return !rate.groupBindingId && !rate.groupKeyHash && bindingIndex.groupNames.has(normalizedName(rate.groupName));
+  const stationGroupName = stationGroupNameKey(rate.stationId, rate.groupName);
+  return stationGroupName !== null && bindingIndex.stationGroupNames.has(stationGroupName);
 }
 
 export function latestGroupRatesByBindingOrHash(
@@ -235,4 +238,9 @@ function firstNumber(...values: Array<number | null | undefined>) {
 
 function normalizedName(value: string) {
   return value.trim().toLowerCase();
+}
+
+function stationGroupNameKey(stationId: string, groupName: string) {
+  const normalizedGroupName = normalizedName(groupName);
+  return normalizedGroupName ? `${stationId}:${normalizedGroupName}` : null;
 }
