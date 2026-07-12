@@ -14,7 +14,7 @@ type ActivityQueryOptions<
   TData,
   TQueryKey extends QueryKey,
 > = Omit<UseQueryOptions<TQueryFnData, TError, TData, TQueryKey>, "enabled" | "subscribed"> & {
-  enabled?: boolean;
+  enabled?: UseQueryOptions<TQueryFnData, TError, TData, TQueryKey>["enabled"];
 };
 
 export function useActivityQuery<
