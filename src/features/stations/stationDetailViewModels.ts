@@ -232,7 +232,7 @@ export function buildUsageCards(station: Station, balances: BalanceSnapshot[]): 
     },
     {
       label: "今日 Token",
-      value: formatUsageCount(currentBalance.sourceSnapshot?.todayTokenCount),
+      value: formatUsageTokenCount(currentBalance.sourceSnapshot?.todayTokenCount),
       helper: formatTokenBreakdown(
         currentBalance.sourceSnapshot?.todayInputTokenCount,
         currentBalance.sourceSnapshot?.todayOutputTokenCount,
@@ -241,7 +241,7 @@ export function buildUsageCards(station: Station, balances: BalanceSnapshot[]): 
     },
     {
       label: "累计 Token",
-      value: formatUsageCount(currentBalance.sourceSnapshot?.totalTokenCount),
+      value: formatUsageTokenCount(currentBalance.sourceSnapshot?.totalTokenCount),
       helper: formatTokenBreakdown(
         currentBalance.sourceSnapshot?.totalInputTokenCount,
         currentBalance.sourceSnapshot?.totalOutputTokenCount,
@@ -465,7 +465,7 @@ function formatTokenBreakdown(
   inputTokens: number | null | undefined,
   outputTokens: number | null | undefined,
 ) {
-  return `输入: ${formatUsageCount(inputTokens)} / 输出: ${formatUsageCount(outputTokens)}`;
+  return `输入: ${formatUsageTokenCount(inputTokens)} / 输出: ${formatUsageTokenCount(outputTokens)}`;
 }
 
 function formatUsageCount(value: number | null | undefined) {
@@ -473,6 +473,27 @@ function formatUsageCount(value: number | null | undefined) {
     return "未采集";
   }
   return value.toLocaleString("zh-CN");
+}
+
+function formatUsageTokenCount(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) {
+    return "未采集";
+  }
+  const absValue = Math.abs(value);
+  if (absValue >= 1_000_000_000) {
+    return `${trimCompactFixed(value / 1_000_000_000)}B`;
+  }
+  if (absValue >= 1_000_000) {
+    return `${trimCompactFixed(value / 1_000_000)}M`;
+  }
+  if (absValue >= 1_000) {
+    return `${trimCompactFixed(value / 1_000)}K`;
+  }
+  return value.toLocaleString("zh-CN");
+}
+
+function trimCompactFixed(value: number) {
+  return value.toFixed(1).replace(/\.0$/, "");
 }
 
 function formatUsageMoney(value: number | null | undefined) {
