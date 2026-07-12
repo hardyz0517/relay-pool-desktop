@@ -517,27 +517,39 @@ export function DashboardPage() {
         title="路由队列"
       >
         <div className="grid gap-2">
-          {keyPoolItems.slice(0, 6).map((key) => (
-            <ObjectRow
-              key={key.id}
-              icon={<KeyRound className="h-4 w-4" />}
-              title={key.name}
-              subtitle={`${key.stationName} - ${key.stationBaseUrl}`}
-              badges={
-                <StatusBadge tone={key.enabled ? "healthy" : "disabled"}>
-                  {key.enabled ? "可用" : "停用"}
-                </StatusBadge>
-              }
-              metrics={[
-                { label: "优先级", value: `${key.priority}` },
-                {
-                  label: "成功率",
-                  value: key.successRate === null ? "-" : `${Math.round(key.successRate * 100)}%`,
-                  tone: key.successRate !== null && key.successRate < 0.9 ? "warning" : "good",
-                },
-              ]}
-            />
-          ))}
+          {dashboardLoaded && keyPoolItems.length === 0 ? (
+            <div className="flex min-h-[164px] flex-col items-center justify-center px-4 py-8 text-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-[16px] bg-slate-100 text-slate-300">
+                <Inbox className="h-7 w-7" strokeWidth={1.75} />
+              </div>
+              <div className="mt-4 text-sm font-medium text-slate-800">暂无路由队列</div>
+              <p className="mt-2 text-sm text-slate-500">
+                添加或导入 Key 后，可用路由将显示在这里。
+              </p>
+            </div>
+          ) : (
+            keyPoolItems.slice(0, 6).map((key) => (
+              <ObjectRow
+                key={key.id}
+                icon={<KeyRound className="h-4 w-4" />}
+                title={key.name}
+                subtitle={`${key.stationName} - ${key.stationBaseUrl}`}
+                badges={
+                  <StatusBadge tone={key.enabled ? "healthy" : "disabled"}>
+                    {key.enabled ? "可用" : "停用"}
+                  </StatusBadge>
+                }
+                metrics={[
+                  { label: "优先级", value: `${key.priority}` },
+                  {
+                    label: "成功率",
+                    value: key.successRate === null ? "-" : `${Math.round(key.successRate * 100)}%`,
+                    tone: key.successRate !== null && key.successRate < 0.9 ? "warning" : "good",
+                  },
+                ]}
+              />
+            ))
+          )}
         </div>
       </SectionCard>
 
