@@ -7,7 +7,7 @@ const activityQuerySource = await readFile("src/lib/query/useActivityQuery.ts", 
 
 assert.ok(
   hostSource.includes("PageActivityProvider") &&
-    hostSource.includes('const active = state === "active";') &&
+    hostSource.includes('const active = state === "active" || state === "entering";') &&
     hostSource.includes('transientActive ? "background" : "active"') &&
     hostSource.includes("<PageActivityProvider active={active}>"),
   "kept-alive shell pages should refresh only in active state, never while serving as a transient background",

@@ -9,7 +9,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation } from "@/components/shell/PageActivity";
+import { usePageActivation, usePageActivity } from "@/components/shell/PageActivity";
 import { Button, EmptyState, InspectorPanel, ObjectRow, SectionCard, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import {
@@ -49,6 +49,7 @@ type TaskStatus =
 
 export function CollectorsPage() {
   const toast = useToast();
+  usePageActivity();
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<string>("");
   const [latestSnapshot, setLatestSnapshot] = useState<CollectorSnapshot | null>(null);

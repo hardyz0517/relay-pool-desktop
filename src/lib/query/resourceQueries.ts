@@ -6,6 +6,8 @@ import { getProxyStatus, listRequestLogs } from "@/lib/api/proxy";
 import { getSettings } from "@/lib/api/settings";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
+import { loadChannelMonitoringWorkspace, loadChannelStatusWorkspace } from "@/lib/queries/channelQueries";
+import { loadLocalRoutingWorkspace } from "@/lib/queries/localRoutingQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { withQueryTimeout } from "@/lib/query/withQueryTimeout";
 
@@ -74,4 +76,25 @@ export const changeEventsQueryOptions = (refetchInterval: number | false = false
     queryFn: listChangeEvents,
     staleTime: 2_000,
     refetchInterval,
+  });
+
+export const localRoutingWorkspaceQueryOptions = () =>
+  queryOptions({
+    queryKey: queryKeys.localRoutingWorkspace,
+    queryFn: loadLocalRoutingWorkspace,
+    staleTime: 2_000,
+  });
+
+export const channelStatusQueryOptions = () =>
+  queryOptions({
+    queryKey: queryKeys.channelStatus,
+    queryFn: loadChannelStatusWorkspace,
+    staleTime: 5_000,
+  });
+
+export const channelMonitoringQueryOptions = () =>
+  queryOptions({
+    queryKey: queryKeys.channelMonitoring,
+    queryFn: loadChannelMonitoringWorkspace,
+    staleTime: 5_000,
   });

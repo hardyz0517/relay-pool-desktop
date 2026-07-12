@@ -9,6 +9,7 @@ export const queryKeys = {
   balanceSnapshots: ["balanceSnapshots"] as const,
   changeEvents: ["changeEvents"] as const,
   localRoutingWorkspace: ["localRoutingWorkspace"] as const,
+  channelMonitoring: ["channelMonitoring"] as const,
   pricing: ["pricing"] as const,
   channelStatus: ["channelStatus"] as const,
 } as const;

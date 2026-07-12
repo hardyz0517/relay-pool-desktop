@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { RefreshCcw } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation } from "@/components/shell/PageActivity";
+import { usePageActivity } from "@/components/shell/PageActivity";
 import { SETTINGS_UPDATED_EVENT } from "@/lib/api/settings";
 import { Button, SegmentedControl, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
-import { loadLocalRoutingWorkspace } from "@/lib/queries/localRoutingQueries";
-import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
+import { queryKeys } from "@/lib/query/queryKeys";
+import { localRoutingWorkspaceQueryOptions } from "@/lib/query/resourceQueries";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
+import { useQueryClient } from "@tanstack/react-query";
 import { LocalRoutingEditTab } from "./LocalRoutingEditTab";
 import { LocalRoutingStatusTab } from "./LocalRoutingStatusTab";
 
@@ -14,49 +16,27 @@ type LocalRoutingTab = "status" | "edit";
 
 export function RoutingPage() {
   const toast = useToast();
+  const queryClient = useQueryClient();
+  const { refreshEnabled } = usePageActivity();
   const [activeTab, setActiveTab] = useState<LocalRoutingTab>("status");
-  const [workspace, setWorkspace] = useState<LocalRoutingWorkspace | null>(null);
-  const [loading, setLoading] = useState(true);
-  const refreshOperationRef = useRef(0);
+  const workspaceQuery = useActivityQuery(refreshEnabled, localRoutingWorkspaceQueryOptions());
+  const workspace = workspaceQuery.data ?? null;
+  const loading = workspaceQuery.isPending && workspaceQuery.data === undefined;
+  const error = workspaceQuery.error ? readError(workspaceQuery.error) : null;
 
-  const refresh = useCallback(async (showLoading = true) => {
-    const operationId = refreshOperationRef.current + 1;
-    refreshOperationRef.current = operationId;
-    if (showLoading) {
-      setLoading(true);
-    }
-    try {
-      const nextWorkspace = await loadLocalRoutingWorkspace();
-      if (operationId !== refreshOperationRef.current) {
-        return;
-      }
-      setWorkspace(nextWorkspace);
-    } catch (requestError) {
-      if (operationId !== refreshOperationRef.current) {
-        return;
-      }
-      setWorkspace(null);
-      toast.error("刷新本地路由状态失败", readError(requestError));
-    } finally {
-      if (operationId === refreshOperationRef.current && showLoading) {
-        setLoading(false);
-      }
-    }
-  }, [toast]);
-
-  usePageActivation(({ isInitial }) => {
-    void refresh(isInitial);
-  });
+  useEffect(() => {
+    if (error) toast.error("刷新本地路由状态失败", error);
+  }, [error, toast]);
 
   useEffect(() => {
     const handleSettingsUpdated = () => {
-      void refresh(false);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.localRoutingWorkspace });
     };
     window.addEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
     return () => {
       window.removeEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
     };
-  }, [refresh]);
+  }, [queryClient]);
 
   return (
     <PageScaffold
@@ -72,7 +52,7 @@ export function RoutingPage() {
             ]}
             onChange={setActiveTab}
           />
-          <Button disabled={loading} variant="secondary" onClick={() => void refresh()}>
+          <Button disabled={loading} variant="secondary" onClick={() => void queryClient.invalidateQueries({ queryKey: queryKeys.localRoutingWorkspace })}>
             <RefreshCcw className="h-4 w-4" />
             刷新
           </Button>
