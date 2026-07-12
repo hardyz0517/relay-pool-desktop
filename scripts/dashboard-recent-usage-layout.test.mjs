@@ -13,7 +13,7 @@ function assert(condition, message) {
 }
 
 assert(
-  /<SectionCard\s+title="最近使用"[\s>]/.test(dashboardSource),
+  /<section className="grid gap-3">\s*<h2 className="truncate text-\[13px\] font-semibold text-slate-800">\s*最近使用\s*<\/h2>/.test(dashboardSource),
   "dashboard recent activity section should be renamed to 最近使用",
 );
 

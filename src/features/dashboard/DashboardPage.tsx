@@ -379,7 +379,7 @@ export function DashboardPage() {
             {
               label: "今日请求",
               value: formatCompactNumber(todayRequests),
-              detail: `累计 ${formatCompactNumber(proxyRequestCount)}`,
+              detail: `总计：${formatCompactNumber(proxyRequestCount)}`,
               icon: Activity,
               tone: todayRequests > 0 ? "good" : "neutral",
               valueClassName: "text-slate-900",
@@ -447,7 +447,7 @@ export function DashboardPage() {
             {
               label: "站点今日请求",
               value: formatCompactNumber(stationUsage.todayRequestCount),
-              detail: `累计 ${formatCompactNumber(stationUsage.totalRequestCount)}`,
+              detail: `总计：${formatCompactNumber(stationUsage.totalRequestCount)}`,
               icon: Activity,
               tone: stationUsage.todayRequestCount > 0 ? "good" : "neutral",
               valueClassName: "text-slate-900",
@@ -455,11 +455,32 @@ export function DashboardPage() {
             },
             {
               label: "站点今日消费",
-              value: formatUsdAmount(stationUsage.todayConsumption),
-              detail: `累计 ${formatUsdAmount(stationUsage.totalConsumption)}`,
+              value: (
+                <>
+                  <span title="实际花费">{formatUsdAmount(stationUsage.todayConsumption)}</span>
+                  {stationUsage.todayBaseConsumption !== null && (
+                    <span className="ml-1 text-sm font-normal text-slate-400" title="1倍率 Token 花费">
+                      {`/ ${formatUsdAmount(stationUsage.todayBaseConsumption)}`}
+                    </span>
+                  )}
+                </>
+              ),
+              detail: (
+                <>
+                  <span>总计：</span>
+                  <span className="font-semibold text-purple-600" title="实际花费">
+                    {formatUsdAmount(stationUsage.totalConsumption)}
+                  </span>
+                  {stationUsage.totalBaseConsumption !== null && (
+                    <span className="text-slate-400" title="1倍率 Token 花费">
+                      {` / ${formatUsdAmount(stationUsage.totalBaseConsumption)}`}
+                    </span>
+                  )}
+                </>
+              ),
               icon: BadgeDollarSign,
               tone: stationUsage.todayConsumption > 0 ? "good" : "neutral",
-              valueClassName: "text-purple-700",
+              valueClassName: "inline-flex items-baseline text-purple-700",
               accent: "purple",
             },
             {
@@ -484,12 +505,16 @@ export function DashboardPage() {
         />
       </div>
 
-      <SectionCard
-        title="当前风险"
-        contentClassName="border-0"
-        action={<StatusBadge tone={unreadRisks > 0 ? "warning" : "healthy"}>{unreadRisks > 0 ? `${unreadRisks} 未读` : "无未读风险"}</StatusBadge>}
-      >
-        <div className="mb-3 grid gap-2 md:grid-cols-4">
+      <section className="grid gap-3">
+        <header className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="truncate text-[13px] font-semibold text-slate-800">
+            当前风险
+          </h2>
+          <StatusBadge tone={unreadRisks > 0 ? "warning" : "healthy"}>
+            {unreadRisks > 0 ? `${unreadRisks} 未读` : "无未读风险"}
+          </StatusBadge>
+        </header>
+        <div className="grid gap-3 md:grid-cols-4">
           <DashboardMetricTile
             label="严重未解决"
             value={p9RiskBreakdown.unresolvedCritical}
@@ -537,14 +562,15 @@ export function DashboardPage() {
             ))}
           </div>
         )}
-      </SectionCard>
+      </section>
 
-      <SectionCard
-        title="路由队列"
-      >
-        <div className="grid gap-2">
+      <section className="grid gap-3">
+        <h2 className="truncate text-[13px] font-semibold text-slate-800">
+          路由队列
+        </h2>
+        <div className="grid gap-3">
           {dashboardLoaded && keyPoolItems.length === 0 ? (
-            <div className="flex min-h-[164px] flex-col items-center justify-center px-4 py-8 text-center">
+            <div className="flex min-h-[164px] flex-col items-center justify-center rounded-[8px] border border-border bg-white px-4 py-8 text-center shadow-[var(--surface-shadow)]">
               <div className="flex h-16 w-16 items-center justify-center rounded-[16px] bg-slate-100 text-slate-300">
                 <Inbox className="h-7 w-7" strokeWidth={1.75} />
               </div>
@@ -577,13 +603,16 @@ export function DashboardPage() {
             ))
           )}
         </div>
-      </SectionCard>
+      </section>
 
       <div className="grid min-h-0 gap-3">
-        <SectionCard title="最近使用" contentClassName="border-0">
+        <section className="grid gap-3">
+          <h2 className="truncate text-[13px] font-semibold text-slate-800">
+            最近使用
+          </h2>
           <div className="grid gap-3">
             {dashboardLoaded && requestLogs.length === 0 ? (
-              <div className="flex min-h-[260px] flex-col items-center justify-center px-4 py-10 text-center">
+              <div className="flex min-h-[260px] flex-col items-center justify-center rounded-[8px] border border-border bg-white px-4 py-10 text-center shadow-[var(--surface-shadow)]">
                 <div className="flex h-20 w-20 items-center justify-center rounded-[16px] bg-slate-100 text-slate-300">
                   <Inbox className="h-8 w-8" strokeWidth={1.75} />
                 </div>
@@ -638,25 +667,30 @@ export function DashboardPage() {
               })
             )}
           </div>
-        </SectionCard>
+        </section>
 
-        <SectionCard title="Key 健康" contentClassName="border-0">
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-2">
-            {(Object.keys(stationKeyStatusLabels) as StationKeyStatus[]).map((key) => (
-              <DashboardMetricTile
-                key={key}
-                label={stationKeyStatusLabels[key]}
-                value={keyPoolItems.filter((item) => item.status === key).length}
-                detail="密钥"
-                icon={Server}
-                tone={metricToneForHealth(key)}
-              />
-            ))}
+        <section className="grid gap-3">
+          <h2 className="truncate text-[13px] font-semibold text-slate-800">
+            Key 健康
+          </h2>
+          <div className="grid gap-3">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-3">
+              {(Object.keys(stationKeyStatusLabels) as StationKeyStatus[]).map((key) => (
+                <DashboardMetricTile
+                  key={key}
+                  label={stationKeyStatusLabels[key]}
+                  value={keyPoolItems.filter((item) => item.status === key).length}
+                  detail="密钥"
+                  icon={Server}
+                  tone={metricToneForHealth(key)}
+                />
+              ))}
+            </div>
+            <div className="rounded-[8px] bg-slate-50/60 px-3 py-2.5 text-xs leading-5 text-slate-700">
+              已知余额总计 {totalBalance.toFixed(2)} - 余额告警 {lowBalanceStations} - 最近错误：{recentError}
+            </div>
           </div>
-          <div className="mt-3 rounded-[8px] bg-slate-50/60 px-3 py-2.5 text-xs leading-5 text-slate-700">
-            已知余额总计 {totalBalance.toFixed(2)} - 余额告警 {lowBalanceStations} - 最近错误：{recentError}
-          </div>
-        </SectionCard>
+        </section>
       </div>
     </PageScaffold>
   );

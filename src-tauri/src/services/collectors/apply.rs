@@ -125,6 +125,8 @@ pub fn apply_collector_facts(
             total_request_count: balance.total_request_count,
             today_consumption: balance.today_consumption,
             total_consumption: balance.total_consumption,
+            today_base_consumption: balance.today_base_consumption,
+            total_base_consumption: balance.total_base_consumption,
             today_token_count: balance.today_token_count,
             total_token_count: balance.total_token_count,
             today_input_token_count: balance.today_input_token_count,
@@ -298,6 +300,8 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
             total_request_count,
             today_consumption,
             total_consumption,
+            today_base_consumption,
+            total_base_consumption,
             today_token_count,
             total_token_count,
             today_input_token_count,
@@ -334,6 +338,16 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
                 sum_present_values(key_balances.iter().map(|balance| balance.today_consumption));
             let total_consumption =
                 sum_present_values(key_balances.iter().map(|balance| balance.total_consumption));
+            let today_base_consumption = sum_present_values(
+                key_balances
+                    .iter()
+                    .map(|balance| balance.today_base_consumption),
+            );
+            let total_base_consumption = sum_present_values(
+                key_balances
+                    .iter()
+                    .map(|balance| balance.total_base_consumption),
+            );
             let today_token_count = sum_present_i64_values(
                 key_balances.iter().map(|balance| balance.today_token_count),
             );
@@ -388,6 +402,8 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
                     total_request_count,
                     today_consumption,
                     total_consumption,
+                    today_base_consumption,
+                    total_base_consumption,
                     today_token_count,
                     total_token_count,
                     today_input_token_count,
@@ -416,6 +432,8 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
             total_request_count,
             today_consumption,
             total_consumption,
+            today_base_consumption,
+            total_base_consumption,
             today_token_count,
             total_token_count,
             today_input_token_count,
@@ -576,6 +594,8 @@ mod tests {
             total_request_count: None,
             today_consumption: None,
             total_consumption: None,
+            today_base_consumption: None,
+            total_base_consumption: None,
             today_token_count: None,
             total_token_count: None,
             today_input_token_count: None,

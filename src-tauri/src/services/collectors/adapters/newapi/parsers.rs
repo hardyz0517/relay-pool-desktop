@@ -7,6 +7,31 @@ use crate::services::collectors::facts::{
 };
 use crate::services::group_categories::infer_group_category;
 
+const TODAY_BASE_CONSUMPTION_FIELDS: &[&str] = &[
+    "today_base_consumption",
+    "today_base_used_amount",
+    "today_base_cost",
+    "todayBaseConsumption",
+    "todayBaseUsedAmount",
+    "todayBaseCost",
+    "today_quota_consumption",
+];
+const TOTAL_BASE_CONSUMPTION_FIELDS: &[&str] = &[
+    "total_base_consumption",
+    "base_consumption",
+    "base_used_amount",
+    "total_base_used_amount",
+    "base_cost",
+    "total_base_cost",
+    "totalBaseConsumption",
+    "baseConsumption",
+    "baseUsedAmount",
+    "totalBaseUsedAmount",
+    "baseCost",
+    "totalBaseCost",
+    "quota_consumption",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct NewApiEnvelopeError {
     pub message: String,
@@ -109,6 +134,8 @@ pub(super) fn parse_balance_fact(
                 "cost",
             ],
         ),
+        today_base_consumption: parse_f64_field(data, TODAY_BASE_CONSUMPTION_FIELDS),
+        total_base_consumption: parse_f64_field(data, TOTAL_BASE_CONSUMPTION_FIELDS),
         today_token_count: parse_i64_field(
             data,
             &[
@@ -327,6 +354,8 @@ mod tests {
                 "today_request_count": 34,
                 "used_amount": 19.875,
                 "today_used_amount": 1.25,
+                "base_used_amount": 39.75,
+                "today_base_used_amount": 2.5,
                 "total_tokens": 987654,
                 "today_tokens": 43210
             }),
@@ -338,6 +367,8 @@ mod tests {
         assert_eq!(fact.total_request_count, Some(1200));
         assert_eq!(fact.today_consumption, Some(1.25));
         assert_eq!(fact.total_consumption, Some(19.875));
+        assert_eq!(fact.today_base_consumption, Some(2.5));
+        assert_eq!(fact.total_base_consumption, Some(39.75));
         assert_eq!(fact.today_token_count, Some(43210));
         assert_eq!(fact.total_token_count, Some(987654));
     }

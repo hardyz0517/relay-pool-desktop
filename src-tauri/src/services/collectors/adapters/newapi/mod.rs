@@ -684,6 +684,8 @@ struct NewApiUsageStats {
     total_request_count: Option<i64>,
     today_consumption: Option<f64>,
     total_consumption: Option<f64>,
+    today_base_consumption: Option<f64>,
+    total_base_consumption: Option<f64>,
     today_token_count: Option<i64>,
     total_token_count: Option<i64>,
     today_input_token_count: Option<i64>,
@@ -697,6 +699,7 @@ struct NewApiLogStatWindow {
     request_count: Option<i64>,
     token_count: Option<i64>,
     consumption: Option<f64>,
+    base_consumption: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -712,6 +715,8 @@ impl NewApiUsageStats {
             || self.total_request_count.is_some()
             || self.today_consumption.is_some()
             || self.total_consumption.is_some()
+            || self.today_base_consumption.is_some()
+            || self.total_base_consumption.is_some()
             || self.today_token_count.is_some()
             || self.total_token_count.is_some()
             || self.today_input_token_count.is_some()
@@ -767,6 +772,12 @@ fn collect_usage_stats(
             .or_else(|| total_stat.as_ref().and_then(|stat| stat.request_count)),
         today_consumption: today_stat.as_ref().and_then(|stat| stat.consumption),
         total_consumption: total_stat.as_ref().and_then(|stat| stat.consumption),
+        today_base_consumption: today_stat
+            .as_ref()
+            .and_then(|stat| stat.base_consumption),
+        total_base_consumption: total_stat
+            .as_ref()
+            .and_then(|stat| stat.base_consumption),
         today_token_count: today_stat
             .as_ref()
             .and_then(|stat| stat.token_count)
@@ -823,11 +834,35 @@ fn collect_log_stat_window(
     )
     .map_err(newapi_request_error_message)?;
     let quota = numeric_f64_field(&response.data, &["quota"]).unwrap_or(0.0);
+    let base_consumption = numeric_f64_field(
+        &response.data,
+        &[
+            "base_consumption",
+            "base_used_amount",
+            "base_cost",
+            "baseConsumption",
+            "baseUsedAmount",
+            "baseCost",
+        ],
+    )
+    .or_else(|| {
+        numeric_f64_field(
+            &response.data,
+            &[
+                "base_quota",
+                "base_used_quota",
+                "baseQuota",
+                "baseUsedQuota",
+            ],
+        )
+        .map(|value| value / quota_per_unit)
+    });
     Ok((
         NewApiLogStatWindow {
             request_count: numeric_i64_field(&response.data, &["rpm", "request_count", "count"]),
             token_count: numeric_i64_field(&response.data, &["tpm", "token_count", "token_used"]),
             consumption: Some(quota / quota_per_unit),
+            base_consumption,
         },
         vec![response.endpoint_result],
     ))
@@ -933,6 +968,40 @@ fn merge_usage_stats_into_balance_data(data: &mut Value, stats: NewApiUsageStats
     );
     insert_missing_f64(object, "today_consumption", stats.today_consumption);
     insert_missing_f64(object, "total_consumption", stats.total_consumption);
+    insert_missing_f64_with_aliases(
+        object,
+        "today_base_consumption",
+        &[
+            "today_base_consumption",
+            "today_base_used_amount",
+            "today_base_cost",
+            "todayBaseConsumption",
+            "todayBaseUsedAmount",
+            "todayBaseCost",
+            "today_quota_consumption",
+        ],
+        stats.today_base_consumption,
+    );
+    insert_missing_f64_with_aliases(
+        object,
+        "total_base_consumption",
+        &[
+            "total_base_consumption",
+            "base_consumption",
+            "base_used_amount",
+            "total_base_used_amount",
+            "base_cost",
+            "total_base_cost",
+            "totalBaseConsumption",
+            "baseConsumption",
+            "baseUsedAmount",
+            "totalBaseUsedAmount",
+            "baseCost",
+            "totalBaseCost",
+            "quota_consumption",
+        ],
+        stats.total_base_consumption,
+    );
     insert_missing_i64(object, "today_token_count", stats.today_token_count);
     insert_missing_i64(object, "total_token_count", stats.total_token_count);
     insert_missing_i64(
@@ -983,6 +1052,18 @@ fn insert_missing_f64(object: &mut serde_json::Map<String, Value>, key: &str, va
             object.insert(key.to_string(), json!(value));
         }
     }
+}
+
+fn insert_missing_f64_with_aliases(
+    object: &mut serde_json::Map<String, Value>,
+    key: &str,
+    aliases: &[&str],
+    value: Option<f64>,
+) {
+    if aliases.iter().any(|alias| object.contains_key(*alias)) {
+        return;
+    }
+    insert_missing_f64(object, key, value);
 }
 
 fn newapi_log_stat_path(start_timestamp: i64, end_timestamp: i64) -> String {

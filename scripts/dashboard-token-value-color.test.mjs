@@ -30,7 +30,7 @@ assert.match(
 
 assert.match(
   metricBlock("今日请求"),
-  /valueClassName:\s*"text-slate-900"[\s\S]*?accent:\s*"green"/,
+  /detail:\s*`总计：\$\{formatCompactNumber\(proxyRequestCount\)\}`[\s\S]*?valueClassName:\s*"text-slate-900"[\s\S]*?accent:\s*"green"/,
   "dashboard today request card should render the primary request count in dark text while keeping the green icon accent",
 );
 

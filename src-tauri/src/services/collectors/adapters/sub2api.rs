@@ -32,6 +32,30 @@ use crate::{
 
 const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const COLLECTOR_TASK_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+const TODAY_BASE_CONSUMPTION_FIELDS: &[&str] = &[
+    "today_base_consumption",
+    "today_base_used_amount",
+    "today_base_cost",
+    "todayBaseConsumption",
+    "todayBaseUsedAmount",
+    "todayBaseCost",
+    "today_quota_consumption",
+];
+const TOTAL_BASE_CONSUMPTION_FIELDS: &[&str] = &[
+    "total_base_consumption",
+    "base_consumption",
+    "base_used_amount",
+    "total_base_used_amount",
+    "base_cost",
+    "total_base_cost",
+    "totalBaseConsumption",
+    "baseConsumption",
+    "baseUsedAmount",
+    "totalBaseUsedAmount",
+    "baseCost",
+    "totalBaseCost",
+    "quota_consumption",
+];
 
 pub fn parse_usage_balance(
     station_id: &str,
@@ -106,6 +130,8 @@ pub fn parse_usage_balance(
                 "cost",
             ],
         ),
+        today_base_consumption: parse_f64_field(payload, TODAY_BASE_CONSUMPTION_FIELDS),
+        total_base_consumption: parse_f64_field(payload, TOTAL_BASE_CONSUMPTION_FIELDS),
         today_token_count: parse_i64_field(
             payload,
             &[
@@ -1690,6 +1716,8 @@ struct DashboardUsageStats {
     total_request_count: Option<i64>,
     today_consumption: Option<f64>,
     total_consumption: Option<f64>,
+    today_base_consumption: Option<f64>,
+    total_base_consumption: Option<f64>,
     today_token_count: Option<i64>,
     total_token_count: Option<i64>,
     today_input_token_count: Option<i64>,
@@ -1704,6 +1732,8 @@ impl DashboardUsageStats {
             || self.total_request_count.is_some()
             || self.today_consumption.is_some()
             || self.total_consumption.is_some()
+            || self.today_base_consumption.is_some()
+            || self.total_base_consumption.is_some()
             || self.today_token_count.is_some()
             || self.total_token_count.is_some()
             || self.today_input_token_count.is_some()
@@ -1717,6 +1747,8 @@ impl DashboardUsageStats {
         balance.total_request_count = self.total_request_count;
         balance.today_consumption = self.today_consumption;
         balance.total_consumption = self.total_consumption;
+        balance.today_base_consumption = self.today_base_consumption;
+        balance.total_base_consumption = self.total_base_consumption;
         balance.today_token_count = self.today_token_count;
         balance.total_token_count = self.total_token_count;
         balance.today_input_token_count = self.today_input_token_count;
@@ -1840,6 +1872,8 @@ fn parse_dashboard_usage_stats(payload: &Value) -> Option<DashboardUsageStats> {
             "consumption",
             "cost",
         ]),
+        today_base_consumption: find_f64(TODAY_BASE_CONSUMPTION_FIELDS),
+        total_base_consumption: find_f64(TOTAL_BASE_CONSUMPTION_FIELDS),
         today_token_count: find_i64(&[
             "today_token_count",
             "today_tokens",
@@ -1954,6 +1988,8 @@ fn merge_dashboard_usage_stats(
         total_request_count: None,
         today_consumption: None,
         total_consumption: None,
+        today_base_consumption: None,
+        total_base_consumption: None,
         today_token_count: None,
         total_token_count: None,
         today_input_token_count: None,
@@ -2071,6 +2107,8 @@ fn parse_account_balance(
                 "cost",
             ],
         ),
+        today_base_consumption: parse_f64_field(payload, TODAY_BASE_CONSUMPTION_FIELDS),
+        total_base_consumption: parse_f64_field(payload, TOTAL_BASE_CONSUMPTION_FIELDS),
         today_token_count: parse_i64_field(
             payload,
             &[
@@ -2235,7 +2273,9 @@ mod tests {
                 "today_request_count": 18,
                 "request_count": 240,
                 "today_used_amount": 0.75,
+                "today_base_consumption": 1.5,
                 "used_amount": 9.5,
+                "total_base_consumption": 19.0,
                 "today_tokens": 12345,
                 "total_tokens": 67890
             }),
@@ -2246,6 +2286,8 @@ mod tests {
         assert_eq!(fact.total_request_count, Some(240));
         assert_eq!(fact.today_consumption, Some(0.75));
         assert_eq!(fact.total_consumption, Some(9.5));
+        assert_eq!(fact.today_base_consumption, Some(1.5));
+        assert_eq!(fact.total_base_consumption, Some(19.0));
         assert_eq!(fact.today_token_count, Some(12345));
         assert_eq!(fact.total_token_count, Some(67890));
     }

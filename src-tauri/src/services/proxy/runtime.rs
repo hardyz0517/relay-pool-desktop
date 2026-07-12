@@ -53,7 +53,6 @@ use crate::{
 pub struct ProxyRuntimeState {
     inner: Mutex<ProxyRuntimeInner>,
 }
-
 #[derive(Debug, Default)]
 struct ProxyRuntimeInner {
     running: bool,
@@ -4405,6 +4404,8 @@ mod tests {
                 total_request_count: None,
                 today_consumption: None,
                 total_consumption: None,
+                today_base_consumption: None,
+                total_base_consumption: None,
                 today_token_count: None,
                 total_token_count: None,
                 today_input_token_count: None,
@@ -4433,6 +4434,8 @@ mod tests {
                 total_request_count: None,
                 today_consumption: None,
                 total_consumption: None,
+                today_base_consumption: None,
+                total_base_consumption: None,
                 today_token_count: None,
                 total_token_count: None,
                 today_input_token_count: None,
@@ -4461,6 +4464,8 @@ mod tests {
                 total_request_count: None,
                 today_consumption: None,
                 total_consumption: None,
+                today_base_consumption: None,
+                total_base_consumption: None,
                 today_token_count: None,
                 total_token_count: None,
                 today_input_token_count: None,
@@ -4489,6 +4494,8 @@ mod tests {
                 total_request_count: None,
                 today_consumption: None,
                 total_consumption: None,
+                today_base_consumption: None,
+                total_base_consumption: None,
                 today_token_count: None,
                 total_token_count: None,
                 today_input_token_count: None,

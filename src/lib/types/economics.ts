@@ -58,6 +58,8 @@ export type BalanceSnapshot = {
   totalRequestCount: number | null;
   todayConsumption: number | null;
   totalConsumption: number | null;
+  todayBaseConsumption: number | null;
+  totalBaseConsumption: number | null;
   todayTokenCount: number | null;
   totalTokenCount: number | null;
   todayInputTokenCount: number | null;

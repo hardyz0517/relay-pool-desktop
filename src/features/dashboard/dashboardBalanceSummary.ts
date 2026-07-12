@@ -14,6 +14,8 @@ export type DashboardStationUsageSummary = {
   totalRequestCount: number;
   todayConsumption: number;
   totalConsumption: number;
+  todayBaseConsumption: number | null;
+  totalBaseConsumption: number | null;
   todayTokenCount: number;
   totalTokenCount: number;
   todayInputTokenCount: number;
@@ -62,6 +64,16 @@ function summarizeStationUsage(
     totalRequestCount: sumNumbers(snapshots.map((snapshot) => snapshot.totalRequestCount)),
     todayConsumption: sumConsumption(snapshots, "todayConsumption", creditPerCnyByStation),
     totalConsumption: sumConsumption(snapshots, "totalConsumption", creditPerCnyByStation),
+    todayBaseConsumption: sumBaseConsumption(
+      snapshots,
+      "todayBaseConsumption",
+      creditPerCnyByStation,
+    ),
+    totalBaseConsumption: sumBaseConsumption(
+      snapshots,
+      "totalBaseConsumption",
+      creditPerCnyByStation,
+    ),
     todayTokenCount: sumNumbers(snapshots.map((snapshot) => snapshot.todayTokenCount)),
     totalTokenCount: sumNumbers(snapshots.map((snapshot) => snapshot.totalTokenCount)),
     todayInputTokenCount: sumNumbers(snapshots.map((snapshot) => snapshot.todayInputTokenCount)),
@@ -83,6 +95,23 @@ function sumConsumption(
     }
     return sum + value / (creditPerCnyByStation.get(snapshot.stationId) ?? 1);
   }, 0);
+}
+
+function sumBaseConsumption(
+  snapshots: BalanceSnapshot[],
+  baseField: "todayBaseConsumption" | "totalBaseConsumption",
+  creditPerCnyByStation: Map<string, number>,
+) {
+  let hasValue = false;
+  const total = snapshots.reduce<number>((sum, snapshot) => {
+    const value = snapshot[baseField];
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return sum;
+    }
+    hasValue = true;
+    return sum + value / (creditPerCnyByStation.get(snapshot.stationId) ?? 1);
+  }, 0);
+  return hasValue ? total : null;
 }
 
 function sumNumbers(values: Array<number | null | undefined>): number {

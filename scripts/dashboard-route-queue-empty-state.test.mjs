@@ -9,7 +9,7 @@ function assert(condition, message) {
 }
 
 assert(
-  dashboardSource.includes('title="路由队列"'),
+  /<section className="grid gap-3">\s*<h2 className="truncate text-\[13px\] font-semibold text-slate-800">\s*路由队列\s*<\/h2>/.test(dashboardSource),
   "dashboard should keep the route queue section on the home page",
 );
 

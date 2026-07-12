@@ -12,6 +12,8 @@ pub struct CollectedBalanceFact {
     pub total_request_count: Option<i64>,
     pub today_consumption: Option<f64>,
     pub total_consumption: Option<f64>,
+    pub today_base_consumption: Option<f64>,
+    pub total_base_consumption: Option<f64>,
     pub today_token_count: Option<i64>,
     pub total_token_count: Option<i64>,
     pub today_input_token_count: Option<i64>,

@@ -31,11 +31,25 @@ assert(
 );
 
 assert(
-  /label:\s*"站点今日请求"[\s\S]*?valueClassName:\s*"text-slate-900"[\s\S]*?accent:\s*"green"/.test(dashboardSource) &&
-    /label:\s*"站点今日消费"[\s\S]*?valueClassName:\s*"text-purple-700"[\s\S]*?accent:\s*"purple"/.test(dashboardSource) &&
+    /label:\s*"站点今日请求"[\s\S]*?valueClassName:\s*"text-slate-900"[\s\S]*?accent:\s*"green"/.test(dashboardSource) &&
+    /label:\s*"站点今日消费"[\s\S]*?valueClassName:\s*"[^"]*text-purple-700[^"]*"[\s\S]*?accent:\s*"purple"/.test(dashboardSource) &&
     /label:\s*"站点今日 Token"[\s\S]*?valueClassName:\s*"text-slate-900"[\s\S]*?accent:\s*"amber"/.test(dashboardSource) &&
     /label:\s*"站点累计 Token"[\s\S]*?valueClassName:\s*"text-slate-900"[\s\S]*?accent:\s*"indigo"/.test(dashboardSource),
   "dashboard station usage metric cards should align their primary value colors with the matching local routing metric cards",
+);
+
+assert(
+  /label:\s*"站点今日请求"[\s\S]*?detail:\s*`总计：\$\{formatCompactNumber\(stationUsage\.totalRequestCount\)\}`/.test(dashboardSource),
+  "dashboard station request card should label the cumulative request count as 总计：",
+);
+
+assert(
+  dashboardSource.includes("stationUsage.todayBaseConsumption") &&
+    dashboardSource.includes("stationUsage.totalBaseConsumption") &&
+    dashboardSource.includes('formatUsdAmount(stationUsage.todayBaseConsumption)') &&
+    dashboardSource.includes('formatUsdAmount(stationUsage.totalBaseConsumption)') &&
+    dashboardSource.includes("总计："),
+  "dashboard station consumption card should render actual/base consumption totals with a 总计： detail",
 );
 
 assert(
@@ -45,6 +59,16 @@ assert(
     stationDetailViewModelSource.includes("totalInputTokenCount") &&
     stationDetailViewModelSource.includes("totalOutputTokenCount"),
   "station detail usage cards should render token input/output breakdown helpers",
+);
+
+assert(
+  /label:\s*"今日请求"[\s\S]*?helper:\s*`总计：\$\{formatUsageCount\(currentBalance\.sourceSnapshot\?\.totalRequestCount\)\}`/.test(stationDetailViewModelSource),
+  "station detail request usage card should label the cumulative request count as 总计：",
+);
+
+assert(
+  /label:\s*"今日消费"[\s\S]*?helper:\s*`总计：\$\{formatUsageMoney\(currentBalance\.sourceSnapshot\?\.totalConsumption\)\}`/.test(stationDetailViewModelSource),
+  "station detail consumption usage card should label the cumulative consumption as 总计：",
 );
 
 assert(

@@ -221,13 +221,13 @@ export function buildUsageCards(station: Station, balances: BalanceSnapshot[]): 
     {
       label: "今日请求",
       value: formatUsageCount(currentBalance.sourceSnapshot?.todayRequestCount),
-      helper: `累计 ${formatUsageCount(currentBalance.sourceSnapshot?.totalRequestCount)}`,
+      helper: `总计：${formatUsageCount(currentBalance.sourceSnapshot?.totalRequestCount)}`,
       tone: hasUsage ? "good" : "muted",
     },
     {
       label: "今日消费",
       value: formatUsageMoney(currentBalance.sourceSnapshot?.todayConsumption),
-      helper: `累计 ${formatUsageMoney(currentBalance.sourceSnapshot?.totalConsumption)}`,
+      helper: `总计：${formatUsageMoney(currentBalance.sourceSnapshot?.totalConsumption)}`,
       tone: hasUsage ? "neutral" : "muted",
     },
     {

@@ -144,6 +144,8 @@ pub fn sanitize_balance_snapshot_input(
         total_request_count: input.total_request_count,
         today_consumption: input.today_consumption,
         total_consumption: input.total_consumption,
+        today_base_consumption: input.today_base_consumption,
+        total_base_consumption: input.total_base_consumption,
         today_token_count: input.today_token_count,
         total_token_count: input.total_token_count,
         today_input_token_count: input.today_input_token_count,
