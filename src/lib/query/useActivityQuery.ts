@@ -34,8 +34,8 @@ export function useActivityQuery<
   });
 
   useEffect(() => {
-    if (!active && result.fetchStatus === "fetching") recordHiddenPageQueryStart();
-  }, [active, result.fetchStatus]);
+    if (!active && queryEnabled && result.fetchStatus === "fetching") recordHiddenPageQueryStart();
+  }, [active, queryEnabled, result.fetchStatus]);
 
   return result;
 }
