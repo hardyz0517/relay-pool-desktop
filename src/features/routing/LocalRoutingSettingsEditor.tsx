@@ -19,7 +19,8 @@ import {
 } from "@/lib/types/settings";
 import {
   createLocalRoutingSettingsDraft,
-  parseLocalRoutingSettingsDraft,
+  parseLocalRoutingBoundaryDraft,
+  parseLocalRoutingSchedulerDraft,
   ROUTING_GROUP_PRESET_OPTIONS,
   type LocalRoutingSettingsDraft,
   type LocalRoutingSettingsErrorKey,
@@ -61,30 +62,56 @@ export function LocalRoutingSettingsEditor() {
   const [savedDraft, setSavedDraft] = useState<LocalRoutingSettingsDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [saveState, setSaveState] = useState<SaveState>("idle");
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [boundarySaveState, setBoundarySaveState] = useState<SaveState>("idle");
+  const [boundarySavePending, setBoundarySavePending] = useState(false);
+  const [boundarySaveError, setBoundarySaveError] = useState<string | null>(null);
+  const [schedulerSaveState, setSchedulerSaveState] = useState<SaveState>("idle");
+  const [schedulerSaveError, setSchedulerSaveError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<LocalRoutingSettingsErrors>({});
+  const settingsRef = useRef<AppSettings | null>(null);
   const loadOperationRef = useRef(0);
-  const saveOperationRef = useRef(0);
+  const boundarySaveOperationRef = useRef(0);
+  const boundaryDraftVersionRef = useRef(0);
+  const schedulerSaveOperationRef = useRef(0);
+  const boundarySaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     void loadCurrentSettings();
     return () => {
       loadOperationRef.current += 1;
-      saveOperationRef.current += 1;
+      boundarySaveOperationRef.current += 1;
+      boundaryDraftVersionRef.current += 1;
+      schedulerSaveOperationRef.current += 1;
+      if (boundarySaveTimeoutRef.current) {
+        clearTimeout(boundarySaveTimeoutRef.current);
+      }
     };
   }, []);
 
-  const dirty = useMemo(
-    () => Boolean(draft && savedDraft && JSON.stringify(draft) !== JSON.stringify(savedDraft)),
+  function applySettings(nextSettings: AppSettings) {
+    settingsRef.current = nextSettings;
+    setSettings(nextSettings);
+  }
+
+  const schedulerDirty = useMemo(
+    () => {
+      if (!draft || !savedDraft) {
+        return false;
+      }
+      return Object.entries(draft.scheduler).some(
+        ([field, value]) =>
+          field !== "multiplierMinConfidence" &&
+          savedDraft.scheduler[field as keyof typeof savedDraft.scheduler] !== value,
+      );
+    },
     [draft, savedDraft],
   );
-  const visibleSaveState: VisibleSaveState =
-    saveState === "saving" || saveState === "error"
-      ? saveState
-      : dirty
+  const visibleSchedulerSaveState: VisibleSaveState =
+    schedulerSaveState === "saving" || schedulerSaveState === "error"
+      ? schedulerSaveState
+      : schedulerDirty
         ? "dirty"
-        : saveState;
+        : schedulerSaveState;
 
   async function loadCurrentSettings() {
     const operationId = loadOperationRef.current + 1;
@@ -97,12 +124,16 @@ export function LocalRoutingSettingsEditor() {
         return;
       }
       const nextDraft = createLocalRoutingSettingsDraft(nextSettings);
-      setSettings(nextSettings);
+      applySettings(nextSettings);
       setDraft(nextDraft);
       setSavedDraft(nextDraft);
       setFieldErrors({});
-      setSaveError(null);
-      setSaveState("idle");
+      setBoundarySaveError(null);
+      setSchedulerSaveError(null);
+      setBoundarySaveState("idle");
+      setBoundarySavePending(false);
+      setSchedulerSaveState("idle");
+      boundaryDraftVersionRef.current += 1;
     } catch (requestError) {
       if (operationId !== loadOperationRef.current) {
         return;
@@ -117,58 +148,65 @@ export function LocalRoutingSettingsEditor() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!settings || !draft || saveState === "saving") {
+    const currentSettings = settingsRef.current ?? settings;
+    if (
+      !currentSettings ||
+      !draft ||
+      schedulerSaveState === "saving" ||
+      boundarySaveState === "saving" ||
+      boundarySavePending
+    ) {
       return;
     }
-    const parsed = parseLocalRoutingSettingsDraft(draft);
+    const parsed = parseLocalRoutingSchedulerDraft(draft);
     if (!parsed.ok) {
-      setFieldErrors(parsed.errors);
-      setSaveState("error");
-      setSaveError("请修正标记的参数");
+      setFieldErrors((current) => ({ ...current, ...parsed.errors }));
+      setSchedulerSaveState("error");
+      setSchedulerSaveError("请修正标记的参数");
       requestAnimationFrame(() => {
         document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
       });
       return;
     }
 
-    const operationId = saveOperationRef.current + 1;
-    saveOperationRef.current = operationId;
-    setSaveState("saving");
-    setSaveError(null);
+    const operationId = schedulerSaveOperationRef.current + 1;
+    schedulerSaveOperationRef.current = operationId;
+    setSchedulerSaveState("saving");
+    setSchedulerSaveError(null);
     setFieldErrors({});
     try {
       const nextSettings = await updateSettings({
-        ...appSettingsToUpdateInput(settings),
+        ...appSettingsToUpdateInput(currentSettings),
         defaultRoutingStrategy: "automatic_balanced",
-        maxRateMultiplier: parsed.value.maxRateMultiplier,
-        defaultRoutingGroupFilter: parsed.value.defaultRoutingGroupFilter,
+        maxRateMultiplier: currentSettings.maxRateMultiplier,
+        defaultRoutingGroupFilter: currentSettings.defaultRoutingGroupFilter,
         schedulerAdvancedSettings: parsed.value.schedulerAdvancedSettings,
       });
-      if (operationId !== saveOperationRef.current) {
+      if (operationId !== schedulerSaveOperationRef.current) {
         return;
       }
       const nextDraft = createLocalRoutingSettingsDraft(nextSettings);
-      setSettings(nextSettings);
-      setDraft(nextDraft);
-      setSavedDraft(nextDraft);
-      setSaveState("saved");
+      applySettings(nextSettings);
+      setDraft((current) => (current ? { ...current, scheduler: nextDraft.scheduler } : nextDraft));
+      setSavedDraft((current) => (current ? { ...current, scheduler: nextDraft.scheduler } : nextDraft));
+      setSchedulerSaveState("saved");
       window.dispatchEvent(new Event(SETTINGS_UPDATED_EVENT));
-      toast.success("路由设置已保存");
+      toast.success("调度参数已保存");
     } catch (requestError) {
-      if (operationId !== saveOperationRef.current) {
+      if (operationId !== schedulerSaveOperationRef.current) {
         return;
       }
       const message = readError(requestError);
-      setSaveState("error");
-      setSaveError(message);
-      toast.error("保存路由设置失败", message);
+      setSchedulerSaveState("error");
+      setSchedulerSaveError(message);
+      toast.error("保存调度参数失败", message);
     }
   }
 
   function updateDraft(update: (current: LocalRoutingSettingsDraft) => LocalRoutingSettingsDraft) {
     setDraft((current) => (current ? update(current) : current));
-    setSaveState((current) => (current === "saving" ? current : "idle"));
-    setSaveError(null);
+    setSchedulerSaveState((current) => (current === "saving" ? current : "idle"));
+    setSchedulerSaveError(null);
   }
 
   function updateNumericField(field: SchedulerNumericField, value: string) {
@@ -180,6 +218,26 @@ export function LocalRoutingSettingsEditor() {
       ...current,
       scheduler: { ...current.scheduler, [field]: value },
     }));
+  }
+
+  function updateBoundaryNumericField(field: SchedulerNumericField, value: string) {
+    if (field !== "multiplierMinConfidence") {
+      updateNumericField(field, value);
+      return;
+    }
+    if (!draft) {
+      return;
+    }
+    clearFieldError(field);
+    boundaryDraftVersionRef.current += 1;
+    const nextDraft = {
+      ...draft,
+      scheduler: { ...draft.scheduler, [field]: value },
+    };
+    setDraft(nextDraft);
+    setBoundarySaveState((current) => (current === "saving" ? current : "idle"));
+    setBoundarySaveError(null);
+    queueBoundaryAutoSave(nextDraft);
   }
 
   function updateBooleanField(field: SchedulerBooleanField) {
@@ -199,6 +257,139 @@ export function LocalRoutingSettingsEditor() {
       delete next[field];
       return next;
     });
+  }
+
+  function queueBoundaryAutoSave(nextDraft: LocalRoutingSettingsDraft, delayMs = 400) {
+    const draftVersion = boundaryDraftVersionRef.current;
+    if (boundarySaveTimeoutRef.current) {
+      clearTimeout(boundarySaveTimeoutRef.current);
+      boundarySaveTimeoutRef.current = null;
+    }
+    if (delayMs === 0) {
+      setBoundarySavePending(false);
+      void handleBoundaryAutoSave(nextDraft, draftVersion);
+      return;
+    }
+    setBoundarySavePending(true);
+    boundarySaveTimeoutRef.current = setTimeout(() => {
+      boundarySaveTimeoutRef.current = null;
+      void handleBoundaryAutoSave(nextDraft, draftVersion);
+    }, delayMs);
+  }
+
+  async function handleBoundaryAutoSave(nextDraft: LocalRoutingSettingsDraft, draftVersion: number) {
+    const currentSettings = settingsRef.current ?? settings;
+    setBoundarySavePending(false);
+    if (!currentSettings) {
+      return;
+    }
+    const parsed = parseLocalRoutingBoundaryDraft(nextDraft);
+    if (!parsed.ok) {
+      setFieldErrors((current) => ({ ...current, ...parsed.errors }));
+      setBoundarySaveState("error");
+      setBoundarySaveError("请修正标记的边界参数");
+      return;
+    }
+
+    const operationId = boundarySaveOperationRef.current + 1;
+    boundarySaveOperationRef.current = operationId;
+    setBoundarySaveState("saving");
+    setBoundarySaveError(null);
+    setFieldErrors((current) => {
+      if (!("maxRateMultiplier" in current) && !("multiplierMinConfidence" in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next.maxRateMultiplier;
+      delete next.multiplierMinConfidence;
+      return next;
+    });
+
+    try {
+      const nextSettings = await updateSettings({
+        ...appSettingsToUpdateInput(currentSettings),
+        defaultRoutingStrategy: "automatic_balanced",
+        maxRateMultiplier: parsed.value.maxRateMultiplier,
+        defaultRoutingGroupFilter: parsed.value.defaultRoutingGroupFilter,
+        schedulerAdvancedSettings: {
+          ...currentSettings.schedulerAdvancedSettings,
+          ...parsed.value.schedulerAdvancedPatch,
+        },
+      });
+      if (
+        operationId !== boundarySaveOperationRef.current ||
+        draftVersion !== boundaryDraftVersionRef.current
+      ) {
+        return;
+      }
+      const nextSavedDraft = createLocalRoutingSettingsDraft(nextSettings);
+      const savedBoundary = {
+        maxRateMultiplier: nextSavedDraft.maxRateMultiplier,
+        defaultRoutingGroupPreset: nextSavedDraft.defaultRoutingGroupPreset,
+        currentRoutingGroupFilter: nextSavedDraft.currentRoutingGroupFilter,
+      };
+      const savedBoundaryScheduler = {
+        multiplierMinConfidence: nextSavedDraft.scheduler.multiplierMinConfidence,
+      };
+      applySettings(nextSettings);
+      setDraft((current) =>
+        current
+          ? {
+              ...current,
+              ...savedBoundary,
+              scheduler: { ...current.scheduler, ...savedBoundaryScheduler },
+            }
+          : nextSavedDraft,
+      );
+      setSavedDraft((current) =>
+        current
+          ? {
+              ...current,
+              ...savedBoundary,
+              scheduler: { ...current.scheduler, ...savedBoundaryScheduler },
+            }
+          : nextSavedDraft,
+      );
+      setBoundarySaveState("saved");
+      window.dispatchEvent(new Event(SETTINGS_UPDATED_EVENT));
+      toast.success("路由边界已保存");
+    } catch (requestError) {
+      if (
+        operationId !== boundarySaveOperationRef.current ||
+        draftVersion !== boundaryDraftVersionRef.current
+      ) {
+        return;
+      }
+      const message = readError(requestError);
+      setBoundarySaveState("error");
+      setBoundarySaveError(message);
+      toast.error("保存路由边界失败", message);
+    }
+  }
+
+  function updateMaxRateMultiplier(maxRateMultiplier: string) {
+    if (!draft) {
+      return;
+    }
+    clearFieldError("maxRateMultiplier");
+    boundaryDraftVersionRef.current += 1;
+    const nextDraft = { ...draft, maxRateMultiplier };
+    setDraft(nextDraft);
+    setBoundarySaveState((current) => (current === "saving" ? current : "idle"));
+    setBoundarySaveError(null);
+    queueBoundaryAutoSave(nextDraft);
+  }
+
+  function updateRoutingGroupPreset(defaultRoutingGroupPreset: RoutingGroupPreset) {
+    if (!draft) {
+      return;
+    }
+    boundaryDraftVersionRef.current += 1;
+    const nextDraft = { ...draft, defaultRoutingGroupPreset };
+    setDraft(nextDraft);
+    setBoundarySaveState((current) => (current === "saving" ? current : "idle"));
+    setBoundarySaveError(null);
+    queueBoundaryAutoSave(nextDraft, 0);
   }
 
   function resetSchedulerDefaults() {
@@ -241,40 +432,51 @@ export function LocalRoutingSettingsEditor() {
         ...ROUTING_GROUP_PRESET_OPTIONS,
       ]
     : [...ROUTING_GROUP_PRESET_OPTIONS];
-  const disabled = loading || saveState === "saving";
+  const schedulerDisabled = loading || schedulerSaveState === "saving" || boundarySaveState === "saving" || boundarySavePending;
+  const boundaryDisabled = loading || schedulerSaveState === "saving";
 
   return (
     <form className="grid gap-3" onSubmit={(event) => void handleSubmit(event)}>
-      <SectionCard title="路由边界" contentClassName="p-0">
+      <SectionCard
+        title="路由边界"
+        action={
+          boundarySaveState === "idle" ? null : (
+            <StatusBadge tone={saveStateTones[boundarySaveState]}>
+              {saveStateLabels[boundarySaveState]}
+            </StatusBadge>
+          )
+        }
+        contentClassName="p-0"
+      >
         <LocalRoutingBoundaryFields
-          disabled={disabled}
+          disabled={boundaryDisabled}
           draft={draft}
           errors={fieldErrors}
           groupOptions={groupOptions}
-          onGroupPresetChange={(defaultRoutingGroupPreset) =>
-            updateDraft((current) => ({ ...current, defaultRoutingGroupPreset }))
-          }
-          onMaxRateMultiplierChange={(maxRateMultiplier) => {
-            clearFieldError("maxRateMultiplier");
-            updateDraft((current) => ({ ...current, maxRateMultiplier }));
-          }}
+          onGroupPresetChange={updateRoutingGroupPreset}
+          onMaxRateMultiplierChange={updateMaxRateMultiplier}
           onBooleanChange={updateBooleanField}
-          onNumericChange={updateNumericField}
+          onNumericChange={updateBoundaryNumericField}
         />
+        {boundarySaveError ? (
+          <div className="border-t border-rose-100 bg-rose-50 px-4 py-2 text-xs text-rose-700">
+            {boundarySaveError}
+          </div>
+        ) : null}
       </SectionCard>
 
       <SectionCard
         title="自动调度参数"
         action={
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <StatusBadge tone={saveStateTones[visibleSaveState]}>
-              {saveStateLabels[visibleSaveState]}
+            <StatusBadge tone={saveStateTones[visibleSchedulerSaveState]}>
+              {saveStateLabels[visibleSchedulerSaveState]}
             </StatusBadge>
-            <Button disabled={disabled} type="button" variant="outline" onClick={resetSchedulerDefaults}>
+            <Button disabled={schedulerDisabled} type="button" variant="outline" onClick={resetSchedulerDefaults}>
               <RotateCcw className="h-4 w-4" />
               恢复默认
             </Button>
-            <Button disabled={disabled || !dirty} type="submit">
+            <Button disabled={schedulerDisabled || !schedulerDirty} type="submit">
               <Save className="h-4 w-4" />
               保存设置
             </Button>
@@ -284,14 +486,14 @@ export function LocalRoutingSettingsEditor() {
       >
         <LocalRoutingSchedulerFields
           draft={draft}
-          disabled={disabled}
+          disabled={schedulerDisabled}
           errors={fieldErrors}
           onNumericChange={updateNumericField}
           onBooleanChange={updateBooleanField}
         />
-        {saveError ? (
+        {schedulerSaveError ? (
           <div className="border-t border-rose-100 bg-rose-50 px-4 py-2 text-xs text-rose-700">
-            {saveError}
+            {schedulerSaveError}
           </div>
         ) : null}
       </SectionCard>

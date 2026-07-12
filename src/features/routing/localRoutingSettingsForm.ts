@@ -50,8 +50,28 @@ export type LocalRoutingSettingsValue = {
   schedulerAdvancedSettings: SchedulerAdvancedSettings;
 };
 
+export type LocalRoutingBoundarySettingsValue = Pick<
+  LocalRoutingSettingsValue,
+  "maxRateMultiplier" | "defaultRoutingGroupFilter"
+> & {
+  schedulerAdvancedPatch: Pick<SchedulerAdvancedSettings, "multiplierMinConfidence">;
+};
+
+export type LocalRoutingSchedulerSettingsValue = Pick<
+  LocalRoutingSettingsValue,
+  "schedulerAdvancedSettings"
+>;
+
 export type ParsedLocalRoutingSettingsDraft =
   | { ok: true; value: LocalRoutingSettingsValue }
+  | { ok: false; errors: LocalRoutingSettingsErrors };
+
+export type ParsedLocalRoutingBoundaryDraft =
+  | { ok: true; value: LocalRoutingBoundarySettingsValue }
+  | { ok: false; errors: LocalRoutingSettingsErrors };
+
+export type ParsedLocalRoutingSchedulerDraft =
+  | { ok: true; value: LocalRoutingSchedulerSettingsValue }
   | { ok: false; errors: LocalRoutingSettingsErrors };
 
 export type SchedulerFieldGroup = "score" | "sticky" | "waiting" | "boundary";
@@ -137,8 +157,32 @@ export function createLocalRoutingSettingsDraft(settings: AppSettings): LocalRou
 export function parseLocalRoutingSettingsDraft(
   draft: LocalRoutingSettingsDraft,
 ): ParsedLocalRoutingSettingsDraft {
+  const boundary = parseLocalRoutingBoundaryDraft(draft);
+  const scheduler = parseLocalRoutingSchedulerDraft(draft);
+  if (!boundary.ok || !scheduler.ok) {
+    return {
+      ok: false,
+      errors: {
+        ...(!boundary.ok ? boundary.errors : {}),
+        ...(!scheduler.ok ? scheduler.errors : {}),
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      maxRateMultiplier: boundary.value.maxRateMultiplier,
+      defaultRoutingGroupFilter: boundary.value.defaultRoutingGroupFilter,
+      schedulerAdvancedSettings: scheduler.value.schedulerAdvancedSettings,
+    },
+  };
+}
+
+export function parseLocalRoutingBoundaryDraft(
+  draft: LocalRoutingSettingsDraft,
+): ParsedLocalRoutingBoundaryDraft {
   const errors: LocalRoutingSettingsErrors = {};
-  const schedulerValues: Partial<Record<keyof SchedulerAdvancedSettings, number | boolean>> = {};
   const maxRateMultiplier = parseNullableNonNegativeNumber(
     draft.maxRateMultiplier,
     "倍率上限必须是大于或等于 0 的数字",
@@ -146,6 +190,37 @@ export function parseLocalRoutingSettingsDraft(
       errors.maxRateMultiplier = message;
     },
   );
+  const multiplierMinConfidence = parseSchedulerNumber(
+    "multiplierMinConfidence",
+    SCHEDULER_ADVANCED_FIELD_KINDS.multiplierMinConfidence,
+    String(draft.scheduler.multiplierMinConfidence),
+    errors,
+  );
+
+  if (Object.keys(errors).length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    value: {
+      maxRateMultiplier,
+      defaultRoutingGroupFilter: routingGroupPresetToFilter(
+        draft.defaultRoutingGroupPreset,
+        draft.currentRoutingGroupFilter,
+      ),
+      schedulerAdvancedPatch: {
+        multiplierMinConfidence: multiplierMinConfidence ?? 0,
+      },
+    },
+  };
+}
+
+export function parseLocalRoutingSchedulerDraft(
+  draft: LocalRoutingSettingsDraft,
+): ParsedLocalRoutingSchedulerDraft {
+  const errors: LocalRoutingSettingsErrors = {};
+  const schedulerValues: Partial<Record<keyof SchedulerAdvancedSettings, number | boolean>> = {};
 
   for (const [key, kind] of typedEntries(SCHEDULER_ADVANCED_FIELD_KINDS)) {
     const value = draft.scheduler[key];
@@ -174,11 +249,6 @@ export function parseLocalRoutingSettingsDraft(
   return {
     ok: true,
     value: {
-      maxRateMultiplier,
-      defaultRoutingGroupFilter: routingGroupPresetToFilter(
-        draft.defaultRoutingGroupPreset,
-        draft.currentRoutingGroupFilter,
-      ),
       schedulerAdvancedSettings: schedulerValues as SchedulerAdvancedSettings,
     },
   };

@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCcw } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { usePageActivation } from "@/components/shell/PageActivity";
+import { SETTINGS_UPDATED_EVENT } from "@/lib/api/settings";
 import { Button, SegmentedControl, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { loadLocalRoutingWorkspace } from "@/lib/queries/localRoutingQueries";
@@ -16,26 +17,46 @@ export function RoutingPage() {
   const [activeTab, setActiveTab] = useState<LocalRoutingTab>("status");
   const [workspace, setWorkspace] = useState<LocalRoutingWorkspace | null>(null);
   const [loading, setLoading] = useState(true);
+  const refreshOperationRef = useRef(0);
+
+  const refresh = useCallback(async (showLoading = true) => {
+    const operationId = refreshOperationRef.current + 1;
+    refreshOperationRef.current = operationId;
+    if (showLoading) {
+      setLoading(true);
+    }
+    try {
+      const nextWorkspace = await loadLocalRoutingWorkspace();
+      if (operationId !== refreshOperationRef.current) {
+        return;
+      }
+      setWorkspace(nextWorkspace);
+    } catch (requestError) {
+      if (operationId !== refreshOperationRef.current) {
+        return;
+      }
+      setWorkspace(null);
+      toast.error("刷新本地路由状态失败", readError(requestError));
+    } finally {
+      if (operationId === refreshOperationRef.current && showLoading) {
+        setLoading(false);
+      }
+    }
+  }, [toast]);
 
   usePageActivation(({ isInitial }) => {
     void refresh(isInitial);
   });
 
-  async function refresh(showLoading = true) {
-    if (showLoading) {
-      setLoading(true);
-    }
-    try {
-      setWorkspace(await loadLocalRoutingWorkspace());
-    } catch (requestError) {
-      setWorkspace(null);
-      toast.error("刷新本地路由状态失败", readError(requestError));
-    } finally {
-      if (showLoading) {
-        setLoading(false);
-      }
-    }
-  }
+  useEffect(() => {
+    const handleSettingsUpdated = () => {
+      void refresh(false);
+    };
+    window.addEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
+    return () => {
+      window.removeEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
+    };
+  }, [refresh]);
 
   return (
     <PageScaffold

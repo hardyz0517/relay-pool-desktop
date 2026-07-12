@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import {
   SelectControl,
-  StatusBadge,
   SwitchControl,
   type SelectOption,
 } from "@/components/ui";
@@ -60,9 +59,6 @@ export function LocalRoutingBoundaryFields({
 
   return (
     <>
-      <CompactSettingRow label="策略">
-        <code className="text-xs font-medium text-slate-700">automatic_balanced</code>
-      </CompactSettingRow>
       <CompactSettingRow label="倍率上限">
         <LabeledNumberInput
           hideLabel
@@ -86,9 +82,6 @@ export function LocalRoutingBoundaryFields({
           options={groupOptions}
           onChange={onGroupPresetChange}
         />
-      </CompactSettingRow>
-      <CompactSettingRow label="无候选策略">
-        <StatusBadge tone="error">严格拒绝</StatusBadge>
       </CompactSettingRow>
       {boundaryNumericFields.map(([field, meta]) => (
         <CompactSettingRow key={field} label={meta.label}>
