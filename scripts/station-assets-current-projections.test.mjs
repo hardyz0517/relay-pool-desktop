@@ -21,6 +21,7 @@ async function transpileTsFile(sourcePath, outputPath, replacements = []) {
 
 async function importStationAssetViewModels() {
   const tempRoot = await mkdtemp(join(tmpdir(), "relay-station-assets-"));
+  const groupCategoriesPath = join(tempRoot, "groupCategories.mjs");
   const groupFactsPath = join(tempRoot, "groupFacts.mjs");
   const balanceFactsPath = join(tempRoot, "balanceFacts.mjs");
   const assetPath = join(tempRoot, "stationAssetViewModels.mjs");
@@ -30,7 +31,10 @@ async function importStationAssetViewModels() {
     "export function toTimestampMillis(value) { return Date.parse(value); }",
     "utf8",
   );
-  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath);
+  await transpileTsFile("src/lib/groupCategories.ts", groupCategoriesPath);
+  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath, [
+    ['@/lib/groupCategories', "./groupCategories.mjs"],
+  ]);
   await transpileTsFile("src/lib/projections/balanceFacts.ts", balanceFactsPath, [
     ['@/lib/time', "./time.mjs"],
   ]);

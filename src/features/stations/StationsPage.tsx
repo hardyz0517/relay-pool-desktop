@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   closestCenter,
   type DraggableAttributes,
@@ -17,13 +17,14 @@ import {
   type AnimateLayoutChanges,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { Clock3, Edit3, GripVertical, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation } from "@/components/shell/PageActivity";
+import { usePageActivity } from "@/components/shell/PageActivity";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
-import { createStation, deleteStation, listStations, openStationBaseUrl, reorderStations, updateStation } from "@/lib/api/stations";
+import { createStation, deleteStation, openStationBaseUrl, reorderStations, updateStation } from "@/lib/api/stations";
 import {
   clearStationCredentials,
   createStationKey,
@@ -40,9 +41,15 @@ import {
   listCollectorSnapshots,
 } from "@/lib/api/collector";
 import { listCollectorRuns } from "@/lib/api/collectorRuns";
-import { listChangeEvents } from "@/lib/api/changeEvents";
-import { listBalanceSnapshots } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
+import { queryKeys } from "@/lib/query/queryKeys";
+import {
+  balanceSnapshotsQueryOptions,
+  changeEventsQueryOptions,
+  stationAssetQueryOptions,
+  stationsQueryOptions,
+} from "@/lib/query/resourceQueries";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import { stationKeyStatusLabels, type CreateStationKeyInput, type StationCredentials, type StationKey, type StationKeyStatus, type UpdateStationKeyInput } from "@/lib/types/stationKeys";
 import type { CollectorSnapshot } from "@/lib/types/collector";
@@ -128,10 +135,6 @@ const statusTone: Record<Station["status"], "healthy" | "warning" | "error" | "d
   disabled: "disabled",
   unchecked: "info",
 };
-const STATION_ASSET_REFRESH_INTERVAL_MS = 30_000;
-const STATION_ASSET_PRIMARY_TIMEOUT_MS = 8_000;
-const STATION_ASSET_ENRICHMENT_TIMEOUT_MS = 6_000;
-
 const shouldAnimateStationAssetLayoutChanges: AnimateLayoutChanges = ({ isSorting, wasDragging }) =>
   isSorting || wasDragging;
 
@@ -143,7 +146,8 @@ type StationsPageProps = {
 
 export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: StationsPageProps) {
   const toast = useToast();
-  const [stations, setStations] = useState<Station[]>([]);
+  const queryClient = useQueryClient();
+  const { refreshEnabled } = usePageActivity();
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
@@ -154,15 +158,9 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   const [stationKeys, setStationKeys] = useState<StationKey[]>([]);
   const [snapshots, setSnapshots] = useState<CollectorSnapshot[]>([]);
   const [snapshot, setSnapshot] = useState<CollectorSnapshot | null>(null);
-  const [assetSnapshotsByStation, setAssetSnapshotsByStation] = useState<
-    Map<string, CollectorSnapshot | null>
-  >(new Map());
   const [groupBindingsByStation, setGroupBindingsByStation] = useState(new Map<string, StationGroupBinding[]>());
   const [rateRecordsByStation, setRateRecordsByStation] = useState(new Map<string, GroupRateRecord[]>());
   const [collectorRunsByStation, setCollectorRunsByStation] = useState(new Map<string, CollectorRun[]>());
-  const [balanceSnapshots, setBalanceSnapshots] = useState<BalanceSnapshot[]>([]);
-  const [balanceFactsReady, setBalanceFactsReady] = useState(false);
-  const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
   const [drawerStationId, setDrawerStationId] = useState<string | null>(null);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [drawerClosing, setDrawerClosing] = useState(false);
@@ -170,7 +168,6 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   const [pendingDeleteKey, setPendingDeleteKey] = useState<StationKey | null>(null);
   const [pendingDeleteStation, setPendingDeleteStation] = useState<Station | null>(null);
   const [keyForm, setKeyForm] = useState<StationKeyFormState>(emptyKeyForm);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actionSaving, setActionSaving] = useState(false);
   const [stationAction, setStationAction] = useState<{
@@ -178,20 +175,35 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     action: StationAction;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const stationAssetRefreshSequence = useRef(0);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
-
-  usePageActivation(({ isInitial }) => {
-    void refreshStations({ silent: !isInitial });
+  const stationsQuery = useActivityQuery(refreshEnabled, stationsQueryOptions());
+  const balancesQuery = useActivityQuery(refreshEnabled, balanceSnapshotsQueryOptions());
+  const changesQuery = useActivityQuery(refreshEnabled, changeEventsQueryOptions(false));
+  const stations = stationsQuery.data ?? [];
+  const balanceSnapshots = balancesQuery.data ?? [];
+  const changeEvents = changesQuery.data ?? [];
+  const loading = stationsQuery.isPending && stationsQuery.data === undefined;
+  const queryError = stationsQuery.error ? readError(stationsQuery.error) : null;
+  const loadError = queryError ?? error;
+  const balanceFactsReady = balancesQuery.data !== undefined;
+  const stationAssetQueries = useQueries({
+    queries: stations.map((station) => ({
+      ...stationAssetQueryOptions(station.id),
+      enabled: refreshEnabled,
+      subscribed: refreshEnabled,
+    })),
   });
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      void refreshStations({ silent: true });
-    }, STATION_ASSET_REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(intervalId);
-  }, []);
+  const assetSnapshotsByStation = useMemo(
+    () =>
+      new Map(
+        stations.map((station, index) => [
+          station.id,
+          stationAssetQueries[index]?.data ?? null,
+        ]),
+      ),
+    [stationAssetQueries, stations],
+  );
 
   useEffect(() => {
     if (!drawerStationId) {
@@ -283,89 +295,36 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     void refreshExtras(activeDialogStation.id);
   }, [activeDialogStation?.id]);
 
-  async function refreshStations(options: { silent?: boolean } = {}) {
-    const refreshId = ++stationAssetRefreshSequence.current;
-    if (!options.silent) {
-      setLoading(true);
-    }
-    setError(null);
-    try {
-      const nextStations = await withStationAssetTimeout(
-        listStations(),
-        "station asset list",
-        STATION_ASSET_PRIMARY_TIMEOUT_MS,
-      );
-      if (stationAssetRefreshSequence.current !== refreshId) {
-        return;
+  useEffect(() => {
+    setSelectedStationId((current) => {
+      if (current && stations.some((station) => station.id === current)) {
+        return current;
       }
-      setStations((currentStations) => {
-        if (options.silent && areStationAssetListsEqual(currentStations, nextStations)) {
-          return currentStations;
-        }
-        return nextStations;
-      });
-      setSelectedStationId((current) => {
-        if (current && nextStations.some((station) => station.id === current)) {
-          return current;
-        }
-        return null;
-      });
-      if (!options.silent) {
-        setLoading(false);
-      }
-      void refreshStationAssetEnrichment(nextStations, refreshId);
-    } catch (requestError) {
-      const message = readError(requestError);
-      setError(message);
-      toast.error("读取中转站失败", message);
-    } finally {
-      if (!options.silent && stationAssetRefreshSequence.current === refreshId) {
-        setLoading(false);
-      }
-    }
-  }
+      return null;
+    });
+  }, [stations]);
 
-  async function refreshStationAssetEnrichment(nextStations: Station[], refreshId: number) {
-    const [balancesResult, changesResult, snapshotsResult] = await Promise.allSettled([
-      withStationAssetTimeout(
-        listBalanceSnapshots(),
-        "station asset balances",
-        STATION_ASSET_ENRICHMENT_TIMEOUT_MS,
-      ),
-      withStationAssetTimeout(
-        listChangeEvents(),
-        "station asset changes",
-        STATION_ASSET_ENRICHMENT_TIMEOUT_MS,
-      ),
-      Promise.allSettled(
-        nextStations.map(async (station) => {
-          const snapshot = await withStationAssetTimeout(
-            getLatestCollectorSnapshot(station.id),
-            `station asset snapshot ${station.id}`,
-            STATION_ASSET_ENRICHMENT_TIMEOUT_MS,
-          );
-          return [station.id, snapshot] as const;
-        }),
-      ),
-    ]);
+  const cancelStationSharedQueries = useCallback(
+    async () => {
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: queryKeys.stations }),
+        queryClient.cancelQueries({ queryKey: queryKeys.balanceSnapshots }),
+        queryClient.cancelQueries({ queryKey: queryKeys.stationAssets }),
+      ]);
+    },
+    [queryClient],
+  );
 
-    if (stationAssetRefreshSequence.current !== refreshId) {
-      return;
-    }
-    if (balancesResult.status === "fulfilled") {
-      setBalanceSnapshots(balancesResult.value);
-      setBalanceFactsReady(true);
-    }
-    if (changesResult.status === "fulfilled") {
-      setChangeEvents(changesResult.value);
-    }
-    if (snapshotsResult.status === "fulfilled") {
-      const nextSnapshotEntries = snapshotsResult.value.map((result, index) =>
-        result.status === "fulfilled" ? result.value : [nextStations[index].id, null] as const,
-      );
-      setAssetSnapshotsByStation(new Map(nextSnapshotEntries));
-    }
-  }
+  const invalidateStationSharedQueries = useCallback(
+    async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.stations }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.balanceSnapshots }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.stationAssets }),
+      ]);
+    },
+    [queryClient],
+  );
 
   const refreshExtras = useCallback(async (stationId: string) => {
     try {
@@ -379,11 +338,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
       setStationKeys(nextKeys);
       setSnapshots(nextSnapshots);
       setSnapshot(nextSnapshot);
-      setAssetSnapshotsByStation((current) => {
-        const next = new Map(current);
-        next.set(stationId, nextSnapshot);
-        return next;
-      });
+      queryClient.setQueryData(queryKeys.stationAsset(stationId), nextSnapshot);
       if (dialogMode === "edit") {
         setForm((current) => ({
           ...current,
@@ -395,7 +350,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     } catch (requestError) {
       toast.error("读取中转站详情失败", readError(requestError));
     }
-  }, [dialogMode]);
+  }, [dialogMode, queryClient]);
 
   async function refreshStationFacts(stationId: string) {
     const [bindings, rates, runs] = await Promise.all([
@@ -520,9 +475,10 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     setActionSaving(true);
     setError(null);
     try {
+      await cancelStationSharedQueries();
       await deleteStation(pendingDeleteStation.id);
       setPendingDeleteStation(null);
-      await refreshStations();
+      await invalidateStationSharedQueries();
       toast.success("站点已删除");
     } catch (requestError) {
       toast.error("删除站点失败", readError(requestError));
@@ -554,13 +510,15 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     const nextStations = [...stations];
     const [moved] = nextStations.splice(oldIndex, 1);
     nextStations.splice(newIndex, 0, moved);
-    setStations(nextStations);
+    await cancelStationSharedQueries();
+    queryClient.setQueryData(queryKeys.stations, nextStations);
     try {
       const savedStations = await reorderStations(nextStations.map((station) => station.id));
-      setStations(savedStations);
+      queryClient.setQueryData(queryKeys.stations, savedStations);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.stations });
       toast.success("站点排序已保存");
     } catch (requestError) {
-      setStations(previousStations);
+      queryClient.setQueryData(queryKeys.stations, previousStations);
       toast.error("保存站点排序失败", readError(requestError));
     }
   }
@@ -570,6 +528,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     setSaving(true);
     setError(null);
     try {
+      await cancelStationSharedQueries();
       const input = formToInput(form);
       if (dialogMode === "edit" && editingStationId) {
         await updateStation({
@@ -612,7 +571,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
           toast.error("刷新余额失败", readError(balanceError));
         }
       }
-      await refreshStations();
+      await invalidateStationSharedQueries();
       closeDialog();
     } catch (requestError) {
       toast.error("保存站点失败", readError(requestError));
@@ -645,8 +604,9 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     setStationAction({ stationId: station.id, action: "collect" });
     setError(null);
     try {
+      await cancelStationSharedQueries();
       await collectSub2apiStation(station.id);
-      await refreshStations({ silent: true });
+      await invalidateStationSharedQueries();
       if (station.id === selectedStationId || station.id === drawerStationId) {
         await refreshExtras(station.id);
       }
@@ -666,8 +626,9 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     setStationAction({ stationId: station.id, action: "balance" });
     setError(null);
     try {
+      await cancelStationSharedQueries();
       const result = await collectStationTask(station.id, "balance");
-      await refreshStations({ silent: true });
+      await invalidateStationSharedQueries();
       if (station.id === selectedStationId || station.id === drawerStationId) {
         await refreshExtras(station.id);
       }
@@ -695,6 +656,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     setActionSaving(true);
     setError(null);
     try {
+      await cancelStationSharedQueries();
       if (keyForm.id) {
         await updateStationKey(toUpdateKeyInput(keyForm, activeDialogStation.id));
       } else {
@@ -703,6 +665,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
       setKeyDialogOpen(false);
       setKeyForm(emptyKeyForm);
       await refreshExtras(activeDialogStation.id);
+      await invalidateStationSharedQueries();
       toast.success("密钥已保存");
     } catch (requestError) {
       toast.error("保存密钥失败", readError(requestError));
@@ -721,11 +684,13 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     }
     setActionSaving(true);
     try {
+      await cancelStationSharedQueries();
       await deleteStationKey(pendingDeleteKey.id);
       if (activeDialogStation) {
         await refreshExtras(activeDialogStation.id);
       }
       setPendingDeleteKey(null);
+      await invalidateStationSharedQueries();
       toast.success("密钥已删除");
     } catch (requestError) {
       toast.error("删除密钥失败", readError(requestError));
@@ -764,6 +729,10 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
           {loading ? (
             <div className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
               正在读取本地数据...
+            </div>
+          ) : loadError ? (
+            <div className="rounded-[var(--surface-radius)] border border-rose-100 bg-rose-50 px-4 py-5 text-sm text-rose-700 shadow-[var(--surface-shadow)]">
+              {loadError}
             </div>
           ) : stations.length === 0 ? (
             <EmptyState
@@ -1639,20 +1608,6 @@ function keyToForm(key: StationKey): StationKeyFormState {
 }
 
 
-function withStationAssetTimeout<T>(promise: Promise<T>, label: string, timeoutMs: number): Promise<T> {
-  let timeoutId: number | null = null;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutId = window.setTimeout(() => {
-      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`));
-    }, timeoutMs);
-  });
-  return Promise.race([promise, timeout]).finally(() => {
-    if (timeoutId !== null) {
-      window.clearTimeout(timeoutId);
-    }
-  });
-}
-
 function stationAvatarLabel(name: string) {
   const trimmed = name.trim();
   return trimmed ? Array.from(trimmed)[0] : "?";
@@ -1665,42 +1620,6 @@ function formatStationDisplayUrl(baseUrl: string) {
   } catch {
     return baseUrl.replace(/\/+$/, "");
   }
-}
-
-function areStationAssetListsEqual(currentStations: Station[], nextStations: Station[]) {
-  if (currentStations.length !== nextStations.length) {
-    return false;
-  }
-
-  return currentStations.every((currentStation, index) =>
-    areStationAssetRowsEqual(currentStation, nextStations[index]),
-  );
-}
-
-function areStationAssetRowsEqual(currentStation: Station, nextStation: Station) {
-  return (
-    currentStation.id === nextStation.id &&
-    currentStation.name === nextStation.name &&
-    currentStation.stationType === nextStation.stationType &&
-    currentStation.baseUrl === nextStation.baseUrl &&
-    currentStation.apiKeyMasked === nextStation.apiKeyMasked &&
-    currentStation.apiKeyPresent === nextStation.apiKeyPresent &&
-    currentStation.keyCount === nextStation.keyCount &&
-    currentStation.enabled === nextStation.enabled &&
-    currentStation.priority === nextStation.priority &&
-    currentStation.creditPerCny === nextStation.creditPerCny &&
-    currentStation.balanceRaw === nextStation.balanceRaw &&
-    currentStation.balanceCny === nextStation.balanceCny &&
-    currentStation.lowBalanceThresholdCny === nextStation.lowBalanceThresholdCny &&
-    currentStation.collectionIntervalMinutes === nextStation.collectionIntervalMinutes &&
-    currentStation.status === nextStation.status &&
-    currentStation.latencyMs === nextStation.latencyMs &&
-    currentStation.lastCheckedAt === nextStation.lastCheckedAt &&
-    currentStation.lastPricingFetchedAt === nextStation.lastPricingFetchedAt &&
-    currentStation.note === nextStation.note &&
-    currentStation.createdAt === nextStation.createdAt &&
-    currentStation.updatedAt === nextStation.updatedAt
-  );
 }
 
 function formatStationBalanceParts(row: StationAssetRow) {

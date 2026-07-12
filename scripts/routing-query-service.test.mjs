@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const querySource = await readFile("src/lib/queries/localRoutingQueries.ts", "utf8");
+const resourceSource = await readFile("src/lib/query/resourceQueries.ts", "utf8");
 const pageSource = await readFile("src/features/routing/RoutingPage.tsx", "utf8");
 
 assert.ok(
@@ -24,9 +25,10 @@ assert.ok(
 );
 
 assert.ok(
-  pageSource.includes('import { loadLocalRoutingWorkspace } from "@/lib/queries/localRoutingQueries";') &&
-    pageSource.includes("setWorkspace(await loadLocalRoutingWorkspace())"),
-  "routing page should consume the local routing query service",
+  resourceSource.includes('import { loadLocalRoutingWorkspace } from "@/lib/queries/localRoutingQueries";') &&
+    resourceSource.includes("queryFn: loadLocalRoutingWorkspace") &&
+    pageSource.includes("useActivityQuery(refreshEnabled, localRoutingWorkspaceQueryOptions())"),
+  "routing page should consume the local routing query service through an activity-bound shared query",
 );
 
 assert.ok(

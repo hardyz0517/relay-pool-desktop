@@ -27,12 +27,11 @@ assert.ok(
 );
 
 assert.ok(
-  pageSource.includes('import { loadChangeCenterWorkspace } from "@/lib/queries/changeQueries";') &&
-    pageSource.includes("const workspace = await loadChangeCenterWorkspace()") &&
-    pageSource.includes("setStationNamesById(new Map(workspace.stations.map((station) => [station.id, station.name])))") &&
-    pageSource.includes("markUnreadChangeEventsRead(workspace.changeEvents, markChangeEventRead)") &&
-    pageSource.includes("setEvents(readOnEntryResult.events)"),
-  "change center page should consume the query service without changing existing state assignments",
+  pageSource.includes("changeEventsQueryOptions") &&
+    pageSource.includes("stationsQueryOptions") &&
+    pageSource.includes("queryClient.setQueryData(queryKeys.changeEvents") &&
+    !pageSource.includes("loadChangeCenterWorkspace"),
+  "change center page should consume shared resource query options instead of the legacy workspace loader",
 );
 
 assert.ok(

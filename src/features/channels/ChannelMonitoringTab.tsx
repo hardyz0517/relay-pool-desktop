@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Copy, Edit3, LayoutTemplate, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button, ConfirmDialog, EmptyState, IconButton, StatusBadge, useToast } from "@/components/ui";
-import { usePageActivation } from "@/components/shell/PageActivity";
+import { usePageActivation, usePageActivity } from "@/components/shell/PageActivity";
 import {
   createChannelMonitor,
   deleteChannelMonitor,
@@ -10,6 +10,8 @@ import {
 } from "@/lib/api/channelMonitors";
 import { readError } from "@/lib/errors";
 import { loadChannelMonitoringWorkspace } from "@/lib/queries/channelQueries";
+import { channelMonitoringQueryOptions } from "@/lib/query/resourceQueries";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import { toTimestampMillis } from "@/lib/time";
 import type { ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun, CreateChannelMonitorInput } from "@/lib/types/channelMonitors";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
@@ -38,6 +40,8 @@ const monitorGridClassName =
 
 export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabProps) {
   const toast = useToast();
+  const { refreshEnabled } = usePageActivity();
+  useActivityQuery(refreshEnabled, channelMonitoringQueryOptions());
   const [monitors, setMonitors] = useState<ChannelMonitor[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
   const [keys, setKeys] = useState<KeyPoolItem[]>([]);

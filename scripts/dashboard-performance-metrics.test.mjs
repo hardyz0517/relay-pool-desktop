@@ -36,25 +36,19 @@ assert.ok(
 );
 
 assert.ok(
-  dashboardSource.includes("const DASHBOARD_RUNTIME_REFRESH_INTERVAL_MS = 2_000;") &&
-    dashboardSource.includes('import { getProxyStatus, listRequestLogs, startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";'),
-  "dashboard should import and define a short runtime refresh path for live request throughput",
+  dashboardSource.includes("requestLogsQueryOptions(proxyStatusQuery.data?.running ? 2_000 : false)") &&
+    dashboardSource.includes("proxyStatusQueryOptions(false)"),
+  "dashboard should keep live request throughput fresh through shared query options",
 );
 
 assert.ok(
-  dashboardSource.includes("async function refreshDashboardRuntimeFacts()") &&
-    dashboardSource.includes("const [nextProxyStatus, nextRequestLogs] = await Promise.all([") &&
-    dashboardSource.includes("getProxyStatus(),") &&
-    dashboardSource.includes("listRequestLogs(),") &&
-    dashboardSource.includes("setProxyStatus(nextProxyStatus)") &&
-    dashboardSource.includes("setRequestLogs(nextRequestLogs)"),
-  "dashboard should refresh proxy status and request logs together for live performance metrics",
+  dashboardSource.includes("const requestLogs = requestLogsQuery.data ?? []") &&
+    dashboardSource.includes("const proxyStatus = proxyStatusQuery.data ?? null"),
+  "dashboard should derive live performance metrics from shared query data",
 );
 
 assert.ok(
-  dashboardSource.includes("const runtimeRefreshIntervalId = window.setInterval(") &&
-    dashboardSource.includes("refreshDashboardRuntimeFacts") &&
-    dashboardSource.includes("DASHBOARD_RUNTIME_REFRESH_INTERVAL_MS") &&
-    dashboardSource.includes("window.clearInterval(runtimeRefreshIntervalId)"),
-  "dashboard should keep performance metrics fresh with a cleared interval",
+  !dashboardSource.includes("refreshDashboardRuntimeFacts") &&
+    !dashboardSource.includes("window.setInterval"),
+  "dashboard should not own a runtime refresh interval",
 );

@@ -4,18 +4,16 @@ import { readFile } from "node:fs/promises";
 const dashboardSource = await readFile("src/features/dashboard/DashboardPage.tsx", "utf8");
 
 assert.ok(
-  dashboardSource.includes("DASHBOARD_BALANCE_REFRESH_INTERVAL_MS"),
-  "dashboard should define a balance refresh interval for CCSwitch parity",
+  dashboardSource.includes("balanceSnapshotsQueryOptions"),
+  "dashboard should read balances through the shared balance snapshot query option",
 );
 
 assert.ok(
-  dashboardSource.includes("window.setInterval") &&
-    dashboardSource.includes("listBalanceSnapshots") &&
-    dashboardSource.includes("setBalanceSnapshots"),
-  "dashboard should periodically reload balance snapshots instead of only reading them on mount",
+  dashboardSource.includes("useActivityQuery(refreshEnabled, balanceSnapshotsQueryOptions())"),
+  "dashboard balance refresh should be owned by the active query subscription",
 );
 
 assert.ok(
-  dashboardSource.includes("window.clearInterval"),
-  "dashboard balance polling should clean up its interval",
+  !dashboardSource.includes("window.setInterval"),
+  "dashboard should not own a page-local balance polling interval",
 );
