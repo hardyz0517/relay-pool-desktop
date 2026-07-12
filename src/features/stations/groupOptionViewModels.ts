@@ -21,6 +21,14 @@ export function formatMultiplier(value: number | null | undefined, fallback = "�
   return formatCompactMultiplier(value, fallback);
 }
 
+export function formatStationGroupOptionLabel(option: Pick<StationGroupOption, "groupName" | "rateMultiplier">) {
+  const rateLabel =
+    option.rateMultiplier === null || option.rateMultiplier === undefined
+      ? "倍率未知"
+      : `${formatMultiplier(option.rateMultiplier)}x`;
+  return `${option.groupName} · ${rateLabel}`;
+}
+
 export function findMatchingGroupOption(
   row: { groupBindingId: string | null; groupIdHash: string | null; groupName: string },
   options: StationGroupOption[],

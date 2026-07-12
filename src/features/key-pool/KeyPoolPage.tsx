@@ -31,7 +31,11 @@ import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { Station } from "@/lib/types/stations";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
-import { buildStationGroupOptionsFromCurrentFactsForSelect } from "@/features/stations/groupOptionViewModels";
+import {
+  buildStationGroupOptionsFromCurrentFactsForSelect,
+  findMatchingGroupOption,
+  formatStationGroupOptionLabel,
+} from "@/features/stations/groupOptionViewModels";
 import {
   createStationKeyMonitorInput,
   findStationKeyMonitor,
@@ -349,7 +353,11 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         loadCurrentStationGroupOptions(item.stationId),
       ]);
       setGroupOptionsForEdit(groupOptions);
-      setEditForm((current) => current.id === item.id ? mergeCapabilitiesIntoForm(current, capabilities) : current);
+      setEditForm((current) =>
+        current.id === item.id
+          ? mergeCapabilitiesIntoForm(formFromItem(item, groupOptions), capabilities)
+          : current,
+      );
     } catch (requestError) {
       toast.error("读取密钥详情失败", readError(requestError));
     } finally {
@@ -1188,7 +1196,7 @@ function groupNameForDialogSelection(
 }
 
 function groupOptionLabel(option: StationGroupOption) {
-  return `${option.groupName} · ${formatRate(option.rateMultiplier)} · ${option.rateSource ?? "可用"}`;
+  return formatStationGroupOptionLabel(option);
 }
 
 const selectClassName =
@@ -1225,7 +1233,7 @@ function CheckField({
   );
 }
 
-function formFromItem(item: KeyPoolItem): KeyPoolEditForm {
+function formFromItem(item: KeyPoolItem, options: StationGroupOption[] = []): KeyPoolEditForm {
   return {
     id: item.id,
     stationId: item.stationId,
@@ -1234,7 +1242,7 @@ function formFromItem(item: KeyPoolItem): KeyPoolEditForm {
     apiKey: "",
     enabled: item.enabled,
     priority: String(item.priority),
-    groupBindingId: KEEP_GROUP_BINDING_VALUE,
+    groupBindingId: groupBindingValueFromItem(item, options),
     groupName: item.groupName ?? "",
     tierLabel: item.tierLabel ?? "",
     status: item.status,
@@ -1252,6 +1260,18 @@ function formFromItem(item: KeyPoolItem): KeyPoolEditForm {
     onlyUseAsBackup: item.onlyUseAsBackup,
     routingTags: "",
   };
+}
+
+function groupBindingValueFromItem(item: KeyPoolItem, options: StationGroupOption[]) {
+  const option = findMatchingGroupOption(
+    {
+      groupBindingId: item.groupBindingId,
+      groupIdHash: item.groupIdHash,
+      groupName: item.groupName ?? "",
+    },
+    options,
+  );
+  return option?.groupBindingId ?? item.groupBindingId ?? KEEP_GROUP_BINDING_VALUE;
 }
 
 function createFormForStation(station: Station, items: KeyPoolItem[]): KeyPoolEditForm {

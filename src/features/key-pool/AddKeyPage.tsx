@@ -6,10 +6,10 @@ import { listStationGroupOptions } from "@/lib/api/groupFacts";
 import { listStations } from "@/lib/api/stations";
 import { saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
-import { formatRate } from "@/lib/formatters";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { Station } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
+import { formatStationGroupOptionLabel } from "@/features/stations/groupOptionViewModels";
 
 type AddKeyPageProps = {
   initialStationId?: string | null;
@@ -385,5 +385,5 @@ function selectedGroupOption(options: StationGroupOption[], value: string) {
 }
 
 function groupOptionLabel(option: StationGroupOption) {
-  return `${option.groupName} · ${formatRate(option.rateMultiplier)} · ${option.rateSource ?? "可用"}`;
+  return formatStationGroupOptionLabel(option);
 }

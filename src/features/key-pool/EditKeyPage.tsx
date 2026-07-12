@@ -9,7 +9,11 @@ import { formatRate } from "@/lib/formatters";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
-import { buildStationGroupOptionsFromCurrentFactsForSelect } from "@/features/stations/groupOptionViewModels";
+import {
+  buildStationGroupOptionsFromCurrentFactsForSelect,
+  findMatchingGroupOption,
+  formatStationGroupOptionLabel,
+} from "@/features/stations/groupOptionViewModels";
 
 type EditKeyPageProps = {
   stationKeyId: string | null;
@@ -115,7 +119,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
         }
         setSourceItem(item);
         setGroupOptions(nextGroupOptions);
-        setForm(formFromItem(item));
+        setForm(formFromItem(item, nextGroupOptions));
       })
       .catch((requestError) => {
         if (!alive) {
@@ -382,7 +386,7 @@ function CheckField({
   );
 }
 
-function formFromItem(item: KeyPoolItem): EditKeyFormState {
+function formFromItem(item: KeyPoolItem, options: StationGroupOption[] = []): EditKeyFormState {
   return {
     id: item.id,
     stationId: item.stationId,
@@ -392,7 +396,7 @@ function formFromItem(item: KeyPoolItem): EditKeyFormState {
     apiKey: "",
     enabled: item.enabled,
     priority: String(item.priority),
-    groupBindingId: KEEP_GROUP_BINDING_VALUE,
+    groupBindingId: groupBindingValueFromItem(item, options),
     groupName: item.groupName ?? "",
     tierLabel: item.tierLabel ?? "",
     status: item.status,
@@ -403,6 +407,18 @@ function formFromItem(item: KeyPoolItem): EditKeyFormState {
     onlyUseAsBackup: item.onlyUseAsBackup,
     routingTags: "",
   };
+}
+
+function groupBindingValueFromItem(item: KeyPoolItem, options: StationGroupOption[]) {
+  const option = findMatchingGroupOption(
+    {
+      groupBindingId: item.groupBindingId,
+      groupIdHash: item.groupIdHash,
+      groupName: item.groupName ?? "",
+    },
+    options,
+  );
+  return option?.groupBindingId ?? item.groupBindingId ?? KEEP_GROUP_BINDING_VALUE;
 }
 
 function groupSelectionFromEditForm(
@@ -477,7 +493,7 @@ function groupNameForEditSelection(
 }
 
 function groupOptionLabel(option: StationGroupOption) {
-  return `${option.groupName} · ${formatRate(option.rateMultiplier)} · ${option.rateSource ?? "可用"}`;
+  return formatStationGroupOptionLabel(option);
 }
 
 function linesToList(value: string) {
