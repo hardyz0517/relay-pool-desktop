@@ -195,18 +195,19 @@ function createCapturedCompletion(initialSnapshot) {
   };
 }
 
-let finalCloseCalls = 0;
+let activeToFinalStaleCalls = 0;
+let activeToFinalLatestCalls = 0;
 const activeToFinal = createCapturedCompletion({
   hasActivePage: true,
   onExitComplete: () => {
-    finalCloseCalls += 1;
+    activeToFinalStaleCalls += 1;
   },
 });
 const activeToFinalCompletion = activeToFinal.capturedCompletion;
 activeToFinal.commit({
   hasActivePage: false,
   onExitComplete: () => {
-    finalCloseCalls += 1;
+    activeToFinalLatestCalls += 1;
   },
 });
 assert.equal(
@@ -216,23 +217,29 @@ assert.equal(
 );
 activeToFinalCompletion();
 assert.equal(
-  finalCloseCalls,
+  activeToFinalStaleCalls,
+  0,
+  "active-to-final navigation should not call the stale captured callback",
+);
+assert.equal(
+  activeToFinalLatestCalls,
   1,
-  "active-to-final navigation should restore shell focus when the captured exit finishes",
+  "active-to-final navigation should call the latest committed callback exactly once",
 );
 
-let replacementCalls = 0;
+let finalToActiveStaleCalls = 0;
+let finalToActiveLatestCalls = 0;
 const finalToActive = createCapturedCompletion({
   hasActivePage: false,
   onExitComplete: () => {
-    replacementCalls += 1;
+    finalToActiveStaleCalls += 1;
   },
 });
 const finalToActiveCompletion = finalToActive.capturedCompletion;
 finalToActive.commit({
   hasActivePage: true,
   onExitComplete: () => {
-    replacementCalls += 1;
+    finalToActiveLatestCalls += 1;
   },
 });
 assert.equal(
@@ -242,9 +249,14 @@ assert.equal(
 );
 finalToActiveCompletion();
 assert.equal(
-  replacementCalls,
+  finalToActiveStaleCalls,
   0,
-  "final-to-active navigation should not restore shell focus when the captured exit finishes",
+  "final-to-active navigation should not call the stale captured callback",
+);
+assert.equal(
+  finalToActiveLatestCalls,
+  0,
+  "final-to-active navigation should not call the latest active-page callback",
 );
 
 assert.doesNotThrow(

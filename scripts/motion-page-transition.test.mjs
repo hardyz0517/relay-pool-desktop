@@ -394,6 +394,40 @@ assert.equal(
   1,
   "the latest exit snapshot ref should have one committed update path",
 );
+const committedSnapshotValue = snapshotAssignments[0].right;
+assert.ok(
+  ts.isObjectLiteralExpression(committedSnapshotValue),
+  "the committed exit snapshot should be an object literal",
+);
+const hasActivePageProperty = committedSnapshotValue.properties.find(
+  (property) => objectLiteralPropertyName(property) === "hasActivePage",
+);
+assert.ok(
+  hasActivePageProperty &&
+    ts.isPropertyAssignment(hasActivePageProperty) &&
+    ts.isBinaryExpression(hasActivePageProperty.initializer) &&
+    ts.isIdentifier(hasActivePageProperty.initializer.left) &&
+    hasActivePageProperty.initializer.left.text === "page" &&
+    hasActivePageProperty.initializer.operatorToken.kind ===
+      ts.SyntaxKind.ExclamationEqualsEqualsToken &&
+    hasActivePageProperty.initializer.right.kind === ts.SyntaxKind.NullKeyword,
+  "the committed snapshot should derive hasActivePage from page !== null",
+);
+const onExitCompleteProperty = committedSnapshotValue.properties.find(
+  (property) => objectLiteralPropertyName(property) === "onExitComplete",
+);
+const committedExitCallback = onExitCompleteProperty
+  ? ts.isShorthandPropertyAssignment(onExitCompleteProperty)
+    ? onExitCompleteProperty.name
+    : ts.isPropertyAssignment(onExitCompleteProperty)
+      ? onExitCompleteProperty.initializer
+      : undefined
+  : undefined;
+assert.ok(
+  ts.isIdentifier(committedExitCallback) &&
+    committedExitCallback.text === "onExitComplete",
+  "the committed snapshot should carry the current host exit callback",
+);
 
 const layoutEffectCalls = findNodes(
   hostSourceFile,
