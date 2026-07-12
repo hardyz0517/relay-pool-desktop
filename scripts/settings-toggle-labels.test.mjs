@@ -1,28 +1,35 @@
 import { readFile } from "node:fs/promises";
 
-const source = await readFile("src/features/settings/SettingsPage.tsx", "utf8");
+const settingsSource = await readFile("src/features/settings/SettingsPage.tsx", "utf8");
+const routingFieldsSource = await readFile(
+  "src/features/routing/LocalRoutingSettingsFields.tsx",
+  "utf8",
+);
 const switchControlSource = await readFile("src/components/ui/SwitchControl.tsx", "utf8");
 
-const toggleLabels = [
-  ["允许余额耗尽兜底", /ariaLabel="允许余额耗尽兜底"[\s\S]*?\/>/],
-  ["开发者模式", /ariaLabel="开发者模式"[\s\S]*?\/>/],
-];
+const settingsSwitch = settingsSource.match(/ariaLabel="显示高级工具"[\s\S]*?\/>/);
+if (!settingsSwitch) {
+  console.error("显示高级工具 switch should be present in settings page.");
+  process.exit(1);
+}
+if (!settingsSwitch[0].includes("showLabel={false}")) {
+  console.error("显示高级工具 switch should explicitly hide inline state text.");
+  process.exit(1);
+}
 
-for (const [label, pattern] of toggleLabels) {
-  const match = source.match(pattern);
-  if (!match) {
-    console.error(`${label} switch should be present in settings page.`);
-    process.exit(1);
-  }
-  const switchSource = match[0];
-  if (switchSource.includes('offLabel="关闭"') || switchSource.includes('onLabel="开启"')) {
-    console.error(`${label} switch should not render inline state text.`);
-    process.exit(1);
-  }
-  if (!switchSource.includes("showLabel={false}")) {
-    console.error(`${label} switch should explicitly hide inline state text.`);
-    process.exit(1);
-  }
+const routingSwitch = routingFieldsSource.match(/ariaLabel="余额耗尽兜底"[\s\S]*?\/>/);
+if (!routingSwitch) {
+  console.error("余额耗尽兜底 switch should be present in routing fields.");
+  process.exit(1);
+}
+if (!routingSwitch[0].includes("showLabel={false}")) {
+  console.error("余额耗尽兜底 switch should explicitly hide inline state text.");
+  process.exit(1);
+}
+
+if (settingsSource.includes("允许余额耗尽兜底") || settingsSource.includes("开发者模式")) {
+  console.error("settings page should not render old routing/developer toggle labels.");
+  process.exit(1);
 }
 
 if (

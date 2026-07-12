@@ -75,5 +75,10 @@ assert.match(candidateRow, /schedulerRejectReason/);
 assert.doesNotMatch(settingsPage, /routingStrategyLabels/);
 assert.doesNotMatch(settingsPage, /handleDefaultRoutingStrategyChange/);
 assert.doesNotMatch(settingsPage, /默认路由策略/);
+for (const label of ["低余额阈值", "允许余额耗尽兜底"]) {
+  assert.doesNotMatch(settingsPage, new RegExp(`label="${label}"`));
+}
+assert.match(settingsFields, /默认低余额阈值/);
+assert.match(settingsFields, /余额耗尽兜底/);
 
 console.log("local routing automatic settings contract ok");

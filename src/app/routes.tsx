@@ -52,7 +52,7 @@ export const appRoutes: AppRoute[] = [
   {
     id: "collectors",
     label: "采集中心",
-    description: "开发者模式下调试采集、登录态和快照识别",
+    description: "高级工具中调试采集、登录态和快照识别",
     icon: FlaskConical,
   },
   {

@@ -3,12 +3,12 @@ import { readFile } from "node:fs/promises";
 
 const settingsPageSource = await readFile("src/features/settings/SettingsPage.tsx", "utf8");
 const localProxySectionStart = settingsPageSource.indexOf('title="本地代理"');
-const routingSectionStart = settingsPageSource.indexOf('title="采集与路由"');
+const networkSectionStart = settingsPageSource.indexOf('title="网络与代理"');
 
 assert.ok(localProxySectionStart > -1, "settings page should keep the local proxy section");
-assert.ok(routingSectionStart > localProxySectionStart, "settings page should keep routing after local proxy");
+assert.ok(networkSectionStart > localProxySectionStart, "settings page should keep network settings after local proxy");
 
-const localProxySection = settingsPageSource.slice(localProxySectionStart, routingSectionStart);
+const localProxySection = settingsPageSource.slice(localProxySectionStart, networkSectionStart);
 
 assert.ok(
   !localProxySection.includes("description="),

@@ -205,7 +205,7 @@ export function App() {
       case "logs":
         return <LogsPage />;
       case "settings":
-        return <SettingsPage onOpenModelBasePrices={() => navigateTo("modelBasePrices")} />;
+        return <SettingsPage />;
       case "dashboard":
       default:
         return <DashboardPage />;

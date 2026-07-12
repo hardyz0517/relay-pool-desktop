@@ -13,8 +13,7 @@ assert.ok(
 
 assert.ok(
   settingsPageSource.includes("commitSettingsForm") &&
-    settingsPageSource.includes("onCommit") &&
     settingsPageSource.includes("handleCollectorProxyModeChange") &&
-    settingsPageSource.includes("handleAllowDepletedFallbackToggle"),
-  "settings page should autosave individual setting changes",
+    settingsPageSource.includes("handleDeveloperModeToggle"),
+  "settings page should autosave each remaining application-level setting",
 );

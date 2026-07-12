@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
-import { Coins, Copy, ExternalLink, FolderOpen, Github, Play, RefreshCw, RotateCcw, Square, Wand2 } from "lucide-react";
+import { Copy, ExternalLink, FolderOpen, Github, Play, RefreshCw, RotateCcw, Square, Wand2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
@@ -25,28 +25,14 @@ import {
   type TrayBehavior,
   type UpdateSettingsInput,
 } from "@/lib/types/settings";
-import type { RoutingGroupFilter, PricingGroupType } from "@/lib/types/routing";
 
 type SettingsFormState = {
   localProxyPort: string;
   collectorProxyMode: CollectorProxyMode;
   collectorProxyUrl: string;
-  maxRateMultiplier: string;
-  defaultRoutingGroupFilter: RoutingGroupPreset;
-  lowBalanceThresholdCny: string;
-  collectorIntervalMinutes: string;
-  balanceIntervalMinutes: string;
-  groupRateIntervalMinutes: string;
-  modelListIntervalMinutes: string;
-  pricingRefreshIntervalMinutes: string;
-  collectorTimeoutSeconds: string;
-  collectorMaxConcurrency: string;
-  allowDepletedFallback: boolean;
   trayBehavior: TrayBehavior;
   developerModeEnabled: boolean;
 };
-
-type RoutingGroupPreset = "all_groups" | "ungrouped_only" | PricingGroupType;
 
 const fallbackSettings: AppSettings = {
   localProxyPort: 8787,
@@ -83,13 +69,9 @@ const fallbackProxyStatus: ProxyStatus = {
   requestCount: 0,
 };
 
-type SettingsPageProps = {
-  onOpenModelBasePrices: () => void;
-};
-
 const REPOSITORY_URL = "https://github.com/hardyz0517/relay-pool-desktop";
 
-export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
+export function SettingsPage() {
   const toast = useToast();
   const { state: updaterState, checkNow: checkForUpdates } = useUpdater();
   const [settings, setSettings] = useState<AppSettings>(fallbackSettings);
@@ -172,7 +154,7 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
     const nextForm = { ...form, developerModeEnabled: !form.developerModeEnabled };
     await commitSettingsForm(
       nextForm,
-      nextForm.developerModeEnabled ? "开发者模式已开启" : "开发者模式已关闭",
+      nextForm.developerModeEnabled ? "高级工具已显示" : "高级工具已隐藏",
     );
   }
 
@@ -181,15 +163,7 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
       collectorProxyMode === "manual"
         ? withManualProxyDefault({ ...form, collectorProxyMode })
         : { ...form, collectorProxyMode };
-    await commitSettingsForm(nextForm, "默认采集代理已更新");
-  }
-
-  async function handleAllowDepletedFallbackToggle() {
-    const nextForm = { ...form, allowDepletedFallback: !form.allowDepletedFallback };
-    await commitSettingsForm(
-      nextForm,
-      nextForm.allowDepletedFallback ? "余额耗尽兜底已开启" : "余额耗尽兜底已关闭",
-    );
+    await commitSettingsForm(nextForm, "默认网络出口已更新");
   }
 
   async function copyLocalAccessKey(value?: string) {
@@ -332,10 +306,7 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
   const displayedDataDir = settings.pendingDataDir ?? settings.dataDir;
 
   return (
-    <PageScaffold
-      title="设置"
-      width="settings"
-    >
+    <PageScaffold title="设置" width="settings">
       <div className="grid min-w-0 gap-[var(--shell-page-gap)]">
         <SectionCard
           contentClassName="p-0"
@@ -418,56 +389,23 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
           />
         </SectionCard>
 
-        <SectionCard contentClassName="p-0" title="采集与路由">
-          <SettingRow
-            control={
-              <input
-                className={inputClassName}
-                min="0"
-                step="0.01"
-                type="number"
-                value={form.maxRateMultiplier}
-                onChange={(event) =>
-                  setForm({ ...form, maxRateMultiplier: event.target.value })
-                }
-                onBlur={() => void commitSettingsForm(form, "倍率上限已更新")}
-              />
-            }
-            description="自动路由不会选择超过该倍率的 Key；留空时自动路由不可用。"
-            label="倍率上限"
-          />
-          <SettingRow
-            control={
-              <SelectControl
-                ariaLabel="默认路由分组"
-                className={inputClassName}
-                value={form.defaultRoutingGroupFilter}
-                options={routingGroupPresetOptions}
-                onChange={(defaultRoutingGroupFilter) =>
-                  setForm({
-                    ...form,
-                    defaultRoutingGroupFilter: defaultRoutingGroupFilter as RoutingGroupPreset,
-                  })
-                }
-              />
-            }
-            description="自动路由仅使用匹配分组的 Key。"
-            label="默认路由分组"
-          />
+        <SectionCard contentClassName="p-0" title="网络与代理">
           <SettingRow
             control={
               <div className="grid w-full min-w-0 gap-2">
                 <SelectControl
-                  ariaLabel="默认采集代理"
+                  ariaLabel="默认网络出口"
                   className={inputClassName}
                   value={form.collectorProxyMode}
                   options={Object.entries(collectorProxyModeLabels).map(([value, label]) => ({
                     value: value as CollectorProxyMode,
                     label,
                   }))}
-                  onChange={(collectorProxyMode) => void handleCollectorProxyModeChange(collectorProxyMode)}
+                  onChange={(collectorProxyMode) =>
+                    void handleCollectorProxyModeChange(collectorProxyMode)
+                  }
                 />
-                {form.collectorProxyMode === "manual" && (
+                {form.collectorProxyMode === "manual" ? (
                   <input
                     className={inputClassName}
                     placeholder={DEFAULT_MANUAL_PROXY_URL}
@@ -475,99 +413,17 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
                     onChange={(event) =>
                       setForm({ ...form, collectorProxyUrl: event.target.value })
                     }
-                    onBlur={() => void commitSettingsForm(form, "默认采集代理已更新")}
+                    onBlur={() => void commitSettingsForm(form, "默认网络出口已更新")}
                   />
-                )}
+                ) : null}
               </div>
             }
-            description="登录刷新、余额/分组采集、远端 Key 读取和本地 key 路由都会使用这里的默认出口；单个中转站可以覆盖。"
-            label="默认采集代理"
-          />
-          <SettingRow
-            control={
-              <input
-                className={inputClassName}
-                min="0"
-                step="0.01"
-                type="number"
-                value={form.lowBalanceThresholdCny}
-                onChange={(event) =>
-                  setForm({ ...form, lowBalanceThresholdCny: event.target.value })
-                }
-                onBlur={() => void commitSettingsForm(form, "低余额阈值已更新")}
-              />
-            }
-            description="低于该值时，成本策略会降低或跳过低余额候选。"
-            label="低余额阈值"
-          />
-          <SettingRow
-            control={<SettingsNumberInput min="1" value={form.balanceIntervalMinutes} onChange={(balanceIntervalMinutes) => setForm({ ...form, balanceIntervalMinutes })} onCommit={() => void commitSettingsForm(form, "余额采集周期已更新")} />}
-            description="余额快照采集周期。"
-            label="余额采集周期（分钟）"
-          />
-          <SettingRow
-            control={<SettingsNumberInput min="1" value={form.groupRateIntervalMinutes} onChange={(groupRateIntervalMinutes) => setForm({ ...form, groupRateIntervalMinutes })} onCommit={() => void commitSettingsForm(form, "分组 / 倍率采集周期已更新")} />}
-            description="分组可见性和倍率事实采集周期。"
-            label="分组 / 倍率采集周期（分钟）"
-          />
-          <SettingRow
-            control={<SettingsNumberInput min="1" value={form.modelListIntervalMinutes} onChange={(modelListIntervalMinutes) => setForm({ ...form, modelListIntervalMinutes })} onCommit={() => void commitSettingsForm(form, "模型采集周期已更新")} />}
-            description="模型列表刷新周期。"
-            label="模型采集周期（分钟）"
-          />
-          <SettingRow
-            control={<SettingsNumberInput min="1" value={form.pricingRefreshIntervalMinutes} onChange={(pricingRefreshIntervalMinutes) => setForm({ ...form, pricingRefreshIntervalMinutes })} onCommit={() => void commitSettingsForm(form, "价格刷新周期已更新")} />}
-            description="价格规则和倍率归一化刷新周期。"
-            label="价格刷新周期（分钟）"
-          />
-          <SettingRow
-            control={
-              <Button type="button" variant="outline" onClick={onOpenModelBasePrices}>
-                <Coins className="h-4 w-4" />
-                编辑
-              </Button>
-            }
-            description="用于把站点分组倍率折算成请求成本；默认值来自官方 API 定价页，可手动覆盖。"
-            label="模型基准价格"
-          />
-          <SettingRow
-            control={<SettingsNumberInput min="3" value={form.collectorTimeoutSeconds} onChange={(collectorTimeoutSeconds) => setForm({ ...form, collectorTimeoutSeconds })} onCommit={() => void commitSettingsForm(form, "采集超时已更新")} />}
-            description="单次采集请求超时；后端要求至少 3 秒。"
-            label="采集超时（秒）"
-          />
-          <SettingRow
-            control={<SettingsNumberInput max="8" min="1" value={form.collectorMaxConcurrency} onChange={(collectorMaxConcurrency) => setForm({ ...form, collectorMaxConcurrency })} onCommit={() => void commitSettingsForm(form, "采集并发数已更新")} />}
-            description="采集任务最大并发数；后端限制 1 到 8。"
-            label="采集并发数"
-          />
-          <SettingRow
-            control={
-              <SwitchControl
-                ariaLabel="允许余额耗尽兜底"
-                checked={form.allowDepletedFallback}
-                onCheckedChange={() => void handleAllowDepletedFallbackToggle()}
-                showLabel={false}
-              />
-            }
-            description="关闭时，余额耗尽的候选默认不参与路由；开启后只作为兜底候选。"
-            label="允许余额耗尽兜底"
-          />
-          <SettingRow
-            control={
-              <SwitchControl
-                ariaLabel="开发者模式"
-                checked={form.developerModeEnabled}
-                disabled={saving || loading}
-                onCheckedChange={() => void handleDeveloperModeToggle()}
-                showLabel={false}
-              />
-            }
-            description="打开后侧边栏显示采集中心。"
-            label="开发者模式"
+            description="采集与转发默认使用；站点可单独覆盖。"
+            label="默认网络出口"
           />
         </SectionCard>
 
-        <SectionCard contentClassName="p-0" title="数据与安全">
+        <SectionCard contentClassName="p-0" title="数据">
           <SettingRow
             control={
               <div className="flex w-full min-w-0 items-center gap-1.5">
@@ -606,6 +462,22 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
             }
             description={restartRequired ? "重启后使用新的数据目录；当前运行仍使用原数据库。" : undefined}
             label="数据目录"
+          />
+        </SectionCard>
+
+        <SectionCard contentClassName="p-0" title="高级">
+          <SettingRow
+            control={
+              <SwitchControl
+                ariaLabel="显示高级工具"
+                checked={form.developerModeEnabled}
+                disabled={saving || loading}
+                onCheckedChange={() => void handleDeveloperModeToggle()}
+                showLabel={false}
+              />
+            }
+            description="在侧边栏显示采集中心。"
+            label="显示高级工具"
           />
         </SectionCard>
 
@@ -741,32 +613,6 @@ function LocalAccessKeyControl({
   );
 }
 
-function SettingsNumberInput({
-  value,
-  min,
-  max,
-  onChange,
-  onCommit,
-}: {
-  value: string;
-  min?: string;
-  max?: string;
-  onChange: (value: string) => void;
-  onCommit: () => void;
-}) {
-  return (
-    <input
-      className={inputClassName}
-      max={max}
-      min={min}
-      type="number"
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      onBlur={onCommit}
-    />
-  );
-}
-
 function SettingRow({
   label,
   description,
@@ -799,17 +645,6 @@ function settingsToForm(settings: AppSettings): SettingsFormState {
     localProxyPort: String(settings.localProxyPort),
     collectorProxyMode: settings.collectorProxyMode,
     collectorProxyUrl: settings.collectorProxyUrl ?? "",
-    maxRateMultiplier: settings.maxRateMultiplier == null ? "" : String(settings.maxRateMultiplier),
-    defaultRoutingGroupFilter: routingGroupFilterToPreset(settings.defaultRoutingGroupFilter),
-    lowBalanceThresholdCny: String(settings.lowBalanceThresholdCny),
-    collectorIntervalMinutes: String(settings.collectorIntervalMinutes),
-    balanceIntervalMinutes: String(settings.balanceIntervalMinutes),
-    groupRateIntervalMinutes: String(settings.groupRateIntervalMinutes),
-    modelListIntervalMinutes: String(settings.modelListIntervalMinutes),
-    pricingRefreshIntervalMinutes: String(settings.pricingRefreshIntervalMinutes),
-    collectorTimeoutSeconds: String(settings.collectorTimeoutSeconds),
-    collectorMaxConcurrency: String(settings.collectorMaxConcurrency),
-    allowDepletedFallback: settings.allowDepletedFallback,
     trayBehavior: settings.trayBehavior,
     developerModeEnabled: settings.developerModeEnabled,
   };
@@ -821,21 +656,11 @@ function formToInput(form: SettingsFormState, settings: AppSettings): UpdateSett
     localProxyPort: Number(form.localProxyPort),
     defaultRoutingStrategy: "automatic_balanced",
     collectorProxyMode: form.collectorProxyMode,
-    collectorProxyUrl: form.collectorProxyMode === "manual" && form.collectorProxyUrl.trim()
-      ? form.collectorProxyUrl.trim()
-      : null,
-    maxRateMultiplier: parseNullableNumber(form.maxRateMultiplier),
-    defaultRoutingGroupFilter: routingGroupPresetToFilter(form.defaultRoutingGroupFilter),
+    collectorProxyUrl:
+      form.collectorProxyMode === "manual" && form.collectorProxyUrl.trim()
+        ? form.collectorProxyUrl.trim()
+        : null,
     schedulerAdvancedSettings: settings.schedulerAdvancedSettings,
-    lowBalanceThresholdCny: Number(form.lowBalanceThresholdCny),
-    collectorIntervalMinutes: Number(form.collectorIntervalMinutes),
-    balanceIntervalMinutes: Number(form.balanceIntervalMinutes),
-    groupRateIntervalMinutes: Number(form.groupRateIntervalMinutes),
-    modelListIntervalMinutes: Number(form.modelListIntervalMinutes),
-    pricingRefreshIntervalMinutes: Number(form.pricingRefreshIntervalMinutes),
-    collectorTimeoutSeconds: Number(form.collectorTimeoutSeconds),
-    collectorMaxConcurrency: Number(form.collectorMaxConcurrency),
-    allowDepletedFallback: form.allowDepletedFallback,
     trayBehavior: form.trayBehavior,
     developerModeEnabled: form.developerModeEnabled,
   };
@@ -852,42 +677,6 @@ function generateLocalAccessKey() {
   }
   const token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   return `sk-local-${token}`;
-}
-
-const routingGroupPresetOptions: Array<{ value: RoutingGroupPreset; label: string }> = [
-  { value: "all_groups", label: "全部分组" },
-  { value: "gpt", label: "GPT 分组" },
-  { value: "claude", label: "Claude 分组" },
-  { value: "gemini", label: "Gemini 分组" },
-  { value: "grok", label: "Grok 分组" },
-  { value: "image_generation", label: "图像生成" },
-  { value: "ungrouped_only", label: "仅未分组" },
-];
-
-function routingGroupFilterToPreset(filter: RoutingGroupFilter): RoutingGroupPreset {
-  if (filter === "all_groups" || filter === "ungrouped_only") {
-    return filter;
-  }
-  if ("group_type" in filter) {
-    return filter.group_type;
-  }
-  return "all_groups";
-}
-
-function routingGroupPresetToFilter(preset: RoutingGroupPreset): RoutingGroupFilter {
-  if (preset === "all_groups" || preset === "ungrouped_only") {
-    return preset;
-  }
-  return { group_type: preset };
-}
-
-function parseNullableNumber(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const numeric = Number(trimmed);
-  return Number.isFinite(numeric) ? numeric : null;
 }
 
 const inputClassName =
