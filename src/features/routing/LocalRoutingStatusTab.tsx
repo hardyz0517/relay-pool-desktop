@@ -1,7 +1,7 @@
 import { Clock3, Server, ShieldCheck } from "lucide-react";
 import { EmptyState, SectionCard, StatusBadge } from "@/components/ui";
 import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
-import type { RouteEndpointKind } from "@/lib/types/routing";
+import type { RouteEndpointKind, RoutingGroupFilter } from "@/lib/types/routing";
 import { LocalRoutingCandidateRow } from "./LocalRoutingCandidateRow";
 
 type LocalRoutingStatusTabProps = {
@@ -14,14 +14,6 @@ const endpointLabels: Record<RouteEndpointKind, string> = {
   responses: "Responses",
   models: "模型列表",
   embeddings: "向量",
-};
-
-const policyLabels: Record<string, string> = {
-  cost_stable_first: "低价稳定优先",
-  priority_fallback: "顺位故障切换",
-  stable_first: "稳定优先",
-  backup_only: "仅备用兜底",
-  cheap_first: "低价优先",
 };
 
 export function LocalRoutingStatusTab({ workspace, loading }: LocalRoutingStatusTabProps) {
@@ -57,7 +49,7 @@ export function LocalRoutingStatusTab({ workspace, loading }: LocalRoutingStatus
                   {workspace.settings.bindAddr}:{workspace.settings.port}
                 </div>
                 <div className="truncate text-xs text-muted-foreground">
-                  {formatEndpoint(workspace.settings.endpoint)} / {formatPolicy(workspace.settings.policy)}
+                  {formatEndpoint(workspace.settings.endpoint)} / 自动路由 / 倍率未知或过期不参与路由
                 </div>
               </div>
             </div>
@@ -65,10 +57,14 @@ export function LocalRoutingStatusTab({ workspace, loading }: LocalRoutingStatus
               {workspace.proxyStatus.running ? "运行中" : "未启动"}
             </StatusBadge>
           </div>
-          <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
+          <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-4">
+            <Metric
+              label="倍率上限"
+              value={workspace.settings.maxRateMultiplier == null ? "未设置" : `${workspace.settings.maxRateMultiplier}x`}
+            />
+            <Metric label="分组筛选" value={formatRoutingGroupFilter(workspace.settings.routingGroupFilter)} />
+            <Metric label="上限内 Key" value={workspace.summary.eligibleUnderMultiplierLimitCount} />
             <Metric label="可用候选" value={workspace.summary.healthyCandidateCount} />
-            <Metric label="降级候选" value={workspace.summary.degradedCandidateCount} />
-            <Metric label="冷却候选" value={workspace.summary.cooldownCandidateCount} />
           </div>
         </SectionCard>
 
@@ -108,11 +104,16 @@ function formatEndpoint(endpoint: RouteEndpointKind) {
   return endpointLabels[endpoint] ?? endpoint;
 }
 
-function formatPolicy(policy: string) {
-  return policyLabels[policy] ?? policy;
+function formatRoutingGroupFilter(filter: RoutingGroupFilter) {
+  if (filter === "all_groups") return "全部分组";
+  if (filter === "ungrouped_only") return "未绑定分组";
+  if ("group_type" in filter) return `${filter.group_type} 分组`;
+  if ("group_binding_id" in filter) return "指定绑定";
+  if ("group_id_hash" in filter) return "指定分组";
+  return "全部分组";
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+function Metric({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-[var(--surface-radius)] border border-slate-200 bg-slate-50 px-3 py-2">
       <div className="text-[11px] text-muted-foreground">{label}</div>

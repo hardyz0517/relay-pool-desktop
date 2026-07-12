@@ -1,6 +1,7 @@
 import type { RoutingGroupFilter, SchedulerAdvancedSettings } from "@/lib/types/routing";
 
 export type RoutingStrategy =
+  | "automatic_balanced"
   | "priority_fallback"
   | "stable_first"
   | "backup_only"
@@ -82,6 +83,7 @@ export type UpdateSettingsInput = {
 };
 
 export const routingStrategyLabels: Record<RoutingStrategy, string> = {
+  automatic_balanced: "自动路由",
   priority_fallback: "优先级轮换",
   stable_first: "稳定优先",
   backup_only: "备用模式",

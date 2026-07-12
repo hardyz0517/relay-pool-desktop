@@ -31,6 +31,7 @@ pub struct RouteRequest {
     pub routing_group_filter: RoutingGroupFilter,
     pub session_hash: Option<String>,
     pub previous_response_id: Option<String>,
+    pub excluded_key_ids: Vec<String>,
     pub current_station_key_id: Option<String>,
     pub allow_depleted_fallback: bool,
     pub now_ms: i64,
@@ -118,7 +119,7 @@ pub fn select_route_candidates(
         max_rate_multiplier,
         session_hash: request.session_hash.clone(),
         previous_response_id: request.previous_response_id.clone(),
-        excluded_key_ids: Vec::new(),
+        excluded_key_ids: request.excluded_key_ids.clone(),
         now_ms: request.now_ms,
     };
     let scheduler_candidates = candidates
@@ -849,6 +850,34 @@ mod tests {
     }
 
     #[test]
+    fn automatic_router_preserves_over_ceiling_code_after_request_exclusions() {
+        let request = automatic_route_request(|request| {
+            request.max_rate_multiplier = Some(1.0);
+            request.excluded_key_ids = vec!["failed-key".to_string()];
+        });
+        let selected = select_route_candidates(
+            &request,
+            vec![
+                rich_scheduler_candidate("failed-key", 0, Some(0.5), Some(PricingGroupType::Gpt)),
+                rich_scheduler_candidate(
+                    "expensive-key",
+                    10,
+                    Some(2.0),
+                    Some(PricingGroupType::Gpt),
+                ),
+            ],
+            &[],
+        )
+        .expect("automatic route should return structured rejection");
+
+        assert!(selected.accepted.is_empty());
+        assert_eq!(
+            selected.scheduler_error_code.as_deref(),
+            Some("routing_no_candidate_within_multiplier_limit")
+        );
+    }
+
+    #[test]
     fn automatic_router_applies_same_model_alias_without_substituting_logical_model() {
         let request = automatic_route_request(|request| {
             request.max_rate_multiplier = Some(2.0);
@@ -872,9 +901,10 @@ mod tests {
             "client-allowlisted"
         );
         assert_eq!(selected.mapped_model.as_deref(), Some("upstream-model"));
-        assert!(selected.explanations.iter().all(|explanation| {
-            explanation.mapped_model.as_deref() == Some("upstream-model")
-        }));
+        assert!(selected
+            .explanations
+            .iter()
+            .all(|explanation| { explanation.mapped_model.as_deref() == Some("upstream-model") }));
     }
 
     fn route_request(
@@ -895,6 +925,7 @@ mod tests {
             routing_group_filter: RoutingGroupFilter::AllGroups,
             session_hash: None,
             previous_response_id: None,
+            excluded_key_ids: Vec::new(),
             current_station_key_id: None,
             allow_depleted_fallback: false,
             now_ms: 1_800_000_000_000,

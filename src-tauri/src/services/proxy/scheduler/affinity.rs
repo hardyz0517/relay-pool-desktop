@@ -61,7 +61,12 @@ impl AffinityStore {
         session_hash: &str,
         now_ms: i64,
     ) -> Option<String> {
-        lookup_entry(&mut self.session_entries, routing_group_scope, session_hash, now_ms)
+        lookup_entry(
+            &mut self.session_entries,
+            routing_group_scope,
+            session_hash,
+            now_ms,
+        )
     }
 
     pub fn lookup_response(

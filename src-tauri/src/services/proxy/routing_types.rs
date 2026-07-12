@@ -1,5 +1,5 @@
 use crate::models::proxy::ProxyStatus;
-use crate::models::routing::RouteEndpointKind;
+use crate::models::routing::{RouteEndpointKind, RoutingGroupFilter};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -48,6 +48,8 @@ pub struct LocalRoutingSettingsView {
     pub port: u16,
     pub endpoint: RouteEndpointKind,
     pub policy: String,
+    pub max_rate_multiplier: Option<f64>,
+    pub routing_group_filter: RoutingGroupFilter,
     pub fallback_enabled: bool,
 }
 
@@ -56,6 +58,7 @@ pub struct LocalRoutingSettingsView {
 pub struct LocalRoutingSummary {
     pub enabled_candidate_count: i64,
     pub healthy_candidate_count: i64,
+    pub eligible_under_multiplier_limit_count: i64,
     pub degraded_candidate_count: i64,
     pub cooldown_candidate_count: i64,
     pub last_decision_at: Option<String>,
@@ -76,6 +79,12 @@ pub struct LocalRoutingCandidateRow {
     pub last_failure_at: Option<String>,
     pub cooldown_until: Option<String>,
     pub score: Option<i64>,
+    pub effective_multiplier: Option<f64>,
+    pub effective_multiplier_source: Option<String>,
+    pub effective_multiplier_confidence: Option<f64>,
+    pub routing_group_scope: RoutingGroupFilter,
+    pub routing_group_match: bool,
+    pub scheduler_reject_reason: Option<String>,
     pub facts: Vec<DecisionFact>,
 }
 

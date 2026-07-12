@@ -15,16 +15,16 @@ import type { ProxyStatus } from "@/lib/types/proxy";
 import { useUpdater } from "@/features/updater/UpdaterProvider";
 import {
   DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
-  routingStrategyLabels,
   type AppSettings,
-  type RoutingStrategy,
   type TrayBehavior,
   type UpdateSettingsInput,
 } from "@/lib/types/settings";
+import type { RoutingGroupFilter, PricingGroupType } from "@/lib/types/routing";
 
 type SettingsFormState = {
   localProxyPort: string;
-  defaultRoutingStrategy: RoutingStrategy;
+  maxRateMultiplier: string;
+  defaultRoutingGroupFilter: RoutingGroupPreset;
   lowBalanceThresholdCny: string;
   collectorIntervalMinutes: string;
   balanceIntervalMinutes: string;
@@ -38,10 +38,12 @@ type SettingsFormState = {
   developerModeEnabled: boolean;
 };
 
+type RoutingGroupPreset = "all_groups" | "ungrouped_only" | PricingGroupType;
+
 const fallbackSettings: AppSettings = {
   localProxyPort: 8787,
   localKeyMasked: "未读取",
-  defaultRoutingStrategy: "cost_stable_first",
+  defaultRoutingStrategy: "automatic_balanced",
   maxRateMultiplier: null,
   defaultRoutingGroupFilter: "all_groups",
   schedulerAdvancedSettings: DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
@@ -155,12 +157,6 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
       nextForm.developerModeEnabled ? "开发者模式已开启" : "开发者模式已关闭",
       true,
     );
-  }
-
-  async function handleDefaultRoutingStrategyChange(defaultRoutingStrategy: RoutingStrategy) {
-    const nextForm = { ...form, defaultRoutingStrategy };
-    setForm(nextForm);
-    await persistSettings(nextForm, "默认路由策略已更新", true);
   }
 
   async function copyLocalAccessKey() {
@@ -299,19 +295,37 @@ export function SettingsPage({ onOpenModelBasePrices }: SettingsPageProps) {
         <SectionCard title="采集与路由">
           <SettingRow
             control={
-              <SelectControl
-                ariaLabel="默认路由策略"
+              <input
                 className={inputClassName}
-                value={form.defaultRoutingStrategy}
-                options={Object.entries(routingStrategyLabels).map(([value, label]) => ({
-                  value: value as RoutingStrategy,
-                  label,
-                }))}
-                onChange={(defaultRoutingStrategy) => void handleDefaultRoutingStrategyChange(defaultRoutingStrategy)}
+                min="0"
+                step="0.01"
+                type="number"
+                value={form.maxRateMultiplier}
+                onChange={(event) =>
+                  setForm({ ...form, maxRateMultiplier: event.target.value })
+                }
               />
             }
-            description="当前本地代理会按所选策略对密钥池候选排序。"
-            label="默认路由策略"
+            description="自动路由的硬成本墙；倍率未知、过期或超过上限的 Key 不参与路由。留空时本地代理会拒绝可路由请求，直到设置上限。"
+            label="倍率上限"
+          />
+          <SettingRow
+            control={
+              <SelectControl
+                ariaLabel="默认分组筛选"
+                className={inputClassName}
+                value={form.defaultRoutingGroupFilter}
+                options={routingGroupPresetOptions}
+                onChange={(defaultRoutingGroupFilter) =>
+                  setForm({
+                    ...form,
+                    defaultRoutingGroupFilter: defaultRoutingGroupFilter as RoutingGroupPreset,
+                  })
+                }
+              />
+            }
+            description="自动路由只会在选定分组内挑 Key，不会跨分组兜底；例如选择 GPT 后只使用 GPT 分组候选。"
+            label="默认分组筛选"
           />
           <SettingRow
             control={
@@ -497,7 +511,8 @@ function SettingRow({
 function settingsToForm(settings: AppSettings): SettingsFormState {
   return {
     localProxyPort: String(settings.localProxyPort),
-    defaultRoutingStrategy: settings.defaultRoutingStrategy,
+    maxRateMultiplier: settings.maxRateMultiplier == null ? "" : String(settings.maxRateMultiplier),
+    defaultRoutingGroupFilter: routingGroupFilterToPreset(settings.defaultRoutingGroupFilter),
     lowBalanceThresholdCny: String(settings.lowBalanceThresholdCny),
     collectorIntervalMinutes: String(settings.collectorIntervalMinutes),
     balanceIntervalMinutes: String(settings.balanceIntervalMinutes),
@@ -515,9 +530,9 @@ function settingsToForm(settings: AppSettings): SettingsFormState {
 function formToInput(form: SettingsFormState, settings: AppSettings): UpdateSettingsInput {
   return {
     localProxyPort: Number(form.localProxyPort),
-    defaultRoutingStrategy: form.defaultRoutingStrategy,
-    maxRateMultiplier: settings.maxRateMultiplier,
-    defaultRoutingGroupFilter: settings.defaultRoutingGroupFilter,
+    defaultRoutingStrategy: "automatic_balanced",
+    maxRateMultiplier: parseNullableNumber(form.maxRateMultiplier),
+    defaultRoutingGroupFilter: routingGroupPresetToFilter(form.defaultRoutingGroupFilter),
     schedulerAdvancedSettings: settings.schedulerAdvancedSettings,
     lowBalanceThresholdCny: Number(form.lowBalanceThresholdCny),
     collectorIntervalMinutes: Number(form.collectorIntervalMinutes),
@@ -531,6 +546,42 @@ function formToInput(form: SettingsFormState, settings: AppSettings): UpdateSett
     trayBehavior: form.trayBehavior,
     developerModeEnabled: form.developerModeEnabled,
   };
+}
+
+const routingGroupPresetOptions: Array<{ value: RoutingGroupPreset; label: string }> = [
+  { value: "all_groups", label: "全部分组" },
+  { value: "gpt", label: "GPT 分组" },
+  { value: "claude", label: "Claude 分组" },
+  { value: "gemini", label: "Gemini 分组" },
+  { value: "grok", label: "Grok 分组" },
+  { value: "image_generation", label: "图像分组" },
+  { value: "ungrouped_only", label: "未绑定分组" },
+];
+
+function routingGroupFilterToPreset(filter: RoutingGroupFilter): RoutingGroupPreset {
+  if (filter === "all_groups" || filter === "ungrouped_only") {
+    return filter;
+  }
+  if ("group_type" in filter) {
+    return filter.group_type;
+  }
+  return "all_groups";
+}
+
+function routingGroupPresetToFilter(preset: RoutingGroupPreset): RoutingGroupFilter {
+  if (preset === "all_groups" || preset === "ungrouped_only") {
+    return preset;
+  }
+  return { group_type: preset };
+}
+
+function parseNullableNumber(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const numeric = Number(trimmed);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 

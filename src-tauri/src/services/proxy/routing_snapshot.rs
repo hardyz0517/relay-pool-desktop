@@ -1,7 +1,10 @@
 use crate::{
     models::{
         proxy::{ProxyStatus, RequestLog},
-        routing::{RouteEndpointKind, StationKeyCapabilities, StationKeyHealth},
+        routing::{
+            PricingGroupType, RouteEndpointKind, RoutingGroupFilter, StationKeyCapabilities,
+            StationKeyHealth,
+        },
     },
     services::{
         database::{now_millis_for_services, AppDatabase},
@@ -13,6 +16,7 @@ use crate::{
                 LocalRoutingSettingsView, LocalRoutingSummary, LocalRoutingWorkspace,
                 RouteDecisionEvent, RouteDecisionStatus, RouteDecisionSummary, RouteHealthState,
             },
+            scheduler::types::{EffectiveMultiplierFact, MultiplierRejectReason},
         },
     },
 };
@@ -26,6 +30,11 @@ pub(crate) struct LocalRoutingReadCandidate {
     pub(crate) capabilities: StationKeyCapabilities,
     pub(crate) health: Option<StationKeyHealth>,
     pub(crate) economics: Option<RouteCandidateEconomics>,
+    pub(crate) scheduler_group_binding_id: Option<String>,
+    pub(crate) scheduler_group_id_hash: Option<String>,
+    pub(crate) scheduler_group_type: Option<PricingGroupType>,
+    pub(crate) scheduler_effective_multiplier: Option<EffectiveMultiplierFact>,
+    pub(crate) scheduler_multiplier_reject_reason: Option<MultiplierRejectReason>,
 }
 
 pub fn load_local_routing_workspace(
@@ -39,7 +48,9 @@ pub fn load_local_routing_workspace(
     let rows = candidates
         .iter()
         .enumerate()
-        .map(|(index, candidate)| candidate_row(index, candidate))
+        .map(|(index, candidate)| {
+            candidate_row(index, candidate, &settings.default_routing_group_filter)
+        })
         .collect::<Vec<_>>();
 
     let latest_decision = latest_log.map(|log| latest_decision(log, &rows));
@@ -52,6 +63,8 @@ pub fn load_local_routing_workspace(
             port: settings.local_proxy_port,
             endpoint: RouteEndpointKind::ChatCompletions,
             policy: settings.default_routing_strategy,
+            max_rate_multiplier: settings.max_rate_multiplier,
+            routing_group_filter: settings.default_routing_group_filter.clone(),
             fallback_enabled: settings.allow_depleted_fallback,
         },
         summary: LocalRoutingSummary {
@@ -60,6 +73,21 @@ pub fn load_local_routing_workspace(
                 .iter()
                 .filter(|row| row.health_state == RouteHealthState::Ready)
                 .count() as i64,
+            eligible_under_multiplier_limit_count: settings
+                .max_rate_multiplier
+                .map(|limit| {
+                    rows.iter()
+                        .filter(|row| {
+                            row.enabled
+                                && row.routing_group_match
+                                && row
+                                    .effective_multiplier
+                                    .map(|multiplier| multiplier <= limit)
+                                    .unwrap_or(false)
+                        })
+                        .count() as i64
+                })
+                .unwrap_or(0),
             degraded_candidate_count: rows
                 .iter()
                 .filter(|row| row.health_state == RouteHealthState::Degraded)
@@ -76,8 +104,13 @@ pub fn load_local_routing_workspace(
     })
 }
 
-fn candidate_row(index: usize, candidate: &LocalRoutingReadCandidate) -> LocalRoutingCandidateRow {
+fn candidate_row(
+    index: usize,
+    candidate: &LocalRoutingReadCandidate,
+    routing_group_filter: &RoutingGroupFilter,
+) -> LocalRoutingCandidateRow {
     let health_state = health_state(candidate);
+    let routing_group_match = local_candidate_group_matches(routing_group_filter, candidate);
     let mut facts = Vec::new();
     facts.push(DecisionFact {
         kind: DecisionFactKind::Policy,
@@ -118,19 +151,6 @@ fn candidate_row(index: usize, candidate: &LocalRoutingReadCandidate) -> LocalRo
                 severity: DecisionFactSeverity::Info,
             });
         }
-        if let Some(multiplier) = economics.rate_multiplier {
-            facts.push(DecisionFact {
-                kind: DecisionFactKind::Pricing,
-                label: "Multiplier".to_string(),
-                value: match economics.group_binding_id.as_deref() {
-                    Some(group_binding_id) => {
-                        format!("{multiplier:.4}x via group {group_binding_id}")
-                    }
-                    None => format!("{multiplier:.4}x"),
-                },
-                severity: DecisionFactSeverity::Info,
-            });
-        }
         if let Some(status) = economics.balance_status.as_deref() {
             facts.push(DecisionFact {
                 kind: DecisionFactKind::Balance,
@@ -144,6 +164,35 @@ fn candidate_row(index: usize, candidate: &LocalRoutingReadCandidate) -> LocalRo
             });
         }
     }
+    if let Some(multiplier) = &candidate.scheduler_effective_multiplier {
+        facts.push(DecisionFact {
+            kind: DecisionFactKind::Pricing,
+            label: "Effective multiplier".to_string(),
+            value: format!("{:.4}x via {}", multiplier.value, multiplier.source),
+            severity: DecisionFactSeverity::Info,
+        });
+    } else if let Some(reason) = candidate.scheduler_multiplier_reject_reason {
+        facts.push(DecisionFact {
+            kind: DecisionFactKind::Pricing,
+            label: "Multiplier evidence".to_string(),
+            value: multiplier_reject_reason_label(reason).to_string(),
+            severity: DecisionFactSeverity::Warning,
+        });
+    }
+    facts.push(DecisionFact {
+        kind: DecisionFactKind::Policy,
+        label: "Routing group".to_string(),
+        value: if routing_group_match {
+            "matched".to_string()
+        } else {
+            "out_of_scope".to_string()
+        },
+        severity: if routing_group_match {
+            DecisionFactSeverity::Info
+        } else {
+            DecisionFactSeverity::Warning
+        },
+    });
 
     LocalRoutingCandidateRow {
         station_key_id: candidate.station_key_id.clone(),
@@ -167,7 +216,57 @@ fn candidate_row(index: usize, candidate: &LocalRoutingReadCandidate) -> LocalRo
             .as_ref()
             .and_then(|health| health.cooldown_until.clone()),
         score: None,
+        effective_multiplier: candidate
+            .scheduler_effective_multiplier
+            .as_ref()
+            .map(|multiplier| multiplier.value),
+        effective_multiplier_source: candidate
+            .scheduler_effective_multiplier
+            .as_ref()
+            .map(|multiplier| multiplier.source.clone()),
+        effective_multiplier_confidence: candidate
+            .scheduler_effective_multiplier
+            .as_ref()
+            .map(|multiplier| multiplier.confidence),
+        routing_group_scope: routing_group_filter.clone(),
+        routing_group_match,
+        scheduler_reject_reason: candidate
+            .scheduler_multiplier_reject_reason
+            .map(|reason| multiplier_reject_reason_label(reason).to_string()),
         facts,
+    }
+}
+
+fn local_candidate_group_matches(
+    filter: &RoutingGroupFilter,
+    candidate: &LocalRoutingReadCandidate,
+) -> bool {
+    match filter {
+        RoutingGroupFilter::AllGroups => true,
+        RoutingGroupFilter::UngroupedOnly => {
+            candidate.scheduler_group_binding_id.is_none()
+                && candidate.scheduler_group_id_hash.is_none()
+        }
+        RoutingGroupFilter::GroupBindingId(expected) => {
+            candidate.scheduler_group_binding_id.as_deref() == Some(expected.as_str())
+        }
+        RoutingGroupFilter::GroupIdHash(expected) => {
+            candidate.scheduler_group_id_hash.as_deref() == Some(expected.as_str())
+        }
+        RoutingGroupFilter::GroupType(expected) => {
+            candidate.scheduler_group_type.as_ref() == Some(expected)
+        }
+    }
+}
+
+fn multiplier_reject_reason_label(reason: MultiplierRejectReason) -> &'static str {
+    match reason {
+        MultiplierRejectReason::Missing => "missing",
+        MultiplierRejectReason::Invalid => "invalid",
+        MultiplierRejectReason::Negative => "negative",
+        MultiplierRejectReason::Expired => "expired",
+        MultiplierRejectReason::UnboundGroup => "unbound_group",
+        MultiplierRejectReason::LowConfidence => "low_confidence",
     }
 }
 

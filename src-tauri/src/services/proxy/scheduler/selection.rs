@@ -192,10 +192,7 @@ mod tests {
             .map(|candidate| candidate.station_key_id.as_str())
             .collect();
 
-        assert_eq!(
-            keys,
-            vec!["key-valid", "key-inf", "key-nan", "key-neg-inf"]
-        );
+        assert_eq!(keys, vec!["key-valid", "key-inf", "key-nan", "key-neg-inf"]);
     }
 
     #[test]
@@ -209,7 +206,9 @@ mod tests {
 
         let weights = top_k_weights(&candidates);
         assert_eq!(weights.len(), candidates.len());
-        assert!(weights.iter().all(|weight| weight.is_finite() && *weight > 0.0));
+        assert!(weights
+            .iter()
+            .all(|weight| weight.is_finite() && *weight > 0.0));
 
         let ordered = weighted_order_without_replacement(&candidates, 42);
         let mut keys: Vec<_> = ordered
@@ -217,10 +216,7 @@ mod tests {
             .map(|candidate| candidate.station_key_id.as_str())
             .collect();
         keys.sort_unstable();
-        assert_eq!(
-            keys,
-            vec!["key-inf", "key-nan", "key-neg-inf", "key-valid"]
-        );
+        assert_eq!(keys, vec!["key-inf", "key-nan", "key-neg-inf", "key-valid"]);
     }
 
     #[test]

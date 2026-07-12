@@ -181,13 +181,7 @@ fn lower_is_better_factors(values: &[f64], equal_factor: f64) -> Vec<f64> {
     if range == 0.0 {
         return values
             .iter()
-            .map(|value| {
-                if value.is_finite() {
-                    equal_factor
-                } else {
-                    0.0
-                }
-            })
+            .map(|value| if value.is_finite() { equal_factor } else { 0.0 })
             .collect();
     }
 

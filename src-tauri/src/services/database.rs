@@ -6224,6 +6224,16 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析富路由候选失败: {error}"))?;
 
+    let advanced_settings = parse_scheduler_advanced_settings(&read_setting_or_default(
+        connection,
+        "scheduler_advanced_settings_json",
+        "",
+    )?)?;
+    let group_rate_interval_minutes: u16 =
+        parse_setting_or_default(connection, "group_rate_interval_minutes", "20")?;
+    let group_rate_interval_ms = i64::from(group_rate_interval_minutes) * 60 * 1000;
+    let now_ms = now_millis_for_services() as i64;
+
     let mut enriched_rows = Vec::with_capacity(rows.len());
     for mut row in rows {
         if row.candidate.api_key.trim().is_empty() {
@@ -6239,6 +6249,28 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
             &row.candidate.station_id,
             None,
         )?;
+        let multiplier_facts = load_multiplier_source_facts_from_connection(
+            connection,
+            &row.candidate.station_key_id,
+        )?;
+        row.scheduler_group_binding_id = multiplier_facts.group_binding_id.clone();
+        row.scheduler_group_id_hash = multiplier_facts.group_id_hash.clone();
+        row.scheduler_group_type = parse_pricing_group_type(multiplier_facts.group_name.as_deref());
+        match resolve_effective_multiplier(
+            multiplier_facts,
+            now_ms,
+            advanced_settings.multiplier_min_confidence,
+            group_rate_interval_ms,
+        ) {
+            Ok(fact) => {
+                row.scheduler_effective_multiplier = Some(fact);
+                row.scheduler_multiplier_reject_reason = None;
+            }
+            Err(reason) => {
+                row.scheduler_effective_multiplier = None;
+                row.scheduler_multiplier_reject_reason = Some(reason);
+            }
+        }
         enriched_rows.push(row);
     }
 
@@ -6331,11 +6363,26 @@ fn local_routing_read_candidates_from_connection(
                     updated_at: row.get(26).unwrap_or_else(|_| "0".to_string()),
                 }),
                 economics: None,
+                scheduler_group_binding_id: None,
+                scheduler_group_id_hash: None,
+                scheduler_group_type: None,
+                scheduler_effective_multiplier: None,
+                scheduler_multiplier_reject_reason: None,
             })
         })
         .map_err(|error| format!("查询本地路由读模型候选失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析本地路由读模型候选失败: {error}"))?;
+
+    let advanced_settings = parse_scheduler_advanced_settings(&read_setting_or_default(
+        connection,
+        "scheduler_advanced_settings_json",
+        "",
+    )?)?;
+    let group_rate_interval_minutes: u16 =
+        parse_setting_or_default(connection, "group_rate_interval_minutes", "20")?;
+    let group_rate_interval_ms = i64::from(group_rate_interval_minutes) * 60 * 1000;
+    let now_ms = now_millis_for_services() as i64;
 
     let mut enriched_rows = Vec::with_capacity(rows.len());
     for mut row in rows {
@@ -6345,6 +6392,26 @@ fn local_routing_read_candidates_from_connection(
             &row.station_id,
             None,
         )?;
+        let multiplier_facts =
+            load_multiplier_source_facts_from_connection(connection, &row.station_key_id)?;
+        row.scheduler_group_binding_id = multiplier_facts.group_binding_id.clone();
+        row.scheduler_group_id_hash = multiplier_facts.group_id_hash.clone();
+        row.scheduler_group_type = parse_pricing_group_type(multiplier_facts.group_name.as_deref());
+        match resolve_effective_multiplier(
+            multiplier_facts,
+            now_ms,
+            advanced_settings.multiplier_min_confidence,
+            group_rate_interval_ms,
+        ) {
+            Ok(fact) => {
+                row.scheduler_effective_multiplier = Some(fact);
+                row.scheduler_multiplier_reject_reason = None;
+            }
+            Err(reason) => {
+                row.scheduler_effective_multiplier = None;
+                row.scheduler_multiplier_reject_reason = Some(reason);
+            }
+        }
         enriched_rows.push(row);
     }
 
@@ -7698,6 +7765,7 @@ fn simulate_route_in_connection(
         routing_group_filter: routing_group_filter.clone(),
         session_hash: input.session_hash,
         previous_response_id: input.previous_response_id,
+        excluded_key_ids: Vec::new(),
         current_station_key_id: None,
         allow_depleted_fallback,
         now_ms,

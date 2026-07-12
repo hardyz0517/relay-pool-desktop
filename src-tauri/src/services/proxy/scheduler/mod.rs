@@ -197,6 +197,32 @@ fn no_candidate_error_code(
                     .unwrap_or(false)
             })
     };
+    let active_matching_decisions = matching_decisions
+        .iter()
+        .copied()
+        .filter(|decision| {
+            !decision
+                .rejection
+                .as_ref()
+                .map(|rejection| {
+                    rejection.reasons.len() == 1
+                        && rejection
+                            .reasons
+                            .contains(&CandidateRejectionCode::AssetUnavailable)
+                })
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    let all_active_matching_have_reason = |code| {
+        !active_matching_decisions.is_empty()
+            && active_matching_decisions.iter().all(|decision| {
+                decision
+                    .rejection
+                    .as_ref()
+                    .map(|rejection| rejection.reasons.contains(&code))
+                    .unwrap_or(false)
+            })
+    };
 
     let all_matching_have_multiplier_evidence_rejection = !matching_decisions.is_empty()
         && matching_decisions.iter().all(|decision| {
@@ -230,7 +256,9 @@ fn no_candidate_error_code(
     if all_matching_have_multiplier_evidence_rejection {
         return "routing_no_multiplier_evidence";
     }
-    if all_matching_have_reason(CandidateRejectionCode::MultiplierOverCeiling) {
+    if all_active_matching_have_reason(CandidateRejectionCode::MultiplierOverCeiling)
+        || all_matching_have_reason(CandidateRejectionCode::MultiplierOverCeiling)
+    {
         return "routing_no_candidate_within_multiplier_limit";
     }
 
