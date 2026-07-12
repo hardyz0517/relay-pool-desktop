@@ -3,6 +3,7 @@ import { access, readFile } from "node:fs/promises";
 
 const appSource = await readFile("src/app/App.tsx", "utf8");
 const navigationSource = await readFile("src/lib/types/navigation.ts", "utf8");
+const pageTransitionPolicySource = await readFile("src/app/pageTransitionPolicy.ts", "utf8");
 const keyPoolSource = await readFile("src/features/key-pool/KeyPoolPage.tsx", "utf8");
 
 await access("src/features/key-pool/EditKeyPage.tsx");
@@ -34,8 +35,15 @@ assert.ok(
 );
 
 assert.ok(
-  /pageId === "addKey" \|\| pageId === "editKey"/.test(appSource),
-  "edit-key should keep the key-pool shell item active",
+  appSource.includes("resolveActiveShellRouteId(") &&
+    appSource.includes("<AppShell activeRouteId={activeShellRouteId}"),
+  "transient pages should resolve and pass their parent shell route as active",
+);
+
+assert.ok(
+  /addKey:\s*\{[\s\S]*?parentRouteId:\s*"keyPool"/.test(pageTransitionPolicySource) &&
+    /editKey:\s*\{[\s\S]*?parentRouteId:\s*"keyPool"/.test(pageTransitionPolicySource),
+  "add-key and edit-key should keep the key-pool shell item active",
 );
 
 assert.ok(
