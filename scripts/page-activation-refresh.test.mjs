@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 
 const appSource = await readFile("src/app/App.tsx", "utf8");
 const activitySource = await readFile("src/components/shell/PageActivity.tsx", "utf8").catch(() => "");
+const activityQuerySource = await readFile("src/lib/query/useActivityQuery.ts", "utf8").catch(() => "");
 
 assert.ok(
   appSource.includes("PageActivityProvider") &&
@@ -17,6 +18,19 @@ assert.ok(
     activitySource.includes("active && !wasActiveRef.current") &&
     activitySource.includes("isInitial"),
   "page activation should fire once on first entry and again only after an inactive-to-active transition",
+);
+
+assert.ok(
+  activitySource.includes("interactive: boolean") &&
+    activitySource.includes("refreshEnabled: boolean") &&
+    activitySource.includes("export function usePageActivity"),
+  "page activity should expose separate interaction and refresh axes",
+);
+
+assert.ok(
+  activityQuerySource.includes("enabled: queryEnabled") &&
+    activityQuerySource.includes("subscribed: active"),
+  "inactive query consumers should disable both query execution and subscription",
 );
 
 const pages = [
