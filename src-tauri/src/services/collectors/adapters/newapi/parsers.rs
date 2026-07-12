@@ -68,6 +68,57 @@ pub(super) fn parse_balance_fact(
         value: remaining,
         used_value: used,
         total_value: remaining.zip(used).map(|(left, right)| left + right),
+        today_request_count: parse_i64_field(
+            data,
+            &["today_request_count", "today_requests", "todayRequestCount", "todayRequests"],
+        ),
+        total_request_count: parse_i64_field(
+            data,
+            &[
+                "total_request_count",
+                "request_count",
+                "totalRequests",
+                "requestCount",
+                "requests",
+            ],
+        ),
+        today_consumption: parse_f64_field(
+            data,
+            &[
+                "today_consumption",
+                "today_used_amount",
+                "todayConsume",
+                "todayConsumption",
+                "todayUsedAmount",
+                "today_cost",
+            ],
+        ),
+        total_consumption: parse_f64_field(
+            data,
+            &[
+                "total_consumption",
+                "used_amount",
+                "totalUsedAmount",
+                "totalConsumption",
+                "consumption",
+                "cost",
+            ],
+        ),
+        today_token_count: parse_i64_field(
+            data,
+            &["today_token_count", "today_tokens", "todayTokenCount", "todayTokens"],
+        ),
+        total_token_count: parse_i64_field(
+            data,
+            &[
+                "total_token_count",
+                "total_tokens",
+                "token_count",
+                "totalTokenCount",
+                "totalTokens",
+                "tokens",
+            ],
+        ),
         currency: "USD".to_string(),
         credit_unit: Some(format!("newapi_quota_{quota_per_unit}")),
         status: if remaining == Some(0.0) {
@@ -158,6 +209,28 @@ fn parse_optional_f64(value: Option<&Value>) -> Option<f64> {
     })
 }
 
+fn parse_f64_field(payload: &Value, names: &[&str]) -> Option<f64> {
+    names
+        .iter()
+        .find_map(|name| parse_optional_f64(payload.get(*name)))
+}
+
+fn parse_i64_field(payload: &Value, names: &[&str]) -> Option<i64> {
+    names
+        .iter()
+        .find_map(|name| parse_optional_i64(payload.get(*name)))
+}
+
+fn parse_optional_i64(value: Option<&Value>) -> Option<i64> {
+    value.and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
+            .or_else(|| value.as_f64().map(|value| value.round() as i64))
+            .or_else(|| value.as_str()?.trim().parse::<i64>().ok())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,6 +256,32 @@ mod tests {
         assert_eq!(fact.used_value, Some(1.0));
         assert_eq!(fact.total_value, Some(4.0));
         assert_eq!(fact.confidence, 0.95);
+    }
+
+    #[test]
+    fn balance_captures_station_usage_totals() {
+        let fact = parse_balance_fact(
+            "station-1",
+            &json!({
+                "quota": 750000,
+                "used_quota": 250000,
+                "request_count": 1200,
+                "today_request_count": 34,
+                "used_amount": 19.875,
+                "today_used_amount": 1.25,
+                "total_tokens": 987654,
+                "today_tokens": 43210
+            }),
+            250000.0,
+            false,
+        );
+
+        assert_eq!(fact.today_request_count, Some(34));
+        assert_eq!(fact.total_request_count, Some(1200));
+        assert_eq!(fact.today_consumption, Some(1.25));
+        assert_eq!(fact.total_consumption, Some(19.875));
+        assert_eq!(fact.today_token_count, Some(43210));
+        assert_eq!(fact.total_token_count, Some(987654));
     }
 
     #[test]

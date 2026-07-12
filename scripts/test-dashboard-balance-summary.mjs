@@ -41,6 +41,12 @@ const summary = summarizeDashboardBalances([
     scope: "station",
     value: 10,
     currency: "CNY",
+    todayRequestCount: 12,
+    totalRequestCount: 120,
+    todayConsumption: 0.75,
+    totalConsumption: 8.5,
+    todayTokenCount: 34567,
+    totalTokenCount: 456789,
     status: "normal",
     updatedAt: "2000",
   },
@@ -59,6 +65,12 @@ const summary = summarizeDashboardBalances([
     scope: "station",
     value: 6,
     currency: "CNY",
+    todayRequestCount: 8,
+    totalRequestCount: 80,
+    todayConsumption: 0.25,
+    totalConsumption: 2.5,
+    todayTokenCount: 1000,
+    totalTokenCount: 2000,
     status: "normal",
     updatedAt: "4000",
   },
@@ -76,6 +88,14 @@ const summary = summarizeDashboardBalances([
 assert.equal(summary.totalBalance, 18);
 assert.equal(summary.lowBalanceStations, 1);
 assert.equal(summary.primaryBalanceCurrency, "CNY");
+assert.deepEqual(JSON.parse(JSON.stringify(summary.stationUsage)), {
+  todayRequestCount: 20,
+  totalRequestCount: 200,
+  todayConsumption: 1,
+  totalConsumption: 11,
+  todayTokenCount: 35567,
+  totalTokenCount: 458789,
+});
 assert.equal(
   summary.latestStationBalances.map((balance) => balance.id).join(","),
   "station-normalized,station-b-newer-normal,station-c-usd",

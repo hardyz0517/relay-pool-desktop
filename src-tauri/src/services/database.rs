@@ -1957,6 +1957,12 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             credit_unit TEXT,
             used_value REAL,
             total_value REAL,
+            today_request_count INTEGER,
+            total_request_count INTEGER,
+            today_consumption REAL,
+            total_consumption REAL,
+            today_token_count INTEGER,
+            total_token_count INTEGER,
             low_balance_threshold REAL,
             status TEXT NOT NULL,
             source TEXT NOT NULL,
@@ -2339,6 +2345,12 @@ fn migrate_p9_fact_schema(connection: &Connection) -> rusqlite::Result<()> {
         "inferred_group_category",
         "TEXT",
     )?;
+    add_column_if_missing(connection, "balance_snapshots", "today_request_count", "INTEGER")?;
+    add_column_if_missing(connection, "balance_snapshots", "total_request_count", "INTEGER")?;
+    add_column_if_missing(connection, "balance_snapshots", "today_consumption", "REAL")?;
+    add_column_if_missing(connection, "balance_snapshots", "total_consumption", "REAL")?;
+    add_column_if_missing(connection, "balance_snapshots", "today_token_count", "INTEGER")?;
+    add_column_if_missing(connection, "balance_snapshots", "total_token_count", "INTEGER")?;
 
     Ok(())
 }
@@ -6656,6 +6668,12 @@ fn migrate_pricing_tables(connection: &Connection) -> rusqlite::Result<()> {
             credit_unit TEXT,
             used_value REAL,
             total_value REAL,
+            today_request_count INTEGER,
+            total_request_count INTEGER,
+            today_consumption REAL,
+            total_consumption REAL,
+            today_token_count INTEGER,
+            total_token_count INTEGER,
             low_balance_threshold REAL,
             status TEXT NOT NULL,
             source TEXT NOT NULL,
@@ -9062,8 +9080,10 @@ fn list_balance_snapshots_from_connection(
     let mut statement = connection
         .prepare(
             "SELECT id, station_id, station_key_id, scope, value, currency, credit_unit,
-                    used_value, total_value, low_balance_threshold, status, source, confidence,
-                    collected_at, created_at, updated_at
+                    used_value, total_value, today_request_count, total_request_count,
+                    today_consumption, total_consumption, today_token_count, total_token_count,
+                    low_balance_threshold, status, source, confidence, collected_at, created_at,
+                    updated_at
                FROM balance_snapshots
               ORDER BY updated_at DESC, created_at DESC",
         )
@@ -9083,8 +9103,10 @@ fn list_balance_snapshots_for_station_from_connection(
     let mut statement = connection
         .prepare(
             "SELECT id, station_id, station_key_id, scope, value, currency, credit_unit,
-                    used_value, total_value, low_balance_threshold, status, source, confidence,
-                    collected_at, created_at, updated_at
+                    used_value, total_value, today_request_count, total_request_count,
+                    today_consumption, total_consumption, today_token_count, total_token_count,
+                    low_balance_threshold, status, source, confidence, collected_at, created_at,
+                    updated_at
                FROM balance_snapshots
               WHERE station_id = ?1
               ORDER BY updated_at DESC, created_at DESC",
@@ -9119,9 +9141,11 @@ fn upsert_balance_snapshot_in_connection(
         .execute(
             "INSERT INTO balance_snapshots (
                 id, station_id, station_key_id, scope, value, currency, credit_unit,
-                used_value, total_value, low_balance_threshold, status, source, confidence,
-                collected_at, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                used_value, total_value, today_request_count, total_request_count,
+                today_consumption, total_consumption, today_token_count, total_token_count,
+                low_balance_threshold, status, source, confidence, collected_at, created_at,
+                updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
              ON CONFLICT(id) DO UPDATE SET
                 station_id = excluded.station_id,
                 station_key_id = excluded.station_key_id,
@@ -9131,6 +9155,12 @@ fn upsert_balance_snapshot_in_connection(
                 credit_unit = excluded.credit_unit,
                 used_value = excluded.used_value,
                 total_value = excluded.total_value,
+                today_request_count = excluded.today_request_count,
+                total_request_count = excluded.total_request_count,
+                today_consumption = excluded.today_consumption,
+                total_consumption = excluded.total_consumption,
+                today_token_count = excluded.today_token_count,
+                total_token_count = excluded.total_token_count,
                 low_balance_threshold = excluded.low_balance_threshold,
                 status = excluded.status,
                 source = excluded.source,
@@ -9147,6 +9177,12 @@ fn upsert_balance_snapshot_in_connection(
                 normalize_optional_string(input.credit_unit),
                 input.used_value,
                 input.total_value,
+                input.today_request_count,
+                input.total_request_count,
+                input.today_consumption,
+                input.total_consumption,
+                input.today_token_count,
+                input.total_token_count,
                 input.low_balance_threshold,
                 normalize_balance_status(input.status)?,
                 input.source.trim(),
@@ -9232,13 +9268,19 @@ fn row_to_balance_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<BalanceS
         credit_unit: row.get(6)?,
         used_value: row.get(7)?,
         total_value: row.get(8)?,
-        low_balance_threshold: row.get(9)?,
-        status: row.get(10)?,
-        source: row.get(11)?,
-        confidence: row.get(12)?,
-        collected_at: row.get(13)?,
-        created_at: row.get(14)?,
-        updated_at: row.get(15)?,
+        today_request_count: row.get(9)?,
+        total_request_count: row.get(10)?,
+        today_consumption: row.get(11)?,
+        total_consumption: row.get(12)?,
+        today_token_count: row.get(13)?,
+        total_token_count: row.get(14)?,
+        low_balance_threshold: row.get(15)?,
+        status: row.get(16)?,
+        source: row.get(17)?,
+        confidence: row.get(18)?,
+        collected_at: row.get(19)?,
+        created_at: row.get(20)?,
+        updated_at: row.get(21)?,
     })
 }
 
@@ -9279,8 +9321,10 @@ fn balance_snapshot_by_id(connection: &Connection, id: &str) -> Result<BalanceSn
     connection
         .query_row(
             "SELECT id, station_id, station_key_id, scope, value, currency, credit_unit,
-                    used_value, total_value, low_balance_threshold, status, source, confidence,
-                    collected_at, created_at, updated_at
+                    used_value, total_value, today_request_count, total_request_count,
+                    today_consumption, total_consumption, today_token_count, total_token_count,
+                    low_balance_threshold, status, source, confidence, collected_at, created_at,
+                    updated_at
                FROM balance_snapshots
               WHERE id = ?1",
             params![id],
@@ -13256,6 +13300,12 @@ mod tests {
                 credit_unit: None,
                 used_value: None,
                 total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_token_count: None,
+                total_token_count: None,
                 low_balance_threshold: None,
                 status: "depleted".to_string(),
                 source: "test".to_string(),
@@ -14795,6 +14845,12 @@ mod tests {
                 credit_unit: None,
                 used_value: None,
                 total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_token_count: None,
+                total_token_count: None,
                 low_balance_threshold: None,
                 status: "normal".to_string(),
                 source: "test".to_string(),
@@ -14813,6 +14869,12 @@ mod tests {
                 credit_unit: None,
                 used_value: None,
                 total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_token_count: None,
+                total_token_count: None,
                 low_balance_threshold: None,
                 status: "normal".to_string(),
                 source: "test".to_string(),
@@ -15429,6 +15491,12 @@ mod tests {
                 credit_unit: None,
                 used_value: None,
                 total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_token_count: None,
+                total_token_count: None,
                 low_balance_threshold: Some(10.0),
                 status: "depleted".to_string(),
                 source: "test".to_string(),
@@ -15458,6 +15526,12 @@ mod tests {
                 credit_unit: None,
                 used_value: None,
                 total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_token_count: None,
+                total_token_count: None,
                 low_balance_threshold: Some(10.0),
                 status: "depleted".to_string(),
                 source: "test".to_string(),
@@ -15493,6 +15567,12 @@ mod tests {
                 credit_unit: None,
                 used_value: None,
                 total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_token_count: None,
+                total_token_count: None,
                 low_balance_threshold: Some(10.0),
                 status: "depleted".to_string(),
                 source: "test".to_string(),
@@ -15526,6 +15606,12 @@ mod tests {
                 credit_unit: None,
                 used_value: None,
                 total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_token_count: None,
+                total_token_count: None,
                 low_balance_threshold: Some(10.0),
                 status: "low".to_string(),
                 source: "test".to_string(),
@@ -17866,6 +17952,12 @@ mod tests {
                 credit_unit: None,
                 used_value: None,
                 total_value: None,
+                today_request_count: Some(7),
+                total_request_count: Some(70),
+                today_consumption: Some(0.25),
+                total_consumption: Some(3.5),
+                today_token_count: Some(1234),
+                total_token_count: Some(56789),
                 low_balance_threshold: Some(5.0),
                 status: "normal".to_string(),
                 source: "collector".to_string(),
@@ -17878,6 +17970,12 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, saved.id);
         assert_eq!(rows[0].value, Some(12.5));
+        assert_eq!(rows[0].today_request_count, Some(7));
+        assert_eq!(rows[0].total_request_count, Some(70));
+        assert_eq!(rows[0].today_consumption, Some(0.25));
+        assert_eq!(rows[0].total_consumption, Some(3.5));
+        assert_eq!(rows[0].today_token_count, Some(1234));
+        assert_eq!(rows[0].total_token_count, Some(56789));
         assert_eq!(rows[0].status, "normal");
     }
 }

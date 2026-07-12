@@ -121,6 +121,12 @@ pub fn apply_collector_facts(
             credit_unit: balance.credit_unit,
             used_value: balance.used_value,
             total_value: balance.total_value,
+            today_request_count: balance.today_request_count,
+            total_request_count: balance.total_request_count,
+            today_consumption: balance.today_consumption,
+            total_consumption: balance.total_consumption,
+            today_token_count: balance.today_token_count,
+            total_token_count: balance.total_token_count,
             low_balance_threshold: None,
             status: balance.status,
             source: balance.source,
@@ -280,7 +286,21 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
             continue;
         }
 
-        let Some((value, used_value, total_value, currency, credit_unit, confidence, collected_at)) =
+        let Some((
+            value,
+            used_value,
+            total_value,
+            today_request_count,
+            total_request_count,
+            today_consumption,
+            total_consumption,
+            today_token_count,
+            total_token_count,
+            currency,
+            credit_unit,
+            confidence,
+            collected_at,
+        )) =
             ({
                 let key_balances = balances
                     .iter()
@@ -293,6 +313,24 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
                     sum_present_values(key_balances.iter().map(|balance| balance.used_value));
                 let total_value =
                     sum_present_values(key_balances.iter().map(|balance| balance.total_value));
+                let today_request_count = sum_present_i64_values(
+                    key_balances.iter().map(|balance| balance.today_request_count),
+                );
+                let total_request_count = sum_present_i64_values(
+                    key_balances.iter().map(|balance| balance.total_request_count),
+                );
+                let today_consumption = sum_present_values(
+                    key_balances.iter().map(|balance| balance.today_consumption),
+                );
+                let total_consumption = sum_present_values(
+                    key_balances.iter().map(|balance| balance.total_consumption),
+                );
+                let today_token_count = sum_present_i64_values(
+                    key_balances.iter().map(|balance| balance.today_token_count),
+                );
+                let total_token_count = sum_present_i64_values(
+                    key_balances.iter().map(|balance| balance.total_token_count),
+                );
                 let currency =
                     shared_text_value(key_balances.iter().map(|balance| balance.currency.as_str()))
                         .unwrap_or("CNY")
@@ -317,6 +355,12 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
                         value,
                         used_value,
                         total_value,
+                        today_request_count,
+                        total_request_count,
+                        today_consumption,
+                        total_consumption,
+                        today_token_count,
+                        total_token_count,
                         currency,
                         credit_unit,
                         confidence,
@@ -335,6 +379,12 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
             value: Some(value),
             used_value,
             total_value,
+            today_request_count,
+            total_request_count,
+            today_consumption,
+            total_consumption,
+            today_token_count,
+            total_token_count,
             currency,
             credit_unit,
             status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
@@ -347,6 +397,16 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
 
 fn sum_present_values(values: impl Iterator<Item = Option<f64>>) -> Option<f64> {
     let mut total = 0.0;
+    let mut has_value = false;
+    for value in values.flatten() {
+        total += value;
+        has_value = true;
+    }
+    has_value.then_some(total)
+}
+
+fn sum_present_i64_values(values: impl Iterator<Item = Option<i64>>) -> Option<i64> {
+    let mut total = 0_i64;
     let mut has_value = false;
     for value in values.flatten() {
         total += value;
@@ -475,6 +535,12 @@ mod tests {
             value: Some(value),
             used_value: None,
             total_value: None,
+            today_request_count: None,
+            total_request_count: None,
+            today_consumption: None,
+            total_consumption: None,
+            today_token_count: None,
+            total_token_count: None,
             currency: "CNY".to_string(),
             credit_unit: None,
             status: "normal".to_string(),

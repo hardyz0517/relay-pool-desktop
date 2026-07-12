@@ -65,6 +65,67 @@ pub fn parse_usage_balance(
         value: normalize_credit_value(remaining, credit_per_cny),
         used_value: normalize_credit_value(used, credit_per_cny),
         total_value: normalize_credit_value(total, credit_per_cny),
+        today_request_count: parse_i64_field(
+            payload,
+            &[
+                "today_request_count",
+                "today_requests",
+                "todayRequestCount",
+                "todayRequests",
+            ],
+        ),
+        total_request_count: parse_i64_field(
+            payload,
+            &[
+                "total_request_count",
+                "request_count",
+                "totalRequests",
+                "requestCount",
+                "requests",
+            ],
+        ),
+        today_consumption: parse_f64_field(
+            payload,
+            &[
+                "today_consumption",
+                "today_used_amount",
+                "todayConsume",
+                "todayConsumption",
+                "todayUsedAmount",
+                "today_cost",
+            ],
+        ),
+        total_consumption: parse_f64_field(
+            payload,
+            &[
+                "total_consumption",
+                "used_amount",
+                "totalUsedAmount",
+                "totalConsumption",
+                "consumption",
+                "cost",
+            ],
+        ),
+        today_token_count: parse_i64_field(
+            payload,
+            &[
+                "today_token_count",
+                "today_tokens",
+                "todayTokenCount",
+                "todayTokens",
+            ],
+        ),
+        total_token_count: parse_i64_field(
+            payload,
+            &[
+                "total_token_count",
+                "total_tokens",
+                "token_count",
+                "totalTokenCount",
+                "totalTokens",
+                "tokens",
+            ],
+        ),
         currency: "CNY".to_string(),
         credit_unit: payload
             .pointer("/quota/unit")
@@ -76,6 +137,38 @@ pub fn parse_usage_balance(
         confidence: if remaining.is_some() { 0.9 } else { 0.4 },
         collected_at: None,
     }
+}
+
+fn parse_f64_field(payload: &Value, names: &[&str]) -> Option<f64> {
+    names.iter().find_map(|name| {
+        parse_optional_f64(payload.get(*name))
+            .or_else(|| parse_optional_f64(payload.pointer(&format!("/data/{name}"))))
+    })
+}
+
+fn parse_i64_field(payload: &Value, names: &[&str]) -> Option<i64> {
+    names.iter().find_map(|name| {
+        parse_optional_i64(payload.get(*name))
+            .or_else(|| parse_optional_i64(payload.pointer(&format!("/data/{name}"))))
+    })
+}
+
+fn parse_optional_f64(value: Option<&Value>) -> Option<f64> {
+    value.and_then(|value| {
+        value
+            .as_f64()
+            .or_else(|| value.as_str()?.trim().parse::<f64>().ok())
+    })
+}
+
+fn parse_optional_i64(value: Option<&Value>) -> Option<i64> {
+    value.and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
+            .or_else(|| value.as_f64().map(|value| value.round() as i64))
+            .or_else(|| value.as_str()?.trim().parse::<i64>().ok())
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -1427,6 +1520,19 @@ pub fn collect_balance(
             facts.balances.push(balance);
         }
     }
+    if !facts.balances.is_empty() {
+        if let Some(stats) = collect_dashboard_usage_stats(
+            database,
+            data_key,
+            &station,
+            &proxy,
+            &mut endpoint_results,
+            &budget,
+            &policy,
+        )? {
+            merge_dashboard_usage_stats(&mut facts.balances, &station.id, stats);
+        }
+    }
 
     let status = if facts.balances.is_empty() {
         "failed"
@@ -1530,6 +1636,261 @@ fn collect_account_balance_fallback(
     Ok(None)
 }
 
+#[derive(Debug, Clone, Copy)]
+struct DashboardUsageStats {
+    today_request_count: Option<i64>,
+    total_request_count: Option<i64>,
+    today_consumption: Option<f64>,
+    total_consumption: Option<f64>,
+    today_token_count: Option<i64>,
+    total_token_count: Option<i64>,
+}
+
+impl DashboardUsageStats {
+    fn has_any(self) -> bool {
+        self.today_request_count.is_some()
+            || self.total_request_count.is_some()
+            || self.today_consumption.is_some()
+            || self.total_consumption.is_some()
+            || self.today_token_count.is_some()
+            || self.total_token_count.is_some()
+    }
+
+    fn apply_to(self, balance: &mut CollectedBalanceFact) {
+        balance.today_request_count = self.today_request_count;
+        balance.total_request_count = self.total_request_count;
+        balance.today_consumption = self.today_consumption;
+        balance.total_consumption = self.total_consumption;
+        balance.today_token_count = self.today_token_count;
+        balance.total_token_count = self.total_token_count;
+    }
+}
+
+fn collect_dashboard_usage_stats(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &crate::models::stations::Station,
+    proxy: &ProxyConfig,
+    endpoint_results: &mut Vec<Value>,
+    budget: &CollectionAttemptBudget,
+    policy: &RequestPolicy,
+) -> Result<Option<DashboardUsageStats>, String> {
+    let session = database.resolve_station_session_with_data_key(
+        station.id.clone(),
+        data_key,
+        crate::services::database::now_millis_for_services() as i64,
+    )?;
+    let access_token = match session.access_token {
+        Some(access_token) => access_token,
+        None => {
+            let Some(remaining) = budget.remaining() else {
+                return Ok(None);
+            };
+            match login_and_store_access_token_with_budget(database, data_key, station, remaining)?
+            {
+                Some(access_token) => access_token,
+                None => return Ok(None),
+            }
+        }
+    };
+
+    let urls = collector_base_urls(&station.base_url);
+    let path = "/api/v1/usage/dashboard/stats";
+    let url = join_url(&urls.management_base_url, path);
+    let mut auth_refresh_started = false;
+    let mut auth_refresh = |_: &String, remaining: std::time::Duration| {
+        if auth_refresh_started {
+            return None;
+        }
+        auth_refresh_started = true;
+        login_and_store_access_token_with_budget(database, data_key, station, remaining)
+            .ok()
+            .flatten()
+    };
+    let mut request = |token: &String, timeout: std::time::Duration| {
+        fetch_recoverable_json_with_bearer(&url, token, timeout, proxy)
+    };
+    let execution = execute_json_request(
+        path,
+        access_token,
+        Some(&mut auth_refresh),
+        &mut request,
+        policy,
+        budget,
+    );
+    let payload = execution.result.payload.clone().unwrap_or(Value::Null);
+    endpoint_results.push(execution.to_redacted_json());
+    if execution.failure_kind.is_some() || !execution.result.ok {
+        return Ok(None);
+    }
+
+    Ok(parse_dashboard_usage_stats(&payload))
+}
+
+fn parse_dashboard_usage_stats(payload: &Value) -> Option<DashboardUsageStats> {
+    let mut candidates = vec![payload];
+    for pointer in ["/data", "/stats", "/data/stats"] {
+        if let Some(candidate) = payload.pointer(pointer) {
+            candidates.push(candidate);
+        }
+    }
+
+    let find_i64 = |names: &[&str]| {
+        candidates
+            .iter()
+            .find_map(|candidate| parse_i64_field(candidate, names))
+    };
+    let find_f64 = |names: &[&str]| {
+        candidates
+            .iter()
+            .find_map(|candidate| parse_f64_field(candidate, names))
+    };
+    let stats = DashboardUsageStats {
+        today_request_count: find_i64(&[
+            "today_request_count",
+            "today_requests",
+            "todayRequestCount",
+            "todayRequests",
+        ]),
+        total_request_count: find_i64(&[
+            "total_request_count",
+            "total_requests",
+            "request_count",
+            "totalRequests",
+            "requestCount",
+            "requests",
+        ]),
+        today_consumption: find_f64(&[
+            "today_consumption",
+            "today_actual_cost",
+            "today_used_amount",
+            "todayConsume",
+            "todayConsumption",
+            "todayActualCost",
+            "todayUsedAmount",
+            "today_cost",
+        ]),
+        total_consumption: find_f64(&[
+            "total_consumption",
+            "total_actual_cost",
+            "used_amount",
+            "totalUsedAmount",
+            "totalConsumption",
+            "totalActualCost",
+            "consumption",
+            "cost",
+        ]),
+        today_token_count: find_i64(&[
+            "today_token_count",
+            "today_tokens",
+            "todayTokenCount",
+            "todayTokens",
+        ]),
+        total_token_count: find_i64(&[
+            "total_token_count",
+            "total_tokens",
+            "token_count",
+            "totalTokenCount",
+            "totalTokens",
+            "tokens",
+        ]),
+    };
+    stats.has_any().then_some(stats)
+}
+
+fn merge_dashboard_usage_stats(
+    balances: &mut Vec<CollectedBalanceFact>,
+    station_id: &str,
+    stats: DashboardUsageStats,
+) {
+    if !stats.has_any() {
+        return;
+    }
+    if let Some(station_balance) = balances
+        .iter_mut()
+        .find(|balance| balance.station_id == station_id && balance.scope == "station")
+    {
+        stats.apply_to(station_balance);
+        return;
+    }
+
+    let key_balances = balances
+        .iter()
+        .filter(|balance| balance.station_id == station_id && balance.scope == "station_key")
+        .collect::<Vec<_>>();
+    let Some(value) = sum_present_f64_values(key_balances.iter().map(|balance| balance.value))
+    else {
+        return;
+    };
+    let used_value = sum_present_f64_values(key_balances.iter().map(|balance| balance.used_value));
+    let total_value =
+        sum_present_f64_values(key_balances.iter().map(|balance| balance.total_value));
+    let currency = shared_balance_text_value(
+        key_balances
+            .iter()
+            .map(|balance| Some(balance.currency.as_str())),
+    )
+    .unwrap_or("CNY")
+    .to_string();
+    let credit_unit = shared_balance_text_value(
+        key_balances
+            .iter()
+            .map(|balance| balance.credit_unit.as_deref()),
+    )
+    .map(ToString::to_string);
+    let confidence = key_balances
+        .iter()
+        .map(|balance| balance.confidence)
+        .fold(1.0_f64, f64::min);
+    let collected_at = key_balances
+        .iter()
+        .filter_map(|balance| balance.collected_at.as_ref())
+        .max()
+        .cloned();
+    let mut station_balance = CollectedBalanceFact {
+        station_id: station_id.to_string(),
+        station_key_id: None,
+        scope: "station".to_string(),
+        value: Some(value),
+        used_value,
+        total_value,
+        today_request_count: None,
+        total_request_count: None,
+        today_consumption: None,
+        total_consumption: None,
+        today_token_count: None,
+        total_token_count: None,
+        currency,
+        credit_unit,
+        status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
+        source: "station_key_balance_aggregate".to_string(),
+        confidence,
+        collected_at,
+    };
+    stats.apply_to(&mut station_balance);
+    balances.push(station_balance);
+}
+
+fn sum_present_f64_values(values: impl Iterator<Item = Option<f64>>) -> Option<f64> {
+    let mut total = 0.0_f64;
+    let mut has_value = false;
+    for value in values.flatten() {
+        total += value;
+        has_value = true;
+    }
+    has_value.then_some(total)
+}
+
+fn shared_balance_text_value<'a>(
+    mut values: impl Iterator<Item = Option<&'a str>>,
+) -> Option<&'a str> {
+    let first = values.find_map(|value| value)?;
+    values
+        .flatten()
+        .all(|value| value == first)
+        .then_some(first)
+}
+
 fn parse_account_balance(
     station_id: &str,
     payload: &Value,
@@ -1569,6 +1930,67 @@ fn parse_account_balance(
         value: normalize_credit_value(Some(value), credit_per_cny),
         used_value: normalize_credit_value(used, credit_per_cny),
         total_value: normalize_credit_value(total, credit_per_cny),
+        today_request_count: parse_i64_field(
+            payload,
+            &[
+                "today_request_count",
+                "today_requests",
+                "todayRequestCount",
+                "todayRequests",
+            ],
+        ),
+        total_request_count: parse_i64_field(
+            payload,
+            &[
+                "total_request_count",
+                "request_count",
+                "totalRequests",
+                "requestCount",
+                "requests",
+            ],
+        ),
+        today_consumption: parse_f64_field(
+            payload,
+            &[
+                "today_consumption",
+                "today_used_amount",
+                "todayConsume",
+                "todayConsumption",
+                "todayUsedAmount",
+                "today_cost",
+            ],
+        ),
+        total_consumption: parse_f64_field(
+            payload,
+            &[
+                "total_consumption",
+                "used_amount",
+                "totalUsedAmount",
+                "totalConsumption",
+                "consumption",
+                "cost",
+            ],
+        ),
+        today_token_count: parse_i64_field(
+            payload,
+            &[
+                "today_token_count",
+                "today_tokens",
+                "todayTokenCount",
+                "todayTokens",
+            ],
+        ),
+        total_token_count: parse_i64_field(
+            payload,
+            &[
+                "total_token_count",
+                "total_tokens",
+                "token_count",
+                "totalTokenCount",
+                "totalTokens",
+                "tokens",
+            ],
+        ),
         currency,
         credit_unit: None,
         status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
@@ -1649,6 +2071,35 @@ mod tests {
         assert_eq!(fact.used_value, Some(2.5));
         assert_eq!(fact.total_value, Some(12.5));
         assert_eq!(fact.currency, "CNY");
+    }
+
+    #[test]
+    fn sub2api_usage_captures_request_cost_and_token_totals() {
+        let fact = parse_usage_balance(
+            "station-1",
+            Some("key-1".to_string()),
+            &json!({
+                "quota": {
+                    "remaining": 100.0,
+                    "used": 25.0,
+                    "total": 125.0
+                },
+                "today_request_count": 18,
+                "request_count": 240,
+                "today_used_amount": 0.75,
+                "used_amount": 9.5,
+                "today_tokens": 12345,
+                "total_tokens": 67890
+            }),
+            10.0,
+        );
+
+        assert_eq!(fact.today_request_count, Some(18));
+        assert_eq!(fact.total_request_count, Some(240));
+        assert_eq!(fact.today_consumption, Some(0.75));
+        assert_eq!(fact.total_consumption, Some(9.5));
+        assert_eq!(fact.today_token_count, Some(12345));
+        assert_eq!(fact.total_token_count, Some(67890));
     }
 
     #[test]
@@ -2431,6 +2882,66 @@ mod tests {
     }
 
     #[test]
+    fn sub2api_balance_collects_dashboard_usage_stats_with_account_token() {
+        let server = BalanceDashboardStatsServer::start();
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: "dashboard stats balance station".to_string(),
+                    station_type: "sub2api".to_string(),
+                    base_url: server.base_url,
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
+                    api_key: "sk-dashboard-balance".to_string(),
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
+                    note: None,
+                },
+                Some(&data_key),
+            )
+            .expect("station");
+        database
+            .update_station_session_with_data_key(
+                UpdateStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: Some("dashboard-token-secret".to_string()),
+                    refresh_token: None,
+                    cookie: None,
+                    newapi_user_id: None,
+                    token_expires_at: None,
+                },
+                &data_key,
+            )
+            .expect("session");
+
+        let output = collect_balance(&database, &data_key, &station.id).expect("balance");
+        let station_balance = output
+            .facts
+            .balances
+            .iter()
+            .find(|balance| balance.scope == "station")
+            .expect("station usage balance");
+
+        assert_eq!(output.status, "success");
+        assert_eq!(station_balance.value, Some(100.0));
+        assert_eq!(station_balance.today_request_count, Some(12));
+        assert_eq!(station_balance.total_request_count, Some(1200));
+        assert_eq!(station_balance.today_consumption, Some(0.75));
+        assert_eq!(station_balance.total_consumption, Some(18.5));
+        assert_eq!(station_balance.today_token_count, Some(34567));
+        assert_eq!(station_balance.total_token_count, Some(4567890));
+        assert!(output.summary_json["endpointResults"]
+            .as_array()
+            .expect("endpoint results")
+            .iter()
+            .any(|endpoint| endpoint["path"] == json!("/api/v1/usage/dashboard/stats")));
+    }
+
+    #[test]
     fn sub2api_balance_attempts_all_keys_before_transient_retries() {
         let server = FairBalanceServer::start();
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
@@ -2529,6 +3040,10 @@ mod tests {
     }
 
     struct RefreshingBalanceFallbackServer {
+        base_url: String,
+    }
+
+    struct BalanceDashboardStatsServer {
         base_url: String,
     }
 
@@ -2633,6 +3148,19 @@ mod tests {
             thread::spawn(move || {
                 for stream in listener.incoming().take(4).flatten() {
                     handle_refreshing_balance_fallback_request(stream);
+                }
+            });
+            Self { base_url }
+        }
+    }
+
+    impl BalanceDashboardStatsServer {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+            let base_url = format!("http://{}", listener.local_addr().expect("addr"));
+            thread::spawn(move || {
+                for stream in listener.incoming().take(2).flatten() {
+                    handle_balance_dashboard_stats_request(stream);
                 }
             });
             Self { base_url }
@@ -2949,6 +3477,49 @@ mod tests {
                 json!({
                     "data": {
                         "balance": 42.0
+                    }
+                }),
+            ),
+            _ => ("401 Unauthorized", json!({ "message": "unauthorized" })),
+        };
+        let text = response.to_string();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
+    }
+
+    fn handle_balance_dashboard_stats_request(mut stream: TcpStream) {
+        let request = read_http_request(&mut stream);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
+        let lower = request.to_lowercase();
+        let key_authorized = lower.contains("authorization: bearer sk-dashboard-balance");
+        let dashboard_authorized = lower.contains("authorization: bearer dashboard-token-secret");
+
+        let (status, response) = match path {
+            "/v1/usage" if key_authorized => (
+                "200 OK",
+                json!({
+                    "remaining": 100.0
+                }),
+            ),
+            "/api/v1/usage/dashboard/stats" if dashboard_authorized => (
+                "200 OK",
+                json!({
+                    "data": {
+                        "today_requests": 12,
+                        "total_requests": 1200,
+                        "today_actual_cost": 0.75,
+                        "total_actual_cost": 18.5,
+                        "today_tokens": 34567,
+                        "total_tokens": 4567890
                     }
                 }),
             ),

@@ -228,7 +228,7 @@ export function DashboardPage() {
   const recentPerformance = getRecentPerformanceMetrics(requestLogs);
   const activeRequests = proxyStatus?.activeRequests ?? 0;
   const balanceSummary = useMemo(() => summarizeDashboardBalances(balanceSnapshots), [balanceSnapshots]);
-  const { lowBalanceStations, primaryBalanceCurrency, totalBalance } = balanceSummary;
+  const { lowBalanceStations, primaryBalanceCurrency, stationUsage, totalBalance } = balanceSummary;
   const activeRiskEvents = useMemo(
     () =>
       changeEvents.filter(
@@ -415,6 +415,44 @@ export function DashboardPage() {
               icon: Gauge,
               tone: recentPerformance.rpm > 0 || activeRequests > 0 ? "good" : "neutral",
               accent: "violet",
+            },
+          ]}
+        />
+        <MetricPanel
+          title="中转站用量"
+          description="来自中转站后台采集，不含本地代理日志"
+          metrics={[
+            {
+              label: "站点今日请求",
+              value: formatCompactNumber(stationUsage.todayRequestCount),
+              detail: `累计 ${formatCompactNumber(stationUsage.totalRequestCount)}`,
+              icon: Activity,
+              tone: stationUsage.todayRequestCount > 0 ? "good" : "neutral",
+              accent: "green",
+            },
+            {
+              label: "站点今日消费",
+              value: formatUsdAmount(stationUsage.todayConsumption),
+              detail: `累计 ${formatUsdAmount(stationUsage.totalConsumption)}`,
+              icon: BadgeDollarSign,
+              tone: stationUsage.todayConsumption > 0 ? "good" : "neutral",
+              accent: "purple",
+            },
+            {
+              label: "站点今日 Token",
+              value: formatCompactNumber(stationUsage.todayTokenCount),
+              detail: "后台采集口径",
+              icon: BarChart3,
+              tone: stationUsage.todayTokenCount > 0 ? "good" : "neutral",
+              accent: "amber",
+            },
+            {
+              label: "站点累计 Token",
+              value: formatCompactNumber(stationUsage.totalTokenCount),
+              detail: "全部中转站总计",
+              icon: Server,
+              tone: stationUsage.totalTokenCount > 0 ? "good" : "neutral",
+              accent: "indigo",
             },
           ]}
         />
@@ -674,6 +712,10 @@ function getRecentPerformanceMetrics(logs: RequestLog[]) {
 function formatBalance(value: number, currency?: string) {
   const symbol = currencySymbol(currency);
   return `${symbol}${value.toFixed(2)}`;
+}
+
+function formatUsdAmount(value: number) {
+  return `$${value.toFixed(value >= 100 ? 2 : 4)}`;
 }
 
 function DashboardCostTotals({ totals, compact = false }: { totals: DashboardCostTotal[]; compact?: boolean }) {

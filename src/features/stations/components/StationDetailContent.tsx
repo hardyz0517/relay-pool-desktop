@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   ArrowLeft,
+  BarChart3,
   Clock3,
   Database,
   Edit3,
@@ -153,6 +154,30 @@ export function StationDetailContent({
         </div>
         <div className="grid gap-3 p-4 md:grid-cols-3">
           {viewModel.balanceCards.map((card) => (
+            <div
+              key={card.label}
+              className={cn(
+                "min-h-[84px] rounded-[var(--surface-radius)] border px-3 py-2.5",
+                surfaceToneClassName[card.tone],
+              )}
+            >
+              <div className="text-xs text-muted-foreground">{card.label}</div>
+              <div className={cn("mt-1 truncate text-lg font-semibold", textToneClassName[card.tone])}>
+                {card.value}
+              </div>
+              <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{card.helper}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+          <BarChart3 className="h-4 w-4 text-slate-500" />
+          <h2 className="text-sm font-semibold text-slate-900">中转站用量</h2>
+        </div>
+        <div className="grid gap-3 p-4 md:grid-cols-4">
+          {viewModel.usageCards.map((card) => (
             <div
               key={card.label}
               className={cn(
