@@ -63,6 +63,21 @@ assert.match(
   /default:\s*\{\s*const exhaustivePageId: never = pageId;\s*return exhaustivePageId;\s*\}/,
   "transient route rendering should fail TypeScript exhaustiveness when a future page is unhandled",
 );
+assert.ok(
+  appSource.includes("transientParentRouteId: AppRouteId | null;") &&
+    appSource.includes("transientParentRouteId: null,") &&
+    appSource.includes("resolveTransientParentRouteId(") &&
+    appSource.includes("resolveActiveShellRouteId("),
+  "navigation state should retain the actual invoking shell and resolve static parents only as fallback",
+);
+
+const modelBasePricesCase =
+  appSource.match(/case "modelBasePrices":([\s\S]*?)default:/)?.[1] ?? "";
+assert.ok(
+  modelBasePricesCase.includes("navigateTo(activeShellRouteId)") &&
+    !modelBasePricesCase.includes('navigateTo("pricing")'),
+  "model base prices should return to its actual invoking shell instead of hard-coding pricing",
+);
 
 assert.ok(
   appSource.includes('type ShellPageState = "active" | "background" | "inactive";') &&

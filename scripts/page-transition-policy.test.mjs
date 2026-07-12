@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 
 const policySource = await readFile("src/app/pageTransitionPolicy.ts", "utf8");
 const appSource = await readFile("src/app/App.tsx", "utf8");
+const policyModule = await import("../src/app/pageTransitionPolicy.ts");
 
 const shellPages = [
   "dashboard",
@@ -76,6 +77,52 @@ for (const directionIdentifier of [
     `page transition policy should remove dead direction metadata: ${directionIdentifier}`,
   );
 }
+
+const {
+  resolveActiveShellRouteId,
+  resolveTransientParentRouteId,
+} = policyModule;
+assert.equal(
+  typeof resolveTransientParentRouteId,
+  "function",
+  "policy should export a pure resolver for the actual transient parent",
+);
+assert.equal(
+  typeof resolveActiveShellRouteId,
+  "function",
+  "policy should export a pure resolver for the active shell",
+);
+
+assert.equal(
+  resolveTransientParentRouteId("settings", "modelBasePrices", null),
+  "settings",
+  "settings -> modelBasePrices should retain settings as the actual parent",
+);
+assert.equal(
+  resolveTransientParentRouteId("pricing", "modelBasePrices", null),
+  "pricing",
+  "pricing -> modelBasePrices should retain pricing as the actual parent",
+);
+assert.equal(
+  resolveTransientParentRouteId("modelBasePrices", "editProvider", "settings"),
+  "settings",
+  "transient replacement should preserve the invoking shell",
+);
+assert.equal(
+  resolveTransientParentRouteId("modelBasePrices", "settings", "settings"),
+  null,
+  "navigating to a shell should clear the transient parent",
+);
+assert.equal(
+  resolveActiveShellRouteId("modelBasePrices", "settings"),
+  "settings",
+  "an actual transient parent should override the static fallback",
+);
+assert.equal(
+  resolveActiveShellRouteId("modelBasePrices", null),
+  "pricing",
+  "a direct transient route should fall back to its static policy parent",
+);
 
 assert.ok(
   policySource.includes("export function getPageTransitionPolicy"),

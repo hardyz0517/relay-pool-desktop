@@ -41,6 +41,7 @@
 - `InteractionActivityProvider` 必须覆盖 portal 消费者，`SelectControl` 在页面失活时同步关闭 portal 菜单，避免 transient 退出后留下脱离 inert 层的交互面。
 - `StationDetailPage` 的 seed 重置必须保留在 passive `useEffect`；layout effect 会在首帧前清空 seed，破坏无空白过渡前提。
 - descriptor 使用从 `navigation.ts` 导入的穷尽 `TransientPageId`，policy 只保留 `pageId`、`kind`、`parentRouteId`，删除 direction 类型和字段。
+- 静态 `parentRouteId` 仅作为 direct/fallback；`NavigationState` 记录实际 invoking shell，shell -> transient 时捕获、transient replacement 时保留、进入 shell 时清空，active shell 和共享 transient 返回动作优先使用 actual caller。
 - retained shell layer 以 `z-index: 0` 和 `isolation: isolate` 建立堆叠上下文；transient overlay 使用 `z-index: 1` 覆盖。
 - `main` 改为 `overflow-hidden`；全高 stack 下每个 shell/transient layer 独立 `overflow-y: auto`，分别持有并保留自身 `scrollTop`。
 - `App` 集中捕获 active shell 的调用控件，Host 在 transient 挂载时聚焦首个 actionable control，并仅在最终关闭到 shell 后用 `preventScroll` 恢复精确调用控件。
@@ -452,7 +453,7 @@ type ShellPageState = "active" | "background" | "inactive";
         return {
           pageId: "modelBasePrices",
           instanceKey: "modelBasePrices",
-          node: <ModelBasePricesPage onBack={() => navigateTo("pricing")} />,
+          node: <ModelBasePricesPage onBack={() => navigateTo(activeShellRouteId)} />,
         };
       default:
         return null;

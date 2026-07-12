@@ -7,8 +7,9 @@ import {
 } from "@/app/TransientPageHost";
 import {
   getPageTransitionPolicy,
-  getShellRouteId,
   isShellPage,
+  resolveActiveShellRouteId,
+  resolveTransientParentRouteId,
 } from "@/app/pageTransitionPolicy";
 import { CollectorsPage } from "@/features/collectors/CollectorsPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
@@ -31,6 +32,7 @@ import type { Station } from "@/lib/types/stations";
 type NavigationState = {
   activeRouteId: AppPageId;
   previousRouteId: AppPageId | null;
+  transientParentRouteId: AppRouteId | null;
 };
 
 type ShellPageState = "active" | "background" | "inactive";
@@ -46,10 +48,12 @@ const ACTIONABLE_ELEMENT_SELECTOR = [
 ].join(", ");
 
 export function App() {
-  const [{ activeRouteId, previousRouteId }, setNavigation] = useState<NavigationState>({
-    activeRouteId: "dashboard",
-    previousRouteId: null,
-  });
+  const [{ activeRouteId, previousRouteId, transientParentRouteId }, setNavigation] =
+    useState<NavigationState>({
+      activeRouteId: "dashboard",
+      previousRouteId: null,
+      transientParentRouteId: null,
+    });
   const [mountedRouteIds, setMountedRouteIds] = useState<Set<AppRouteId>>(
     () => new Set(["dashboard"]),
   );
@@ -60,7 +64,10 @@ export function App() {
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
   const lastShellFocusTargetRef = useRef<HTMLElement | null>(null);
   const transientReturnFocusRef = useRef<HTMLElement | null>(null);
-  const activeShellRouteId = getShellRouteId(activeRouteId);
+  const activeShellRouteId = resolveActiveShellRouteId(
+    activeRouteId,
+    transientParentRouteId,
+  );
 
   const rememberShellFocusTarget = useCallback((target: EventTarget | null) => {
     if (!(target instanceof Element)) {
@@ -98,6 +105,11 @@ export function App() {
         return {
           activeRouteId: routeId,
           previousRouteId: current.activeRouteId,
+          transientParentRouteId: resolveTransientParentRouteId(
+            current.activeRouteId,
+            routeId,
+            current.transientParentRouteId,
+          ),
         };
       });
     },
@@ -260,7 +272,7 @@ export function App() {
         return {
           pageId: "modelBasePrices",
           instanceKey: "modelBasePrices",
-          node: <ModelBasePricesPage onBack={() => navigateTo("pricing")} />,
+          node: <ModelBasePricesPage onBack={() => navigateTo(activeShellRouteId)} />,
         };
       default: {
         const exhaustivePageId: never = pageId;

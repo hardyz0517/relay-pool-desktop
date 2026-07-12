@@ -293,6 +293,7 @@ shell 页面需要拆分三个视觉/交互状态：
 - `InteractionActivityProvider` 从页面激活上下文向 portal 传播交互状态；`SelectControl` 在页面失活时同步关闭 portal 菜单，避免退出层卸载后残留可交互菜单。
 - `StationDetailPage` 的 seed 重置必须使用 passive `useEffect`，不能在首帧前用 layout effect 清空 seed；这是详情首帧无空白的前置条件，不改变数据选择逻辑。
 - `navigation.ts` 导出穷尽的 `TransientPageId`；descriptor 只能接受该联合类型，policy 删除未被消费的 direction 类型与字段。
+- `pageTransitionPolicy.parentRouteId` 只定义 direct/fallback parent；运行时由导航状态记录实际 invoking shell，transient replacement 保留该 caller，进入 shell 时清空，active shell 与通用返回动作均优先使用 actual caller。
 - shell layer 使用显式 `z-index: 0` 和 `isolation: isolate` 建立稳定堆叠上下文，transient overlay 保持绝对定位的 `z-index: 1`。
 - `main` 不再持有页面滚动；transition stack 和每个 shell/transient layer 均为全高，layer 各自使用独立 `overflow-y: auto`，从而分别保留自己的 `scrollTop`。
 - `App` 集中记录 active shell 内的精确调用控件；Host 挂载时聚焦首个 actionable control，最终关闭后用 `preventScroll` 恢复原调用控件，transient-to-transient 不经过 shell focus。

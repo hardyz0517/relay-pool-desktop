@@ -110,3 +110,27 @@ export function isShellPage(pageId: AppPageId): pageId is AppRouteId {
 export function getShellRouteId(pageId: AppPageId): AppRouteId {
   return getPageTransitionPolicy(pageId).parentRouteId;
 }
+
+export function resolveTransientParentRouteId(
+  currentPageId: AppPageId,
+  targetPageId: AppPageId,
+  transientParentRouteId: AppRouteId | null,
+): AppRouteId | null {
+  if (isShellPage(targetPageId)) {
+    return null;
+  }
+  if (isShellPage(currentPageId)) {
+    return currentPageId;
+  }
+  return transientParentRouteId ?? getShellRouteId(currentPageId);
+}
+
+export function resolveActiveShellRouteId(
+  pageId: AppPageId,
+  transientParentRouteId: AppRouteId | null,
+): AppRouteId {
+  if (isShellPage(pageId)) {
+    return pageId;
+  }
+  return transientParentRouteId ?? getShellRouteId(pageId);
+}

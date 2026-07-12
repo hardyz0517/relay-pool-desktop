@@ -133,8 +133,16 @@ assert.ok(
     navigateToSource.includes("lastShellFocusTargetRef.current") &&
     navigateToSource.includes("document.activeElement") &&
     navigateToSource.includes("transientReturnFocusRef.current =") &&
+    navigateToSource.includes("resolveTransientParentRouteId(") &&
     /\[\s*activeRouteId\s*\],?\s*\);/.test(navigateToSource),
-  "shell-to-transient navigation should capture the recorded or active shell element without overwriting transient replacements",
+  "shell-to-transient navigation should capture focus and its actual shell parent without overwriting replacements",
+);
+assert.ok(
+  appSource.includes("transientParentRouteId: AppRouteId | null;") &&
+    /resolveActiveShellRouteId\(\s*activeRouteId,\s*transientParentRouteId,?\s*\)/.test(
+      appSource,
+    ),
+  "the actual invoking shell should remain the visible background so its focus target can be restored",
 );
 assert.ok(
   appSource.includes("const restoreTransientReturnFocus = useCallback") &&
