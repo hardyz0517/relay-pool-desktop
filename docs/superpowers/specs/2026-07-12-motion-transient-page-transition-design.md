@@ -78,13 +78,14 @@
 
 ```ts
 type TransientPageDescriptor = {
-  pageId: AppPageId;
+  pageId: TransientPageId;
   instanceKey: string;
   node: ReactNode;
 };
 
 type TransientPageHostProps = {
   page: TransientPageDescriptor | null;
+  onExitComplete?: () => void;
 };
 ```
 
@@ -169,15 +170,24 @@ shell 页面需要拆分三个视觉/交互状态：
 计划新增：
 
 - `src/app/TransientPageHost.tsx`
+- `src/components/ui/InteractionActivity.tsx`
 - `scripts/motion-page-transition.test.mjs`
+- `scripts/page-transition-focus-scroll.test.mjs`
 
 计划修改：
 
 - `package.json`
 - `pnpm-lock.yaml`
 - `src/app/App.tsx`
+- `src/app/pageTransitionPolicy.ts`
+- `src/components/shell/AppShell.tsx`
+- `src/components/shell/PageActivity.tsx`
+- `src/components/ui/SelectControl.tsx`
+- `src/features/stations/StationDetailPage.tsx`
+- `src/lib/types/navigation.ts`
 - `src/styles.css`
 - `scripts/page-transition-container.test.mjs`
+- `scripts/page-transition-policy.test.mjs`
 - `scripts/page-transition-styles.test.mjs`
 - `scripts/station-detail-transition-performance.test.mjs`
 
@@ -275,6 +285,18 @@ shell 页面需要拆分三个视觉/交互状态：
 - 若 `mode="wait"` 在 transient-to-transient 场景产生明显等待，只允许在 Host 内评估 `mode="sync"`，不得让页面自行选择模式。
 - 若浏览器验证发现父 shell 在 background 状态触发刷新，修正 PageActivityProvider 的 active 判定，不隐藏父 shell DOM。
 - 若退出期间发生点击穿透，保留 exiting overlay 的 pointer shield，不能通过延长动画掩盖问题。
+
+## Implementation review amendments
+
+以下条目覆盖原设计中与最终实现冲突的接口和范围描述：
+
+- `InteractionActivityProvider` 从页面激活上下文向 portal 传播交互状态；`SelectControl` 在页面失活时同步关闭 portal 菜单，避免退出层卸载后残留可交互菜单。
+- `StationDetailPage` 的 seed 重置必须使用 passive `useEffect`，不能在首帧前用 layout effect 清空 seed；这是详情首帧无空白的前置条件，不改变数据选择逻辑。
+- `navigation.ts` 导出穷尽的 `TransientPageId`；descriptor 只能接受该联合类型，policy 删除未被消费的 direction 类型与字段。
+- shell layer 使用显式 `z-index: 0` 和 `isolation: isolate` 建立稳定堆叠上下文，transient overlay 保持绝对定位的 `z-index: 1`。
+- `main` 不再持有页面滚动；transition stack 和每个 shell/transient layer 均为全高，layer 各自使用独立 `overflow-y: auto`，从而分别保留自己的 `scrollTop`。
+- `App` 集中记录 active shell 内的精确调用控件；Host 挂载时聚焦首个 actionable control，最终关闭后用 `preventScroll` 恢复原调用控件，transient-to-transient 不经过 shell focus。
+- 最终 real Chrome 验收必须覆盖非零 shell `scrollTop`、独立详情页滚动、打开后的焦点进入，以及关闭后的精确焦点/滚动恢复。
 
 ## 自审结果
 

@@ -13,9 +13,18 @@
 ## File Map
 
 - Create: `src/app/TransientPageHost.tsx` - 唯一 Motion 边界，管理 transient presence、opacity 动画、退出隔离与 pointer shield。
+- Create: `src/components/ui/InteractionActivity.tsx` - 向普通 DOM 和 portal 统一传播页面交互状态。
 - Create: `scripts/motion-page-transition.test.mjs` - 固化依赖版本、唯一 import、Motion 配置和纯 opacity 契约。
+- Create: `scripts/page-transition-focus-scroll.test.mjs` - 固化独立滚动、进入焦点和返回焦点生命周期。
 - Modify: `src/app/App.tsx` - 删除手工退出状态机，构造实体级 descriptor，并为 shell 输出三态。
+- Modify: `src/app/pageTransitionPolicy.ts` - 删除未消费的 direction 元数据。
+- Modify: `src/components/shell/AppShell.tsx` - 将页面滚动所有权移交给 transition layer。
+- Modify: `src/components/shell/PageActivity.tsx` - 通过共享交互上下文继续隔离失活页面。
+- Modify: `src/components/ui/SelectControl.tsx` - 页面失活时关闭 portal 菜单。
+- Modify: `src/features/stations/StationDetailPage.tsx` - 将 seed 重置改为 passive effect，保留首帧 seed。
+- Modify: `src/lib/types/navigation.ts` - 导出穷尽的 `TransientPageId`。
 - Modify: `scripts/page-transition-container.test.mjs` - 固化 App/Host 分工、三态 shell、旧状态机彻底删除和单一 Host。
+- Modify: `scripts/page-transition-policy.test.mjs` - 固化精简 policy 和 direction 字段删除。
 - Modify: `scripts/page-activation-refresh.test.mjs` - 让激活测试匹配 shell 三态，并继续禁止 background 页面刷新。
 - Modify: `scripts/station-detail-transition-performance.test.mjs` - 将实体隔离契约从页面局部 `key` 迁移到 Host `instanceKey`。
 - Modify: `src/styles.css` - 保留 shell 几何和主导航动画，删除 transient keyframes，增加 background 与 pointer-shield 样式。
@@ -23,7 +32,19 @@
 - Modify: `package.json` - 增加 `framer-motion` 运行时依赖。
 - Modify: `pnpm-lock.yaml` - 锁定 Motion 及其传递依赖。
 
-`src/app/pageTransitionPolicy.ts`、`src/components/shell/PageActivity.tsx`、业务页面、Tauri/Rust 和数据库均保持不变。
+业务 API、数据选择器、Tauri/Rust 和数据库保持不变；实现复核允许且实际包含上列交互上下文、portal 收口和 `StationDetailPage` effect 调度调整，不改变业务语义。
+
+## Implementation review amendments
+
+以下 review 结论覆盖原计划中冲突的代码片段和范围声明：
+
+- `InteractionActivityProvider` 必须覆盖 portal 消费者，`SelectControl` 在页面失活时同步关闭 portal 菜单，避免 transient 退出后留下脱离 inert 层的交互面。
+- `StationDetailPage` 的 seed 重置必须保留在 passive `useEffect`；layout effect 会在首帧前清空 seed，破坏无空白过渡前提。
+- descriptor 使用从 `navigation.ts` 导入的穷尽 `TransientPageId`，policy 只保留 `pageId`、`kind`、`parentRouteId`，删除 direction 类型和字段。
+- retained shell layer 以 `z-index: 0` 和 `isolation: isolate` 建立堆叠上下文；transient overlay 使用 `z-index: 1` 覆盖。
+- `main` 改为 `overflow-hidden`；全高 stack 下每个 shell/transient layer 独立 `overflow-y: auto`，分别持有并保留自身 `scrollTop`。
+- `App` 集中捕获 active shell 的调用控件，Host 在 transient 挂载时聚焦首个 actionable control，并仅在最终关闭到 shell 后用 `preventScroll` 恢复精确调用控件。
+- controller 的 real Chrome 复核必须包含非零 shell scroll、独立 detail scroll、进入焦点和返回焦点/滚动不变；本实现线程只运行自动化和构建检查。
 
 ### Task 1: 建立唯一 Motion 宿主边界
 

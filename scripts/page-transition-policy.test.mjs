@@ -56,10 +56,24 @@ for (const [pageId, parentRouteId] of transientPages) {
   assert.ok(
     policyBlock.includes(`pageId: "${pageId}"`) &&
       policyBlock.includes(`parentRouteId: "${parentRouteId}"`) &&
-      policyBlock.includes('kind: "transient"') &&
-      policyBlock.includes('enterDirection: "forward"') &&
-      policyBlock.includes('exitDirection: "back"'),
+      policyBlock.includes('kind: "transient"'),
     `page transition policy should map ${pageId} to parent route ${parentRouteId}`,
+  );
+  assert.deepEqual(
+    [...policyBlock.matchAll(/^\s*(\w+):/gm)].map((match) => match[1]),
+    ["pageId", "kind", "parentRouteId"],
+    `transient policy ${pageId} should contain only pageId, kind, and parentRouteId`,
+  );
+}
+
+for (const directionIdentifier of [
+  "PageTransitionDirection",
+  "enterDirection",
+  "exitDirection",
+]) {
+  assert.ok(
+    !policySource.includes(directionIdentifier),
+    `page transition policy should remove dead direction metadata: ${directionIdentifier}`,
   );
 }
 

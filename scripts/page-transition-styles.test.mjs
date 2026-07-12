@@ -81,10 +81,13 @@ const overlayRule = readRule(".app-page-transition-overlay");
 const contentRule = readRule(".app-page-transition-content");
 
 assertDeclaration(stackRule, "position", "relative");
+assertDeclaration(stackRule, "height", "100%");
 assertDeclaration(stackRule, "min-height", "100%");
 assertDeclaration(stackRule, "isolation", "isolate");
+assertDeclaration(baseLayerRule, "height", "100%");
 assertDeclaration(baseLayerRule, "min-height", "100%");
 assertDeclaration(baseLayerRule, "min-width", "0");
+assertDeclaration(baseLayerRule, "overflow-y", "auto");
 
 for (const property of ["transform", "opacity", "transition", "animation"]) {
   assertNoDeclaration(baseLayerRule, property);

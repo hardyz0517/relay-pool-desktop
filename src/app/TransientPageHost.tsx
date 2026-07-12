@@ -1,7 +1,7 @@
 import { AnimatePresence, motion, MotionConfig, useIsPresent } from "framer-motion";
-import type { ReactNode } from "react";
+import { cloneElement, useLayoutEffect, useRef, type ReactNode } from "react";
 import { PageActivityProvider } from "@/components/shell/PageActivity";
-import type { AppPageId } from "@/lib/types/navigation";
+import type { TransientPageId } from "@/lib/types/navigation";
 
 declare module "react" {
   interface HTMLAttributes<T> {
@@ -10,24 +10,48 @@ declare module "react" {
 }
 
 export type TransientPageDescriptor = {
-  pageId: AppPageId;
+  pageId: TransientPageId;
   instanceKey: string;
   node: ReactNode;
 };
 
 type TransientPageHostProps = {
   page: TransientPageDescriptor | null;
+  onExitComplete?: () => void;
 };
 
 const transientPageTransition = {
   duration: 0.2,
 };
 
+const ACTIONABLE_ELEMENT_SELECTOR = [
+  "button:not([disabled])",
+  "a[href]",
+  'input:not([disabled]):not([type="hidden"])',
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex^="-"])',
+].join(", ");
+
 function TransientPageLayer({ page }: { page: TransientPageDescriptor }) {
   const isPresent = useIsPresent();
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) {
+      return;
+    }
+
+    const focusTarget =
+      root.querySelector<HTMLElement>("[data-page-autofocus]") ??
+      root.querySelector<HTMLElement>(ACTIONABLE_ELEMENT_SELECTOR);
+    focusTarget?.focus({ preventScroll: true });
+  }, []);
 
   return (
     <motion.div
+      ref={rootRef}
       className="app-page-transition-layer app-page-transition-overlay"
       data-page-transition-layer
       data-page-transition-kind="transient"
@@ -51,12 +75,22 @@ function TransientPageLayer({ page }: { page: TransientPageDescriptor }) {
   );
 }
 
-export function TransientPageHost({ page }: TransientPageHostProps) {
+export function TransientPageHost({ page, onExitComplete }: TransientPageHostProps) {
+  const transientPresence = (
+    <AnimatePresence initial={false} mode="wait">
+      {page ? <TransientPageLayer key={page.instanceKey} page={page} /> : null}
+    </AnimatePresence>
+  );
+
   return (
     <MotionConfig reducedMotion="user">
-      <AnimatePresence initial={false} mode="wait">
-        {page ? <TransientPageLayer key={page.instanceKey} page={page} /> : null}
-      </AnimatePresence>
+      {cloneElement(transientPresence, {
+        onExitComplete: () => {
+          if (!page) {
+            onExitComplete?.();
+          }
+        },
+      })}
     </MotionConfig>
   );
 }

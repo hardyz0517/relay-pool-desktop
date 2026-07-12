@@ -21,6 +21,8 @@ export type AppPageId =
   | "editKey"
   | "modelBasePrices";
 
+export type TransientPageId = Exclude<AppPageId, AppRouteId>;
+
 export type AppRoute = {
   id: AppRouteId;
   label: string;

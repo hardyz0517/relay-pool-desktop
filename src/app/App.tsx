@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageActivityProvider } from "@/components/shell/PageActivity";
 import {
@@ -25,8 +25,7 @@ import { EditKeyPage } from "@/features/key-pool/EditKeyPage";
 import { AddProviderPage } from "@/features/stations/AddProviderPage";
 import { StationDetailPage } from "@/features/stations/StationDetailPage";
 import { StationsPage } from "@/features/stations/StationsPage";
-import type { AppPageId } from "@/lib/types/navigation";
-import type { AppRouteId } from "@/lib/types/navigation";
+import type { AppPageId, AppRouteId, TransientPageId } from "@/lib/types/navigation";
 import type { Station } from "@/lib/types/stations";
 
 type NavigationState = {
@@ -34,9 +33,17 @@ type NavigationState = {
   previousRouteId: AppPageId | null;
 };
 
-type TransientPageId = Exclude<AppPageId, AppRouteId>;
-
 type ShellPageState = "active" | "background" | "inactive";
+
+const ACTIONABLE_ELEMENT_SELECTOR = [
+  "[data-page-autofocus]",
+  "button:not([disabled])",
+  "a[href]",
+  'input:not([disabled]):not([type="hidden"])',
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex^="-"])',
+].join(", ");
 
 export function App() {
   const [{ activeRouteId, previousRouteId }, setNavigation] = useState<NavigationState>({
@@ -51,18 +58,61 @@ export function App() {
   const [detailStationPreview, setDetailStationPreview] = useState<Station | null>(null);
   const [initialKeyStationId, setInitialKeyStationId] = useState<string | null>(null);
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
+  const lastShellFocusTargetRef = useRef<HTMLElement | null>(null);
+  const transientReturnFocusRef = useRef<HTMLElement | null>(null);
   const activeShellRouteId = getShellRouteId(activeRouteId);
 
-  const navigateTo = useCallback((routeId: AppPageId) => {
-    setNavigation((current) => {
-      if (current.activeRouteId === routeId) {
-        return current;
+  const rememberShellFocusTarget = useCallback((target: EventTarget | null) => {
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const candidate = target.closest<HTMLElement>(ACTIONABLE_ELEMENT_SELECTOR);
+    if (
+      !candidate?.closest(
+        '[data-page-transition-kind="shell"][data-page-transition-state="active"]',
+      )
+    ) {
+      return;
+    }
+
+    lastShellFocusTargetRef.current = candidate;
+  }, []);
+
+  const navigateTo = useCallback(
+    (routeId: AppPageId) => {
+      if (isShellPage(activeRouteId) && !isShellPage(routeId)) {
+        const recordedTarget = lastShellFocusTargetRef.current;
+        const activeElement = document.activeElement;
+        transientReturnFocusRef.current = recordedTarget?.isConnected
+          ? recordedTarget
+          : activeElement instanceof HTMLElement
+            ? activeElement
+            : null;
       }
-      return {
-        activeRouteId: routeId,
-        previousRouteId: current.activeRouteId,
-      };
-    });
+
+      setNavigation((current) => {
+        if (current.activeRouteId === routeId) {
+          return current;
+        }
+        return {
+          activeRouteId: routeId,
+          previousRouteId: current.activeRouteId,
+        };
+      });
+    },
+    [activeRouteId],
+  );
+
+  const restoreTransientReturnFocus = useCallback(() => {
+    const target = transientReturnFocusRef.current;
+    transientReturnFocusRef.current = null;
+
+    if (!target?.isConnected || target.closest("[inert]")) {
+      return;
+    }
+
+    target.focus({ preventScroll: true });
   }, []);
 
   useEffect(() => {
@@ -238,6 +288,8 @@ export function App() {
       <div
         className="app-page-transition-stack"
         data-page-transition-handoff={isReturningFromTransient ? "transient-exit" : "none"}
+        onPointerDownCapture={(event) => rememberShellFocusTarget(event.target)}
+        onFocusCapture={(event) => rememberShellFocusTarget(event.target)}
       >
         {shellRouteIds.map((routeId) => {
           const shellPageState: ShellPageState =
@@ -263,7 +315,10 @@ export function App() {
           );
         })}
 
-        <TransientPageHost page={activeTransientPage} />
+        <TransientPageHost
+          page={activeTransientPage}
+          onExitComplete={restoreTransientReturnFocus}
+        />
       </div>
     </AppShell>
   );

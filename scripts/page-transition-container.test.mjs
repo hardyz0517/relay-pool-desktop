@@ -10,7 +10,9 @@ const hostSource = normalizeSource(await readFile("src/app/TransientPageHost.tsx
 
 assert.ok(
   appSource.includes('from "@/app/TransientPageHost"') &&
-    appSource.includes("<TransientPageHost page={activeTransientPage} />"),
+    /<TransientPageHost\s+page=\{activeTransientPage\}\s+onExitComplete=\{restoreTransientReturnFocus\}\s*\/>/.test(
+      appSource,
+    ),
   "App should delegate transient rendering and presence cleanup to one host",
 );
 assert.equal(
@@ -38,7 +40,10 @@ for (const legacyIdentifier of [
 }
 
 assert.ok(
-  appSource.includes("type TransientPageId = Exclude<AppPageId, AppRouteId>;") &&
+  /import type \{[^}]*\bTransientPageId\b[^}]*\} from "@\/lib\/types\/navigation";/.test(
+    appSource,
+  ) &&
+    !appSource.includes("type TransientPageId = Exclude<AppPageId, AppRouteId>;") &&
     appSource.includes(
       "function renderTransientPage(pageId: TransientPageId): TransientPageDescriptor",
     ) &&
@@ -84,6 +89,13 @@ assert.ok(
       'data-page-transition-handoff={isReturningFromTransient ? "transient-exit" : "none"}',
     ),
   "returning from a transient page should not retrigger the shell entry animation",
+);
+assert.ok(
+  appSource.includes(
+    "onPointerDownCapture={(event) => rememberShellFocusTarget(event.target)}",
+  ) &&
+    appSource.includes("onFocusCapture={(event) => rememberShellFocusTarget(event.target)}"),
+  "the transition stack should centrally capture the shell invoker",
 );
 
 for (const instanceKey of [
