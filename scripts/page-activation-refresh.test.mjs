@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const appSource = await readFile("src/app/App.tsx", "utf8");
+const hostSource = await readFile("src/app/ShellPageHost.tsx", "utf8");
 const activitySource = await readFile("src/components/shell/PageActivity.tsx", "utf8").catch(() => "");
 const activityQuerySource = await readFile("src/lib/query/useActivityQuery.ts", "utf8").catch(() => "");
 
 assert.ok(
-  appSource.includes("PageActivityProvider") &&
-    appSource.includes('const active = shellPageState === "active";') &&
-    appSource.includes('isCurrentTransientPage ? "background" : "active"') &&
-    appSource.includes("<PageActivityProvider key={routeId} active={active}>"),
+  hostSource.includes("PageActivityProvider") &&
+    hostSource.includes('const active = state === "active";') &&
+    hostSource.includes('transientActive ? "background" : "active"') &&
+    hostSource.includes("<PageActivityProvider active={active}>"),
   "kept-alive shell pages should refresh only in active state, never while serving as a transient background",
 );
 

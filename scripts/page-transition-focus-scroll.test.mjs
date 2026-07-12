@@ -5,11 +5,12 @@ function normalizeSource(source) {
   return source.replace(/\r\n?/g, "\n");
 }
 
-const [appSource, hostSource, shellSource, navigationSource, policySource, stylesSource] =
+const [appSource, hostSource, shellHostSource, shellSource, navigationSource, policySource, stylesSource] =
   await Promise.all(
     [
       "src/app/App.tsx",
       "src/app/TransientPageHost.tsx",
+      "src/app/ShellPageHost.tsx",
       "src/components/shell/AppShell.tsx",
       "src/lib/types/navigation.ts",
       "src/app/pageTransitionPolicy.ts",
@@ -104,11 +105,8 @@ assertDeclaration(contentRule, "padding", "var(--shell-page-gap)");
 assertDeclaration(scrollbarRule, "display", "none");
 
 assert.ok(
-  appSource.includes(
-    `<div className="app-page-transition-content">
-                  {renderShellPage(routeId)}
-                </div>`,
-  ),
+  shellHostSource.includes('<div className="app-page-transition-content">') &&
+    shellHostSource.includes("<ShellPageContent routeId={routeId} actions={actions} />"),
   "retained shell pages should use the same inner gutter wrapper as transient pages",
 );
 
@@ -136,21 +134,21 @@ assert.ok(
   "shell focus tracking should resolve an actionable ancestor only in the active shell layer",
 );
 assert.ok(
-  appSource.includes(
-    "onPointerDownCapture={(event) => rememberShellFocusTarget(event.target)}",
+  shellHostSource.includes(
+    "onPointerDownCapture={(event) => onRememberShellFocusTarget(event.target)}",
   ) &&
-    appSource.includes("onFocusCapture={(event) => rememberShellFocusTarget(event.target)}"),
+    shellHostSource.includes("onFocusCapture={(event) => onRememberShellFocusTarget(event.target)}"),
   "the transition stack should track shell invokers from pointer and focus capture",
 );
 const navigateToSource =
-  appSource.match(/const navigateTo = useCallback\([\s\S]*?\n  \);/)?.[0] ?? "";
+  appSource.match(/const navigateTo = useCallback\([\s\S]*?\n  \}, \[\]\);/)?.[0] ?? "";
 assert.ok(
-  navigateToSource.includes("isShellPage(activeRouteId) && !isShellPage(routeId)") &&
+  navigateToSource.includes("isShellPage(activeRouteIdRef.current) && !isShellPage(routeId)") &&
     navigateToSource.includes("lastShellFocusTargetRef.current") &&
     navigateToSource.includes("document.activeElement") &&
     navigateToSource.includes("transientReturnFocusRef.current =") &&
     navigateToSource.includes("resolveTransientParentRouteId(") &&
-    /\[\s*activeRouteId\s*\],?\s*\);/.test(navigateToSource),
+    /\[\s*\]\);/.test(navigateToSource),
   "shell-to-transient navigation should capture focus and its actual shell parent without overwriting replacements",
 );
 assert.ok(
@@ -169,9 +167,13 @@ assert.ok(
   "return focus should clear its ref and restore only a connected, non-inert target without scrolling",
 );
 assert.match(
-  appSource,
-  /<TransientPageHost\s+page=\{activeTransientPage\}\s+onExitComplete=\{restoreTransientReturnFocus\}\s*\/>/,
-  "App should restore shell focus through the transient host exit callback",
+  shellHostSource,
+  /<TransientPageHost\s+page=\{activeTransientPage\}\s+onExitComplete=\{onExitComplete\}\s*\/>/,
+  "ShellPageHost should forward the transient host exit callback",
+);
+assert.ok(
+  appSource.includes("onExitComplete={restoreTransientReturnFocus}"),
+  "App should restore shell focus through the ShellPageHost exit callback",
 );
 
 assert.match(
