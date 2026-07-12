@@ -357,7 +357,7 @@ export function DashboardPage() {
         </SectionCard>
 
         <MetricPanel
-          title="今日指标"
+          title="本地路由指标"
           metrics={[
             {
               label: "总余额",
@@ -425,8 +425,7 @@ export function DashboardPage() {
           ]}
         />
         <MetricPanel
-          title="中转站用量"
-          description="来自中转站后台采集，不含本地代理日志"
+          title="中转站指标统计"
           metrics={[
             {
               label: "站点今日请求",

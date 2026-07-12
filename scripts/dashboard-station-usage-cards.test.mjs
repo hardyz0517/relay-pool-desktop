@@ -14,7 +14,8 @@ function assert(condition, message) {
 }
 
 assert(
-  dashboardSource.includes('title="中转站用量"') &&
+  dashboardSource.includes('title="中转站指标统计"') &&
+    dashboardSource.includes('title="本地路由指标"') &&
     dashboardSource.includes("stationUsage.todayInputTokenCount") &&
     dashboardSource.includes("stationUsage.todayOutputTokenCount") &&
     dashboardSource.includes("stationUsage.totalInputTokenCount") &&
@@ -22,6 +23,11 @@ assert(
     dashboardSource.includes("输入:") &&
     dashboardSource.includes("输出:"),
   "dashboard station usage token cards should show input/output token breakdowns",
+);
+
+assert(
+  !dashboardSource.includes('description="来自中转站后台采集，不含本地代理日志"'),
+  "dashboard station usage section should not render the old explanatory description",
 );
 
 assert(
