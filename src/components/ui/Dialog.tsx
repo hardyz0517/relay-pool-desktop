@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { Button } from "./button";
 import { cn } from "@/lib/utils";
@@ -13,6 +14,9 @@ type DialogProps = {
   className?: string;
 };
 
+let openDialogCount = 0;
+let previousBodyOverflow = "";
+
 export function Dialog({
   open,
   title,
@@ -22,12 +26,35 @@ export function Dialog({
   onClose,
   className,
 }: DialogProps) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    if (openDialogCount === 0) {
+      previousBodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+    }
+    openDialogCount += 1;
+
+    return () => {
+      openDialogCount = Math.max(0, openDialogCount - 1);
+      if (openDialogCount === 0) {
+        document.body.style.overflow = previousBodyOverflow;
+      }
+    };
+  }, [open]);
+
   if (!open) {
     return null;
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/20 p-4 backdrop-blur-[2px]">
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-white/35 p-4 backdrop-blur-[1px]"
+    >
       <div
         className={cn(
           "max-h-[calc(100vh-32px)] w-full max-w-[780px] overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[0_24px_70px_rgba(15,23,42,0.16)]",
@@ -48,6 +75,7 @@ export function Dialog({
         <div className="max-h-[calc(100vh-180px)] overflow-auto">{children}</div>
         {footer && <div className="border-t border-border px-5 py-4">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

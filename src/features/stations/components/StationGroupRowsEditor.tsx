@@ -1,5 +1,6 @@
-import { Trash2 } from "lucide-react";
-import { Button } from "@/components/ui";
+import { Sparkles, Trash2 } from "lucide-react";
+import { Button, SelectControl, type SelectOption } from "@/components/ui";
+import { groupCategoryDefinitions, type StationGroupCategory } from "@/lib/groupCategories";
 import { cn } from "@/lib/utils";
 
 export type StationGroupDraftSource = "manual" | "remote";
@@ -11,6 +12,8 @@ export type StationGroupDraft = {
   groupIdHash: string | null;
   groupName: string;
   rateMultiplier: string;
+  inferredGroupCategory: StationGroupCategory;
+  groupCategoryOverride: StationGroupCategory | null;
   source: StationGroupDraftSource;
   deleteRequested: boolean;
 };
@@ -18,12 +21,19 @@ export type StationGroupDraft = {
 type StationGroupRowsEditorProps = {
   rows: StationGroupDraft[];
   disabled?: boolean;
+  developerModeEnabled?: boolean;
   onRowsChange: (rows: StationGroupDraft[]) => void;
 };
 
 const inputClassName =
   "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-2.5 text-xs text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.16)] disabled:bg-slate-50 disabled:text-slate-500";
-const groupRowsGridTemplate = "minmax(9rem,1fr) 6rem 5.5rem 2.5rem";
+const groupRowsGridTemplate = "minmax(9rem,1fr) 7.5rem 6rem 5.5rem 2.5rem";
+const autoGroupCategoryValue = "__auto__";
+type GroupCategorySelectValue = typeof autoGroupCategoryValue | StationGroupCategory;
+export const groupCategoryOptions = groupCategoryDefinitions.map((definition) => ({
+  value: definition.value,
+  label: definition.label,
+}));
 
 export function createEmptyStationGroupDraft(index: number): StationGroupDraft {
   return {
@@ -33,6 +43,8 @@ export function createEmptyStationGroupDraft(index: number): StationGroupDraft {
     groupIdHash: null,
     groupName: "",
     rateMultiplier: "",
+    inferredGroupCategory: "unknown",
+    groupCategoryOverride: null,
     source: "manual",
     deleteRequested: false,
   };
@@ -41,6 +53,7 @@ export function createEmptyStationGroupDraft(index: number): StationGroupDraft {
 export function StationGroupRowsEditor({
   rows,
   disabled,
+  developerModeEnabled = false,
   onRowsChange,
 }: StationGroupRowsEditorProps) {
   const visibleRows = rows.filter((row) => !row.deleteRequested);
@@ -66,6 +79,7 @@ export function StationGroupRowsEditor({
             style={{ gridTemplateColumns: groupRowsGridTemplate }}
           >
             <span>分组</span>
+            <span>类型</span>
             <span>倍率</span>
             <span>来源</span>
             <span className="text-right">操作</span>
@@ -91,6 +105,25 @@ export function StationGroupRowsEditor({
                     })
                   }
                   placeholder={`分组 ${index + 1}`}
+                />
+                <SelectControl<GroupCategorySelectValue>
+                  ariaLabel="选择分组类型"
+                  className="h-8 w-full min-w-0 px-2.5 text-xs shadow-none"
+                  disabled={disabled}
+                  value={row.groupCategoryOverride ?? autoGroupCategoryValue}
+                  menuClassName="min-w-[12rem]"
+                  options={groupCategorySelectOptions(
+                    row.inferredGroupCategory,
+                    developerModeEnabled,
+                  )}
+                  onChange={(value) =>
+                    updateRow(row.clientId, {
+                      groupCategoryOverride:
+                        value === autoGroupCategoryValue
+                          ? null
+                          : value,
+                    })
+                  }
                 />
                 <input
                   className={inputClassName}
@@ -131,4 +164,36 @@ export function StationGroupRowsEditor({
       )}
     </div>
   );
+}
+
+function groupCategoryLabel(value: StationGroupCategory) {
+  return groupCategoryOptions.find((option) => option.value === value)?.label ?? "未知";
+}
+
+function groupCategorySelectOptions(
+  inferredGroupCategory: StationGroupCategory,
+  developerModeEnabled: boolean,
+): SelectOption<GroupCategorySelectValue>[] {
+  const manualOptions = groupCategoryDefinitions
+    .filter(
+      (definition) =>
+        developerModeEnabled ||
+        (definition.value !== "embedding" && definition.value !== "rerank"),
+    )
+    .map((definition, index) => ({
+      value: definition.value,
+      label: definition.label,
+      sectionLabel: index === 0 ? "手动指定" : undefined,
+    }));
+
+  return [
+    {
+      value: autoGroupCategoryValue,
+      label: "跟随识别结果",
+      triggerLabel: groupCategoryLabel(inferredGroupCategory),
+      description: `当前识别：${groupCategoryLabel(inferredGroupCategory)}`,
+      leadingIcon: <Sparkles className="h-3.5 w-3.5" />,
+    },
+    ...manualOptions,
+  ];
 }

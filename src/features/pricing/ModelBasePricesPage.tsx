@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Plus, RefreshCw, RotateCcw, Search } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
+import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, Plus, RefreshCw, RotateCcw, Search } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, Dialog, IconButton, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { listModelBasePrices, resetModelBasePricesToBuiltins, upsertModelBasePrice } from "@/lib/api/economics";
@@ -28,6 +29,10 @@ type DraftRow = {
 
 type ProviderFilter = "all" | "openai" | "google" | "anthropic" | "xai" | "custom";
 type PriceField = "inputPrice" | "outputPrice";
+type DatePickerPosition = {
+  left: number;
+  top: number;
+};
 
 const providerFilterOptions: Array<{ value: ProviderFilter; label: string }> = [
   { value: "all", label: "全部厂商" },
@@ -353,7 +358,7 @@ export function ModelBasePricesPage({ onBack }: ModelBasePricesPageProps) {
           <SelectField label="币种" options={currencyOptions} value={createDraft.currency} onChange={(currency) => setCreateDraft({ ...createDraft, currency })} />
           <SelectField label="单位" options={unitOptions} value={createDraft.unit} onChange={(unit) => setCreateDraft({ ...createDraft, unit })} />
           <Field label="来源名称" value={createDraft.sourceLabel} onChange={(sourceLabel) => setCreateDraft({ ...createDraft, sourceLabel })} />
-          <Field label="检查日期" inputType="date" value={createDraft.sourceCheckedAt} onChange={(sourceCheckedAt) => setCreateDraft({ ...createDraft, sourceCheckedAt })} />
+          <DateField label="检查日期" value={createDraft.sourceCheckedAt} onChange={(sourceCheckedAt) => setCreateDraft({ ...createDraft, sourceCheckedAt })} />
           <div className="md:col-span-2">
             <Field label="来源 URL" value={createDraft.sourceUrl} onChange={(sourceUrl) => setCreateDraft({ ...createDraft, sourceUrl })} />
           </div>
@@ -495,17 +500,201 @@ function SelectField({
   );
 }
 
+function DateField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const selectedDate = useMemo(() => parseDateValue(value) ?? new Date(), [value]);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [viewDate, setViewDate] = useState(() => selectedDate);
+  const [position, setPosition] = useState<DatePickerPosition | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setViewDate(selectedDate);
+    }
+  }, [open, selectedDate]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      return;
+    }
+    updateDatePickerPosition(triggerRef.current, setPosition);
+  }, [open, viewDate]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || panelRef.current?.contains(target)) {
+        return;
+      }
+      setOpen(false);
+    };
+    const handleViewportChange = () => setOpen(false);
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [open]);
+
+  return (
+    <label className="grid gap-1 text-xs font-medium text-slate-600">
+      <span>{label}</span>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        className="flex h-8 min-w-0 cursor-pointer items-center justify-between gap-2 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-left text-sm text-slate-800 shadow-[0_1px_2px_rgba(15,23,42,0.04)] outline-none transition hover:border-[hsl(var(--accent)/0.35)] hover:bg-slate-50 focus:border-[hsl(var(--accent)/0.45)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="tabular-nums">{formatDisplayDate(value)}</span>
+        <CalendarDays className="h-4 w-4 shrink-0 text-slate-500" />
+      </button>
+      {open && position ? (
+        <DatePickerPanel
+          panelRef={panelRef}
+          position={position}
+          selectedValue={value}
+          viewDate={viewDate}
+          onMonthChange={setViewDate}
+          onSelect={(nextValue) => {
+            onChange(nextValue);
+            setOpen(false);
+          }}
+        />
+      ) : null}
+    </label>
+  );
+}
+
+function DatePickerPanel({
+  panelRef,
+  position,
+  selectedValue,
+  viewDate,
+  onMonthChange,
+  onSelect,
+}: {
+  panelRef: RefObject<HTMLDivElement>;
+  position: DatePickerPosition;
+  selectedValue: string;
+  viewDate: Date;
+  onMonthChange: (date: Date) => void;
+  onSelect: (value: string) => void;
+}) {
+  const monthDays = getCalendarDays(viewDate);
+  const selectedDate = parseDateValue(selectedValue);
+  const todayValue = formatLocalDate(new Date());
+  const viewMonth = viewDate.getMonth();
+
+  return createPortal(
+    <div
+      ref={panelRef}
+      className="fixed z-[70] w-[236px] rounded-[var(--surface-radius)] border border-border bg-white p-2 shadow-[0_18px_42px_rgba(15,23,42,0.14)]"
+      style={{ left: position.left, top: position.top }}
+    >
+      <div className="mb-2 flex items-center justify-between">
+        <div className="px-1 text-xs font-semibold text-slate-800">
+          {viewDate.getFullYear()}年{viewDate.getMonth() + 1}月
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            aria-label="上个月"
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[7px] text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.18)]"
+            onClick={() => onMonthChange(addMonths(viewDate, -1))}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="下个月"
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[7px] text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.18)]"
+            onClick={() => onMonthChange(addMonths(viewDate, 1))}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-medium text-slate-500">
+        {["一", "二", "三", "四", "五", "六", "日"].map((day) => (
+          <div key={day} className="h-6 leading-6">
+            {day}
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 grid grid-cols-7 gap-1 text-center text-xs">
+        {monthDays.map((date) => {
+          const dateValue = formatLocalDate(date);
+          const selected = selectedDate ? isSameDate(date, selectedDate) : false;
+          const today = dateValue === todayValue;
+          const muted = date.getMonth() !== viewMonth;
+          return (
+            <button
+              key={dateValue}
+              type="button"
+              className={[
+                "flex h-7 w-7 cursor-pointer items-center justify-center rounded-[7px] tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.2)]",
+                selected
+                  ? "bg-[hsl(var(--accent))] text-white shadow-[0_4px_12px_rgba(13,148,136,0.24)]"
+                  : today
+                    ? "border border-[hsl(var(--accent)/0.35)] bg-[hsl(var(--accent)/0.06)] text-[hsl(var(--accent))]"
+                    : "text-slate-700 hover:bg-slate-100",
+                muted && !selected ? "text-slate-400" : "",
+              ].join(" ")}
+              onClick={() => onSelect(dateValue)}
+            >
+              {date.getDate()}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex justify-between border-t border-border pt-2">
+        <button
+          type="button"
+          className="h-7 cursor-pointer rounded-[7px] px-2 text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.18)]"
+          onClick={() => onSelect("")}
+        >
+          清除
+        </button>
+        <button
+          type="button"
+          className="h-7 cursor-pointer rounded-[7px] px-2 text-xs font-medium text-[hsl(var(--accent))] transition hover:bg-[hsl(var(--accent)/0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.18)]"
+          onClick={() => onSelect(todayValue)}
+        >
+          今天
+        </button>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function Field({
   label,
   value,
   numeric,
-  inputType,
   onChange,
 }: {
   label: string;
   value: string;
   numeric?: boolean;
-  inputType?: "text" | "date";
   onChange: (value: string) => void;
 }) {
   return (
@@ -515,7 +704,7 @@ function Field({
         className="h-8 min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]"
         min={numeric ? "0" : undefined}
         step={numeric ? "0.0001" : undefined}
-        type={numeric ? "number" : inputType ?? "text"}
+        type={numeric ? "number" : "text"}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
@@ -634,4 +823,77 @@ function formatLocalDate(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatDisplayDate(value: string) {
+  return value ? value.replace(/-/g, "/") : "未选择";
+}
+
+function parseDateValue(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return null;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  const date = new Date(year, month, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month || date.getDate() !== day) {
+    return null;
+  }
+  return date;
+}
+
+function updateDatePickerPosition(
+  trigger: HTMLButtonElement | null,
+  setPosition: (position: DatePickerPosition) => void,
+) {
+  const rect = trigger?.getBoundingClientRect();
+  if (!rect) {
+    return;
+  }
+  const gap = 6;
+  const viewportPadding = 10;
+  const panelWidth = 236;
+  const panelHeight = 300;
+  const spaceAbove = rect.top - viewportPadding;
+  const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+  const canOpenBelow = spaceBelow >= panelHeight;
+  const canOpenAbove = spaceAbove >= panelHeight;
+  const openBelow = canOpenBelow || !canOpenAbove;
+  const preferredLeft = rect.right - panelWidth;
+  const left = Math.max(
+    viewportPadding,
+    Math.min(preferredLeft, window.innerWidth - panelWidth - viewportPadding),
+  );
+  const top = openBelow
+    ? Math.min(window.innerHeight - viewportPadding - panelHeight, rect.bottom + gap)
+    : Math.max(viewportPadding, rect.top - panelHeight - gap);
+
+  setPosition({ left, top });
+}
+
+function addMonths(date: Date, delta: number) {
+  return new Date(date.getFullYear(), date.getMonth() + delta, 1);
+}
+
+function getCalendarDays(viewDate: Date) {
+  const firstDay = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
+  const mondayOffset = (firstDay.getDay() + 6) % 7;
+  const startDate = new Date(firstDay);
+  startDate.setDate(firstDay.getDate() - mondayOffset);
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(startDate);
+    date.setDate(startDate.getDate() + index);
+    return date;
+  });
+}
+
+function isSameDate(left: Date, right: Date) {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
 }

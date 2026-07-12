@@ -10,7 +10,12 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  type AnimateLayoutChanges,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Clock3, Edit3, GripVertical, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
@@ -126,6 +131,9 @@ const statusTone: Record<Station["status"], "healthy" | "warning" | "error" | "d
 const STATION_ASSET_REFRESH_INTERVAL_MS = 30_000;
 const STATION_ASSET_PRIMARY_TIMEOUT_MS = 8_000;
 const STATION_ASSET_ENRICHMENT_TIMEOUT_MS = 6_000;
+
+const shouldAnimateStationAssetLayoutChanges: AnimateLayoutChanges = ({ isSorting, wasDragging }) =>
+  isSorting || wasDragging;
 
 type StationsPageProps = {
   onAddProvider?: () => void;
@@ -290,7 +298,12 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
       if (stationAssetRefreshSequence.current !== refreshId) {
         return;
       }
-      setStations(nextStations);
+      setStations((currentStations) => {
+        if (options.silent && areStationAssetListsEqual(currentStations, nextStations)) {
+          return currentStations;
+        }
+        return nextStations;
+      });
       setSelectedStationId((current) => {
         if (current && nextStations.some((station) => station.id === current)) {
           return current;
@@ -943,6 +956,7 @@ type StationAssetListRowProps = {
 function SortableStationAssetListRow(props: StationAssetListRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.row.station.id,
+    animateLayoutChanges: shouldAnimateStationAssetLayoutChanges,
   });
 
   return (
@@ -1651,6 +1665,42 @@ function formatStationDisplayUrl(baseUrl: string) {
   } catch {
     return baseUrl.replace(/\/+$/, "");
   }
+}
+
+function areStationAssetListsEqual(currentStations: Station[], nextStations: Station[]) {
+  if (currentStations.length !== nextStations.length) {
+    return false;
+  }
+
+  return currentStations.every((currentStation, index) =>
+    areStationAssetRowsEqual(currentStation, nextStations[index]),
+  );
+}
+
+function areStationAssetRowsEqual(currentStation: Station, nextStation: Station) {
+  return (
+    currentStation.id === nextStation.id &&
+    currentStation.name === nextStation.name &&
+    currentStation.stationType === nextStation.stationType &&
+    currentStation.baseUrl === nextStation.baseUrl &&
+    currentStation.apiKeyMasked === nextStation.apiKeyMasked &&
+    currentStation.apiKeyPresent === nextStation.apiKeyPresent &&
+    currentStation.keyCount === nextStation.keyCount &&
+    currentStation.enabled === nextStation.enabled &&
+    currentStation.priority === nextStation.priority &&
+    currentStation.creditPerCny === nextStation.creditPerCny &&
+    currentStation.balanceRaw === nextStation.balanceRaw &&
+    currentStation.balanceCny === nextStation.balanceCny &&
+    currentStation.lowBalanceThresholdCny === nextStation.lowBalanceThresholdCny &&
+    currentStation.collectionIntervalMinutes === nextStation.collectionIntervalMinutes &&
+    currentStation.status === nextStation.status &&
+    currentStation.latencyMs === nextStation.latencyMs &&
+    currentStation.lastCheckedAt === nextStation.lastCheckedAt &&
+    currentStation.lastPricingFetchedAt === nextStation.lastPricingFetchedAt &&
+    currentStation.note === nextStation.note &&
+    currentStation.createdAt === nextStation.createdAt &&
+    currentStation.updatedAt === nextStation.updatedAt
+  );
 }
 
 function formatStationBalanceParts(row: StationAssetRow) {

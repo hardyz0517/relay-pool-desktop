@@ -3,6 +3,23 @@ export function formatRequestCost(
   currency?: string | null,
   costStatus?: string | null,
 ) {
+  return formatCurrencyCost(value, currency, costStatus, formatCostValue);
+}
+
+export function formatRecentRequestCost(
+  value: number | null | undefined,
+  currency?: string | null,
+  costStatus?: string | null,
+) {
+  return formatCurrencyCost(value, currency, costStatus, formatRecentCostValue);
+}
+
+function formatCurrencyCost(
+  value: number | null | undefined,
+  currency: string | null | undefined,
+  costStatus: string | null | undefined,
+  formatValue: (value: number) => string,
+) {
   if (value == null && costStatus === "usage_only") {
     return "未定价";
   }
@@ -10,7 +27,7 @@ export function formatRequestCost(
     return "-";
   }
   const symbol = currencySymbol(currency ?? "USD") || "$";
-  const formattedValue = formatCostValue(value);
+  const formattedValue = formatValue(value);
   if (formattedValue.startsWith("< ")) {
     return `< ${symbol}${formattedValue.slice(2)}`;
   }
@@ -41,6 +58,17 @@ function formatCostValue(value: number) {
   }
   if (absValue > 0 && absValue < 0.0001) {
     return trimTrailingZeros(value.toFixed(8));
+  }
+  return value.toFixed(4);
+}
+
+function formatRecentCostValue(value: number) {
+  if (!Number.isFinite(value)) {
+    return "0.0000";
+  }
+  const absValue = Math.abs(value);
+  if (absValue > 0 && absValue < 0.0001) {
+    return "< 0.0001";
   }
   return value.toFixed(4);
 }

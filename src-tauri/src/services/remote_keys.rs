@@ -732,6 +732,8 @@ mod tests {
                 rate_source: Some("sub2api_groups_rates".to_string()),
                 confidence: 0.95,
                 last_seen_at: Some("1000".to_string()),
+                inferred_group_category: Some("gpt".to_string()),
+                group_category_override: None,
                 raw_json_redacted: None,
             })
             .expect("group");
@@ -748,6 +750,12 @@ mod tests {
                 effective_rate_multiplier: Some(1.2),
                 source: "sub2api_groups_rates".to_string(),
                 confidence: 0.95,
+                inferred_group_category: Some(
+                    group
+                        .inferred_group_category
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                ),
                 raw_json_redacted: None,
                 checked_at: "2000".to_string(),
             })

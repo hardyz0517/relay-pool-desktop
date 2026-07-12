@@ -884,6 +884,8 @@ mod tests {
                 rate_source: Some("test".to_string()),
                 confidence: 1.0,
                 last_seen_at: None,
+                inferred_group_category: Some("unknown".to_string()),
+                group_category_override: None,
                 raw_json_redacted: None,
             })
             .expect("group binding");

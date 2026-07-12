@@ -3,6 +3,18 @@ import { readFile } from "node:fs/promises";
 
 const stylesSource = await readFile("src/styles.css", "utf8");
 
+function readKeyframes(name) {
+  const start = stylesSource.indexOf(`@keyframes ${name}`);
+  assert.notEqual(start, -1, `styles should define ${name} keyframes`);
+
+  const nextKeyframes = stylesSource.indexOf("@keyframes", start + 1);
+  const nextMedia = stylesSource.indexOf("@media", start + 1);
+  const endCandidates = [nextKeyframes, nextMedia].filter((index) => index !== -1);
+  const end = endCandidates.length > 0 ? Math.min(...endCandidates) : stylesSource.length;
+
+  return stylesSource.slice(start, end);
+}
+
 assert.ok(
   stylesSource.includes(".app-page-transition-stack") &&
     stylesSource.includes("[data-page-transition-layer]") &&
@@ -14,10 +26,39 @@ assert.ok(
 );
 
 assert.ok(
-  stylesSource.includes("relayPageFadeUp") &&
+  stylesSource.includes(
+    '.app-page-transition-stack[data-page-transition-handoff="none"]',
+  ) &&
+    stylesSource.includes("relayPageFadeUp") &&
     stylesSource.includes("relayTransientEnter") &&
     stylesSource.includes("relayTransientExit"),
-  "styles should define shell fade-up and transient enter/exit animations",
+  "shell entry animation should run only for a fresh shell navigation",
+);
+
+assert.ok(
+  stylesSource.includes('data-page-transition-handoff="transient-exit"') &&
+    stylesSource.includes("animation: none"),
+  "returning from a transient page should keep the parent shell visually stable during overlay exit",
+);
+
+const transientEnterKeyframes = readKeyframes("relayTransientEnter");
+const transientExitKeyframes = readKeyframes("relayTransientExit");
+
+assert.ok(
+  !transientEnterKeyframes.includes("translateX") &&
+    !transientExitKeyframes.includes("translateX") &&
+    transientEnterKeyframes.includes("translateY") &&
+    transientExitKeyframes.includes("translateY") &&
+    transientEnterKeyframes.includes("scale(") &&
+    transientExitKeyframes.includes("scale("),
+  "transient page animations should feel like a soft fade/settle, not a horizontal slide",
+);
+
+assert.ok(
+  stylesSource.includes("animation: relayTransientEnter 140ms") &&
+    stylesSource.includes("animation: relayTransientExit 140ms") &&
+    !transientEnterKeyframes.includes("opacity: 0;"),
+  "transient navigation should stay immediately legible and finish quickly",
 );
 
 assert.ok(

@@ -26,7 +26,8 @@ assert.ok(
   appSource.includes("data-page-transition-layer") &&
     appSource.includes("data-page-transition-state") &&
     appSource.includes("data-page-transition-kind") &&
-    appSource.includes("data-page-transition-direction"),
+    appSource.includes("data-page-transition-direction") &&
+    appSource.includes("data-page-transition-handoff"),
   "App should expose stable transition data attributes for styling and tests",
 );
 
@@ -47,19 +48,13 @@ assert.ok(
 );
 
 assert.ok(
-  appSource.includes('inert={!isCurrentTransientPage ? "" : undefined}'),
-  "inactive transient layers should render inert as an empty string attribute",
+  appSource.includes('inert={transientPageIsExiting ? "" : undefined}'),
+  "the single transient layer should become inert while exiting",
 );
 
 assert.ok(
-  appSource.includes('inert=""'),
-  "exiting transient overlays should explicitly render the inert attribute",
-);
-
-assert.ok(
-  appSource.includes("<PageActivityProvider active={isCurrentTransientPage}>") &&
-    appSource.includes("<PageActivityProvider active={false}>"),
-  "transient pages should have explicit active/inactive PageActivityProvider contexts",
+  /<PageActivityProvider[\s\S]*?active=\{!transientPageIsExiting\}/.test(appSource),
+  "the retained transient page should become inactive without remounting",
 );
 
 assert.ok(
@@ -73,13 +68,39 @@ assert.ok(
   "last active transient page should not be updated in a standalone earlier effect",
 );
 
-const previousTransientReadIndex = sourceIndex(
-  "const previousTransientPage = lastActiveTransientPageRef.current",
-  "App should read the previous transient page before updating refs",
+assert.ok(
+  appSource.includes("const pendingExitingTransientPage") &&
+    appSource.includes("const renderedTransientPage") &&
+    appSource.includes("activeTransientPage ??") &&
+    appSource.includes("pendingExitingTransientPage ??") &&
+    appSource.includes("exitingTransientPage"),
+  "App should keep the outgoing transient page in the same render branch before layout effects run",
 );
-const previousRouteWriteIndex = sourceIndex(
-  "previousRouteIdRef.current = activeRouteId",
-  "App should update the previous route ref inside the combined transient preservation effect",
+
+assert.equal(
+  appSource.match(/className="app-page-transition-layer app-page-transition-overlay"/g)?.length ?? 0,
+  1,
+  "App should render one stable transient layer instead of remounting an outgoing clone",
+);
+
+assert.ok(
+  !appSource.includes("{activeTransientPage && (") &&
+    !appSource.includes("{exitingTransientPage && (") &&
+    appSource.includes("{renderedTransientPage.node}"),
+  "active and exiting transient states should share one component position",
+);
+
+assert.ok(
+  appSource.includes("const isReturningFromTransient") &&
+    appSource.includes(
+      'data-page-transition-handoff={isReturningFromTransient ? "transient-exit" : "none"}',
+    ),
+  "return handoff state should survive outgoing overlay cleanup so the shell cannot animate late",
+);
+
+const pendingTransientReadIndex = sourceIndex(
+  "const pendingExitingTransientPage",
+  "App should derive the outgoing transient page during render",
 );
 const activeTransientWriteIndex = sourceIndex(
   "lastActiveTransientPageRef.current = activeTransientPage",
@@ -87,16 +108,19 @@ const activeTransientWriteIndex = sourceIndex(
 );
 
 assert.ok(
-  previousTransientReadIndex < activeTransientWriteIndex &&
-    previousRouteWriteIndex < activeTransientWriteIndex &&
-    appSource.includes("}, [activeRouteId, activeTransientPage]);"),
-  "App should preserve outgoing transient pages before updating the last active transient ref",
+  pendingTransientReadIndex < activeTransientWriteIndex &&
+    appSource.includes("previousRouteId: current.activeRouteId") &&
+    appSource.includes("useLayoutEffect(() => {") &&
+    appSource.includes("}, [activeTransientPage, pendingExitingTransientPage]);"),
+  "App should preserve navigation history and the outgoing transient instance before paint",
 );
 
 assert.ok(
   appSource.includes("handleTransientExitAnimationEnd") &&
     appSource.includes("event.target !== event.currentTarget") &&
-    appSource.includes("onAnimationEnd={handleTransientExitAnimationEnd}") &&
+    /onAnimationEnd=\{[\s\S]*?transientPageIsExiting\s*\?\s*handleTransientExitAnimationEnd/.test(
+      appSource,
+    ) &&
     appSource.includes("window.setTimeout(handleTransientExitComplete"),
   "outgoing transient cleanup should ignore bubbled animationend events and keep timeout fallback",
 );

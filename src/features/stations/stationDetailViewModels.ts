@@ -11,6 +11,7 @@ import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
+import type { StationGroupCategory } from "@/lib/groupCategories";
 import type { StationKey } from "@/lib/types/stationKeys";
 import type { StationCredentials } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
@@ -28,6 +29,7 @@ export type StationDetailGroupRow = {
   id: string;
   groupName: string;
   rawJsonRedacted: Record<string, unknown> | null;
+  effectiveGroupCategory: StationGroupCategory;
   effectiveRate: string;
   defaultRate: string;
   userRate: string;
@@ -227,6 +229,7 @@ function groupRowFromCurrentFact(fact: StationGroupCurrentFact): StationDetailGr
     id: fact.groupBindingId ?? fact.identityKey,
     groupName: fact.groupName || "未命名分组",
     rawJsonRedacted: fact.sourceRate?.rawJsonRedacted ?? fact.sourceBinding?.rawJsonRedacted ?? null,
+    effectiveGroupCategory: fact.effectiveGroupCategory,
     effectiveRate: formatRate(fact.rateMultiplier, "未确定"),
     defaultRate: formatRate(defaultRate),
     userRate: formatRate(userRate, "未覆盖"),

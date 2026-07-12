@@ -215,7 +215,11 @@ export function StationDetailContent({
                   {viewModel.groupRows.map((row) => (
                     <tr key={row.id} className="border-t border-border transition-colors hover:bg-slate-50/70">
                       <TableCell className="max-w-[220px] pl-0">
-                        <GroupNameBadge groupName={row.groupName} rawJsonRedacted={row.rawJsonRedacted} />
+                        <GroupNameBadge
+                          groupName={row.groupName}
+                          rawJsonRedacted={row.rawJsonRedacted}
+                          effectiveGroupCategory={row.effectiveGroupCategory}
+                        />
                         {row.warning && (
                           <div className="mt-1 inline-flex items-center gap-1 text-amber-700">
                             <AlertTriangle className="h-3.5 w-3.5" />
@@ -224,7 +228,7 @@ export function StationDetailContent({
                         )}
                       </TableCell>
                       <TableCell>
-                        <span className={cn("inline-flex h-6 items-center rounded-full px-2.5 font-semibold", groupVisualMetaFor(row.groupName, row.rawJsonRedacted).rateBadgeClassName)}>
+                        <span className={cn("inline-flex h-6 items-center rounded-full px-2.5 font-semibold", groupVisualMetaFor(row.groupName, row.rawJsonRedacted, row.effectiveGroupCategory).rateBadgeClassName)}>
                           {row.effectiveRate}
                         </span>
                       </TableCell>
@@ -258,11 +262,13 @@ export function StationDetailContent({
 function GroupNameBadge({
   groupName,
   rawJsonRedacted,
+  effectiveGroupCategory,
 }: {
   groupName: string;
   rawJsonRedacted: Record<string, unknown> | null;
+  effectiveGroupCategory: StationDetailViewModel["groupRows"][number]["effectiveGroupCategory"];
 }) {
-  const visualMeta = groupVisualMetaFor(groupName, rawJsonRedacted);
+  const visualMeta = groupVisualMetaFor(groupName, rawJsonRedacted, effectiveGroupCategory);
 
   return (
     <span

@@ -17,7 +17,10 @@ use crate::{
         },
         station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
     },
-    services::database::{self, AppDatabase},
+    services::{
+        database::{self, AppDatabase},
+        group_categories::{infer_group_category, normalize_group_category},
+    },
 };
 
 pub fn default_station_key_capabilities_input(
@@ -128,6 +131,24 @@ pub fn station_group_options_from_facts(
                 .group_id_hash
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty());
+            let inferred_group_category = normalize_group_category(
+                binding
+                    .inferred_group_category
+                    .as_deref()
+                    .or_else(|| rate.and_then(|record| record.inferred_group_category.as_deref())),
+            )
+            .unwrap_or_else(|| {
+                infer_group_category(
+                    &binding.group_name,
+                    rate.and_then(|record| record.raw_json_redacted.as_ref())
+                        .or(binding.raw_json_redacted.as_ref()),
+                )
+            });
+            let group_category_override =
+                normalize_group_category(binding.group_category_override.as_deref());
+            let effective_group_category = group_category_override
+                .clone()
+                .unwrap_or_else(|| inferred_group_category.clone());
 
             Some(StationGroupOption {
                 value,
@@ -135,6 +156,9 @@ pub fn station_group_options_from_facts(
                 group_id_hash,
                 group_name: binding.group_name,
                 rate_multiplier,
+                inferred_group_category: Some(inferred_group_category),
+                group_category_override,
+                effective_group_category,
                 rate_source,
                 selectable_for_remote_key,
             })
@@ -418,6 +442,8 @@ mod tests {
             last_seen_at: Some("1000".to_string()),
             last_checked_at: Some("1000".to_string()),
             last_rate_changed_at: None,
+            inferred_group_category: Some("gpt".to_string()),
+            group_category_override: None,
             raw_json_redacted: None,
             created_at: "1000".to_string(),
             updated_at: "1000".to_string(),
@@ -438,6 +464,7 @@ mod tests {
             effective_rate_multiplier: Some(1.1),
             source: "rate_api".to_string(),
             confidence: 1.0,
+            inferred_group_category: Some("gpt".to_string()),
             raw_json_redacted: None,
             checked_at: "1000".to_string(),
             created_at: "1000".to_string(),

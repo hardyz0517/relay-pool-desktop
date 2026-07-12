@@ -1,4 +1,11 @@
-export type StationGroupVisualPlatform = "anthropic" | "openai" | "gemini" | "grok" | "generic";
+import {
+  effectiveGroupCategory,
+  groupCategoryDefinitions,
+  groupCategoryFromPlatform,
+  type StationGroupCategory,
+} from "@/lib/groupCategories";
+
+export type StationGroupVisualPlatform = "anthropic" | "openai" | "gemini" | "grok" | "image" | "generic";
 
 export type StationGroupVisualMeta = {
   platform: StationGroupVisualPlatform;
@@ -37,6 +44,13 @@ const groupVisualMetaByPlatform: Record<StationGroupVisualPlatform, StationGroup
     iconClassName: "text-zinc-800",
     rateBadgeClassName: "bg-zinc-100 text-zinc-800",
   },
+  image: {
+    platform: "image",
+    label: "生图",
+    badgeClassName: "border-violet-100 bg-violet-100 text-violet-700",
+    iconClassName: "text-violet-600",
+    rateBadgeClassName: "bg-violet-50 text-violet-700",
+  },
   generic: {
     platform: "generic",
     label: "分组",
@@ -49,26 +63,20 @@ const groupVisualMetaByPlatform: Record<StationGroupVisualPlatform, StationGroup
 export function groupVisualMetaFor(
   _groupName: string,
   rawJsonRedacted?: Record<string, unknown> | null,
+  groupCategory?: StationGroupCategory | null,
 ): StationGroupVisualMeta {
-  return groupVisualMetaByPlatform[platformFromGroupEvidence(rawJsonRedacted)];
+  const effectiveCategory = effectiveGroupCategory(platformCategoryFromGroupEvidence(rawJsonRedacted), groupCategory);
+  const platform =
+    groupCategoryDefinitions.find((definition) => definition.value === effectiveCategory)?.visualPlatform ??
+    "generic";
+  return groupVisualMetaByPlatform[platform];
 }
 
-function platformFromGroupEvidence(rawJsonRedacted?: Record<string, unknown> | null): StationGroupVisualPlatform {
+function platformCategoryFromGroupEvidence(
+  rawJsonRedacted?: Record<string, unknown> | null,
+): StationGroupCategory | null {
   const platform = stringField(rawJsonRedacted, ["platform", "provider", "model_provider", "modelProvider"]);
-  const normalized = platform?.trim().toLowerCase();
-  if (normalized === "openai") {
-    return "openai";
-  }
-  if (normalized === "anthropic" || normalized === "claude") {
-    return "anthropic";
-  }
-  if (normalized === "gemini" || normalized === "google") {
-    return "gemini";
-  }
-  if (normalized === "grok" || normalized === "xai" || normalized === "x-ai") {
-    return "grok";
-  }
-  return "generic";
+  return groupCategoryFromPlatform(platform);
 }
 
 function stringField(value: unknown, keys: string[]): string | null {

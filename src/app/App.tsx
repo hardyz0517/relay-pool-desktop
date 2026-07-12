@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type AnimationEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type AnimationEvent,
+  type ReactNode,
+} from "react";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageActivityProvider } from "@/components/shell/PageActivity";
 import {
@@ -31,15 +40,23 @@ declare module "react" {
   }
 }
 
-const TRANSIENT_EXIT_TIMEOUT_MS = 240;
+const TRANSIENT_EXIT_TIMEOUT_MS = 200;
 
 type RenderedTransientPage = {
   pageId: AppPageId;
   node: ReactNode;
 };
 
+type NavigationState = {
+  activeRouteId: AppPageId;
+  previousRouteId: AppPageId | null;
+};
+
 export function App() {
-  const [activeRouteId, setActiveRouteId] = useState<AppPageId>("dashboard");
+  const [{ activeRouteId, previousRouteId }, setNavigation] = useState<NavigationState>({
+    activeRouteId: "dashboard",
+    previousRouteId: null,
+  });
   const [mountedRouteIds, setMountedRouteIds] = useState<Set<AppRouteId>>(
     () => new Set(["dashboard"]),
   );
@@ -48,12 +65,23 @@ export function App() {
   const [detailStationPreview, setDetailStationPreview] = useState<Station | null>(null);
   const [initialKeyStationId, setInitialKeyStationId] = useState<string | null>(null);
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
-  const previousRouteIdRef = useRef<AppPageId>(activeRouteId);
   const lastActiveTransientPageRef = useRef<RenderedTransientPage | null>(null);
   const transientExitTimeoutRef = useRef<number | null>(null);
   const [exitingTransientPage, setExitingTransientPage] =
     useState<RenderedTransientPage | null>(null);
   const activeShellRouteId = getShellRouteId(activeRouteId);
+
+  const navigateTo = useCallback((routeId: AppPageId) => {
+    setNavigation((current) => {
+      if (current.activeRouteId === routeId) {
+        return current;
+      }
+      return {
+        activeRouteId: routeId,
+        previousRouteId: current.activeRouteId,
+      };
+    });
+  }, []);
 
   useEffect(() => {
     if (!isShellPage(activeRouteId)) {
@@ -73,36 +101,36 @@ export function App() {
     setEditingStationId(null);
     setDetailStationId(null);
     setDetailStationPreview(null);
-    setActiveRouteId("stations");
+    navigateTo("stations");
   }
 
   function returnToKeyPool() {
     setInitialKeyStationId(null);
     setEditingKeyId(null);
-    setActiveRouteId("keyPool");
+    navigateTo("keyPool");
   }
 
   function openEditProvider(stationId: string) {
     setEditingStationId(stationId);
-    setActiveRouteId("editProvider");
+    navigateTo("editProvider");
   }
 
   function openStationDetail(station: Station) {
     setDetailStationId(station.id);
     setDetailStationPreview(station);
-    setActiveRouteId("stationDetail");
+    navigateTo("stationDetail");
   }
 
   function openAddKey(stationId: string | null) {
     setInitialKeyStationId(stationId);
     setEditingKeyId(null);
-    setActiveRouteId("addKey");
+    navigateTo("addKey");
   }
 
   function openEditKey(stationKeyId: string) {
     setEditingKeyId(stationKeyId);
     setInitialKeyStationId(null);
-    setActiveRouteId("editKey");
+    navigateTo("editKey");
   }
 
   function renderShellPage(routeId: AppRouteId) {
@@ -110,7 +138,7 @@ export function App() {
       case "stations":
         return (
           <StationsPage
-            onAddProvider={() => setActiveRouteId("addProvider")}
+            onAddProvider={() => navigateTo("addProvider")}
             onEditProvider={openEditProvider}
             onOpenStation={openStationDetail}
           />
@@ -124,13 +152,13 @@ export function App() {
       case "changes":
         return <ChangeCenterPage />;
       case "pricing":
-        return <PricingPage onOpenModelBasePrices={() => setActiveRouteId("modelBasePrices")} />;
+        return <PricingPage onOpenModelBasePrices={() => navigateTo("modelBasePrices")} />;
       case "routing":
         return <RoutingPage />;
       case "logs":
         return <LogsPage />;
       case "settings":
-        return <SettingsPage onOpenModelBasePrices={() => setActiveRouteId("modelBasePrices")} />;
+        return <SettingsPage onOpenModelBasePrices={() => navigateTo("modelBasePrices")} />;
       case "dashboard":
       default:
         return <DashboardPage />;
@@ -149,6 +177,7 @@ export function App() {
       case "editProvider":
         return (
           <AddProviderPage
+            key={editingStationId ?? "edit-provider-empty"}
             stationId={editingStationId}
             onBack={returnToStations}
             onUpdated={returnToStations}
@@ -157,6 +186,7 @@ export function App() {
       case "stationDetail":
         return (
           <StationDetailPage
+            key={detailStationId ?? "station-detail-empty"}
             stationId={detailStationId}
             initialStation={detailStationPreview}
             onBack={returnToStations}
@@ -166,6 +196,7 @@ export function App() {
       case "addKey":
         return (
           <AddKeyPage
+            key={initialKeyStationId ?? "add-key-unscoped"}
             initialStationId={initialKeyStationId}
             onBack={returnToKeyPool}
             onCreated={returnToKeyPool}
@@ -174,13 +205,14 @@ export function App() {
       case "editKey":
         return (
           <EditKeyPage
+            key={editingKeyId ?? "edit-key-empty"}
             stationKeyId={editingKeyId}
             onBack={returnToKeyPool}
             onUpdated={returnToKeyPool}
           />
         );
       case "modelBasePrices":
-        return <ModelBasePricesPage onBack={() => setActiveRouteId("pricing")} />;
+        return <ModelBasePricesPage onBack={() => navigateTo("pricing")} />;
       default:
         return null;
     }
@@ -205,23 +237,32 @@ export function App() {
     initialKeyStationId,
   ]);
   const isCurrentTransientPage = activeTransitionPolicy.kind === "transient";
+  const previousTransitionPolicy = previousRouteId
+    ? getPageTransitionPolicy(previousRouteId)
+    : null;
+  const isReturningFromTransient =
+    activeTransitionPolicy.kind === "shell" && previousTransitionPolicy?.kind === "transient";
+  const pendingExitingTransientPage =
+    isReturningFromTransient && lastActiveTransientPageRef.current?.pageId === previousRouteId
+      ? lastActiveTransientPageRef.current
+      : null;
+  const renderedTransientPage =
+    activeTransientPage ?? pendingExitingTransientPage ?? exitingTransientPage;
+  const transientPageIsExiting = !activeTransientPage && renderedTransientPage !== null;
 
-  useEffect(() => {
-    const previousRouteId = previousRouteIdRef.current;
-    const previousPolicy = getPageTransitionPolicy(previousRouteId);
-    const previousTransientPage = lastActiveTransientPageRef.current;
-
-    if (previousRouteId !== activeRouteId && previousPolicy.kind === "transient") {
-      setExitingTransientPage(
-        previousTransientPage?.pageId === previousRouteId ? previousTransientPage : null,
+  useLayoutEffect(() => {
+    if (pendingExitingTransientPage) {
+      setExitingTransientPage((current) =>
+        current === pendingExitingTransientPage ? current : pendingExitingTransientPage,
       );
+      return;
     }
 
-    previousRouteIdRef.current = activeRouteId;
     if (activeTransientPage) {
+      setExitingTransientPage(null);
       lastActiveTransientPageRef.current = activeTransientPage;
     }
-  }, [activeRouteId, activeTransientPage]);
+  }, [activeTransientPage, pendingExitingTransientPage]);
 
   useEffect(() => {
     if (!exitingTransientPage) {
@@ -249,6 +290,12 @@ export function App() {
       window.clearTimeout(transientExitTimeoutRef.current);
       transientExitTimeoutRef.current = null;
     }
+    if (
+      exitingTransientPage &&
+      lastActiveTransientPageRef.current?.pageId === exitingTransientPage.pageId
+    ) {
+      lastActiveTransientPageRef.current = null;
+    }
     setExitingTransientPage(null);
   }
 
@@ -264,8 +311,11 @@ export function App() {
     : [...mountedRouteIds];
 
   return (
-    <AppShell activeRouteId={activeShellRouteId} onRouteChange={(routeId) => setActiveRouteId(routeId)}>
-      <div className="app-page-transition-stack">
+    <AppShell activeRouteId={activeShellRouteId} onRouteChange={navigateTo}>
+      <div
+        className="app-page-transition-stack"
+        data-page-transition-handoff={isReturningFromTransient ? "transient-exit" : "none"}
+      >
         {shellRouteIds.map((routeId) => {
           const active = activeRouteId === routeId && !isCurrentTransientPage;
           const inert = !active;
@@ -287,37 +337,28 @@ export function App() {
           );
         })}
 
-        {activeTransientPage && (
-          <PageActivityProvider active={isCurrentTransientPage}>
+        {renderedTransientPage && (
+          <PageActivityProvider
+            key={renderedTransientPage.pageId}
+            active={!transientPageIsExiting}
+          >
             <div
-              aria-hidden={!isCurrentTransientPage}
-              className="app-page-transition-layer app-page-transition-overlay"
-              data-page-transition-layer
-              data-page-transition-kind="transient"
-              data-page-transition-direction={activeTransitionPolicy.enterDirection}
-              data-page-transition-state="active"
-              inert={!isCurrentTransientPage ? "" : undefined}
-            >
-              {activeTransientPage.node}
-            </div>
-          </PageActivityProvider>
-        )}
-
-        {exitingTransientPage && (
-          <PageActivityProvider active={false}>
-            <div
-              aria-hidden
+              aria-hidden={transientPageIsExiting}
               className="app-page-transition-layer app-page-transition-overlay"
               data-page-transition-layer
               data-page-transition-kind="transient"
               data-page-transition-direction={
-                getPageTransitionPolicy(exitingTransientPage.pageId).exitDirection
+                transientPageIsExiting
+                  ? getPageTransitionPolicy(renderedTransientPage.pageId).exitDirection
+                  : activeTransitionPolicy.enterDirection
               }
-              data-page-transition-state="exiting"
-              inert=""
-              onAnimationEnd={handleTransientExitAnimationEnd}
+              data-page-transition-state={transientPageIsExiting ? "exiting" : "active"}
+              inert={transientPageIsExiting ? "" : undefined}
+              onAnimationEnd={
+                transientPageIsExiting ? handleTransientExitAnimationEnd : undefined
+              }
             >
-              {exitingTransientPage.node}
+              {renderedTransientPage.node}
             </div>
           </PageActivityProvider>
         )}

@@ -66,6 +66,9 @@ pub struct StationGroupOption {
     pub group_id_hash: Option<String>,
     pub group_name: String,
     pub rate_multiplier: Option<f64>,
+    pub inferred_group_category: Option<String>,
+    pub group_category_override: Option<String>,
+    pub effective_group_category: String,
     pub rate_source: Option<String>,
     pub selectable_for_remote_key: bool,
 }

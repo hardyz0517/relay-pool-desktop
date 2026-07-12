@@ -25,7 +25,12 @@ import { useToast } from "@/components/ui";
 
 type UpdaterContextValue = {
   state: UpdaterState;
-  checkNow: () => Promise<void>;
+  checkNow: (options?: UpdateCheckOptions) => Promise<void>;
+  installNow: () => Promise<void>;
+};
+
+type UpdateCheckOptions = {
+  notify?: boolean;
 };
 
 const UpdaterContext = createContext<UpdaterContextValue | null>(null);
@@ -36,8 +41,9 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const checkingRef = useRef(false);
 
-  const checkNow = useCallback(async () => {
+  const checkNow = useCallback(async (options?: UpdateCheckOptions) => {
     if (checkingRef.current) return;
+    const shouldNotify = options?.notify ?? true;
     checkingRef.current = true;
     dispatch({ type: "CHECK_STARTED" });
     try {
@@ -49,21 +55,21 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
           version: result.update.version,
           notes: result.update.notes,
         });
-        toast.info(`发现新版本 ${result.update.version}`);
-        setDialogOpen(true);
+        if (shouldNotify) toast.info(`发现新版本 ${result.update.version}`);
+        if (shouldNotify) setDialogOpen(true);
       } else {
         dispatch({
           type: "UP_TO_DATE",
           currentVersion: result.currentVersion,
           checkedAt: new Date().toISOString(),
         });
-        toast.success("已是最新");
+        if (shouldNotify) toast.success("已是最新");
         setDialogOpen(false);
       }
     } catch (error) {
       const message = normalizeUpdaterError(error);
       dispatch({ type: "FAILED", message });
-      toast.error("检查更新未完成", message);
+      if (shouldNotify) toast.error("检查更新未完成", message);
     } finally {
       checkingRef.current = false;
     }
@@ -73,7 +79,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
     void currentAppVersion()
       .then((version) => dispatch({ type: "CURRENT_VERSION", version }))
       .catch(() => undefined);
-    const timer = window.setTimeout(() => void checkNow(), 5_000);
+    const timer = window.setTimeout(() => void checkNow({ notify: false }), 5_000);
     return () => window.clearTimeout(timer);
   }, [checkNow]);
 
@@ -101,7 +107,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const value = useMemo(() => ({ state, checkNow }), [checkNow, state]);
+  const value = useMemo(() => ({ state, checkNow, installNow: install }), [checkNow, install, state]);
 
   return (
     <UpdaterContext.Provider value={value}>

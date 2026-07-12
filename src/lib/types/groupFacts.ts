@@ -1,3 +1,5 @@
+import type { StationGroupCategory } from "@/lib/groupCategories";
+
 export type BindingKind = "station_group" | "key_binding" | string;
 
 export type BindingStatus =
@@ -21,6 +23,8 @@ export type StationGroupBinding = {
   defaultRateMultiplier: number | null;
   userRateMultiplier: number | null;
   effectiveRateMultiplier: number | null;
+  inferredGroupCategory: StationGroupCategory | null;
+  groupCategoryOverride: StationGroupCategory | null;
   rateSource: string | null;
   confidence: number;
   lastSeenAt: string | null;
@@ -42,6 +46,7 @@ export type GroupRateRecord = {
   defaultRateMultiplier: number | null;
   userRateMultiplier: number | null;
   effectiveRateMultiplier: number | null;
+  inferredGroupCategory: StationGroupCategory | null;
   source: string;
   confidence: number;
   rawJsonRedacted: Record<string, unknown> | null;
@@ -61,6 +66,8 @@ export type UpsertStationGroupBindingInput = {
   defaultRateMultiplier: number | null;
   userRateMultiplier: number | null;
   effectiveRateMultiplier: number | null;
+  inferredGroupCategory: StationGroupCategory | null;
+  groupCategoryOverride: StationGroupCategory | null;
   rateSource: string | null;
   confidence: number;
   lastSeenAt: string | null;
@@ -73,6 +80,9 @@ export type StationGroupOption = {
   groupIdHash: string | null;
   groupName: string;
   rateMultiplier: number | null;
+  inferredGroupCategory: StationGroupCategory | null;
+  groupCategoryOverride: StationGroupCategory | null;
+  effectiveGroupCategory: StationGroupCategory;
   rateSource: string | null;
   selectableForRemoteKey: boolean;
 };

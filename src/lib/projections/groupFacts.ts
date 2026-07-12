@@ -1,4 +1,10 @@
 import type { GroupRateRecord, StationGroupBinding, StationGroupOption } from "@/lib/types/groupFacts";
+import {
+  effectiveGroupCategory,
+  inferGroupCategoryFromEvidence,
+  normalizeGroupCategory,
+  type StationGroupCategory,
+} from "@/lib/groupCategories";
 
 export type StationGroupCurrentFact = {
   identityKey: string;
@@ -12,6 +18,9 @@ export type StationGroupCurrentFact = {
   bindingStatus: string;
   available: boolean;
   rateMultiplier: number | null;
+  inferredGroupCategory: StationGroupCategory;
+  groupCategoryOverride: StationGroupCategory | null;
+  effectiveGroupCategory: StationGroupCategory;
   rateSource: string | null;
   rateEvidenceId: string | null;
   rateCheckedAt: string | null;
@@ -105,6 +114,9 @@ export function buildStationGroupOptionsFromCurrentFacts(
       groupIdHash: fact.groupIdHash,
       groupName: fact.groupName,
       rateMultiplier: fact.rateMultiplier,
+      inferredGroupCategory: fact.inferredGroupCategory,
+      groupCategoryOverride: fact.groupCategoryOverride,
+      effectiveGroupCategory: fact.effectiveGroupCategory,
       rateSource: fact.rateSource,
       selectableForRemoteKey: Boolean(fact.groupIdHash),
     }));
@@ -143,6 +155,12 @@ function factFromBinding(
       binding.defaultRateMultiplier,
       latestRate?.defaultRateMultiplier,
     ),
+    inferredGroupCategory: inferCurrentGroupCategory(binding, latestRate),
+    groupCategoryOverride: normalizeGroupCategory(binding.groupCategoryOverride),
+    effectiveGroupCategory: effectiveGroupCategory(
+      inferCurrentGroupCategory(binding, latestRate),
+      binding.groupCategoryOverride,
+    ),
     rateSource: latestRate?.source ?? binding.rateSource ?? null,
     rateEvidenceId: latestRate?.id ?? null,
     rateCheckedAt: latestRate?.checkedAt ?? binding.lastCheckedAt,
@@ -168,12 +186,29 @@ function factFromRate(rate: GroupRateRecord, identityKey: string): StationGroupC
       rate.effectiveRateMultiplier,
       rate.defaultRateMultiplier,
     ),
+    inferredGroupCategory: inferCurrentGroupCategory(null, rate),
+    groupCategoryOverride: null,
+    effectiveGroupCategory: effectiveGroupCategory(inferCurrentGroupCategory(null, rate), null),
     rateSource: rate.source,
     rateEvidenceId: rate.id,
     rateCheckedAt: rate.checkedAt,
     sourceBinding: null,
     sourceRate: rate,
   };
+}
+
+function inferCurrentGroupCategory(
+  binding: StationGroupBinding | null,
+  rate: GroupRateRecord | null,
+): StationGroupCategory {
+  return (
+    normalizeGroupCategory(binding?.inferredGroupCategory) ??
+    normalizeGroupCategory(rate?.inferredGroupCategory) ??
+    inferGroupCategoryFromEvidence({
+      groupName: binding?.groupName ?? rate?.groupName ?? "",
+      rawJsonRedacted: rate?.rawJsonRedacted ?? binding?.rawJsonRedacted ?? null,
+    })
+  );
 }
 
 function identityKeyForBinding(binding: StationGroupBinding) {

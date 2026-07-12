@@ -25,6 +25,7 @@ use crate::{
             url::{collector_base_urls, join_url},
         },
         database::AppDatabase,
+        group_categories::infer_group_category,
         outbound::{resolve_proxy_config, ProxyConfig},
     },
 };
@@ -105,6 +106,8 @@ pub fn parse_group_rate_facts(
         );
         let user_rate = group_id.as_deref().and_then(|id| rate_map.get(id).copied());
         let effective = user_rate.or(group.default_rate_multiplier);
+        let inferred_group_category =
+            infer_group_category(&group.group_name, group.raw_json_redacted.as_ref());
 
         facts.groups.push(CollectedGroupFact {
             station_id: station_id.to_string(),
@@ -112,6 +115,7 @@ pub fn parse_group_rate_facts(
             group_key_hash: group_key_hash.clone(),
             group_name: group.group_name.clone(),
             visibility: "available".to_string(),
+            inferred_group_category: Some(inferred_group_category.clone()),
             source: "sub2api_groups_available".to_string(),
             confidence: 0.9,
             raw_json_redacted: group.raw_json_redacted.clone(),
@@ -125,6 +129,7 @@ pub fn parse_group_rate_facts(
             default_rate_multiplier: group.default_rate_multiplier,
             user_rate_multiplier: user_rate,
             effective_rate_multiplier: effective,
+            inferred_group_category: Some(inferred_group_category),
             source: "sub2api_groups_rates".to_string(),
             confidence: if effective.is_some() { 0.9 } else { 0.6 },
             checked_at: None,
@@ -1315,6 +1320,10 @@ fn add_single_group_key_bindings(facts: &mut CollectorFacts, keys: &[StationKey]
             effective_rate_multiplier: station_rate
                 .as_ref()
                 .and_then(|rate| rate.effective_rate_multiplier),
+            inferred_group_category: station_rate
+                .as_ref()
+                .and_then(|rate| rate.inferred_group_category.clone())
+                .or(group.inferred_group_category.clone()),
             source: "single_group_low_confidence".to_string(),
             confidence: 0.5,
             checked_at: None,
@@ -1902,6 +1911,8 @@ mod tests {
                     rate_source: Some("sub2api_groups_rates".to_string()),
                     confidence: 0.95,
                     last_seen_at: Some("1000".to_string()),
+                    inferred_group_category: Some("gpt".to_string()),
+                    group_category_override: None,
                     raw_json_redacted: None,
                 },
             )
@@ -1982,6 +1993,8 @@ mod tests {
                     rate_source: Some("sub2api_groups_rates".to_string()),
                     confidence: 0.95,
                     last_seen_at: Some("1000".to_string()),
+                    inferred_group_category: Some("gpt".to_string()),
+                    group_category_override: None,
                     raw_json_redacted: None,
                 },
             )

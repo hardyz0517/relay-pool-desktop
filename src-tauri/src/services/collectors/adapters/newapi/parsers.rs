@@ -5,6 +5,7 @@ use serde_json::Value;
 use crate::services::collectors::facts::{
     CollectedBalanceFact, CollectedGroupFact, CollectedModelFact, CollectedRateFact, CollectorFacts,
 };
+use crate::services::group_categories::infer_group_category;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct NewApiEnvelopeError {
@@ -88,15 +89,18 @@ pub(super) fn parse_group_facts(station_id: &str, data: &Value) -> CollectorFact
         let group_key_hash =
             super::stable_group_key_hash(station_id, "newapi", Some(group_name), group_name);
         let rate = parse_optional_f64(value.get("ratio"));
+        let raw_json_redacted = crate::services::secrets::mask::redact_value(value);
+        let inferred_group_category = infer_group_category(group_name, Some(&raw_json_redacted));
         facts.groups.push(CollectedGroupFact {
             station_id: station_id.to_string(),
             group_id: Some(group_name.clone()),
             group_key_hash: group_key_hash.clone(),
             group_name: group_name.clone(),
             visibility: "available".to_string(),
+            inferred_group_category: Some(inferred_group_category.clone()),
             source: "newapi_user_groups".to_string(),
             confidence: 0.9,
-            raw_json_redacted: Some(crate::services::secrets::mask::redact_value(value)),
+            raw_json_redacted: Some(raw_json_redacted),
         });
         facts.rates.push(CollectedRateFact {
             station_id: station_id.to_string(),
@@ -107,6 +111,7 @@ pub(super) fn parse_group_facts(station_id: &str, data: &Value) -> CollectorFact
             default_rate_multiplier: rate,
             user_rate_multiplier: rate,
             effective_rate_multiplier: rate,
+            inferred_group_category: Some(inferred_group_category),
             source: "newapi_user_groups".to_string(),
             confidence: if rate.is_some() { 0.9 } else { 0.65 },
             checked_at: None,
