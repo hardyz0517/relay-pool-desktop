@@ -47,3 +47,10 @@ assert.ok(
   source.includes('label="端点 PING"'),
   "channel status card should show endpoint PING that is refreshed by monitor runs",
 );
+
+assert.ok(
+  source.includes("visibleRunsByMonitor") &&
+    source.includes("filterChannelMonitorRunsByWindow(runs, timeWindow)") &&
+    source.includes('timeWindow === "recent"'),
+  "channel status time-window tabs should filter monitor runs and reserve aggregate health fallback for recent mode",
+);

@@ -1434,11 +1434,15 @@ impl AppDatabase {
         list_channel_monitors_from_connection(&connection)
     }
 
-    pub fn list_channel_monitor_summaries(&self) -> Result<Vec<ChannelMonitorSummary>, String> {
+    pub fn list_channel_monitor_summaries(
+        &self,
+        run_since: Option<&str>,
+        run_limit: Option<usize>,
+    ) -> Result<Vec<ChannelMonitorSummary>, String> {
         let monitors = self.list_channel_monitors()?;
         Ok(
             crate::services::shared_capabilities::channel_monitor_summaries_from_database(
-                self, monitors,
+                self, monitors, run_since, run_limit,
             ),
         )
     }
@@ -1475,6 +1479,21 @@ impl AppDatabase {
     ) -> Result<Vec<ChannelMonitorRun>, String> {
         let connection = self.connection()?;
         list_channel_monitor_runs_from_connection(&connection, &monitor_id)
+    }
+
+    pub fn list_channel_monitor_runs_for_summary(
+        &self,
+        monitor_id: String,
+        run_since: Option<&str>,
+        run_limit: Option<usize>,
+    ) -> Result<Vec<ChannelMonitorRun>, String> {
+        let connection = self.connection()?;
+        list_channel_monitor_runs_for_summary_from_connection(
+            &connection,
+            &monitor_id,
+            run_since,
+            run_limit,
+        )
     }
 
     pub fn insert_channel_monitor_run(
@@ -1897,6 +1916,9 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_channel_monitor_runs_monitor_created
             ON channel_monitor_runs(monitor_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_monitor_runs_monitor_started
+            ON channel_monitor_runs(monitor_id, started_at DESC);
 
         CREATE INDEX IF NOT EXISTS idx_channel_monitor_runs_station_created
             ON channel_monitor_runs(station_id, station_key_id, created_at DESC);
@@ -2382,8 +2404,18 @@ fn migrate_p9_fact_schema(connection: &Connection) -> rusqlite::Result<()> {
     )?;
     add_column_if_missing(connection, "balance_snapshots", "today_consumption", "REAL")?;
     add_column_if_missing(connection, "balance_snapshots", "total_consumption", "REAL")?;
-    add_column_if_missing(connection, "balance_snapshots", "today_base_consumption", "REAL")?;
-    add_column_if_missing(connection, "balance_snapshots", "total_base_consumption", "REAL")?;
+    add_column_if_missing(
+        connection,
+        "balance_snapshots",
+        "today_base_consumption",
+        "REAL",
+    )?;
+    add_column_if_missing(
+        connection,
+        "balance_snapshots",
+        "total_base_consumption",
+        "REAL",
+    )?;
     add_column_if_missing(
         connection,
         "balance_snapshots",
@@ -5832,6 +5864,69 @@ fn list_channel_monitor_runs_from_connection(
     Ok(runs)
 }
 
+const DEFAULT_CHANNEL_MONITOR_SUMMARY_RUN_LIMIT: usize = 60;
+const MAX_CHANNEL_MONITOR_SUMMARY_RUN_LIMIT: usize = 10_080;
+
+fn normalize_channel_monitor_summary_run_limit(run_limit: Option<usize>) -> usize {
+    run_limit
+        .unwrap_or(DEFAULT_CHANNEL_MONITOR_SUMMARY_RUN_LIMIT)
+        .clamp(1, MAX_CHANNEL_MONITOR_SUMMARY_RUN_LIMIT)
+}
+
+fn list_channel_monitor_runs_for_summary_from_connection(
+    connection: &Connection,
+    monitor_id: &str,
+    run_since: Option<&str>,
+    run_limit: Option<usize>,
+) -> Result<Vec<ChannelMonitorRun>, String> {
+    channel_monitor_by_id(connection, monitor_id)?;
+    let limit = normalize_channel_monitor_summary_run_limit(run_limit) as i64;
+    if let Some(run_since) = run_since {
+        let run_since = parse_channel_monitor_run_time(run_since, "run_since")?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, monitor_id, template_id, station_id, station_key_id, status,
+                        started_at, finished_at, duration_ms, http_status, latency_ms,
+                        response_model, fallback_model, error_message, created_at
+                   FROM channel_monitor_runs
+                  WHERE monitor_id = ?1
+                    AND CAST(started_at AS INTEGER) >= ?2
+                  ORDER BY created_at DESC
+                  LIMIT ?3",
+            )
+            .map_err(|error| format!("读取通道监控运行记录失败: {error}"))?;
+
+        let runs = statement
+            .query_map(
+                params![monitor_id, run_since, limit],
+                row_to_channel_monitor_run,
+            )
+            .map_err(|error| format!("查询通道监控运行记录失败: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("解析通道监控运行记录失败: {error}"))?;
+        return Ok(runs);
+    }
+
+    let mut statement = connection
+        .prepare(
+            "SELECT id, monitor_id, template_id, station_id, station_key_id, status,
+                    started_at, finished_at, duration_ms, http_status, latency_ms,
+                    response_model, fallback_model, error_message, created_at
+               FROM channel_monitor_runs
+              WHERE monitor_id = ?1
+              ORDER BY created_at DESC
+              LIMIT ?2",
+        )
+        .map_err(|error| format!("读取通道监控运行记录失败: {error}"))?;
+
+    let runs = statement
+        .query_map(params![monitor_id, limit], row_to_channel_monitor_run)
+        .map_err(|error| format!("查询通道监控运行记录失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析通道监控运行记录失败: {error}"))?;
+    Ok(runs)
+}
+
 fn insert_channel_monitor_run_in_connection(
     connection: &Connection,
     input: CreateChannelMonitorRunInput,
@@ -7366,7 +7461,10 @@ fn list_key_pool_items_from_connection(
              LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
              LEFT JOIN station_key_health h ON h.station_key_id = k.id
              LEFT JOIN station_endpoint_health eh ON eh.station_id = s.id
-             ORDER BY k.priority ASC, k.created_at ASC",
+             ORDER BY COALESCE(k.routing_order, k.priority) ASC,
+                      k.priority ASC,
+                      k.created_at ASC,
+                      k.id ASC",
         )
         .map_err(|error| format!("读取 Key 池失败: {error}"))?;
 
@@ -16147,6 +16245,41 @@ mod tests {
                 ("key-third".to_string(), 2, 3),
             ]
         );
+    }
+
+    #[test]
+    fn key_pool_items_follow_global_routing_order_when_priorities_repeat() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let first_station = test_station(&database, "first-key-pool-route");
+        let second_station = test_station(&database, "second-key-pool-route");
+        let first_key = database
+            .list_station_keys(first_station.id)
+            .expect("first station keys")
+            .remove(0);
+        let second_key = database
+            .list_station_keys(second_station.id)
+            .expect("second station keys")
+            .remove(0);
+
+        assert_eq!(first_key.priority, 0);
+        assert_eq!(second_key.priority, 0);
+
+        database
+            .reorder_local_routing_keys(vec![second_key.id.clone(), first_key.id.clone()])
+            .expect("persist global routing order");
+
+        let items = database.list_key_pool_items().expect("key pool items");
+        let ids = items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>();
+        let priorities = items
+            .iter()
+            .map(|item| item.priority)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec![second_key.id.as_str(), first_key.id.as_str()]);
+        assert_eq!(priorities, vec![0, 0]);
     }
 
     #[test]

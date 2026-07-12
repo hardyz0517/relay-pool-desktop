@@ -12,7 +12,7 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Activity, Edit3, GripVertical, KeyRound, Loader2, Plus, Search, Trash2 } from "lucide-react";
+import { Activity, Bot, Edit3, GripVertical, KeyRound, Loader2, MessageCircle, Plus, RotateCw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, SelectControl, StatusBadge, SwitchControl, type StatusTone, useToast } from "@/components/ui";
@@ -29,7 +29,7 @@ import type { ChannelMonitor, ChannelMonitorRequestTemplate } from "@/lib/types/
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { Station } from "@/lib/types/stations";
-import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
+import type { KeyPoolItem, StationKeyConnectivityTestResult, StationKeyStatus } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
 import {
   buildStationGroupOptionsFromCurrentFactsForSelect,
@@ -71,6 +71,13 @@ const keyPoolGridClassName =
 
 const KEEP_GROUP_BINDING_VALUE = "__keep__";
 const CLEAR_GROUP_BINDING_VALUE = "__clear__";
+const DEFAULT_KEY_CONNECTIVITY_TEST_MODEL = "gpt-5.5";
+
+const defaultKeyConnectivityModelOptions = [
+  { value: "gpt-5.5", label: "GPT-5.5" },
+  { value: "gpt-5.4", label: "GPT-5.4" },
+  { value: "gpt-4.1", label: "GPT-4.1" },
+];
 
 export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const toast = useToast();
@@ -86,6 +93,10 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [creatingKey, setCreatingKey] = useState(false);
   const [editingItem, setEditingItem] = useState<KeyPoolItem | null>(null);
+  const [connectivityDialogItem, setConnectivityDialogItem] = useState<KeyPoolItem | null>(null);
+  const [connectivityCapabilities, setConnectivityCapabilities] = useState<StationKeyCapabilities | null>(null);
+  const [connectivityTestResult, setConnectivityTestResult] = useState<StationKeyConnectivityTestResult | null>(null);
+  const [connectivityTestError, setConnectivityTestError] = useState<string | null>(null);
   const [pendingDeleteItem, setPendingDeleteItem] = useState<KeyPoolItem | null>(null);
   const [editForm, setEditForm] = useState<KeyPoolEditForm>(emptyEditForm);
   const [groupOptionsForEdit, setGroupOptionsForEdit] = useState<StationGroupOption[]>([]);
@@ -279,15 +290,39 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     }
   }
 
-  async function handleTestConnectivity(item: KeyPoolItem) {
+  function handleTestConnectivity(item: KeyPoolItem) {
     if (!item.apiKeyPresent) {
       toast.error("无法测试连通性", "该密钥没有保存 API Key。");
       return;
     }
+    setConnectivityDialogItem(item);
+    setConnectivityCapabilities(null);
+    setConnectivityTestResult(null);
+    setConnectivityTestError(null);
+    void loadConnectivityCapabilities(item);
+  }
+
+  async function loadConnectivityCapabilities(item: KeyPoolItem) {
+    try {
+      const capabilities = await getStationKeyCapabilities(item.id);
+      setConnectivityCapabilities(capabilities);
+    } catch (requestError) {
+      toast.info("读取模型范围失败，先使用默认 GPT 测试模型", readError(requestError));
+    }
+  }
+
+  async function handleRunConnectivityTest(model: string) {
+    if (!connectivityDialogItem) {
+      return;
+    }
+    const item = connectivityDialogItem;
     setTestingKeyId(item.id);
     setError(null);
+    setConnectivityTestError(null);
+    setConnectivityTestResult(null);
     try {
-      const result = await testStationKeyConnectivity(item.id);
+      const result = await testStationKeyConnectivity(item.id, model);
+      setConnectivityTestResult(result);
       await refresh();
       if (result.ok) {
         toast.success("连通性正常", `${item.name} · ${result.durationMs}ms · ${result.model}`);
@@ -295,7 +330,9 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         toast.error("连通性异常", `${result.statusCode || "网络"} · ${result.message}`);
       }
     } catch (requestError) {
-      toast.error("测试连通性失败", readError(requestError));
+      const message = readError(requestError);
+      setConnectivityTestError(message);
+      toast.error("测试连通性失败", message);
     } finally {
       setTestingKeyId(null);
     }
@@ -320,7 +357,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
           stationUpstreamApiFormat: item.stationUpstreamApiFormat,
           capabilities,
         }) ?? template;
-        const connectivityResult = await testStationKeyConnectivity(item.id);
+        const connectivityResult = await testStationKeyConnectivity(item.id, DEFAULT_KEY_CONNECTIVITY_TEST_MODEL);
         const monitorModel = connectivityResult.ok ? connectivityResult.model : null;
         await createChannelMonitor(createStationKeyMonitorInput(item, preferredTemplate, capabilities, monitorModel));
         if (!connectivityResult.ok) {
@@ -614,6 +651,21 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         />
       )}
 
+      <KeyConnectivityTestDialog
+        item={connectivityDialogItem}
+        capabilities={connectivityCapabilities}
+        result={connectivityTestResult}
+        error={connectivityTestError}
+        testing={Boolean(connectivityDialogItem && testingKeyId === connectivityDialogItem.id)}
+        onClose={() => {
+          setConnectivityDialogItem(null);
+          setConnectivityCapabilities(null);
+          setConnectivityTestResult(null);
+          setConnectivityTestError(null);
+        }}
+        onTest={(model) => void handleRunConnectivityTest(model)}
+      />
+
       <ConfirmDialog
         open={pendingDeleteItem !== null}
         title="删除密钥"
@@ -624,6 +676,258 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       />
     </PageScaffold>
   );
+}
+
+function KeyConnectivityTestDialog({
+  item,
+  capabilities,
+  result,
+  error,
+  testing,
+  onClose,
+  onTest,
+}: {
+  item: KeyPoolItem | null;
+  capabilities: StationKeyCapabilities | null;
+  result: StationKeyConnectivityTestResult | null;
+  error: string | null;
+  testing: boolean;
+  onClose: () => void;
+  onTest: (model: string) => void;
+}) {
+  const [model, setModel] = useState(DEFAULT_KEY_CONNECTIVITY_TEST_MODEL);
+  const [displayedResponseText, setDisplayedResponseText] = useState("");
+  const open = item !== null;
+  const modelOptions = useMemo(
+    () => buildKeyConnectivityModelOptions(capabilities),
+    [capabilities],
+  );
+  const completed = Boolean(result || error);
+  const selectedModelLabel = modelOptions.find((option) => option.value === model)?.label ?? model;
+  const fullResponseText = result
+    ? result.ok
+      ? result.message || `Hi! What can I help you with? (${formatConnectivityDuration(result.durationMs)})`
+      : `${result.statusCode || "网络"} · ${result.message}`
+    : error ?? "";
+  const responseTypingComplete = completed && displayedResponseText === fullResponseText;
+
+  useEffect(() => {
+    if (open) {
+      setModel(modelOptions[0]?.value ?? DEFAULT_KEY_CONNECTIVITY_TEST_MODEL);
+      setDisplayedResponseText("");
+    }
+  }, [modelOptions, open, item?.id]);
+
+  useEffect(() => {
+    if (!fullResponseText) {
+      setDisplayedResponseText("");
+      return;
+    }
+
+    setDisplayedResponseText("");
+    let index = 0;
+    const interval = window.setInterval(() => {
+      index += 1;
+      setDisplayedResponseText(fullResponseText.slice(0, index));
+      if (index >= fullResponseText.length) {
+        window.clearInterval(interval);
+      }
+    }, 28);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [fullResponseText]);
+
+  return (
+    <Dialog
+      open={open}
+      title="测试密钥连接"
+      className="max-w-[460px] rounded-[14px]"
+      onClose={onClose}
+      footer={
+        <div className="flex items-center justify-end gap-3">
+          <Button variant="ghost" className="bg-slate-100 text-slate-700 hover:bg-slate-200" onClick={onClose}>
+            关闭
+          </Button>
+          <Button
+            className={cn(
+              "min-w-[74px] bg-emerald-500 hover:bg-emerald-600",
+              testing && "bg-teal-500 hover:bg-teal-500",
+            )}
+            disabled={!item || testing}
+            onClick={() => onTest(model)}
+          >
+            {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" /> : <RotateCw className="h-3.5 w-3.5" />}
+            {testing ? "测试中..." : completed ? "重试" : "测试模型"}
+          </Button>
+        </div>
+      }
+    >
+      <div data-testid="key-connectivity-test-dialog" className="space-y-4 px-5 py-4">
+        <div className="flex items-center justify-between gap-3 rounded-[10px] border border-slate-200 bg-slate-50/80 p-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-teal-500 text-white shadow-[0_1px_2px_rgba(15,118,110,0.2)]">
+              <Activity className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="truncate text-[13px] font-semibold text-slate-900">{item?.name ?? "密钥"}</div>
+              <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500">
+                <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-500">APIKEY</span>
+                <span>密钥</span>
+              </div>
+            </div>
+          </div>
+          <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+            {item?.enabled ? "active" : "inactive"}
+          </span>
+        </div>
+
+        <Field label="选择测试模型">
+          <SelectControl
+            value={model}
+            options={modelOptions}
+            ariaLabel="选择测试模型"
+            className="h-9 w-full rounded-[10px] border-slate-200 bg-white text-[13px]"
+            menuClassName="text-[13px]"
+            disabled={testing}
+            onChange={setModel}
+          />
+        </Field>
+
+        <div className="rounded-[10px] bg-slate-950 p-4 font-mono text-[12px] leading-5 text-slate-300 shadow-inner">
+          {buildConnectivityConsoleLines({
+            item,
+            model,
+            selectedModelLabel,
+            testing,
+            result,
+            error,
+            displayedResponseText,
+            responseTypingComplete,
+          }).map((line, index) => (
+            <div key={`${line.text}-${index}`} className={line.className}>
+              {testing && index === 0 ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <Loader2
+                    data-testid="key-connectivity-console-spinner"
+                    className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
+                  />
+                  {line.text}
+                </span>
+              ) : (
+                line.text
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-between text-[11px] text-slate-500">
+          <span className="inline-flex items-center gap-1.5">
+            <Bot className="h-3.5 w-3.5" />
+            测试模型
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <MessageCircle className="h-3.5 w-3.5" />
+            提示词："hi"
+          </span>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+function buildConnectivityConsoleLines({
+  item,
+  model,
+  selectedModelLabel,
+  testing,
+  result,
+  error,
+  displayedResponseText,
+  responseTypingComplete,
+}: {
+  item: KeyPoolItem | null;
+  model: string;
+  selectedModelLabel: string;
+  testing: boolean;
+  result: StationKeyConnectivityTestResult | null;
+  error: string | null;
+  displayedResponseText: string;
+  responseTypingComplete: boolean;
+}) {
+  const lines = [
+    { text: testing ? "连接 API 中..." : `开始测试密钥：${item?.name ?? "密钥"}`, className: "text-sky-300" },
+    { text: `使用模型：${selectedModelLabel}`, className: "font-semibold text-cyan-300" },
+    { text: '发送测试消息："hi"', className: "text-slate-300" },
+    { text: "响应：", className: "font-semibold text-yellow-300" },
+  ];
+
+  if (testing) {
+    return lines;
+  }
+  if (result) {
+    return [
+      ...lines,
+      {
+        text: displayedResponseText,
+        className: result.ok ? "font-semibold text-emerald-300" : "font-semibold text-rose-300",
+      },
+      ...(responseTypingComplete
+        ? [
+            {
+              text: result.ok ? "测试完成！" : "测试未通过。",
+              className: result.ok
+                ? "mt-2 border-t border-slate-700 pt-2 text-emerald-300"
+                : "mt-2 border-t border-slate-700 pt-2 text-rose-300",
+            },
+          ]
+        : []),
+    ];
+  }
+  if (error) {
+    return [
+      ...lines,
+      { text: displayedResponseText, className: "font-semibold text-rose-300" },
+      ...(responseTypingComplete
+        ? [{ text: "测试失败。", className: "mt-2 border-t border-slate-700 pt-2 text-rose-300" }]
+        : []),
+    ];
+  }
+  return [...lines, { text: `待测试模型 ${model}`, className: "text-slate-400" }];
+}
+
+function formatConnectivityDuration(durationMs: number) {
+  return durationMs > 0 ? `${durationMs}ms` : "预览模式";
+}
+
+function buildKeyConnectivityModelOptions(capabilities: StationKeyCapabilities | null) {
+  const scopedModels =
+    capabilities?.modelAllowlist.length
+      ? capabilities.modelAllowlist
+      : capabilities?.preferredModels.length
+        ? capabilities.preferredModels
+        : [];
+  const sourceModels = scopedModels.length > 0
+    ? scopedModels
+    : defaultKeyConnectivityModelOptions.map((option) => option.value);
+  const seen = new Set<string>();
+  return sourceModels.flatMap((model) => {
+    const trimmed = model.trim();
+    if (!trimmed) {
+      return [];
+    }
+    const normalized = trimmed.toLowerCase();
+    if (seen.has(normalized)) {
+      return [];
+    }
+    seen.add(normalized);
+    return [{ value: trimmed, label: formatConnectivityModelLabel(trimmed) }];
+  });
+}
+
+function formatConnectivityModelLabel(model: string) {
+  return defaultKeyConnectivityModelOptions.find((option) => option.value === model)?.label ?? model;
 }
 
 function SortableKeyRow({

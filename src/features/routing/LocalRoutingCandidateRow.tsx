@@ -57,6 +57,7 @@ export function LocalRoutingCandidateRow({
   const isSortable = Boolean(dragAttributes || dragListeners);
   const pricingFact = candidate.facts.find((fact) => fact.kind === "pricing");
   const balanceFact = candidate.facts.find((fact) => fact.kind === "balance");
+  const isCoolingDown = candidate.healthState === "cooldown";
   const multiplierLabel =
     candidate.effectiveMultiplier == null
       ? (candidate.schedulerRejectReason ?? "无可信倍率")
@@ -103,7 +104,7 @@ export function LocalRoutingCandidateRow({
         { label: "倍率", value: multiplierLabel, tone: candidate.effectiveMultiplier == null ? "warning" : "good" },
         { label: "来源", value: multiplierSource ?? pricingFact?.value ?? pricingFact?.label ?? "-", tone: multiplierSource ? "neutral" : "warning" },
         { label: "余额", value: balanceFact?.value ?? balanceFact?.label ?? "-", tone: balanceFact?.severity === "warning" || balanceFact?.severity === "error" ? "warning" : "neutral" },
-        { label: "冷却", value: candidate.cooldownUntil ? "进行中" : "无", tone: candidate.cooldownUntil ? "warning" : "neutral" },
+        { label: "冷却", value: isCoolingDown ? "进行中" : "无", tone: isCoolingDown ? "warning" : "neutral" },
       ]}
     />
   );

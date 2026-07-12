@@ -341,15 +341,15 @@ export function reorderKeyPool(keyIds: string[]) {
   }));
 }
 
-export function testStationKeyConnectivity(stationKeyId: string) {
-  return invoke<StationKeyConnectivityTestResult>("test_station_key_connectivity", { stationKeyId }).catch((error) => {
+export function testStationKeyConnectivity(stationKeyId: string, model: string) {
+  return invoke<StationKeyConnectivityTestResult>("test_station_key_connectivity", { stationKeyId, model }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       return {
         stationKeyId,
         ok: true,
         statusCode: 200,
         durationMs: 0,
-        model: "mock",
+        model,
         message: "浏览器预览模式：跳过真实连通性测试",
       };
     }

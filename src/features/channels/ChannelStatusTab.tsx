@@ -34,13 +34,14 @@ import {
   buildMonitorRecentOutcomes,
   buildRecentOutcomes,
   enabledStationKeyMonitorsByKey,
+  filterChannelItemsByWindow,
+  filterChannelMonitorRunsByWindow,
   monitorRunToStationKeyStatus,
   orderChannelsBySavedOrder,
   resolveChannelLatencyMetrics,
+  type ChannelWindow,
   type RecentOutcome,
 } from "./channelStatusViewModel";
-
-type ChannelWindow = "recent" | "24h" | "7d";
 
 type ChannelHealth = {
   id: string;
@@ -107,10 +108,23 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
     }
   }, [refreshToken]);
 
-  const visibleLogs = useMemo(() => filterLogsByWindow(logs, timeWindow), [logs, timeWindow]);
+  const visibleLogs = useMemo(() => filterChannelItemsByWindow(logs, timeWindow), [logs, timeWindow]);
+  const visibleRunsByMonitor = useMemo(
+    () =>
+      new Map(
+        [...runsByMonitor.entries()].map(
+          ([monitorId, runs]) => [monitorId, filterChannelMonitorRunsByWindow(runs, timeWindow)] as const,
+        ),
+      ),
+    [runsByMonitor, timeWindow],
+  );
   const channels = useMemo(
-    () => orderChannelsBySavedOrder(buildChannels(keys, visibleLogs, health, monitors, runsByMonitor), channelOrder),
-    [channelOrder, health, keys, monitors, runsByMonitor, visibleLogs],
+    () =>
+      orderChannelsBySavedOrder(
+        buildChannels(keys, visibleLogs, health, monitors, visibleRunsByMonitor, timeWindow === "recent"),
+        channelOrder,
+      ),
+    [channelOrder, health, keys, monitors, timeWindow, visibleLogs, visibleRunsByMonitor],
   );
   const channelIds = useMemo(() => channels.map((channel) => channel.id), [channels]);
   const sensors = useSensors(
@@ -359,21 +373,13 @@ function formatAvailability(value: number | null) {
   return value === null ? "--" : `${value.toFixed(2)}%`;
 }
 
-function filterLogsByWindow(logs: RequestLog[], timeWindow: ChannelWindow) {
-  if (timeWindow === "recent") {
-    return logs;
-  }
-  const windowMs = timeWindow === "24h" ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
-  const cutoff = Date.now() - windowMs;
-  return logs.filter((log) => toTime(log.startedAt) >= cutoff);
-}
-
 function buildChannels(
   keys: KeyPoolItem[],
   logs: RequestLog[],
   health: StationKeyHealth[],
   monitors: ChannelMonitor[],
   runsByMonitor: Map<string, ChannelMonitorRun[]>,
+  useAggregateFallback: boolean,
 ): ChannelHealth[] {
   const healthByKey = new Map(health.map((item) => [item.stationKeyId, item] as const));
   const monitorByKey = enabledStationKeyMonitorsByKey(monitors);
@@ -383,24 +389,25 @@ function buildChannels(
       return [];
     }
     const keyHealth = healthByKey.get(key.id);
+    const aggregateHealth = useAggregateFallback ? keyHealth : null;
     const monitorRuns = sortRunsAscending(runsByMonitor.get(monitor.id) ?? []);
     const latestRun = monitorRuns.length > 0 ? monitorRuns[monitorRuns.length - 1] : null;
     const keyLogs = logs
       .filter((log) => log.stationKeyId === key.id)
       .sort((a, b) => toTime(a.startedAt) - toTime(b.startedAt));
-    const totalHealthRequests = (keyHealth?.successCount ?? 0) + (keyHealth?.failureCount ?? 0);
+    const totalHealthRequests = (aggregateHealth?.successCount ?? 0) + (aggregateHealth?.failureCount ?? 0);
     const monitorAvailabilityPercent = availabilityFromMonitorRuns(monitorRuns);
     const availabilityPercent =
       monitorAvailabilityPercent ??
       (totalHealthRequests === 0
-        ? key.successRate === null
+        ? !useAggregateFallback || key.successRate === null
           ? null
           : key.successRate * 100
-        : ((keyHealth?.successCount ?? 0) / totalHealthRequests) * 100);
+        : ((aggregateHealth?.successCount ?? 0) / totalHealthRequests) * 100);
     const recentLogs = keyLogs.slice(-60);
     const requestLatencyMs = averageDurationMs(recentLogs);
     const monitorLatencyMs = latestRun?.latencyMs ?? latestRun?.durationMs ?? null;
-    const healthLatencyMs = monitorLatencyMs ?? keyHealth?.avgLatencyMs ?? key.avgLatencyMs;
+    const healthLatencyMs = monitorLatencyMs ?? aggregateHealth?.avgLatencyMs ?? (useAggregateFallback ? key.avgLatencyMs : null);
     const { conversationLatencyMs, endpointPingMs } = resolveChannelLatencyMetrics({
       requestLatencyMs: monitorLatencyMs ?? requestLatencyMs,
       healthLatencyMs,
@@ -408,11 +415,11 @@ function buildChannels(
     });
     const recentOutcomes = monitorRuns.length > 0
       ? buildMonitorRecentOutcomes(monitorRuns)
-      : buildRecentOutcomes(recentLogs, keyHealth);
+      : buildRecentOutcomes(recentLogs, aggregateHealth);
     const lastError = latestRun
       ? latestRun.errorMessage
-      : keyHealth?.lastErrorSummary ??
-        key.lastErrorSummary ??
+      : aggregateHealth?.lastErrorSummary ??
+        (useAggregateFallback ? key.lastErrorSummary : null) ??
         [...keyLogs].reverse().find((log) => log.errorMessage)?.errorMessage ??
         null;
     const monitorCounts = countMonitorRuns(monitorRuns);
@@ -429,12 +436,12 @@ function buildChannels(
       latencyMs: conversationLatencyMs,
       endpointPingMs,
       availabilityPercent,
-      lastCheckedAt: latestRun?.finishedAt ?? latestRun?.startedAt ?? keyHealth?.updatedAt ?? key.lastCheckedAt,
-      lastUsedAt: latestRun?.status === "success" ? latestRun.finishedAt ?? latestRun.startedAt : keyHealth?.lastSuccessAt ?? key.lastUsedAt,
+      lastCheckedAt: latestRun?.finishedAt ?? latestRun?.startedAt ?? aggregateHealth?.updatedAt ?? (useAggregateFallback ? key.lastCheckedAt : null),
+      lastUsedAt: latestRun?.status === "success" ? latestRun.finishedAt ?? latestRun.startedAt : aggregateHealth?.lastSuccessAt ?? (useAggregateFallback ? key.lastUsedAt : null),
       lastError,
-      successCount: monitorRuns.length > 0 ? monitorCounts.successCount : keyHealth?.successCount ?? 0,
-      failureCount: monitorRuns.length > 0 ? monitorCounts.failureCount : keyHealth?.failureCount ?? 0,
-      consecutiveFailures: monitorRuns.length > 0 ? monitorCounts.consecutiveFailures : keyHealth?.consecutiveFailures ?? key.consecutiveFailures,
+      successCount: monitorRuns.length > 0 ? monitorCounts.successCount : aggregateHealth?.successCount ?? 0,
+      failureCount: monitorRuns.length > 0 ? monitorCounts.failureCount : aggregateHealth?.failureCount ?? 0,
+      consecutiveFailures: monitorRuns.length > 0 ? monitorCounts.consecutiveFailures : aggregateHealth?.consecutiveFailures ?? (useAggregateFallback ? key.consecutiveFailures : 0),
       cooldownUntil: keyHealth?.cooldownUntil ?? key.cooldownUntil,
       recentOutcomes,
     }];

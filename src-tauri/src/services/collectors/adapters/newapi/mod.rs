@@ -772,12 +772,8 @@ fn collect_usage_stats(
             .or_else(|| total_stat.as_ref().and_then(|stat| stat.request_count)),
         today_consumption: today_stat.as_ref().and_then(|stat| stat.consumption),
         total_consumption: total_stat.as_ref().and_then(|stat| stat.consumption),
-        today_base_consumption: today_stat
-            .as_ref()
-            .and_then(|stat| stat.base_consumption),
-        total_base_consumption: total_stat
-            .as_ref()
-            .and_then(|stat| stat.base_consumption),
+        today_base_consumption: today_stat.as_ref().and_then(|stat| stat.base_consumption),
+        total_base_consumption: total_stat.as_ref().and_then(|stat| stat.base_consumption),
         today_token_count: today_stat
             .as_ref()
             .and_then(|stat| stat.token_count)

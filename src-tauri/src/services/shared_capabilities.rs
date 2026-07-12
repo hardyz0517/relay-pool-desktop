@@ -177,13 +177,19 @@ pub fn station_group_options_from_facts(
 pub fn channel_monitor_summaries_from_database(
     database: &AppDatabase,
     monitors: Vec<ChannelMonitor>,
+    run_since: Option<&str>,
+    run_limit: Option<usize>,
 ) -> Vec<ChannelMonitorSummary> {
     monitors
         .into_iter()
-        .map(
-            |monitor| match database.list_channel_monitor_runs(monitor.id.clone()) {
+        .map(|monitor| {
+            match database.list_channel_monitor_runs_for_summary(
+                monitor.id.clone(),
+                run_since,
+                run_limit,
+            ) {
                 Ok(runs) => {
-                    let recent_runs = runs.into_iter().take(60).collect::<Vec<_>>();
+                    let recent_runs = runs;
                     let latest_run = recent_runs.first().cloned();
                     ChannelMonitorSummary {
                         monitor,
@@ -198,8 +204,8 @@ pub fn channel_monitor_summaries_from_database(
                     runs_load_status: ChannelMonitorRunsLoadStatus::Failed,
                     latest_run: None,
                 },
-            },
-        )
+            }
+        })
         .collect()
 }
 

@@ -43,18 +43,47 @@ try {
   const validDraft = createLocalRoutingSettingsDraft(baseSettings);
   const validResult = parseLocalRoutingSettingsDraft(validDraft);
   assert.equal(validResult.ok, true);
+  assert.equal(validDraft.maxRateLimitEnabled, true);
+  assert.equal(validDraft.lowBalanceThresholdCny, "15");
+  assert.equal(validDraft.allowDepletedFallback, false);
   assert.equal(validResult.value.maxRateMultiplier, 2);
+  assert.equal(validResult.value.lowBalanceThresholdCny, 15);
+  assert.equal(validResult.value.allowDepletedFallback, false);
   assert.deepEqual(
     validResult.value.schedulerAdvancedSettings,
     DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   );
 
-  const noCeilingResult = parseLocalRoutingSettingsDraft({
+  const enabledLimitWithoutCeilingResult = parseLocalRoutingSettingsDraft({
     ...validDraft,
     maxRateMultiplier: "",
   });
-  assert.equal(noCeilingResult.ok, true);
-  assert.equal(noCeilingResult.value.maxRateMultiplier, null);
+  assert.equal(enabledLimitWithoutCeilingResult.ok, false);
+  assert.match(enabledLimitWithoutCeilingResult.errors.maxRateMultiplier, /大于或等于 0/);
+
+  const disabledLimitResult = parseLocalRoutingSettingsDraft({
+    ...validDraft,
+    maxRateLimitEnabled: false,
+    maxRateMultiplier: "",
+  });
+  assert.equal(disabledLimitResult.ok, true);
+  assert.equal(disabledLimitResult.value.maxRateMultiplier, null);
+
+  for (const lowBalanceThresholdCny of ["", "-0.01", "not-a-number"]) {
+    const result = parseLocalRoutingSettingsDraft({
+      ...validDraft,
+      lowBalanceThresholdCny,
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.errors.lowBalanceThresholdCny, /大于或等于 0/);
+  }
+
+  const depletedFallbackResult = parseLocalRoutingSettingsDraft({
+    ...validDraft,
+    allowDepletedFallback: true,
+  });
+  assert.equal(depletedFallbackResult.ok, true);
+  assert.equal(depletedFallbackResult.value.allowDepletedFallback, true);
 
   const specificFilter = { group_binding_id: "binding-1" };
   const specificDraft = createLocalRoutingSettingsDraft({

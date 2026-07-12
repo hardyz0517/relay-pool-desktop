@@ -35,8 +35,14 @@ assert(
 );
 
 assert(
-  dashboardSource.includes("`${key.priority + 1}`"),
-  "dashboard route queue should display the same 1-based order users see in routing views",
+  /keyPoolItems\.slice\(0,\s*6\)\.map\(\(\s*key\s*,\s*index\s*\)\s*=>/.test(dashboardSource),
+  "dashboard route queue should derive the visible order from the rendered queue index",
+);
+
+assert(
+  dashboardSource.includes('label: "顺位", value: `${index + 1}`') &&
+    !dashboardSource.includes("`${key.priority + 1}`"),
+  "dashboard route queue should not expose duplicate per-station priority values as global order",
 );
 
 assert(

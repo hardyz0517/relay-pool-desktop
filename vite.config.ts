@@ -14,7 +14,12 @@ export default defineConfig({
     port: 1430,
     strictPort: true,
     watch: {
-      ignored: ["**/src-tauri/target/**"],
+      ignored: [
+        "**/src-tauri/target/**",
+        "**/.worktrees/**",
+        "**/dist/**",
+        "**/.pnpm-store/**",
+      ],
     },
   },
 });

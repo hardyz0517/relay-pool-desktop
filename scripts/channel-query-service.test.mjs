@@ -33,8 +33,22 @@ assert.ok(
 assert.ok(
   querySource.includes("export async function loadChannelStatusWorkspace()") &&
     querySource.includes("listRequestLogs()") &&
-    querySource.includes("listStationKeyHealth()"),
-  "channel query service should orchestrate status raw fact reads",
+    querySource.includes("listStationKeyHealth()") &&
+    querySource.includes("const runSince = String(Date.now() - CHANNEL_STATUS_MONITOR_LOOKBACK_MS)") &&
+    querySource.includes("listChannelMonitorSummaries({ runSince, runLimit: CHANNEL_STATUS_MONITOR_RUN_LIMIT })"),
+  "channel query service should load enough monitor runs for the channel status time windows",
+);
+
+const monitoringWorkspaceSource = querySource.slice(
+  querySource.indexOf("export async function loadChannelMonitoringWorkspace()"),
+  querySource.indexOf("export async function loadChannelStatusWorkspace()"),
+);
+assert.ok(
+  monitoringSource.includes("const workspace = await loadChannelMonitoringWorkspace()") &&
+    monitoringWorkspaceSource.includes("listChannelMonitorSummaries()") &&
+    !monitoringWorkspaceSource.includes("runLimit") &&
+    !monitoringWorkspaceSource.includes("runSince"),
+  "channel monitoring tab should keep the default lightweight recent monitor summaries",
 );
 
 assert.ok(

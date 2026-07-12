@@ -580,7 +580,7 @@ export function DashboardPage() {
               </p>
             </div>
           ) : (
-            keyPoolItems.slice(0, 6).map((key) => (
+            keyPoolItems.slice(0, 6).map((key, index) => (
               <ObjectRow
                 key={key.id}
                 icon={<KeyRound className="h-4 w-4" />}
@@ -592,7 +592,7 @@ export function DashboardPage() {
                   </StatusBadge>
                 }
                 metrics={[
-                  { label: "顺位", value: `${key.priority + 1}` },
+                  { label: "顺位", value: `${index + 1}` },
                   {
                     label: "成功率",
                     value: key.successRate === null ? "-" : `${Math.round(key.successRate * 100)}%`,

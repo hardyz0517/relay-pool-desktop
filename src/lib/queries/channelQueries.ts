@@ -9,6 +9,9 @@ import type { StationKeyHealth } from "@/lib/types/routing";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
 
+export const CHANNEL_STATUS_MONITOR_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+export const CHANNEL_STATUS_MONITOR_RUN_LIMIT = 7 * 24 * 60;
+
 export type ChannelMonitoringWorkspace = {
   monitorSummaries: ChannelMonitorSummary[];
   stations: Station[];
@@ -40,11 +43,12 @@ export async function loadChannelMonitoringWorkspace(): Promise<ChannelMonitorin
 }
 
 export async function loadChannelStatusWorkspace(): Promise<ChannelStatusWorkspace> {
+  const runSince = String(Date.now() - CHANNEL_STATUS_MONITOR_LOOKBACK_MS);
   const [keyPoolItems, requestLogs, stationKeyHealth, monitorSummaries] = await Promise.all([
     listKeyPoolItems(),
     listRequestLogs(),
     listStationKeyHealth(),
-    listChannelMonitorSummaries(),
+    listChannelMonitorSummaries({ runSince, runLimit: CHANNEL_STATUS_MONITOR_RUN_LIMIT }),
   ]);
 
   return {

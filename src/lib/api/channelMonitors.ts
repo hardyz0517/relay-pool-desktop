@@ -14,6 +14,11 @@ let memoryMonitors: ChannelMonitor[] = [];
 let memoryTemplates: ChannelMonitorRequestTemplate[] | null = null;
 const memoryRuns = new Map<string, ChannelMonitorRun[]>();
 
+export type ChannelMonitorSummaryOptions = {
+  runLimit?: number;
+  runSince?: string;
+};
+
 export function listChannelMonitors() {
   return invoke<ChannelMonitor[]>("list_channel_monitors").catch((error) => {
     if (isInvokeUnavailable(error)) {
@@ -23,14 +28,19 @@ export function listChannelMonitors() {
   });
 }
 
-export function listChannelMonitorSummaries() {
-  return invoke<ChannelMonitorSummary[]>("list_channel_monitor_summaries").catch((error) => {
+export function listChannelMonitorSummaries(options: ChannelMonitorSummaryOptions = {}) {
+  return invoke<ChannelMonitorSummary[]>("list_channel_monitor_summaries", {
+    runLimit: options.runLimit ?? null,
+    runSince: options.runSince ?? null,
+  }).catch((error) => {
     if (isInvokeUnavailable(error)) {
+      const runSince = options.runSince ? toTime(options.runSince) : null;
       return memoryMonitors.map((monitor) => {
         const recentRuns = (memoryRuns.get(monitor.id) ?? [])
           .map(copyRun)
+          .filter((run) => runSince === null || toTime(run.startedAt) >= runSince)
           .sort((left, right) => toTime(right.startedAt) - toTime(left.startedAt))
-          .slice(0, 60);
+          .slice(0, options.runLimit ?? 60);
         return {
           monitor: copyMonitor(monitor),
           recentRuns,

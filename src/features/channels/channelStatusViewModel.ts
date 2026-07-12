@@ -4,6 +4,8 @@ import type { ChannelMonitor, ChannelMonitorRun } from "@/lib/types/channelMonit
 import type { StationKeyStatus } from "@/lib/types/stationKeys";
 import { toTimestampMillis } from "@/lib/time";
 
+export type ChannelWindow = "recent" | "24h" | "7d";
+
 export type RecentOutcome = "success" | "warning" | "failed" | "unknown";
 
 export type ChannelAvailabilityState = {
@@ -32,6 +34,12 @@ type StationKeyMonitorSummary = Pick<
   "id" | "targetType" | "stationKeyId" | "enabled" | "updatedAt"
 >;
 type MonitorRunSummary = Pick<ChannelMonitorRun, "status" | "startedAt">;
+type WindowedItem = { startedAt: string };
+
+const CHANNEL_WINDOW_MS: Record<Exclude<ChannelWindow, "recent">, number> = {
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
+};
 
 export function enabledStationKeyMonitorsByKey(monitors: StationKeyMonitorSummary[]) {
   const monitorByKey = new Map<string, StationKeyMonitorSummary>();
@@ -69,6 +77,26 @@ export function buildMonitorRecentOutcomes(runs: MonitorRunSummary[]) {
       .slice(-60)
       .map(monitorRunToOutcome),
   );
+}
+
+export function filterChannelItemsByWindow<TItem extends WindowedItem>(
+  items: TItem[],
+  timeWindow: ChannelWindow,
+  now = Date.now(),
+) {
+  if (timeWindow === "recent") {
+    return items;
+  }
+  const cutoff = now - CHANNEL_WINDOW_MS[timeWindow];
+  return items.filter((item) => toTime(item.startedAt) >= cutoff);
+}
+
+export function filterChannelMonitorRunsByWindow<TItem extends MonitorRunSummary>(
+  runs: TItem[],
+  timeWindow: ChannelWindow,
+  now = Date.now(),
+) {
+  return filterChannelItemsByWindow(runs, timeWindow, now);
 }
 
 export function availabilityToneClassName(channel: ChannelAvailabilityState) {

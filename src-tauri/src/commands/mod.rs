@@ -548,8 +548,10 @@ pub fn list_channel_monitors(
 #[tauri::command]
 pub fn list_channel_monitor_summaries(
     database: State<'_, AppDatabase>,
+    run_since: Option<String>,
+    run_limit: Option<usize>,
 ) -> Result<Vec<ChannelMonitorSummary>, String> {
-    database.list_channel_monitor_summaries()
+    database.list_channel_monitor_summaries(run_since.as_deref(), run_limit)
 }
 
 #[tauri::command]
@@ -737,11 +739,12 @@ pub async fn test_station_key_connectivity(
     database: State<'_, AppDatabase>,
     secrets: State<'_, SecretManager>,
     station_key_id: String,
+    model: String,
 ) -> Result<StationKeyConnectivityTestResult, String> {
     let database = database.inner().clone();
     let data_key = *secrets.data_key();
     tauri::async_runtime::spawn_blocking(move || {
-        test_station_key_connectivity_blocking(&database, &data_key, &station_key_id)
+        test_station_key_connectivity_blocking(&database, &data_key, &station_key_id, &model)
     })
     .await
     .map_err(|error| format!("测试密钥连通性任务失败: {error}"))?
@@ -1495,6 +1498,7 @@ fn test_station_key_connectivity_blocking(
     database: &AppDatabase,
     data_key: &[u8; 32],
     station_key_id: &str,
+    model: &str,
 ) -> Result<StationKeyConnectivityTestResult, String> {
     let key = database
         .list_key_pool_items()?
@@ -1522,8 +1526,12 @@ fn test_station_key_connectivity_blocking(
     let discovered_models =
         discover_station_key_connectivity_models(&key.station_base_url, &api_key)
             .unwrap_or_default();
-    let candidates =
-        station_key_connectivity_model_candidates(capabilities.as_ref(), None, &discovered_models);
+    let requested_model = model.trim().to_string();
+    let candidates = station_key_connectivity_model_candidates(
+        capabilities.as_ref(),
+        Some(requested_model.as_str()),
+        &discovered_models,
+    );
     let (model, result) = run_station_key_connectivity_model_attempts(&candidates, |candidate| {
         run_station_key_connectivity_single_model_probe(
             &upstream_api_format,
@@ -1574,19 +1582,19 @@ fn build_station_key_connectivity_probe_body(
 ) -> Value {
     match kind {
         StationKeyConnectivityProbeKind::Responses => json!({
-            "model": model,
-            "input": "ping",
+        "model": model,
+            "input": "hi",
             "store": false,
-            "max_output_tokens": 1,
+            "max_output_tokens": 32,
         }),
         StationKeyConnectivityProbeKind::ChatCompletions => json!({
             "model": model,
             "messages": [{
                 "role": "user",
-                "content": "ping",
+                "content": "hi",
             }],
             "stream": false,
-            "max_tokens": 16,
+            "max_tokens": 32,
         }),
     }
 }
@@ -1771,10 +1779,7 @@ where
         return StationKeyConnectivityProbeResult::success(
             chat_result.status_code,
             duration_ms,
-            format!(
-                "Responses 直连返回 HTTP {}，Chat Completions 兼容探测正常",
-                response_result.status_code
-            ),
+            chat_result.message,
         );
     }
 
@@ -1816,15 +1821,16 @@ fn send_station_key_connectivity_probe(
         }
     };
     if (200..300).contains(&status_code) {
-        let message = match kind {
-            StationKeyConnectivityProbeKind::Responses => "Responses 连通正常",
-            StationKeyConnectivityProbeKind::ChatCompletions => "Chat Completions 连通正常",
-        };
-        return StationKeyConnectivityProbeResult::success(
-            status_code,
-            duration_ms,
-            message.to_string(),
-        );
+        let message =
+            extract_station_key_connectivity_reply(&response_text, kind).unwrap_or_else(|| {
+                match kind {
+                    StationKeyConnectivityProbeKind::Responses => "Responses 连通正常".to_string(),
+                    StationKeyConnectivityProbeKind::ChatCompletions => {
+                        "Chat Completions 连通正常".to_string()
+                    }
+                }
+            });
+        return StationKeyConnectivityProbeResult::success(status_code, duration_ms, message);
     }
     StationKeyConnectivityProbeResult::failure(
         status_code,
@@ -1892,6 +1898,81 @@ fn response_error_message(response_text: &str, status_code: u16) -> String {
         message.to_string()
     };
     redact_error_message(&fallback)
+}
+
+fn extract_station_key_connectivity_reply(
+    response_text: &str,
+    kind: StationKeyConnectivityProbeKind,
+) -> Option<String> {
+    let parsed = serde_json::from_str::<Value>(response_text).ok()?;
+    let reply = match kind {
+        StationKeyConnectivityProbeKind::Responses => extract_responses_reply_text(&parsed),
+        StationKeyConnectivityProbeKind::ChatCompletions => extract_chat_reply_text(&parsed),
+    }?;
+    let trimmed = reply.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(redact_error_message(&truncate_connectivity_reply(trimmed)))
+    }
+}
+
+fn extract_responses_reply_text(value: &Value) -> Option<String> {
+    value
+        .get("output_text")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .or_else(|| {
+            value
+                .get("output")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find_map(|item| {
+                    item.get("content")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .find_map(|content| {
+                            content
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string)
+                        })
+                })
+        })
+}
+
+fn extract_chat_reply_text(value: &Value) -> Option<String> {
+    let message = value.pointer("/choices/0/message")?;
+    message
+        .get("content")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .or_else(|| {
+            message
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find_map(|content| {
+                    content
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                })
+        })
+}
+
+fn truncate_connectivity_reply(value: &str) -> String {
+    const MAX_REPLY_CHARS: usize = 240;
+    let mut chars = value.chars();
+    let truncated = chars.by_ref().take(MAX_REPLY_CHARS).collect::<String>();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 fn record_station_key_connectivity_result(
@@ -1982,9 +2063,50 @@ mod tests {
         );
 
         assert_eq!(body["model"], "gpt-test");
-        assert_eq!(body["input"], "ping");
+        assert_eq!(body["input"], "hi");
         assert_eq!(body["store"], false);
-        assert_eq!(body["max_output_tokens"], 1);
+        assert_eq!(body["max_output_tokens"], 32);
+    }
+
+    #[test]
+    fn station_key_connectivity_extracts_responses_reply_text() {
+        let value = json!({
+            "output": [{
+                "type": "message",
+                "content": [{
+                    "type": "output_text",
+                    "text": "Hi! What can I help you with?"
+                }]
+            }]
+        });
+
+        assert_eq!(
+            extract_station_key_connectivity_reply(
+                &value.to_string(),
+                StationKeyConnectivityProbeKind::Responses
+            ),
+            Some("Hi! What can I help you with?".to_string())
+        );
+    }
+
+    #[test]
+    fn station_key_connectivity_extracts_chat_reply_text() {
+        let value = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Hi there"
+                }
+            }]
+        });
+
+        assert_eq!(
+            extract_station_key_connectivity_reply(
+                &value.to_string(),
+                StationKeyConnectivityProbeKind::ChatCompletions
+            ),
+            Some("Hi there".to_string())
+        );
     }
 
     #[test]

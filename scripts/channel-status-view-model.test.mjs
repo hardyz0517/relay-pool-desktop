@@ -24,6 +24,7 @@ const {
   buildMonitorRecentOutcomes,
   buildRecentOutcomes,
   enabledStationKeyMonitorsByKey,
+  filterChannelMonitorRunsByWindow,
   monitorRunToStationKeyStatus,
   orderChannelsBySavedOrder,
   resolveChannelLatencyMetrics,
@@ -147,4 +148,26 @@ assert.deepEqual(
   monitorOutcomes.slice(-3),
   ["success", "failed", "warning"],
   "monitor outcomes should preserve chronological run order in the newest slots",
+);
+
+const now = 1_700_000_000_000;
+const monitorWindowRuns = [
+  { status: "success", startedAt: String(now - 2 * 60 * 60 * 1000) },
+  { status: "failed", startedAt: String(now - 30 * 60 * 60 * 1000) },
+  { status: "warning", startedAt: String(now - 8 * 24 * 60 * 60 * 1000) },
+];
+assert.deepEqual(
+  filterChannelMonitorRunsByWindow(monitorWindowRuns, "recent", now).map((run) => run.status),
+  ["success", "failed", "warning"],
+  "recent channel status should preserve the loaded monitor run slice",
+);
+assert.deepEqual(
+  filterChannelMonitorRunsByWindow(monitorWindowRuns, "24h", now).map((run) => run.status),
+  ["success"],
+  "24h channel status should exclude monitor runs outside the selected window",
+);
+assert.deepEqual(
+  filterChannelMonitorRunsByWindow(monitorWindowRuns, "7d", now).map((run) => run.status),
+  ["success", "failed"],
+  "7d channel status should exclude monitor runs older than seven days",
 );

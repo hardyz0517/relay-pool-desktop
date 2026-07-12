@@ -106,8 +106,8 @@ assert.deepEqual(
 const keyPoolPageSource = await readFile("src/features/key-pool/KeyPoolPage.tsx", "utf8");
 
 assert.ok(
-  keyPoolPageSource.includes("const connectivityResult = await testStationKeyConnectivity(item.id);"),
-  "key-pool monitor creation should identify an actually callable model before creating the monitor",
+  keyPoolPageSource.includes("const connectivityResult = await testStationKeyConnectivity(item.id, DEFAULT_KEY_CONNECTIVITY_TEST_MODEL);"),
+  "key-pool monitor creation should identify an actually callable default model before creating the monitor",
 );
 
 assert.ok(
