@@ -453,7 +453,12 @@ type ShellPageState = "active" | "background" | "inactive";
         return {
           pageId: "modelBasePrices",
           instanceKey: "modelBasePrices",
-          node: <ModelBasePricesPage onBack={() => navigateTo(activeShellRouteId)} />,
+          node: (
+            <ModelBasePricesPage
+              backLabel={`返回${activeShellRouteLabel}`}
+              onBack={() => navigateTo(activeShellRouteId)}
+            />
+          ),
         };
       default:
         return null;
