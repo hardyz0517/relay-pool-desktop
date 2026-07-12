@@ -1,7 +1,8 @@
-import { useEffect, type ReactNode } from "react";
+import { useLayoutEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { Button } from "./button";
+import { useInteractionActivity } from "@/components/ui/InteractionActivity";
 import { cn } from "@/lib/utils";
 
 type DialogProps = {
@@ -26,8 +27,16 @@ export function Dialog({
   onClose,
   className,
 }: DialogProps) {
-  useEffect(() => {
-    if (!open) {
+  const interactionActive = useInteractionActivity();
+
+  useLayoutEffect(() => {
+    if (!interactionActive && open) {
+      onClose();
+    }
+  }, [interactionActive, onClose, open]);
+
+  useLayoutEffect(() => {
+    if (!open || !interactionActive) {
       return;
     }
 
@@ -43,9 +52,9 @@ export function Dialog({
         document.body.style.overflow = previousBodyOverflow;
       }
     };
-  }, [open]);
+  }, [interactionActive, open]);
 
-  if (!open) {
+  if (!open || !interactionActive) {
     return null;
   }
 

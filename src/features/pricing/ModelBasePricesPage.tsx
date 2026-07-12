@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, Plus, RefreshCw, RotateCcw, Search } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, Dialog, IconButton, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
+import { useInteractionActivity } from "@/components/ui/InteractionActivity";
 import { listModelBasePrices, resetModelBasePricesToBuiltins, upsertModelBasePrice } from "@/lib/api/economics";
 import { readError } from "@/lib/errors";
 import type { ModelBasePrice } from "@/lib/types/economics";
@@ -510,12 +511,21 @@ function DateField({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const interactionActive = useInteractionActivity();
   const selectedDate = useMemo(() => parseDateValue(value) ?? new Date(), [value]);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [viewDate, setViewDate] = useState(() => selectedDate);
   const [position, setPosition] = useState<DatePickerPosition | null>(null);
+
+  useLayoutEffect(() => {
+    if (interactionActive) {
+      return;
+    }
+    setOpen(false);
+    setPosition(null);
+  }, [interactionActive]);
 
   useEffect(() => {
     if (!open) {
@@ -567,7 +577,7 @@ function DateField({
         <span className="tabular-nums">{formatDisplayDate(value)}</span>
         <CalendarDays className="h-4 w-4 shrink-0 text-slate-500" />
       </button>
-      {open && position ? (
+      {interactionActive && open && position ? (
         <DatePickerPanel
           panelRef={panelRef}
           position={position}

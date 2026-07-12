@@ -7,6 +7,10 @@ const editablePriceCellSource = source.slice(
   source.indexOf("function Field"),
 );
 const createDialogSource = source.slice(source.indexOf("<Dialog"), source.indexOf("function TableColumnHeaderRow"));
+const dateFieldSource = source.slice(
+  source.indexOf("function DateField"),
+  source.indexOf("function DatePickerPanel"),
+);
 
 assert.ok(
   source.includes("providerFilterOptions"),
@@ -130,6 +134,24 @@ assert.ok(
     !createDialogSource.includes('inputType="date"') &&
     !source.includes('type={numeric ? "number" : inputType ?? "text"}'),
   "checked date should use a compact app-styled date picker instead of the browser-native date input",
+);
+
+assert.ok(
+  source.includes(
+    'import { useInteractionActivity } from "@/components/ui/InteractionActivity";',
+  ) && dateFieldSource.includes("const interactionActive = useInteractionActivity();"),
+  "the date field should consume interaction activity before rendering its body portal",
+);
+
+assert.match(
+  dateFieldSource,
+  /useLayoutEffect\(\(\) => \{\s*if \(interactionActive\) \{\s*return;\s*\}\s*setOpen\(false\);\s*setPosition\(null\);\s*\}, \[interactionActive\]\);/,
+  "the date field should clear open state and portal geometry during the inactive commit",
+);
+
+assert.ok(
+  dateFieldSource.includes("interactionActive && open && position"),
+  "the date picker portal should be omitted from the current inactive render",
 );
 
 assert.ok(

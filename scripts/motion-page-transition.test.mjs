@@ -143,6 +143,64 @@ function findNodes(root, predicate) {
   return matches;
 }
 
+function isDocumentBody(node) {
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "document" &&
+    node.name.text === "body"
+  );
+}
+
+function isCreatePortalCallee(node) {
+  return (
+    (ts.isIdentifier(node) && node.text === "createPortal") ||
+    (ts.isPropertyAccessExpression(node) && node.name.text === "createPortal")
+  );
+}
+
+function findBodyPortalCalls(sourceFile) {
+  return findNodes(
+    sourceFile,
+    (node) =>
+      ts.isCallExpression(node) &&
+      isCreatePortalCallee(node.expression) &&
+      node.arguments.length >= 2 &&
+      isDocumentBody(node.arguments[1]),
+  );
+}
+
+function interactionActivityHookNames(sourceFile) {
+  const hookNames = new Set();
+  for (const node of findNodes(sourceFile, ts.isImportDeclaration)) {
+    if (
+      !ts.isStringLiteralLike(node.moduleSpecifier) ||
+      node.moduleSpecifier.text !== "@/components/ui/InteractionActivity" ||
+      !node.importClause?.namedBindings ||
+      !ts.isNamedImports(node.importClause.namedBindings)
+    ) {
+      continue;
+    }
+    for (const element of node.importClause.namedBindings.elements) {
+      if ((element.propertyName ?? element.name).text === "useInteractionActivity") {
+        hookNames.add(element.name.text);
+      }
+    }
+  }
+  return hookNames;
+}
+
+function consumesInteractionActivity(sourceFile) {
+  const hookNames = interactionActivityHookNames(sourceFile);
+  return findNodes(
+    sourceFile,
+    (node) =>
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      hookNames.has(node.expression.text),
+  ).length > 0;
+}
+
 function findJsxOpeningElements(sourceFile, tagName) {
   return findNodes(
     sourceFile,
@@ -212,11 +270,26 @@ const selectControlSource = await readFile(
 );
 const sourceFiles = await readSourceFiles("src");
 const motionImporters = [];
+const bodyPortalCallSources = [];
+const bodyPortalCallSourcesWithoutActivity = [];
 
 for (const sourcePath of sourceFiles) {
   const source = await readFile(sourcePath, "utf8");
   if (sourceReferencesFramerMotion(source, sourcePath)) {
     motionImporters.push(path.normalize(sourcePath));
+  }
+  const sourceFile = parseTsxSource(source, sourcePath);
+  const bodyPortalCalls = findBodyPortalCalls(sourceFile);
+  if (bodyPortalCalls.length > 0) {
+    const normalizedSourcePath = path.normalize(sourcePath);
+    bodyPortalCallSources.push(
+      ...bodyPortalCalls.map(() => normalizedSourcePath),
+    );
+    if (!consumesInteractionActivity(sourceFile)) {
+      bodyPortalCallSourcesWithoutActivity.push(
+        ...bodyPortalCalls.map(() => normalizedSourcePath),
+      );
+    }
   }
 }
 
@@ -253,6 +326,20 @@ assert.ok(
       selectControlSource,
     ),
   "select menus should close synchronously when their owning page becomes inactive",
+);
+assert.deepEqual(
+  bodyPortalCallSources.sort(),
+  [
+    path.normalize("src/components/ui/Dialog.tsx"),
+    path.normalize("src/components/ui/SelectControl.tsx"),
+    path.normalize("src/features/pricing/ModelBasePricesPage.tsx"),
+  ].sort(),
+  "the portal audit should enumerate every current document.body portal call",
+);
+assert.deepEqual(
+  bodyPortalCallSourcesWithoutActivity,
+  [],
+  "every document.body portal source should consume interaction activity",
 );
 assert.deepEqual(
   motionImporters,
