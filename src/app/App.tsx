@@ -5,6 +5,7 @@ import type { TransientPageDescriptor } from "@/app/TransientPageHost";
 import { ShellPageHost } from "@/app/ShellPageHost";
 import type { ShellPageActions } from "@/app/shellPageRegistry";
 import { useNavigationController } from "@/app/navigationController";
+import { useIdlePagePrewarm } from "@/app/useIdlePagePrewarm";
 import {
   getPageTransitionPolicy,
   isShellPage,
@@ -48,6 +49,20 @@ export function App() {
   );
   const activeShellRouteLabel =
     appRoutes.find((route) => route.id === activeShellRouteId)?.label ?? activeShellRouteId;
+  const idlePrewarmCandidates = useMemo(
+    () =>
+      appRoutes
+        .map((route) => ({
+          routeId: route.id,
+          prewarmPriority: getPageTransitionPolicy(route.id).prewarmPriority,
+        }))
+        .filter((candidate): candidate is { routeId: AppRouteId; prewarmPriority: number } =>
+          candidate.prewarmPriority !== null,
+        )
+        .sort((left, right) => left.prewarmPriority - right.prewarmPriority)
+        .map((candidate) => candidate.routeId),
+    [],
+  );
 
   const rememberShellFocusTarget = useCallback((target: EventTarget | null) => {
     if (!(target instanceof Element)) {
@@ -108,6 +123,24 @@ export function App() {
       return next;
     });
   }, [activeRouteId]);
+
+  const prewarmShellRoute = useCallback((routeId: AppRouteId) => {
+    setMountedRouteIds((current) => {
+      if (current.has(routeId)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(routeId);
+      return next;
+    });
+  }, []);
+
+  useIdlePagePrewarm({
+    candidates: idlePrewarmCandidates,
+    mountedRouteIds,
+    disabled: pending,
+    onPrewarm: prewarmShellRoute,
+  });
 
   const returnToStations = useCallback(() => {
     setEditingStationId(null);

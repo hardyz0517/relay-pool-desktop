@@ -44,9 +44,11 @@ for (const routeId of shellPages) {
   const policyBlock = getPolicyBlock(routeId);
 
   assert.ok(
-    policyBlock.includes(`pageId: "${routeId}"`) &&
+      policyBlock.includes(`pageId: "${routeId}"`) &&
       policyBlock.includes('kind: "shell"') &&
-      policyBlock.includes(`parentRouteId: "${routeId}"`),
+      policyBlock.includes(`parentRouteId: "${routeId}"`) &&
+      policyBlock.includes('retention: "keep"') &&
+      policyBlock.includes("prewarmPriority:"),
     `page transition policy should map shell route ${routeId} to itself`,
   );
 }
@@ -55,15 +57,17 @@ for (const [pageId, parentRouteId] of transientPages) {
   const policyBlock = getPolicyBlock(pageId);
 
   assert.ok(
-    policyBlock.includes(`pageId: "${pageId}"`) &&
+      policyBlock.includes(`pageId: "${pageId}"`) &&
       policyBlock.includes(`parentRouteId: "${parentRouteId}"`) &&
-      policyBlock.includes('kind: "transient"'),
+      policyBlock.includes('kind: "transient"') &&
+      policyBlock.includes('retention: "keep"') &&
+      policyBlock.includes("prewarmPriority: null"),
     `page transition policy should map ${pageId} to parent route ${parentRouteId}`,
   );
   assert.deepEqual(
     [...policyBlock.matchAll(/^\s*(\w+):/gm)].map((match) => match[1]),
-    ["pageId", "kind", "parentRouteId"],
-    `transient policy ${pageId} should contain only pageId, kind, and parentRouteId`,
+    ["pageId", "kind", "parentRouteId", "retention", "prewarmPriority"],
+    `transient policy ${pageId} should contain only pageId, kind, parentRouteId, retention, and prewarmPriority`,
   );
 }
 
