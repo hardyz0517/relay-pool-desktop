@@ -22,6 +22,7 @@ export type SchedulerNumericField = {
 }[keyof SchedulerAdvancedSettings];
 
 export type SchedulerBooleanField = Exclude<keyof SchedulerAdvancedSettings, SchedulerNumericField>;
+export type SchedulerVisibleBooleanField = Exclude<SchedulerBooleanField, "stickyEscape">;
 
 export type SchedulerDraft = {
   [Key in keyof SchedulerAdvancedSettings]: SchedulerAdvancedSettings[Key] extends number
@@ -86,8 +87,10 @@ export const SCHEDULER_NUMERIC_FIELD_META = {
 
 export const SCHEDULER_BOOLEAN_FIELD_META = {
   stickyWeighted: { label: "加权粘性", group: "sticky" },
-  stickyEscape: { label: "粘性逃逸", group: "sticky" },
-} as const satisfies Record<SchedulerBooleanField, { label: string; group: SchedulerFieldGroup }>;
+} as const satisfies Record<
+  SchedulerVisibleBooleanField,
+  { label: string; group: SchedulerFieldGroup }
+>;
 
 export const ROUTING_GROUP_PRESET_OPTIONS: ReadonlyArray<{
   value: Exclude<RoutingGroupPreset, "current_specific">;

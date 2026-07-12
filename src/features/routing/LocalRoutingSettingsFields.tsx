@@ -15,6 +15,7 @@ import {
   type SchedulerBooleanField,
   type SchedulerFieldGroup,
   type SchedulerNumericField,
+  type SchedulerVisibleBooleanField,
 } from "./localRoutingSettingsForm";
 
 type NumericChangeHandler = (field: SchedulerNumericField, value: string) => void;
@@ -29,11 +30,11 @@ const numericFieldEntries = Object.entries(SCHEDULER_NUMERIC_FIELD_META) as Arra
 ]>;
 
 const booleanFieldEntries = Object.entries(SCHEDULER_BOOLEAN_FIELD_META) as Array<[
-  SchedulerBooleanField,
+  SchedulerVisibleBooleanField,
   { label: string; group: SchedulerFieldGroup },
 ]>;
 
-const PROMOTED_BOOLEAN_FIELDS = new Set<SchedulerBooleanField>(["stickyWeighted"]);
+const PROMOTED_BOOLEAN_FIELDS = new Set<SchedulerVisibleBooleanField>(["stickyWeighted"]);
 
 export function LocalRoutingBoundaryFields({
   draft,
@@ -189,7 +190,7 @@ function PromotedBooleanSettingRow({
   disabled,
   onBooleanChange,
 }: {
-  field: SchedulerBooleanField;
+  field: SchedulerVisibleBooleanField;
   draft: LocalRoutingSettingsDraft;
   disabled: boolean;
   onBooleanChange: BooleanChangeHandler;

@@ -8,6 +8,8 @@ pub mod scoring;
 pub mod selection;
 pub mod types;
 
+use std::sync::Mutex;
+
 use crate::{
     models::routing::{RoutingGroupFilter, SchedulerAdvancedSettings},
     services::proxy::scheduler::{
@@ -26,6 +28,118 @@ use crate::{
         },
     },
 };
+
+#[derive(Debug, Default)]
+pub struct SchedulerRuntimeState {
+    metrics: RuntimeMetricsRegistry,
+    capacity: CapacityRegistry,
+    affinity: Mutex<AffinityStore>,
+}
+
+impl SchedulerRuntimeState {
+    pub fn try_acquire(
+        &self,
+        station_key_id: impl Into<String>,
+        max_concurrency: i64,
+    ) -> capacity::CapacityGuard {
+        self.capacity.try_acquire(station_key_id, max_concurrency)
+    }
+
+    pub fn schedule(
+        &self,
+        request: &ScheduleRequest,
+        candidates: &[SchedulerCandidate],
+        advanced: &SchedulerAdvancedSettings,
+    ) -> Result<ScheduleDecision, ScheduleError> {
+        let mut affinity = self
+            .affinity
+            .lock()
+            .expect("scheduler affinity store poisoned");
+        schedule_once(
+            request,
+            candidates,
+            &self.metrics,
+            &self.capacity,
+            &mut affinity,
+            advanced,
+        )
+    }
+
+    pub fn report_result(
+        &self,
+        station_key_id: impl Into<String>,
+        success: bool,
+        first_token_ms: Option<i64>,
+    ) {
+        self.metrics
+            .report_result(station_key_id, success, first_token_ms);
+    }
+
+    pub fn bind_session(
+        &self,
+        routing_group_scope: &str,
+        session_hash: &str,
+        station_key_id: &str,
+        now_ms: i64,
+        ttl_seconds: i64,
+    ) {
+        self.affinity
+            .lock()
+            .expect("scheduler affinity store poisoned")
+            .bind_session(
+                routing_group_scope,
+                session_hash,
+                station_key_id,
+                now_ms,
+                ttl_seconds,
+            );
+    }
+
+    pub fn bind_response(
+        &self,
+        routing_group_scope: &str,
+        response_id: &str,
+        station_key_id: &str,
+        now_ms: i64,
+        ttl_seconds: i64,
+    ) {
+        self.affinity
+            .lock()
+            .expect("scheduler affinity store poisoned")
+            .bind_response(
+                routing_group_scope,
+                response_id,
+                station_key_id,
+                now_ms,
+                ttl_seconds,
+            );
+    }
+
+    #[cfg(test)]
+    pub fn metrics_snapshot(&self, station_key_id: &str) -> metrics::RuntimeMetricsSnapshot {
+        self.metrics.snapshot(station_key_id)
+    }
+
+    #[cfg(test)]
+    pub fn resolve_affinity(
+        &self,
+        routing_group_scope: &str,
+        previous_response_id: Option<&str>,
+        session_hash: Option<&str>,
+        now_ms: i64,
+    ) -> Option<String> {
+        self.affinity
+            .lock()
+            .expect("scheduler affinity store poisoned")
+            .resolve(
+                routing_group_scope,
+                previous_response_id,
+                session_hash,
+                now_ms,
+            )
+            .map(|hit| hit.station_key_id)
+    }
+}
 
 pub fn schedule_once(
     request: &ScheduleRequest,
@@ -51,6 +165,25 @@ pub fn schedule_once(
         request.session_hash.as_deref(),
         request.now_ms,
     );
+    let sticky_escape = affinity_hit.as_ref().and_then(|hit| {
+        candidates
+            .iter()
+            .find(|candidate| candidate.station_key_id == hit.station_key_id)
+            .and_then(|candidate| {
+                sticky_escape_reason(
+                    &metrics.snapshot(&hit.station_key_id),
+                    &capacity.snapshot(&hit.station_key_id),
+                    candidate.max_concurrency,
+                    advanced,
+                )
+            })
+            .map(|reason| (hit.station_key_id.clone(), reason))
+    });
+    let affinity_hit = if sticky_escape.is_some() {
+        None
+    } else {
+        affinity_hit
+    };
 
     let mut decisions = Vec::with_capacity(candidates.len());
     let mut score_inputs = Vec::new();
@@ -69,7 +202,10 @@ pub fn schedule_once(
                         .map(|fact| fact.value)
                         .unwrap_or(1.0),
                     in_flight: capacity_snapshot.in_flight,
-                    effective_capacity: effective_load_capacity(0, 0),
+                    effective_capacity: effective_load_capacity(
+                        candidate.max_concurrency,
+                        candidate.load_factor.unwrap_or(0),
+                    ),
                     waiting: capacity_snapshot.waiting,
                     error_rate_ewma: metrics_snapshot.error_rate_ewma,
                     ttft_ms: metrics_snapshot.ttft_ewma_ms,
@@ -115,6 +251,11 @@ pub fn schedule_once(
             decision.score = Some(breakdown.score);
             decision.factors =
                 explanation::score_factor_labels(&breakdown.factors, advanced, breakdown.score);
+            if let Some((station_key_id, reason)) = sticky_escape.as_ref() {
+                if station_key_id == &breakdown.station_key_id {
+                    decision.factors.push(format!("sticky_escape:{reason}"));
+                }
+            }
         }
         scored.push(ScoredCandidate {
             station_key_id: breakdown.station_key_id.clone(),
@@ -154,7 +295,12 @@ pub fn schedule_once(
             .find(|decision| decision.station_key_id == candidate.station_key_id)
         {
             decision.top_k_rank = Some(index + 1);
-            let mut guard = capacity.try_acquire(&candidate.station_key_id, 0);
+            let max_concurrency = candidates
+                .iter()
+                .find(|source| source.station_key_id == candidate.station_key_id)
+                .map(|source| source.max_concurrency)
+                .unwrap_or(0);
+            let mut guard = capacity.try_acquire(&candidate.station_key_id, max_concurrency);
             decision.slot_result = if guard.acquired() {
                 guard.release();
                 Some("acquired_simulated".to_string())
@@ -169,6 +315,31 @@ pub fn schedule_once(
         ordered_station_key_ids,
         candidate_decisions: decisions,
     })
+}
+
+fn sticky_escape_reason(
+    metrics: &metrics::RuntimeMetricsSnapshot,
+    capacity: &capacity::CapacitySnapshot,
+    max_concurrency: i64,
+    advanced: &SchedulerAdvancedSettings,
+) -> Option<&'static str> {
+    if !advanced.sticky_escape {
+        return None;
+    }
+    if metrics.has_ttft
+        && metrics
+            .ttft_ewma_ms
+            .is_some_and(|ttft| ttft > advanced.sticky_escape_ttft_ms as f64)
+    {
+        return Some("ttft");
+    }
+    if metrics.error_rate_ewma > advanced.sticky_escape_error_rate {
+        return Some("error_rate");
+    }
+    if max_concurrency > 0 && capacity.in_flight >= max_concurrency as u64 {
+        return Some("concurrency_full");
+    }
+    None
 }
 
 fn no_candidate_error_code(
@@ -279,7 +450,119 @@ fn multiplier_evidence_rejection_codes() -> &'static [CandidateRejectionCode] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::proxy::scheduler::types::CandidateRejection;
+    use crate::{
+        models::routing::RouteEndpointKind,
+        services::proxy::scheduler::types::{
+            CandidateRejection, EffectiveMultiplierFact, SchedulerCandidate,
+        },
+    };
+
+    #[test]
+    fn ttft_degraded_session_affinity_soft_escapes_without_deleting_binding() {
+        let request = sticky_request();
+        let candidates = vec![
+            eligible_candidate("sticky", 100),
+            eligible_candidate("healthy", 0),
+        ];
+        let metrics = RuntimeMetricsRegistry::default();
+        metrics.report_result("sticky", true, Some(20_000));
+        let capacity = CapacityRegistry::default();
+        let mut affinity = AffinityStore::default();
+        affinity.bind_session("all_groups", "session", "sticky", 1_000, 3_600);
+
+        let decision = schedule_once(
+            &request,
+            &candidates,
+            &metrics,
+            &capacity,
+            &mut affinity,
+            &SchedulerAdvancedSettings::default(),
+        )
+        .expect("eligible candidates");
+
+        assert_eq!(decision.selected_station_key_id.as_deref(), Some("healthy"));
+        assert_eq!(
+            affinity.lookup_session("all_groups", "session", 1_001),
+            Some("sticky".to_string())
+        );
+    }
+
+    #[test]
+    fn error_degraded_session_affinity_soft_escapes() {
+        let request = sticky_request();
+        let candidates = vec![
+            eligible_candidate("sticky", 100),
+            eligible_candidate("healthy", 0),
+        ];
+        let metrics = RuntimeMetricsRegistry::default();
+        metrics.report_result("sticky", false, None);
+        let capacity = CapacityRegistry::default();
+        let mut affinity = AffinityStore::default();
+        affinity.bind_session("all_groups", "session", "sticky", 1_000, 3_600);
+
+        let decision = schedule_once(
+            &request,
+            &candidates,
+            &metrics,
+            &capacity,
+            &mut affinity,
+            &SchedulerAdvancedSettings::default(),
+        )
+        .expect("eligible candidates");
+
+        assert_eq!(decision.selected_station_key_id.as_deref(), Some("healthy"));
+    }
+
+    #[test]
+    fn concurrency_full_session_affinity_soft_escapes() {
+        let request = sticky_request();
+        let mut sticky = eligible_candidate("sticky", 100);
+        sticky.max_concurrency = 1;
+        let candidates = vec![sticky, eligible_candidate("healthy", 0)];
+        let metrics = RuntimeMetricsRegistry::default();
+        let capacity = CapacityRegistry::default();
+        let _guard = capacity.try_acquire("sticky", 1);
+        let mut affinity = AffinityStore::default();
+        affinity.bind_session("all_groups", "session", "sticky", 1_000, 3_600);
+
+        let decision = schedule_once(
+            &request,
+            &candidates,
+            &metrics,
+            &capacity,
+            &mut affinity,
+            &SchedulerAdvancedSettings::default(),
+        )
+        .expect("eligible candidates");
+
+        assert_eq!(decision.selected_station_key_id.as_deref(), Some("healthy"));
+    }
+
+    #[test]
+    fn runtime_state_capacity_guard_drives_concurrency_escape() {
+        let request = sticky_request();
+        let mut sticky = eligible_candidate("sticky", 100);
+        sticky.max_concurrency = 1;
+        let candidates = vec![sticky, eligible_candidate("healthy", 0)];
+        let scheduler = SchedulerRuntimeState::default();
+        scheduler.bind_session("all_groups", "session", "sticky", 1_000, 3_600);
+        let guard = scheduler.try_acquire("sticky", 1);
+        assert!(guard.acquired());
+
+        let escaped = scheduler
+            .schedule(&request, &candidates, &SchedulerAdvancedSettings::default())
+            .expect("escaped selection");
+        assert_eq!(escaped.selected_station_key_id.as_deref(), Some("healthy"));
+
+        drop(guard);
+        let sticky_again = scheduler
+            .schedule(&request, &candidates, &SchedulerAdvancedSettings::default())
+            .expect("sticky selection after release");
+        assert_eq!(
+            sticky_again.selected_station_key_id.as_deref(),
+            Some("sticky")
+        );
+    }
 
     #[test]
     fn mixed_multiplier_evidence_failures_prefer_expired_error_code() {
@@ -318,6 +601,61 @@ mod tests {
             factors: Vec::new(),
             top_k_rank: None,
             slot_result: Some("rejected".to_string()),
+        }
+    }
+
+    fn sticky_request() -> ScheduleRequest {
+        ScheduleRequest {
+            endpoint: RouteEndpointKind::ChatCompletions,
+            requested_model: Some("gpt-4o".to_string()),
+            mapped_model: Some("gpt-4o".to_string()),
+            routing_group_filter: RoutingGroupFilter::AllGroups,
+            stream: false,
+            uses_tools: false,
+            uses_vision: false,
+            uses_reasoning: false,
+            max_rate_multiplier: 2.0,
+            session_hash: Some("session".to_string()),
+            previous_response_id: None,
+            excluded_key_ids: Vec::new(),
+            now_ms: 1_001,
+        }
+    }
+
+    fn eligible_candidate(station_key_id: &str, priority: i64) -> SchedulerCandidate {
+        SchedulerCandidate {
+            station_key_id: station_key_id.to_string(),
+            station_id: format!("station-{station_key_id}"),
+            priority,
+            max_concurrency: 0,
+            load_factor: None,
+            group_binding_id: None,
+            group_id_hash: None,
+            group_type: None,
+            station_enabled: true,
+            key_enabled: true,
+            schedulable: true,
+            supports_chat_completions: true,
+            supports_responses: true,
+            supports_embeddings: true,
+            supports_stream: true,
+            supports_tools: true,
+            supports_vision: true,
+            supports_reasoning: true,
+            model_allowlist: Vec::new(),
+            model_blocklist: Vec::new(),
+            health_blocked: false,
+            balance_depleted: false,
+            effective_multiplier: Some(EffectiveMultiplierFact {
+                station_key_id: station_key_id.to_string(),
+                value: 1.0,
+                source: "test".to_string(),
+                collected_at_ms: Some(1_000),
+                valid_until_ms: Some(2_000),
+                confidence: 1.0,
+                group_binding_id: None,
+            }),
+            multiplier_reject_reason: None,
         }
     }
 }

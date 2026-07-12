@@ -22,6 +22,8 @@ pub struct SchedulerCandidate {
     pub station_key_id: String,
     pub station_id: String,
     pub priority: i64,
+    pub max_concurrency: i64,
+    pub load_factor: Option<i64>,
     pub group_binding_id: Option<String>,
     pub group_id_hash: Option<String>,
     pub group_type: Option<PricingGroupType>,

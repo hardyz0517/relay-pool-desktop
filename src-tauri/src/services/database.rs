@@ -6823,6 +6823,8 @@ struct SchedulerCandidateBaseRow {
     station_key_id: String,
     station_id: String,
     priority: i64,
+    max_concurrency: i64,
+    load_factor: Option<i64>,
     group_binding_id: Option<String>,
     group_id_hash: Option<String>,
     group_name: Option<String>,
@@ -6877,7 +6879,9 @@ fn load_scheduler_candidates_from_connection(
             COALESCE(c.model_allowlist_json, '[]'),
             COALESCE(c.model_blocklist_json, '[]'),
             h.cooldown_until,
-            COALESCE(bs.status, '')
+            COALESCE(bs.status, ''),
+            k.max_concurrency,
+            k.load_factor
          FROM station_keys k
          JOIN stations s ON s.id = k.station_id
          LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
@@ -6934,6 +6938,8 @@ fn load_scheduler_candidates_from_connection(
                     station_key_id: row.get(0)?,
                     station_id: row.get(1)?,
                     priority: row.get(2)?,
+                    max_concurrency: row.get(20)?,
+                    load_factor: row.get(21)?,
                     group_binding_id: row.get(3)?,
                     group_id_hash: row.get(4)?,
                     group_name: row.get(5)?,
@@ -6991,6 +6997,8 @@ fn load_scheduler_candidates_from_connection(
                 station_key_id: row.station_key_id,
                 station_id: row.station_id,
                 priority: row.priority,
+                max_concurrency: row.max_concurrency,
+                load_factor: row.load_factor,
                 group_binding_id: row.group_binding_id,
                 group_id_hash: row.group_id_hash,
                 group_type: parse_pricing_group_type(row.group_name.as_deref()),
@@ -7958,7 +7966,8 @@ fn proxy_route_candidates_from_connection_with_data_key(
         .prepare(
             "SELECT k.id, k.station_id, s.base_url, k.api_key, k.api_key_secret_id,
                     s.upstream_api_format, COALESCE(k.routing_order, k.priority),
-                    s.collector_proxy_mode, s.collector_proxy_url
+                    s.collector_proxy_mode, s.collector_proxy_url,
+                    k.max_concurrency, k.load_factor
                FROM station_keys k
                JOIN stations s ON s.id = k.station_id
               WHERE k.enabled = 1
@@ -7981,6 +7990,8 @@ fn proxy_route_candidates_from_connection_with_data_key(
                 api_key,
                 upstream_api_format: parse_upstream_api_format(row.get::<_, String>(5)?),
                 priority: row.get(6)?,
+                max_concurrency: row.get(9)?,
+                load_factor: row.get(10)?,
                 collector_proxy_mode: {
                     let proxy = resolve_proxy_config(
                         &row.get::<_, String>(7)?,
@@ -8074,7 +8085,9 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                 h.cooldown_until,
                 h.updated_at,
                 s.collector_proxy_mode,
-                s.collector_proxy_url
+                s.collector_proxy_url,
+                k.max_concurrency,
+                k.load_factor
              FROM station_keys k
              JOIN stations s ON s.id = k.station_id
              LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
@@ -8108,6 +8121,8 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                     api_key,
                     upstream_api_format: parse_upstream_api_format(row.get::<_, String>(5)?),
                     priority: row.get(6)?,
+                    max_concurrency: row.get(34)?,
+                    load_factor: row.get(35)?,
                     collector_proxy_mode: proxy.mode,
                     collector_proxy_url: proxy.url,
                 },
@@ -13025,8 +13040,8 @@ mod tests {
                 api_key: "sk-gpt".to_string(),
                 enabled: true,
                 priority: Some(0),
-                max_concurrency: None,
-                load_factor: None,
+                max_concurrency: Some(7),
+                load_factor: Some(9),
                 schedulable: Some(true),
                 group_name: Some("gpt".to_string()),
                 tier_label: None,
@@ -13066,6 +13081,8 @@ mod tests {
             .expect("scheduler candidates");
 
         assert_eq!(candidate_key_ids(&candidates), vec![gpt_key.id]);
+        assert_eq!(candidates[0].max_concurrency, 7);
+        assert_eq!(candidates[0].load_factor, Some(9));
 
         let missing = database
             .load_scheduler_candidates(&RoutingGroupFilter::GroupIdHash("missing".to_string()), 0)

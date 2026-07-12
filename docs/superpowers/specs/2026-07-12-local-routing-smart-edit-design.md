@@ -72,7 +72,6 @@ Second visible group:
 
 - `previousResponse`
 - `sessionSticky`
-- `stickyEscape`
 - `stickyEscapeTtftMs`
 - `stickyEscapeErrorRate`
 - `stickySessionTtlSeconds`
@@ -85,9 +84,10 @@ Second visible group:
 Controls:
 
 - Numeric inputs for numeric fields.
-- Switches for boolean fields.
+- `stickyWeighted` is the only user-facing scheduler boolean. Sub2API keeps sticky escape enabled by default as an internal gateway safeguard rather than exposing it as an admin UI switch.
 - `stickyWeighted` is promoted to a standalone full-width row above all scheduler parameter groups, matching the Sub2API gateway layout.
 - The promoted `stickyWeighted` switch shows only the switch track and thumb; it keeps an accessible label but does not show `开启` / `关闭` text or an outer button surface.
+- `stickyEscape` remains an internal persisted compatibility field with a default of `true`; the editor does not render or mutate it. The TTFT and error-rate thresholds remain editable advanced parameters.
 - Reset-to-default action for scheduler settings.
 - Save state visible as a compact badge: idle/saving/saved/error.
 
@@ -144,6 +144,12 @@ Event sync:
 - Scheduler group titles use normal document flow with 12px space above and below; titles must not sit on divider lines.
 - Do not hide required routing controls in Settings only; the routing edit page must be the main place to tune automatic routing.
 - Keep keyboard accessibility: labels must map to inputs, focus states remain visible, and disabled/saving states must be explicit.
+
+Runtime parity requirement:
+
+- Scheduler metrics, capacity, and scoped affinity live for the lifetime of the local proxy server rather than being recreated for each selection.
+- A valid sticky binding is ignored for the current selection when TTFT EWMA exceeds the configured threshold, error-rate EWMA exceeds the configured threshold, or its concurrency capacity is full.
+- Soft escape does not delete the binding. Hard eligibility failures continue to prevent affinity from bypassing group, multiplier, model, health, or capability gates.
 
 ## Test Plan
 

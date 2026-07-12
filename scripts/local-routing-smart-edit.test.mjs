@@ -55,7 +55,9 @@ const schedulerFields = [
 
 for (const field of schedulerFields) {
   assert.match(settingsTypes, new RegExp(`${field}:`), `settings schema must cover ${field}`);
-  assert.match(form, new RegExp(`${field}:`), `form metadata must cover ${field}`);
+  if (field !== "stickyEscape") {
+    assert.match(form, new RegExp(`${field}:`), `form metadata must cover ${field}`);
+  }
 }
 
 assert.match(settingsTypes, /SCHEDULER_ADVANCED_FIELD_KINDS/);
@@ -68,6 +70,11 @@ assert.match(form, /topK.*65_535/s);
 assert.match(form, /baseWeights/);
 assert.match(form, /multiplierMinConfidence/);
 assert.match(form, /stickyEscapeErrorRate/);
+assert.doesNotMatch(
+  form,
+  /stickyEscape:\s*\{\s*label:/,
+  "sticky escape is an internal default-on safeguard and must not render as a user switch",
+);
 
 const promotedStickyIndex = fields.indexOf('field="stickyWeighted"');
 const scoreGroupIndex = fields.indexOf('title="综合评分"');
@@ -77,6 +84,7 @@ assert.ok(
   "stickyWeighted must render above the score parameter group",
 );
 assert.match(fields, /PROMOTED_BOOLEAN_FIELDS[\s\S]*stickyWeighted/);
+assert.doesNotMatch(fields, /field="stickyEscape"/);
 assert.match(fields, /!PROMOTED_BOOLEAN_FIELDS\.has\(field\)/);
 assert.match(
   fields,

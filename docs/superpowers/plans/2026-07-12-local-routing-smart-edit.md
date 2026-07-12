@@ -128,7 +128,7 @@ Render labeled controls for strategy, multiplier ceiling, group filter, strict r
 
 - [ ] **Step 3: Render every scheduler field from metadata**
 
-Promote `stickyWeighted` to a standalone row before the score section and render its `SwitchControl` with `showLabel={false}` plus borderless outer chrome. Exclude it from the generic boolean grid so it appears exactly once. Group all remaining fields into score, stickiness, and waiting sections. Render each group with `role="group"`, `aria-label={title}`, and a normal-flow `h3` using 12px top/bottom spacing instead of a divider-overlapping `legend`. Numeric fields use field-kind-derived `min`, `max`, and `step`; booleans use `SwitchControl`. Invalid fields use `aria-invalid` and compact inline errors.
+Promote `stickyWeighted` to a standalone row before the score section and render its `SwitchControl` with `showLabel={false}` plus borderless outer chrome. It is the only user-facing scheduler boolean. Exclude internal `stickyEscape` from render metadata so the editor preserves but never displays or mutates it. Group numeric fields into score, stickiness, and waiting sections. Render each group with `role="group"`, `aria-label={title}`, and a normal-flow `h3` using 12px top/bottom spacing instead of a divider-overlapping `legend`. Numeric fields use field-kind-derived `min`, `max`, and `step`. Invalid fields use `aria-invalid` and compact inline errors.
 
 - [ ] **Step 4: Save atomically through the typed API**
 
@@ -213,3 +213,35 @@ git diff --cached --name-only
 ```
 
 Expected: only planned files are modified, staged paths are empty before exact-path staging, and no secrets or generated screenshots are tracked.
+
+### Task 5: Correct sticky escape to match Sub2API runtime behavior
+
+**Files:**
+- Modify: `src/features/routing/localRoutingSettingsForm.ts`
+- Modify: `src/features/routing/LocalRoutingSettingsFields.tsx`
+- Modify: `scripts/local-routing-smart-edit.test.mjs`
+- Modify: `src-tauri/src/services/proxy/scheduler/mod.rs`
+- Modify: `src-tauri/src/services/proxy/scheduler/types.rs`
+- Modify: `src-tauri/src/services/proxy/router.rs`
+- Modify: `src-tauri/src/services/proxy/runtime.rs`
+- Test: Rust unit tests colocated with the scheduler and runtime modules
+
+- [ ] **Step 1: Prove the current UI and runtime gaps with failing tests**
+
+Add a frontend contract assertion that `stickyEscape` is absent from render metadata while its numeric thresholds remain present. Add scheduler tests showing that a sticky candidate is not promoted when its TTFT EWMA, error-rate EWMA, or live concurrency exceeds the configured boundary, and that the binding remains stored after soft escape.
+
+- [ ] **Step 2: Run focused tests and verify RED**
+
+Run `node .\scripts\local-routing-smart-edit.test.mjs` and the focused scheduler Rust tests. Expected: the UI assertion finds the current visible switch and the scheduler still promotes the degraded sticky candidate.
+
+- [ ] **Step 3: Implement persistent runtime scheduler state**
+
+Keep runtime metrics, capacity, and group-scoped affinity on `ProxyServerContext`. Pass the saved advanced settings and those registries into automatic selection. Feed scheduler-relevant success/failure outcomes back into EWMA state and bind successful session/response affinity without weakening the existing forward-time hard-gate recheck.
+
+- [ ] **Step 4: Implement fixed-on user behavior and soft escape**
+
+Remove `stickyEscape` from frontend render metadata but preserve it in typed settings round trips. Resolve affinity only after eligibility, then ignore it for the current selection when TTFT, error rate, or concurrency meets Sub2API escape conditions. Do not clear the affinity entry on soft escape.
+
+- [ ] **Step 5: Verify GREEN and regression coverage**
+
+Run the focused Node and Cargo tests, all local-routing scripts, `pnpm.cmd build`, `cargo fmt --check`, `cargo check`, and browser checks at desktop and 375px widths. Expected: all pass; only `stickyWeighted` is visible as a boolean control, while escape thresholds remain editable.

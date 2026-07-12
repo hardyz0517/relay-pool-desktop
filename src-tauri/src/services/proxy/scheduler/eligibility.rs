@@ -399,6 +399,8 @@ mod tests {
             station_key_id: "key-1".to_string(),
             station_id: "station-1".to_string(),
             priority: 0,
+            max_concurrency: 0,
+            load_factor: None,
             group_binding_id: None,
             group_id_hash: None,
             group_type: None,
