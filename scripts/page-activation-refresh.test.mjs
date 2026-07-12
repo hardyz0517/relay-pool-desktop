@@ -50,8 +50,8 @@ const pages = [
 for (const page of pages) {
   const source = await readFile(page, "utf8");
   assert.ok(
-    source.includes("usePageActivation"),
-    `${page} should refresh its persisted data whenever the page becomes active`,
+    source.includes("usePageActivation") || source.includes("useActivityQuery"),
+    `${page} should refresh or subscribe to persisted data only when the page becomes active`,
   );
 }
 

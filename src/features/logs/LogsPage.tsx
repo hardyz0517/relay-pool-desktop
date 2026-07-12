@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation } from "@/components/shell/PageActivity";
+import { usePageActivity } from "@/components/shell/PageActivity";
 import {
   Button,
   ConfirmDialog,
@@ -17,10 +18,14 @@ import {
 import { readError } from "@/lib/errors";
 import { formatRate } from "@/lib/formatters";
 import { clearRequestLogs } from "@/lib/api/proxy";
-import { getSettings } from "@/lib/api/settings";
-import { loadRequestLogWorkspace } from "@/lib/queries/logQueries";
-import type { RequestLog } from "@/lib/types/proxy";
-import type { KeyPoolItem } from "@/lib/types/stationKeys";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
+import {
+  keyPoolQueryOptions,
+  proxyStatusQueryOptions,
+  requestLogsQueryOptions,
+  settingsQueryOptions,
+} from "@/lib/query/resourceQueries";
+import { queryKeys } from "@/lib/query/queryKeys";
 import { RequestLogPagination, RequestLogTable } from "./RequestLogTable";
 import {
   formatKeyName,
@@ -38,21 +43,26 @@ type LogFilter = "all" | "failed" | "fallback";
 
 export function LogsPage() {
   const toast = useToast();
-  const [logs, setLogs] = useState<RequestLog[]>([]);
-  const [keys, setKeys] = useState<KeyPoolItem[]>([]);
+  const queryClient = useQueryClient();
+  const { refreshEnabled } = usePageActivity();
+  const proxyStatusQuery = useActivityQuery(refreshEnabled, proxyStatusQueryOptions(false));
+  const logsQuery = useActivityQuery(
+    refreshEnabled,
+    requestLogsQueryOptions(proxyStatusQuery.data?.running ? 2_000 : false),
+  );
+  const keysQuery = useActivityQuery(refreshEnabled, keyPoolQueryOptions());
+  const settingsQuery = useActivityQuery(refreshEnabled, settingsQueryOptions());
+  const logs = logsQuery.data ?? [];
+  const keys = keysQuery.data ?? [];
+  const developerModeEnabled = settingsQuery.data?.developerModeEnabled ?? false;
+  const loading = logsQuery.isPending && logsQuery.data === undefined;
+  const error = logsQuery.error ? readError(logsQuery.error) : null;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<LogFilter>("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
-  const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  usePageActivation(({ isInitial }) => {
-    void refreshLogs(false, isInitial);
-  });
 
   const filteredLogs = useMemo(() => {
     if (filter === "failed") {
@@ -71,31 +81,20 @@ export function LogsPage() {
   const selected = pageInfo.logs.find((log) => log.id === selectedId) ?? pageInfo.logs[0] ?? null;
   const keyById = useMemo(() => new Map(keys.map((key) => [key.id, key] as const)), [keys]);
 
-  async function refreshLogs(showSuccess = false, showLoading = true) {
+  async function refreshLogs(showSuccess = false) {
     setPage(1);
-    if (showLoading) {
-      setLoading(true);
-    }
-    setError(null);
     try {
-      const settingsPromise = getSettings();
-      const workspace = await loadRequestLogWorkspace();
-      const settings = await settingsPromise;
-      setLogs(workspace.requestLogs);
-      setKeys(workspace.keyPoolItems);
-      setDeveloperModeEnabled(settings.developerModeEnabled);
-      setSelectedId((current) => current ?? workspace.requestLogs[0]?.id ?? null);
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: queryKeys.requestLogs, type: "active" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.keyPool, type: "active" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.settings, type: "active" }),
+      ]);
       if (showSuccess) {
         toast.success("使用记录已刷新");
       }
     } catch (requestError) {
       const message = readError(requestError);
-      setError(message);
       toast.error("刷新使用记录失败", message);
-    } finally {
-      if (showLoading) {
-        setLoading(false);
-      }
     }
   }
 
@@ -105,17 +104,16 @@ export function LogsPage() {
 
   async function handleConfirmClear() {
     setClearing(true);
-    setError(null);
     try {
+      await queryClient.cancelQueries({ queryKey: queryKeys.requestLogs });
       await clearRequestLogs();
-      setLogs([]);
+      queryClient.setQueryData(queryKeys.requestLogs, []);
       setPage(1);
       setSelectedId(null);
       setClearConfirmOpen(false);
       toast.success("使用记录已清空");
     } catch (requestError) {
       const message = readError(requestError);
-      setError(message);
       toast.error("清空使用记录失败", message);
     } finally {
       setClearing(false);

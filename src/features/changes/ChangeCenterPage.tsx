@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { CheckCheck, ChevronLeft, ChevronRight, RefreshCw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation } from "@/components/shell/PageActivity";
+import { usePageActivation, usePageActivity } from "@/components/shell/PageActivity";
 import {
   Button,
   ConfirmDialog,
@@ -18,7 +19,12 @@ import {
   markChangeEventRead,
   notifyChangeEventsUpdated,
 } from "@/lib/api/changeEvents";
-import { loadChangeCenterWorkspace } from "@/lib/queries/changeQueries";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
+import {
+  changeEventsQueryOptions,
+  stationsQueryOptions,
+} from "@/lib/query/resourceQueries";
+import { queryKeys } from "@/lib/query/queryKeys";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import {
   activeSeverityCount,
@@ -35,30 +41,37 @@ import {
 
 export function ChangeCenterPage() {
   const toast = useToast();
-  const [events, setEvents] = useState<ChangeEvent[]>([]);
-  const [stationNamesById, setStationNamesById] = useState<Map<string, string>>(new Map());
+  const queryClient = useQueryClient();
+  const { refreshEnabled } = usePageActivity();
+  const eventsQuery = useActivityQuery(refreshEnabled, changeEventsQueryOptions(false));
+  const stationsQuery = useActivityQuery(refreshEnabled, stationsQueryOptions());
+  const events = eventsQuery.data ?? [];
+  const stationNamesById = useMemo(
+    () => new Map((stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)),
+    [stationsQuery.data],
+  );
+  const loading = eventsQuery.isPending && eventsQuery.data === undefined;
+  const error = eventsQuery.error ? readError(eventsQuery.error) : null;
   const [filter, setFilter] = useState<ChangeFilter>({ severity: "all", status: "active", objectType: "all", query: "" });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(CHANGE_EVENTS_DEFAULT_PAGE_SIZE);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   usePageActivation(({ isInitial }) => {
     void refresh(false, isInitial);
   });
 
-  async function refresh(showSuccess = false, showLoading = true) {
-    if (showLoading) {
-      setLoading(true);
-    }
-    setError(null);
+  async function refresh(showSuccess = false, _showLoading = true) {
     try {
-      const workspace = await loadChangeCenterWorkspace();
-      setStationNamesById(new Map(workspace.stations.map((station) => [station.id, station.name])));
-      const readOnEntryResult = await markUnreadChangeEventsRead(workspace.changeEvents, markChangeEventRead);
-      setEvents(readOnEntryResult.events);
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: queryKeys.changeEvents, type: "active" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.stations, type: "active" }),
+      ]);
+      const currentEvents = queryClient.getQueryData<ChangeEvent[]>(queryKeys.changeEvents) ?? events;
+      await queryClient.cancelQueries({ queryKey: queryKeys.changeEvents });
+      const readOnEntryResult = await markUnreadChangeEventsRead(currentEvents, markChangeEventRead);
+      queryClient.setQueryData(queryKeys.changeEvents, readOnEntryResult.events);
       if (readOnEntryResult.changedCount > 0) {
         notifyChangeEventsUpdated();
       }
@@ -67,20 +80,16 @@ export function ChangeCenterPage() {
       }
     } catch (requestError) {
       const message = readError(requestError);
-      setError(message);
       toast.error("刷新变更中心失败", message);
-    } finally {
-      if (showLoading) {
-        setLoading(false);
-      }
     }
   }
 
   async function markAllRead() {
     setSaving(true);
     try {
+      await queryClient.cancelQueries({ queryKey: queryKeys.changeEvents });
       const result = await markUnreadChangeEventsRead(events, markChangeEventRead);
-      setEvents(result.events);
+      queryClient.setQueryData(queryKeys.changeEvents, result.events);
       if (result.changedCount > 0) {
         notifyChangeEventsUpdated();
       }
@@ -95,8 +104,9 @@ export function ChangeCenterPage() {
   async function clearChangeHistory() {
     setSaving(true);
     try {
+      await queryClient.cancelQueries({ queryKey: queryKeys.changeEvents });
       await clearChangeEvents();
-      setEvents([]);
+      queryClient.setQueryData(queryKeys.changeEvents, []);
       setPage(1);
       notifyChangeEventsUpdated();
       toast.success("变更记录已清除");
