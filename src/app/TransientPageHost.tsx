@@ -1,6 +1,9 @@
 import { AnimatePresence, motion, MotionConfig, useIsPresent } from "framer-motion";
-import { useLayoutEffect, useRef, type ReactNode } from "react";
-import { completeTransientPageExit } from "@/app/transientPageExitPolicy";
+import { useCallback, useLayoutEffect, useRef, type ReactNode } from "react";
+import {
+  completeTransientPageExit,
+  type TransientPageExitSnapshot,
+} from "@/app/transientPageExitPolicy";
 import { PageActivityProvider } from "@/components/shell/PageActivity";
 import type { TransientPageId } from "@/lib/types/navigation";
 
@@ -77,12 +80,28 @@ function TransientPageLayer({ page }: { page: TransientPageDescriptor }) {
 }
 
 export function TransientPageHost({ page, onExitComplete }: TransientPageHostProps) {
+  const latestExitSnapshotRef = useRef<TransientPageExitSnapshot>({
+    hasActivePage: page !== null,
+    onExitComplete,
+  });
+
+  useLayoutEffect(() => {
+    latestExitSnapshotRef.current = {
+      hasActivePage: page !== null,
+      onExitComplete,
+    };
+  }, [page, onExitComplete]);
+
+  const handleExitComplete = useCallback(() => {
+    completeTransientPageExit(latestExitSnapshotRef.current);
+  }, []);
+
   return (
     <MotionConfig reducedMotion="user">
       <AnimatePresence
         initial={false}
         mode="wait"
-        onExitComplete={() => completeTransientPageExit(page, onExitComplete)}
+        onExitComplete={handleExitComplete}
       >
         {page ? <TransientPageLayer key={page.instanceKey} page={page} /> : null}
       </AnimatePresence>

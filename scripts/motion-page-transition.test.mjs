@@ -119,29 +119,38 @@ function findForbiddenObjectLiteralProperties(source, fileName = "fixture.tsx") 
   return forbiddenProperties;
 }
 
-function findJsxOpeningElements(source, tagName, fileName = "fixture.tsx") {
-  const sourceFile = ts.createSourceFile(
+function parseTsxSource(source, fileName = "fixture.tsx") {
+  return ts.createSourceFile(
     fileName,
     source,
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TSX,
   );
-  const openingElements = [];
+}
+
+function findNodes(root, predicate) {
+  const matches = [];
 
   function visit(node) {
-    if (
-      (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
-      ts.isIdentifier(node.tagName) &&
-      node.tagName.text === tagName
-    ) {
-      openingElements.push(node);
+    if (predicate(node)) {
+      matches.push(node);
     }
     ts.forEachChild(node, visit);
   }
 
-  visit(sourceFile);
-  return openingElements;
+  visit(root);
+  return matches;
+}
+
+function findJsxOpeningElements(sourceFile, tagName) {
+  return findNodes(
+    sourceFile,
+    (node) =>
+      (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
+      ts.isIdentifier(node.tagName) &&
+      node.tagName.text === tagName,
+  );
 }
 
 function getJsxAttribute(openingElement, attributeName) {
@@ -188,6 +197,7 @@ async function readSourceFiles(root) {
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 const hostPath = path.normalize("src/app/TransientPageHost.tsx");
 const hostSource = await readFile(hostPath, "utf8");
+const hostSourceFile = parseTsxSource(hostSource, hostPath);
 const interactionActivitySource = await readFile(
   "src/components/ui/InteractionActivity.tsx",
   "utf8",
@@ -255,10 +265,26 @@ assert.doesNotMatch(
   "the Motion host should declare presence lifecycle props directly",
 );
 
+const motionConfigElements = findJsxOpeningElements(hostSourceFile, "MotionConfig");
+assert.equal(
+  motionConfigElements.length,
+  1,
+  "the host should render exactly one MotionConfig boundary",
+);
+const reducedMotionAttribute = getJsxAttribute(
+  motionConfigElements[0],
+  "reducedMotion",
+);
+assert.ok(
+  reducedMotionAttribute?.initializer &&
+    ts.isStringLiteral(reducedMotionAttribute.initializer) &&
+    reducedMotionAttribute.initializer.text === "user",
+  "MotionConfig should delegate reduced-motion behavior to the user preference",
+);
+
 const animatePresenceElements = findJsxOpeningElements(
-  hostSource,
+  hostSourceFile,
   "AnimatePresence",
-  hostPath,
 );
 assert.equal(
   animatePresenceElements.length,
@@ -272,18 +298,129 @@ const exitCompleteAttribute = getJsxAttribute(
   animatePresenceElement,
   "onExitComplete",
 );
+const exitCompleteExpression =
+  exitCompleteAttribute?.initializer &&
+  ts.isJsxExpression(exitCompleteAttribute.initializer)
+    ? exitCompleteAttribute.initializer.expression
+    : undefined;
 assert.ok(
-  hostSource.includes('<MotionConfig reducedMotion="user">') &&
-    initialAttribute?.initializer &&
+  initialAttribute?.initializer &&
     ts.isJsxExpression(initialAttribute.initializer) &&
     initialAttribute.initializer.expression?.kind === ts.SyntaxKind.FalseKeyword &&
     modeAttribute?.initializer &&
     ts.isStringLiteral(modeAttribute.initializer) &&
     modeAttribute.initializer.text === "wait" &&
-    exitCompleteAttribute?.initializer &&
-    ts.isJsxExpression(exitCompleteAttribute.initializer) &&
-    exitCompleteAttribute.initializer.expression,
+    ts.isIdentifier(exitCompleteExpression),
   "the host should directly declare reduced-motion, wait-mode, and exit completion behavior",
+);
+
+const stableHandlerDeclarations = findNodes(
+  hostSourceFile,
+  (node) =>
+    ts.isVariableDeclaration(node) &&
+    ts.isIdentifier(node.name) &&
+    node.name.text === exitCompleteExpression.text,
+);
+assert.equal(
+  stableHandlerDeclarations.length,
+  1,
+  "AnimatePresence onExitComplete should resolve to one local stable handler",
+);
+const stableHandlerInitializer = stableHandlerDeclarations[0].initializer;
+assert.ok(
+  stableHandlerInitializer &&
+    ts.isCallExpression(stableHandlerInitializer) &&
+    ts.isIdentifier(stableHandlerInitializer.expression) &&
+    stableHandlerInitializer.expression.text === "useCallback" &&
+    (ts.isArrowFunction(stableHandlerInitializer.arguments[0]) ||
+      ts.isFunctionExpression(stableHandlerInitializer.arguments[0])) &&
+    ts.isArrayLiteralExpression(stableHandlerInitializer.arguments[1]) &&
+    stableHandlerInitializer.arguments[1].elements.length === 0,
+  "the exit completion handler should keep stable identity with useCallback([])",
+);
+
+const stableHandlerFunction = stableHandlerInitializer.arguments[0];
+const exitPolicyCalls = findNodes(
+  stableHandlerFunction,
+  (node) =>
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "completeTransientPageExit",
+);
+assert.equal(
+  exitPolicyCalls.length,
+  1,
+  "the stable handler should delegate once to the transient exit policy",
+);
+const latestSnapshotArgument = exitPolicyCalls[0].arguments[0];
+assert.ok(
+  exitPolicyCalls[0].arguments.length === 1 &&
+    ts.isPropertyAccessExpression(latestSnapshotArgument) &&
+    ts.isIdentifier(latestSnapshotArgument.expression) &&
+    latestSnapshotArgument.name.text === "current",
+  "the stable handler should read one latest committed snapshot ref",
+);
+
+const snapshotRefName = latestSnapshotArgument.expression.text;
+const snapshotRefDeclarations = findNodes(
+  hostSourceFile,
+  (node) =>
+    ts.isVariableDeclaration(node) &&
+    ts.isIdentifier(node.name) &&
+    node.name.text === snapshotRefName &&
+    node.initializer &&
+    ts.isCallExpression(node.initializer) &&
+    ts.isIdentifier(node.initializer.expression) &&
+    node.initializer.expression.text === "useRef",
+);
+assert.equal(
+  snapshotRefDeclarations.length,
+  1,
+  "the latest exit snapshot should be owned by one ref",
+);
+
+const snapshotAssignments = findNodes(
+  hostSourceFile,
+  (node) =>
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isPropertyAccessExpression(node.left) &&
+    ts.isIdentifier(node.left.expression) &&
+    node.left.expression.text === snapshotRefName &&
+    node.left.name.text === "current",
+);
+assert.equal(
+  snapshotAssignments.length,
+  1,
+  "the latest exit snapshot ref should have one committed update path",
+);
+
+const layoutEffectCalls = findNodes(
+  hostSourceFile,
+  (node) =>
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "useLayoutEffect",
+);
+const committedSnapshotEffects = layoutEffectCalls.filter((effectCall) =>
+  findNodes(effectCall.arguments[0], (node) => node === snapshotAssignments[0])
+    .length > 0,
+);
+assert.equal(
+  committedSnapshotEffects.length,
+  1,
+  "the latest exit snapshot should update only after React commits a layout effect",
+);
+const snapshotEffectDependencies = committedSnapshotEffects[0].arguments[1];
+assert.ok(
+  ts.isArrayLiteralExpression(snapshotEffectDependencies) &&
+    snapshotEffectDependencies.elements.some(
+      (element) => ts.isIdentifier(element) && element.text === "page",
+    ) &&
+    snapshotEffectDependencies.elements.some(
+      (element) => ts.isIdentifier(element) && element.text === "onExitComplete",
+    ),
+  "the committed snapshot should update with both current page and host callback",
 );
 assert.ok(
   hostSource.includes("useIsPresent()") &&

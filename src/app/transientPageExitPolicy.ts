@@ -1,8 +1,12 @@
+export type TransientPageExitSnapshot = Readonly<{
+  hasActivePage: boolean;
+  onExitComplete?: () => void;
+}>;
+
 export function completeTransientPageExit(
-  page: unknown,
-  onExitComplete?: () => void,
+  snapshot: TransientPageExitSnapshot,
 ): void {
-  if (page === null) {
-    onExitComplete?.();
+  if (!snapshot.hasActivePage) {
+    snapshot.onExitComplete?.();
   }
 }

@@ -175,7 +175,7 @@ assert.ok(
   "the host should pass lifecycle props directly to AnimatePresence without cloneElement",
 );
 assert.ok(
-  hostSource.includes("completeTransientPageExit(page, onExitComplete)"),
+  hostSource.includes("completeTransientPageExit"),
   "the AnimatePresence exit callback should delegate to the executable exit policy",
 );
 
@@ -183,28 +183,73 @@ const { completeTransientPageExit } = await import(
   "../src/app/transientPageExitPolicy.ts"
 );
 
-let exitCompleteCalls = 0;
-const recordExitComplete = () => {
-  exitCompleteCalls += 1;
-};
+function createCapturedCompletion(initialSnapshot) {
+  let latestSnapshot = initialSnapshot;
+  const capturedCompletion = () => completeTransientPageExit(latestSnapshot);
 
-completeTransientPageExit({ instanceKey: "transient-b" }, recordExitComplete);
+  return {
+    capturedCompletion,
+    commit(snapshot) {
+      latestSnapshot = snapshot;
+    },
+  };
+}
+
+let finalCloseCalls = 0;
+const activeToFinal = createCapturedCompletion({
+  hasActivePage: true,
+  onExitComplete: () => {
+    finalCloseCalls += 1;
+  },
+});
+const activeToFinalCompletion = activeToFinal.capturedCompletion;
+activeToFinal.commit({
+  hasActivePage: false,
+  onExitComplete: () => {
+    finalCloseCalls += 1;
+  },
+});
 assert.equal(
-  exitCompleteCalls,
-  0,
-  "a transient replacement should not restore shell focus",
+  activeToFinal.capturedCompletion,
+  activeToFinalCompletion,
+  "Motion should keep the same captured completion callback while committed state changes",
+);
+activeToFinalCompletion();
+assert.equal(
+  finalCloseCalls,
+  1,
+  "active-to-final navigation should restore shell focus when the captured exit finishes",
 );
 
-completeTransientPageExit(null, recordExitComplete);
+let replacementCalls = 0;
+const finalToActive = createCapturedCompletion({
+  hasActivePage: false,
+  onExitComplete: () => {
+    replacementCalls += 1;
+  },
+});
+const finalToActiveCompletion = finalToActive.capturedCompletion;
+finalToActive.commit({
+  hasActivePage: true,
+  onExitComplete: () => {
+    replacementCalls += 1;
+  },
+});
 assert.equal(
-  exitCompleteCalls,
-  1,
-  "closing the final transient should restore shell focus exactly once",
+  finalToActive.capturedCompletion,
+  finalToActiveCompletion,
+  "replacement navigation should not replace Motion's captured completion callback",
+);
+finalToActiveCompletion();
+assert.equal(
+  replacementCalls,
+  0,
+  "final-to-active navigation should not restore shell focus when the captured exit finishes",
 );
 
 assert.doesNotThrow(
-  () => completeTransientPageExit(null),
-  "closing without an optional host callback should remain safe",
+  () => completeTransientPageExit({ hasActivePage: false }),
+  "a final exit without an optional host callback should remain safe",
 );
 
 assert.ok(
