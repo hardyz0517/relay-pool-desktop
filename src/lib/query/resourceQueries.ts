@@ -1,11 +1,13 @@
 import { queryOptions } from "@tanstack/react-query";
 import { listChangeEvents } from "@/lib/api/changeEvents";
+import { getLatestCollectorSnapshot } from "@/lib/api/collector";
 import { listBalanceSnapshots } from "@/lib/api/economics";
 import { getProxyStatus, listRequestLogs } from "@/lib/api/proxy";
 import { getSettings } from "@/lib/api/settings";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
 import { queryKeys } from "@/lib/query/queryKeys";
+import { withQueryTimeout } from "@/lib/query/withQueryTimeout";
 
 export const settingsQueryOptions = () =>
   queryOptions({
@@ -36,6 +38,18 @@ export const stationsQueryOptions = (refetchInterval: number | false = false) =>
     queryFn: listStations,
     staleTime: 5_000,
     refetchInterval,
+  });
+
+export const stationAssetQueryOptions = (stationId: string) =>
+  queryOptions({
+    queryKey: queryKeys.stationAsset(stationId),
+    queryFn: () =>
+      withQueryTimeout(
+        getLatestCollectorSnapshot(stationId),
+        `station asset snapshot ${stationId}`,
+        6_000,
+      ),
+    staleTime: 30_000,
   });
 
 export const keyPoolQueryOptions = (refetchInterval: number | false = false) =>
