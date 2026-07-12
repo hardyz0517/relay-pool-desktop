@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { appRoutes } from "@/app/routes";
 import { AppShell } from "@/components/shell/AppShell";
 import { PageActivityProvider } from "@/components/shell/PageActivity";
 import {
@@ -68,6 +69,8 @@ export function App() {
     activeRouteId,
     transientParentRouteId,
   );
+  const activeShellRouteLabel =
+    appRoutes.find((route) => route.id === activeShellRouteId)?.label ?? activeShellRouteId;
 
   const rememberShellFocusTarget = useCallback((target: EventTarget | null) => {
     if (!(target instanceof Element)) {
@@ -272,7 +275,12 @@ export function App() {
         return {
           pageId: "modelBasePrices",
           instanceKey: "modelBasePrices",
-          node: <ModelBasePricesPage onBack={() => navigateTo(activeShellRouteId)} />,
+          node: (
+            <ModelBasePricesPage
+              backLabel={`返回${activeShellRouteLabel}`}
+              onBack={() => navigateTo(activeShellRouteId)}
+            />
+          ),
         };
       default: {
         const exhaustivePageId: never = pageId;

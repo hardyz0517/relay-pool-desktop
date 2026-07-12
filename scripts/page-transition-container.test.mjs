@@ -75,8 +75,16 @@ const modelBasePricesCase =
   appSource.match(/case "modelBasePrices":([\s\S]*?)default:/)?.[1] ?? "";
 assert.ok(
   modelBasePricesCase.includes("navigateTo(activeShellRouteId)") &&
+    modelBasePricesCase.includes('backLabel={`返回${activeShellRouteLabel}`}') &&
     !modelBasePricesCase.includes('navigateTo("pricing")'),
-  "model base prices should return to its actual invoking shell instead of hard-coding pricing",
+  "model base prices should return to and describe its actual invoking shell",
+);
+assert.ok(
+  appSource.includes('import { appRoutes } from "@/app/routes";') &&
+    /appRoutes\.find\(\s*\(route\) => route\.id === activeShellRouteId,?\s*\)\?\.label/.test(
+      appSource,
+    ),
+  "App should derive transient back copy from active-shell route metadata without page-specific labels",
 );
 
 assert.ok(

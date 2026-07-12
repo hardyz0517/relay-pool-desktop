@@ -7,6 +7,7 @@ import { readError } from "@/lib/errors";
 import type { ModelBasePrice } from "@/lib/types/economics";
 
 type ModelBasePricesPageProps = {
+  backLabel: string;
   onBack: () => void;
 };
 
@@ -71,7 +72,7 @@ function createEmptyDraft(): DraftRow {
   };
 }
 
-export function ModelBasePricesPage({ onBack }: ModelBasePricesPageProps) {
+export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPageProps) {
   const toast = useToast();
   const [rows, setRows] = useState<ModelBasePrice[]>([]);
   const [query, setQuery] = useState("");
@@ -208,7 +209,7 @@ export function ModelBasePricesPage({ onBack }: ModelBasePricesPageProps) {
       title="模型基准价格"
       stickyHeader
       backAction={
-        <IconButton label="返回价格 / 倍率" onClick={onBack}>
+        <IconButton label={backLabel} onClick={onBack}>
           <ArrowLeft className="h-4 w-4" />
         </IconButton>
       }

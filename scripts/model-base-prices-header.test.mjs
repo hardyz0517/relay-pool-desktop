@@ -19,8 +19,10 @@ assert.ok(
 );
 
 assert.ok(
-  source.includes('label="返回价格 / 倍率"'),
-  "back affordance should stay as an icon button with an accessible label",
+  source.includes("backLabel: string;") &&
+    source.includes("label={backLabel}") &&
+    !source.includes('label="返回价格 / 倍率"'),
+  "back affordance should use the explicit caller-provided accessible label",
 );
 
 assert.ok(
