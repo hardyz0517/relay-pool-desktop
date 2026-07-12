@@ -38,7 +38,7 @@ export function LocalRoutingStatusTab({ workspace, loading }: LocalRoutingStatus
   return (
     <div className="grid gap-3">
       <div className="grid items-stretch gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] lg:[&>*]:h-full">
-        <SectionCard title="本地端点" className="h-full" contentClassName="grid h-full gap-3">
+        <SectionCard title="本地端点" className="h-full grid-rows-[auto_minmax(0,1fr)]" contentClassName="grid h-full gap-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-teal-50 text-teal-700">
@@ -68,7 +68,7 @@ export function LocalRoutingStatusTab({ workspace, loading }: LocalRoutingStatus
           </div>
         </SectionCard>
 
-        <SectionCard title="当前秘钥" className="h-full" contentClassName="grid h-full content-start gap-3">
+        <SectionCard title="当前秘钥" className="h-full grid-rows-[auto_minmax(0,1fr)]" contentClassName="grid h-full content-center gap-3">
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-emerald-50 text-emerald-700">
               <ShieldCheck className="h-5 w-5" />

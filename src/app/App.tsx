@@ -329,7 +329,9 @@ export function App() {
                 data-page-transition-state={shellPageState}
                 inert={inert ? "" : undefined}
               >
-                {renderShellPage(routeId)}
+                <div className="app-page-transition-content">
+                  {renderShellPage(routeId)}
+                </div>
               </div>
             </PageActivityProvider>
           );

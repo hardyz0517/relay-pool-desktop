@@ -46,3 +46,15 @@ assert.ok(
     source.includes("isSorting || wasDragging"),
   "station rows should not run sortable layout animations for background refreshes or return-navigation reactivation",
 );
+
+assert.match(
+  source,
+  /async function handleRunCollect\([\s\S]*?await collectSub2apiStation\(station\.id\);[\s\S]*?await refreshStations\(\{ silent: true \}\);/,
+  "manual station collection should refresh the asset list silently so the page does not swap to the loading state and jump to the top",
+);
+
+assert.match(
+  source,
+  /async function handleRefreshBalance\([\s\S]*?collectStationTask\(station\.id,\s*"balance"\);[\s\S]*?await refreshStations\(\{ silent: true \}\);/,
+  "manual balance refresh should refresh the asset list silently so the current scroll position is preserved",
+);

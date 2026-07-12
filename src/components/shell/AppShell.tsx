@@ -152,7 +152,7 @@ export function AppShell({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <main className="min-h-0 flex-1 overflow-hidden bg-background p-[var(--shell-page-gap)]">
+        <main className="min-h-0 flex-1 overflow-hidden bg-background">
           {children}
         </main>
       </div>

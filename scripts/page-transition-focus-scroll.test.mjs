@@ -78,11 +78,16 @@ for (const className of ["min-h-0", "flex-1", "overflow-hidden"]) {
 for (const className of ["overflow-auto", "overflow-y-auto"]) {
   assert.ok(!mainClasses.has(className), `AppShell main should not include ${className}`);
 }
+assert.ok(
+  !mainClasses.has("p-[var(--shell-page-gap)]"),
+  "AppShell main should not leave a static gutter outside the page scrollport",
+);
 
 const stackRule = readRule(".app-page-transition-stack");
 const layerRule = readRule(
   ".app-page-transition-layer,\n[data-page-transition-layer]",
 );
+const contentRule = readRule(".app-page-transition-content");
 const scrollbarRule = readRule(
   ".app-page-transition-layer::-webkit-scrollbar,\n[data-page-transition-layer]::-webkit-scrollbar",
 );
@@ -94,7 +99,18 @@ assertDeclaration(layerRule, "min-height", "100%");
 assertDeclaration(layerRule, "min-width", "0");
 assertDeclaration(layerRule, "overflow-y", "auto");
 assertDeclaration(layerRule, "scrollbar-width", "none");
+assertNoDeclaration(layerRule, "padding");
+assertDeclaration(contentRule, "padding", "var(--shell-page-gap)");
 assertDeclaration(scrollbarRule, "display", "none");
+
+assert.ok(
+  appSource.includes(
+    `<div className="app-page-transition-content">
+                  {renderShellPage(routeId)}
+                </div>`,
+  ),
+  "retained shell pages should use the same inner gutter wrapper as transient pages",
+);
 
 for (const property of ["transform", "transition", "animation"]) {
   assertNoDeclaration(layerRule, property);

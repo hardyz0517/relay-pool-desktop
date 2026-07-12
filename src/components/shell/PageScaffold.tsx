@@ -34,7 +34,7 @@ export function PageScaffold({
         className={cn(
           "flex min-h-[44px] flex-wrap items-center justify-between gap-3",
           stickyHeader &&
-            "sticky top-[calc(var(--shell-page-gap)*-1)] z-20 -mx-[var(--shell-page-gap)] -mt-[var(--shell-page-gap)] border-b border-border bg-background/95 px-[var(--shell-page-gap)] py-3 backdrop-blur",
+            "sticky top-0 z-20 -mx-[var(--shell-page-gap)] -mt-[var(--shell-page-gap)] border-b border-border bg-background/95 px-[var(--shell-page-gap)] py-3 backdrop-blur",
         )}
       >
         <div className="flex min-w-0 items-center gap-3">

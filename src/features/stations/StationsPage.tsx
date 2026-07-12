@@ -646,7 +646,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     setError(null);
     try {
       await collectSub2apiStation(station.id);
-      await refreshStations();
+      await refreshStations({ silent: true });
       if (station.id === selectedStationId || station.id === drawerStationId) {
         await refreshExtras(station.id);
       }
@@ -667,7 +667,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     setError(null);
     try {
       const result = await collectStationTask(station.id, "balance");
-      await refreshStations();
+      await refreshStations({ silent: true });
       if (station.id === selectedStationId || station.id === drawerStationId) {
         await refreshExtras(station.id);
       }

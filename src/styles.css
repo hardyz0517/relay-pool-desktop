@@ -136,6 +136,7 @@ textarea {
 
 .app-page-transition-content {
   min-height: 100%;
+  padding: var(--shell-page-gap);
 }
 
 @keyframes relayPageFadeUp {

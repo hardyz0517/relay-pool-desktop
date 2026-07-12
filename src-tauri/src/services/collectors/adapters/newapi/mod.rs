@@ -24,6 +24,9 @@ use crate::services::{
 
 const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const NEWAPI_REMOTE_KEY_PAGE_SIZE: usize = 100;
+const NEWAPI_LOG_PAGE_SIZE: usize = 100;
+const NEWAPI_LOG_MAX_PAGES: usize = 100;
+const NEWAPI_LOG_TYPE_CONSUME: i64 = 2;
 
 pub(crate) fn login_with_password(
     database: &AppDatabase,
@@ -479,7 +482,7 @@ fn build_balance_output(
     station_id: &str,
     data: &Value,
     status: &parsers::NewApiStatus,
-    endpoint_result: Value,
+    endpoint_results: Vec<Value>,
 ) -> AdapterOutput {
     let mut facts = CollectorFacts::default();
     facts.balances.push(parsers::parse_balance_fact(
@@ -503,7 +506,7 @@ fn build_balance_output(
             "task": "balance",
             "quotaPerUnit": status.quota_per_unit,
             "quotaPerUnitFallback": status.used_fallback,
-            "endpointResults": [endpoint_result],
+            "endpointResults": endpoint_results,
         }),
         normalized_json: json!({
             "balanceCount": balance_count,
@@ -614,7 +617,7 @@ fn collect_authenticated_task(
 ) -> Result<AdapterOutput, String> {
     let station = database.station_for_collector(station_id)?;
     if task == CollectorTask::Balance {
-        let (status, _) = fetch_status(database, &station)?;
+        let (status, status_endpoint_result) = fetch_status(database, &station)?;
         let response = client::get_authenticated_json(
             database,
             data_key,
@@ -623,11 +626,19 @@ fn collect_authenticated_task(
             client::NewApiOperation::SelfInfo,
         )
         .map_err(newapi_request_error_message)?;
+        let (usage_stats, usage_endpoint_results) =
+            collect_usage_stats(database, data_key, &station, status.quota_per_unit);
+        let mut balance_data = response.data;
+        if let Some(usage_stats) = usage_stats {
+            merge_usage_stats_into_balance_data(&mut balance_data, usage_stats);
+        }
+        let mut endpoint_results = vec![status_endpoint_result, response.endpoint_result];
+        endpoint_results.extend(usage_endpoint_results);
         return Ok(build_balance_output(
             station_id,
-            &response.data,
+            &balance_data,
             &status,
-            response.endpoint_result,
+            endpoint_results,
         ));
     }
     if task == CollectorTask::Groups {
@@ -665,6 +676,367 @@ fn collect_authenticated_task(
         "unsupported_task",
         "NewAPI adapter does not run this task directly.",
     )
+}
+
+#[derive(Debug, Clone, Default)]
+struct NewApiUsageStats {
+    today_request_count: Option<i64>,
+    total_request_count: Option<i64>,
+    today_consumption: Option<f64>,
+    total_consumption: Option<f64>,
+    today_token_count: Option<i64>,
+    total_token_count: Option<i64>,
+    today_input_token_count: Option<i64>,
+    today_output_token_count: Option<i64>,
+    total_input_token_count: Option<i64>,
+    total_output_token_count: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct NewApiLogStatWindow {
+    request_count: Option<i64>,
+    token_count: Option<i64>,
+    consumption: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct NewApiLogWindow {
+    request_count: Option<i64>,
+    input_token_count: Option<i64>,
+    output_token_count: Option<i64>,
+}
+
+impl NewApiUsageStats {
+    fn has_any(&self) -> bool {
+        self.today_request_count.is_some()
+            || self.total_request_count.is_some()
+            || self.today_consumption.is_some()
+            || self.total_consumption.is_some()
+            || self.today_token_count.is_some()
+            || self.total_token_count.is_some()
+            || self.today_input_token_count.is_some()
+            || self.today_output_token_count.is_some()
+            || self.total_input_token_count.is_some()
+            || self.total_output_token_count.is_some()
+    }
+}
+
+fn collect_usage_stats(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &Station,
+    quota_per_unit: f64,
+) -> (Option<NewApiUsageStats>, Vec<Value>) {
+    let now = unix_now_seconds();
+    let today_start = local_today_start_timestamp(now);
+    let mut endpoint_results = Vec::new();
+
+    let today_stat = collect_log_stat_window(
+        database,
+        data_key,
+        station,
+        today_start,
+        now,
+        quota_per_unit,
+    )
+    .map_endpoint_result(&mut endpoint_results);
+    let today_logs = collect_log_window(database, data_key, station, today_start, now)
+        .map_endpoint_results(&mut endpoint_results);
+    let total_stat = collect_log_stat_window(database, data_key, station, 0, now, quota_per_unit)
+        .map_endpoint_result(&mut endpoint_results);
+    let total_logs = collect_log_window(database, data_key, station, 0, now)
+        .map_endpoint_results(&mut endpoint_results);
+
+    let today_split_token_count = today_logs
+        .as_ref()
+        .and_then(|logs| logs.input_token_count.zip(logs.output_token_count))
+        .map(|(input, output)| input + output);
+    let total_split_token_count = total_logs
+        .as_ref()
+        .and_then(|logs| logs.input_token_count.zip(logs.output_token_count))
+        .map(|(input, output)| input + output);
+
+    let stats = NewApiUsageStats {
+        today_request_count: today_logs
+            .as_ref()
+            .and_then(|logs| logs.request_count)
+            .or_else(|| today_stat.as_ref().and_then(|stat| stat.request_count)),
+        total_request_count: total_logs
+            .as_ref()
+            .and_then(|logs| logs.request_count)
+            .or_else(|| total_stat.as_ref().and_then(|stat| stat.request_count)),
+        today_consumption: today_stat.as_ref().and_then(|stat| stat.consumption),
+        total_consumption: total_stat.as_ref().and_then(|stat| stat.consumption),
+        today_token_count: today_stat
+            .as_ref()
+            .and_then(|stat| stat.token_count)
+            .or(today_split_token_count),
+        total_token_count: total_stat
+            .as_ref()
+            .and_then(|stat| stat.token_count)
+            .or(total_split_token_count),
+        today_input_token_count: today_logs.as_ref().and_then(|logs| logs.input_token_count),
+        today_output_token_count: today_logs.as_ref().and_then(|logs| logs.output_token_count),
+        total_input_token_count: total_logs.as_ref().and_then(|logs| logs.input_token_count),
+        total_output_token_count: total_logs.as_ref().and_then(|logs| logs.output_token_count),
+    };
+
+    (stats.has_any().then_some(stats), endpoint_results)
+}
+
+trait UsageCollectionResultExt<T> {
+    fn map_endpoint_result(self, endpoint_results: &mut Vec<Value>) -> Option<T>;
+    fn map_endpoint_results(self, endpoint_results: &mut Vec<Value>) -> Option<T>;
+}
+
+impl<T> UsageCollectionResultExt<T> for Result<(T, Vec<Value>), String> {
+    fn map_endpoint_result(self, endpoint_results: &mut Vec<Value>) -> Option<T> {
+        self.map_endpoint_results(endpoint_results)
+    }
+
+    fn map_endpoint_results(self, endpoint_results: &mut Vec<Value>) -> Option<T> {
+        match self {
+            Ok((value, mut results)) => {
+                endpoint_results.append(&mut results);
+                Some(value)
+            }
+            Err(_) => None,
+        }
+    }
+}
+
+fn collect_log_stat_window(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &Station,
+    start_timestamp: i64,
+    end_timestamp: i64,
+    quota_per_unit: f64,
+) -> Result<(NewApiLogStatWindow, Vec<Value>), String> {
+    let path = newapi_log_stat_path(start_timestamp, end_timestamp);
+    let response = client::get_authenticated_json(
+        database,
+        data_key,
+        station,
+        &path,
+        client::NewApiOperation::LogStat,
+    )
+    .map_err(newapi_request_error_message)?;
+    let quota = numeric_f64_field(&response.data, &["quota"]).unwrap_or(0.0);
+    Ok((
+        NewApiLogStatWindow {
+            request_count: numeric_i64_field(&response.data, &["rpm", "request_count", "count"]),
+            token_count: numeric_i64_field(&response.data, &["tpm", "token_count", "token_used"]),
+            consumption: Some(quota / quota_per_unit),
+        },
+        vec![response.endpoint_result],
+    ))
+}
+
+fn collect_log_window(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &Station,
+    start_timestamp: i64,
+    end_timestamp: i64,
+) -> Result<(NewApiLogWindow, Vec<Value>), String> {
+    let mut page = 1_usize;
+    let mut total = None;
+    let mut fetched = 0_usize;
+    let mut input_tokens = 0_i64;
+    let mut output_tokens = 0_i64;
+    let mut saw_token_count = false;
+    let mut endpoint_results = Vec::new();
+
+    loop {
+        let path = newapi_log_page_path(page, start_timestamp, end_timestamp);
+        let response = client::get_authenticated_json(
+            database,
+            data_key,
+            station,
+            &path,
+            client::NewApiOperation::ListLogs,
+        )
+        .map_err(newapi_request_error_message)?;
+        endpoint_results.push(response.endpoint_result);
+        total = total.or_else(|| numeric_usize_field(&response.data, &["total"]));
+        let items = response
+            .data
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for item in &items {
+            let prompt_tokens = numeric_i64_field(
+                item,
+                &[
+                    "prompt_tokens",
+                    "input_tokens",
+                    "promptTokens",
+                    "inputTokens",
+                ],
+            )
+            .unwrap_or(0);
+            let completion_tokens = numeric_i64_field(
+                item,
+                &[
+                    "completion_tokens",
+                    "output_tokens",
+                    "completionTokens",
+                    "outputTokens",
+                ],
+            )
+            .unwrap_or(0);
+            if prompt_tokens != 0 || completion_tokens != 0 {
+                saw_token_count = true;
+            }
+            input_tokens += prompt_tokens;
+            output_tokens += completion_tokens;
+        }
+
+        fetched += items.len();
+        if items.is_empty()
+            || total.is_some_and(|total| fetched >= total)
+            || page >= NEWAPI_LOG_MAX_PAGES
+        {
+            break;
+        }
+        page += 1;
+    }
+
+    Ok((
+        NewApiLogWindow {
+            request_count: total.and_then(|value| i64::try_from(value).ok()),
+            input_token_count: saw_token_count.then_some(input_tokens),
+            output_token_count: saw_token_count.then_some(output_tokens),
+        },
+        endpoint_results,
+    ))
+}
+
+fn merge_usage_stats_into_balance_data(data: &mut Value, stats: NewApiUsageStats) {
+    let Some(object) = data.as_object_mut() else {
+        return;
+    };
+    insert_missing_i64(object, "today_request_count", stats.today_request_count);
+    insert_missing_i64_with_aliases(
+        object,
+        "total_request_count",
+        &[
+            "total_request_count",
+            "request_count",
+            "totalRequests",
+            "requestCount",
+            "requests",
+        ],
+        stats.total_request_count,
+    );
+    insert_missing_f64(object, "today_consumption", stats.today_consumption);
+    insert_missing_f64(object, "total_consumption", stats.total_consumption);
+    insert_missing_i64(object, "today_token_count", stats.today_token_count);
+    insert_missing_i64(object, "total_token_count", stats.total_token_count);
+    insert_missing_i64(
+        object,
+        "today_input_token_count",
+        stats.today_input_token_count,
+    );
+    insert_missing_i64(
+        object,
+        "today_output_token_count",
+        stats.today_output_token_count,
+    );
+    insert_missing_i64(
+        object,
+        "total_input_token_count",
+        stats.total_input_token_count,
+    );
+    insert_missing_i64(
+        object,
+        "total_output_token_count",
+        stats.total_output_token_count,
+    );
+}
+
+fn insert_missing_i64(object: &mut serde_json::Map<String, Value>, key: &str, value: Option<i64>) {
+    if !object.contains_key(key) {
+        if let Some(value) = value {
+            object.insert(key.to_string(), json!(value));
+        }
+    }
+}
+
+fn insert_missing_i64_with_aliases(
+    object: &mut serde_json::Map<String, Value>,
+    key: &str,
+    aliases: &[&str],
+    value: Option<i64>,
+) {
+    if aliases.iter().any(|alias| object.contains_key(*alias)) {
+        return;
+    }
+    insert_missing_i64(object, key, value);
+}
+
+fn insert_missing_f64(object: &mut serde_json::Map<String, Value>, key: &str, value: Option<f64>) {
+    if !object.contains_key(key) {
+        if let Some(value) = value {
+            object.insert(key.to_string(), json!(value));
+        }
+    }
+}
+
+fn newapi_log_stat_path(start_timestamp: i64, end_timestamp: i64) -> String {
+    format!(
+        "/api/log/self/stat?type={NEWAPI_LOG_TYPE_CONSUME}&token_name=&model_name=&start_timestamp={start_timestamp}&end_timestamp={end_timestamp}&group="
+    )
+}
+
+fn newapi_log_page_path(page: usize, start_timestamp: i64, end_timestamp: i64) -> String {
+    format!(
+        "/api/log/self?p={page}&page_size={NEWAPI_LOG_PAGE_SIZE}&type={NEWAPI_LOG_TYPE_CONSUME}&token_name=&model_name=&start_timestamp={start_timestamp}&end_timestamp={end_timestamp}&group=&request_id="
+    )
+}
+
+fn unix_now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn local_today_start_timestamp(fallback_now: i64) -> i64 {
+    let now = chrono::Local::now();
+    let Some(midnight) = now.date_naive().and_hms_opt(0, 0, 0) else {
+        return fallback_now;
+    };
+    midnight
+        .and_local_timezone(chrono::Local)
+        .earliest()
+        .map(|value| value.timestamp())
+        .unwrap_or(fallback_now)
+}
+
+fn numeric_f64_field(value: &Value, keys: &[&str]) -> Option<f64> {
+    keys.iter().find_map(|key| {
+        value
+            .get(*key)
+            .and_then(|item| item.as_f64().or_else(|| item.as_str()?.trim().parse().ok()))
+    })
+}
+
+fn numeric_i64_field(value: &Value, keys: &[&str]) -> Option<i64> {
+    keys.iter().find_map(|key| {
+        value.get(*key).and_then(|item| {
+            item.as_i64()
+                .or_else(|| item.as_u64().and_then(|value| i64::try_from(value).ok()))
+                .or_else(|| item.as_f64().map(|value| value.round() as i64))
+                .or_else(|| item.as_str()?.trim().parse().ok())
+        })
+    })
+}
+
+fn numeric_usize_field(value: &Value, keys: &[&str]) -> Option<usize> {
+    numeric_i64_field(value, keys).and_then(|value| usize::try_from(value).ok())
 }
 
 fn fetch_status(
@@ -890,7 +1262,7 @@ mod tests {
                 200,
                 json!({
                     "success": true,
-                    "data": { "quota": 375000, "rpm": 0, "tpm": 0 }
+                    "data": { "quota": 375000, "rpm": 2, "tpm": 49567 }
                 }),
             )),
             Some(json_response(
@@ -912,7 +1284,7 @@ mod tests {
                 200,
                 json!({
                     "success": true,
-                    "data": { "quota": 9250000, "rpm": 0, "tpm": 0 }
+                    "data": { "quota": 9250000, "rpm": 3, "tpm": 422890 }
                 }),
             )),
             Some(json_response(
@@ -953,16 +1325,94 @@ mod tests {
         assert_eq!(balance.total_input_token_count, Some(290000));
         assert_eq!(balance.total_output_token_count, Some(132890));
         assert_eq!(balance.total_token_count, Some(422890));
-        assert!(
-            requests
-                .iter()
-                .any(|request| request.starts_with("GET /api/log/self/stat?type=2&"))
-        );
-        assert!(
-            requests
-                .iter()
-                .any(|request| request.starts_with("GET /api/log/self/?p=1&page_size=100&type=2&"))
-        );
+        assert!(requests
+            .iter()
+            .any(|request| request.starts_with("GET /api/log/self/stat?type=2&")));
+        assert!(requests
+            .iter()
+            .any(|request| request.starts_with("GET /api/log/self?p=1&page_size=100&type=2&")));
+    }
+
+    #[test]
+    fn newapi_balance_collects_total_tokens_from_stat_when_logs_have_no_split() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota_per_unit": 500000 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota": 1000000,
+                        "used_quota": 0,
+                        "request_count": 0
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 0, "rpm": 0, "tpm": 54321 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 0,
+                        "items": []
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 0, "rpm": 0, "tpm": 987654 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 0,
+                        "items": []
+                    }
+                }),
+            )),
+        ]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let output = collect(&database, &data_key, &station.id, CollectorTask::Balance)
+            .expect("balance collect");
+        let balance = output.facts.balances.first().expect("balance fact");
+
+        assert_eq!(output.status, "success");
+        assert_eq!(balance.today_request_count, Some(0));
+        assert_eq!(balance.today_consumption, Some(0.0));
+        assert_eq!(balance.today_input_token_count, None);
+        assert_eq!(balance.today_output_token_count, None);
+        assert_eq!(balance.today_token_count, Some(54321));
+        assert_eq!(balance.total_request_count, Some(0));
+        assert_eq!(balance.total_consumption, Some(0.0));
+        assert_eq!(balance.total_input_token_count, None);
+        assert_eq!(balance.total_output_token_count, None);
+        assert_eq!(balance.total_token_count, Some(987654));
     }
 
     #[test]

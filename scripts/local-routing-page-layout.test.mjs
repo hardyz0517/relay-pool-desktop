@@ -19,6 +19,13 @@ function assertExcludes(source, needle, label) {
   }
 }
 
+function assertOccurrenceCount(source, needle, expectedCount, label) {
+  const count = source.split(needle).length - 1;
+  if (count !== expectedCount) {
+    throw new Error(`${label} should include ${needle} ${expectedCount} times, found ${count}`);
+  }
+}
+
 function assertNotSharedWorkspacePromiseAll(source) {
   const sharedLoadPattern = /Promise\.all\(\[\s*loadRoutingWorkspace\(\),\s*loadLocalRoutingWorkspace\(\),?\s*\]\)/;
   if (sharedLoadPattern.test(source)) {
@@ -40,6 +47,8 @@ assertIncludes(routingPage, "编辑", "RoutingPage");
 assertIncludes(statusTab, "本地端点", "LocalRoutingStatusTab");
 assertIncludes(statusTab, "当前秘钥", "LocalRoutingStatusTab");
 assertIncludes(statusTab, "lg:[&>*]:h-full", "LocalRoutingStatusTab");
+assertOccurrenceCount(statusTab, "grid-rows-[auto_minmax(0,1fr)]", 2, "LocalRoutingStatusTab");
+assertIncludes(statusTab, 'contentClassName="grid h-full content-center gap-3"', "LocalRoutingStatusTab");
 assertExcludes(statusTab, "latestDecision?.reason", "LocalRoutingStatusTab");
 assertIncludes(statusTab, "倍率上限", "LocalRoutingStatusTab");
 assertIncludes(statusTab, "分组筛选", "LocalRoutingStatusTab");

@@ -9444,6 +9444,15 @@ fn list_change_events_from_connection(connection: &Connection) -> Result<Vec<Cha
                     old_value_json, new_value_json, impact_json, dedupe_key, source,
                     detected_at, resolved_at, created_at, updated_at
                FROM change_events
+              WHERE NOT (
+                    event_type IN ('model_added', 'model_removed')
+                    AND EXISTS (
+                        SELECT 1
+                          FROM stations
+                         WHERE stations.id = change_events.station_id
+                           AND stations.station_type = 'newapi'
+                    )
+                )
               ORDER BY updated_at DESC, detected_at DESC",
         )
         .map_err(|error| format!("读取变更事件失败: {error}"))?;
@@ -9467,6 +9476,15 @@ fn list_change_events_for_station_from_connection(
                     detected_at, resolved_at, created_at, updated_at
                FROM change_events
               WHERE station_id = ?1
+                AND NOT (
+                    event_type IN ('model_added', 'model_removed')
+                    AND EXISTS (
+                        SELECT 1
+                          FROM stations
+                         WHERE stations.id = change_events.station_id
+                           AND stations.station_type = 'newapi'
+                    )
+                )
               ORDER BY updated_at DESC, detected_at DESC",
         )
         .map_err(|error| format!("读取中转站变更事件失败: {error}"))?;
@@ -11318,61 +11336,63 @@ fn insert_collector_snapshot_in_connection(
     if let Some(previous_snapshot) = previous_snapshot.as_ref() {
         let previous_models = models_from_snapshot_value(&previous_snapshot.normalized_json);
         let next_models = models_from_snapshot_value(&saved.normalized_json);
-        for model in next_models
-            .iter()
-            .filter(|model| !previous_models.contains(model))
-        {
-            let event = UpsertChangeEventInput {
-                severity: crate::services::change_events::SEVERITY_INFO.to_string(),
-                event_type: "model_added".to_string(),
-                title: "模型新增".to_string(),
-                message: format!("站点新增模型 {model}"),
-                object_type: "station".to_string(),
-                object_id: Some(saved.station_id.clone()),
-                station_id: Some(saved.station_id.clone()),
-                station_key_id: None,
-                pricing_rule_id: None,
-                request_log_id: None,
-                old_value_json: None,
-                new_value_json: Some(json!({ "model": model }).to_string()),
-                impact_json: None,
-                dedupe_key: crate::services::change_events::model_dedupe_key(
-                    &saved.station_id,
-                    "model_added",
-                    model,
-                ),
-                source: "collector".to_string(),
-            };
-            let _ = upsert_change_event_in_connection(connection, event);
-        }
-        for model in previous_models
-            .iter()
-            .filter(|model| !next_models.contains(model))
-        {
-            let event = UpsertChangeEventInput {
-                severity: crate::services::change_events::SEVERITY_WARNING.to_string(),
-                event_type: "model_removed".to_string(),
-                title: "模型下架".to_string(),
-                message: format!("站点下架模型 {model}"),
-                object_type: "station".to_string(),
-                object_id: Some(saved.station_id.clone()),
-                station_id: Some(saved.station_id.clone()),
-                station_key_id: None,
-                pricing_rule_id: None,
-                request_log_id: None,
-                old_value_json: Some(json!({ "model": model }).to_string()),
-                new_value_json: None,
-                impact_json: Some(
-                    json!({ "routingRisk": "model_candidates_may_change" }).to_string(),
-                ),
-                dedupe_key: crate::services::change_events::model_dedupe_key(
-                    &saved.station_id,
-                    "model_removed",
-                    model,
-                ),
-                source: "collector".to_string(),
-            };
-            let _ = upsert_change_event_in_connection(connection, event);
+        if should_emit_model_change_events(&saved.source) {
+            for model in next_models
+                .iter()
+                .filter(|model| !previous_models.contains(model))
+            {
+                let event = UpsertChangeEventInput {
+                    severity: crate::services::change_events::SEVERITY_INFO.to_string(),
+                    event_type: "model_added".to_string(),
+                    title: "模型新增".to_string(),
+                    message: format!("站点新增模型 {model}"),
+                    object_type: "station".to_string(),
+                    object_id: Some(saved.station_id.clone()),
+                    station_id: Some(saved.station_id.clone()),
+                    station_key_id: None,
+                    pricing_rule_id: None,
+                    request_log_id: None,
+                    old_value_json: None,
+                    new_value_json: Some(json!({ "model": model }).to_string()),
+                    impact_json: None,
+                    dedupe_key: crate::services::change_events::model_dedupe_key(
+                        &saved.station_id,
+                        "model_added",
+                        model,
+                    ),
+                    source: "collector".to_string(),
+                };
+                let _ = upsert_change_event_in_connection(connection, event);
+            }
+            for model in previous_models
+                .iter()
+                .filter(|model| !next_models.contains(model))
+            {
+                let event = UpsertChangeEventInput {
+                    severity: crate::services::change_events::SEVERITY_WARNING.to_string(),
+                    event_type: "model_removed".to_string(),
+                    title: "模型下架".to_string(),
+                    message: format!("站点下架模型 {model}"),
+                    object_type: "station".to_string(),
+                    object_id: Some(saved.station_id.clone()),
+                    station_id: Some(saved.station_id.clone()),
+                    station_key_id: None,
+                    pricing_rule_id: None,
+                    request_log_id: None,
+                    old_value_json: Some(json!({ "model": model }).to_string()),
+                    new_value_json: None,
+                    impact_json: Some(
+                        json!({ "routingRisk": "model_candidates_may_change" }).to_string(),
+                    ),
+                    dedupe_key: crate::services::change_events::model_dedupe_key(
+                        &saved.station_id,
+                        "model_removed",
+                        model,
+                    ),
+                    source: "collector".to_string(),
+                };
+                let _ = upsert_change_event_in_connection(connection, event);
+            }
         }
 
         let previous_rates =
@@ -11395,6 +11415,10 @@ fn insert_collector_snapshot_in_connection(
         }
     }
     Ok(saved)
+}
+
+fn should_emit_model_change_events(source: &str) -> bool {
+    source != "newapi-models"
 }
 
 fn row_to_collector_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<CollectorSnapshot> {
@@ -12935,6 +12959,16 @@ mod tests {
                 note: None,
             })
             .expect("station")
+    }
+
+    fn set_station_type_for_test(database: &AppDatabase, station_id: &str, station_type: &str) {
+        let connection = database.connection().expect("connection");
+        connection
+            .execute(
+                "UPDATE stations SET station_type = ?2 WHERE id = ?1",
+                params![station_id, station_type],
+            )
+            .expect("set station type");
     }
 
     fn finish_test_collector_run(
@@ -15856,6 +15890,101 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| event.event_type == "rate_changed" && event.severity == "warning"));
+    }
+
+    #[test]
+    fn newapi_model_collection_does_not_create_change_center_events() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "newapi-model-relay");
+        set_station_type_for_test(&database, &station.id, "newapi");
+
+        database
+            .insert_collector_snapshot(
+                &station.id,
+                "newapi-models",
+                "success",
+                json!({ "ok": true }),
+                json!({ "models": ["gpt-5.6-sol"] }),
+                None,
+                None,
+            )
+            .expect("first snapshot");
+        database
+            .insert_collector_snapshot(
+                &station.id,
+                "newapi-models",
+                "success",
+                json!({ "ok": true }),
+                json!({ "models": ["gpt-5.6-sol", "grok-4.5"] }),
+                None,
+                None,
+            )
+            .expect("second snapshot");
+
+        let events = database.list_change_events().expect("events");
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_type != "model_added"
+                    && event.event_type != "model_removed"),
+            "NewAPI model collection should stay out of the change center; got {events:?}",
+        );
+    }
+
+    #[test]
+    fn list_change_events_filters_existing_newapi_model_events() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "newapi-existing-events");
+        set_station_type_for_test(&database, &station.id, "newapi");
+
+        database
+            .upsert_change_event(UpsertChangeEventInput {
+                severity: crate::services::change_events::SEVERITY_INFO.to_string(),
+                event_type: "model_added".to_string(),
+                title: "模型新增".to_string(),
+                message: "站点新增模型 grok-4.5".to_string(),
+                object_type: "station".to_string(),
+                object_id: Some(station.id.clone()),
+                station_id: Some(station.id.clone()),
+                station_key_id: None,
+                pricing_rule_id: None,
+                request_log_id: None,
+                old_value_json: None,
+                new_value_json: Some(json!({ "model": "grok-4.5" }).to_string()),
+                impact_json: None,
+                dedupe_key: "old-newapi-model-added".to_string(),
+                source: "collector".to_string(),
+            })
+            .expect("model event");
+        database
+            .upsert_change_event(UpsertChangeEventInput {
+                severity: crate::services::change_events::SEVERITY_WARNING.to_string(),
+                event_type: "low_balance".to_string(),
+                title: "余额偏低".to_string(),
+                message: "余额低于阈值".to_string(),
+                object_type: "station".to_string(),
+                object_id: Some(station.id.clone()),
+                station_id: Some(station.id.clone()),
+                station_key_id: None,
+                pricing_rule_id: None,
+                request_log_id: None,
+                old_value_json: None,
+                new_value_json: None,
+                impact_json: None,
+                dedupe_key: "newapi-low-balance".to_string(),
+                source: "balance".to_string(),
+            })
+            .expect("balance event");
+
+        let events = database.list_change_events().expect("events");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "low_balance");
+
+        let station_events = database
+            .list_change_events_for_station(station.id)
+            .expect("station events");
+        assert_eq!(station_events.len(), 1);
+        assert_eq!(station_events[0].event_type, "low_balance");
     }
 
     #[test]
