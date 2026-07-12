@@ -5081,13 +5081,16 @@ fn load_scheduler_candidates_from_connection(
         .map(|row| {
             let multiplier_facts =
                 load_multiplier_source_facts_from_connection(connection, &row.station_key_id)?;
-            let effective_multiplier = resolve_effective_multiplier(
+            let multiplier_result = resolve_effective_multiplier(
                 multiplier_facts,
                 now_ms,
                 advanced_settings.multiplier_min_confidence,
                 group_rate_interval_ms,
-            )
-            .ok();
+            );
+            let (effective_multiplier, multiplier_reject_reason) = match multiplier_result {
+                Ok(fact) => (Some(fact), None),
+                Err(reason) => (None, Some(reason)),
+            };
             Ok(SchedulerCandidate {
                 station_key_id: row.station_key_id,
                 station_id: row.station_id,
@@ -5110,6 +5113,7 @@ fn load_scheduler_candidates_from_connection(
                 health_blocked: row.health_blocked,
                 balance_depleted: row.balance_depleted,
                 effective_multiplier,
+                multiplier_reject_reason,
             })
         })
         .collect()
@@ -6213,6 +6217,7 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                 scheduler_group_id_hash: None,
                 scheduler_group_type: None,
                 scheduler_effective_multiplier: None,
+                scheduler_multiplier_reject_reason: None,
             })
         })
         .map_err(|error| format!("查询富路由候选失败: {error}"))?
@@ -7583,16 +7588,19 @@ fn simulate_route_in_connection(
             .as_ref()
             .and_then(|settings| settings.max_rate_multiplier)
     });
+    let aliases = enabled_model_alias_pairs_from_connection(connection)?;
     if matches!(policy, RoutingPolicy::AutomaticBalanced) {
         let max_rate_multiplier = max_rate_multiplier
             .ok_or_else(|| "routing_multiplier_limit_not_configured".to_string())?;
         if !max_rate_multiplier.is_finite() || max_rate_multiplier < 0.0 {
             return Err("routing_multiplier_limit_not_configured".to_string());
         }
+        let mapped_model =
+            crate::services::proxy::routing_policy::mapped_model(input.model.as_deref(), &aliases);
         let scheduler_request = crate::services::proxy::scheduler::types::ScheduleRequest {
             endpoint: input.endpoint,
             requested_model: input.model.clone(),
-            mapped_model: None,
+            mapped_model: mapped_model.clone(),
             routing_group_filter: routing_group_filter.clone(),
             stream: input.stream,
             uses_tools: input.uses_tools,
@@ -7630,6 +7638,7 @@ fn simulate_route_in_connection(
                     &scheduler_candidates,
                     &local_candidates,
                     &decision.candidate_decisions,
+                    mapped_model.clone(),
                 ),
                 None,
             ),
@@ -7639,11 +7648,18 @@ fn simulate_route_in_connection(
                     &scheduler_candidates,
                     &local_candidates,
                     &error.candidate_decisions,
+                    mapped_model.clone(),
                 );
-                return Err(if candidates.is_empty() {
-                    error.code.to_string()
-                } else {
-                    error.code.to_string()
+                return Ok(RouteSimulationResult {
+                    selected_station_key_id: None,
+                    selected_station_id: None,
+                    mapped_model,
+                    policy,
+                    max_rate_multiplier: Some(max_rate_multiplier),
+                    routing_group_filter,
+                    scheduler_error_code: Some(error.code.to_string()),
+                    candidates,
+                    message: format!("Automatic scheduler rejected request: {}", error.code),
                 });
             }
         };
@@ -7661,7 +7677,7 @@ fn simulate_route_in_connection(
         return Ok(RouteSimulationResult {
             selected_station_key_id,
             selected_station_id,
-            mapped_model: None,
+            mapped_model,
             policy,
             max_rate_multiplier: Some(max_rate_multiplier),
             routing_group_filter,
@@ -7687,7 +7703,6 @@ fn simulate_route_in_connection(
         now_ms,
     };
     let candidates = proxy_rich_route_candidates_from_connection(connection)?;
-    let aliases = enabled_model_alias_pairs_from_connection(connection)?;
     let selection = select_route_candidates(&request, candidates, &aliases)?;
     let selected = selection.accepted.first();
     let selected_station_key_id =
@@ -7736,6 +7751,7 @@ fn automatic_simulation_explanations(
     scheduler_candidates: &[SchedulerCandidate],
     local_candidates: &[LocalRoutingReadCandidate],
     decisions: &[crate::services::proxy::scheduler::types::SchedulerCandidateDecision],
+    mapped_model: Option<String>,
 ) -> Vec<crate::models::routing::RouteCandidateExplanation> {
     let local_by_key = local_candidates
         .iter()
@@ -7769,7 +7785,7 @@ fn automatic_simulation_explanations(
                 reasons: crate::services::proxy::scheduler::explanation::decision_reasons(decision),
                 rejection_reasons:
                     crate::services::proxy::scheduler::explanation::rejection_reason_codes(decision),
-                mapped_model: None,
+                mapped_model: mapped_model.clone(),
                 pricing_rule_id: economics.and_then(|economics| economics.pricing_rule_id.clone()),
                 group_binding_id: scheduler_candidate.group_binding_id.clone(),
                 rate_multiplier: decision
@@ -13755,6 +13771,71 @@ mod tests {
                     .rejection_reasons
                     .iter()
                     .any(|reason| reason.contains("allowlist"))
+        }));
+    }
+
+    #[test]
+    fn automatic_simulate_route_returns_structured_rejection_when_over_multiplier_limit() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "automatic-over-limit");
+        let key = database
+            .list_station_keys(station.id)
+            .expect("keys")
+            .remove(0);
+
+        database
+            .update_station_key(UpdateStationKeyInput {
+                id: key.id.clone(),
+                station_id: key.station_id.clone(),
+                name: key.name.clone(),
+                api_key: None,
+                enabled: true,
+                priority: key.priority,
+                max_concurrency: key.max_concurrency,
+                load_factor: key.load_factor,
+                schedulable: true,
+                group_name: key.group_name.clone(),
+                tier_label: key.tier_label.clone(),
+                group_binding_id: key.group_binding_id.clone(),
+                group_id_hash: key.group_id_hash.clone(),
+                rate_multiplier: key.rate_multiplier,
+                manual_rate_multiplier: Some(Some(2.0)),
+                rate_source: key.rate_source.clone(),
+                balance_scope: key.balance_scope.clone(),
+                status: key.status.clone(),
+                note: key.note.clone(),
+            })
+            .expect("manual multiplier");
+
+        let result = database
+            .simulate_route(RouteSimulationInput {
+                endpoint: RouteEndpointKind::ChatCompletions,
+                model: Some("gpt-5.4".to_string()),
+                stream: false,
+                uses_tools: false,
+                uses_vision: false,
+                uses_reasoning: false,
+                policy: Some(RoutingPolicy::AutomaticBalanced),
+                max_rate_multiplier: Some(1.0),
+                routing_group_filter: None,
+                session_hash: None,
+                previous_response_id: None,
+            })
+            .expect("automatic hard rejection should still return explanation");
+
+        assert_eq!(result.selected_station_key_id, None);
+        assert_eq!(
+            result.scheduler_error_code.as_deref(),
+            Some("routing_no_candidate_within_multiplier_limit")
+        );
+        assert!(result.candidates.iter().any(|candidate| {
+            candidate.station_key_id == key.id
+                && !candidate.accepted
+                && candidate.rate_multiplier == Some(2.0)
+                && candidate
+                    .rejection_reasons
+                    .iter()
+                    .any(|reason| reason == "multiplier_over_ceiling")
         }));
     }
 

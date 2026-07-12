@@ -113,7 +113,8 @@ pub fn schedule_once(
             .find(|decision| decision.station_key_id == breakdown.station_key_id)
         {
             decision.score = Some(breakdown.score);
-            decision.factors = explanation::score_factor_labels(&breakdown.factors);
+            decision.factors =
+                explanation::score_factor_labels(&breakdown.factors, advanced, breakdown.score);
         }
         scored.push(ScoredCandidate {
             station_key_id: breakdown.station_key_id.clone(),
@@ -197,7 +198,36 @@ fn no_candidate_error_code(
             })
     };
 
-    if all_matching_have_reason(CandidateRejectionCode::NoMultiplierEvidence) {
+    let all_matching_have_multiplier_evidence_rejection = !matching_decisions.is_empty()
+        && matching_decisions.iter().all(|decision| {
+            decision
+                .rejection
+                .as_ref()
+                .map(|rejection| {
+                    rejection
+                        .reasons
+                        .iter()
+                        .any(|reason| multiplier_evidence_rejection_codes().contains(reason))
+                })
+                .unwrap_or(false)
+        });
+    let any_matching_has_expired_multiplier_evidence = matching_decisions.iter().any(|decision| {
+        decision
+            .rejection
+            .as_ref()
+            .map(|rejection| {
+                rejection
+                    .reasons
+                    .contains(&CandidateRejectionCode::MultiplierEvidenceExpired)
+            })
+            .unwrap_or(false)
+    });
+    if all_matching_have_multiplier_evidence_rejection
+        && any_matching_has_expired_multiplier_evidence
+    {
+        return "routing_multiplier_evidence_expired";
+    }
+    if all_matching_have_multiplier_evidence_rejection {
         return "routing_no_multiplier_evidence";
     }
     if all_matching_have_reason(CandidateRejectionCode::MultiplierOverCeiling) {
@@ -205,4 +235,61 @@ fn no_candidate_error_code(
     }
 
     "routing_no_eligible_candidate"
+}
+
+fn multiplier_evidence_rejection_codes() -> &'static [CandidateRejectionCode] {
+    &[
+        CandidateRejectionCode::NoMultiplierEvidence,
+        CandidateRejectionCode::MultiplierEvidenceInvalid,
+        CandidateRejectionCode::MultiplierEvidenceNegative,
+        CandidateRejectionCode::MultiplierEvidenceExpired,
+        CandidateRejectionCode::MultiplierEvidenceUnboundGroup,
+        CandidateRejectionCode::MultiplierEvidenceLowConfidence,
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::proxy::scheduler::types::CandidateRejection;
+
+    #[test]
+    fn mixed_multiplier_evidence_failures_prefer_expired_error_code() {
+        let decisions = vec![
+            rejected_decision(
+                "expired",
+                vec![CandidateRejectionCode::MultiplierEvidenceExpired],
+            ),
+            rejected_decision(
+                "low-confidence",
+                vec![CandidateRejectionCode::MultiplierEvidenceLowConfidence],
+            ),
+        ];
+
+        assert_eq!(
+            no_candidate_error_code(&decisions, &RoutingGroupFilter::AllGroups),
+            "routing_multiplier_evidence_expired"
+        );
+    }
+
+    fn rejected_decision(
+        station_key_id: &str,
+        reasons: Vec<CandidateRejectionCode>,
+    ) -> SchedulerCandidateDecision {
+        SchedulerCandidateDecision {
+            station_key_id: station_key_id.to_string(),
+            station_id: format!("station-{station_key_id}"),
+            accepted: false,
+            rejection: Some(CandidateRejection {
+                primary_code: reasons[0],
+                reasons,
+            }),
+            routing_group_match: true,
+            effective_multiplier: None,
+            score: None,
+            factors: Vec::new(),
+            top_k_rank: None,
+            slot_result: Some("rejected".to_string()),
+        }
+    }
 }

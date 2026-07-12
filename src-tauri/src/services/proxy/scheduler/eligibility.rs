@@ -1,6 +1,7 @@
 use crate::models::routing::{RouteEndpointKind, RoutingGroupFilter};
 use crate::services::proxy::scheduler::types::{
-    CandidateRejection, CandidateRejectionCode, ScheduleRequest, SchedulerCandidate,
+    CandidateRejection, CandidateRejectionCode, MultiplierRejectReason, ScheduleRequest,
+    SchedulerCandidate,
 };
 
 pub fn group_matches(filter: &RoutingGroupFilter, candidate: &SchedulerCandidate) -> bool {
@@ -61,7 +62,9 @@ pub fn evaluate_candidate(
             reasons.push(CandidateRejectionCode::MultiplierOverCeiling);
         }
         Some(_) => {}
-        None => reasons.push(CandidateRejectionCode::NoMultiplierEvidence),
+        None => reasons.push(multiplier_rejection_code(
+            candidate.multiplier_reject_reason,
+        )),
     }
 
     if let Some(primary_code) = reasons.first().copied() {
@@ -71,6 +74,25 @@ pub fn evaluate_candidate(
         })
     } else {
         Ok(())
+    }
+}
+
+fn multiplier_rejection_code(reason: Option<MultiplierRejectReason>) -> CandidateRejectionCode {
+    match reason {
+        Some(MultiplierRejectReason::Invalid) => CandidateRejectionCode::MultiplierEvidenceInvalid,
+        Some(MultiplierRejectReason::Negative) => {
+            CandidateRejectionCode::MultiplierEvidenceNegative
+        }
+        Some(MultiplierRejectReason::Expired) => CandidateRejectionCode::MultiplierEvidenceExpired,
+        Some(MultiplierRejectReason::UnboundGroup) => {
+            CandidateRejectionCode::MultiplierEvidenceUnboundGroup
+        }
+        Some(MultiplierRejectReason::LowConfidence) => {
+            CandidateRejectionCode::MultiplierEvidenceLowConfidence
+        }
+        Some(MultiplierRejectReason::Missing) | None => {
+            CandidateRejectionCode::NoMultiplierEvidence
+        }
     }
 }
 
@@ -333,6 +355,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn expired_multiplier_evidence_preserves_specific_rejection_code() {
+        let request = request(|request| {
+            request.routing_group_filter = RoutingGroupFilter::AllGroups;
+        });
+        let candidate = candidate(|candidate| {
+            candidate.effective_multiplier = None;
+            candidate.multiplier_reject_reason = Some(MultiplierRejectReason::Expired);
+        });
+
+        let rejection = evaluate_candidate(&request, &candidate)
+            .expect_err("expired multiplier evidence should reject");
+
+        assert_eq!(
+            rejection.primary_code,
+            CandidateRejectionCode::MultiplierEvidenceExpired
+        );
+    }
+
     fn request(mut customize: impl FnMut(&mut ScheduleRequest)) -> ScheduleRequest {
         let mut request = ScheduleRequest {
             endpoint: RouteEndpointKind::ChatCompletions,
@@ -376,6 +417,7 @@ mod tests {
             health_blocked: false,
             balance_depleted: false,
             effective_multiplier: Some(multiplier(0.5)),
+            multiplier_reject_reason: None,
         };
         customize(&mut candidate);
         candidate

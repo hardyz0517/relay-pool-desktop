@@ -48,6 +48,8 @@ pub struct RichRouteCandidate {
     pub scheduler_group_id_hash: Option<String>,
     pub scheduler_group_type: Option<crate::models::routing::PricingGroupType>,
     pub scheduler_effective_multiplier: Option<EffectiveMultiplierFact>,
+    pub scheduler_multiplier_reject_reason:
+        Option<crate::services::proxy::scheduler::types::MultiplierRejectReason>,
 }
 
 #[allow(dead_code)]
@@ -81,6 +83,7 @@ pub struct RouteSelection {
     pub accepted: Vec<RichRouteCandidate>,
     pub explanations: Vec<RouteCandidateExplanation>,
     pub mapped_model: Option<String>,
+    pub scheduler_error_code: Option<String>,
 }
 
 pub fn select_route_candidates(
@@ -101,10 +104,12 @@ pub fn select_route_candidates(
         return Err("routing_multiplier_limit_not_configured".to_string());
     }
 
+    let mapped_model =
+        crate::services::proxy::routing_policy::mapped_model(request.model.as_deref(), aliases);
     let scheduler_request = ScheduleRequest {
         endpoint: request.endpoint.clone(),
         requested_model: request.model.clone(),
-        mapped_model: None,
+        mapped_model: mapped_model.clone(),
         routing_group_filter: request.routing_group_filter.clone(),
         stream: request.stream,
         uses_tools: request.uses_tools,
@@ -132,8 +137,7 @@ pub fn select_route_candidates(
         &capacity,
         &mut affinity,
         &advanced,
-    )
-    .map_err(|error| error.code.to_string())?;
+    );
 
     let candidates_by_id = candidates
         .iter()
@@ -148,13 +152,23 @@ pub fn select_route_candidates(
         .iter()
         .map(|candidate| (candidate.station_key_id.clone(), candidate.clone()))
         .collect::<HashMap<_, _>>();
-    let accepted = decision
-        .ordered_station_key_ids
+    let (ordered_station_key_ids, candidate_decisions, scheduler_error_code) = match decision {
+        Ok(decision) => (
+            decision.ordered_station_key_ids,
+            decision.candidate_decisions,
+            None,
+        ),
+        Err(error) => (
+            Vec::new(),
+            error.candidate_decisions,
+            Some(error.code.to_string()),
+        ),
+    };
+    let accepted = ordered_station_key_ids
         .iter()
         .filter_map(|station_key_id| candidates_by_id.get(station_key_id).cloned())
         .collect::<Vec<_>>();
-    let explanations = decision
-        .candidate_decisions
+    let explanations = candidate_decisions
         .iter()
         .filter_map(|candidate_decision| {
             let rich_candidate = candidates_by_id.get(&candidate_decision.station_key_id)?;
@@ -165,6 +179,7 @@ pub fn select_route_candidates(
                 rich_candidate,
                 scheduler_candidate,
                 candidate_decision,
+                mapped_model.clone(),
             ))
         })
         .collect();
@@ -172,7 +187,8 @@ pub fn select_route_candidates(
     Ok(RouteSelection {
         accepted,
         explanations,
-        mapped_model: None,
+        mapped_model,
+        scheduler_error_code,
     })
 }
 
@@ -235,6 +251,7 @@ fn rich_candidate_to_scheduler_candidate(candidate: &RichRouteCandidate) -> Sche
                     group_binding_id: economics.group_binding_id.clone(),
                 })
             }),
+        multiplier_reject_reason: candidate.scheduler_multiplier_reject_reason,
     }
 }
 
@@ -243,6 +260,7 @@ fn automatic_candidate_explanation(
     candidate: &RichRouteCandidate,
     scheduler_candidate: &SchedulerCandidate,
     decision: &SchedulerCandidateDecision,
+    mapped_model: Option<String>,
 ) -> RouteCandidateExplanation {
     let economics = candidate.economics.as_ref();
     RouteCandidateExplanation {
@@ -259,7 +277,7 @@ fn automatic_candidate_explanation(
         rejection_reasons: crate::services::proxy::scheduler::explanation::rejection_reason_codes(
             decision,
         ),
-        mapped_model: None,
+        mapped_model,
         pricing_rule_id: economics.and_then(|economics| economics.pricing_rule_id.clone()),
         group_binding_id: scheduler_candidate.group_binding_id.clone(),
         rate_multiplier: decision
@@ -707,10 +725,15 @@ mod tests {
             rich_scheduler_candidate("expensive-b", 1, Some(3.0), Some(PricingGroupType::Gpt)),
         ];
 
-        let error = select_route_candidates(&request, candidates, &[])
-            .expect_err("over-ceiling automatic candidates should reject");
+        let selected = select_route_candidates(&request, candidates, &[])
+            .expect("over-ceiling automatic candidates should return structured rejection");
 
-        assert_eq!(error, "routing_no_candidate_within_multiplier_limit");
+        assert!(selected.accepted.is_empty());
+        assert_eq!(
+            selected.scheduler_error_code.as_deref(),
+            Some("routing_no_candidate_within_multiplier_limit")
+        );
+        assert_eq!(selected.explanations.len(), 2);
     }
 
     #[test]
@@ -750,10 +773,21 @@ mod tests {
             Some(PricingGroupType::Gpt),
         )];
 
-        let error = select_route_candidates(&request, candidates, &[])
-            .expect_err("missing multiplier evidence should reject");
+        let selected = select_route_candidates(&request, candidates, &[])
+            .expect("missing multiplier evidence should return structured rejection");
 
-        assert_eq!(error, "routing_no_multiplier_evidence");
+        assert!(selected.accepted.is_empty());
+        assert_eq!(
+            selected.scheduler_error_code.as_deref(),
+            Some("routing_no_multiplier_evidence")
+        );
+        assert!(selected.explanations.iter().any(|candidate| {
+            candidate.station_key_id == "unknown-multiplier"
+                && candidate
+                    .rejection_reasons
+                    .iter()
+                    .any(|reason| reason == "no_multiplier_evidence")
+        }));
     }
 
     #[test]
@@ -804,14 +838,18 @@ mod tests {
             Some(PricingGroupType::Claude),
         )];
 
-        let error = select_route_candidates(&request, candidates, &[])
-            .expect_err("group-scoped automatic routing should distinguish no candidate in scope");
+        let selected = select_route_candidates(&request, candidates, &[])
+            .expect("group-scoped automatic routing should return structured rejection");
 
-        assert_eq!(error, "routing_no_candidate_in_group_scope");
+        assert!(selected.accepted.is_empty());
+        assert_eq!(
+            selected.scheduler_error_code.as_deref(),
+            Some("routing_no_candidate_in_group_scope")
+        );
     }
 
     #[test]
-    fn automatic_router_keeps_requested_model_unsubstituted() {
+    fn automatic_router_applies_same_model_alias_without_substituting_logical_model() {
         let request = automatic_route_request(|request| {
             request.max_rate_multiplier = Some(2.0);
             request.model = Some("client-model".to_string());
@@ -823,7 +861,7 @@ mod tests {
             Some(0.5),
             Some(PricingGroupType::Gpt),
             capabilities(|capabilities| {
-                capabilities.model_allowlist = vec!["client-model".to_string()];
+                capabilities.model_allowlist = vec!["upstream-model".to_string()];
             }),
         )];
 
@@ -833,7 +871,10 @@ mod tests {
             selected.accepted[0].candidate.station_key_id,
             "client-allowlisted"
         );
-        assert_eq!(selected.mapped_model, None);
+        assert_eq!(selected.mapped_model.as_deref(), Some("upstream-model"));
+        assert!(selected.explanations.iter().all(|explanation| {
+            explanation.mapped_model.as_deref() == Some("upstream-model")
+        }));
     }
 
     fn route_request(
@@ -944,6 +985,7 @@ mod tests {
             scheduler_group_id_hash: None,
             scheduler_group_type: None,
             scheduler_effective_multiplier: None,
+            scheduler_multiplier_reject_reason: None,
         }
     }
 

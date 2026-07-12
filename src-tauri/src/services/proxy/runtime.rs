@@ -842,9 +842,13 @@ fn select_proxy_route(
         .map_err(|error| ProxyResponse::json_error(500, "route_selector_error", &error))?;
     if route.accepted.is_empty() {
         let log_context = route_log_context(&route_request.policy, &route.explanations);
+        let error_code = route
+            .scheduler_error_code
+            .as_deref()
+            .unwrap_or("no_route_candidates");
         return Err(ProxyResponse::json_error(
             503,
-            "no_route_candidates",
+            error_code,
             &format!(
                 "没有可用 Station Key 支持该请求：model={} endpoint={:?} stream={}",
                 route_request.model.as_deref().unwrap_or("<none>"),

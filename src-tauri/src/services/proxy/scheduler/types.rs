@@ -40,6 +40,7 @@ pub struct SchedulerCandidate {
     pub health_blocked: bool,
     pub balance_depleted: bool,
     pub effective_multiplier: Option<EffectiveMultiplierFact>,
+    pub multiplier_reject_reason: Option<MultiplierRejectReason>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +52,11 @@ pub enum CandidateRejectionCode {
     HealthBlocked,
     BalanceDepleted,
     NoMultiplierEvidence,
+    MultiplierEvidenceInvalid,
+    MultiplierEvidenceNegative,
+    MultiplierEvidenceExpired,
+    MultiplierEvidenceUnboundGroup,
+    MultiplierEvidenceLowConfidence,
     MultiplierOverCeiling,
 }
 

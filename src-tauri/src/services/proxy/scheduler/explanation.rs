@@ -1,5 +1,5 @@
 use crate::{
-    models::routing::RoutingGroupFilter,
+    models::routing::{RoutingGroupFilter, SchedulerAdvancedSettings},
     services::proxy::scheduler::{
         scoring::ScoreFactors,
         types::{CandidateRejectionCode, SchedulerCandidateDecision},
@@ -16,15 +16,40 @@ pub fn routing_group_scope_key(filter: &RoutingGroupFilter) -> String {
     }
 }
 
-pub fn score_factor_labels(factors: &ScoreFactors) -> Vec<String> {
+pub fn score_factor_labels(
+    factors: &ScoreFactors,
+    weights: &SchedulerAdvancedSettings,
+    base_score: f64,
+) -> Vec<String> {
     vec![
         format!("multiplier={:.4}", factors.multiplier),
+        format!(
+            "multiplier_contribution={:.4}",
+            factors.multiplier * weights.multiplier
+        ),
         format!("priority={:.4}", factors.priority),
+        format!(
+            "priority_contribution={:.4}",
+            factors.priority * weights.priority
+        ),
         format!("load={:.4}", factors.load),
+        format!("load_contribution={:.4}", factors.load * weights.load),
         format!("queue={:.4}", factors.queue),
+        format!("queue_contribution={:.4}", factors.queue * weights.queue),
         format!("error_rate={:.4}", factors.error_rate),
+        format!(
+            "error_rate_contribution={:.4}",
+            factors.error_rate * weights.error_rate
+        ),
         format!("ttft={:.4}", factors.ttft),
+        format!("ttft_contribution={:.4}", factors.ttft * weights.ttft),
         format!("quota_headroom={:.4}", factors.quota_headroom),
+        format!(
+            "quota_headroom_contribution={:.4}",
+            factors.quota_headroom * weights.quota_headroom
+        ),
+        format!("base_score={base_score:.4}"),
+        format!("sticky_score={base_score:.4}"),
     ]
 }
 
@@ -64,6 +89,18 @@ pub fn decision_reasons(decision: &SchedulerCandidateDecision) -> Vec<String> {
     if let Some(slot_result) = &decision.slot_result {
         reasons.push(format!("slot_result={slot_result}"));
     }
+    reasons.push(format!(
+        "selection_result={}",
+        if decision.accepted {
+            if decision.top_k_rank == Some(1) {
+                "selected"
+            } else {
+                "not_selected"
+            }
+        } else {
+            "rejected"
+        }
+    ));
     reasons
 }
 
@@ -76,6 +113,15 @@ fn rejection_code_label(code: CandidateRejectionCode) -> &'static str {
         CandidateRejectionCode::HealthBlocked => "health_blocked",
         CandidateRejectionCode::BalanceDepleted => "balance_depleted",
         CandidateRejectionCode::NoMultiplierEvidence => "no_multiplier_evidence",
+        CandidateRejectionCode::MultiplierEvidenceInvalid => "multiplier_evidence_invalid",
+        CandidateRejectionCode::MultiplierEvidenceNegative => "multiplier_evidence_negative",
+        CandidateRejectionCode::MultiplierEvidenceExpired => "multiplier_evidence_expired",
+        CandidateRejectionCode::MultiplierEvidenceUnboundGroup => {
+            "multiplier_evidence_unbound_group"
+        }
+        CandidateRejectionCode::MultiplierEvidenceLowConfidence => {
+            "multiplier_evidence_low_confidence"
+        }
         CandidateRejectionCode::MultiplierOverCeiling => "multiplier_over_ceiling",
     }
 }

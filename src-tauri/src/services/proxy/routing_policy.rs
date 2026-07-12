@@ -140,6 +140,7 @@ pub fn select_route_candidates(
             .collect(),
         explanations,
         mapped_model,
+        scheduler_error_code: None,
     })
 }
 
@@ -210,7 +211,7 @@ fn add_stability_reason(explanations: &mut [RouteCandidateExplanation], station_
     }
 }
 
-fn mapped_model(model: Option<&str>, aliases: &[(String, String)]) -> Option<String> {
+pub(crate) fn mapped_model(model: Option<&str>, aliases: &[(String, String)]) -> Option<String> {
     let model = model?;
     aliases
         .iter()
