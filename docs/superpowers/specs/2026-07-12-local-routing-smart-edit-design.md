@@ -72,7 +72,6 @@ Second visible group:
 
 - `previousResponse`
 - `sessionSticky`
-- `stickyWeighted`
 - `stickyEscape`
 - `stickyEscapeTtftMs`
 - `stickyEscapeErrorRate`
@@ -87,6 +86,8 @@ Controls:
 
 - Numeric inputs for numeric fields.
 - Switches for boolean fields.
+- `stickyWeighted` is promoted to a standalone full-width row above all scheduler parameter groups, matching the Sub2API gateway layout.
+- The promoted `stickyWeighted` switch shows only the switch track and thumb; it keeps an accessible label but does not show `开启` / `关闭` text or an outer button surface.
 - Reset-to-default action for scheduler settings.
 - Save state visible as a compact badge: idle/saving/saved/error.
 

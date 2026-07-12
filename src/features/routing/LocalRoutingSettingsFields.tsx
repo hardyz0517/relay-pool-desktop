@@ -33,6 +33,8 @@ const booleanFieldEntries = Object.entries(SCHEDULER_BOOLEAN_FIELD_META) as Arra
   { label: string; group: SchedulerFieldGroup },
 ]>;
 
+const PROMOTED_BOOLEAN_FIELDS = new Set<SchedulerBooleanField>(["stickyWeighted"]);
+
 export function LocalRoutingBoundaryFields({
   draft,
   disabled,
@@ -128,6 +130,12 @@ export function LocalRoutingSchedulerFields({
 }) {
   return (
     <>
+      <PromotedBooleanSettingRow
+        field="stickyWeighted"
+        draft={draft}
+        disabled={disabled}
+        onBooleanChange={onBooleanChange}
+      />
       {errors.baseWeights ? (
         <div className="border-b border-rose-100 bg-rose-50 px-4 py-2 text-xs text-rose-700">
           {errors.baseWeights}
@@ -175,6 +183,33 @@ function CompactSettingRow({ label, children }: { label: string; children: React
   );
 }
 
+function PromotedBooleanSettingRow({
+  field,
+  draft,
+  disabled,
+  onBooleanChange,
+}: {
+  field: SchedulerBooleanField;
+  draft: LocalRoutingSettingsDraft;
+  disabled: boolean;
+  onBooleanChange: BooleanChangeHandler;
+}) {
+  const meta = SCHEDULER_BOOLEAN_FIELD_META[field];
+  return (
+    <div className="flex min-h-12 items-center justify-between gap-4 border-b border-border px-4 py-2">
+      <span className="text-sm font-medium text-slate-800">{meta.label}</span>
+      <SwitchControl
+        ariaLabel={meta.label}
+        checked={draft.scheduler[field]}
+        disabled={disabled}
+        onCheckedChange={() => onBooleanChange(field)}
+        showLabel={false}
+        className="h-6 min-w-0 border-0 bg-transparent p-0 shadow-none hover:bg-transparent"
+      />
+    </div>
+  );
+}
+
 function SchedulerFieldGroup({
   title,
   group,
@@ -193,7 +228,9 @@ function SchedulerFieldGroup({
   onBooleanChange: BooleanChangeHandler;
 }) {
   const numericFields = numericFieldEntries.filter(([, meta]) => meta.group === group);
-  const booleanFields = booleanFieldEntries.filter(([, meta]) => meta.group === group);
+  const booleanFields = booleanFieldEntries.filter(
+    ([field, meta]) => meta.group === group && !PROMOTED_BOOLEAN_FIELDS.has(field),
+  );
 
   return (
     <fieldset className="border-b border-border px-4 py-3 last:border-b-0" disabled={disabled}>

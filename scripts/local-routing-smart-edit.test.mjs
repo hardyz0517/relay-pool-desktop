@@ -69,6 +69,20 @@ assert.match(form, /baseWeights/);
 assert.match(form, /multiplierMinConfidence/);
 assert.match(form, /stickyEscapeErrorRate/);
 
+const promotedStickyIndex = fields.indexOf('field="stickyWeighted"');
+const scoreGroupIndex = fields.indexOf('title="综合评分"');
+assert.ok(promotedStickyIndex >= 0, "stickyWeighted must render as an explicit promoted row");
+assert.ok(
+  promotedStickyIndex < scoreGroupIndex,
+  "stickyWeighted must render above the score parameter group",
+);
+assert.match(fields, /PROMOTED_BOOLEAN_FIELDS[\s\S]*stickyWeighted/);
+assert.match(fields, /!PROMOTED_BOOLEAN_FIELDS\.has\(field\)/);
+assert.match(
+  fields,
+  /function PromotedBooleanSettingRow[\s\S]*showLabel=\{false\}[\s\S]*border-0[\s\S]*bg-transparent/,
+);
+
 assert.match(settingsApi, /normalizeSchedulerAdvancedSettings/);
 assert.match(settingsApi, /SCHEDULER_ADVANCED_FIELD_KINDS/);
 assert.match(settingsApi, /DEFAULT_SCHEDULER_ADVANCED_SETTINGS/);
