@@ -1,6 +1,7 @@
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Circle } from "lucide-react";
+import { markNavigation, navigationMarks } from "@/app/navigationPerformance";
 import { appRoutes } from "@/app/routes";
 import { shellLayout } from "@/components/ui/layout";
 import { CHANGE_EVENTS_UPDATED_EVENT } from "@/lib/api/changeEvents";
@@ -21,12 +22,14 @@ import type { AppRouteId } from "@/lib/types/navigation";
 type AppShellProps = {
   activeRouteId: AppRouteId;
   children: ReactNode;
+  navigationSequence: number;
   onRouteChange: (routeId: AppRouteId) => void;
 };
 
 export function AppShell({
   activeRouteId,
   children,
+  navigationSequence,
   onRouteChange,
 }: AppShellProps) {
   const queryClient = useQueryClient();
@@ -80,6 +83,10 @@ export function AppShell({
 
   const changeUnreadCount = useMemo(() => unreadChangeCount(changeEvents), [changeEvents]);
   const proxyRunning = proxyStatus?.running ?? false;
+
+  useLayoutEffect(() => {
+    markNavigation(navigationMarks.indicator(navigationSequence));
+  }, [navigationSequence]);
 
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background text-foreground">

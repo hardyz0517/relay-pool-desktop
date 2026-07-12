@@ -5,12 +5,14 @@ function normalizeSource(source) {
   return source.replace(/\r\n?/g, "\n");
 }
 
-const [appSource, hostSource, shellHostSource, shellSource, navigationSource, policySource, stylesSource] =
+const [appSource, hostSource, shellHostSource, controllerSource, navigationPolicySource, shellSource, navigationSource, policySource, stylesSource] =
   await Promise.all(
     [
       "src/app/App.tsx",
       "src/app/TransientPageHost.tsx",
       "src/app/ShellPageHost.tsx",
+      "src/app/navigationController.ts",
+      "src/app/navigationPolicy.ts",
       "src/components/shell/AppShell.tsx",
       "src/lib/types/navigation.ts",
       "src/app/pageTransitionPolicy.ts",
@@ -147,12 +149,13 @@ assert.ok(
     navigateToSource.includes("lastShellFocusTargetRef.current") &&
     navigateToSource.includes("document.activeElement") &&
     navigateToSource.includes("transientReturnFocusRef.current =") &&
-    navigateToSource.includes("resolveTransientParentRouteId(") &&
+    controllerSource.includes("resolveTransientParentRouteId(") &&
     /\[\s*\]\);/.test(navigateToSource),
   "shell-to-transient navigation should capture focus and its actual shell parent without overwriting replacements",
 );
 assert.ok(
-  appSource.includes("transientParentRouteId: AppRouteId | null;") &&
+  navigationPolicySource.includes("export type CommittedNavigation") &&
+    navigationPolicySource.includes("transientParentRouteId: AppRouteId | null;") &&
     /resolveActiveShellRouteId\(\s*activeRouteId,\s*transientParentRouteId,?\s*\)/.test(
       appSource,
     ),

@@ -4,11 +4,11 @@ import { AppShell } from "@/components/shell/AppShell";
 import type { TransientPageDescriptor } from "@/app/TransientPageHost";
 import { ShellPageHost } from "@/app/ShellPageHost";
 import type { ShellPageActions } from "@/app/shellPageRegistry";
+import { useNavigationController } from "@/app/navigationController";
 import {
   getPageTransitionPolicy,
   isShellPage,
   resolveActiveShellRouteId,
-  resolveTransientParentRouteId,
 } from "@/app/pageTransitionPolicy";
 import { ModelBasePricesPage } from "@/features/pricing/ModelBasePricesPage";
 import { AddKeyPage } from "@/features/key-pool/AddKeyPage";
@@ -17,12 +17,6 @@ import { AddProviderPage } from "@/features/stations/AddProviderPage";
 import { StationDetailPage } from "@/features/stations/StationDetailPage";
 import type { AppPageId, AppRouteId, TransientPageId } from "@/lib/types/navigation";
 import type { Station } from "@/lib/types/stations";
-
-type NavigationState = {
-  activeRouteId: AppPageId;
-  previousRouteId: AppPageId | null;
-  transientParentRouteId: AppRouteId | null;
-};
 
 const ACTIONABLE_ELEMENT_SELECTOR = [
   "[data-page-autofocus]",
@@ -35,12 +29,8 @@ const ACTIONABLE_ELEMENT_SELECTOR = [
 ].join(", ");
 
 export function App() {
-  const [{ activeRouteId, previousRouteId, transientParentRouteId }, setNavigation] =
-    useState<NavigationState>({
-      activeRouteId: "dashboard",
-      previousRouteId: null,
-      transientParentRouteId: null,
-    });
+  const { intent, committed, pending, navigate } = useNavigationController("dashboard");
+  const { activeRouteId, previousRouteId, transientParentRouteId } = committed;
   const [mountedRouteIds, setMountedRouteIds] = useState<Set<AppRouteId>>(
     () => new Set(["dashboard"]),
   );
@@ -91,21 +81,8 @@ export function App() {
           : null;
     }
 
-    setNavigation((current) => {
-      if (current.activeRouteId === routeId) {
-        return current;
-      }
-      return {
-        activeRouteId: routeId,
-        previousRouteId: current.activeRouteId,
-        transientParentRouteId: resolveTransientParentRouteId(
-          current.activeRouteId,
-          routeId,
-          current.transientParentRouteId,
-        ),
-      };
-    });
-  }, []);
+    navigate(routeId);
+  }, [navigate]);
 
   const restoreTransientReturnFocus = useCallback(() => {
     const target = transientReturnFocusRef.current;
@@ -277,14 +254,20 @@ export function App() {
     activeTransitionPolicy.kind === "shell" && previousTransitionPolicy?.kind === "transient";
 
   return (
-    <AppShell activeRouteId={activeShellRouteId} onRouteChange={navigateTo}>
+    <AppShell
+      activeRouteId={intent.shellRouteId}
+      navigationSequence={intent.sequence}
+      onRouteChange={navigateTo}
+    >
       <ShellPageHost
         actions={shellPageActions}
         activeShellRouteId={activeShellRouteId}
         activeTransientPage={activeTransientPage}
         mountedRouteIds={mountedRouteIds}
+        navigationSequence={intent.sequence}
         onExitComplete={restoreTransientReturnFocus}
         onRememberShellFocusTarget={rememberShellFocusTarget}
+        pending={pending}
         returningFromTransient={isReturningFromTransient}
         transientActive={isCurrentTransientPage}
       />

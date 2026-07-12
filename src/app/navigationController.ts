@@ -3,6 +3,7 @@ import {
   resolveActiveShellRouteId,
   resolveTransientParentRouteId,
 } from "@/app/pageTransitionPolicy";
+import { markNavigation, navigationMarks } from "@/app/navigationPerformance";
 import {
   commitNavigationIntent,
   createInitialNavigationIntent,
@@ -38,6 +39,7 @@ export function useNavigationController(initialRouteId: AppRouteId) {
       sequence,
     );
     intentRef.current = nextIntent;
+    markNavigation(navigationMarks.intent(sequence));
     setIntent(nextIntent);
     startTransition(() => {
       setCommitted((current) =>

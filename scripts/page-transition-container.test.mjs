@@ -8,6 +8,8 @@ function normalizeSource(source) {
 const appSource = normalizeSource(await readFile("src/app/App.tsx", "utf8"));
 const hostSource = normalizeSource(await readFile("src/app/TransientPageHost.tsx", "utf8"));
 const shellHostSource = normalizeSource(await readFile("src/app/ShellPageHost.tsx", "utf8"));
+const controllerSource = normalizeSource(await readFile("src/app/navigationController.ts", "utf8"));
+const policySource = normalizeSource(await readFile("src/app/navigationPolicy.ts", "utf8"));
 
 assert.ok(
   shellHostSource.includes('from "@/app/TransientPageHost"') &&
@@ -65,9 +67,9 @@ assert.match(
   "transient route rendering should fail TypeScript exhaustiveness when a future page is unhandled",
 );
 assert.ok(
-  appSource.includes("transientParentRouteId: AppRouteId | null;") &&
-    appSource.includes("transientParentRouteId: null,") &&
-    appSource.includes("resolveTransientParentRouteId(") &&
+  policySource.includes("transientParentRouteId: AppRouteId | null;") &&
+    controllerSource.includes("transientParentRouteId: null,") &&
+    controllerSource.includes("resolveTransientParentRouteId(") &&
     appSource.includes("resolveActiveShellRouteId("),
   "navigation state should retain the actual invoking shell and resolve static parents only as fallback",
 );
@@ -89,11 +91,11 @@ assert.ok(
 );
 
 assert.ok(
-  shellHostSource.includes('export type ShellPageState = "active" | "background" | "inactive";') &&
+  shellHostSource.includes('export type ShellPageState = "active" | "background" | "entering" | "inactive";') &&
     shellHostSource.includes('transientActive ? "background" : "active"') &&
-    shellHostSource.includes('const active = state === "active";') &&
+    shellHostSource.includes('const active = state === "active" || state === "entering";') &&
     shellHostSource.includes('const inert = !active;'),
-  "shell pages should have explicit active, visible-background, and inactive states",
+  "shell pages should have explicit active, visible-background, entering, and inactive states",
 );
 assert.ok(
   shellHostSource.includes("<PageActivityProvider active={active}>") &&
