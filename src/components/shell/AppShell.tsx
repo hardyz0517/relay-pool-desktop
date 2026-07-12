@@ -1,18 +1,22 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Circle } from "lucide-react";
 import { appRoutes } from "@/app/routes";
 import { shellLayout } from "@/components/ui/layout";
-import { CHANGE_EVENTS_UPDATED_EVENT, listChangeEvents } from "@/lib/api/changeEvents";
-import { getProxyStatus, PROXY_STATUS_UPDATED_EVENT } from "@/lib/api/proxy";
-import { getSettings, SETTINGS_UPDATED_EVENT } from "@/lib/api/settings";
-import type { ChangeEvent } from "@/lib/types/changeEvents";
+import { CHANGE_EVENTS_UPDATED_EVENT } from "@/lib/api/changeEvents";
+import { PROXY_STATUS_UPDATED_EVENT } from "@/lib/api/proxy";
+import { SETTINGS_UPDATED_EVENT } from "@/lib/api/settings";
 import type { ProxyStatus } from "@/lib/types/proxy";
 import type { AppSettings } from "@/lib/types/settings";
+import {
+  changeEventsQueryOptions,
+  proxyStatusQueryOptions,
+  settingsQueryOptions,
+} from "@/lib/query/resourceQueries";
+import { queryKeys } from "@/lib/query/queryKeys";
 import { cn } from "@/lib/utils";
 import { unreadChangeCount } from "@/features/changes/changeEventViewModels";
 import type { AppRouteId } from "@/lib/types/navigation";
-
-const CHANGE_EVENTS_REFRESH_INTERVAL_MS = 10_000;
 
 type AppShellProps = {
   activeRouteId: AppRouteId;
@@ -25,64 +29,42 @@ export function AppShell({
   children,
   onRouteChange,
 }: AppShellProps) {
-  const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
-  const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const queryClient = useQueryClient();
+  const { data: changeEvents = [] } = useQuery(changeEventsQueryOptions(10_000));
+  const { data: proxyStatus = null } = useQuery(proxyStatusQueryOptions(2_000));
+  const { data: settings = null } = useQuery(settingsQueryOptions());
 
   useEffect(() => {
     function refreshChangeEvents() {
-      void listChangeEvents()
-        .then(setChangeEvents)
-        .catch(() => setChangeEvents([]));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.changeEvents });
     }
 
-    refreshChangeEvents();
-    const refreshInterval = window.setInterval(refreshChangeEvents, CHANGE_EVENTS_REFRESH_INTERVAL_MS);
     window.addEventListener(CHANGE_EVENTS_UPDATED_EVENT, refreshChangeEvents);
-    return () => {
-      window.clearInterval(refreshInterval);
-      window.removeEventListener(CHANGE_EVENTS_UPDATED_EVENT, refreshChangeEvents);
-    };
-  }, []);
+    return () => window.removeEventListener(CHANGE_EVENTS_UPDATED_EVENT, refreshChangeEvents);
+  }, [queryClient]);
 
   useEffect(() => {
-    function refreshProxyStatus() {
-      void getProxyStatus().then(setProxyStatus).catch(() => {});
-    }
-
     function handleProxyStatusUpdated(event: Event) {
-      setProxyStatus((event as CustomEvent<ProxyStatus>).detail);
+      queryClient.setQueryData(queryKeys.proxyStatus, (event as CustomEvent<ProxyStatus>).detail);
     }
 
-    refreshProxyStatus();
-    const intervalId = window.setInterval(refreshProxyStatus, 2_000);
     window.addEventListener(PROXY_STATUS_UPDATED_EVENT, handleProxyStatusUpdated);
-    return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener(PROXY_STATUS_UPDATED_EVENT, handleProxyStatusUpdated);
-    };
-  }, []);
+    return () => window.removeEventListener(PROXY_STATUS_UPDATED_EVENT, handleProxyStatusUpdated);
+  }, [queryClient]);
 
   useEffect(() => {
-    function refreshSettings() {
-      void getSettings()
-        .then(setSettings)
-        .catch(() => setSettings(null));
-    }
-
     function handleSettingsUpdated(event: Event) {
       const nextSettings = (event as CustomEvent<AppSettings>).detail;
       if (nextSettings) {
-        setSettings(nextSettings);
+        queryClient.setQueryData(queryKeys.settings, nextSettings);
         return;
       }
-      refreshSettings();
+      void queryClient.invalidateQueries({ queryKey: queryKeys.settings });
     }
 
-    refreshSettings();
     window.addEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
     return () => window.removeEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
-  }, []);
+  }, [queryClient]);
 
   const visibleRoutes = useMemo(
     () =>
