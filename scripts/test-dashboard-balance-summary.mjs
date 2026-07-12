@@ -25,7 +25,7 @@ vm.runInNewContext(compiled.outputText, {
 
 const { summarizeDashboardBalances } = module.exports;
 
-const summary = summarizeDashboardBalances([
+const balances = [
   {
     id: "key-raw-newer",
     stationId: "station-a",
@@ -47,6 +47,10 @@ const summary = summarizeDashboardBalances([
     totalConsumption: 8.5,
     todayTokenCount: 34567,
     totalTokenCount: 456789,
+    todayInputTokenCount: 28000,
+    todayOutputTokenCount: 6567,
+    totalInputTokenCount: 410000,
+    totalOutputTokenCount: 46789,
     status: "normal",
     updatedAt: "2000",
   },
@@ -71,6 +75,10 @@ const summary = summarizeDashboardBalances([
     totalConsumption: 2.5,
     todayTokenCount: 1000,
     totalTokenCount: 2000,
+    todayInputTokenCount: 800,
+    todayOutputTokenCount: 200,
+    totalInputTokenCount: 1500,
+    totalOutputTokenCount: 500,
     status: "normal",
     updatedAt: "4000",
   },
@@ -83,7 +91,24 @@ const summary = summarizeDashboardBalances([
     status: "depleted",
     updatedAt: "3000",
   },
-]);
+];
+
+const stations = [
+  {
+    id: "station-a",
+    creditPerCny: 10,
+  },
+  {
+    id: "station-b",
+    creditPerCny: 5,
+  },
+  {
+    id: "station-c",
+    creditPerCny: 1,
+  },
+];
+
+const summary = summarizeDashboardBalances(balances, stations);
 
 assert.equal(summary.totalBalance, 18);
 assert.equal(summary.lowBalanceStations, 1);
@@ -91,10 +116,14 @@ assert.equal(summary.primaryBalanceCurrency, "CNY");
 assert.deepEqual(JSON.parse(JSON.stringify(summary.stationUsage)), {
   todayRequestCount: 20,
   totalRequestCount: 200,
-  todayConsumption: 1,
-  totalConsumption: 11,
+  todayConsumption: 0.125,
+  totalConsumption: 1.35,
   todayTokenCount: 35567,
   totalTokenCount: 458789,
+  todayInputTokenCount: 28800,
+  todayOutputTokenCount: 6767,
+  totalInputTokenCount: 411500,
+  totalOutputTokenCount: 47289,
 });
 assert.equal(
   summary.latestStationBalances.map((balance) => balance.id).join(","),

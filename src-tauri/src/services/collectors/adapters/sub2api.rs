@@ -126,6 +126,54 @@ pub fn parse_usage_balance(
                 "tokens",
             ],
         ),
+        today_input_token_count: parse_i64_field(
+            payload,
+            &[
+                "today_input_token_count",
+                "today_input_tokens",
+                "today_prompt_tokens",
+                "todayInputTokenCount",
+                "todayInputTokens",
+                "todayPromptTokens",
+            ],
+        ),
+        today_output_token_count: parse_i64_field(
+            payload,
+            &[
+                "today_output_token_count",
+                "today_output_tokens",
+                "today_completion_tokens",
+                "todayOutputTokenCount",
+                "todayOutputTokens",
+                "todayCompletionTokens",
+            ],
+        ),
+        total_input_token_count: parse_i64_field(
+            payload,
+            &[
+                "total_input_token_count",
+                "total_input_tokens",
+                "input_tokens",
+                "prompt_tokens",
+                "totalInputTokenCount",
+                "totalInputTokens",
+                "inputTokens",
+                "promptTokens",
+            ],
+        ),
+        total_output_token_count: parse_i64_field(
+            payload,
+            &[
+                "total_output_token_count",
+                "total_output_tokens",
+                "output_tokens",
+                "completion_tokens",
+                "totalOutputTokenCount",
+                "totalOutputTokens",
+                "outputTokens",
+                "completionTokens",
+            ],
+        ),
         currency: "CNY".to_string(),
         credit_unit: payload
             .pointer("/quota/unit")
@@ -1644,6 +1692,10 @@ struct DashboardUsageStats {
     total_consumption: Option<f64>,
     today_token_count: Option<i64>,
     total_token_count: Option<i64>,
+    today_input_token_count: Option<i64>,
+    today_output_token_count: Option<i64>,
+    total_input_token_count: Option<i64>,
+    total_output_token_count: Option<i64>,
 }
 
 impl DashboardUsageStats {
@@ -1654,6 +1706,10 @@ impl DashboardUsageStats {
             || self.total_consumption.is_some()
             || self.today_token_count.is_some()
             || self.total_token_count.is_some()
+            || self.today_input_token_count.is_some()
+            || self.today_output_token_count.is_some()
+            || self.total_input_token_count.is_some()
+            || self.total_output_token_count.is_some()
     }
 
     fn apply_to(self, balance: &mut CollectedBalanceFact) {
@@ -1663,6 +1719,10 @@ impl DashboardUsageStats {
         balance.total_consumption = self.total_consumption;
         balance.today_token_count = self.today_token_count;
         balance.total_token_count = self.total_token_count;
+        balance.today_input_token_count = self.today_input_token_count;
+        balance.today_output_token_count = self.today_output_token_count;
+        balance.total_input_token_count = self.total_input_token_count;
+        balance.total_output_token_count = self.total_output_token_count;
     }
 }
 
@@ -1794,6 +1854,42 @@ fn parse_dashboard_usage_stats(payload: &Value) -> Option<DashboardUsageStats> {
             "totalTokens",
             "tokens",
         ]),
+        today_input_token_count: find_i64(&[
+            "today_input_token_count",
+            "today_input_tokens",
+            "today_prompt_tokens",
+            "todayInputTokenCount",
+            "todayInputTokens",
+            "todayPromptTokens",
+        ]),
+        today_output_token_count: find_i64(&[
+            "today_output_token_count",
+            "today_output_tokens",
+            "today_completion_tokens",
+            "todayOutputTokenCount",
+            "todayOutputTokens",
+            "todayCompletionTokens",
+        ]),
+        total_input_token_count: find_i64(&[
+            "total_input_token_count",
+            "total_input_tokens",
+            "input_tokens",
+            "prompt_tokens",
+            "totalInputTokenCount",
+            "totalInputTokens",
+            "inputTokens",
+            "promptTokens",
+        ]),
+        total_output_token_count: find_i64(&[
+            "total_output_token_count",
+            "total_output_tokens",
+            "output_tokens",
+            "completion_tokens",
+            "totalOutputTokenCount",
+            "totalOutputTokens",
+            "outputTokens",
+            "completionTokens",
+        ]),
     };
     stats.has_any().then_some(stats)
 }
@@ -1860,6 +1956,10 @@ fn merge_dashboard_usage_stats(
         total_consumption: None,
         today_token_count: None,
         total_token_count: None,
+        today_input_token_count: None,
+        today_output_token_count: None,
+        total_input_token_count: None,
+        total_output_token_count: None,
         currency,
         credit_unit,
         status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
@@ -1989,6 +2089,54 @@ fn parse_account_balance(
                 "totalTokenCount",
                 "totalTokens",
                 "tokens",
+            ],
+        ),
+        today_input_token_count: parse_i64_field(
+            payload,
+            &[
+                "today_input_token_count",
+                "today_input_tokens",
+                "today_prompt_tokens",
+                "todayInputTokenCount",
+                "todayInputTokens",
+                "todayPromptTokens",
+            ],
+        ),
+        today_output_token_count: parse_i64_field(
+            payload,
+            &[
+                "today_output_token_count",
+                "today_output_tokens",
+                "today_completion_tokens",
+                "todayOutputTokenCount",
+                "todayOutputTokens",
+                "todayCompletionTokens",
+            ],
+        ),
+        total_input_token_count: parse_i64_field(
+            payload,
+            &[
+                "total_input_token_count",
+                "total_input_tokens",
+                "input_tokens",
+                "prompt_tokens",
+                "totalInputTokenCount",
+                "totalInputTokens",
+                "inputTokens",
+                "promptTokens",
+            ],
+        ),
+        total_output_token_count: parse_i64_field(
+            payload,
+            &[
+                "total_output_token_count",
+                "total_output_tokens",
+                "output_tokens",
+                "completion_tokens",
+                "totalOutputTokenCount",
+                "totalOutputTokens",
+                "outputTokens",
+                "completionTokens",
             ],
         ),
         currency,
@@ -2934,6 +3082,10 @@ mod tests {
         assert_eq!(station_balance.total_consumption, Some(18.5));
         assert_eq!(station_balance.today_token_count, Some(34567));
         assert_eq!(station_balance.total_token_count, Some(4567890));
+        assert_eq!(station_balance.today_input_token_count, Some(30000));
+        assert_eq!(station_balance.today_output_token_count, Some(4567));
+        assert_eq!(station_balance.total_input_token_count, Some(4300000));
+        assert_eq!(station_balance.total_output_token_count, Some(267890));
         assert!(output.summary_json["endpointResults"]
             .as_array()
             .expect("endpoint results")
@@ -3519,7 +3671,11 @@ mod tests {
                         "today_actual_cost": 0.75,
                         "total_actual_cost": 18.5,
                         "today_tokens": 34567,
-                        "total_tokens": 4567890
+                        "total_tokens": 4567890,
+                        "today_prompt_tokens": 30000,
+                        "today_completion_tokens": 4567,
+                        "prompt_tokens": 4300000,
+                        "completion_tokens": 267890
                     }
                 }),
             ),

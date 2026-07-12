@@ -233,15 +233,19 @@ export function buildUsageCards(station: Station, balances: BalanceSnapshot[]): 
     {
       label: "今日 Token",
       value: formatUsageCount(currentBalance.sourceSnapshot?.todayTokenCount),
-      helper: "中转站后台统计",
+      helper: formatTokenBreakdown(
+        currentBalance.sourceSnapshot?.todayInputTokenCount,
+        currentBalance.sourceSnapshot?.todayOutputTokenCount,
+      ),
       tone: hasUsage ? "neutral" : "muted",
     },
     {
       label: "累计 Token",
       value: formatUsageCount(currentBalance.sourceSnapshot?.totalTokenCount),
-      helper: currentBalance.collectedAt
-        ? `采集时间：${formatDetailDate(currentBalance.collectedAt)}`
-        : "等待采集器写入用量快照",
+      helper: formatTokenBreakdown(
+        currentBalance.sourceSnapshot?.totalInputTokenCount,
+        currentBalance.sourceSnapshot?.totalOutputTokenCount,
+      ),
       tone: hasUsage ? "neutral" : "muted",
     },
   ];
@@ -449,8 +453,19 @@ function hasCollectedUsage(snapshot: BalanceSnapshot | null) {
         snapshot.totalConsumption,
         snapshot.todayTokenCount,
         snapshot.totalTokenCount,
+        snapshot.todayInputTokenCount,
+        snapshot.todayOutputTokenCount,
+        snapshot.totalInputTokenCount,
+        snapshot.totalOutputTokenCount,
       ].some((value) => typeof value === "number" && Number.isFinite(value)),
   );
+}
+
+function formatTokenBreakdown(
+  inputTokens: number | null | undefined,
+  outputTokens: number | null | undefined,
+) {
+  return `输入: ${formatUsageCount(inputTokens)} / 输出: ${formatUsageCount(outputTokens)}`;
 }
 
 function formatUsageCount(value: number | null | undefined) {

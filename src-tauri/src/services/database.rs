@@ -1963,6 +1963,10 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             total_consumption REAL,
             today_token_count INTEGER,
             total_token_count INTEGER,
+            today_input_token_count INTEGER,
+            today_output_token_count INTEGER,
+            total_input_token_count INTEGER,
+            total_output_token_count INTEGER,
             low_balance_threshold REAL,
             status TEXT NOT NULL,
             source TEXT NOT NULL,
@@ -2351,6 +2355,30 @@ fn migrate_p9_fact_schema(connection: &Connection) -> rusqlite::Result<()> {
     add_column_if_missing(connection, "balance_snapshots", "total_consumption", "REAL")?;
     add_column_if_missing(connection, "balance_snapshots", "today_token_count", "INTEGER")?;
     add_column_if_missing(connection, "balance_snapshots", "total_token_count", "INTEGER")?;
+    add_column_if_missing(
+        connection,
+        "balance_snapshots",
+        "today_input_token_count",
+        "INTEGER",
+    )?;
+    add_column_if_missing(
+        connection,
+        "balance_snapshots",
+        "today_output_token_count",
+        "INTEGER",
+    )?;
+    add_column_if_missing(
+        connection,
+        "balance_snapshots",
+        "total_input_token_count",
+        "INTEGER",
+    )?;
+    add_column_if_missing(
+        connection,
+        "balance_snapshots",
+        "total_output_token_count",
+        "INTEGER",
+    )?;
 
     Ok(())
 }
@@ -6674,6 +6702,10 @@ fn migrate_pricing_tables(connection: &Connection) -> rusqlite::Result<()> {
             total_consumption REAL,
             today_token_count INTEGER,
             total_token_count INTEGER,
+            today_input_token_count INTEGER,
+            today_output_token_count INTEGER,
+            total_input_token_count INTEGER,
+            total_output_token_count INTEGER,
             low_balance_threshold REAL,
             status TEXT NOT NULL,
             source TEXT NOT NULL,
@@ -9082,8 +9114,9 @@ fn list_balance_snapshots_from_connection(
             "SELECT id, station_id, station_key_id, scope, value, currency, credit_unit,
                     used_value, total_value, today_request_count, total_request_count,
                     today_consumption, total_consumption, today_token_count, total_token_count,
-                    low_balance_threshold, status, source, confidence, collected_at, created_at,
-                    updated_at
+                    today_input_token_count, today_output_token_count, total_input_token_count,
+                    total_output_token_count, low_balance_threshold, status, source, confidence,
+                    collected_at, created_at, updated_at
                FROM balance_snapshots
               ORDER BY updated_at DESC, created_at DESC",
         )
@@ -9105,8 +9138,9 @@ fn list_balance_snapshots_for_station_from_connection(
             "SELECT id, station_id, station_key_id, scope, value, currency, credit_unit,
                     used_value, total_value, today_request_count, total_request_count,
                     today_consumption, total_consumption, today_token_count, total_token_count,
-                    low_balance_threshold, status, source, confidence, collected_at, created_at,
-                    updated_at
+                    today_input_token_count, today_output_token_count, total_input_token_count,
+                    total_output_token_count, low_balance_threshold, status, source, confidence,
+                    collected_at, created_at, updated_at
                FROM balance_snapshots
               WHERE station_id = ?1
               ORDER BY updated_at DESC, created_at DESC",
@@ -9143,9 +9177,10 @@ fn upsert_balance_snapshot_in_connection(
                 id, station_id, station_key_id, scope, value, currency, credit_unit,
                 used_value, total_value, today_request_count, total_request_count,
                 today_consumption, total_consumption, today_token_count, total_token_count,
-                low_balance_threshold, status, source, confidence, collected_at, created_at,
-                updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+                today_input_token_count, today_output_token_count, total_input_token_count,
+                total_output_token_count, low_balance_threshold, status, source, confidence,
+                collected_at, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
              ON CONFLICT(id) DO UPDATE SET
                 station_id = excluded.station_id,
                 station_key_id = excluded.station_key_id,
@@ -9161,6 +9196,10 @@ fn upsert_balance_snapshot_in_connection(
                 total_consumption = excluded.total_consumption,
                 today_token_count = excluded.today_token_count,
                 total_token_count = excluded.total_token_count,
+                today_input_token_count = excluded.today_input_token_count,
+                today_output_token_count = excluded.today_output_token_count,
+                total_input_token_count = excluded.total_input_token_count,
+                total_output_token_count = excluded.total_output_token_count,
                 low_balance_threshold = excluded.low_balance_threshold,
                 status = excluded.status,
                 source = excluded.source,
@@ -9183,6 +9222,10 @@ fn upsert_balance_snapshot_in_connection(
                 input.total_consumption,
                 input.today_token_count,
                 input.total_token_count,
+                input.today_input_token_count,
+                input.today_output_token_count,
+                input.total_input_token_count,
+                input.total_output_token_count,
                 input.low_balance_threshold,
                 normalize_balance_status(input.status)?,
                 input.source.trim(),
@@ -9274,13 +9317,17 @@ fn row_to_balance_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<BalanceS
         total_consumption: row.get(12)?,
         today_token_count: row.get(13)?,
         total_token_count: row.get(14)?,
-        low_balance_threshold: row.get(15)?,
-        status: row.get(16)?,
-        source: row.get(17)?,
-        confidence: row.get(18)?,
-        collected_at: row.get(19)?,
-        created_at: row.get(20)?,
-        updated_at: row.get(21)?,
+        today_input_token_count: row.get(15)?,
+        today_output_token_count: row.get(16)?,
+        total_input_token_count: row.get(17)?,
+        total_output_token_count: row.get(18)?,
+        low_balance_threshold: row.get(19)?,
+        status: row.get(20)?,
+        source: row.get(21)?,
+        confidence: row.get(22)?,
+        collected_at: row.get(23)?,
+        created_at: row.get(24)?,
+        updated_at: row.get(25)?,
     })
 }
 
@@ -9323,8 +9370,9 @@ fn balance_snapshot_by_id(connection: &Connection, id: &str) -> Result<BalanceSn
             "SELECT id, station_id, station_key_id, scope, value, currency, credit_unit,
                     used_value, total_value, today_request_count, total_request_count,
                     today_consumption, total_consumption, today_token_count, total_token_count,
-                    low_balance_threshold, status, source, confidence, collected_at, created_at,
-                    updated_at
+                    today_input_token_count, today_output_token_count, total_input_token_count,
+                    total_output_token_count, low_balance_threshold, status, source, confidence,
+                    collected_at, created_at, updated_at
                FROM balance_snapshots
               WHERE id = ?1",
             params![id],
@@ -13306,6 +13354,10 @@ mod tests {
                 total_consumption: None,
                 today_token_count: None,
                 total_token_count: None,
+                today_input_token_count: None,
+                today_output_token_count: None,
+                total_input_token_count: None,
+                total_output_token_count: None,
                 low_balance_threshold: None,
                 status: "depleted".to_string(),
                 source: "test".to_string(),
@@ -14851,6 +14903,10 @@ mod tests {
                 total_consumption: None,
                 today_token_count: None,
                 total_token_count: None,
+                today_input_token_count: None,
+                today_output_token_count: None,
+                total_input_token_count: None,
+                total_output_token_count: None,
                 low_balance_threshold: None,
                 status: "normal".to_string(),
                 source: "test".to_string(),
@@ -14875,6 +14931,10 @@ mod tests {
                 total_consumption: None,
                 today_token_count: None,
                 total_token_count: None,
+                today_input_token_count: None,
+                today_output_token_count: None,
+                total_input_token_count: None,
+                total_output_token_count: None,
                 low_balance_threshold: None,
                 status: "normal".to_string(),
                 source: "test".to_string(),
@@ -15497,6 +15557,10 @@ mod tests {
                 total_consumption: None,
                 today_token_count: None,
                 total_token_count: None,
+                today_input_token_count: None,
+                today_output_token_count: None,
+                total_input_token_count: None,
+                total_output_token_count: None,
                 low_balance_threshold: Some(10.0),
                 status: "depleted".to_string(),
                 source: "test".to_string(),
@@ -15532,6 +15596,10 @@ mod tests {
                 total_consumption: None,
                 today_token_count: None,
                 total_token_count: None,
+                today_input_token_count: None,
+                today_output_token_count: None,
+                total_input_token_count: None,
+                total_output_token_count: None,
                 low_balance_threshold: Some(10.0),
                 status: "depleted".to_string(),
                 source: "test".to_string(),
@@ -15573,6 +15641,10 @@ mod tests {
                 total_consumption: None,
                 today_token_count: None,
                 total_token_count: None,
+                today_input_token_count: None,
+                today_output_token_count: None,
+                total_input_token_count: None,
+                total_output_token_count: None,
                 low_balance_threshold: Some(10.0),
                 status: "depleted".to_string(),
                 source: "test".to_string(),
@@ -15612,6 +15684,10 @@ mod tests {
                 total_consumption: None,
                 today_token_count: None,
                 total_token_count: None,
+                today_input_token_count: None,
+                today_output_token_count: None,
+                total_input_token_count: None,
+                total_output_token_count: None,
                 low_balance_threshold: Some(10.0),
                 status: "low".to_string(),
                 source: "test".to_string(),
@@ -17958,6 +18034,10 @@ mod tests {
                 total_consumption: Some(3.5),
                 today_token_count: Some(1234),
                 total_token_count: Some(56789),
+                today_input_token_count: Some(1000),
+                today_output_token_count: Some(234),
+                total_input_token_count: Some(50000),
+                total_output_token_count: Some(6789),
                 low_balance_threshold: Some(5.0),
                 status: "normal".to_string(),
                 source: "collector".to_string(),
@@ -17976,6 +18056,10 @@ mod tests {
         assert_eq!(rows[0].total_consumption, Some(3.5));
         assert_eq!(rows[0].today_token_count, Some(1234));
         assert_eq!(rows[0].total_token_count, Some(56789));
+        assert_eq!(rows[0].today_input_token_count, Some(1000));
+        assert_eq!(rows[0].today_output_token_count, Some(234));
+        assert_eq!(rows[0].total_input_token_count, Some(50000));
+        assert_eq!(rows[0].total_output_token_count, Some(6789));
         assert_eq!(rows[0].status, "normal");
     }
 }

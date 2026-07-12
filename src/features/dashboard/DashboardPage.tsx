@@ -40,6 +40,7 @@ import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 import type { AppSettings } from "@/lib/types/settings";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
+import type { Station } from "@/lib/types/stations";
 import { stationKeyStatusLabels } from "@/lib/types/stationKeys";
 import { formatChangeTime, severityLabels, severityTone, unreadRiskCount } from "@/features/changes/changeEventViewModels";
 import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
@@ -83,6 +84,7 @@ export function DashboardPage() {
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
   const [keyPoolItems, setKeyPoolItems] = useState<KeyPoolItem[]>([]);
+  const [stations, setStations] = useState<Station[]>([]);
   const [balanceSnapshots, setBalanceSnapshots] = useState<BalanceSnapshot[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
@@ -97,6 +99,7 @@ export function DashboardPage() {
         setProxyStatus(workspace.proxyStatus);
         setRequestLogs(workspace.requestLogs);
         setKeyPoolItems(workspace.keyPoolItems);
+        setStations(workspace.stations);
         setBalanceSnapshots(workspace.balanceSnapshots);
         setSettings(workspace.settings);
         setChangeEvents(workspace.changeEvents);
@@ -227,7 +230,10 @@ export function DashboardPage() {
   const averageResponseMs = averageDurationMs(todayLogs);
   const recentPerformance = getRecentPerformanceMetrics(requestLogs);
   const activeRequests = proxyStatus?.activeRequests ?? 0;
-  const balanceSummary = useMemo(() => summarizeDashboardBalances(balanceSnapshots), [balanceSnapshots]);
+  const balanceSummary = useMemo(
+    () => summarizeDashboardBalances(balanceSnapshots, stations),
+    [balanceSnapshots, stations],
+  );
   const { lowBalanceStations, primaryBalanceCurrency, stationUsage, totalBalance } = balanceSummary;
   const activeRiskEvents = useMemo(
     () =>
@@ -351,7 +357,7 @@ export function DashboardPage() {
         </SectionCard>
 
         <MetricPanel
-          title="今日指标"
+          title="本地路由指标"
           metrics={[
             {
               label: "总余额",
@@ -419,8 +425,7 @@ export function DashboardPage() {
           ]}
         />
         <MetricPanel
-          title="中转站用量"
-          description="来自中转站后台采集，不含本地代理日志"
+          title="中转站指标统计"
           metrics={[
             {
               label: "站点今日请求",
@@ -441,7 +446,7 @@ export function DashboardPage() {
             {
               label: "站点今日 Token",
               value: formatCompactNumber(stationUsage.todayTokenCount),
-              detail: "后台采集口径",
+              detail: `输入: ${formatCompactNumber(stationUsage.todayInputTokenCount)} / 输出: ${formatCompactNumber(stationUsage.todayOutputTokenCount)}`,
               icon: BarChart3,
               tone: stationUsage.todayTokenCount > 0 ? "good" : "neutral",
               accent: "amber",
@@ -449,7 +454,7 @@ export function DashboardPage() {
             {
               label: "站点累计 Token",
               value: formatCompactNumber(stationUsage.totalTokenCount),
-              detail: "全部中转站总计",
+              detail: `输入: ${formatCompactNumber(stationUsage.totalInputTokenCount)} / 输出: ${formatCompactNumber(stationUsage.totalOutputTokenCount)}`,
               icon: Server,
               tone: stationUsage.totalTokenCount > 0 ? "good" : "neutral",
               accent: "indigo",
@@ -517,27 +522,39 @@ export function DashboardPage() {
         title="路由队列"
       >
         <div className="grid gap-2">
-          {keyPoolItems.slice(0, 6).map((key) => (
-            <ObjectRow
-              key={key.id}
-              icon={<KeyRound className="h-4 w-4" />}
-              title={key.name}
-              subtitle={`${key.stationName} - ${key.stationBaseUrl}`}
-              badges={
-                <StatusBadge tone={key.enabled ? "healthy" : "disabled"}>
-                  {key.enabled ? "可用" : "停用"}
-                </StatusBadge>
-              }
-              metrics={[
-                { label: "优先级", value: `${key.priority}` },
-                {
-                  label: "成功率",
-                  value: key.successRate === null ? "-" : `${Math.round(key.successRate * 100)}%`,
-                  tone: key.successRate !== null && key.successRate < 0.9 ? "warning" : "good",
-                },
-              ]}
-            />
-          ))}
+          {dashboardLoaded && keyPoolItems.length === 0 ? (
+            <div className="flex min-h-[164px] flex-col items-center justify-center px-4 py-8 text-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-[16px] bg-slate-100 text-slate-300">
+                <Inbox className="h-7 w-7" strokeWidth={1.75} />
+              </div>
+              <div className="mt-4 text-sm font-medium text-slate-800">暂无路由队列</div>
+              <p className="mt-2 text-sm text-slate-500">
+                添加或导入 Key 后，可用路由将显示在这里。
+              </p>
+            </div>
+          ) : (
+            keyPoolItems.slice(0, 6).map((key) => (
+              <ObjectRow
+                key={key.id}
+                icon={<KeyRound className="h-4 w-4" />}
+                title={key.name}
+                subtitle={`${key.stationName} - ${key.stationBaseUrl}`}
+                badges={
+                  <StatusBadge tone={key.enabled ? "healthy" : "disabled"}>
+                    {key.enabled ? "可用" : "停用"}
+                  </StatusBadge>
+                }
+                metrics={[
+                  { label: "优先级", value: `${key.priority}` },
+                  {
+                    label: "成功率",
+                    value: key.successRate === null ? "-" : `${Math.round(key.successRate * 100)}%`,
+                    tone: key.successRate !== null && key.successRate < 0.9 ? "warning" : "good",
+                  },
+                ]}
+              />
+            ))
+          )}
         </div>
       </SectionCard>
 

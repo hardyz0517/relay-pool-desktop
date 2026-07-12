@@ -60,6 +60,10 @@ export type BalanceSnapshot = {
   totalConsumption: number | null;
   todayTokenCount: number | null;
   totalTokenCount: number | null;
+  todayInputTokenCount: number | null;
+  todayOutputTokenCount: number | null;
+  totalInputTokenCount: number | null;
+  totalOutputTokenCount: number | null;
   lowBalanceThreshold: number | null;
   status: "unknown" | "normal" | "low" | "depleted" | string;
   source: string;
