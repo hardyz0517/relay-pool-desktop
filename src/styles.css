@@ -108,6 +108,17 @@ textarea {
   visibility: visible;
 }
 
+.app-page-transition-layer[data-page-transition-state="entering"] {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  pointer-events: auto;
+  visibility: visible;
+  animation: relayShellPageEnter 140ms ease-out;
+  will-change: opacity;
+}
+
 .app-page-transition-layer[data-page-transition-state="active"] {
   display: block;
   pointer-events: auto;
@@ -151,9 +162,23 @@ textarea {
   }
 }
 
+@keyframes relayShellPageEnter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .app-page-transition-layer[data-page-transition-kind="shell"] {
     animation-duration: 1ms !important;
     transform: none !important;
+  }
+
+  .app-page-transition-layer[data-page-transition-state="entering"] {
+    animation-duration: 1ms !important;
   }
 }

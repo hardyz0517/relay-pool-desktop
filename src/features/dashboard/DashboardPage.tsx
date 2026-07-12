@@ -1,4 +1,5 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
@@ -18,7 +19,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation } from "@/components/shell/PageActivity";
+import { usePageActivity } from "@/components/shell/PageActivity";
 import {
   Button,
   IconButton,
@@ -31,17 +32,22 @@ import {
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
-import { listBalanceSnapshots } from "@/lib/api/economics";
-import { getProxyStatus, listRequestLogs, startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
+import { startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
 import { getLocalAccessKey, importRelayPoolToCCSwitch } from "@/lib/api/settings";
-import { loadDashboardWorkspace } from "@/lib/queries/dashboardQueries";
-import type { ChangeEvent } from "@/lib/types/changeEvents";
-import type { BalanceSnapshot } from "@/lib/types/economics";
-import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
-import type { AppSettings } from "@/lib/types/settings";
-import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
-import type { Station } from "@/lib/types/stations";
+import type { RequestLog } from "@/lib/types/proxy";
+import type { StationKeyStatus } from "@/lib/types/stationKeys";
 import { stationKeyStatusLabels } from "@/lib/types/stationKeys";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
+import {
+  balanceSnapshotsQueryOptions,
+  changeEventsQueryOptions,
+  keyPoolQueryOptions,
+  proxyStatusQueryOptions,
+  requestLogsQueryOptions,
+  settingsQueryOptions,
+  stationsQueryOptions,
+} from "@/lib/query/resourceQueries";
+import { queryKeys } from "@/lib/query/queryKeys";
 import { formatChangeTime, severityLabels, severityTone, unreadRiskCount } from "@/features/changes/changeEventViewModels";
 import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
 import { formatRecentRequestCost, formatRequestCost, requestBaseCostValue } from "@/features/dashboard/requestCostFormat";
@@ -60,8 +66,6 @@ const healthTone = {
   unchecked: "info",
 } as const;
 
-const DASHBOARD_BALANCE_REFRESH_INTERVAL_MS = 30_000;
-const DASHBOARD_RUNTIME_REFRESH_INTERVAL_MS = 2_000;
 const RECENT_PERFORMANCE_WINDOW_MINUTES = 5;
 
 const dashboardMetricToneClassName: Record<MetricTone, string> = {
@@ -81,60 +85,38 @@ const dashboardMetricIconClassName: Record<MetricTone, string> = {
 export function DashboardPage() {
   const toast = useToast();
   const { state: updaterState, installNow } = useUpdater();
-  const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
-  const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
-  const [keyPoolItems, setKeyPoolItems] = useState<KeyPoolItem[]>([]);
-  const [stations, setStations] = useState<Station[]>([]);
-  const [balanceSnapshots, setBalanceSnapshots] = useState<BalanceSnapshot[]>([]);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
-  const [dashboardLoaded, setDashboardLoaded] = useState(false);
+  const queryClient = useQueryClient();
+  const { refreshEnabled } = usePageActivity();
+  const proxyStatusQuery = useActivityQuery(refreshEnabled, proxyStatusQueryOptions(false));
+  const requestLogsQuery = useActivityQuery(
+    refreshEnabled,
+    requestLogsQueryOptions(proxyStatusQuery.data?.running ? 2_000 : false),
+  );
+  const keyPoolQuery = useActivityQuery(refreshEnabled, keyPoolQueryOptions());
+  const stationsQuery = useActivityQuery(refreshEnabled, stationsQueryOptions());
+  const balancesQuery = useActivityQuery(refreshEnabled, balanceSnapshotsQueryOptions());
+  const settingsQuery = useActivityQuery(refreshEnabled, settingsQueryOptions());
+  const changeEventsQuery = useActivityQuery(refreshEnabled, changeEventsQueryOptions(false));
   const [startingLocalProxy, setStartingLocalProxy] = useState(false);
   const [stoppingLocalProxy, setStoppingLocalProxy] = useState(false);
   const [importingCCSwitch, setImportingCCSwitch] = useState(false);
 
-  usePageActivation(() => {
-    void loadDashboardWorkspace()
-      .then((workspace) => {
-        setProxyStatus(workspace.proxyStatus);
-        setRequestLogs(workspace.requestLogs);
-        setKeyPoolItems(workspace.keyPoolItems);
-        setStations(workspace.stations);
-        setBalanceSnapshots(workspace.balanceSnapshots);
-        setSettings(workspace.settings);
-        setChangeEvents(workspace.changeEvents);
-        setDashboardLoaded(true);
-      })
-      .catch((requestError) => {
-        toast.error("工作台刷新失败", readError(requestError));
-      });
-  });
-
-  async function refreshDashboardRuntimeFacts() {
-    const [nextProxyStatus, nextRequestLogs] = await Promise.all([
-      getProxyStatus(),
-      listRequestLogs(),
-    ]);
-    setProxyStatus(nextProxyStatus);
-    setRequestLogs(nextRequestLogs);
-  }
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      void listBalanceSnapshots()
-        .then(setBalanceSnapshots)
-        .catch(() => {});
-    }, DASHBOARD_BALANCE_REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(intervalId);
-  }, []);
-
-  useEffect(() => {
-    const runtimeRefreshIntervalId = window.setInterval(() => {
-      void refreshDashboardRuntimeFacts().catch(() => {});
-    }, DASHBOARD_RUNTIME_REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(runtimeRefreshIntervalId);
-  }, []);
-
+  const proxyStatus = proxyStatusQuery.data ?? null;
+  const requestLogs = requestLogsQuery.data ?? [];
+  const keyPoolItems = keyPoolQuery.data ?? [];
+  const stations = stationsQuery.data ?? [];
+  const balanceSnapshots = balancesQuery.data ?? [];
+  const settings = settingsQuery.data ?? null;
+  const changeEvents = changeEventsQuery.data ?? [];
+  const dashboardLoaded = [
+    proxyStatusQuery.data,
+    requestLogsQuery.data,
+    keyPoolQuery.data,
+    stationsQuery.data,
+    balancesQuery.data,
+    settingsQuery.data,
+    changeEventsQuery.data,
+  ].every((value) => value !== undefined);
   async function copyText(value: string, label = "内容") {
     if (isMaskedDisplayValue(value)) {
       toast.error("复制失败", `${label}是脱敏展示值，不能复制。`);
@@ -161,8 +143,9 @@ export function DashboardPage() {
   async function handleStartLocalProxy() {
     setStartingLocalProxy(true);
     try {
+      await queryClient.cancelQueries({ queryKey: queryKeys.proxyStatus });
       const nextStatus = await startLocalProxy();
-      setProxyStatus(nextStatus);
+      queryClient.setQueryData(queryKeys.proxyStatus, nextStatus);
       toast.success("本地路由已启动", `监听 ${nextStatus.bindAddr}:${nextStatus.port}`);
     } catch (startError) {
       toast.error("启动本地路由失败", readError(startError));
@@ -174,8 +157,9 @@ export function DashboardPage() {
   async function handleStopLocalProxy() {
     setStoppingLocalProxy(true);
     try {
+      await queryClient.cancelQueries({ queryKey: queryKeys.proxyStatus });
       const nextStatus = await stopLocalProxy();
-      setProxyStatus(nextStatus);
+      queryClient.setQueryData(queryKeys.proxyStatus, nextStatus);
       toast.success("本地路由已关闭");
     } catch (stopError) {
       toast.error("关闭本地路由失败", readError(stopError));

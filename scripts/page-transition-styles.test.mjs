@@ -77,6 +77,9 @@ const inactiveRule = readRule(
 const activeRule = readRule(
   '.app-page-transition-layer[data-page-transition-state="active"]',
 );
+const enteringRule = readRule(
+  '.app-page-transition-layer[data-page-transition-state="entering"]',
+);
 const overlayRule = readRule(".app-page-transition-overlay");
 const contentRule = readRule(".app-page-transition-content");
 
@@ -112,6 +115,17 @@ assertDeclaration(inactiveRule, "pointer-events", "none");
 assertDeclaration(activeRule, "display", "block");
 assertDeclaration(activeRule, "visibility", "visible");
 assertDeclaration(activeRule, "pointer-events", "auto");
+assertDeclaration(enteringRule, "position", "absolute");
+assertDeclaration(enteringRule, "inset", "0");
+assertDeclaration(enteringRule, "z-index", "1");
+assertDeclaration(enteringRule, "display", "block");
+assertDeclaration(enteringRule, "visibility", "visible");
+assertDeclaration(enteringRule, "pointer-events", "auto");
+assertDeclaration(enteringRule, "animation", "relayShellPageEnter 140ms ease-out");
+assertDeclaration(enteringRule, "will-change", "opacity");
+for (const property of ["transition", "transform", "filter"]) {
+  assertNoDeclaration(enteringRule, property);
+}
 
 assertDeclaration(overlayRule, "position", "absolute");
 assertDeclaration(overlayRule, "inset", "0");
@@ -153,6 +167,7 @@ assertDeclaration(
   "relayPageFadeUp 160ms ease-out",
 );
 readRule("@keyframes relayPageFadeUp");
+readRule("@keyframes relayShellPageEnter");
 
 const transientExitHandoffRule = readRule(
   '.app-page-transition-stack[data-page-transition-handoff="transient-exit"]\n' +
@@ -178,10 +193,16 @@ assertDeclaration(
   "1ms !important",
 );
 assertDeclaration(reducedMotionShellRule, "transform", "none !important");
-assert.equal(
-  normalizedReducedMotionRule.trim(),
-  `${reducedMotionShellSelector} {${reducedMotionShellRule}}`,
-  "reduced-motion CSS should target only shell transition layers",
+const reducedMotionEnteringSelector =
+  '.app-page-transition-layer[data-page-transition-state="entering"]';
+const reducedMotionEnteringRule = readRuleFrom(
+  normalizedReducedMotionRule,
+  reducedMotionEnteringSelector,
+);
+assertDeclaration(
+  reducedMotionEnteringRule,
+  "animation-duration",
+  "1ms !important",
 );
 
 console.log("page transition styles contract ok");

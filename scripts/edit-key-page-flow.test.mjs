@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 
 const appSource = await readFile("src/app/App.tsx", "utf8");
-const navigationSource = await readFile("src/lib/types/navigation.ts", "utf8");
+const shellPageRegistrySource = await readFile("src/app/shellPageRegistry.tsx", "utf8");
 const pageTransitionPolicySource = await readFile("src/app/pageTransitionPolicy.ts", "utf8");
+const navigationSource = await readFile("src/lib/types/navigation.ts", "utf8");
 const keyPoolSource = await readFile("src/features/key-pool/KeyPoolPage.tsx", "utf8");
 
 await access("src/features/key-pool/EditKeyPage.tsx");
@@ -30,13 +31,15 @@ assert.ok(
 );
 
 assert.ok(
-  /<KeyPoolPage\s+onAddKey=\{openAddKey\}\s+onEditKey=\{openEditKey\}\s+\/>/.test(appSource),
+  /<KeyPoolPage\s+onAddKey=\{actions\.addKey\}\s+onEditKey=\{actions\.editKey\}\s+\/>/.test(
+    shellPageRegistrySource,
+  ),
   "key-pool page should navigate row edit actions to the edit-key page",
 );
 
 assert.ok(
   appSource.includes("resolveActiveShellRouteId(") &&
-    appSource.includes("<AppShell activeRouteId={activeShellRouteId}"),
+    appSource.includes("activeRouteId={intent.shellRouteId}"),
   "transient pages should resolve and pass their parent shell route as active",
 );
 

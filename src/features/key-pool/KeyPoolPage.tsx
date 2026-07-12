@@ -14,7 +14,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { Activity, Bot, Edit3, GripVertical, KeyRound, Loader2, MessageCircle, Plus, RotateCw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation } from "@/components/shell/PageActivity";
+import { usePageActivation, usePageActivity } from "@/components/shell/PageActivity";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, SelectControl, StatusBadge, SwitchControl, type StatusTone, useToast } from "@/components/ui";
 import { createChannelMonitor, listChannelMonitorTemplates, listChannelMonitors, updateChannelMonitor } from "@/lib/api/channelMonitors";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
@@ -24,6 +24,8 @@ import { KEY_POOL_ITEMS_UPDATED_EVENT, deleteStationKey, listKeyPoolItems, reord
 import { readError } from "@/lib/errors";
 import { formatRate } from "@/lib/formatters";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
+import { keyPoolQueryOptions, stationsQueryOptions } from "@/lib/query/resourceQueries";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import { parseTimestampLikeDate } from "@/lib/time";
 import type { ChannelMonitor, ChannelMonitorRequestTemplate } from "@/lib/types/channelMonitors";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
@@ -81,6 +83,9 @@ const defaultKeyConnectivityModelOptions = [
 
 export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const toast = useToast();
+  const { refreshEnabled } = usePageActivity();
+  useActivityQuery(refreshEnabled, keyPoolQueryOptions());
+  useActivityQuery(refreshEnabled, stationsQueryOptions());
   const [stations, setStations] = useState<Station[]>([]);
   const [items, setItems] = useState<KeyPoolItem[]>([]);
   const [monitors, setMonitors] = useState<ChannelMonitor[]>([]);
@@ -116,6 +121,9 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
 
   useEffect(() => {
     function handleKeyPoolItemsUpdated() {
+      if (!refreshEnabled) {
+        return;
+      }
       void refresh(false);
     }
 
@@ -123,7 +131,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     return () => {
       window.removeEventListener(KEY_POOL_ITEMS_UPDATED_EVENT, handleKeyPoolItemsUpdated);
     };
-  }, []);
+  }, [refreshEnabled]);
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {

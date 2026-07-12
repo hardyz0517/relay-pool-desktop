@@ -28,12 +28,11 @@ assert.ok(
 );
 
 assert.ok(
-  pageSource.includes('import { loadRequestLogWorkspace } from "@/lib/queries/logQueries";') &&
-    pageSource.includes("const workspace = await loadRequestLogWorkspace()") &&
-    pageSource.includes("setLogs(workspace.requestLogs)") &&
-    pageSource.includes("setKeys(workspace.keyPoolItems)") &&
-    pageSource.includes("workspace.requestLogs[0]?.id"),
-  "logs page should consume the query service without changing existing state assignments",
+  pageSource.includes("requestLogsQueryOptions") &&
+    pageSource.includes("keyPoolQueryOptions") &&
+    pageSource.includes("settingsQueryOptions") &&
+    !pageSource.includes("loadRequestLogWorkspace"),
+  "logs page should consume shared resource query options instead of the legacy workspace loader",
 );
 
 assert.ok(

@@ -314,8 +314,9 @@ assert.ok(
   pageActivitySource.includes("<InteractionActivityProvider active={active}>") &&
     pageActivitySource.includes("{children}") &&
     pageActivitySource.includes("</InteractionActivityProvider>") &&
-    pageActivitySource.includes("const active = useInteractionActivity();") &&
-    !pageActivitySource.includes("createContext("),
+    pageActivitySource.includes("const interactive = useInteractionActivity();") &&
+    pageActivitySource.includes("refreshEnabled: boolean") &&
+    pageActivitySource.includes("export function usePageActivity()"),
   "page activity should share one interaction-active state without changing activation semantics",
 );
 assert.ok(

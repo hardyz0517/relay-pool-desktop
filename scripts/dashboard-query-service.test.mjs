@@ -34,14 +34,8 @@ assert.ok(
 );
 
 assert.ok(
-  dashboardSource.includes("loadDashboardWorkspace()") &&
-    dashboardSource.includes("setProxyStatus(workspace.proxyStatus)") &&
-    dashboardSource.includes("setRequestLogs(workspace.requestLogs)") &&
-    dashboardSource.includes("setKeyPoolItems(workspace.keyPoolItems)") &&
-    dashboardSource.includes("setBalanceSnapshots(workspace.balanceSnapshots)") &&
-    dashboardSource.includes("setSettings(workspace.settings)") &&
-    dashboardSource.includes("setChangeEvents(workspace.changeEvents)"),
-  "dashboard should consume the query service without changing existing state assignments",
+  !dashboardSource.includes("loadDashboardWorkspace"),
+  "dashboard should no longer import or call the legacy composite workspace loader",
 );
 
 assert.ok(

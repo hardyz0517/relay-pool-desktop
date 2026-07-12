@@ -7,18 +7,21 @@ function normalizeSource(source) {
 
 const appSource = normalizeSource(await readFile("src/app/App.tsx", "utf8"));
 const hostSource = normalizeSource(await readFile("src/app/TransientPageHost.tsx", "utf8"));
+const shellHostSource = normalizeSource(await readFile("src/app/ShellPageHost.tsx", "utf8"));
+const controllerSource = normalizeSource(await readFile("src/app/navigationController.ts", "utf8"));
+const policySource = normalizeSource(await readFile("src/app/navigationPolicy.ts", "utf8"));
 
 assert.ok(
-  appSource.includes('from "@/app/TransientPageHost"') &&
-    /<TransientPageHost\s+page=\{activeTransientPage\}\s+onExitComplete=\{restoreTransientReturnFocus\}\s*\/>/.test(
-      appSource,
+  shellHostSource.includes('from "@/app/TransientPageHost"') &&
+    /<TransientPageHost\s+page=\{activeTransientPage\}\s+onExitComplete=\{onExitComplete\}\s*\/>/.test(
+      shellHostSource,
     ),
-  "App should delegate transient rendering and presence cleanup to one host",
+  "ShellPageHost should delegate transient rendering and presence cleanup to one host",
 );
 assert.equal(
-  appSource.match(/<TransientPageHost\b/g)?.length ?? 0,
+  shellHostSource.match(/<TransientPageHost\b/g)?.length ?? 0,
   1,
-  "App should render exactly one transient host",
+  "ShellPageHost should render exactly one transient host",
 );
 
 for (const legacyIdentifier of [
@@ -55,7 +58,7 @@ assert.ok(
     `const activeTransientPage = isShellPage(activeRouteId)
     ? null
     : renderTransientPage(activeRouteId);`,
-  ) && !/\buseMemo\b/.test(appSource),
+  ),
   "App should construct the active descriptor directly so callbacks stay fresh without mirrored dependencies",
 );
 assert.match(
@@ -64,9 +67,9 @@ assert.match(
   "transient route rendering should fail TypeScript exhaustiveness when a future page is unhandled",
 );
 assert.ok(
-  appSource.includes("transientParentRouteId: AppRouteId | null;") &&
-    appSource.includes("transientParentRouteId: null,") &&
-    appSource.includes("resolveTransientParentRouteId(") &&
+  policySource.includes("transientParentRouteId: AppRouteId | null;") &&
+    controllerSource.includes("transientParentRouteId: null,") &&
+    controllerSource.includes("resolveTransientParentRouteId(") &&
     appSource.includes("resolveActiveShellRouteId("),
   "navigation state should retain the actual invoking shell and resolve static parents only as fallback",
 );
@@ -88,36 +91,36 @@ assert.ok(
 );
 
 assert.ok(
-  appSource.includes('type ShellPageState = "active" | "background" | "inactive";') &&
-    appSource.includes('isCurrentTransientPage ? "background" : "active"') &&
-    appSource.includes('const active = shellPageState === "active";') &&
-    appSource.includes('const inert = shellPageState !== "active";'),
-  "shell pages should have explicit active, visible-background, and inactive states",
+  shellHostSource.includes('export type ShellPageState = "active" | "background" | "entering" | "inactive";') &&
+    shellHostSource.includes('transientActive ? "background" : "active"') &&
+    shellHostSource.includes('const active = state === "active" || state === "entering";') &&
+    shellHostSource.includes('const inert = !active;'),
+  "shell pages should have explicit active, visible-background, entering, and inactive states",
 );
 assert.ok(
-  appSource.includes("<PageActivityProvider key={routeId} active={active}>") &&
-    appSource.includes("data-page-transition-state={shellPageState}") &&
-    appSource.includes('inert={inert ? "" : undefined}') &&
-    appSource.includes("aria-hidden={inert}"),
+  shellHostSource.includes("<PageActivityProvider active={active}>") &&
+    shellHostSource.includes("data-page-transition-state={state}") &&
+    shellHostSource.includes('inert={inert ? "" : undefined}') &&
+    shellHostSource.includes("aria-hidden={inert}"),
   "background and inactive shells should remain mounted without refreshing or accepting focus",
 );
 assert.ok(
-  appSource.includes("mountedRouteIds.has(activeShellRouteId)") &&
-    appSource.includes("[...mountedRouteIds, activeShellRouteId]"),
+  shellHostSource.includes("mountedRouteIds.has(activeShellRouteId)") &&
+    shellHostSource.includes("[...mountedRouteIds, activeShellRouteId]"),
   "a transient route should always have its retained parent shell rendered beneath it",
 );
 assert.ok(
   appSource.includes("const isReturningFromTransient") &&
-    appSource.includes(
-      'data-page-transition-handoff={isReturningFromTransient ? "transient-exit" : "none"}',
+    shellHostSource.includes(
+      'data-page-transition-handoff={returningFromTransient ? "transient-exit" : "none"}',
     ),
   "returning from a transient page should not retrigger the shell entry animation",
 );
 assert.ok(
-  appSource.includes(
-    "onPointerDownCapture={(event) => rememberShellFocusTarget(event.target)}",
+  shellHostSource.includes(
+    "onPointerDownCapture={(event) => onRememberShellFocusTarget(event.target)}",
   ) &&
-    appSource.includes("onFocusCapture={(event) => rememberShellFocusTarget(event.target)}"),
+    shellHostSource.includes("onFocusCapture={(event) => onRememberShellFocusTarget(event.target)}"),
   "the transition stack should centrally capture the shell invoker",
 );
 
@@ -139,23 +142,23 @@ assert.ok(
 );
 
 assert.ok(
-  appSource.includes("data-page-transition-layer") &&
-    appSource.includes("data-page-transition-state") &&
-    appSource.includes("data-page-transition-kind") &&
-    appSource.includes("data-page-transition-handoff") &&
-    !appSource.includes("data-page-transition-direction"),
+  shellHostSource.includes("data-page-transition-layer") &&
+    shellHostSource.includes("data-page-transition-state") &&
+    shellHostSource.includes("data-page-transition-kind") &&
+    shellHostSource.includes("data-page-transition-handoff") &&
+    !shellHostSource.includes("data-page-transition-direction"),
   "App and Host should expose stable direction-free transition attributes",
 );
 assert.ok(
-  appSource.includes('inert={inert ? "" : undefined}') &&
-    appSource.includes("aria-hidden={inert}") &&
+  shellHostSource.includes('inert={inert ? "" : undefined}') &&
+    shellHostSource.includes("aria-hidden={inert}") &&
     hostSource.includes('inert={isPresent ? undefined : ""}') &&
     hostSource.includes("aria-hidden={!isPresent}"),
   "inactive shell and outgoing transient content should be isolated from focus and screen readers",
 );
 assert.ok(
-  appSource.includes("app-page-transition-stack") &&
-    appSource.includes("app-page-transition-layer") &&
+  shellHostSource.includes("app-page-transition-stack") &&
+    shellHostSource.includes("app-page-transition-layer") &&
     hostSource.includes("app-page-transition-overlay"),
   "App and Host should wire the transition stack, shell layer, and overlay classes",
 );
