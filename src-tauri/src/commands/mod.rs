@@ -7,7 +7,7 @@ use tauri::{Manager, State};
 
 use crate::{
     models::{
-        capture::{CaptureSessionStatus, CapturedHttpEventInput},
+        capture::{CaptureSessionStatus, CapturedHttpEvent, CapturedHttpEventInput},
         change_events::{ChangeEvent, UpsertChangeEventInput},
         channel_monitors::{
             ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
@@ -1217,15 +1217,13 @@ pub fn record_capture_event(
     if !capture_request_belongs_to_station(&station.base_url, &input.request_url) {
         return Err("捕获事件不属于当前站点 Base URL，已拒绝。".to_string());
     }
-    let web_authorization_candidate = web_authorization_candidate_from_input(&input);
+    let web_authorization_user_id = web_authorization_candidate_user_id_from_input(&input);
     if let Some(session) = capture::extract_session_credentials(&input) {
         database.persist_station_session_with_data_key(session, secrets.data_key())?;
     }
     let station_id = input.station_id.clone();
     let event = capture::sanitize_event(input);
-    let mut status = sessions.push_event(&station_id, event)?;
-    status.web_authorization_candidate = web_authorization_candidate;
-    Ok(status)
+    sessions.push_event(&station_id, event, web_authorization_user_id)
 }
 
 #[tauri::command]
@@ -1267,6 +1265,15 @@ fn finish_capture_session_from_events(
     web_authorization_summary: Option<Value>,
 ) -> Result<CollectorRunResult, String> {
     let events = sessions.take_events(&station_id)?;
+    finish_capture_session_with_events(database, station_id, events, web_authorization_summary)
+}
+
+fn finish_capture_session_with_events(
+    database: &AppDatabase,
+    station_id: String,
+    events: Vec<CapturedHttpEvent>,
+    web_authorization_summary: Option<Value>,
+) -> Result<CollectorRunResult, String> {
     let (mut summary, normalized, raw) = capture::summarize_events(&events);
     if let Some(web_authorization_summary) = web_authorization_summary {
         if let Some(summary) = summary.as_object_mut() {
@@ -1307,33 +1314,41 @@ pub async fn finish_web_authorization_session(
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
     let station = database.station_for_collector(&station_id)?;
+    let candidate = sessions
+        .web_authorization_candidate(&station_id)?
+        .ok_or_else(|| {
+            "网页登录授权尚未捕获到用户身份，请在授权窗口完成登录后重试。".to_string()
+        })?;
     let cookie_header =
         read_capture_window_cookie_header(app, &station_id, &station.base_url).await?;
     let urls = collectors::url::collector_base_urls(&station.base_url);
     let verified = capture::web_authorization::verify_newapi_cookie_session(
         &urls.management_base_url,
         &cookie_header,
+        &candidate.user_id,
         Duration::from_secs(20),
     )?;
 
-    database.persist_station_session_with_data_key(
-        PersistStationSessionInput {
-            station_id: station_id.clone(),
-            access_token: None,
-            refresh_token: None,
-            cookie: Some(verified.cookie_header),
-            newapi_user_id: Some(verified.newapi_user_id),
-            token_expires_at: None,
-            session_expires_at: None,
-            session_source: verified.session_source,
-        },
-        secrets.data_key(),
-    )?;
+    let (_, events) = sessions.commit_web_authorization(&station_id, &candidate, || {
+        database.persist_station_session_with_data_key(
+            PersistStationSessionInput {
+                station_id: station_id.clone(),
+                access_token: None,
+                refresh_token: None,
+                cookie: Some(verified.cookie_header),
+                newapi_user_id: Some(verified.newapi_user_id),
+                token_expires_at: None,
+                session_expires_at: None,
+                session_source: verified.session_source,
+            },
+            secrets.data_key(),
+        )
+    })?;
 
-    finish_capture_session_from_events(
+    finish_capture_session_with_events(
         &database,
-        &sessions,
         station_id,
+        events,
         Some(capture::web_authorization_summary(
             "success",
             Some("web_authorization"),
@@ -1389,7 +1404,9 @@ fn url_has_base_prefix(request_url: &str, base_url: &str) -> bool {
     !base.is_empty() && (request == base || request.starts_with(&format!("{base}/")))
 }
 
-fn web_authorization_candidate_from_input(input: &CapturedHttpEventInput) -> bool {
+fn web_authorization_candidate_user_id_from_input(
+    input: &CapturedHttpEventInput,
+) -> Option<String> {
     let fallback_path;
     let request_path = if let Some(path) = input.request_path.as_deref() {
         path
@@ -1397,11 +1414,17 @@ fn web_authorization_candidate_from_input(input: &CapturedHttpEventInput) -> boo
         fallback_path = path_from_request_url(&input.request_url);
         &fallback_path
     };
-    capture::web_authorization::is_newapi_completion_candidate(
+    if !capture::web_authorization::is_newapi_completion_candidate(
         request_path,
         input.status,
         input.response_json.as_ref(),
-    )
+    ) {
+        return None;
+    }
+    input
+        .response_json
+        .as_ref()
+        .and_then(capture::web_authorization::extract_verified_user_id)
 }
 
 fn path_from_request_url(url: &str) -> String {
@@ -2267,7 +2290,10 @@ mod tests {
             error_message: None,
         };
 
-        assert!(web_authorization_candidate_from_input(&input));
+        assert_eq!(
+            web_authorization_candidate_user_id_from_input(&input).as_deref(),
+            Some("42")
+        );
     }
 
     #[test]
