@@ -17,8 +17,9 @@ assert.ok(
 assert.ok(
   querySource.includes("export type ChannelStatusWorkspace") &&
     querySource.includes("requestLogs: RequestLog[]") &&
-    querySource.includes("stationKeyHealth: StationKeyHealth[]"),
-  "channel query service should expose status raw facts workspace shape",
+    querySource.includes("stationKeyHealth: StationKeyHealth[]") &&
+    querySource.includes("channelStatusSummaries: ChannelStatusSummary[]"),
+  "channel query service should expose status backend summary workspace shape",
 );
 
 assert.ok(
@@ -34,9 +35,8 @@ assert.ok(
   querySource.includes("export async function loadChannelStatusWorkspace()") &&
     querySource.includes("listRequestLogs()") &&
     querySource.includes("listStationKeyHealth()") &&
-    querySource.includes("const runSince = String(Date.now() - CHANNEL_STATUS_MONITOR_LOOKBACK_MS)") &&
-    querySource.includes("listChannelMonitorSummaries({ runSince, runLimit: CHANNEL_STATUS_MONITOR_RUN_LIMIT })"),
-  "channel query service should load enough monitor runs for the channel status time windows",
+    querySource.includes("listChannelStatusSummaries()"),
+  "channel query service should orchestrate status summary reads",
 );
 
 const monitoringWorkspaceSource = querySource.slice(
@@ -75,10 +75,11 @@ assert.ok(
 assert.ok(
   statusSource.includes('import { loadChannelStatusWorkspace } from "@/lib/queries/channelQueries";') &&
     statusSource.includes("const workspace = await loadChannelStatusWorkspace()") &&
-    statusSource.includes("const nextMonitors = workspace.monitorSummaries.map((summary) => summary.monitor)") &&
+    statusSource.includes("const nextMonitors = workspace.channelStatusSummaries.map((summary) => summary.monitor)") &&
     statusSource.includes("setKeys(workspace.keyPoolItems)") &&
     statusSource.includes("setLogs(workspace.requestLogs)") &&
-    statusSource.includes("setHealth(workspace.stationKeyHealth)"),
+    statusSource.includes("setHealth(workspace.stationKeyHealth)") &&
+    statusSource.includes("setStatusSummaries(workspace.channelStatusSummaries)"),
   "channel status tab should consume the status query service without changing state assignments",
 );
 

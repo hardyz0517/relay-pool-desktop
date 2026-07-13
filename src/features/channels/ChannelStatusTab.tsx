@@ -25,7 +25,7 @@ import { loadChannelStatusWorkspace } from "@/lib/queries/channelQueries";
 import { channelStatusQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import { parseTimestampLikeDate, toTimestampMillis } from "@/lib/time";
-import type { ChannelMonitor, ChannelMonitorRun } from "@/lib/types/channelMonitors";
+import type { ChannelMonitor, ChannelStatusSummary, ChannelStatusTimelinePoint } from "@/lib/types/channelMonitors";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { StationKeyHealth } from "@/lib/types/routing";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
@@ -33,15 +33,14 @@ import { stationTypeLabels } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import {
   availabilityToneClassName,
-  buildMonitorRecentOutcomes,
+  buildMonitorTimelineOutcomes,
   buildRecentOutcomes,
+  type ChannelWindow,
   enabledStationKeyMonitorsByKey,
-  filterChannelItemsByWindow,
-  filterChannelMonitorRunsByWindow,
   monitorRunToStationKeyStatus,
   orderChannelsBySavedOrder,
   resolveChannelLatencyMetrics,
-  type ChannelWindow,
+  selectChannelStatusWindowSummary,
   type RecentOutcome,
 } from "./channelStatusViewModel";
 
@@ -63,6 +62,7 @@ type ChannelHealth = {
   consecutiveFailures: number;
   cooldownUntil: string | null;
   recentOutcomes: RecentOutcome[];
+  availabilityLabel: string;
 };
 
 const statusTone: Record<StationKeyStatus, "healthy" | "warning" | "error" | "disabled" | "info"> = {
@@ -96,7 +96,7 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
   const [logs, setLogs] = useState<RequestLog[]>([]);
   const [health, setHealth] = useState<StationKeyHealth[]>([]);
   const [monitors, setMonitors] = useState<ChannelMonitor[]>([]);
-  const [runsByMonitor, setRunsByMonitor] = useState(new Map<string, ChannelMonitorRun[]>());
+  const [statusSummaries, setStatusSummaries] = useState<ChannelStatusSummary[]>([]);
   const [channelOrder, setChannelOrder] = useState<string[]>([]);
   const [timeWindow, setTimeWindow] = useState<ChannelWindow>("recent");
   const [loading, setLoading] = useState(true);
@@ -112,23 +112,14 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
     }
   }, [refreshToken]);
 
-  const visibleLogs = useMemo(() => filterChannelItemsByWindow(logs, timeWindow), [logs, timeWindow]);
-  const visibleRunsByMonitor = useMemo(
-    () =>
-      new Map(
-        [...runsByMonitor.entries()].map(
-          ([monitorId, runs]) => [monitorId, filterChannelMonitorRunsByWindow(runs, timeWindow)] as const,
-        ),
-      ),
-    [runsByMonitor, timeWindow],
-  );
+  const visibleLogs = useMemo(() => filterLogsByWindow(logs, timeWindow), [logs, timeWindow]);
   const channels = useMemo(
     () =>
       orderChannelsBySavedOrder(
-        buildChannels(keys, visibleLogs, health, monitors, visibleRunsByMonitor, timeWindow === "recent"),
+        buildChannels(keys, visibleLogs, health, monitors, statusSummaries, timeWindow),
         channelOrder,
       ),
-    [channelOrder, health, keys, monitors, timeWindow, visibleLogs, visibleRunsByMonitor],
+    [channelOrder, health, keys, monitors, statusSummaries, timeWindow, visibleLogs],
   );
   const channelIds = useMemo(() => channels.map((channel) => channel.id), [channels]);
   const sensors = useSensors(
@@ -161,12 +152,12 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
     setError(null);
     try {
       const workspace = await loadChannelStatusWorkspace();
-      const nextMonitors = workspace.monitorSummaries.map((summary) => summary.monitor);
+      const nextMonitors = workspace.channelStatusSummaries.map((summary) => summary.monitor);
       setKeys(workspace.keyPoolItems);
       setLogs(workspace.requestLogs);
       setHealth(workspace.stationKeyHealth);
       setMonitors(nextMonitors);
-      setRunsByMonitor(new Map(workspace.monitorSummaries.map((summary) => [summary.monitor.id, summary.recentRuns] as const)));
+      setStatusSummaries(workspace.channelStatusSummaries);
       if (showSuccess) {
         toast.success("渠道状态已刷新");
       }
@@ -313,7 +304,7 @@ function ChannelHealthCard({
 
       <div className="mt-3 border-t border-slate-100 pt-3">
         <div className="flex items-end justify-between gap-3">
-          <div className="min-w-0 text-xs font-medium text-slate-500">可用性 · 近 60 次</div>
+          <div className="min-w-0 text-xs font-medium text-slate-500">{channel.availabilityLabel}</div>
           <div
             className={cn(
               "shrink-0 text-3xl font-semibold leading-8 tracking-normal",
@@ -377,56 +368,70 @@ function formatAvailability(value: number | null) {
   return value === null ? "--" : `${value.toFixed(2)}%`;
 }
 
+function filterLogsByWindow(logs: RequestLog[], timeWindow: ChannelWindow) {
+  if (timeWindow === "recent") {
+    return logs;
+  }
+  const windowMs = timeWindow === "24h" ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - windowMs;
+  return logs.filter((log) => toTime(log.startedAt) >= cutoff);
+}
+
 function buildChannels(
   keys: KeyPoolItem[],
   logs: RequestLog[],
   health: StationKeyHealth[],
   monitors: ChannelMonitor[],
-  runsByMonitor: Map<string, ChannelMonitorRun[]>,
-  useAggregateFallback: boolean,
+  statusSummaries: ChannelStatusSummary[],
+  timeWindow: ChannelWindow,
 ): ChannelHealth[] {
   const healthByKey = new Map(health.map((item) => [item.stationKeyId, item] as const));
   const monitorByKey = enabledStationKeyMonitorsByKey(monitors);
+  const summaryByMonitor = new Map(statusSummaries.map((summary) => [summary.monitor.id, summary] as const));
   return keys.flatMap((key) => {
     const monitor = monitorByKey.get(key.id);
     if (!monitor) {
       return [];
     }
     const keyHealth = healthByKey.get(key.id);
-    const aggregateHealth = useAggregateFallback ? keyHealth : null;
-    const monitorRuns = sortRunsAscending(runsByMonitor.get(monitor.id) ?? []);
-    const latestRun = monitorRuns.length > 0 ? monitorRuns[monitorRuns.length - 1] : null;
+    const backendSummary = summaryByMonitor.get(monitor.id);
+    const windowSummary = backendSummary ? selectChannelStatusWindowSummary(backendSummary, timeWindow) : null;
+    const aggregateHealth = timeWindow === "recent" ? keyHealth : null;
+    const latestStatus = windowSummary?.latestStatus
+      ? monitorRunToStationKeyStatus({ status: windowSummary.latestStatus })
+      : "unchecked";
     const keyLogs = logs
       .filter((log) => log.stationKeyId === key.id)
       .sort((a, b) => toTime(a.startedAt) - toTime(b.startedAt));
     const totalHealthRequests = (aggregateHealth?.successCount ?? 0) + (aggregateHealth?.failureCount ?? 0);
-    const monitorAvailabilityPercent = availabilityFromMonitorRuns(monitorRuns);
     const availabilityPercent =
-      monitorAvailabilityPercent ??
+      windowSummary?.availabilityPercent ??
       (totalHealthRequests === 0
-        ? !useAggregateFallback || key.successRate === null
+        ? timeWindow !== "recent" || key.successRate === null
           ? null
           : key.successRate * 100
         : ((aggregateHealth?.successCount ?? 0) / totalHealthRequests) * 100);
     const recentLogs = keyLogs.slice(-60);
     const requestLatencyMs = averageDurationMs(recentLogs);
-    const monitorLatencyMs = latestRun?.latencyMs ?? latestRun?.durationMs ?? null;
-    const healthLatencyMs = monitorLatencyMs ?? aggregateHealth?.avgLatencyMs ?? (useAggregateFallback ? key.avgLatencyMs : null);
+    const healthLatencyMs =
+      windowSummary?.avgLatencyMs ?? aggregateHealth?.avgLatencyMs ?? (timeWindow === "recent" ? key.avgLatencyMs : null);
     const { conversationLatencyMs, endpointPingMs } = resolveChannelLatencyMetrics({
-      requestLatencyMs: monitorLatencyMs ?? requestLatencyMs,
+      requestLatencyMs: windowSummary?.avgLatencyMs ?? requestLatencyMs,
       healthLatencyMs,
-      endpointPingMs: key.endpointPingMs,
+      endpointPingMs:
+        windowSummary?.avgEndpointPingMs ?? (timeWindow === "recent" ? key.endpointPingMs : null),
     });
-    const recentOutcomes = monitorRuns.length > 0
-      ? buildMonitorRecentOutcomes(monitorRuns)
+    const recentOutcomes = windowSummary
+      ? buildMonitorTimelineOutcomes(windowSummary.timeline)
       : buildRecentOutcomes(recentLogs, aggregateHealth);
-    const lastError = latestRun
-      ? latestRun.errorMessage
-      : aggregateHealth?.lastErrorSummary ??
-        (useAggregateFallback ? key.lastErrorSummary : null) ??
+    const lastError =
+      windowSummary?.latestErrorMessage ??
+        aggregateHealth?.lastErrorSummary ??
+        (timeWindow === "recent" ? key.lastErrorSummary : null) ??
         [...keyLogs].reverse().find((log) => log.errorMessage)?.errorMessage ??
         null;
-    const monitorCounts = countMonitorRuns(monitorRuns);
+    const nonSuccessCount =
+      windowSummary === null ? aggregateHealth?.failureCount ?? 0 : windowSummary.failureCount + windowSummary.warningCount;
 
     return [{
       id: key.id,
@@ -435,48 +440,51 @@ function buildChannels(
       stationType: key.stationType,
       modelSummary: key.modelScopeSummary || key.groupName || key.tierLabel || "全部模型",
       status: key.enabled
-        ? cooldownStatus(monitorRunToStationKeyStatus(latestRun), keyHealth?.cooldownUntil ?? key.cooldownUntil)
+        ? cooldownStatus(latestStatus, keyHealth?.cooldownUntil ?? key.cooldownUntil)
         : "disabled",
       latencyMs: conversationLatencyMs,
       endpointPingMs,
       availabilityPercent,
-      lastCheckedAt: latestRun?.finishedAt ?? latestRun?.startedAt ?? aggregateHealth?.updatedAt ?? (useAggregateFallback ? key.lastCheckedAt : null),
-      lastUsedAt: latestRun?.status === "success" ? latestRun.finishedAt ?? latestRun.startedAt : aggregateHealth?.lastSuccessAt ?? (useAggregateFallback ? key.lastUsedAt : null),
+      lastCheckedAt:
+        windowSummary?.lastCheckedAt ??
+        aggregateHealth?.updatedAt ??
+        (timeWindow === "recent" ? key.lastCheckedAt : null),
+      lastUsedAt:
+        windowSummary?.latestStatus === "success"
+          ? windowSummary.lastCheckedAt
+          : aggregateHealth?.lastSuccessAt ?? (timeWindow === "recent" ? key.lastUsedAt : null),
       lastError,
-      successCount: monitorRuns.length > 0 ? monitorCounts.successCount : aggregateHealth?.successCount ?? 0,
-      failureCount: monitorRuns.length > 0 ? monitorCounts.failureCount : aggregateHealth?.failureCount ?? 0,
-      consecutiveFailures: monitorRuns.length > 0 ? monitorCounts.consecutiveFailures : aggregateHealth?.consecutiveFailures ?? (useAggregateFallback ? key.consecutiveFailures : 0),
+      successCount: windowSummary?.successCount ?? aggregateHealth?.successCount ?? 0,
+      failureCount: nonSuccessCount,
+      consecutiveFailures: windowSummary
+        ? countConsecutiveNonSuccess(windowSummary.timeline)
+        : aggregateHealth?.consecutiveFailures ?? key.consecutiveFailures,
       cooldownUntil: keyHealth?.cooldownUntil ?? key.cooldownUntil,
       recentOutcomes,
+      availabilityLabel: availabilityLabelForWindow(timeWindow),
     }];
   });
 }
 
-function sortRunsAscending(runs: ChannelMonitorRun[]) {
-  return [...runs].sort((a, b) => toTime(a.startedAt) - toTime(b.startedAt));
-}
-
-function availabilityFromMonitorRuns(runs: ChannelMonitorRun[]) {
-  if (runs.length === 0) {
-    return null;
+function availabilityLabelForWindow(timeWindow: ChannelWindow) {
+  if (timeWindow === "24h") {
+    return "可用性 · 24 小时";
   }
-  const successCount = runs.filter((run) => run.status === "success").length;
-  return (successCount / runs.length) * 100;
+  if (timeWindow === "7d") {
+    return "可用性 · 7 天";
+  }
+  return "可用性 · 近 60 次";
 }
 
-function countMonitorRuns(runs: ChannelMonitorRun[]) {
+function countConsecutiveNonSuccess(timeline: ChannelStatusTimelinePoint[]) {
   let consecutiveFailures = 0;
-  for (const run of [...runs].reverse()) {
-    if (run.status === "success") {
+  for (const point of timeline) {
+    if (point.status === "success") {
       break;
     }
     consecutiveFailures += 1;
   }
-  return {
-    successCount: runs.filter((run) => run.status === "success").length,
-    failureCount: runs.filter((run) => run.status === "failed" || run.status === "warning" || run.status === "skipped").length,
-    consecutiveFailures,
-  };
+  return consecutiveFailures;
 }
 
 function averageDurationMs(logs: RequestLog[]) {

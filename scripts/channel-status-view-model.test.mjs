@@ -22,12 +22,13 @@ await esbuild.build({
 const {
   availabilityToneClassName,
   buildMonitorRecentOutcomes,
+  buildMonitorTimelineOutcomes,
   buildRecentOutcomes,
   enabledStationKeyMonitorsByKey,
-  filterChannelMonitorRunsByWindow,
   monitorRunToStationKeyStatus,
   orderChannelsBySavedOrder,
   resolveChannelLatencyMetrics,
+  selectChannelStatusWindowSummary,
 } = await import(pathToFileURL(outFile).href);
 
 assert.equal(
@@ -150,24 +151,29 @@ assert.deepEqual(
   "monitor outcomes should preserve chronological run order in the newest slots",
 );
 
-const now = 1_700_000_000_000;
-const monitorWindowRuns = [
-  { status: "success", startedAt: String(now - 2 * 60 * 60 * 1000) },
-  { status: "failed", startedAt: String(now - 30 * 60 * 60 * 1000) },
-  { status: "warning", startedAt: String(now - 8 * 24 * 60 * 60 * 1000) },
-];
+const backendSummary = {
+  recent: { window: "recent", totalCount: 3, availabilityPercent: 66.67 },
+  last24h: { window: "24h", totalCount: 1, availabilityPercent: 100 },
+  last7d: { window: "7d", totalCount: 2, availabilityPercent: 50 },
+};
+assert.equal(
+  selectChannelStatusWindowSummary(backendSummary, "24h").availabilityPercent,
+  100,
+  "24h cards should use backend 24h summary instead of frontend raw-run slicing",
+);
+assert.equal(
+  selectChannelStatusWindowSummary(backendSummary, "7d").availabilityPercent,
+  50,
+  "7d cards should use backend 7d summary",
+);
+
+const timelineOutcomes = buildMonitorTimelineOutcomes([
+  { status: "warning" },
+  { status: "failed" },
+  { status: "success" },
+]);
 assert.deepEqual(
-  filterChannelMonitorRunsByWindow(monitorWindowRuns, "recent", now).map((run) => run.status),
+  timelineOutcomes.slice(-3),
   ["success", "failed", "warning"],
-  "recent channel status should preserve the loaded monitor run slice",
-);
-assert.deepEqual(
-  filterChannelMonitorRunsByWindow(monitorWindowRuns, "24h", now).map((run) => run.status),
-  ["success"],
-  "24h channel status should exclude monitor runs outside the selected window",
-);
-assert.deepEqual(
-  filterChannelMonitorRunsByWindow(monitorWindowRuns, "7d", now).map((run) => run.status),
-  ["success", "failed"],
-  "7d channel status should exclude monitor runs older than seven days",
+  "backend timeline points arrive newest-first and should render oldest-to-newest in the strip",
 );
