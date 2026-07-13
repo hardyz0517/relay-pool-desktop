@@ -141,6 +141,12 @@ fn authenticated_json(
         ) {
             Ok(response) => return Ok(response),
             Err(NewApiRequestError::AuthRequired { .. }) if attempt == 0 => {
+                if let Some(error) = manual_reauthorization_error_for_source(
+                    &auth_context.session_source,
+                    "Web authorization session expired; please re-authorize in the login window.",
+                ) {
+                    return Err(error);
+                }
                 let credential_kind = match used_kind {
                     auth::NewApiAuthKind::AccessToken => StationSessionCredentialKind::AccessToken,
                     auth::NewApiAuthKind::Cookie => StationSessionCredentialKind::Cookie,
@@ -169,19 +175,25 @@ fn resolve_auth_context(
             crate::services::database::now_millis_for_services() as i64,
         )
         .map_err(permanent_error)?;
+    let credentials = database
+        .get_station_credentials(station.id.clone())
+        .map_err(permanent_error)?;
+    let session_source = credentials.session_source.clone();
     let user_id = session
         .newapi_user_id
         .clone()
         .filter(|value| !value.trim().is_empty());
     if let (Some(access_token), Some(user_id)) = (session.access_token.clone(), user_id.clone()) {
-        return Ok(auth::NewApiAuthContext::access_token(access_token, user_id));
+        return Ok(
+            auth::NewApiAuthContext::access_token(access_token, user_id)
+                .with_session_source(session_source),
+        );
     }
     if let (Some(cookie), Some(user_id)) = (session.cookie.clone(), user_id) {
-        return Ok(auth::NewApiAuthContext::cookie(cookie, user_id));
+        return Ok(
+            auth::NewApiAuthContext::cookie(cookie, user_id).with_session_source(session_source),
+        );
     }
-    let credentials = database
-        .get_station_credentials(station.id.clone())
-        .map_err(permanent_error)?;
     let Some(username) = credentials
         .login_username
         .filter(|value| !value.trim().is_empty())
@@ -205,7 +217,8 @@ fn resolve_auth_context(
         .map_err(permanent_error)?;
     match (session.cookie, session.newapi_user_id) {
         (Some(cookie), Some(user_id)) if !user_id.trim().is_empty() => {
-            Ok(auth::NewApiAuthContext::cookie(cookie, user_id))
+            Ok(auth::NewApiAuthContext::cookie(cookie, user_id)
+                .with_session_source("password_login"))
         }
         _ => Err(manual_required_error(
             "NewAPI password login did not produce a Cookie session",
@@ -354,6 +367,17 @@ fn auth_required_error(message: impl Into<String>) -> NewApiRequestError {
     }
 }
 
+fn manual_reauthorization_error_for_source(
+    session_source: &str,
+    message: impl Into<String>,
+) -> Option<NewApiRequestError> {
+    is_web_authorization_source(session_source).then(|| manual_required_error(message))
+}
+
+fn is_web_authorization_source(session_source: &str) -> bool {
+    matches!(session_source.trim(), "web_authorization" | "webview_capture")
+}
+
 fn manual_required_error(message: impl Into<String>) -> NewApiRequestError {
     NewApiRequestError::ManualRequired {
         code: "manual_session_required".to_string(),
@@ -390,6 +414,25 @@ mod tests {
         assert_eq!(NewApiOperation::ListTokens.max_transient_retries(), 1);
         assert_eq!(NewApiOperation::CreateToken.max_transient_retries(), 0);
         assert!(NewApiOperation::CreateToken.is_non_idempotent());
+    }
+
+    #[test]
+    fn web_authorization_session_auth_failure_requires_manual_reauthorization() {
+        let error = manual_reauthorization_error_for_source(
+            "web_authorization",
+            "Web authorization session expired; please re-authorize in the login window.",
+        )
+        .expect("web authorization should require manual action");
+
+        match error {
+            NewApiRequestError::ManualRequired { code, message } => {
+                assert_eq!(code, "manual_session_required");
+                assert!(message.contains("re-authorize"));
+            }
+            _ => panic!("expected manual required error"),
+        }
+
+        assert!(manual_reauthorization_error_for_source("password_login", "expired").is_none());
     }
 
     #[test]
