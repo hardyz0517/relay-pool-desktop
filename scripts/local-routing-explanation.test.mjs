@@ -29,11 +29,9 @@ for (const removedText of ["排障入口", "最近一次路由解释", "RouteExp
 
 assertExcludes(routingPage, "onOpenPage", "RoutingPage");
 assertExcludes(appPage, "<RoutingPage onOpenPage=", "App");
-
-assertIncludes(
-  statusTab,
-  'className="grid items-stretch gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] lg:[&>*]:h-full"',
-  "routing summary grid",
-);
+assertIncludes(statusTab, 'SectionCard title="本地路由状态"', "routing status band");
+assertIncludes(statusTab, 'aria-labelledby="local-routing-candidates-title"', "candidate preview section");
+assertIncludes(statusTab, "最近一次路由", "latest decision row");
+assertIncludes(statusTab, "候选顺序预览", "candidate preview title");
 
 console.log("local routing status simplification contract ok");

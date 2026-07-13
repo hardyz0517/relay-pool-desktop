@@ -131,9 +131,8 @@ export function LocalRoutingSettingsEditor({ workspace }: LocalRoutingSettingsEd
       : boundaryDirty
         ? "dirty"
         : boundarySaveState;
-  const enabledCandidateCount = workspace?.summary.enabledCandidateCount ?? 0;
-  const eligibleUnderMultiplierLimitCount =
-    workspace?.summary.eligibleUnderMultiplierLimitCount ?? 0;
+  const candidateCount = workspace?.summary.candidateCount ?? 0;
+  const previewEligibleCandidateCount = workspace?.summary.previewEligibleCandidateCount ?? 0;
 
   async function loadCurrentSettings() {
     const operationId = loadOperationRef.current + 1;
@@ -481,7 +480,7 @@ export function LocalRoutingSettingsEditor({ workspace }: LocalRoutingSettingsEd
           onNumericChange={updateBoundaryNumericField}
         />
         <div className="border-t border-border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
-          当前生效：{eligibleUnderMultiplierLimitCount} / {enabledCandidateCount} 个启用候选满足倍率边界。
+          当前预览：{previewEligibleCandidateCount} / {candidateCount} 个候选可参与路由。
         </div>
         {boundarySaveError ? (
           <div className="border-t border-rose-100 bg-rose-50 px-4 py-2 text-xs text-rose-700">

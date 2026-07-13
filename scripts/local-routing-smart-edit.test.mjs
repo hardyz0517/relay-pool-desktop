@@ -23,16 +23,15 @@ assert.doesNotMatch(editor, /@tauri-apps\/api|\binvoke\s*\(/);
 
 const editSurface = editTab + editor + fields;
 assert.match(editSurface, /倍率上限/);
-assert.match(editSurface, /分组筛选/);
+assert.match(editSurface, /候选分组/);
 assert.match(editor, /保存设置/);
 assert.match(editor, /恢复默认/);
 assert.doesNotMatch(fields, /无候选策略|automatic_balanced|严格拒绝/);
-assert.doesNotMatch(editSurface, /运行时会综合|分组筛选不会跨组兜底|这是.*页|当前仅展示.*骨架/);
+assert.doesNotMatch(editSurface, /运行时会综合|分组筛选不会跨组兜底|当前仅展示.*骨架/);
 assert.match(editor, /boundarySaveState/);
-assert.match(editor, /boundarySavePending/);
 assert.match(editor, /schedulerSaveState/);
 assert.match(editor, /schedulerDirty/);
-assert.match(editor, /handleBoundaryAutoSave/);
+assert.match(editor, /handleBoundarySave/);
 assert.match(editor, /settingsRef/);
 assert.match(editor, /updateBoundaryNumericField/);
 assert.match(editor, /parseLocalRoutingBoundaryDraft/);
@@ -40,17 +39,22 @@ assert.match(editor, /parseLocalRoutingSchedulerDraft/);
 assert.match(
   editor,
   /schedulerAdvancedSettings:\s*\{[\s\S]*currentSettings\.schedulerAdvancedSettings[\s\S]*parsed\.value\.schedulerAdvancedPatch[\s\S]*\}/,
-  "boundary autosave must merge boundary scheduler patch into the latest saved scheduler settings",
+  "boundary save must merge boundary scheduler patch into the latest saved scheduler settings",
 );
 assert.match(
   editor,
-  /schedulerDisabled[\s\S]*boundarySavePending/,
-  "scheduler save must be disabled while a boundary autosave is pending",
+  /const schedulerDisabled = loading \|\| schedulerSaveState === "saving" \|\| boundarySaveState === "saving";/,
+  "scheduler save must be disabled while a boundary save is pending",
+);
+assert.match(
+  editor,
+  /const boundaryDisabled = loading \|\| schedulerSaveState === "saving" \|\| boundarySaveState === "saving";/,
+  "boundary save must be disabled while a scheduler save is pending",
 );
 assert.match(
   editor,
   /onNumericChange=\{updateBoundaryNumericField\}/,
-  "boundary numeric fields must use boundary autosave instead of scheduler save",
+  "boundary numeric fields must use boundary-specific parsing and save state",
 );
 
 const schedulerFields = [

@@ -1,13 +1,19 @@
-import { Clock3, Server, ShieldCheck } from "lucide-react";
-import { EmptyState, SectionCard, StatusBadge } from "@/components/ui";
-import { parseTimestampLikeDate } from "@/lib/time";
+import { Clock3, Power, PowerOff, Server } from "lucide-react";
+import { Button, EmptyState, SectionCard, StatusBadge } from "@/components/ui";
 import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
 import type { RouteEndpointKind, RoutingGroupFilter } from "@/lib/types/routing";
-import { LocalRoutingCandidateRow } from "./LocalRoutingCandidateRow";
+import {
+  buildLatestDecisionDisplay,
+  formatRoutingDecisionTime,
+} from "./localRoutingStatusViewModel";
+import { LocalRoutingStatusCandidateRow } from "./LocalRoutingStatusCandidateRow";
 
 type LocalRoutingStatusTabProps = {
   workspace: LocalRoutingWorkspace | null;
   loading: boolean;
+  nowMs: number;
+  proxyActionPending: boolean;
+  onToggleProxy: () => void;
 };
 
 const endpointLabels: Record<RouteEndpointKind, string> = {
@@ -17,11 +23,24 @@ const endpointLabels: Record<RouteEndpointKind, string> = {
   embeddings: "向量",
 };
 
-export function LocalRoutingStatusTab({ workspace, loading }: LocalRoutingStatusTabProps) {
+const latestDecisionToneClass = {
+  neutral: "text-slate-700",
+  healthy: "text-emerald-700",
+  warning: "text-amber-700",
+  error: "text-rose-700",
+};
+
+export function LocalRoutingStatusTab({
+  workspace,
+  loading,
+  nowMs,
+  proxyActionPending,
+  onToggleProxy,
+}: LocalRoutingStatusTabProps) {
   if (loading && !workspace) {
     return (
       <SectionCard title="本地路由状态">
-        <div className="text-sm text-muted-foreground">正在加载本地路由工作区...</div>
+        <div className="text-sm text-muted-foreground">正在加载本地路由状态...</div>
       </SectionCard>
     );
   }
@@ -29,72 +48,130 @@ export function LocalRoutingStatusTab({ workspace, loading }: LocalRoutingStatus
   if (!workspace) {
     return (
       <SectionCard title="本地路由状态">
-        <EmptyState title="暂无本地路由数据" description="刷新后仍为空时，请检查本地路由预览接口。" />
+        <EmptyState
+          title="暂无本地路由数据"
+          description="刷新后仍无数据，请检查本地路由配置。"
+        />
       </SectionCard>
     );
   }
 
-  const currentKey = workspace.latestDecision?.selectedStationName ?? "未选择";
-  const decisionTimeLabel = formatDecisionTime(workspace.summary.lastDecisionAt);
+  const latestDecision = buildLatestDecisionDisplay(
+    workspace.proxyStatus.running,
+    workspace.latestDecision,
+  );
+  const multiplierLimitLabel =
+    workspace.settings.maxRateMultiplier == null
+      ? "未设置"
+      : `${workspace.settings.maxRateMultiplier}x`;
 
   return (
-    <div className="grid gap-3">
-      <div className="grid items-stretch gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] lg:[&>*]:h-full">
-        <SectionCard title="本地端点" className="h-full grid-rows-[auto_minmax(0,1fr)]" contentClassName="grid h-full gap-3">
+    <div className="grid gap-4">
+      <SectionCard title="本地路由状态">
+        <div className="grid gap-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-teal-50 text-teal-700">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-teal-50 text-teal-700">
                 <Server className="h-5 w-5" />
               </span>
               <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-slate-900">
-                  {workspace.settings.bindAddr}:{workspace.settings.port}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate text-sm font-semibold text-slate-900">
+                    {workspace.settings.bindAddr}:{workspace.settings.port}
+                  </span>
+                  <StatusBadge tone={workspace.proxyStatus.running ? "healthy" : "disabled"}>
+                    {workspace.proxyStatus.running ? "运行中" : "未启动"}
+                  </StatusBadge>
                 </div>
-                <div className="truncate text-xs text-muted-foreground">
-                  {formatEndpoint(workspace.settings.endpoint)} / 自动路由 / 倍率未知或过期不参与路由
+                <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                  {formatEndpoint(workspace.settings.endpoint)} · 自动路由
                 </div>
               </div>
             </div>
-            <StatusBadge tone={workspace.proxyStatus.running ? "healthy" : "disabled"}>
-              {workspace.proxyStatus.running ? "运行中" : "未启动"}
-            </StatusBadge>
+            <Button
+              disabled={proxyActionPending}
+              variant={workspace.proxyStatus.running ? "danger" : "primary"}
+              onClick={onToggleProxy}
+            >
+              {workspace.proxyStatus.running ? (
+                <PowerOff className="h-4 w-4" />
+              ) : (
+                <Power className="h-4 w-4" />
+              )}
+              {workspace.proxyStatus.running ? "停止路由" : "启动路由"}
+            </Button>
           </div>
-          <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-4">
-            <Metric
-              label="倍率上限"
-              value={workspace.settings.maxRateMultiplier == null ? "未设置" : `${workspace.settings.maxRateMultiplier}x`}
+
+          <dl className="grid gap-x-6 gap-y-3 border-t border-slate-100 pt-3 sm:grid-cols-4">
+            <StatusMetric label="倍率上限" value={multiplierLimitLabel} />
+            <StatusMetric
+              label="分组筛选"
+              value={formatRoutingGroupFilter(workspace.settings.routingGroupFilter)}
             />
-            <Metric label="分组筛选" value={formatRoutingGroupFilter(workspace.settings.routingGroupFilter)} />
-            <Metric label="上限内 Key" value={workspace.summary.eligibleUnderMultiplierLimitCount} />
-            <Metric label="可用候选" value={workspace.summary.healthyCandidateCount} />
-          </div>
-        </SectionCard>
+            <StatusMetric
+              label="可参与"
+              value={workspace.summary.previewEligibleCandidateCount}
+              tone="good"
+            />
+            <StatusMetric
+              label="不参与"
+              value={workspace.summary.previewExcludedCandidateCount}
+              tone={workspace.summary.previewExcludedCandidateCount > 0 ? "warning" : "neutral"}
+            />
+          </dl>
 
-        <SectionCard title="当前秘钥" className="h-full grid-rows-[auto_minmax(0,1fr)]" contentClassName="grid h-full content-center gap-3">
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-emerald-50 text-emerald-700">
-              <ShieldCheck className="h-5 w-5" />
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-slate-900">{currentKey}</div>
+              <div className="text-[11px] font-medium text-muted-foreground">最近一次路由</div>
+              <div className="mt-0.5 truncate text-sm font-semibold text-slate-900">
+                {latestDecision.title}
+              </div>
+              <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Clock3 className="h-3.5 w-3.5" />
+                {formatRoutingDecisionTime(latestDecision.decidedAt)}
+              </div>
             </div>
+            {latestDecision.badge ? (
+              <span
+                className={`text-xs font-semibold ${latestDecisionToneClass[latestDecision.tone]}`}
+              >
+                {latestDecision.badge}
+              </span>
+            ) : null}
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Clock3 className="h-3.5 w-3.5" />
-            {decisionTimeLabel}
-          </div>
-        </SectionCard>
-      </div>
-
-      <SectionCard title="候选顺位" contentClassName="grid gap-2">
-        {workspace.candidates.length === 0 ? (
-          <EmptyState title="暂无候选 Key" description="后续任务会接入可编辑的本地路由候选列表。" />
-        ) : (
-          workspace.candidates.map((candidate, index) => (
-            <LocalRoutingCandidateRow key={candidate.stationKeyId} candidate={candidate} order={index + 1} />
-          ))
-        )}
+        </div>
       </SectionCard>
+
+      <section aria-labelledby="local-routing-candidates-title">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2
+            id="local-routing-candidates-title"
+            className="text-sm font-semibold text-slate-900"
+          >
+            候选顺序预览
+          </h2>
+          <span className="text-xs text-muted-foreground">
+            {workspace.summary.candidateCount} 个密钥
+          </span>
+        </div>
+        {workspace.candidates.length === 0 ? (
+          <EmptyState
+            title="暂无候选密钥"
+            description="当前配置下没有可预览的路由密钥。"
+          />
+        ) : (
+          <div className="overflow-hidden rounded-[var(--surface-radius)] border border-slate-200 bg-white divide-y divide-slate-100">
+            {workspace.candidates.map((candidate, index) => (
+              <LocalRoutingStatusCandidateRow
+                key={candidate.stationKeyId}
+                candidate={candidate}
+                order={index + 1}
+                nowMs={nowMs}
+              />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -112,30 +189,21 @@ function formatRoutingGroupFilter(filter: RoutingGroupFilter) {
   return "全部分组";
 }
 
-function formatDecisionTime(value: string | null) {
-  if (!value) {
-    return "暂无决策时间";
-  }
-  const date = parseTimestampLikeDate(value);
-  if (Number.isNaN(date.getTime())) {
-    return "决策时间异常";
-  }
-  return `最近决策 ${date.toLocaleString("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  })}`;
-}
-
-function Metric({ label, value }: { label: string; value: number | string }) {
+function StatusMetric({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: number | string;
+  tone?: "neutral" | "good" | "warning";
+}) {
+  const valueClass =
+    tone === "good" ? "text-emerald-700" : tone === "warning" ? "text-amber-700" : "text-slate-900";
   return (
-    <div className="rounded-[var(--surface-radius)] border border-slate-200 bg-slate-50 px-3 py-2">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="text-sm font-semibold text-slate-900">{value}</div>
+    <div>
+      <dt className="text-[11px] text-muted-foreground">{label}</dt>
+      <dd className={`mt-0.5 text-sm font-semibold ${valueClass}`}>{value}</dd>
     </div>
   );
 }

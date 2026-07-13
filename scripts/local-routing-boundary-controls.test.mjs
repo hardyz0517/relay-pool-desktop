@@ -30,16 +30,21 @@ for (const snippet of [
 for (const snippet of [
   "handleBoundarySave",
   "保存路由边界",
-  "eligibleUnderMultiplierLimitCount",
-  "enabledCandidateCount",
+  "previewEligibleCandidateCount",
+  "candidateCount",
 ]) {
   assert.ok(editorSource.includes(snippet), `missing editor source snippet: ${snippet}`);
 }
 
-for (const removedSnippet of ["queueBoundaryAutoSave", "boundarySaveTimeoutRef"]) {
+for (const removedSnippet of [
+  "queueBoundaryAutoSave",
+  "boundarySaveTimeoutRef",
+  "eligibleUnderMultiplierLimitCount",
+  "enabledCandidateCount",
+]) {
   assert.ok(
     !editorSource.includes(removedSnippet),
-    `editor should not include removed autosave snippet: ${removedSnippet}`,
+    `editor should not include removed autosave or old summary snippet: ${removedSnippet}`,
   );
 }
 
