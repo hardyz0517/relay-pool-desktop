@@ -5,7 +5,7 @@ const source = await readFile("src/features/stations/StationsPage.tsx", "utf8");
 const resources = await readFile("src/lib/query/resourceQueries.ts", "utf8");
 
 assert.match(source, /stationsQueryOptions/);
-assert.match(source, /balanceSnapshotsQueryOptions/);
+assert.match(source, /currentStationBalanceSnapshotsQueryOptions/);
 assert.match(source, /changeEventsQueryOptions/);
 assert.match(source, /useQueries/);
 assert.match(resources, /stationAssetQueryOptions/);

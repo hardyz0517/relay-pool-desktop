@@ -1318,6 +1318,11 @@ impl AppDatabase {
         list_balance_snapshots_from_connection(&connection)
     }
 
+    pub fn list_current_station_balance_snapshots(&self) -> Result<Vec<BalanceSnapshot>, String> {
+        let connection = self.connection()?;
+        list_current_station_balance_snapshots_from_connection(&connection)
+    }
+
     pub fn list_balance_snapshots_for_station(
         &self,
         station_id: String,
@@ -7168,16 +7173,37 @@ fn load_multiplier_source_facts_from_connection(
     connection
         .query_row(
             "SELECT k.id, k.manual_rate_multiplier, k.manual_rate_updated_at,
-                    k.group_binding_id, k.group_id_hash, k.group_name,
+                    COALESCE(cb.id, k.group_binding_id),
+                    COALESCE(cb.group_id_hash, b.group_id_hash, k.group_id_hash),
+                    COALESCE(cb.group_name, b.group_name, k.group_name),
+                    COALESCE(cb.inferred_group_category, b.inferred_group_category),
+                    COALESCE(cb.group_category_override, b.group_category_override),
                     k.rate_multiplier, k.rate_source, k.rate_collected_at,
-                    COALESCE(b.confidence, 0.8)
+                    COALESCE(cb.confidence, b.confidence, 0.8)
                FROM station_keys k
                LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
+               LEFT JOIN station_group_bindings cb ON cb.id = (
+                    SELECT canonical.id
+                      FROM station_group_bindings canonical
+                     WHERE canonical.station_id = k.station_id
+                       AND canonical.binding_kind = 'station_group'
+                       AND canonical.binding_status = 'available'
+                       AND COALESCE(canonical.rate_source, '') != 'legacy_key_group'
+                       AND lower(trim(canonical.group_name)) = lower(trim(COALESCE(b.group_name, k.group_name)))
+                       AND b.id IS NOT NULL
+                       AND (
+                            b.binding_kind != 'station_group'
+                            OR b.binding_status != 'available'
+                            OR COALESCE(b.rate_source, '') = 'legacy_key_group'
+                       )
+                     ORDER BY canonical.updated_at DESC, canonical.created_at DESC, canonical.id ASC
+                     LIMIT 1
+               )
               WHERE k.id = ?1",
             params![station_key_id],
             |row| {
                 let manual_rate_updated_at: Option<String> = row.get(2)?;
-                let rate_collected_at: Option<String> = row.get(8)?;
+                let rate_collected_at: Option<String> = row.get(10)?;
                 Ok(MultiplierSourceFacts {
                     station_key_id: row.get(0)?,
                     manual_rate_multiplier: row.get(1)?,
@@ -7185,9 +7211,11 @@ fn load_multiplier_source_facts_from_connection(
                     group_binding_id: row.get(3)?,
                     group_id_hash: row.get(4)?,
                     group_name: row.get(5)?,
-                    collected_rate_multiplier: row.get(6)?,
-                    collected_rate_source: row.get(7)?,
-                    collected_rate_confidence: row.get(9)?,
+                    inferred_group_category: row.get(6)?,
+                    group_category_override: row.get(7)?,
+                    collected_rate_multiplier: row.get(8)?,
+                    collected_rate_source: row.get(9)?,
+                    collected_rate_confidence: row.get(11)?,
                     collected_rate_collected_at_ms: parse_optional_millisecond_timestamp(
                         rate_collected_at.as_deref(),
                     ),
@@ -7209,6 +7237,8 @@ struct SchedulerCandidateBaseRow {
     group_binding_id: Option<String>,
     group_id_hash: Option<String>,
     group_name: Option<String>,
+    inferred_group_category: Option<String>,
+    group_category_override: Option<String>,
     station_enabled: bool,
     key_enabled: bool,
     schedulable: bool,
@@ -7223,6 +7253,14 @@ struct SchedulerCandidateBaseRow {
     model_blocklist: Vec<String>,
     health_blocked: bool,
     balance_depleted: bool,
+}
+
+fn scheduler_row_group_type(row: &SchedulerCandidateBaseRow) -> Option<PricingGroupType> {
+    pricing_group_type_from_binding_metadata(
+        row.group_category_override.as_deref(),
+        row.inferred_group_category.as_deref(),
+        row.group_name.as_deref(),
+    )
 }
 
 fn load_scheduler_candidates_from_connection(
@@ -7244,9 +7282,11 @@ fn load_scheduler_candidates_from_connection(
             k.id,
             k.station_id,
             COALESCE(k.routing_order, k.priority),
-            k.group_binding_id,
-            COALESCE(b.group_id_hash, k.group_id_hash),
-            COALESCE(b.group_name, k.group_name),
+            COALESCE(cb.id, k.group_binding_id),
+            COALESCE(cb.group_id_hash, b.group_id_hash, k.group_id_hash),
+            COALESCE(cb.group_name, b.group_name, k.group_name),
+            COALESCE(cb.inferred_group_category, b.inferred_group_category),
+            COALESCE(cb.group_category_override, b.group_category_override),
             s.enabled,
             k.enabled,
             k.schedulable,
@@ -7266,6 +7306,23 @@ fn load_scheduler_candidates_from_connection(
          FROM station_keys k
          JOIN stations s ON s.id = k.station_id
          LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
+         LEFT JOIN station_group_bindings cb ON cb.id = (
+             SELECT canonical.id
+               FROM station_group_bindings canonical
+              WHERE canonical.station_id = k.station_id
+                AND canonical.binding_kind = 'station_group'
+                AND canonical.binding_status = 'available'
+                AND COALESCE(canonical.rate_source, '') != 'legacy_key_group'
+                AND lower(trim(canonical.group_name)) = lower(trim(COALESCE(b.group_name, k.group_name)))
+                AND b.id IS NOT NULL
+                AND (
+                     b.binding_kind != 'station_group'
+                     OR b.binding_status != 'available'
+                     OR COALESCE(b.rate_source, '') = 'legacy_key_group'
+                )
+              ORDER BY canonical.updated_at DESC, canonical.created_at DESC, canonical.id ASC
+              LIMIT 1
+         )
          LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
          LEFT JOIN station_key_health h ON h.station_key_id = k.id
          LEFT JOIN balance_snapshots bs ON bs.id = (
@@ -7292,11 +7349,13 @@ fn load_scheduler_candidates_from_connection(
                 .push("k.group_binding_id IS NULL AND k.group_id_hash IS NULL".to_string());
         }
         RoutingGroupFilter::GroupBindingId(group_binding_id) => {
-            where_clauses.push("k.group_binding_id = ?".to_string());
+            where_clauses.push("COALESCE(cb.id, k.group_binding_id) = ?".to_string());
             sql_params.push(group_binding_id.clone());
         }
         RoutingGroupFilter::GroupIdHash(group_id_hash) => {
-            where_clauses.push("COALESCE(b.group_id_hash, k.group_id_hash) = ?".to_string());
+            where_clauses.push(
+                "COALESCE(cb.group_id_hash, b.group_id_hash, k.group_id_hash) = ?".to_string(),
+            );
             sql_params.push(group_id_hash.clone());
         }
         RoutingGroupFilter::GroupType(group_type) => {
@@ -7313,29 +7372,31 @@ fn load_scheduler_candidates_from_connection(
             .map_err(|error| format!("read scheduler candidates failed: {error}"))?;
         let rows = statement
             .query_map(params_from_iter(sql_params.iter()), |row| {
-                let cooldown_until: Option<String> = row.get(18)?;
-                let balance_status: String = row.get(19)?;
+                let cooldown_until: Option<String> = row.get(20)?;
+                let balance_status: String = row.get(21)?;
                 Ok(SchedulerCandidateBaseRow {
                     station_key_id: row.get(0)?,
                     station_id: row.get(1)?,
                     priority: row.get(2)?,
-                    max_concurrency: row.get(20)?,
-                    load_factor: row.get(21)?,
+                    max_concurrency: row.get(22)?,
+                    load_factor: row.get(23)?,
                     group_binding_id: row.get(3)?,
                     group_id_hash: row.get(4)?,
                     group_name: row.get(5)?,
-                    station_enabled: i64_to_bool(row.get(6)?),
-                    key_enabled: i64_to_bool(row.get(7)?),
-                    schedulable: i64_to_bool(row.get(8)?),
-                    supports_chat_completions: i64_to_bool(row.get(9)?),
-                    supports_responses: i64_to_bool(row.get(10)?),
-                    supports_embeddings: i64_to_bool(row.get(11)?),
-                    supports_stream: i64_to_bool(row.get(12)?),
-                    supports_tools: i64_to_bool(row.get(13)?),
-                    supports_vision: i64_to_bool(row.get(14)?),
-                    supports_reasoning: i64_to_bool(row.get(15)?),
-                    model_allowlist: parse_json_string_list(row.get::<_, String>(16)?.as_str()),
-                    model_blocklist: parse_json_string_list(row.get::<_, String>(17)?.as_str()),
+                    inferred_group_category: row.get(6)?,
+                    group_category_override: row.get(7)?,
+                    station_enabled: i64_to_bool(row.get(8)?),
+                    key_enabled: i64_to_bool(row.get(9)?),
+                    schedulable: i64_to_bool(row.get(10)?),
+                    supports_chat_completions: i64_to_bool(row.get(11)?),
+                    supports_responses: i64_to_bool(row.get(12)?),
+                    supports_embeddings: i64_to_bool(row.get(13)?),
+                    supports_stream: i64_to_bool(row.get(14)?),
+                    supports_tools: i64_to_bool(row.get(15)?),
+                    supports_vision: i64_to_bool(row.get(16)?),
+                    supports_reasoning: i64_to_bool(row.get(17)?),
+                    model_allowlist: parse_json_string_list(row.get::<_, String>(18)?.as_str()),
+                    model_blocklist: parse_json_string_list(row.get::<_, String>(19)?.as_str()),
                     health_blocked: cooldown_until
                         .as_deref()
                         .and_then(|value| parse_optional_millisecond_timestamp(Some(value)))
@@ -7356,12 +7417,11 @@ fn load_scheduler_candidates_from_connection(
         .filter(|row| {
             group_type_filter
                 .as_ref()
-                .map(|expected| {
-                    parse_pricing_group_type(row.group_name.as_deref()).as_ref() == Some(expected)
-                })
+                .map(|expected| scheduler_row_group_type(row).as_ref() == Some(expected))
                 .unwrap_or(true)
         })
         .map(|row| {
+            let group_type = scheduler_row_group_type(&row);
             let multiplier_facts =
                 load_multiplier_source_facts_from_connection(connection, &row.station_key_id)?;
             let multiplier_result = resolve_effective_multiplier(
@@ -7382,7 +7442,7 @@ fn load_scheduler_candidates_from_connection(
                 load_factor: row.load_factor,
                 group_binding_id: row.group_binding_id,
                 group_id_hash: row.group_id_hash,
-                group_type: parse_pricing_group_type(row.group_name.as_deref()),
+                group_type,
                 station_enabled: row.station_enabled,
                 key_enabled: row.key_enabled,
                 schedulable: row.schedulable,
@@ -7449,6 +7509,17 @@ fn parse_pricing_group_type(value: Option<&str>) -> Option<PricingGroupType> {
         return Some(PricingGroupType::Gpt);
     }
     None
+}
+
+fn pricing_group_type_from_binding_metadata(
+    group_category_override: Option<&str>,
+    inferred_group_category: Option<&str>,
+    group_name: Option<&str>,
+) -> Option<PricingGroupType> {
+    group_category_override
+        .and_then(|value| parse_pricing_group_type(Some(value)))
+        .or_else(|| inferred_group_category.and_then(|value| parse_pricing_group_type(Some(value))))
+        .or_else(|| parse_pricing_group_type(group_name))
 }
 
 fn text_matches_any_group_type_matcher(value: &str, matchers: &[&str]) -> bool {
@@ -8583,7 +8654,11 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
         )?;
         row.scheduler_group_binding_id = multiplier_facts.group_binding_id.clone();
         row.scheduler_group_id_hash = multiplier_facts.group_id_hash.clone();
-        row.scheduler_group_type = parse_pricing_group_type(multiplier_facts.group_name.as_deref());
+        row.scheduler_group_type = pricing_group_type_from_binding_metadata(
+            multiplier_facts.group_category_override.as_deref(),
+            multiplier_facts.inferred_group_category.as_deref(),
+            multiplier_facts.group_name.as_deref(),
+        );
         match resolve_effective_multiplier(
             multiplier_facts,
             now_ms,
@@ -8724,7 +8799,11 @@ fn local_routing_read_candidates_from_connection(
             load_multiplier_source_facts_from_connection(connection, &row.station_key_id)?;
         row.scheduler_group_binding_id = multiplier_facts.group_binding_id.clone();
         row.scheduler_group_id_hash = multiplier_facts.group_id_hash.clone();
-        row.scheduler_group_type = parse_pricing_group_type(multiplier_facts.group_name.as_deref());
+        row.scheduler_group_type = pricing_group_type_from_binding_metadata(
+            multiplier_facts.group_category_override.as_deref(),
+            multiplier_facts.inferred_group_category.as_deref(),
+            multiplier_facts.group_name.as_deref(),
+        );
         match resolve_effective_multiplier(
             multiplier_facts,
             now_ms,
@@ -9476,6 +9555,41 @@ fn list_balance_snapshots_from_connection(
         .map_err(|error| format!("查询余额快照失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析余额快照失败: {error}"))?;
+    Ok(rows)
+}
+
+fn list_current_station_balance_snapshots_from_connection(
+    connection: &Connection,
+) -> Result<Vec<BalanceSnapshot>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT b.id, b.station_id, b.station_key_id, b.scope, b.value, b.currency, b.credit_unit,
+                    b.used_value, b.total_value, b.today_request_count, b.total_request_count,
+                    b.today_consumption, b.total_consumption, b.today_base_consumption, b.total_base_consumption,
+                    b.today_token_count, b.total_token_count,
+                    b.today_input_token_count, b.today_output_token_count, b.total_input_token_count,
+                    b.total_output_token_count, b.low_balance_threshold, b.status, b.source, b.confidence,
+                    b.collected_at, b.created_at, b.updated_at
+               FROM balance_snapshots b
+              WHERE b.id IN (
+                    SELECT (
+                        SELECT latest.id
+                          FROM balance_snapshots latest INDEXED BY idx_balance_snapshots_station_scope_updated
+                         WHERE latest.station_id = s.id
+                           AND latest.scope = 'station'
+                         ORDER BY latest.updated_at DESC, latest.created_at DESC, latest.id DESC
+                         LIMIT 1
+                    )
+                      FROM stations s
+              )
+              ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC",
+        )
+        .map_err(|error| format!("Failed to read current station balances: {error}"))?;
+    let rows = statement
+        .query_map([], row_to_balance_snapshot)
+        .map_err(|error| format!("Failed to query current station balances: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to parse current station balances: {error}"))?;
     Ok(rows)
 }
 
@@ -13351,6 +13465,28 @@ mod tests {
         group_id_hash: &str,
         priority: i64,
     ) -> StationKey {
+        scheduler_group_candidate_with_category(
+            database,
+            station_id,
+            key_name,
+            group_name,
+            group_id_hash,
+            priority,
+            None,
+            None,
+        )
+    }
+
+    fn scheduler_group_candidate_with_category(
+        database: &AppDatabase,
+        station_id: &str,
+        key_name: &str,
+        group_name: &str,
+        group_id_hash: &str,
+        priority: i64,
+        inferred_group_category: Option<&str>,
+        group_category_override: Option<&str>,
+    ) -> StationKey {
         let binding = database
             .upsert_station_group_binding(UpsertStationGroupBindingInput {
                 station_id: station_id.to_string(),
@@ -13366,8 +13502,8 @@ mod tests {
                 effective_rate_multiplier: Some(1.0),
                 rate_source: Some("group_rates".to_string()),
                 confidence: 0.9,
-                inferred_group_category: None,
-                group_category_override: None,
+                inferred_group_category: inferred_group_category.map(str::to_string),
+                group_category_override: group_category_override.map(str::to_string),
                 last_seen_at: None,
                 raw_json_redacted: None,
             })
@@ -13629,6 +13765,260 @@ mod tests {
         assert!(
             missing.is_empty(),
             "group type filters must not fall back to unrelated groups"
+        );
+    }
+
+    #[test]
+    fn load_scheduler_candidates_group_type_filter_uses_binding_category_before_group_name() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-candidates-binding-category");
+
+        let claude_key = scheduler_group_candidate_with_category(
+            &database,
+            &station.id,
+            "plus claude key",
+            "plus",
+            "hash-plus-claude",
+            0,
+            Some("gpt"),
+            Some("claude"),
+        );
+        scheduler_group_candidate_with_category(
+            &database,
+            &station.id,
+            "plus inferred gpt key",
+            "plus",
+            "hash-plus-gpt",
+            1,
+            Some("gpt"),
+            None,
+        );
+
+        let candidates = database
+            .load_scheduler_candidates(&RoutingGroupFilter::GroupType(PricingGroupType::Claude), 0)
+            .expect("scheduler candidates");
+
+        assert_eq!(candidate_key_ids(&candidates), vec![claude_key.id]);
+        assert_eq!(candidates[0].group_type, Some(PricingGroupType::Claude));
+    }
+
+    #[test]
+    fn local_routing_workspace_preview_uses_bound_group_category_before_group_name() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "local-routing-binding-category");
+        let key = scheduler_group_candidate_with_category(
+            &database,
+            &station.id,
+            "plus claude local key",
+            "plus",
+            "hash-plus-claude-local",
+            0,
+            Some("gpt"),
+            Some("claude"),
+        );
+        {
+            let connection = database.connection().expect("connection");
+            upsert_setting(&connection, "max_rate_multiplier", "10").expect("max multiplier");
+            let filter = serialize_routing_group_filter_setting(&RoutingGroupFilter::GroupType(
+                PricingGroupType::Claude,
+            ))
+            .expect("routing group filter");
+            upsert_setting(&connection, "default_routing_group_filter", &filter)
+                .expect("routing group setting");
+        }
+
+        let workspace = database
+            .load_local_routing_workspace(crate::models::proxy::ProxyStatus {
+                running: false,
+                lifecycle: ProxyLifecycle::Stopped,
+                bind_addr: "127.0.0.1".to_string(),
+                port: 8787,
+                started_at: None,
+                last_error: None,
+                active_requests: 0,
+                request_count: 0,
+            })
+            .expect("workspace");
+        let candidate = workspace
+            .candidates
+            .iter()
+            .find(|candidate| candidate.station_key_id == key.id)
+            .expect("candidate");
+
+        assert!(candidate.routing_group_match);
+        assert!(candidate.preview_eligible);
+        assert!(!candidate
+            .preview_reject_reasons
+            .iter()
+            .any(|reason| reason == "routing_group_mismatch"));
+    }
+
+    #[test]
+    fn local_routing_workspace_uses_canonical_station_group_for_legacy_key_binding() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "local-routing-legacy-key-binding");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id.clone(),
+                name: "legacy grouped key".to_string(),
+                api_key: "sk-legacy-grouped".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: Some(true),
+                group_name: Some("倍率动态调整，分组上限0.05倍率".to_string()),
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: Some(0.05),
+                manual_rate_multiplier: None,
+                rate_source: Some("sub2api_groups_rates".to_string()),
+                balance_scope: None,
+                note: None,
+            })
+            .expect("key");
+        {
+            let connection = database.connection().expect("connection");
+            migrate_legacy_group_facts(&connection).expect("legacy binding");
+        }
+        let canonical = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "remote-group-005".to_string(),
+                group_id_hash: Some("2".to_string()),
+                group_name: "倍率动态调整，分组上限0.05倍率".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(0.05),
+                user_rate_multiplier: None,
+                effective_rate_multiplier: Some(0.05),
+                rate_source: Some("sub2api_groups_rates".to_string()),
+                confidence: 0.9,
+                inferred_group_category: Some("gpt".to_string()),
+                group_category_override: None,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("canonical binding");
+        {
+            let connection = database.connection().expect("connection");
+            upsert_setting(&connection, "max_rate_multiplier", "10").expect("max multiplier");
+            let filter = serialize_routing_group_filter_setting(&RoutingGroupFilter::GroupType(
+                PricingGroupType::Gpt,
+            ))
+            .expect("routing group filter");
+            upsert_setting(&connection, "default_routing_group_filter", &filter)
+                .expect("routing group setting");
+        }
+
+        let stored_key = database
+            .list_station_keys(station.id.clone())
+            .expect("station keys")
+            .into_iter()
+            .find(|station_key| station_key.id == key.id)
+            .expect("stored key");
+        assert_ne!(
+            stored_key.group_binding_id.as_deref(),
+            Some(canonical.id.as_str())
+        );
+
+        let workspace = database
+            .load_local_routing_workspace(crate::models::proxy::ProxyStatus {
+                running: false,
+                lifecycle: ProxyLifecycle::Stopped,
+                bind_addr: "127.0.0.1".to_string(),
+                port: 8787,
+                started_at: None,
+                last_error: None,
+                active_requests: 0,
+                request_count: 0,
+            })
+            .expect("workspace");
+        let candidate = workspace
+            .candidates
+            .iter()
+            .find(|candidate| candidate.station_key_id == key.id)
+            .expect("candidate");
+
+        assert_eq!(candidate.effective_multiplier, Some(0.05));
+        assert!(candidate.routing_group_match);
+        assert!(candidate.preview_eligible);
+        assert!(!candidate
+            .preview_reject_reasons
+            .iter()
+            .any(|reason| reason == "routing_group_mismatch"));
+    }
+
+    #[test]
+    fn load_scheduler_candidates_uses_canonical_station_group_for_legacy_key_binding() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "scheduler-legacy-key-binding");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id.clone(),
+                name: "legacy scheduler key".to_string(),
+                api_key: "sk-legacy-scheduler".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: Some(true),
+                group_name: Some("倍率动态调整，分组上限0.05倍率".to_string()),
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: Some(0.05),
+                manual_rate_multiplier: None,
+                rate_source: Some("sub2api_groups_rates".to_string()),
+                balance_scope: None,
+                note: None,
+            })
+            .expect("key");
+        {
+            let connection = database.connection().expect("connection");
+            migrate_legacy_group_facts(&connection).expect("legacy binding");
+        }
+        let canonical = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "remote-scheduler-group-005".to_string(),
+                group_id_hash: Some("2".to_string()),
+                group_name: "倍率动态调整，分组上限0.05倍率".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(0.05),
+                user_rate_multiplier: None,
+                effective_rate_multiplier: Some(0.05),
+                rate_source: Some("sub2api_groups_rates".to_string()),
+                confidence: 0.9,
+                inferred_group_category: Some("gpt".to_string()),
+                group_category_override: None,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .expect("canonical binding");
+
+        let candidates = database
+            .load_scheduler_candidates(&RoutingGroupFilter::GroupType(PricingGroupType::Gpt), 0)
+            .expect("scheduler candidates");
+
+        assert_eq!(candidate_key_ids(&candidates), vec![key.id]);
+        assert_eq!(
+            candidates[0].group_binding_id.as_deref(),
+            Some(canonical.id.as_str())
+        );
+        assert_eq!(candidates[0].group_type, Some(PricingGroupType::Gpt));
+        assert_eq!(
+            candidates[0]
+                .effective_multiplier
+                .as_ref()
+                .map(|fact| fact.value),
+            Some(0.05)
         );
     }
 
@@ -15351,6 +15741,86 @@ mod tests {
 
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].id, "balance-target");
+    }
+
+    #[test]
+    fn current_station_balances_return_one_latest_station_scope_row_per_station() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station_a = test_station(&database, "Station A");
+        let station_b = test_station(&database, "Station B");
+        let connection = database.connection().expect("connection");
+
+        for (id, station_id, scope, value, created_at, updated_at) in [
+            (
+                "a-old",
+                station_a.id.as_str(),
+                "station",
+                10.0,
+                "2026-07-13T01:00:00Z",
+                "2026-07-13T01:00:00Z",
+            ),
+            (
+                "a-same-updated-older-created",
+                station_a.id.as_str(),
+                "station",
+                11.0,
+                "2026-07-13T01:30:00Z",
+                "2026-07-13T02:00:00Z",
+            ),
+            (
+                "a-new",
+                station_a.id.as_str(),
+                "station",
+                12.0,
+                "2026-07-13T02:00:00Z",
+                "2026-07-13T02:00:00Z",
+            ),
+            (
+                "a-key",
+                station_a.id.as_str(),
+                "station_key",
+                99.0,
+                "2026-07-13T03:00:00Z",
+                "2026-07-13T03:00:00Z",
+            ),
+            (
+                "b-current",
+                station_b.id.as_str(),
+                "station",
+                8.0,
+                "2026-07-13T01:30:00Z",
+                "2026-07-13T01:30:00Z",
+            ),
+            (
+                "b-current-z",
+                station_b.id.as_str(),
+                "station",
+                9.0,
+                "2026-07-13T01:30:00Z",
+                "2026-07-13T01:30:00Z",
+            ),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO balance_snapshots (
+                        id, station_id, station_key_id, scope, value, currency, status,
+                        source, confidence, created_at, updated_at
+                     ) VALUES (?1, ?2, NULL, ?3, ?4, 'CNY', 'normal', 'test', 1.0, ?5, ?6)",
+                    params![id, station_id, scope, value, created_at, updated_at],
+                )
+                .expect("insert balance snapshot");
+        }
+        drop(connection);
+
+        let snapshots = database
+            .list_current_station_balance_snapshots()
+            .expect("current station balances");
+        let ids = snapshots
+            .iter()
+            .map(|snapshot| snapshot.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec!["a-new", "b-current-z"]);
     }
 
     #[test]

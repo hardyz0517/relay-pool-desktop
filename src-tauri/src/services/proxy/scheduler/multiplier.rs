@@ -213,6 +213,8 @@ mod tests {
             group_binding_id: Some("binding-pro".to_string()),
             group_id_hash: Some("hash-pro".to_string()),
             group_name: Some("Pro".to_string()),
+            inferred_group_category: Some("gpt".to_string()),
+            group_category_override: None,
             collected_rate_multiplier: Some(1.25),
             collected_rate_source: Some("rate_api".to_string()),
             collected_rate_confidence: Some(0.8),

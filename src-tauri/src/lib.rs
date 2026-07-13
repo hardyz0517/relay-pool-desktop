@@ -110,6 +110,7 @@ pub fn run() {
             commands::delete_pricing_rule,
             commands::resolve_station_key_pricing_context,
             commands::list_balance_snapshots,
+            commands::list_current_station_balance_snapshots,
             commands::list_balance_snapshots_for_station,
             commands::upsert_balance_snapshot,
             commands::list_station_group_bindings,

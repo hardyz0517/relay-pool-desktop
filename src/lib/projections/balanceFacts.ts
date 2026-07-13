@@ -20,7 +20,7 @@ export function buildCurrentStationBalanceFacts(input: {
   stations: Station[];
   balances: BalanceSnapshot[];
 }): Map<string, StationBalanceCurrentFact> {
-  const latestStationBalances = latestStationBalanceSnapshots(input.balances);
+  const latestStationBalances = latestStationBalanceSnapshotsByStation(input.balances);
   return new Map(
     input.stations.map((station) => [
       station.id,
@@ -35,22 +35,40 @@ export function currentStationBalanceFor(input: {
 }): StationBalanceCurrentFact {
   return factForStation(
     input.station,
-    latestStationBalanceSnapshots(input.balances).get(input.station.id) ?? null,
+    latestStationBalanceSnapshotsByStation(input.balances).get(input.station.id) ?? null,
   );
 }
 
-function latestStationBalanceSnapshots(balances: BalanceSnapshot[]) {
+export function latestStationBalanceSnapshots(balances: BalanceSnapshot[]) {
+  return Array.from(latestStationBalanceSnapshotsByStation(balances).values());
+}
+
+function latestStationBalanceSnapshotsByStation(balances: BalanceSnapshot[]) {
   const latest = new Map<string, BalanceSnapshot>();
   for (const balance of balances) {
     if (balance.scope !== "station") {
       continue;
     }
     const current = latest.get(balance.stationId);
-    if (!current || toTime(balance.updatedAt) > toTime(current.updatedAt)) {
+    if (!current || isNewerBalanceSnapshot(balance, current)) {
       latest.set(balance.stationId, balance);
     }
   }
   return latest;
+}
+
+function isNewerBalanceSnapshot(candidate: BalanceSnapshot, current: BalanceSnapshot) {
+  const updatedAtDifference = toTime(candidate.updatedAt) - toTime(current.updatedAt);
+  if (updatedAtDifference !== 0) {
+    return updatedAtDifference > 0;
+  }
+
+  const createdAtDifference = toTime(candidate.createdAt) - toTime(current.createdAt);
+  if (createdAtDifference !== 0) {
+    return createdAtDifference > 0;
+  }
+
+  return candidate.id > current.id;
 }
 
 function factForStation(

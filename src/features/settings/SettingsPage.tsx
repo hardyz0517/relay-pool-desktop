@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Copy, ExternalLink, FolderOpen, Github, Play, RefreshCw, RotateCcw, Square, Wand2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation, usePageActivity } from "@/components/shell/PageActivity";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -74,7 +74,6 @@ const REPOSITORY_URL = "https://github.com/hardyz0517/relay-pool-desktop";
 
 export function SettingsPage() {
   const toast = useToast();
-  usePageActivity();
   const { state: updaterState, checkNow: checkForUpdates } = useUpdater();
   const [settings, setSettings] = useState<AppSettings>(fallbackSettings);
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus>(fallbackProxyStatus);

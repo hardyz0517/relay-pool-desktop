@@ -54,28 +54,28 @@ function TransientPageLayer({ page }: { page: TransientPageDescriptor }) {
   }, []);
 
   return (
-    <motion.div
+    <div
       ref={rootRef}
       className="app-page-transition-layer app-page-transition-overlay"
       data-page-transition-layer
       data-page-transition-kind="transient"
       data-page-transition-page-id={page.pageId}
       data-page-transition-state={isPresent ? "active" : "exiting"}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={transientPageTransition}
     >
       <PageActivityProvider active={isPresent}>
-        <div
+        <motion.div
           aria-hidden={!isPresent}
           className="app-page-transition-content"
           inert={isPresent ? undefined : ""}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={transientPageTransition}
         >
           {page.node}
-        </div>
+        </motion.div>
       </PageActivityProvider>
-    </motion.div>
+    </div>
   );
 }
 

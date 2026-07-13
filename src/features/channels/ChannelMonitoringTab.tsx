@@ -1,7 +1,10 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Copy, Edit3, LayoutTemplate, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button, ConfirmDialog, EmptyState, IconButton, StatusBadge, useToast } from "@/components/ui";
-import { usePageActivation, usePageActivity } from "@/components/shell/PageActivity";
+import {
+  usePageActivation,
+  usePageRefreshEnabled,
+} from "@/components/shell/PageActivity";
 import {
   createChannelMonitor,
   deleteChannelMonitor,
@@ -40,7 +43,7 @@ const monitorGridClassName =
 
 export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabProps) {
   const toast = useToast();
-  const { refreshEnabled } = usePageActivity();
+  const refreshEnabled = usePageRefreshEnabled();
   useActivityQuery(refreshEnabled, channelMonitoringQueryOptions());
   const [monitors, setMonitors] = useState<ChannelMonitor[]>([]);
   const [stations, setStations] = useState<Station[]>([]);

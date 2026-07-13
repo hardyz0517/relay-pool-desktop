@@ -8,13 +8,13 @@ for (const option of [
   "requestLogsQueryOptions",
   "keyPoolQueryOptions",
   "stationsQueryOptions",
-  "balanceSnapshotsQueryOptions",
+  "currentStationBalanceSnapshotsQueryOptions",
   "settingsQueryOptions",
   "changeEventsQueryOptions",
 ]) {
   assert.ok(source.includes(option), `Dashboard should consume ${option}`);
 }
-assert.match(source, /usePageActivity\(\)/);
+assert.match(source, /usePageRefreshEnabled\(\)/);
 assert.match(source, /useActivityQuery/);
 assert.ok(!source.includes("loadDashboardWorkspace"));
 assert.ok(!source.includes("window.setInterval"));

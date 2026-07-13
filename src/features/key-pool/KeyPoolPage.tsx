@@ -14,7 +14,10 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { Activity, Bot, Edit3, GripVertical, KeyRound, Loader2, MessageCircle, Plus, RotateCw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation, usePageActivity } from "@/components/shell/PageActivity";
+import {
+  usePageActivation,
+  usePageRefreshEnabled,
+} from "@/components/shell/PageActivity";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, SelectControl, StatusBadge, SwitchControl, type StatusTone, useToast } from "@/components/ui";
 import { createChannelMonitor, listChannelMonitorTemplates, listChannelMonitors, updateChannelMonitor } from "@/lib/api/channelMonitors";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
@@ -82,7 +85,7 @@ const defaultKeyConnectivityModelOptions = [
 
 export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const toast = useToast();
-  const { refreshEnabled } = usePageActivity();
+  const refreshEnabled = usePageRefreshEnabled();
   useActivityQuery(refreshEnabled, keyPoolQueryOptions());
   useActivityQuery(refreshEnabled, stationsQueryOptions());
   const [stations, setStations] = useState<Station[]>([]);

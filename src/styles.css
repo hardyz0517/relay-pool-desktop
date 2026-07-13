@@ -115,24 +115,19 @@ textarea {
   display: block;
   pointer-events: auto;
   visibility: visible;
-  animation: relayShellPageEnter 140ms ease-out;
-  will-change: opacity;
+  background: hsl(var(--background));
+}
+
+.app-page-transition-layer[data-page-transition-state="leaving"] {
+  display: block;
+  pointer-events: none;
+  visibility: visible;
 }
 
 .app-page-transition-layer[data-page-transition-state="active"] {
   display: block;
   pointer-events: auto;
   visibility: visible;
-}
-
-.app-page-transition-stack[data-page-transition-handoff="none"]
-  .app-page-transition-layer[data-page-transition-kind="shell"][data-page-transition-state="active"] {
-  animation: relayPageFadeUp 160ms ease-out;
-}
-
-.app-page-transition-stack[data-page-transition-handoff="transient-exit"]
-  .app-page-transition-layer[data-page-transition-kind="shell"][data-page-transition-state="active"] {
-  animation: none;
 }
 
 .app-page-transition-overlay {
@@ -142,43 +137,9 @@ textarea {
   min-height: 100%;
   background: hsl(var(--background));
   pointer-events: auto;
-  will-change: opacity;
 }
 
 .app-page-transition-content {
   min-height: 100%;
   padding: var(--shell-page-gap);
-}
-
-@keyframes relayPageFadeUp {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes relayShellPageEnter {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .app-page-transition-layer[data-page-transition-kind="shell"] {
-    animation-duration: 1ms !important;
-    transform: none !important;
-  }
-
-  .app-page-transition-layer[data-page-transition-state="entering"] {
-    animation-duration: 1ms !important;
-  }
 }

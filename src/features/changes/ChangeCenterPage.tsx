@@ -2,7 +2,10 @@ import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CheckCheck, ChevronLeft, ChevronRight, RefreshCw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation, usePageActivity } from "@/components/shell/PageActivity";
+import {
+  usePageActivation,
+  usePageRefreshEnabled,
+} from "@/components/shell/PageActivity";
 import {
   Button,
   ConfirmDialog,
@@ -42,7 +45,7 @@ import {
 export function ChangeCenterPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const { refreshEnabled } = usePageActivity();
+  const refreshEnabled = usePageRefreshEnabled();
   const eventsQuery = useActivityQuery(refreshEnabled, changeEventsQueryOptions(false));
   const stationsQuery = useActivityQuery(refreshEnabled, stationsQueryOptions());
   const events = eventsQuery.data ?? [];

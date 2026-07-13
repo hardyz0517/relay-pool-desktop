@@ -35,12 +35,18 @@ export function findMatchingGroupOption(
 ) {
   const groupBindingId = row.groupBindingId?.trim() ?? "";
   if (groupBindingId) {
-    return options.find((option) => option.groupBindingId === groupBindingId) ?? null;
+    const bindingMatch = options.find((option) => option.groupBindingId === groupBindingId);
+    if (bindingMatch) {
+      return bindingMatch;
+    }
   }
 
   const groupIdHash = row.groupIdHash?.trim() ?? "";
   if (groupIdHash) {
-    return options.find((option) => option.groupIdHash === groupIdHash) ?? null;
+    const groupIdMatch = options.find((option) => option.groupIdHash === groupIdHash);
+    if (groupIdMatch) {
+      return groupIdMatch;
+    }
   }
 
   const groupName = row.groupName.trim();

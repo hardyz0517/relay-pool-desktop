@@ -254,6 +254,7 @@ async function readSourceFiles(root) {
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 const hostPath = path.normalize("src/app/TransientPageHost.tsx");
+const shellHostPath = path.normalize("src/app/ShellPageHost.tsx");
 const hostSource = await readFile(hostPath, "utf8");
 const hostSourceFile = parseTsxSource(hostSource, hostPath);
 const interactionActivitySource = await readFile(
@@ -343,9 +344,9 @@ assert.deepEqual(
   "every document.body portal source should consume interaction activity",
 );
 assert.deepEqual(
-  motionImporters,
-  [hostPath],
-  "TransientPageHost should be the only source module importing framer-motion",
+  motionImporters.sort(),
+  [hostPath, shellHostPath].sort(),
+  "the two centralized page hosts should be the only source modules importing framer-motion",
 );
 assert.doesNotMatch(
   hostSource,
@@ -552,11 +553,15 @@ assert.ok(
   "exiting page content should become inactive, inert, and hidden from assistive technology",
 );
 assert.ok(
-  hostSource.includes("initial={{ opacity: 0 }}") &&
+  /<div\s+ref=\{rootRef\}\s+className="app-page-transition-layer app-page-transition-overlay"/.test(
+    hostSource,
+  ) &&
+    hostSource.includes('className="app-page-transition-content"') &&
+    hostSource.includes("initial={{ opacity: 0 }}") &&
     hostSource.includes("animate={{ opacity: 1 }}") &&
     hostSource.includes("exit={{ opacity: 0 }}") &&
     hostSource.includes("duration: 0.2"),
-  "transient pages should use one 200ms opacity-only transition",
+  "transient pages should keep the overlay opaque and animate only its content",
 );
 assert.ok(
   findForbiddenObjectLiteralProperties(hostSource, hostPath).length === 0,

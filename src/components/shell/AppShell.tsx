@@ -103,6 +103,7 @@ export function AppShell({
               <button
                 key={route.id}
                 type="button"
+                data-navigation-route-id={route.id}
                 onClick={() => onRouteChange(route.id)}
                 title={route.label}
                 aria-label={route.label}

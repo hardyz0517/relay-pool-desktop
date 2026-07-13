@@ -26,7 +26,11 @@ async function importBalanceProjection() {
   return import(`file://${outputPath.replaceAll("\\", "/")}`);
 }
 
-const { buildCurrentStationBalanceFacts, currentStationBalanceFor } = await importBalanceProjection();
+const {
+  buildCurrentStationBalanceFacts,
+  currentStationBalanceFor,
+  latestStationBalanceSnapshots,
+} = await importBalanceProjection();
 
 const stations = [
   station({ id: "station-a", balanceCny: 99, lowBalanceThresholdCny: 10, lastCheckedAt: "2026-07-08T01:00:00.000Z" }),
@@ -42,6 +46,53 @@ const facts = buildCurrentStationBalanceFacts({
     balance({ id: "station-new", stationId: "station-a", scope: "station", value: 13, status: "low", lowBalanceThreshold: 20, source: "station_balance", updatedAt: "2026-07-08T05:00:00.000Z", collectedAt: "2026-07-08T05:00:01.000Z" }),
   ],
 });
+
+assert.equal(
+  typeof latestStationBalanceSnapshots,
+  "function",
+  "balance facts should export the reusable latest station-scope projection",
+);
+assert.deepEqual(
+  latestStationBalanceSnapshots([
+    balance({ id: "station-old", stationId: "station-a", value: 12, updatedAt: "2026-07-08T03:00:00.000Z" }),
+    balance({ id: "key-newer", stationId: "station-a", stationKeyId: "key-a", scope: "station_key", value: 100, updatedAt: "2026-07-08T06:00:00.000Z" }),
+    balance({ id: "station-new", stationId: "station-a", value: 13, updatedAt: "2026-07-08T05:00:00.000Z" }),
+    balance({ id: "station-b", stationId: "station-b", value: 8, updatedAt: "2026-07-08T04:00:00.000Z" }),
+  ]).map((snapshot) => snapshot.id),
+  ["station-new", "station-b"],
+  "current station balance projection should return one latest station-scope row per station",
+);
+
+assert.deepEqual(
+  latestStationBalanceSnapshots([
+    balance({
+      id: "same-updated-older-created",
+      stationId: "station-a",
+      updatedAt: "2026-07-08T05:00:00.000Z",
+      createdAt: "2026-07-08T04:00:00.000Z",
+    }),
+    balance({
+      id: "same-updated-newer-created",
+      stationId: "station-a",
+      updatedAt: "2026-07-08T05:00:00.000Z",
+      createdAt: "2026-07-08T04:30:00.000Z",
+    }),
+    balance({
+      id: "tie-a",
+      stationId: "station-b",
+      updatedAt: "2026-07-08T05:00:00.000Z",
+      createdAt: "2026-07-08T04:30:00.000Z",
+    }),
+    balance({
+      id: "tie-b",
+      stationId: "station-b",
+      updatedAt: "2026-07-08T05:00:00.000Z",
+      createdAt: "2026-07-08T04:30:00.000Z",
+    }),
+  ]).map((snapshot) => snapshot.id),
+  ["same-updated-newer-created", "tie-b"],
+  "fallback projection should match SQL ordering by updatedAt, createdAt, then id",
+);
 
 assert.deepEqual(
   Array.from(facts.values()).map((fact) => ({

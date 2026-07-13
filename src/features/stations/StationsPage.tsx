@@ -20,7 +20,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { Clock3, Edit3, GripVertical, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivity } from "@/components/shell/PageActivity";
+import { usePageRefreshEnabled } from "@/components/shell/PageActivity";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
@@ -44,7 +44,7 @@ import { listCollectorRuns } from "@/lib/api/collectorRuns";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { queryKeys } from "@/lib/query/queryKeys";
 import {
-  balanceSnapshotsQueryOptions,
+  currentStationBalanceSnapshotsQueryOptions,
   changeEventsQueryOptions,
   stationAssetQueryOptions,
   stationsQueryOptions,
@@ -147,7 +147,7 @@ type StationsPageProps = {
 export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: StationsPageProps) {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const { refreshEnabled } = usePageActivity();
+  const refreshEnabled = usePageRefreshEnabled();
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
@@ -178,7 +178,10 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const stationsQuery = useActivityQuery(refreshEnabled, stationsQueryOptions());
-  const balancesQuery = useActivityQuery(refreshEnabled, balanceSnapshotsQueryOptions());
+  const balancesQuery = useActivityQuery(
+    refreshEnabled,
+    currentStationBalanceSnapshotsQueryOptions(),
+  );
   const changesQuery = useActivityQuery(refreshEnabled, changeEventsQueryOptions(false));
   const stations = stationsQuery.data ?? [];
   const balanceSnapshots = balancesQuery.data ?? [];

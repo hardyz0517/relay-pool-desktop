@@ -19,7 +19,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivity } from "@/components/shell/PageActivity";
+import { usePageRefreshEnabled } from "@/components/shell/PageActivity";
 import {
   Button,
   IconButton,
@@ -39,7 +39,7 @@ import type { StationKeyStatus } from "@/lib/types/stationKeys";
 import { stationKeyStatusLabels } from "@/lib/types/stationKeys";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import {
-  balanceSnapshotsQueryOptions,
+  currentStationBalanceSnapshotsQueryOptions,
   changeEventsQueryOptions,
   keyPoolQueryOptions,
   proxyStatusQueryOptions,
@@ -86,7 +86,7 @@ export function DashboardPage() {
   const toast = useToast();
   const { state: updaterState, installNow } = useUpdater();
   const queryClient = useQueryClient();
-  const { refreshEnabled } = usePageActivity();
+  const refreshEnabled = usePageRefreshEnabled();
   const proxyStatusQuery = useActivityQuery(refreshEnabled, proxyStatusQueryOptions(false));
   const requestLogsQuery = useActivityQuery(
     refreshEnabled,
@@ -94,7 +94,10 @@ export function DashboardPage() {
   );
   const keyPoolQuery = useActivityQuery(refreshEnabled, keyPoolQueryOptions());
   const stationsQuery = useActivityQuery(refreshEnabled, stationsQueryOptions());
-  const balancesQuery = useActivityQuery(refreshEnabled, balanceSnapshotsQueryOptions());
+  const balancesQuery = useActivityQuery(
+    refreshEnabled,
+    currentStationBalanceSnapshotsQueryOptions(),
+  );
   const settingsQuery = useActivityQuery(refreshEnabled, settingsQueryOptions());
   const changeEventsQuery = useActivityQuery(refreshEnabled, changeEventsQueryOptions(false));
   const [startingLocalProxy, setStartingLocalProxy] = useState(false);

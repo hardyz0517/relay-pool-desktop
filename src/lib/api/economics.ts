@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { mockPricingRows } from "@/lib/mock/pricing";
+import { latestStationBalanceSnapshots } from "@/lib/projections/balanceFacts";
 import type {
   BalanceSnapshot,
   ModelBasePrice,
@@ -94,6 +95,18 @@ export function listBalanceSnapshots() {
   return invoke<BalanceSnapshot[]>("list_balance_snapshots").catch((error) => {
     if (isInvokeUnavailable(error)) {
       return ensureMemoryBalanceSnapshots();
+    }
+    throw error;
+  });
+}
+
+export function listCurrentStationBalanceSnapshots() {
+  return invoke<BalanceSnapshot[]>("list_current_station_balance_snapshots").catch((error) => {
+    if (isCommandNotFound(error)) {
+      return listBalanceSnapshots().then(latestStationBalanceSnapshots);
+    }
+    if (isInvokeUnavailable(error)) {
+      return latestStationBalanceSnapshots(ensureMemoryBalanceSnapshots());
     }
     throw error;
   });

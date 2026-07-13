@@ -24,7 +24,7 @@ assert.match(
 
 assert.match(
   source,
-  /useActivityQuery\(refreshEnabled,\s*balanceSnapshotsQueryOptions\(\)\)/,
+  /useActivityQuery\(\s*refreshEnabled,\s*currentStationBalanceSnapshotsQueryOptions\(\),\s*\)/,
   "balance snapshot reads should be gated by page refresh activity",
 );
 

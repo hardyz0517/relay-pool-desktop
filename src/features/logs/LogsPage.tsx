@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivity } from "@/components/shell/PageActivity";
+import { usePageRefreshEnabled } from "@/components/shell/PageActivity";
 import {
   Button,
   ConfirmDialog,
@@ -44,7 +44,7 @@ type LogFilter = "all" | "failed" | "fallback";
 export function LogsPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const { refreshEnabled } = usePageActivity();
+  const refreshEnabled = usePageRefreshEnabled();
   const proxyStatusQuery = useActivityQuery(refreshEnabled, proxyStatusQueryOptions(false));
   const logsQuery = useActivityQuery(
     refreshEnabled,

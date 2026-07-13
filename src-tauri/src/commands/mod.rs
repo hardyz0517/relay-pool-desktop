@@ -884,6 +884,13 @@ pub fn list_balance_snapshots(
 }
 
 #[tauri::command]
+pub fn list_current_station_balance_snapshots(
+    database: State<'_, AppDatabase>,
+) -> Result<Vec<BalanceSnapshot>, String> {
+    database.list_current_station_balance_snapshots()
+}
+
+#[tauri::command]
 pub fn list_balance_snapshots_for_station(
     database: State<'_, AppDatabase>,
     station_id: String,

@@ -121,9 +121,8 @@ assertDeclaration(enteringRule, "z-index", "1");
 assertDeclaration(enteringRule, "display", "block");
 assertDeclaration(enteringRule, "visibility", "visible");
 assertDeclaration(enteringRule, "pointer-events", "auto");
-assertDeclaration(enteringRule, "animation", "relayShellPageEnter 140ms ease-out");
-assertDeclaration(enteringRule, "will-change", "opacity");
-for (const property of ["transition", "transform", "filter"]) {
+assertDeclaration(enteringRule, "background", "hsl(var(--background))");
+for (const property of ["animation", "transition", "transform", "filter", "opacity", "will-change"]) {
   assertNoDeclaration(enteringRule, property);
 }
 
@@ -133,7 +132,7 @@ assertDeclaration(overlayRule, "z-index", "1");
 assertDeclaration(overlayRule, "min-height", "100%");
 assertDeclaration(overlayRule, "background", "hsl(var(--background))");
 assertDeclaration(overlayRule, "pointer-events", "auto");
-assertDeclaration(overlayRule, "will-change", "opacity");
+assertNoDeclaration(overlayRule, "will-change");
 
 for (const property of ["animation", "transition", "transform"]) {
   assertNoDeclaration(overlayRule, property);
@@ -157,52 +156,25 @@ assert.doesNotMatch(
   "direction-specific transition selectors should not remain",
 );
 
-const freshShellRule = readRule(
-  '.app-page-transition-stack[data-page-transition-handoff="none"]\n' +
-    '  .app-page-transition-layer[data-page-transition-kind="shell"][data-page-transition-state="active"]',
+assert.equal(
+  stylesSource.includes("relayPageFadeUp"),
+  false,
+  "a completed shell handoff should not restart a second page-level fade",
 );
-assertDeclaration(
-  freshShellRule,
-  "animation",
-  "relayPageFadeUp 160ms ease-out",
+assert.equal(
+  stylesSource.includes("relayShellPageEnter"),
+  false,
+  "the entering shell layer should stay opaque so the previous page cannot bleed through",
 );
-readRule("@keyframes relayPageFadeUp");
-readRule("@keyframes relayShellPageEnter");
-
-const transientExitHandoffRule = readRule(
-  '.app-page-transition-stack[data-page-transition-handoff="transient-exit"]\n' +
-    '  .app-page-transition-layer[data-page-transition-kind="shell"][data-page-transition-state="active"]',
+assert.equal(
+  stylesSource.includes("relayShellPageContentEnter"),
+  false,
+  "shell content motion should be owned by the centralized Motion host",
 );
-assertDeclaration(transientExitHandoffRule, "animation", "none");
-
-const reducedMotionRule = readRule("@media (prefers-reduced-motion: reduce)");
-const normalizedReducedMotionRule = reducedMotionRule
-  .split("\n")
-  .map((line) => (line.startsWith("  ") ? line.slice(2) : line))
-  .join("\n");
-const reducedMotionShellSelector =
-  '.app-page-transition-layer[data-page-transition-kind="shell"]';
-const reducedMotionShellRule = readRuleFrom(
-  normalizedReducedMotionRule,
-  reducedMotionShellSelector,
-);
-
-assertDeclaration(
-  reducedMotionShellRule,
-  "animation-duration",
-  "1ms !important",
-);
-assertDeclaration(reducedMotionShellRule, "transform", "none !important");
-const reducedMotionEnteringSelector =
-  '.app-page-transition-layer[data-page-transition-state="entering"]';
-const reducedMotionEnteringRule = readRuleFrom(
-  normalizedReducedMotionRule,
-  reducedMotionEnteringSelector,
-);
-assertDeclaration(
-  reducedMotionEnteringRule,
-  "animation-duration",
-  "1ms !important",
+assert.equal(
+  stylesSource.includes("@media (prefers-reduced-motion: reduce)"),
+  false,
+  "page motion reduction should be centralized in MotionConfig",
 );
 
 console.log("page transition styles contract ok");

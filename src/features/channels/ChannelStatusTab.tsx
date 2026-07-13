@@ -18,7 +18,10 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { LucideIcon } from "lucide-react";
 import { Radio, RefreshCw, Server, Timer } from "lucide-react";
-import { usePageActivation, usePageActivity } from "@/components/shell/PageActivity";
+import {
+  usePageActivation,
+  usePageRefreshEnabled,
+} from "@/components/shell/PageActivity";
 import { Button, EmptyState, SegmentedControl, StatusBadge, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { loadChannelStatusWorkspace } from "@/lib/queries/channelQueries";
@@ -90,7 +93,7 @@ const outcomeClassName: Record<RecentOutcome, string> = {
 
 export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
   const toast = useToast();
-  const { refreshEnabled } = usePageActivity();
+  const refreshEnabled = usePageRefreshEnabled();
   useActivityQuery(refreshEnabled, channelStatusQueryOptions());
   const [keys, setKeys] = useState<KeyPoolItem[]>([]);
   const [logs, setLogs] = useState<RequestLog[]>([]);

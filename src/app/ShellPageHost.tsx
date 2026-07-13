@@ -1,9 +1,11 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { motion, MotionConfig, type TargetAndTransition } from "framer-motion";
+import { memo, useCallback, useEffect, useLayoutEffect, useState } from "react";
 import {
   markNavigation,
   measureNavigation,
   navigationMarks,
 } from "@/app/navigationPerformance";
+import { isLatestShellNavigationCompletion } from "@/app/navigationPolicy";
 import { PageActivityProvider } from "@/components/shell/PageActivity";
 import {
   TransientPageHost,
@@ -16,26 +18,47 @@ import {
 } from "@/app/shellPageRegistry";
 import type { AppRouteId } from "@/lib/types/navigation";
 
-export type ShellPageState = "active" | "background" | "entering" | "inactive";
+export type ShellPageState =
+  | "active"
+  | "background"
+  | "entering"
+  | "leaving"
+  | "inactive";
+
+const shellPageMotionTargets = {
+  active: { opacity: 1, y: 0, transition: { duration: 0 } },
+  background: { opacity: 1, y: 0, transition: { duration: 0 } },
+  entering: {
+    opacity: [0, 1],
+    y: [4, 0],
+    transition: { duration: 0.16, ease: "easeOut" },
+  },
+  leaving: { opacity: 1, transition: { duration: 0 } },
+  inactive: { opacity: 1, y: 0, transition: { duration: 0 } },
+} satisfies Record<ShellPageState, TargetAndTransition>;
 
 type ShellPageSlotProps = {
   routeId: AppRouteId;
   state: ShellPageState;
+  refreshEnabled: boolean;
   actions: ShellPageActions;
-  onEnteringComplete: () => void;
+  navigationSequence: number;
+  onEnteringComplete: (routeId: AppRouteId, sequence: number) => void;
 };
 
 const ShellPageSlot = memo(function ShellPageSlot({
   routeId,
   state,
+  refreshEnabled,
   actions,
+  navigationSequence,
   onEnteringComplete,
 }: ShellPageSlotProps) {
-  const active = state === "active" || state === "entering";
-  const inert = !active;
+  const interactive = state === "active" || state === "entering";
+  const inert = !interactive;
 
   return (
-    <PageActivityProvider active={active}>
+    <PageActivityProvider active={interactive} refreshEnabled={refreshEnabled}>
       <div
         aria-hidden={inert}
         className="app-page-transition-layer"
@@ -44,17 +67,21 @@ const ShellPageSlot = memo(function ShellPageSlot({
         data-page-transition-page-id={routeId}
         data-page-transition-state={state}
         inert={inert ? "" : undefined}
-        onAnimationEnd={(event) => {
-          if (state === "entering" && event.target === event.currentTarget) {
-            onEnteringComplete();
-          }
-        }}
       >
-        <div className="app-page-transition-content">
+        <motion.div
+          animate={shellPageMotionTargets[state]}
+          className="app-page-transition-content"
+          initial={state === "entering" ? { opacity: 0 } : false}
+          onAnimationComplete={() => {
+            if (state === "entering") {
+              onEnteringComplete(routeId, navigationSequence);
+            }
+          }}
+        >
           <ShellPageErrorBoundary>
             <ShellPageContent routeId={routeId} actions={actions} />
           </ShellPageErrorBoundary>
-        </div>
+        </motion.div>
       </div>
     </PageActivityProvider>
   );
@@ -63,120 +90,142 @@ const ShellPageSlot = memo(function ShellPageSlot({
 export const ShellPageHost = memo(function ShellPageHost({
   mountedRouteIds,
   activeShellRouteId,
+  previousShellRouteId,
+  intentShellRouteId,
+  intentNavigationSequence,
+  committedNavigationSequence,
   transientActive,
-  returningFromTransient,
   activeTransientPage,
   actions,
-  navigationSequence,
   onExitComplete,
   onRememberShellFocusTarget,
   pending,
 }: {
   mountedRouteIds: Set<AppRouteId>;
   activeShellRouteId: AppRouteId;
+  previousShellRouteId: AppRouteId | null;
+  intentShellRouteId: AppRouteId;
+  intentNavigationSequence: number;
+  committedNavigationSequence: number;
   transientActive: boolean;
-  returningFromTransient: boolean;
   activeTransientPage: TransientPageDescriptor | null;
   actions: ShellPageActions;
-  navigationSequence: number;
   onExitComplete: () => void;
   onRememberShellFocusTarget: (target: EventTarget | null) => void;
   pending: boolean;
 }) {
-  const previousShellRouteIdRef = useRef(activeShellRouteId);
-  const [visualHandoff, setVisualHandoff] = useState<{
-    sequence: number;
-    previousRouteId: AppRouteId | null;
-  } | null>(null);
+  const [completedNavigation, setCompletedNavigation] = useState(() => ({
+    sequence: 0,
+    refreshRouteId: activeShellRouteId,
+  }));
+  const {
+    sequence: completedNavigationSequence,
+    refreshRouteId,
+  } = completedNavigation;
+  const handoffActive =
+    !transientActive &&
+    previousShellRouteId !== null &&
+    previousShellRouteId !== activeShellRouteId &&
+    committedNavigationSequence > completedNavigationSequence;
 
   useLayoutEffect(() => {
-    markNavigation(navigationMarks.content(navigationSequence));
-  }, [navigationSequence]);
+    markNavigation(navigationMarks.content(committedNavigationSequence));
+  }, [committedNavigationSequence]);
 
-  useEffect(() => {
-    if (transientActive || previousShellRouteIdRef.current === activeShellRouteId) {
-      previousShellRouteIdRef.current = activeShellRouteId;
+  const completeEntering = useCallback((routeId: AppRouteId, sequence: number) => {
+    if (
+      !isLatestShellNavigationCompletion(
+        routeId,
+        sequence,
+        { shellRouteId: intentShellRouteId, sequence: intentNavigationSequence },
+        { sequence: committedNavigationSequence },
+      )
+    ) {
       return;
     }
-
-    setVisualHandoff({
-      sequence: navigationSequence,
-      previousRouteId: previousShellRouteIdRef.current,
-    });
-    previousShellRouteIdRef.current = activeShellRouteId;
-  }, [activeShellRouteId, navigationSequence, transientActive]);
-
-  const completeEntering = useCallback(() => {
-    setVisualHandoff((current) => {
-      if (!current) {
+    setCompletedNavigation((current) => {
+      if (current.sequence >= sequence) {
         return current;
       }
-      const completeMark = navigationMarks.complete(current.sequence);
+      const completeMark = navigationMarks.complete(sequence);
       markNavigation(completeMark);
       measureNavigation(
-        `navigation:${current.sequence}:handoff`,
-        navigationMarks.intent(current.sequence),
+        `navigation:${sequence}:handoff`,
+        navigationMarks.intent(sequence),
         completeMark,
       );
-      return null;
+      return { sequence, refreshRouteId: routeId };
     });
-  }, []);
+  }, [committedNavigationSequence, intentNavigationSequence, intentShellRouteId]);
 
   useEffect(() => {
-    if (!visualHandoff) {
+    if (!handoffActive) {
       return;
     }
-    const timeoutId = window.setTimeout(completeEntering, 200);
+    const timeoutId = window.setTimeout(
+      () => completeEntering(activeShellRouteId, committedNavigationSequence),
+      240,
+    );
     return () => window.clearTimeout(timeoutId);
-  }, [completeEntering, visualHandoff]);
+  }, [activeShellRouteId, committedNavigationSequence, completeEntering, handoffActive]);
 
   const routeIds = mountedRouteIds.has(activeShellRouteId)
     ? [...mountedRouteIds]
     : [...mountedRouteIds, activeShellRouteId];
-  if (visualHandoff?.previousRouteId && !routeIds.includes(visualHandoff.previousRouteId)) {
-    routeIds.push(visualHandoff.previousRouteId);
+  if (previousShellRouteId && !routeIds.includes(previousShellRouteId)) {
+    routeIds.push(previousShellRouteId);
   }
 
   return (
     <div
       className="app-page-transition-stack"
-      data-page-transition-handoff={returningFromTransient ? "transient-exit" : "none"}
+      data-page-transition-handoff={handoffActive ? "shell" : "none"}
       data-page-transition-pending={pending ? "true" : "false"}
       onPointerDownCapture={(event) => onRememberShellFocusTarget(event.target)}
       onFocusCapture={(event) => onRememberShellFocusTarget(event.target)}
     >
-      {routeIds.map((routeId) => {
-        const shellPageState: ShellPageState = (() => {
-          if (visualHandoff?.sequence === navigationSequence && !transientActive) {
-            if (routeId === activeShellRouteId) {
-              return "entering";
+      <MotionConfig reducedMotion="user">
+        {routeIds.map((routeId) => {
+          const shellPageState: ShellPageState = (() => {
+            if (handoffActive) {
+              if (routeId === activeShellRouteId) {
+                return "entering";
+              }
+              if (routeId === previousShellRouteId) {
+                return "leaving";
+              }
+              return "inactive";
             }
-            if (routeId === visualHandoff.previousRouteId) {
+            if (routeId !== activeShellRouteId) {
+              return "inactive";
+            }
+            if (transientActive) {
               return "background";
             }
-            return "inactive";
-          }
-          if (routeId !== activeShellRouteId) {
-            return "inactive";
-          }
-          return transientActive ? "background" : "active";
-        })();
+            if (intentShellRouteId !== activeShellRouteId) {
+              return "leaving";
+            }
+            return "active";
+          })();
+          const refreshEnabled =
+            routeId === refreshRouteId &&
+            (shellPageState === "active" || shellPageState === "leaving");
 
-        return (
-          <ShellPageSlot
-            key={routeId}
-            actions={actions}
-            onEnteringComplete={completeEntering}
-            routeId={routeId}
-            state={shellPageState === "entering" ? "entering" : shellPageState}
-          />
-        );
-      })}
+          return (
+            <ShellPageSlot
+              key={routeId}
+              actions={actions}
+              navigationSequence={committedNavigationSequence}
+              onEnteringComplete={completeEntering}
+              refreshEnabled={refreshEnabled}
+              routeId={routeId}
+              state={shellPageState}
+            />
+          );
+        })}
 
-      <TransientPageHost
-        page={activeTransientPage}
-        onExitComplete={onExitComplete}
-      />
+        <TransientPageHost page={activeTransientPage} onExitComplete={onExitComplete} />
+      </MotionConfig>
     </div>
   );
 });

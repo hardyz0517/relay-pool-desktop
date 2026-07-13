@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Coins, Image, RefreshCw, ShieldCheck, TrendingDown } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation, usePageActivity } from "@/components/shell/PageActivity";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import {
   Button,
   EmptyState,
@@ -64,7 +64,6 @@ type PricingPageProps = {
 
 export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
   const toast = useToast();
-  usePageActivity();
   const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
   const [stationKeys, setStationKeys] = useState<StationKey[]>([]);

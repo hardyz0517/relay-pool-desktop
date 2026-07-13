@@ -280,11 +280,8 @@ export function App() {
     ? null
     : renderTransientPage(activeRouteId);
   const isCurrentTransientPage = activeTransitionPolicy.kind === "transient";
-  const previousTransitionPolicy = previousRouteId
-    ? getPageTransitionPolicy(previousRouteId)
-    : null;
-  const isReturningFromTransient =
-    activeTransitionPolicy.kind === "shell" && previousTransitionPolicy?.kind === "transient";
+  const previousShellRouteId =
+    previousRouteId && isShellPage(previousRouteId) ? previousRouteId : null;
 
   return (
     <AppShell
@@ -296,12 +293,14 @@ export function App() {
         actions={shellPageActions}
         activeShellRouteId={activeShellRouteId}
         activeTransientPage={activeTransientPage}
+        committedNavigationSequence={committed.sequence}
+        intentNavigationSequence={intent.sequence}
+        intentShellRouteId={intent.shellRouteId}
         mountedRouteIds={mountedRouteIds}
-        navigationSequence={intent.sequence}
         onExitComplete={restoreTransientReturnFocus}
         onRememberShellFocusTarget={rememberShellFocusTarget}
         pending={pending}
-        returningFromTransient={isReturningFromTransient}
+        previousShellRouteId={previousShellRouteId}
         transientActive={isCurrentTransientPage}
       />
     </AppShell>

@@ -107,7 +107,7 @@ assertDeclaration(contentRule, "padding", "var(--shell-page-gap)");
 assertDeclaration(scrollbarRule, "display", "none");
 
 assert.ok(
-  shellHostSource.includes('<div className="app-page-transition-content">') &&
+  /<motion\.div[\s\S]*?className="app-page-transition-content"/.test(shellHostSource) &&
     shellHostSource.includes("<ShellPageContent routeId={routeId} actions={actions} />"),
   "retained shell pages should use the same inner gutter wrapper as transient pages",
 );

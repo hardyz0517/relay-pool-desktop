@@ -4,6 +4,7 @@ export type CommittedNavigation = {
   activeRouteId: AppPageId;
   previousRouteId: AppPageId | null;
   transientParentRouteId: AppRouteId | null;
+  sequence: number;
 };
 
 export type NavigationIntent = {
@@ -36,6 +37,13 @@ export function createNavigationIntent(
   };
 }
 
+export function shouldNavigateToRoute(
+  currentIntent: Pick<NavigationIntent, "routeId">,
+  routeId: AppPageId,
+) {
+  return currentIntent.routeId !== routeId;
+}
+
 export function commitNavigationIntent(
   current: CommittedNavigation,
   intent: NavigationIntent,
@@ -49,5 +57,19 @@ export function commitNavigationIntent(
     activeRouteId: intent.routeId,
     previousRouteId: current.activeRouteId,
     transientParentRouteId: intent.transientParentRouteId,
+    sequence: intent.sequence,
   };
+}
+
+export function isLatestShellNavigationCompletion(
+  routeId: AppRouteId,
+  sequence: number,
+  intent: Pick<NavigationIntent, "shellRouteId" | "sequence">,
+  committed: Pick<CommittedNavigation, "sequence">,
+) {
+  return (
+    routeId === intent.shellRouteId &&
+    sequence === intent.sequence &&
+    sequence === committed.sequence
+  );
 }

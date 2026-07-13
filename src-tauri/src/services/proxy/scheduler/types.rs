@@ -87,6 +87,8 @@ pub struct MultiplierSourceFacts {
     pub group_binding_id: Option<String>,
     pub group_id_hash: Option<String>,
     pub group_name: Option<String>,
+    pub inferred_group_category: Option<String>,
+    pub group_category_override: Option<String>,
     pub collected_rate_multiplier: Option<f64>,
     pub collected_rate_source: Option<String>,
     pub collected_rate_confidence: Option<f64>,

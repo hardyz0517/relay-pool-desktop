@@ -23,7 +23,7 @@ const shellPagePolicies: Record<AppRouteId, PageTransitionPolicy> = {
     kind: "shell",
     parentRouteId: "stations",
     retention: "keep",
-    prewarmPriority: 2,
+    prewarmPriority: 1,
   },
   keyPool: {
     pageId: "keyPool",
@@ -79,7 +79,7 @@ const shellPagePolicies: Record<AppRouteId, PageTransitionPolicy> = {
     kind: "shell",
     parentRouteId: "settings",
     retention: "keep",
-    prewarmPriority: 1,
+    prewarmPriority: 2,
   },
 };
 

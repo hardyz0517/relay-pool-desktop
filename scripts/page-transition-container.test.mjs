@@ -91,14 +91,20 @@ assert.ok(
 );
 
 assert.ok(
-  shellHostSource.includes('export type ShellPageState = "active" | "background" | "entering" | "inactive";') &&
-    shellHostSource.includes('transientActive ? "background" : "active"') &&
-    shellHostSource.includes('const active = state === "active" || state === "entering";') &&
-    shellHostSource.includes('const inert = !active;'),
-  "shell pages should have explicit active, visible-background, entering, and inactive states",
+  /export type ShellPageState =[\s\S]*?"active"[\s\S]*?"background"[\s\S]*?"entering"[\s\S]*?"leaving"[\s\S]*?"inactive";/.test(
+    shellHostSource,
+  ) &&
+    /if \(transientActive\) \{\s*return "background";\s*\}[\s\S]*return "active";/.test(
+      shellHostSource,
+    ) &&
+    shellHostSource.includes('const interactive = state === "active" || state === "entering";') &&
+    shellHostSource.includes('const inert = !interactive;'),
+  "shell pages should have explicit active, visible-background, entering, leaving, and inactive states",
 );
 assert.ok(
-  shellHostSource.includes("<PageActivityProvider active={active}>") &&
+  shellHostSource.includes(
+    "<PageActivityProvider active={interactive} refreshEnabled={refreshEnabled}>",
+  ) &&
     shellHostSource.includes("data-page-transition-state={state}") &&
     shellHostSource.includes('inert={inert ? "" : undefined}') &&
     shellHostSource.includes("aria-hidden={inert}"),
@@ -110,10 +116,10 @@ assert.ok(
   "a transient route should always have its retained parent shell rendered beneath it",
 );
 assert.ok(
-  appSource.includes("const isReturningFromTransient") &&
-    shellHostSource.includes(
-      'data-page-transition-handoff={returningFromTransient ? "transient-exit" : "none"}',
-    ),
+  appSource.includes("const previousShellRouteId =") &&
+    appSource.includes("previousRouteId && isShellPage(previousRouteId)") &&
+    shellHostSource.includes("previousShellRouteId !== null") &&
+    shellHostSource.includes('data-page-transition-handoff={handoffActive ? "shell" : "none"}'),
   "returning from a transient page should not retrigger the shell entry animation",
 );
 assert.ok(
