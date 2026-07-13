@@ -2416,10 +2416,7 @@ mod tests {
         assert!(result.ok);
         assert_eq!(result.status_code, 200);
         assert_eq!(result.duration_ms, 18);
-        assert_eq!(
-            result.message,
-            "Responses 直连返回 HTTP 503，Chat Completions 兼容探测正常"
-        );
+        assert_eq!(result.message, "Chat Completions 连通正常");
     }
 
     #[test]
@@ -2474,9 +2471,9 @@ mod tests {
 
         assert_eq!(body["model"], "claude-test");
         assert_eq!(body["messages"][0]["role"], "user");
-        assert_eq!(body["messages"][0]["content"], "ping");
+        assert_eq!(body["messages"][0]["content"], "hi");
         assert_eq!(body["stream"], false);
-        assert_eq!(body["max_tokens"], 16);
+        assert_eq!(body["max_tokens"], 32);
     }
 
     #[test]
