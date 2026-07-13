@@ -489,6 +489,7 @@ pub fn test_station_login(
     if !has_login_credentials(&credentials.login_username, credentials.password_present) {
         return Ok(build_status_result(
             station_id,
+            station.endpoint_revision,
             station.name,
             "missing_credentials",
             "未填写登录账号或密码，无法测试登录。",
@@ -501,6 +502,7 @@ pub fn test_station_login(
     let Some(login_password) = password else {
         return Ok(build_status_result(
             station_id,
+            station.endpoint_revision,
             station.name,
             "missing_credentials",
             "未保存登录密码，无法测试登录。",
@@ -527,7 +529,7 @@ pub fn test_station_login(
         }
         _ => {
             let attempt = sub2api::test_login_credentials(
-                &station.base_url,
+                &station.website_url,
                 &login_username,
                 &login_password,
             )?;
@@ -633,11 +635,11 @@ pub fn test_station_login(
 pub fn test_station_login_input(
     input: StationLoginTestInput,
 ) -> Result<StationLoginTestResult, String> {
-    let base_url = input.base_url.trim();
+    let website_url = input.website_url.trim();
     let login_username = input.login_username.trim();
     let login_password = input.login_password.trim();
 
-    if base_url.is_empty() {
+    if website_url.is_empty() {
         return Ok(StationLoginTestResult {
             status: "missing_base_url".to_string(),
             message: "请先填写基础地址。".to_string(),
@@ -657,8 +659,11 @@ pub fn test_station_login_input(
     let station_type = input.station_type.as_deref().unwrap_or("sub2api").trim();
     let login_attempt = match station_type {
         "newapi" => {
-            let attempt =
-                adapters::newapi::test_login_credentials(base_url, login_username, login_password)?;
+            let attempt = adapters::newapi::test_login_credentials(
+                website_url,
+                login_username,
+                login_password,
+            )?;
             LoginTestAttempt {
                 token_present: attempt.cookie_present,
                 login_message: attempt.login_message,
@@ -667,7 +672,7 @@ pub fn test_station_login_input(
         }
         _ => {
             let attempt =
-                sub2api::test_login_credentials(base_url, login_username, login_password)?;
+                sub2api::test_login_credentials(website_url, login_username, login_password)?;
             LoginTestAttempt {
                 token_present: attempt.token_present,
                 login_message: attempt.login_message,
@@ -699,6 +704,7 @@ pub fn test_station_login_input(
 
 fn build_status_result(
     station_id: String,
+    endpoint_revision: i64,
     station_name: String,
     status: &str,
     conclusion: &str,
@@ -710,6 +716,7 @@ fn build_status_result(
             crate::services::database::now_millis_for_services()
         ),
         station_id: station_id.clone(),
+        endpoint_revision,
         source: "login-state-collect".to_string(),
         status: status.to_string(),
         fetched_at: crate::services::database::now_millis_for_services().to_string(),
@@ -808,7 +815,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "login test".to_string(),
                 station_type: "sub2api".to_string(),
-                base_url: server.base_url.clone(),
+                website_url: server.base_url.clone(),
+                api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-test-routing".to_string(),
@@ -857,7 +865,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "newapi login test".to_string(),
                 station_type: "newapi".to_string(),
-                base_url: server.base_url.clone(),
+                website_url: server.base_url.clone(),
+                api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-test-routing".to_string(),
@@ -906,7 +915,7 @@ mod tests {
 
         let result = test_station_login_input(StationLoginTestInput {
             station_type: Some("newapi".to_string()),
-            base_url: server.base_url.clone(),
+            website_url: server.base_url.clone(),
             login_username: "user@example.test".to_string(),
             login_password: "correct-password".to_string(),
         })
@@ -930,7 +939,8 @@ mod tests {
                 CreateStationInput {
                     name: "full collect".to_string(),
                     station_type: "sub2api".to_string(),
-                    base_url: server.base_url,
+                    website_url: server.base_url.clone(),
+                    api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-route-key".to_string(),
@@ -1022,7 +1032,8 @@ mod tests {
                 CreateStationInput {
                     name: "groups and keys collect".to_string(),
                     station_type: "sub2api".to_string(),
-                    base_url: server.base_url,
+                    website_url: server.base_url.clone(),
+                    api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-route-key".to_string(),

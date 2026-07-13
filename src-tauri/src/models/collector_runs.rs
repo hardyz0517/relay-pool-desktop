@@ -14,12 +14,14 @@ pub const COLLECTOR_RUN_PARTIAL: &str = "partial";
 pub const COLLECTOR_RUN_FAILED: &str = "failed";
 pub const COLLECTOR_RUN_MANUAL_REQUIRED: &str = "manual_required";
 pub const COLLECTOR_RUN_RUNNING: &str = "running";
+pub const COLLECTOR_RUN_SUPERSEDED: &str = "superseded";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectorRun {
     pub id: String,
     pub station_id: String,
+    pub endpoint_revision: i64,
     pub parent_run_id: Option<String>,
     pub adapter: String,
     pub task_type: CollectorTaskType,
@@ -70,6 +72,7 @@ mod tests {
         let run = CollectorRun {
             id: "run-1".to_string(),
             station_id: "station-1".to_string(),
+            endpoint_revision: 1,
             parent_run_id: Some("run-parent".to_string()),
             adapter: "sub2api".to_string(),
             task_type: COLLECTOR_TASK_FULL.to_string(),
@@ -89,6 +92,7 @@ mod tests {
         let value = serde_json::to_value(run).expect("json");
 
         assert_eq!(value["stationId"], "station-1");
+        assert_eq!(value["endpointRevision"], 1);
         assert_eq!(value["parentRunId"], "run-parent");
         assert_eq!(value["durationMs"], 100);
         assert_eq!(value["manualActionRequired"], false);

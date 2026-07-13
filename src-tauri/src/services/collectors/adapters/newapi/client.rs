@@ -132,7 +132,7 @@ fn authenticated_json(
     let mut used_kind = auth_context.kind;
     for attempt in 0..=1 {
         match execute_json_with_proxy(
-            &station.base_url,
+            &station.website_url,
             path,
             &auth_context,
             operation,

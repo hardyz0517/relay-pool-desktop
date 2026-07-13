@@ -6,6 +6,7 @@ use serde_json::Value;
 pub struct CollectorSnapshot {
     pub id: String,
     pub station_id: String,
+    pub endpoint_revision: i64,
     pub source: String,
     pub status: String,
     pub fetched_at: String,
@@ -36,7 +37,7 @@ pub struct CollectorRunResult {
 pub struct StationLoginTestInput {
     #[serde(default)]
     pub station_type: Option<String>,
-    pub base_url: String,
+    pub website_url: String,
     pub login_username: String,
     pub login_password: String,
 }

@@ -4,7 +4,7 @@ use crate::services::{
     collectors::{
         adapters::{AdapterOutput, CollectorTask},
         facts::{CollectedModelFact, CollectorFacts},
-        url::{collector_base_urls, join_url},
+        url::join_url,
     },
     database::AppDatabase,
     outbound::{agent_builder_for_proxy, resolve_proxy_config},
@@ -82,8 +82,7 @@ pub fn collect_models(
         }
     };
 
-    let urls = collector_base_urls(&station.base_url);
-    let url = join_url(&urls.upstream_api_base_url, "/models");
+    let url = join_url(&station.api_base_url, "/models");
     let settings = database.get_settings()?;
     let proxy = resolve_proxy_config(
         &station.collector_proxy_mode,

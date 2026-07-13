@@ -95,7 +95,7 @@ pub(crate) fn login_with_password(
     login_username: &str,
     login_password: &str,
 ) -> Result<NewApiLoginProbeOutcome, String> {
-    let login = request_password_login(&station.base_url, login_username, login_password)?;
+    let login = request_password_login(&station.website_url, login_username, login_password)?;
     if login.outcome.manual_required.is_some() {
         return Ok(login.outcome);
     }

@@ -149,7 +149,7 @@ fn update_station_endpoint_pings(
             update_station_endpoint_ping(
                 database,
                 &target.station_id,
-                &target.station_base_url,
+                &target.station_api_base_url,
                 monitor.timeout_seconds,
             )?;
         }
@@ -160,11 +160,11 @@ fn update_station_endpoint_pings(
 fn update_station_endpoint_ping(
     database: &AppDatabase,
     station_id: &str,
-    station_base_url: &str,
+    station_api_base_url: &str,
     timeout_seconds: i64,
 ) -> Result<(), String> {
     let timeout = Duration::from_secs(timeout_seconds.max(1) as u64);
-    let result = ping_station_endpoint(station_base_url, timeout);
+    let result = ping_station_endpoint(station_api_base_url, timeout);
     let checked_at = now_string();
     database.upsert_station_endpoint_health(
         station_id,
@@ -296,7 +296,7 @@ fn run_monitor_for_key(
         }
     };
     let result = run_monitor_probe(
-        &target.station_base_url,
+        &target.station_api_base_url,
         &api_key,
         &request,
         monitor.timeout_seconds,
@@ -402,7 +402,7 @@ fn insert_monitor_request_log(
         lifecycle_status: Some("completed".to_string()),
         station_key_id: Some(target.id.clone()),
         station_id: Some(target.station_id.clone()),
-        upstream_base_url: Some(target.station_base_url.clone()),
+        upstream_base_url: Some(target.station_api_base_url.clone()),
         fallback_count: 0,
         error_message,
         route_policy: Some("channel_monitor".to_string()),
@@ -684,7 +684,8 @@ mod tests {
                 CreateStationInput {
                     name: "monitor cost station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url: "http://127.0.0.1:9".to_string(),
+                    website_url: "http://127.0.0.1:9".to_string(),
+                    api_base_url: "http://127.0.0.1:9/v1".to_string(),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-monitor-cost".to_string(),
@@ -760,7 +761,8 @@ mod tests {
                 CreateStationInput {
                     name: "manual monitor station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url,
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     api_key: "sk-manual-monitor".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -851,7 +853,8 @@ mod tests {
                 CreateStationInput {
                     name: "usage monitor station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url: base_url.clone(),
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-usage-monitor".to_string(),
@@ -969,7 +972,10 @@ mod tests {
         assert_eq!(log.status, "success");
         assert_eq!(log.station_key_id.as_deref(), Some(key.id.as_str()));
         assert_eq!(log.station_id.as_deref(), Some(station.id.as_str()));
-        assert_eq!(log.upstream_base_url.as_deref(), Some(base_url.as_str()));
+        assert_eq!(
+            log.upstream_base_url.as_deref(),
+            Some(format!("{}/v1", base_url.trim_end_matches('/')).as_str())
+        );
         assert_eq!(log.prompt_tokens, Some(4));
         assert_eq!(log.completion_tokens, Some(6));
         assert_eq!(log.total_tokens, Some(10));
@@ -999,7 +1005,8 @@ mod tests {
                 CreateStationInput {
                     name: "missing secret station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url: "http://127.0.0.1:9".to_string(),
+                    website_url: "http://127.0.0.1:9".to_string(),
+                    api_base_url: "http://127.0.0.1:9/v1".to_string(),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-to-be-cleared".to_string(),
@@ -1080,7 +1087,8 @@ mod tests {
                 CreateStationInput {
                     name: "threshold station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url: "http://127.0.0.1:9".to_string(),
+                    website_url: "http://127.0.0.1:9".to_string(),
+                    api_base_url: "http://127.0.0.1:9/v1".to_string(),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-threshold".to_string(),
@@ -1210,7 +1218,8 @@ mod tests {
                 CreateStationInput {
                     name: "builtin template station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url,
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     api_key: "sk-builtin-template".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -1275,7 +1284,8 @@ mod tests {
                 CreateStationInput {
                     name: "responses low token station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url,
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     api_key: "sk-responses-low-token".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -1336,7 +1346,8 @@ mod tests {
                 CreateStationInput {
                     name: "responses fallback station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url,
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     api_key: "sk-responses-fallback".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -1398,7 +1409,8 @@ mod tests {
                 CreateStationInput {
                     name: "concurrent station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url,
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     api_key: "sk-concurrent-1".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -1476,7 +1488,8 @@ mod tests {
                 CreateStationInput {
                     name: "overlap station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url,
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     api_key: "sk-overlap".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -1595,7 +1608,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "disabled key station".to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: "https://example.test".to_string(),
+                website_url: "https://example.test".to_string(),
+                api_base_url: "https://example.test/v1".to_string(),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-disabled-key".to_string(),
@@ -1669,7 +1683,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: name.to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: "https://example.test".to_string(),
+                website_url: "https://example.test".to_string(),
+                api_base_url: "https://example.test/v1".to_string(),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-test-monitor".to_string(),

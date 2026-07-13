@@ -16,7 +16,7 @@ use crate::services::{
     collectors::{
         adapters::{AdapterOutput, CollectorTask, CreatedRemoteKey},
         facts::{CollectedBalanceFact, CollectorFacts},
-        url::{collector_base_urls, join_url},
+        url::join_url,
     },
     database::AppDatabase,
     outbound::{agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
@@ -1127,8 +1127,7 @@ fn fetch_status(
         &settings.collector_proxy_mode,
         settings.collector_proxy_url,
     );
-    let urls = collector_base_urls(&station.base_url);
-    let url = join_url(&urls.management_base_url, "/api/status");
+    let url = join_url(&station.website_url, "/api/status");
     let mut endpoint_results = Vec::new();
     let payload = get_newapi_public_json(&url, &proxy, &mut endpoint_results)?;
     let data = parsers::envelope_data(&payload).unwrap_or(&payload);
@@ -1264,7 +1263,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "live newapi smoke".to_string(),
                 station_type: "newapi".to_string(),
-                base_url,
+                website_url: base_url.to_string(),
+                api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: String::new(),
@@ -1719,7 +1719,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "newapi station".to_string(),
                 station_type: "newapi".to_string(),
-                base_url: base_url.to_string(),
+                website_url: base_url.to_string(),
+                api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: String::new(),

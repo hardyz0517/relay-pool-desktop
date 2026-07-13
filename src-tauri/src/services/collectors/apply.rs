@@ -537,7 +537,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "balance aggregate relay".to_string(),
                 station_type: "sub2api".to_string(),
-                base_url: "https://relay.example.test".to_string(),
+                website_url: "https://relay.example.test".to_string(),
+                api_base_url: "https://relay.example.test/v1".to_string(),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-test".to_string(),

@@ -3636,7 +3636,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "Streaming station".to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: format!("http://127.0.0.1:{upstream_port}"),
+                website_url: format!("http://127.0.0.1:{upstream_port}"),
+                api_base_url: format!("http://127.0.0.1:{upstream_port}/v1"),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-test-streaming".to_string(),
@@ -3752,7 +3753,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "Responses streaming station".to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: format!("http://127.0.0.1:{upstream_port}"),
+                website_url: format!("http://127.0.0.1:{upstream_port}"),
+                api_base_url: format!("http://127.0.0.1:{upstream_port}/v1"),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-test-responses-streaming".to_string(),
@@ -4365,7 +4367,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "First models station".to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: format!("http://127.0.0.1:{first_port}"),
+                website_url: format!("http://127.0.0.1:{first_port}"),
+                api_base_url: format!("http://127.0.0.1:{first_port}/v1"),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-first-models".to_string(),
@@ -4381,7 +4384,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "Second models station".to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: format!("http://127.0.0.1:{second_port}"),
+                website_url: format!("http://127.0.0.1:{second_port}"),
+                api_base_url: format!("http://127.0.0.1:{second_port}/v1"),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-second-models".to_string(),
@@ -4694,7 +4698,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: name.to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: base_url.to_string(),
+                website_url: base_url.to_string(),
+                api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: format!("sk-{name}"),

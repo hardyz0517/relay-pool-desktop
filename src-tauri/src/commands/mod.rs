@@ -679,7 +679,7 @@ fn ping_station_endpoint_for_tests(
         .ok_or_else(|| "未找到要 PING 的中转站".to_string())?;
     let checked_at = now_millis_for_services().to_string();
     let probe = probe_station_endpoint(
-        &station.base_url,
+        &station.api_base_url,
         Duration::from_secs(timeout_seconds.max(1)),
     );
     let health = database.upsert_station_endpoint_health(
@@ -1178,8 +1178,7 @@ pub async fn start_capture_session(
             .build()
             .map_err(|error| format!("打开网页登录窗口失败: {error}"))?;
             if let Some(window) = app_handle.get_webview_window(&label_for_start) {
-                let target_url =
-                    collectors::url::collector_base_urls(&station.base_url).management_base_url;
+                let target_url = station.website_url.clone();
                 let target = target_url
                     .parse()
                     .map_err(|error| format!("Base URL 无法作为网页登录地址打开: {error}"))?;
@@ -1214,7 +1213,11 @@ pub fn record_capture_event(
     input: CapturedHttpEventInput,
 ) -> Result<CaptureSessionStatus, String> {
     let station = database.station_for_collector(&input.station_id)?;
-    if !capture_request_belongs_to_station(&station.base_url, &input.request_url) {
+    if !capture_request_belongs_to_station(
+        &station.website_url,
+        &station.api_base_url,
+        &input.request_url,
+    ) {
         return Err("捕获事件不属于当前站点 Base URL，已拒绝。".to_string());
     }
     let web_authorization_candidate = web_authorization_candidate_from_input(&input);
@@ -1308,10 +1311,9 @@ pub async fn finish_web_authorization_session(
 ) -> Result<CollectorRunResult, String> {
     let station = database.station_for_collector(&station_id)?;
     let cookie_header =
-        read_capture_window_cookie_header(app, &station_id, &station.base_url).await?;
-    let urls = collectors::url::collector_base_urls(&station.base_url);
+        read_capture_window_cookie_header(app, &station_id, &station.website_url).await?;
     let verified = capture::web_authorization::verify_newapi_cookie_session(
-        &urls.management_base_url,
+        &station.website_url,
         &cookie_header,
         Duration::from_secs(20),
     )?;
@@ -1352,14 +1354,13 @@ fn capture_window_label(station_id: &str) -> String {
 async fn read_capture_window_cookie_header(
     app: tauri::AppHandle,
     station_id: &str,
-    station_base_url: &str,
+    station_website_url: &str,
 ) -> Result<String, String> {
     let label = capture_window_label(station_id);
     let window = app
         .get_webview_window(&label)
         .ok_or_else(|| "网页登录授权窗口不存在，请重新打开授权窗口。".to_string())?;
-    let urls = collectors::url::collector_base_urls(station_base_url);
-    let target = tauri::Url::parse(&urls.management_base_url)
+    let target = tauri::Url::parse(station_website_url)
         .map_err(|error| format!("站点管理地址无法用于读取 Cookie: {error}"))?;
 
     let cookies = tauri::async_runtime::spawn_blocking(move || window.cookies_for_url(target))
@@ -1375,9 +1376,12 @@ async fn read_capture_window_cookie_header(
         .ok_or_else(|| "网页登录授权未捕获到可用 Cookie，请确认已在授权窗口完成登录。".to_string())
 }
 
-fn capture_request_belongs_to_station(station_base_url: &str, request_url: &str) -> bool {
-    let urls = collectors::url::collector_base_urls(station_base_url);
-    let belongs = [&urls.management_base_url, &urls.upstream_api_base_url]
+fn capture_request_belongs_to_station(
+    station_website_url: &str,
+    station_api_base_url: &str,
+    request_url: &str,
+) -> bool {
+    let belongs = [station_website_url, station_api_base_url]
         .into_iter()
         .any(|base_url| url_has_base_prefix(request_url, base_url));
     belongs
@@ -1758,7 +1762,7 @@ fn test_station_key_connectivity_blocking(
         })
         .unwrap_or(UpstreamApiFormat::Auto);
     let discovered_models =
-        discover_station_key_connectivity_models(&key.station_base_url, &api_key)
+        discover_station_key_connectivity_models(&key.station_api_base_url, &api_key)
             .unwrap_or_default();
     let requested_model = model.trim().to_string();
     let candidates = station_key_connectivity_model_candidates(
@@ -1772,7 +1776,7 @@ fn test_station_key_connectivity_blocking(
             capabilities.as_ref(),
             |kind| {
                 send_station_key_connectivity_probe(
-                    &key.station_base_url,
+                    &key.station_api_base_url,
                     &api_key,
                     candidate,
                     kind,
@@ -2233,6 +2237,7 @@ mod tests {
     #[test]
     fn capture_request_belongs_to_management_base_when_station_url_uses_v1() {
         assert!(capture_request_belongs_to_station(
+            "https://relay.example.com",
             "https://relay.example.com/v1",
             "https://relay.example.com/api/v1/auth/login"
         ));
@@ -2241,6 +2246,7 @@ mod tests {
     #[test]
     fn capture_request_rejects_other_station_origins() {
         assert!(!capture_request_belongs_to_station(
+            "https://relay.example.com",
             "https://relay.example.com/v1",
             "https://other.example.com/api/v1/auth/login"
         ));
