@@ -150,8 +150,9 @@ export type ThemeUpdateResult = {
 - 使用 `@tauri-apps/api/window` 的当前窗口 `setTheme`。
 - `light`、`dark` 传明确主题；`system` 映射为 `null`，交还操作系统管理。
 - 浏览器预览、权限缺失或 Tauri 调用失败时返回失败结果，不抛到 React 渲染链。
-- 使用串行、末值优先队列合并重复请求，保证快速连续切换后最后一个偏好最后落地。
-- 每次请求携带递增 generation；过期请求完成后不得刷新当前系统主题状态。
+- 使用模块级单例的串行、末值优先队列合并重复请求，保证快速连续切换后最后一个偏好最后落地。
+- 单例队列的 generation 在 Provider 生命周期之外单调递增；Strict Mode 卸载旧 Provider 后，旧请求仍不能越过新实例的请求。
+- 每次请求携带 generation；过期请求完成后不得刷新当前系统主题状态。
 
 不新增自定义 Rust command，也不扩展 `src-tauri/permissions/main-window.toml` 中的应用 command 集合。主窗口由 `src-tauri/capabilities/default.json` 聚合权限，因此只在该 capability 中增加 Tauri 2 的 `core:window:allow-set-theme`。
 
@@ -309,7 +310,7 @@ matchMedia change
 - `StatusBadge` 等共享组件统一拥有状态色，业务页面只传语义 tone。
 - Portal 渲染的 Dialog、Select、Toast 必须继承根变量，不创建独立主题状态。
 
-新增 `scripts/theme-audit.mjs`，扫描 `src/**/*.{ts,tsx}` 中禁止的原始中性色工具类。`package.json` 增加 `theme:audit`，并将其纳入常规构建验证。审计目标为零例外；确实需要的固定颜色应先获得语义名称，而不是维护文件行号白名单。
+新增 `scripts/theme-audit.mjs`，扫描 `src/**/*.{ts,tsx}` 中禁止的原始 Tailwind 调色板颜色工具类，包括中性色和 red/orange/amber/yellow/lime/green/emerald/teal/cyan/sky/blue/indigo/violet/purple/fuchsia/pink/rose 状态与强调色族。审计同时禁止组件类名中的直接 `rgba()`、十六进制颜色和 `hsl(var(--...))` 任意值表达式；这些颜色必须先在 Tailwind 配置中获得稳定语义名称。`package.json` 增加 `theme:audit`，并将其纳入常规构建验证。审计目标为零例外；确实需要的固定颜色应先获得语义名称，而不是维护文件行号白名单。
 
 ## 全应用迁移范围
 
@@ -489,6 +490,7 @@ matchMedia change
 - 偏好、有效主题、系统主题和原生主题的所有转换都有明确类型和单向数据流。
 - 存储、媒体查询和 Tauri 三类外部失败均有非阻断降级。
 - 原生调用使用串行末值优先队列和 generation，避免快速切换竞态。
+- 原生队列位于 Provider 生命周期之外，Strict Mode 重挂载不会重置竞态保护。
 - 系统模式在原生 `setTheme(null)` 后重新采样，覆盖 WebView 媒体查询更新延迟。
 - Strict Mode、切换边界和过期媒体事件均有测试合同。
 - 浏览器和真实 Tauri 分层验收，避免用 Web 预览推断原生标题栏行为。
