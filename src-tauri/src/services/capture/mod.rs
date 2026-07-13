@@ -196,10 +196,7 @@ pub fn extract_session_credentials(
         access_token,
         refresh_token,
         cookie,
-        newapi_user_id: find_string_field(
-            json,
-            &["newapi_user_id", "newapiUserId", "user_id", "userId"],
-        ),
+        newapi_user_id: extract_newapi_user_id(json),
         token_expires_at: find_string_field(
             json,
             &[
@@ -225,6 +222,43 @@ fn is_auth_capture_path(input: &CapturedHttpEventInput) -> bool {
         || lower.contains("/auth/refresh")
         || lower.ends_with("/login")
         || lower.ends_with("/session")
+}
+
+pub(crate) fn extract_newapi_user_id(value: &Value) -> Option<String> {
+    find_string_or_i64_field(
+        value,
+        &[
+            "newapi_user_id",
+            "newapiUserId",
+            "user_id",
+            "userId",
+            "id",
+        ],
+    )
+}
+
+fn find_string_or_i64_field(value: &Value, names: &[&str]) -> Option<String> {
+    match value {
+        Value::Object(map) => {
+            for name in names {
+                if let Some(text) = map.get(*name).and_then(Value::as_str) {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed.to_string());
+                    }
+                }
+                if let Some(number) = map.get(*name).and_then(Value::as_i64) {
+                    return Some(number.to_string());
+                }
+            }
+            map.values()
+                .find_map(|child| find_string_or_i64_field(child, names))
+        }
+        Value::Array(items) => items
+            .iter()
+            .find_map(|child| find_string_or_i64_field(child, names)),
+        _ => None,
+    }
 }
 
 fn find_string_field(value: &Value, names: &[&str]) -> Option<String> {
@@ -604,6 +638,38 @@ mod tests {
         assert_eq!(summary["recognized"]["modelCount"], json!(1));
         assert_eq!(normalized["status"], json!("needs_confirmation"));
         assert_eq!(raw["events"][0]["path"], json!("/api/ratio_config"));
+    }
+
+    #[test]
+    fn capture_extracts_newapi_user_id_from_data_id() {
+        let payload = json!({
+            "success": true,
+            "data": {
+                "id": 42,
+                "username": "kami-user"
+            }
+        });
+
+        assert_eq!(
+            super::extract_newapi_user_id(&payload).as_deref(),
+            Some("42")
+        );
+    }
+
+    #[test]
+    fn capture_extracts_newapi_user_id_from_nested_user_id() {
+        let payload = json!({
+            "data": {
+                "profile": {
+                    "userId": "newapi-user-99"
+                }
+            }
+        });
+
+        assert_eq!(
+            super::extract_newapi_user_id(&payload).as_deref(),
+            Some("newapi-user-99")
+        );
     }
 
     #[test]
