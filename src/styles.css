@@ -3,20 +3,93 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
-  --background: 0 0% 100%;
-  --foreground: 222 22% 12%;
-  --muted: 220 14% 96%;
-  --muted-foreground: 220 9% 42%;
-  --accent: 211 100% 52%;
-  --accent-foreground: 0 0% 100%;
-  --border: 220 13% 89%;
   --surface-radius: 8px;
-  --surface-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
-  --surface-shadow-hover: 0 12px 30px rgba(15, 23, 42, 0.08);
   --shell-sidebar-width: 64px;
   --shell-header-height: 52px;
   --shell-page-gap: 16px;
+}
+
+:root,
+.light {
+  color-scheme: light;
+  --background: 220 14% 97%;
+  --foreground: 222 22% 12%;
+  --surface: 0 0% 100%;
+  --surface-subtle: 220 14% 97%;
+  --surface-inset: 220 14% 95%;
+  --popover: 0 0% 100%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 220 9% 42%;
+  --border: 220 13% 89%;
+  --border-strong: 220 10% 78%;
+  --input: 220 13% 84%;
+  --ring: 211 100% 52%;
+  --hover: 220 14% 94%;
+  --selected: 220 20% 90%;
+  --selected-foreground: 222 22% 12%;
+  --scrim: 222 22% 12%;
+  --control-thumb: 0 0% 100%;
+  --on-solid: 0 0% 100%;
+  --primary: 211 100% 42%;
+  --primary-solid: 211 100% 42%;
+  --primary-foreground: 0 0% 100%;
+  --accent: var(--primary);
+  --accent-foreground: var(--primary-foreground);
+  --success-surface: 152 60% 95%; --success-foreground: 158 64% 27%; --success-border: 151 38% 80%;
+  --warning-surface: 48 100% 96%; --warning-foreground: 32 85% 28%; --warning-border: 45 80% 75%;
+  --danger-surface: 0 86% 97%; --danger-foreground: 0 72% 40%; --danger-border: 0 72% 85%; --danger-solid: 350 75% 44%;
+  --info-surface: 210 100% 96%; --info-foreground: 211 75% 40%; --info-border: 211 75% 84%;
+  --platform-anthropic-surface: 28 100% 96%; --platform-anthropic-foreground: 24 80% 36%; --platform-anthropic-border: 25 75% 84%;
+  --platform-openai-surface: 151 55% 95%; --platform-openai-foreground: 158 60% 28%; --platform-openai-border: 151 40% 82%;
+  --platform-gemini-surface: 213 100% 96%; --platform-gemini-foreground: 217 75% 42%; --platform-gemini-border: 215 75% 85%;
+  --platform-grok-surface: 220 10% 92%; --platform-grok-foreground: 220 12% 25%; --platform-grok-border: 220 10% 80%;
+  --platform-image-surface: 260 100% 97%; --platform-image-foreground: 258 60% 45%; --platform-image-border: 260 65% 87%;
+  --platform-generic-surface: 220 14% 96%; --platform-generic-foreground: 220 9% 42%; --platform-generic-border: 220 13% 84%;
+  --surface-shadow: 0 8px 24px rgb(15 23 42 / 0.05);
+  --surface-shadow-hover: 0 12px 30px rgb(15 23 42 / 0.08);
+  --popover-shadow: 0 18px 48px rgb(15 23 42 / 0.14);
+  --dialog-shadow: 0 24px 70px rgb(15 23 42 / 0.18);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: 220 8% 10%;
+  --foreground: 210 10% 94%;
+  --surface: 220 7% 13%;
+  --surface-subtle: 220 7% 16%;
+  --surface-inset: 220 8% 9%;
+  --popover: 220 7% 14%;
+  --muted: 220 6% 19%;
+  --muted-foreground: 215 8% 68%;
+  --border: 220 6% 24%;
+  --border-strong: 220 6% 32%;
+  --input: 220 6% 30%;
+  --ring: 211 90% 62%;
+  --hover: 220 7% 19%;
+  --selected: 220 7% 23%;
+  --selected-foreground: 210 10% 96%;
+  --scrim: 0 0% 0%;
+  --control-thumb: 0 0% 92%;
+  --on-solid: 0 0% 100%;
+  --primary: 211 95% 70%;
+  --primary-solid: 211 85% 45%;
+  --primary-foreground: 0 0% 100%;
+  --accent: var(--primary);
+  --accent-foreground: var(--primary-foreground);
+  --success-surface: 154 40% 16%; --success-foreground: 150 55% 70%; --success-border: 153 38% 30%;
+  --warning-surface: 36 45% 16%; --warning-foreground: 42 80% 70%; --warning-border: 38 50% 32%;
+  --danger-surface: 0 38% 18%; --danger-foreground: 0 75% 72%; --danger-border: 0 50% 35%; --danger-solid: 350 75% 47%;
+  --info-surface: 211 42% 18%; --info-foreground: 210 85% 72%; --info-border: 211 55% 36%;
+  --platform-anthropic-surface: 25 36% 17%; --platform-anthropic-foreground: 28 72% 72%; --platform-anthropic-border: 25 45% 34%;
+  --platform-openai-surface: 154 35% 16%; --platform-openai-foreground: 151 52% 70%; --platform-openai-border: 153 36% 31%;
+  --platform-gemini-surface: 216 38% 18%; --platform-gemini-foreground: 214 82% 74%; --platform-gemini-border: 216 48% 36%;
+  --platform-grok-surface: 220 6% 19%; --platform-grok-foreground: 215 8% 76%; --platform-grok-border: 220 6% 34%;
+  --platform-image-surface: 260 32% 19%; --platform-image-foreground: 258 72% 76%; --platform-image-border: 260 42% 38%;
+  --platform-generic-surface: 220 6% 19%; --platform-generic-foreground: 215 8% 68%; --platform-generic-border: 220 6% 32%;
+  --surface-shadow: 0 8px 28px rgb(0 0 0 / 0.28);
+  --surface-shadow-hover: 0 12px 34px rgb(0 0 0 / 0.34);
+  --popover-shadow: 0 18px 48px rgb(0 0 0 / 0.42);
+  --dialog-shadow: 0 24px 70px rgb(0 0 0 / 0.52);
 }
 
 * {

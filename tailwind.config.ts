@@ -1,18 +1,75 @@
 import type { Config } from "tailwindcss";
 
+const token = (name: string) => `hsl(var(--${name}) / <alpha-value>)`;
+
 const config = {
   darkMode: ["class"],
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        border: "hsl(var(--border))",
-        background: "hsl(var(--background))",
-        foreground: "hsl(var(--foreground))",
-        muted: "hsl(var(--muted))",
-        "muted-foreground": "hsl(var(--muted-foreground))",
-        accent: "hsl(var(--accent))",
-        "accent-foreground": "hsl(var(--accent-foreground))",
+        background: token("background"),
+        foreground: token("foreground"),
+        surface: token("surface"),
+        "surface-subtle": token("surface-subtle"),
+        "surface-inset": token("surface-inset"),
+        popover: token("popover"),
+        muted: token("muted"),
+        "muted-foreground": token("muted-foreground"),
+        border: token("border"),
+        "border-strong": token("border-strong"),
+        input: token("input"),
+        ring: token("ring"),
+        hover: token("hover"),
+        selected: token("selected"),
+        "selected-foreground": token("selected-foreground"),
+        scrim: token("scrim"),
+        "control-thumb": token("control-thumb"),
+        "on-solid": token("on-solid"),
+        primary: {
+          DEFAULT: token("primary"),
+          solid: token("primary-solid"),
+          foreground: token("primary-foreground"),
+        },
+        success: {
+          surface: token("success-surface"),
+          foreground: token("success-foreground"),
+          border: token("success-border"),
+        },
+        warning: {
+          surface: token("warning-surface"),
+          foreground: token("warning-foreground"),
+          border: token("warning-border"),
+        },
+        danger: {
+          surface: token("danger-surface"),
+          foreground: token("danger-foreground"),
+          border: token("danger-border"),
+          solid: token("danger-solid"),
+        },
+        info: {
+          surface: token("info-surface"),
+          foreground: token("info-foreground"),
+          border: token("info-border"),
+        },
+        platform: Object.fromEntries(
+          ["anthropic", "openai", "gemini", "grok", "image", "generic"].map((platform) => [
+            platform,
+            {
+              surface: token(`platform-${platform}-surface`),
+              foreground: token(`platform-${platform}-foreground`),
+              border: token(`platform-${platform}-border`),
+            },
+          ]),
+        ),
+        accent: token("accent"),
+        "accent-foreground": token("accent-foreground"),
+      },
+      boxShadow: {
+        surface: "var(--surface-shadow)",
+        "surface-hover": "var(--surface-shadow-hover)",
+        popover: "var(--popover-shadow)",
+        dialog: "var(--dialog-shadow)",
       },
       borderRadius: {
         lg: "8px",
