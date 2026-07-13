@@ -1,0 +1,266 @@
+use url::Url;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StationEndpointUrls {
+    pub website_url: String,
+    pub api_base_url: String,
+}
+
+pub fn normalize_station_endpoints(
+    website_url: &str,
+    api_base_url: &str,
+) -> Result<StationEndpointUrls, String> {
+    Ok(StationEndpointUrls {
+        website_url: normalize_endpoint_url(website_url, "前端网址", false)?,
+        api_base_url: normalize_endpoint_url(api_base_url, "API Base URL", true)?,
+    })
+}
+
+pub fn build_management_url(base: &str, path: &str) -> Result<String, String> {
+    append_resource(base, path.trim_start_matches('/'))
+}
+
+pub fn build_api_url(base: &str, local_path: &str) -> Result<String, String> {
+    let resource = local_path
+        .strip_prefix("/v1/")
+        .or_else(|| local_path.strip_prefix("v1/"))
+        .unwrap_or_else(|| local_path.trim_start_matches('/'));
+    if !is_valid_resource_path(resource) {
+        return Err("上游 API 资源路径无效".to_string());
+    }
+    append_resource(base, resource)
+}
+
+pub fn same_origin(left: &str, right: &str) -> Result<bool, String> {
+    let left = Url::parse(left).map_err(|error| format!("URL 无效: {error}"))?;
+    let right = Url::parse(right).map_err(|error| format!("URL 无效: {error}"))?;
+    Ok(origins_match(&left, &right))
+}
+
+pub(crate) fn legacy_api_base_url(website_url: &str) -> Result<String, String> {
+    let normalized = normalize_endpoint_url(website_url, "前端网址", false)?;
+    let url = Url::parse(&normalized).map_err(|error| format!("前端网址无效: {error}"))?;
+    if last_path_segment(&url).is_some_and(is_version_segment) {
+        return Ok(normalized);
+    }
+    append_resource(&normalized, "v1")
+}
+
+pub(crate) fn legacy_website_url(api_base_url: &str) -> Result<String, String> {
+    let normalized = normalize_endpoint_url(api_base_url, "API Base URL", false)?;
+    let mut url = Url::parse(&normalized).map_err(|error| format!("API Base URL 无效: {error}"))?;
+    if last_path_segment(&url).is_some_and(is_version_segment) {
+        url.path_segments_mut()
+            .map_err(|_| "API Base URL 无法作为层级网址".to_string())?
+            .pop();
+    }
+    normalized_url_string(url)
+}
+
+pub(crate) fn url_belongs_to_base(candidate: &str, base: &str) -> bool {
+    let Ok(candidate) = Url::parse(candidate) else {
+        return false;
+    };
+    let Ok(base) = Url::parse(base) else {
+        return false;
+    };
+    if !origins_match(&candidate, &base) {
+        return false;
+    }
+
+    let candidate_segments = meaningful_path_segments(&candidate);
+    let base_segments = meaningful_path_segments(&base);
+    candidate_segments.starts_with(&base_segments)
+}
+
+fn normalize_endpoint_url(
+    value: &str,
+    label: &str,
+    reject_resource: bool,
+) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!("{label}不能为空"));
+    }
+
+    let mut url = Url::parse(value).map_err(|error| format!("{label}无效: {error}"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(format!("{label}必须是有效的 HTTP(S) 网址"));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(format!("{label}不能包含用户凭据"));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(format!("{label}不能包含查询参数或片段"));
+    }
+
+    trim_trailing_path_slashes(&mut url);
+    if reject_resource && is_final_api_resource(&url) {
+        return Err(format!("{label}必须是 API 命名空间，不能是最终资源网址"));
+    }
+    normalized_url_string(url)
+}
+
+fn append_resource(base: &str, resource: &str) -> Result<String, String> {
+    if !is_valid_resource_path(resource) {
+        return Err("资源路径无效".to_string());
+    }
+
+    let normalized = normalize_endpoint_url(base, "基础网址", false)?;
+    let mut url = Url::parse(&normalized).map_err(|error| format!("基础网址无效: {error}"))?;
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| "基础网址无法追加资源路径".to_string())?;
+        for segment in resource.split('/').filter(|segment| !segment.is_empty()) {
+            segments.push(segment);
+        }
+    }
+    normalized_url_string(url)
+}
+
+fn is_valid_resource_path(resource: &str) -> bool {
+    !resource.is_empty()
+        && !resource.contains("://")
+        && resource
+            .split('/')
+            .all(|segment| !matches!(segment, "." | ".."))
+}
+
+fn is_final_api_resource(url: &Url) -> bool {
+    let segments = meaningful_path_segments(url);
+    matches!(segments.last(), Some(&"responses") | Some(&"models"))
+        || segments.ends_with(&["chat", "completions"])
+}
+
+fn last_path_segment(url: &Url) -> Option<&str> {
+    url.path_segments()?
+        .filter(|segment| !segment.is_empty())
+        .next_back()
+}
+
+fn is_version_segment(segment: &str) -> bool {
+    segment
+        .strip_prefix('v')
+        .is_some_and(|version| !version.is_empty() && version.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn meaningful_path_segments(url: &Url) -> Vec<&str> {
+    url.path_segments()
+        .into_iter()
+        .flatten()
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+fn origins_match(left: &Url, right: &Url) -> bool {
+    left.scheme() == right.scheme()
+        && left.host_str() == right.host_str()
+        && left.port_or_known_default() == right.port_or_known_default()
+}
+
+fn trim_trailing_path_slashes(url: &mut Url) {
+    let path = url.path().trim_end_matches('/').to_string();
+    url.set_path(&path);
+}
+
+fn normalized_url_string(url: Url) -> Result<String, String> {
+    let value = url.to_string();
+    let normalized = value.trim_end_matches('/');
+    if normalized.is_empty() {
+        return Err("URL 无效".to_string());
+    }
+    Ok(normalized.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_resources_from_complete_api_namespaces() {
+        assert_eq!(
+            build_management_url("https://relay.example/api", "/user/self").unwrap(),
+            "https://relay.example/api/user/self"
+        );
+        assert_eq!(
+            build_api_url("https://relay.example/v1", "/v1/responses").unwrap(),
+            "https://relay.example/v1/responses"
+        );
+        assert_eq!(
+            build_api_url("https://ark.example/api/v3", "/v1/chat/completions",).unwrap(),
+            "https://ark.example/api/v3/chat/completions"
+        );
+        assert_eq!(
+            build_api_url("https://relay.example/proxy/v1", "/v1/models").unwrap(),
+            "https://relay.example/proxy/v1/models"
+        );
+    }
+
+    #[test]
+    fn rejects_final_resource_urls_as_api_bases() {
+        let error = normalize_station_endpoints(
+            "https://relay.example",
+            "https://api.example/v1/responses",
+        )
+        .expect_err("final response URL must not be accepted as a base");
+        assert!(error.contains("API Base URL"));
+    }
+
+    #[test]
+    fn derives_legacy_versioned_namespaces_without_corrupting_provider_paths() {
+        assert_eq!(
+            legacy_api_base_url("https://relay.example").unwrap(),
+            "https://relay.example/v1"
+        );
+        assert_eq!(
+            legacy_api_base_url("https://relay.example/proxy").unwrap(),
+            "https://relay.example/proxy/v1"
+        );
+        assert_eq!(
+            legacy_api_base_url("https://ark.example/api/v3").unwrap(),
+            "https://ark.example/api/v3"
+        );
+        assert_eq!(
+            legacy_website_url("https://relay.example/v1").unwrap(),
+            "https://relay.example"
+        );
+    }
+
+    #[test]
+    fn base_membership_uses_origin_and_path_boundaries() {
+        assert!(url_belongs_to_base(
+            "https://relay.example/api/user/self",
+            "https://relay.example/api",
+        ));
+        assert!(!url_belongs_to_base(
+            "https://relay.example.evil.test/api/user/self",
+            "https://relay.example",
+        ));
+        assert!(!url_belongs_to_base(
+            "https://relay.example/apix/user/self",
+            "https://relay.example/api",
+        ));
+    }
+
+    #[test]
+    fn normalizes_endpoint_urls_and_compares_origins() {
+        assert_eq!(
+            normalize_station_endpoints(
+                " https://relay.example/ ",
+                " https://api.example/proxy/v1/ ",
+            )
+            .unwrap(),
+            StationEndpointUrls {
+                website_url: "https://relay.example".to_string(),
+                api_base_url: "https://api.example/proxy/v1".to_string(),
+            }
+        );
+        assert!(same_origin(
+            "https://relay.example/path",
+            "https://relay.example:443/other",
+        )
+        .unwrap());
+        assert!(!same_origin("https://relay.example/path", "http://relay.example/path",).unwrap());
+    }
+}
