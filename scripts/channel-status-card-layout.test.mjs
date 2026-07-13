@@ -49,8 +49,8 @@ assert.ok(
 );
 
 assert.ok(
-  source.includes("visibleRunsByMonitor") &&
-    source.includes("filterChannelMonitorRunsByWindow(runs, timeWindow)") &&
-    source.includes('timeWindow === "recent"'),
-  "channel status time-window tabs should filter monitor runs and reserve aggregate health fallback for recent mode",
+  source.includes("selectChannelStatusWindowSummary(backendSummary, timeWindow)") &&
+    source.includes('const aggregateHealth = timeWindow === "recent" ? keyHealth : null') &&
+    source.includes("buildMonitorTimelineOutcomes(windowSummary.timeline)"),
+  "channel status time-window tabs should use backend summaries and reserve aggregate health fallback for recent mode",
 );

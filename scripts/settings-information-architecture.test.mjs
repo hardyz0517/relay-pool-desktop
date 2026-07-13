@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 const settings = await readFile("src/features/settings/SettingsPage.tsx", "utf8");
 const scaffold = await readFile("src/components/shell/PageScaffold.tsx", "utf8");
 const app = await readFile("src/app/App.tsx", "utf8");
+const shellPageRegistry = await readFile("src/app/shellPageRegistry.tsx", "utf8");
 const pricing = await readFile("src/features/pricing/PricingPage.tsx", "utf8");
 const collectors = await readFile("src/features/collectors/CollectorsPage.tsx", "utf8");
 
@@ -33,7 +34,8 @@ assert.doesNotMatch(settings, /onOpenModelBasePrices/);
 
 assert.match(scaffold, /max-w-\[1080px\]/);
 assert.doesNotMatch(app, /<SettingsPage onOpenModelBasePrices=/);
-assert.match(app, /return <SettingsPage \/>/);
+assert.doesNotMatch(shellPageRegistry, /<SettingsPage onOpenModelBasePrices=/);
+assert.match(shellPageRegistry, /return <SettingsPage \/>/);
 assert.match(pricing, /模型基准价格/);
 assert.match(collectors, /<CollectorAdvancedSettings \/>/);
 

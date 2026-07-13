@@ -26,9 +26,9 @@ assert.match(settingsApi, /value === "automatic" \|\| value === "automatic_balan
 assert.match(routingPage, /SETTINGS_UPDATED_EVENT/);
 assert.match(routingPage, /addEventListener\(SETTINGS_UPDATED_EVENT/);
 assert.match(routingPage, /removeEventListener\(SETTINGS_UPDATED_EVENT/);
-assert.match(routingPage, /void refresh\(false\)/);
-assert.match(routingPage, /refreshOperationRef/);
-assert.match(routingPage, /operationId !== refreshOperationRef\.current/);
+assert.match(routingPage, /queryClient\.invalidateQueries/);
+assert.match(routingPage, /queryKeys\.localRoutingWorkspace/);
+assert.match(routingPage, /useActivityQuery/);
 assert.match(localRoutingApi, /getSettings/);
 assert.match(localRoutingApi, /settings\.localProxyPort/);
 assert.match(localRoutingApi, /port:\s*settings\.localProxyPort/);

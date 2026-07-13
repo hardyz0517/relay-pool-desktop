@@ -11,14 +11,14 @@ use crate::{
         },
         routing::{StationKeyCapabilities, UpdateStationKeyCapabilitiesInput},
         shared_capabilities::{
-            ChannelMonitorRunsLoadStatus, ChannelMonitorSummary, SaveStationKeyMode,
-            SaveStationKeyWithDefaultsInput, SaveStationKeyWithDefaultsResult, StationGroupOption,
-            StationKeyGroupSelectionKind,
+            ChannelMonitorRunsLoadStatus, ChannelMonitorSummary, ChannelStatusSummary,
+            ChannelStatusWindowSummary, SaveStationKeyMode, SaveStationKeyWithDefaultsInput,
+            SaveStationKeyWithDefaultsResult, StationGroupOption, StationKeyGroupSelectionKind,
         },
         station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
     },
     services::{
-        database::{self, AppDatabase},
+        database::{self, AppDatabase, ChannelStatusWindowFacts},
         group_categories::{infer_group_category, normalize_group_category},
     },
 };
@@ -207,6 +207,57 @@ pub fn channel_monitor_summaries_from_database(
             }
         })
         .collect()
+}
+
+pub fn channel_status_summaries_from_database(
+    database: &AppDatabase,
+    monitors: Vec<ChannelMonitor>,
+) -> Result<Vec<ChannelStatusSummary>, String> {
+    let now = crate::services::database::now_millis_for_services() as i64;
+    let last24h_since = now - 24 * 60 * 60 * 1000;
+    let last7d_since = now - 7 * 24 * 60 * 60 * 1000;
+
+    monitors
+        .into_iter()
+        .map(|monitor| {
+            let recent = database.channel_status_window_facts(&monitor.id, None, 60)?;
+            let last24h = database.channel_status_window_facts(&monitor.id, Some(last24h_since), 60)?;
+            let last7d = database.channel_status_window_facts(&monitor.id, Some(last7d_since), 60)?;
+
+            Ok(ChannelStatusSummary {
+                monitor,
+                recent: channel_status_window_summary("recent", recent),
+                last24h: channel_status_window_summary("24h", last24h),
+                last7d: channel_status_window_summary("7d", last7d),
+            })
+        })
+        .collect()
+}
+
+fn channel_status_window_summary(
+    window: &str,
+    facts: ChannelStatusWindowFacts,
+) -> ChannelStatusWindowSummary {
+    let availability_percent = if facts.total_count == 0 {
+        None
+    } else {
+        Some((facts.success_count as f64 / facts.total_count as f64) * 100.0)
+    };
+
+    ChannelStatusWindowSummary {
+        window: window.to_string(),
+        total_count: facts.total_count,
+        success_count: facts.success_count,
+        failure_count: facts.failure_count,
+        warning_count: facts.warning_count,
+        availability_percent,
+        avg_latency_ms: facts.avg_latency_ms,
+        avg_endpoint_ping_ms: facts.avg_endpoint_ping_ms,
+        last_checked_at: facts.last_checked_at,
+        latest_status: facts.latest_status,
+        latest_error_message: facts.latest_error_message,
+        timeline: facts.timeline,
+    }
 }
 
 #[allow(dead_code)]

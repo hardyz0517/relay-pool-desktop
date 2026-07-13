@@ -727,24 +727,7 @@ function KeyConnectivityTestDialog({
   }, [modelOptions, open, item?.id]);
 
   useEffect(() => {
-    if (!fullResponseText) {
-      setDisplayedResponseText("");
-      return;
-    }
-
-    setDisplayedResponseText("");
-    let index = 0;
-    const interval = window.setInterval(() => {
-      index += 1;
-      setDisplayedResponseText(fullResponseText.slice(0, index));
-      if (index >= fullResponseText.length) {
-        window.clearInterval(interval);
-      }
-    }, 28);
-
-    return () => {
-      window.clearInterval(interval);
-    };
+    setDisplayedResponseText(fullResponseText);
   }, [fullResponseText]);
 
   return (

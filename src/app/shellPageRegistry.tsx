@@ -52,7 +52,7 @@ export const ShellPageContent = memo(function ShellPageContent({
     case "logs":
       return <LogsPage />;
     case "settings":
-      return <SettingsPage onOpenModelBasePrices={actions.openModelBasePrices} />;
+      return <SettingsPage />;
     case "dashboard":
     default:
       return <DashboardPage />;

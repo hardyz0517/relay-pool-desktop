@@ -25,9 +25,9 @@ assert.ok(
 
 assert.ok(
   pageSource.includes("displayedResponseText") &&
-    pageSource.includes("window.setInterval") &&
+    !pageSource.includes("window.setInterval") &&
     pageSource.includes("responseTypingComplete"),
-  "connectivity dialog should reveal the final response with a typewriter effect",
+  "connectivity dialog should reveal the final response without owning a retained-page interval",
 );
 
 assert.ok(

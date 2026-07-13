@@ -95,3 +95,32 @@ export type ChannelMonitorSummary = {
   runsLoadStatus: ChannelMonitorRunsLoadStatus;
   latestRun: ChannelMonitorRun | null;
 };
+
+export type ChannelStatusTimelinePoint = {
+  status: ChannelMonitorRunStatus;
+  latencyMs: number | null;
+  endpointPingMs: number | null;
+  checkedAt: string;
+};
+
+export type ChannelStatusWindowSummary = {
+  window: "recent" | "24h" | "7d";
+  totalCount: number;
+  successCount: number;
+  failureCount: number;
+  warningCount: number;
+  availabilityPercent: number | null;
+  avgLatencyMs: number | null;
+  avgEndpointPingMs: number | null;
+  lastCheckedAt: string | null;
+  latestStatus: ChannelMonitorRunStatus | null;
+  latestErrorMessage: string | null;
+  timeline: ChannelStatusTimelinePoint[];
+};
+
+export type ChannelStatusSummary = {
+  monitor: ChannelMonitor;
+  recent: ChannelStatusWindowSummary;
+  last24h: ChannelStatusWindowSummary;
+  last7d: ChannelStatusWindowSummary;
+};

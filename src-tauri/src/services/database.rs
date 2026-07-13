@@ -46,12 +46,28 @@ use crate::models::{
     secrets::{SecretMigrationReport, SecretScanFinding},
     settings::{AppSettings, UpdateSettingsInput},
     shared_capabilities::{
-        ChannelMonitorSummary, SaveStationKeyWithDefaultsInput, SaveStationKeyWithDefaultsResult,
-        StationGroupOption,
+        ChannelMonitorSummary, ChannelStatusSummary, ChannelStatusTimelinePoint,
+        SaveStationKeyWithDefaultsInput, SaveStationKeyWithDefaultsResult, StationGroupOption,
     },
     station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, StationEndpointHealth, UpdateStationInput},
 };
+
+const CHANNEL_STATUS_TIMELINE_LIMIT: usize = 60;
+
+#[derive(Debug, Clone)]
+pub struct ChannelStatusWindowFacts {
+    pub total_count: i64,
+    pub success_count: i64,
+    pub failure_count: i64,
+    pub warning_count: i64,
+    pub avg_latency_ms: Option<i64>,
+    pub avg_endpoint_ping_ms: Option<i64>,
+    pub last_checked_at: Option<String>,
+    pub latest_status: Option<String>,
+    pub latest_error_message: Option<String>,
+    pub timeline: Vec<ChannelStatusTimelinePoint>,
+}
 use crate::services::change_events::{
     STATUS_DISMISSED, STATUS_READ, STATUS_RESOLVED, STATUS_UNREAD,
 };
@@ -1447,6 +1463,11 @@ impl AppDatabase {
         )
     }
 
+    pub fn list_channel_status_summaries(&self) -> Result<Vec<ChannelStatusSummary>, String> {
+        let monitors = self.list_channel_monitors()?;
+        crate::services::shared_capabilities::channel_status_summaries_from_database(self, monitors)
+    }
+
     pub fn get_channel_monitor(&self, id: &str) -> Result<ChannelMonitor, String> {
         let connection = self.connection()?;
         channel_monitor_by_id(&connection, id)
@@ -1493,6 +1514,21 @@ impl AppDatabase {
             &monitor_id,
             run_since,
             run_limit,
+        )
+    }
+
+    pub fn channel_status_window_facts(
+        &self,
+        monitor_id: &str,
+        since_ms: Option<i64>,
+        timeline_limit: usize,
+    ) -> Result<ChannelStatusWindowFacts, String> {
+        let connection = self.connection()?;
+        channel_status_window_facts_from_connection(
+            &connection,
+            monitor_id,
+            since_ms,
+            timeline_limit,
         )
     }
 
@@ -1917,8 +1953,8 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_channel_monitor_runs_monitor_created
             ON channel_monitor_runs(monitor_id, created_at DESC);
 
-        CREATE INDEX IF NOT EXISTS idx_channel_monitor_runs_monitor_started
-            ON channel_monitor_runs(monitor_id, started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_channel_monitor_runs_monitor_started_at
+            ON channel_monitor_runs(monitor_id, CAST(started_at AS INTEGER) DESC);
 
         CREATE INDEX IF NOT EXISTS idx_channel_monitor_runs_station_created
             ON channel_monitor_runs(station_id, station_key_id, created_at DESC);
@@ -5925,6 +5961,163 @@ fn list_channel_monitor_runs_for_summary_from_connection(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析通道监控运行记录失败: {error}"))?;
     Ok(runs)
+}
+
+fn channel_status_window_facts_from_connection(
+    connection: &Connection,
+    monitor_id: &str,
+    since_ms: Option<i64>,
+    timeline_limit: usize,
+) -> Result<ChannelStatusWindowFacts, String> {
+    channel_monitor_by_id(connection, monitor_id)?;
+    let timeline_limit = timeline_limit.clamp(1, CHANNEL_STATUS_TIMELINE_LIMIT) as i64;
+
+    let aggregate_sql = if since_ms.is_some() {
+        "SELECT
+            COUNT(*) AS total_count,
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success_count,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failure_count,
+            SUM(CASE WHEN status IN ('warning', 'skipped') THEN 1 ELSE 0 END) AS warning_count,
+            CAST(AVG(COALESCE(latency_ms, duration_ms)) AS INTEGER) AS avg_latency_ms
+         FROM channel_monitor_runs
+         WHERE monitor_id = ?1 AND CAST(started_at AS INTEGER) >= ?2"
+    } else {
+        "WITH latest_runs AS (
+            SELECT status, latency_ms, duration_ms
+              FROM channel_monitor_runs
+             WHERE monitor_id = ?1
+             ORDER BY CAST(started_at AS INTEGER) DESC
+             LIMIT ?2
+         )
+         SELECT
+            COUNT(*) AS total_count,
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success_count,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failure_count,
+            SUM(CASE WHEN status IN ('warning', 'skipped') THEN 1 ELSE 0 END) AS warning_count,
+            CAST(AVG(COALESCE(latency_ms, duration_ms)) AS INTEGER) AS avg_latency_ms
+         FROM latest_runs"
+    };
+
+    let read_aggregate = |row: &rusqlite::Row<'_>| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+            row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+            row.get::<_, Option<i64>>(4)?,
+        ))
+    };
+    let (total_count, success_count, failure_count, warning_count, avg_latency_ms) =
+        if let Some(since_ms) = since_ms {
+            connection.query_row(aggregate_sql, params![monitor_id, since_ms], read_aggregate)
+        } else {
+            connection.query_row(aggregate_sql, params![monitor_id, timeline_limit], read_aggregate)
+        }
+        .map_err(|error| format!("聚合渠道状态窗口失败: {error}"))?;
+
+    let timeline =
+        channel_status_timeline_from_connection(connection, monitor_id, since_ms, timeline_limit)?;
+    let latest = timeline.first();
+    let latest_error_message =
+        latest_channel_status_error(connection, monitor_id, since_ms, timeline_limit)
+            .ok()
+            .flatten();
+
+    Ok(ChannelStatusWindowFacts {
+        total_count,
+        success_count,
+        failure_count,
+        warning_count,
+        avg_latency_ms,
+        avg_endpoint_ping_ms: None,
+        last_checked_at: latest.map(|point| point.checked_at.clone()),
+        latest_status: latest.map(|point| point.status.clone()),
+        latest_error_message,
+        timeline,
+    })
+}
+
+fn channel_status_timeline_from_connection(
+    connection: &Connection,
+    monitor_id: &str,
+    since_ms: Option<i64>,
+    limit: i64,
+) -> Result<Vec<ChannelStatusTimelinePoint>, String> {
+    let timeline_sql = if since_ms.is_some() {
+        "SELECT status, COALESCE(latency_ms, duration_ms), COALESCE(finished_at, started_at)
+           FROM channel_monitor_runs
+          WHERE monitor_id = ?1 AND CAST(started_at AS INTEGER) >= ?2
+          ORDER BY CAST(started_at AS INTEGER) DESC
+          LIMIT ?3"
+    } else {
+        "SELECT status, COALESCE(latency_ms, duration_ms), COALESCE(finished_at, started_at)
+           FROM channel_monitor_runs
+          WHERE monitor_id = ?1
+          ORDER BY CAST(started_at AS INTEGER) DESC
+          LIMIT ?2"
+    };
+
+    let map_row = |row: &rusqlite::Row<'_>| {
+        Ok(ChannelStatusTimelinePoint {
+            status: row.get(0)?,
+            latency_ms: row.get(1)?,
+            endpoint_ping_ms: None,
+            checked_at: row.get(2)?,
+        })
+    };
+
+    let mut statement = connection
+        .prepare(timeline_sql)
+        .map_err(|error| format!("读取渠道状态时间线失败: {error}"))?;
+    let rows = if let Some(since_ms) = since_ms {
+        statement.query_map(params![monitor_id, since_ms, limit], map_row)
+    } else {
+        statement.query_map(params![monitor_id, limit], map_row)
+    }
+    .map_err(|error| format!("查询渠道状态时间线失败: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析渠道状态时间线失败: {error}"))
+}
+
+fn latest_channel_status_error(
+    connection: &Connection,
+    monitor_id: &str,
+    since_ms: Option<i64>,
+    limit: i64,
+) -> Result<Option<String>, String> {
+    let error_sql = if since_ms.is_some() {
+        "SELECT error_message
+           FROM channel_monitor_runs
+          WHERE monitor_id = ?1
+            AND CAST(started_at AS INTEGER) >= ?2
+            AND error_message IS NOT NULL
+            AND TRIM(error_message) != ''
+          ORDER BY CAST(started_at AS INTEGER) DESC
+          LIMIT 1"
+    } else {
+        "WITH latest_runs AS (
+            SELECT error_message, started_at
+              FROM channel_monitor_runs
+             WHERE monitor_id = ?1
+             ORDER BY CAST(started_at AS INTEGER) DESC
+             LIMIT ?2
+         )
+         SELECT error_message
+           FROM latest_runs
+          WHERE error_message IS NOT NULL
+            AND TRIM(error_message) != ''
+          ORDER BY CAST(started_at AS INTEGER) DESC
+          LIMIT 1"
+    };
+
+    if let Some(since_ms) = since_ms {
+        connection.query_row(error_sql, params![monitor_id, since_ms], |row| row.get(0))
+    } else {
+        connection.query_row(error_sql, params![monitor_id, limit], |row| row.get(0))
+    }
+    .optional()
+    .map_err(|error| format!("读取渠道状态最近错误失败: {error}"))
 }
 
 fn insert_channel_monitor_run_in_connection(
