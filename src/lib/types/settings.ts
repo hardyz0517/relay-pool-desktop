@@ -8,7 +8,6 @@ export type RoutingStrategy =
   | "cheap_first"
   | "cost_stable_first";
 
-export type TrayBehavior = "minimize-to-tray" | "close-to-tray" | "disabled";
 export type CollectorProxyMode = "direct" | "system" | "manual";
 
 export type SchedulerAdvancedFieldKind =
@@ -83,7 +82,6 @@ export type AppSettings = {
   collectorTimeoutSeconds: number;
   collectorMaxConcurrency: number;
   allowDepletedFallback: boolean;
-  trayBehavior: TrayBehavior;
   developerModeEnabled: boolean;
   dataDir: string;
   pendingDataDir: string | null;
@@ -113,7 +111,6 @@ export type UpdateSettingsInput = {
   collectorTimeoutSeconds: number;
   collectorMaxConcurrency: number;
   allowDepletedFallback: boolean;
-  trayBehavior: TrayBehavior;
   developerModeEnabled: boolean;
 };
 
@@ -135,7 +132,6 @@ export function appSettingsToUpdateInput(settings: AppSettings): UpdateSettingsI
     collectorTimeoutSeconds: settings.collectorTimeoutSeconds,
     collectorMaxConcurrency: settings.collectorMaxConcurrency,
     allowDepletedFallback: settings.allowDepletedFallback,
-    trayBehavior: settings.trayBehavior,
     developerModeEnabled: settings.developerModeEnabled,
   };
 }
@@ -147,12 +143,6 @@ export const routingStrategyLabels: Record<RoutingStrategy, string> = {
   backup_only: "备用模式",
   cheap_first: "便宜优先",
   cost_stable_first: "低价稳定优先",
-};
-
-export const trayBehaviorLabels: Record<TrayBehavior, string> = {
-  "minimize-to-tray": "最小化到托盘",
-  "close-to-tray": "关闭到托盘",
-  disabled: "禁用",
 };
 
 export const collectorProxyModeLabels: Record<CollectorProxyMode, string> = {
