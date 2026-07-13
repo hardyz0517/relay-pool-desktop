@@ -16,3 +16,4 @@ pub mod secrets;
 pub mod shared_capabilities;
 pub mod station_collectors;
 pub mod stations;
+pub mod updater;
