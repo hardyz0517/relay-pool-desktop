@@ -12,15 +12,27 @@ assert.ok(
 
 assert.match(
   dashboardSource,
-  /<section className="grid gap-3">\s*<header className="flex flex-wrap items-center justify-between gap-3">[\s\S]*?<StatusBadge[\s\S]*?<div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">/,
-  "current risk section should use the same 12px spacing and responsive grid as dashboard metric panels",
+  /<section className="grid min-w-0 gap-3">\s*<header className="flex flex-wrap items-center justify-between gap-3">[\s\S]*?<StatusBadge[\s\S]*?<div className="grid min-w-0 grid-cols-4 gap-3">/,
+  "current risk should keep four shrinkable columns without widening the page",
+);
+
+assert.match(
+  dashboardSource,
+  /activeRiskEvents\.length === 0[\s\S]*?<div className="grid min-w-0 gap-2">/,
+  "current risk detail list should shrink inside the visible page width",
+);
+
+assert.match(
+  dashboardSource,
+  /<ObjectRow\s+key=\{event\.id\}\s+className="min-w-0"/,
+  "each current risk detail row should shrink and truncate",
 );
 
 assert.ok(
   dashboardSource.includes(
-    'className="flex min-h-[96px] items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_8px_rgba(15,23,42,0.08)]"',
+    'className="flex min-h-[96px] min-w-0 items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_8px_rgba(15,23,42,0.08)]"',
   ),
-  "dashboard metric tiles should match the white elevated card style used by MetricPanel cards",
+  "dashboard metric tiles should allow grid tracks to shrink instead of forcing horizontal overflow",
 );
 
 assert.ok(

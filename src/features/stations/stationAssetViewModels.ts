@@ -20,11 +20,61 @@ export type RateChip = {
   tone: "neutral" | "good" | "warning";
 };
 
+export type StationIssueTagKind =
+  | "disabled"
+  | "missing_api_key"
+  | "no_enabled_key"
+  | "key_warning"
+  | "login_required"
+  | "collection_failed"
+  | "not_collected"
+  | "balance_missing"
+  | "balance_zero"
+  | "balance_low"
+  | "group_issue"
+  | "missing_rate";
+
 export type StationIssueTag = {
+  kind: StationIssueTagKind;
   label: string;
   tone: "info" | "warning" | "error" | "disabled";
   title?: string;
 };
+
+export type StationIssueFilterValue = "all" | StationIssueTagKind;
+
+type StationIssueTagDefinition = Omit<StationIssueTag, "kind" | "title">;
+
+const STATION_ISSUE_TAG_DEFINITIONS: Record<StationIssueTagKind, StationIssueTagDefinition> = {
+  disabled: { label: "已禁用", tone: "disabled" },
+  missing_api_key: { label: "缺 API Key", tone: "error" },
+  no_enabled_key: { label: "无可用 Key", tone: "warning" },
+  key_warning: { label: "Key 异常", tone: "warning" },
+  login_required: { label: "需登录", tone: "warning" },
+  collection_failed: { label: "采集失败", tone: "error" },
+  not_collected: { label: "未采集", tone: "info" },
+  balance_missing: { label: "余额未采集", tone: "info" },
+  balance_zero: { label: "余额为零", tone: "error" },
+  balance_low: { label: "余额偏低", tone: "warning" },
+  group_issue: { label: "分组异常", tone: "warning" },
+  missing_rate: { label: "倍率缺失", tone: "warning" },
+};
+
+export const STATION_ISSUE_FILTER_OPTIONS: Array<{ value: StationIssueFilterValue; label: string }> = [
+  { value: "all", label: "全部问题" },
+  { value: "balance_zero", label: STATION_ISSUE_TAG_DEFINITIONS.balance_zero.label },
+  { value: "balance_low", label: STATION_ISSUE_TAG_DEFINITIONS.balance_low.label },
+  { value: "balance_missing", label: STATION_ISSUE_TAG_DEFINITIONS.balance_missing.label },
+  { value: "login_required", label: STATION_ISSUE_TAG_DEFINITIONS.login_required.label },
+  { value: "collection_failed", label: STATION_ISSUE_TAG_DEFINITIONS.collection_failed.label },
+  { value: "missing_api_key", label: STATION_ISSUE_TAG_DEFINITIONS.missing_api_key.label },
+  { value: "no_enabled_key", label: STATION_ISSUE_TAG_DEFINITIONS.no_enabled_key.label },
+  { value: "key_warning", label: STATION_ISSUE_TAG_DEFINITIONS.key_warning.label },
+  { value: "group_issue", label: STATION_ISSUE_TAG_DEFINITIONS.group_issue.label },
+  { value: "missing_rate", label: STATION_ISSUE_TAG_DEFINITIONS.missing_rate.label },
+  { value: "disabled", label: STATION_ISSUE_TAG_DEFINITIONS.disabled.label },
+  { value: "not_collected", label: STATION_ISSUE_TAG_DEFINITIONS.not_collected.label },
+];
 
 export type StationAssetRow = {
   station: Station;
@@ -148,17 +198,17 @@ export function stationIssueTags(row: StationAssetRow): StationIssueTag[] {
   const collectionTag = stationCollectionIssueTag(row);
 
   if (!row.station.enabled || row.station.status === "disabled") {
-    tags.push({ label: "已禁用", tone: "disabled" });
+    tags.push(createStationIssueTag("disabled"));
   }
 
   if (!row.station.apiKeyPresent && row.station.keyCount === 0) {
-    tags.push({ label: "缺 API Key", tone: "error" });
+    tags.push(createStationIssueTag("missing_api_key"));
   } else if (row.station.keyCount > 0 && row.enabledKeyCount === 0) {
-    tags.push({ label: "无可用 Key", tone: "warning" });
+    tags.push(createStationIssueTag("no_enabled_key"));
   }
 
   if (row.warningKeyCount > 0) {
-    tags.push({ label: "Key 异常", tone: "warning" });
+    tags.push(createStationIssueTag("key_warning"));
   }
 
   if (collectionTag) {
@@ -166,25 +216,35 @@ export function stationIssueTags(row: StationAssetRow): StationIssueTag[] {
   }
 
   if (balanceValue == null && row.balanceFactsReady) {
-    tags.push({ label: "余额未采集", tone: "info" });
+    tags.push(createStationIssueTag("balance_missing"));
   } else if (typeof balanceValue === "number" && balanceValue <= 0) {
-    tags.push({ label: "余额为零", tone: "error" });
+    tags.push(createStationIssueTag("balance_zero"));
   } else if (
     row.currentBalance.status === "low" ||
     (typeof balanceValue === "number" && typeof lowBalanceThreshold === "number" && balanceValue < lowBalanceThreshold)
   ) {
-    tags.push({ label: "余额偏低", tone: "warning" });
+    tags.push(createStationIssueTag("balance_low"));
   }
 
   if (row.groupIssueCount > 0) {
-    tags.push({ label: "分组异常", tone: "warning" });
+    tags.push(createStationIssueTag("group_issue"));
   }
 
   if (row.missingRateCount > 0) {
-    tags.push({ label: "倍率缺失", tone: "warning" });
+    tags.push(createStationIssueTag("missing_rate"));
   }
 
   return tags;
+}
+
+export function filterStationAssetRowsByIssue(
+  rows: StationAssetRow[],
+  issueFilter: StationIssueFilterValue,
+): StationAssetRow[] {
+  if (issueFilter === "all") {
+    return rows;
+  }
+  return rows.filter((row) => stationIssueTags(row).some((tag) => tag.kind === issueFilter));
 }
 
 function stationCollectionIssueTag(row: StationAssetRow): StationIssueTag | null {
@@ -196,18 +256,26 @@ function stationCollectionIssueTag(row: StationAssetRow): StationIssueTag | null
     snapshotSummary.loginStatus === "manual_required";
 
   if (loginRequired) {
-    return { label: "需登录", tone: "warning", title: row.latestSnapshot?.errorMessage ?? "采集需要登录或人工处理" };
+    return createStationIssueTag("login_required", row.latestSnapshot?.errorMessage ?? "采集需要登录或人工处理");
   }
 
   if (snapshotStatus === "failed" || snapshotStatus === "error" || row.station.status === "error") {
-    return { label: "采集失败", tone: "error", title: row.latestSnapshot?.errorMessage ?? "最近一次采集失败" };
+    return createStationIssueTag("collection_failed", row.latestSnapshot?.errorMessage ?? "最近一次采集失败");
   }
 
   if (row.station.status === "unchecked" && !row.latestSnapshot) {
-    return { label: "未采集", tone: "info" };
+    return createStationIssueTag("not_collected");
   }
 
   return null;
+}
+
+function createStationIssueTag(kind: StationIssueTagKind, title?: string): StationIssueTag {
+  return {
+    kind,
+    ...STATION_ISSUE_TAG_DEFINITIONS[kind],
+    ...(title ? { title } : {}),
+  };
 }
 
 function countGroupIssues(bindings: StationGroupBinding[]) {

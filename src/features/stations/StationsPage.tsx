@@ -68,8 +68,11 @@ import {
 import { cn } from "@/lib/utils";
 import {
   buildStationAssetRows,
+  filterStationAssetRowsByIssue,
   stationIssueTags,
+  STATION_ISSUE_FILTER_OPTIONS,
   type StationAssetRow,
+  type StationIssueFilterValue,
 } from "./stationAssetViewModels";
 
 type StationFormState = {
@@ -175,6 +178,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     stationId: string;
     action: StationAction;
   } | null>(null);
+  const [issueFilter, setIssueFilter] = useState<StationIssueFilterValue>("all");
   const [error, setError] = useState<string | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
@@ -234,7 +238,6 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     return () => window.clearTimeout(timeoutId);
   }, [drawerClosing]);
 
-  const stationIds = useMemo(() => stations.map((station) => station.id), [stations]);
   const selectedStation = useMemo(
     () => stations.find((station) => station.id === selectedStationId) ?? null,
     [selectedStationId, stations],
@@ -251,10 +254,6 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   const activeDragStation = useMemo(
     () => stations.find((station) => station.id === activeDragId) ?? null,
     [activeDragId, stations],
-  );
-  const attentionCount = useMemo(
-    () => stations.filter((station) => station.status === "warning" || station.status === "error").length,
-    [stations],
   );
   const keysByStation = useMemo(() => {
     const map = new Map<string, StationKey[]>();
@@ -283,9 +282,21 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
       }),
     [balanceFactsReady, balanceSnapshots, changeEvents, groupBindingsByStation, keysByStation, snapshotsByStation, stations],
   );
+  const filteredStationAssetRows = useMemo(
+    () => filterStationAssetRowsByIssue(stationAssetRows, issueFilter),
+    [issueFilter, stationAssetRows],
+  );
   const collectedBalanceCount = useMemo(
-    () => stationAssetRows.filter((row) => row.latestBalance?.value != null || row.station.balanceCny != null).length,
-    [stationAssetRows],
+    () => filteredStationAssetRows.filter((row) => row.latestBalance?.value != null || row.station.balanceCny != null).length,
+    [filteredStationAssetRows],
+  );
+  const filteredStationIds = useMemo(
+    () => filteredStationAssetRows.map((row) => row.station.id),
+    [filteredStationAssetRows],
+  );
+  const attentionCount = useMemo(
+    () => filteredStationAssetRows.filter((row) => stationIssueTags(row).length > 0).length,
+    [filteredStationAssetRows],
   );
   const activeDragRow = useMemo(
     () => stationAssetRows.find((row) => row.station.id === activeDragStation?.id) ?? null,
@@ -727,7 +738,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
       status={
         <div className="flex min-w-0 flex-wrap items-center gap-1.5" aria-label="中转站资产状态">
           <StatusBadge tone="info" className="bg-slate-50 text-slate-600">
-            {`${stations.length} 站点`}
+            {`${filteredStationAssetRows.length} 站点`}
           </StatusBadge>
           <StatusBadge tone={collectedBalanceCount > 0 ? "healthy" : "disabled"}>
             {`${collectedBalanceCount} 已有余额`}
@@ -738,10 +749,19 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
         </div>
       }
       actions={
-        <Button onClick={onAddProvider ?? openCreate}>
-          <Plus className="h-4 w-4" />
-          添加供应商
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <SelectControl<StationIssueFilterValue>
+            ariaLabel="筛选问题标签"
+            className={stationAssetSelectClassName}
+            value={issueFilter}
+            options={STATION_ISSUE_FILTER_OPTIONS}
+            onChange={setIssueFilter}
+          />
+          <Button onClick={onAddProvider ?? openCreate}>
+            <Plus className="h-4 w-4" />
+            添加供应商
+          </Button>
+        </div>
       }
     >
       <div className="grid min-w-0 gap-3">
@@ -760,6 +780,11 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
               description="添加一个站点开始管理登录账号和多把密钥。"
               action={<Button onClick={onAddProvider ?? openCreate}>添加供应商</Button>}
             />
+          ) : filteredStationAssetRows.length === 0 ? (
+            <EmptyState
+              title="没有匹配的问题站点"
+              description="切换问题筛选条件，或继续查看全部中转站资产。"
+            />
           ) : (
             <DndContext
               sensors={sensors}
@@ -768,9 +793,9 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
               onDragCancel={handleDragCancel}
               onDragEnd={handleDragEnd}
             >
-              <SortableContext items={stationIds} strategy={verticalListSortingStrategy}>
+              <SortableContext items={filteredStationIds} strategy={verticalListSortingStrategy}>
                 <div className="space-y-2">
-                  {stationAssetRows.map((row) => (
+                  {filteredStationAssetRows.map((row) => (
                     <SortableStationAssetListRow
                       key={row.station.id}
                       actionDisabled={stationAction !== null}
@@ -1713,6 +1738,9 @@ function stationIssueTagClassName(tone: "info" | "warning" | "error" | "disabled
   if (tone === "disabled") return "border-slate-200 bg-slate-100 text-slate-500";
   return "border-sky-200 bg-sky-50 text-sky-700";
 }
+
+const stationAssetSelectClassName =
+  "h-8 min-w-[148px] rounded-[12px] border border-border bg-white px-3 text-sm text-slate-800 shadow-[0_1px_2px_rgba(15,23,42,0.04)] outline-none transition focus:border-[hsl(var(--accent)/0.45)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";
 
 function formatNullableTime(value: string | null) {
   if (!value) {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import ts from "typescript";
+import ts from "../node_modules/typescript/lib/typescript.js";
 
 async function importStationAssetViewModels() {
   const tempRoot = await mkdtemp(join(tmpdir(), "relay-station-tags-"));
@@ -39,7 +39,7 @@ async function importStationAssetViewModels() {
   return import(`file://${outputPath.replaceAll("\\", "/")}`);
 }
 
-const { stationIssueTags } = await importStationAssetViewModels();
+const { stationIssueTags, filterStationAssetRowsByIssue, STATION_ISSUE_FILTER_OPTIONS } = await importStationAssetViewModels();
 
 assert.deepEqual(
   tagLabels(row({ riskEvents: [change({ severity: "critical" }), change({ severity: "warning" })] })),
@@ -100,12 +100,74 @@ assert.deepEqual(
   "manual login collection states should be concrete",
 );
 
+assert.deepEqual(
+  STATION_ISSUE_FILTER_OPTIONS.map((option) => option.value),
+  [
+    "all",
+    "balance_zero",
+    "balance_low",
+    "balance_missing",
+    "login_required",
+    "collection_failed",
+    "missing_api_key",
+    "no_enabled_key",
+    "key_warning",
+    "group_issue",
+    "missing_rate",
+    "disabled",
+    "not_collected",
+  ],
+  "station issue filter options should use stable issue kinds instead of translated labels",
+);
+
+{
+  const rows = [
+    row({ station: { id: "healthy", name: "Healthy" } }),
+    row({
+      station: { id: "zero", name: "Zero Balance" },
+      currentBalance: { value: 0, lowBalanceThreshold: 10, status: "low", currency: "CNY" },
+    }),
+    row({
+      station: { id: "login", name: "Login Required" },
+      latestSnapshot: { status: "manual_required", errorMessage: null, summaryJson: { loginRequired: true } },
+    }),
+  ];
+
+  assert.deepEqual(
+    filterStationAssetRowsByIssue(rows, "all").map((candidate) => candidate.station.id),
+    ["healthy", "zero", "login"],
+    "all issue filter should preserve every station in the current order",
+  );
+
+  assert.deepEqual(
+    filterStationAssetRowsByIssue(rows, "balance_zero").map((candidate) => candidate.station.id),
+    ["zero"],
+    "zero-balance issue filter should match rows by stable issue kind",
+  );
+
+  assert.deepEqual(
+    filterStationAssetRowsByIssue(rows, "login_required").map((candidate) => candidate.station.id),
+    ["login"],
+    "manual-login issue filter should reuse station issue tags",
+  );
+}
+
 const pageSource = await readFile("src/features/stations/StationsPage.tsx", "utf8");
 const viewModelSource = await readFile("src/features/stations/stationAssetViewModels.ts", "utf8");
 
 assert.ok(
   pageSource.includes("stationIssueTags(row)") || pageSource.includes("const issueTags = stationIssueTags"),
   "station list row should render explicit issue tags from the row model",
+);
+
+assert.ok(
+  pageSource.includes("STATION_ISSUE_FILTER_OPTIONS") &&
+    pageSource.includes("filterStationAssetRowsByIssue(stationAssetRows, issueFilter)") &&
+    pageSource.includes('ariaLabel="筛选问题标签"') &&
+    pageSource.includes("<SortableContext items={filteredStationIds}") &&
+    pageSource.includes("filteredStationAssetRows.map((row)") &&
+    pageSource.includes('title="没有匹配的问题站点"'),
+  "station page should expose an issue-tag filter that drives the visible sortable list and empty state",
 );
 
 assert.ok(

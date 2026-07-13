@@ -147,7 +147,7 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
         ) : (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={candidateIds} strategy={verticalListSortingStrategy}>
-              <div className="grid gap-2">
+              <div className="divide-y divide-slate-100">
                 {candidates.map((candidate, index) => (
                   <SortableLocalRoutingCandidateRow
                     key={candidate.stationKeyId}

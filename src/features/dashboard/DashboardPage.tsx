@@ -491,7 +491,7 @@ export function DashboardPage() {
         />
       </div>
 
-      <section className="grid gap-3">
+      <section className="grid min-w-0 gap-3">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="truncate text-[13px] font-semibold text-slate-800">
             当前风险
@@ -500,7 +500,7 @@ export function DashboardPage() {
             {unreadRisks > 0 ? `${unreadRisks} 未读` : "无未读风险"}
           </StatusBadge>
         </header>
-        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+        <div className="grid min-w-0 grid-cols-4 gap-3">
           <DashboardMetricTile
             label="严重未解决"
             value={p9RiskBreakdown.unresolvedCritical}
@@ -535,10 +535,11 @@ export function DashboardPage() {
             当前没有未解决的严重或警告变更。
           </div>
         ) : (
-          <div className="grid gap-2">
+          <div className="grid min-w-0 gap-2">
             {activeRiskEvents.slice(0, 5).map((event) => (
               <ObjectRow
                 key={event.id}
+                className="min-w-0"
                 icon={<AlertTriangle className="h-4 w-4" />}
                 title={event.title}
                 subtitle={`${event.message} · ${formatChangeTime(event.detectedAt)}`}
@@ -699,7 +700,7 @@ function DashboardMetricTile({
   tone?: MetricTone;
 }) {
   return (
-    <div className="flex min-h-[96px] items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_8px_rgba(15,23,42,0.08)]">
+    <div className="flex min-h-[96px] min-w-0 items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_8px_rgba(15,23,42,0.08)]">
       <div
         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] ${dashboardMetricIconClassName[tone]} ${dashboardMetricToneClassName[tone]}`}
       >

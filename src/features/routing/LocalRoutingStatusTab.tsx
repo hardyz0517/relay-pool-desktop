@@ -1,5 +1,5 @@
-import { Clock3, Power, PowerOff, Server } from "lucide-react";
-import { Button, EmptyState, SectionCard, StatusBadge } from "@/components/ui";
+import { Clock3, Filter, Gauge, Power, PowerOff, Server, UsersRound } from "lucide-react";
+import { Button, EmptyState, MetricPanel, SectionCard, StatusBadge } from "@/components/ui";
 import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
 import type { RouteEndpointKind, RoutingGroupFilter } from "@/lib/types/routing";
 import {
@@ -23,12 +23,7 @@ const endpointLabels: Record<RouteEndpointKind, string> = {
   embeddings: "向量",
 };
 
-const latestDecisionToneClass = {
-  neutral: "text-slate-700",
-  healthy: "text-emerald-700",
-  warning: "text-amber-700",
-  error: "text-rose-700",
-};
+const routeMetricValueClassName = "text-[20px] leading-6 text-slate-900";
 
 export function LocalRoutingStatusTab({
   workspace,
@@ -64,83 +59,99 @@ export function LocalRoutingStatusTab({
     workspace.settings.maxRateMultiplier == null
       ? "未设置"
       : `${workspace.settings.maxRateMultiplier}x`;
+  const routingGroupFilterLabel = formatRoutingGroupFilter(workspace.settings.routingGroupFilter);
+  const candidateStatusLabel = `${workspace.summary.previewEligibleCandidateCount} / ${workspace.summary.previewExcludedCandidateCount}`;
+  const latestDecisionTimeLabel = formatRoutingDecisionTime(latestDecision.decidedAt);
 
   return (
     <div className="grid gap-4">
       <SectionCard title="本地路由状态">
-        <div className="grid gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-teal-50 text-teal-700">
-                <Server className="h-5 w-5" />
-              </span>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="truncate text-sm font-semibold text-slate-900">
-                    {workspace.settings.bindAddr}:{workspace.settings.port}
-                  </span>
-                  <StatusBadge tone={workspace.proxyStatus.running ? "healthy" : "disabled"}>
-                    {workspace.proxyStatus.running ? "运行中" : "未启动"}
-                  </StatusBadge>
-                </div>
-                <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                  {formatEndpoint(workspace.settings.endpoint)} · 自动路由
-                </div>
-              </div>
-            </div>
-            <Button
-              disabled={proxyActionPending}
-              variant={workspace.proxyStatus.running ? "danger" : "primary"}
-              onClick={onToggleProxy}
-            >
-              {workspace.proxyStatus.running ? (
-                <PowerOff className="h-4 w-4" />
-              ) : (
-                <Power className="h-4 w-4" />
-              )}
-              {workspace.proxyStatus.running ? "停止路由" : "启动路由"}
-            </Button>
-          </div>
-
-          <dl className="grid gap-x-6 gap-y-3 border-t border-slate-100 pt-3 sm:grid-cols-4">
-            <StatusMetric label="倍率上限" value={multiplierLimitLabel} />
-            <StatusMetric
-              label="分组筛选"
-              value={formatRoutingGroupFilter(workspace.settings.routingGroupFilter)}
-            />
-            <StatusMetric
-              label="可参与"
-              value={workspace.summary.previewEligibleCandidateCount}
-              tone="good"
-            />
-            <StatusMetric
-              label="不参与"
-              value={workspace.summary.previewExcludedCandidateCount}
-              tone={workspace.summary.previewExcludedCandidateCount > 0 ? "warning" : "neutral"}
-            />
-          </dl>
-
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-teal-50 text-teal-700">
+              <Server className="h-5 w-5" />
+            </span>
             <div className="min-w-0">
-              <div className="text-[11px] font-medium text-muted-foreground">最近一次路由</div>
-              <div className="mt-0.5 truncate text-sm font-semibold text-slate-900">
-                {latestDecision.title}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="truncate text-sm font-semibold text-slate-900">
+                  {workspace.settings.bindAddr}:{workspace.settings.port}
+                </span>
+                <StatusBadge tone={workspace.proxyStatus.running ? "healthy" : "disabled"}>
+                  {workspace.proxyStatus.running ? "运行中" : "未启动"}
+                </StatusBadge>
               </div>
-              <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Clock3 className="h-3.5 w-3.5" />
-                {formatRoutingDecisionTime(latestDecision.decidedAt)}
+              <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                {formatEndpoint(workspace.settings.endpoint)} · 自动路由
               </div>
             </div>
-            {latestDecision.badge ? (
-              <span
-                className={`text-xs font-semibold ${latestDecisionToneClass[latestDecision.tone]}`}
-              >
-                {latestDecision.badge}
-              </span>
-            ) : null}
           </div>
+          <Button
+            disabled={proxyActionPending}
+            variant={workspace.proxyStatus.running ? "danger" : "primary"}
+            onClick={onToggleProxy}
+          >
+            {workspace.proxyStatus.running ? (
+              <PowerOff className="h-4 w-4" />
+            ) : (
+              <Power className="h-4 w-4" />
+            )}
+            {workspace.proxyStatus.running ? "停止路由" : "启动路由"}
+          </Button>
         </div>
       </SectionCard>
+
+      <MetricPanel
+        title="路由策略概览"
+        metrics={[
+          {
+            label: "倍率上限",
+            value: multiplierLimitLabel,
+            detail: "自动路由上限",
+            icon: Gauge,
+            accent: "slate",
+            valueClassName: routeMetricValueClassName,
+          },
+          {
+            label: "分组筛选",
+            value: routingGroupFilterLabel,
+            detail: "当前候选范围",
+            icon: Filter,
+            accent: "blue",
+            valueClassName: routeMetricValueClassName,
+          },
+          {
+            label: "候选状态",
+            value: candidateStatusLabel,
+            detail: "可参与 / 不参与",
+            icon: UsersRound,
+            tone: workspace.summary.previewExcludedCandidateCount > 0 ? "warning" : "good",
+            valueClassName:
+              workspace.summary.previewExcludedCandidateCount > 0
+                ? "text-[20px] leading-6 text-amber-700"
+                : "text-[20px] leading-6 text-emerald-700",
+          },
+          {
+            label: "最近一次路由",
+            value: latestDecision.title,
+            detail: (
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <Clock3 className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{latestDecisionTimeLabel}</span>
+              </span>
+            ),
+            icon: Clock3,
+            tone:
+              latestDecision.tone === "error"
+                ? "danger"
+                : latestDecision.tone === "warning"
+                  ? "warning"
+                  : latestDecision.tone === "healthy"
+                    ? "good"
+                    : "neutral",
+            valueClassName: "text-sm leading-6 text-slate-900",
+          },
+        ]}
+      />
 
       <section aria-labelledby="local-routing-candidates-title">
         <div className="mb-2 flex items-center justify-between gap-3">
@@ -187,23 +198,4 @@ function formatRoutingGroupFilter(filter: RoutingGroupFilter) {
   if ("group_binding_id" in filter) return "指定绑定";
   if ("group_id_hash" in filter) return "指定分组";
   return "全部分组";
-}
-
-function StatusMetric({
-  label,
-  value,
-  tone = "neutral",
-}: {
-  label: string;
-  value: number | string;
-  tone?: "neutral" | "good" | "warning";
-}) {
-  const valueClass =
-    tone === "good" ? "text-emerald-700" : tone === "warning" ? "text-amber-700" : "text-slate-900";
-  return (
-    <div>
-      <dt className="text-[11px] text-muted-foreground">{label}</dt>
-      <dd className={`mt-0.5 text-sm font-semibold ${valueClass}`}>{value}</dd>
-    </div>
-  );
 }
