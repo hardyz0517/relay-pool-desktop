@@ -4651,7 +4651,6 @@ mod tests {
                 collector_timeout_seconds: settings.collector_timeout_seconds,
                 collector_max_concurrency: settings.collector_max_concurrency,
                 allow_depleted_fallback: settings.allow_depleted_fallback,
-                tray_behavior: settings.tray_behavior,
                 developer_mode_enabled: settings.developer_mode_enabled,
             })
             .expect("enable automatic routing");

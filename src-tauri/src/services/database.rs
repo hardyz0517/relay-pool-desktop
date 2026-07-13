@@ -567,7 +567,6 @@ impl AppDatabase {
                 "allow_depleted_fallback",
                 input.allow_depleted_fallback.to_string(),
             ),
-            ("tray_behavior", input.tray_behavior),
             (
                 "developer_mode_enabled",
                 input.developer_mode_enabled.to_string(),
@@ -3144,7 +3143,6 @@ fn seed_default_settings(connection: &Connection) -> rusqlite::Result<()> {
         ("collector_timeout_seconds", "15"),
         ("collector_max_concurrency", "3"),
         ("allow_depleted_fallback", "false"),
-        ("tray_behavior", "minimize-to-tray"),
         ("developer_mode_enabled", "false"),
     ];
 
@@ -13113,7 +13111,6 @@ fn settings_from_connection(
             "allow_depleted_fallback",
             "false",
         )?,
-        tray_behavior: read_setting(connection, "tray_behavior")?,
         developer_mode_enabled: read_setting_or_default(
             connection,
             "developer_mode_enabled",
@@ -14215,7 +14212,6 @@ mod tests {
                 collector_timeout_seconds: 15,
                 collector_max_concurrency: 3,
                 allow_depleted_fallback: false,
-                tray_behavior: "minimize-to-tray".to_string(),
                 developer_mode_enabled: false,
             })
             .expect("settings");
