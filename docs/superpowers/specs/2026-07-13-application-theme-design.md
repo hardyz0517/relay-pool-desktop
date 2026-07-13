@@ -282,9 +282,11 @@ matchMedia change
 - `success-{surface,foreground,border}`：运行、健康、成功。
 - `warning-{surface,foreground,border}`：待处理、风险、降级。
 - `danger-{surface,foreground,border}`：错误、失败、危险操作。
+- `danger-solid`：危险确认按钮等必须使用强实色的极少数场景，前景统一使用 `on-solid`。
 - `info-{surface,foreground,border}`：一般信息和中性提示。
+- `platform-{anthropic,openai,gemini,grok,image,generic}-{surface,foreground,border}`：只用于表达站点分组的平台身份，不复用 success/warning 等运行状态语义。
 
-状态色只承担语义，不作为大面积主题背景。深色模式使用低饱和状态表面和足够明亮的文字，不直接复用浅色状态底。
+状态色只承担语义，不作为大面积主题背景。平台色也只用于紧凑 badge、chip 和平台图标，不扩展成页面主色。深色模式使用低饱和状态与平台表面和足够明亮的文字，不直接复用浅色底。
 
 ### 阴影与层级
 
@@ -442,6 +444,8 @@ matchMedia change
 - `src/theme/nativeTheme.ts`
 - `src/theme/ThemeProvider.tsx`
 - 对应主题测试文件
+- `src/features/settings/ThemeSettings.tsx`
+- `src/features/settings/ThemeSettings.test.tsx`
 - `scripts/theme-audit.mjs`
 
 计划修改：
