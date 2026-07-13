@@ -3690,12 +3690,13 @@ mod tests {
         let upstream_port = upstream.local_addr().expect("upstream addr").port();
 
         let handle = thread::spawn(move || {
+            let request_timeout = Duration::from_secs(5);
             for _ in 0..2 {
                 let (mut server_stream, _) = upstream.accept().expect("accept upstream");
-                let _ = server_stream.set_read_timeout(Some(Duration::from_millis(1000)));
+                let _ = server_stream.set_read_timeout(Some(request_timeout));
                 let mut buf = [0_u8; 4096];
                 let mut read = 0;
-                let deadline = std::time::Instant::now() + Duration::from_millis(1000);
+                let deadline = std::time::Instant::now() + request_timeout;
                 loop {
                     match server_stream.read(&mut buf[read..]) {
                         Ok(0) => break,

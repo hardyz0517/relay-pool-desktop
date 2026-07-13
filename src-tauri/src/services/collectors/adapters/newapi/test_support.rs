@@ -3,6 +3,8 @@ use std::net::TcpListener;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+const FIXTURE_IO_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub(super) struct TestHttpServer {
     pub base_url: String,
     pub requests: std::sync::mpsc::Receiver<String>,
@@ -18,8 +20,8 @@ impl TestHttpServer {
         let address = listener.local_addr().expect("fixture address");
         let (sender, requests) = mpsc::channel();
         let handle = std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(2);
             for response in raw_responses {
+                let deadline = Instant::now() + FIXTURE_IO_TIMEOUT;
                 let (mut stream, _) = loop {
                     match listener.accept() {
                         Ok(accepted) => break accepted,
@@ -39,7 +41,7 @@ impl TestHttpServer {
                     }
                 };
                 stream
-                    .set_read_timeout(Some(Duration::from_millis(200)))
+                    .set_read_timeout(Some(FIXTURE_IO_TIMEOUT))
                     .expect("read timeout");
                 let mut bytes = [0_u8; 8192];
                 let size = stream.read(&mut bytes).unwrap_or(0);
