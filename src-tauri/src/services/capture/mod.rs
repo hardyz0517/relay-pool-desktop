@@ -1,5 +1,6 @@
 pub mod redaction;
 pub mod session;
+pub mod web_authorization;
 
 use serde_json::{json, Value};
 
@@ -159,6 +160,19 @@ pub fn summarize_events(events: &[CapturedHttpEvent]) -> (Value, Value, Value) {
     (summary, normalized, raw)
 }
 
+pub(crate) fn web_authorization_summary(
+    status: &str,
+    session_source: Option<&str>,
+    cookie_present: bool,
+) -> Value {
+    json!({
+        "mode": "web_authorization",
+        "status": status,
+        "sessionSource": session_source.unwrap_or("none"),
+        "cookiePresent": cookie_present,
+    })
+}
+
 pub fn event_field_counts(events: &[CapturedHttpEvent]) -> (usize, usize) {
     let fields = extract_fields(events);
     let pending = fields
@@ -196,10 +210,7 @@ pub fn extract_session_credentials(
         access_token,
         refresh_token,
         cookie,
-        newapi_user_id: find_string_field(
-            json,
-            &["newapi_user_id", "newapiUserId", "user_id", "userId"],
-        ),
+        newapi_user_id: extract_newapi_user_id(json),
         token_expires_at: find_string_field(
             json,
             &[
@@ -225,6 +236,62 @@ fn is_auth_capture_path(input: &CapturedHttpEventInput) -> bool {
         || lower.contains("/auth/refresh")
         || lower.ends_with("/login")
         || lower.ends_with("/session")
+}
+
+pub(crate) fn extract_newapi_user_id(value: &Value) -> Option<String> {
+    find_string_or_i64_field(
+        value,
+        &["newapi_user_id", "newapiUserId", "user_id", "userId"],
+    )
+    .or_else(|| find_trusted_identity_id(value))
+}
+
+fn find_string_or_i64_field(value: &Value, names: &[&str]) -> Option<String> {
+    match value {
+        Value::Object(map) => {
+            for name in names {
+                if let Some(value) = map.get(*name).and_then(string_or_i64_value) {
+                    return Some(value);
+                }
+            }
+            map.values()
+                .find_map(|child| find_string_or_i64_field(child, names))
+        }
+        Value::Array(items) => items
+            .iter()
+            .find_map(|child| find_string_or_i64_field(child, names)),
+        _ => None,
+    }
+}
+
+fn find_trusted_identity_id(value: &Value) -> Option<String> {
+    let map = value.as_object()?;
+    map.get("data")
+        .and_then(|data| {
+            plain_id_value(data).or_else(|| {
+                data.as_object()
+                    .and_then(|data_map| data_map.get("user"))
+                    .and_then(plain_id_value)
+            })
+        })
+        .or_else(|| map.get("user").and_then(plain_id_value))
+}
+
+fn plain_id_value(value: &Value) -> Option<String> {
+    value
+        .as_object()
+        .and_then(|map| map.get("id"))
+        .and_then(string_or_i64_value)
+}
+
+fn string_or_i64_value(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    value.as_i64().map(|number| number.to_string())
 }
 
 fn find_string_field(value: &Value, names: &[&str]) -> Option<String> {
@@ -604,6 +671,106 @@ mod tests {
         assert_eq!(summary["recognized"]["modelCount"], json!(1));
         assert_eq!(normalized["status"], json!("needs_confirmation"));
         assert_eq!(raw["events"][0]["path"], json!("/api/ratio_config"));
+    }
+
+    #[test]
+    fn capture_extracts_newapi_user_id_from_data_id() {
+        let payload = json!({
+            "success": true,
+            "data": {
+                "id": 42,
+                "username": "kami-user"
+            }
+        });
+
+        assert_eq!(
+            super::extract_newapi_user_id(&payload).as_deref(),
+            Some("42")
+        );
+    }
+
+    #[test]
+    fn capture_extracts_newapi_user_id_from_nested_user_id() {
+        let payload = json!({
+            "data": {
+                "profile": {
+                    "userId": "newapi-user-99"
+                }
+            }
+        });
+
+        assert_eq!(
+            super::extract_newapi_user_id(&payload).as_deref(),
+            Some("newapi-user-99")
+        );
+    }
+
+    #[test]
+    fn capture_ignores_unrelated_nested_plain_id_for_newapi_user() {
+        let payload = json!({
+            "data": {
+                "access_token": "captured-access-token",
+                "groups": [
+                    {
+                        "id": 9001,
+                        "name": "default"
+                    }
+                ],
+                "role": {
+                    "id": "admin-role"
+                },
+                "organization": {
+                    "id": "org-1"
+                }
+            }
+        });
+
+        assert_eq!(super::extract_newapi_user_id(&payload), None);
+    }
+
+    #[test]
+    fn capture_session_credentials_extract_newapi_user_id_from_data_id() {
+        let input = CapturedHttpEventInput {
+            station_id: "station-1".to_string(),
+            source_window_id: "window-1".to_string(),
+            page_url: "https://relay.example/login".to_string(),
+            request_url: "https://relay.example/api/v1/auth/login".to_string(),
+            request_path: Some("/api/v1/auth/login".to_string()),
+            method: "POST".to_string(),
+            status: Some(200),
+            content_type: Some("application/json".to_string()),
+            started_at: None,
+            finished_at: None,
+            duration_ms: None,
+            response_kind: None,
+            response_size: None,
+            response_json: Some(json!({
+                "data": {
+                    "id": 42,
+                    "access_token": "captured-access-token"
+                }
+            })),
+            response_text: None,
+            error_message: None,
+        };
+
+        let session = super::extract_session_credentials(&input).expect("captured session");
+
+        assert_eq!(
+            session.access_token.as_deref(),
+            Some("captured-access-token")
+        );
+        assert_eq!(session.newapi_user_id.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn web_authorization_summary_reports_session_source_without_cookie_value() {
+        let summary = super::web_authorization_summary("success", Some("web_authorization"), true);
+        let serialized = summary.to_string();
+
+        assert!(serialized.contains("web_authorization"));
+        assert!(serialized.contains("cookiePresent"));
+        assert!(!serialized.contains("session=abc"));
     }
 
     #[test]

@@ -17,7 +17,7 @@ import {
   clearCaptureSession,
   detectStationInfo,
   closeCaptureSession,
-  finishCaptureSession,
+  finishWebAuthorizationSession,
   getCaptureSessionStatus,
   getLatestCollectorSnapshot,
   listCollectorSnapshots,
@@ -241,10 +241,10 @@ export function CollectorsPage() {
     try {
       const nextStatus = await startCaptureSession(selectedStation.id);
       setCaptureStatus(nextStatus);
-      toast.success("实验性网页登录捕获已打开");
+      toast.success("网页登录授权窗口已打开");
     } catch (requestError) {
       setTaskStatus("failed");
-      toast.error("打开网页登录捕获失败", shortError(readError(requestError)));
+      toast.error("打开网页登录授权失败", shortError(readError(requestError)));
     }
   }
 
@@ -253,14 +253,14 @@ export function CollectorsPage() {
     setTaskStatus("finishingCapture");
     setError(null);
     try {
-      const result = await finishCaptureSession(selectedStation.id);
+      const result = await finishWebAuthorizationSession(selectedStation.id);
       setLatestSnapshot(result.snapshot);
       await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id), refreshCaptureStatus(selectedStation.id)]);
       setTaskStatus("success");
-      toast.success("网页登录捕获快照已保存");
+      toast.success("网页登录授权已保存");
     } catch (requestError) {
       setTaskStatus("failed");
-      toast.error("保存网页登录捕获失败", shortError(readError(requestError)));
+      toast.error("保存网页登录授权失败", shortError(readError(requestError)));
     }
   }
 
@@ -284,9 +284,9 @@ export function CollectorsPage() {
       const nextStatus = await closeCaptureSession(selectedStation.id);
       setCaptureStatus(nextStatus);
       setTaskStatus("idle");
-      toast.success("网页登录捕获窗口已关闭");
+      toast.success("网页登录授权窗口已关闭");
     } catch (requestError) {
-      toast.error("关闭捕获窗口失败", shortError(readError(requestError)));
+      toast.error("关闭授权窗口失败", shortError(readError(requestError)));
     }
   }
 
@@ -522,7 +522,7 @@ export function CollectorsPage() {
                       {taskStatus === "detecting" ? "高级探测中" : "重新探测接口"}
                     </Button>
                     <div className="rounded-[10px] bg-white/75 px-3 py-2 text-xs leading-5 text-slate-700">
-                      实验功能：用于验证码、二次验证或魔改站兜底，当前需要技术验证，不保证能捕获所有请求。
+                      用于验证码、二次验证或魔改站网页登录授权，完成登录后会验证后台会话并保存可复用的登录态。
                     </div>
                     {captureActive ? (
                       <div className="space-y-2">
@@ -558,7 +558,7 @@ export function CollectorsPage() {
                         disabled={actionBusy || !selectedStation}
                       >
                         <ShieldCheck className="h-4 w-4" />
-                        网页登录捕获（实验）
+                        网页登录授权
                       </Button>
                     )}
                   </div>
@@ -831,8 +831,8 @@ function taskStatusLabel(status: TaskStatus, summary: CollectorSummary) {
   if (status === "testingLogin") return "正在测试登录...";
   if (status === "detecting") return "正在执行高级探测...";
   if (status === "collecting") return "正在采集登录态信息...";
-  if (status === "capturing") return "网页登录捕获窗口已打开";
-  if (status === "finishingCapture") return "正在保存网页登录捕获快照...";
+  if (status === "capturing") return "网页登录授权窗口已打开";
+  if (status === "finishingCapture") return "正在保存网页登录授权...";
   if (status === "success") return summary.message ?? "任务完成";
   if (status === "failed") return "任务失败";
   return "空闲";

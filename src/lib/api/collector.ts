@@ -131,6 +131,15 @@ export function finishCaptureSession(stationId: string) {
   });
 }
 
+export function finishWebAuthorizationSession(stationId: string) {
+  return invoke<CollectorRunResult>("finish_web_authorization_session", { stationId }).catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return createMemoryRun(stationId, "webview-capture", "manual_required");
+    }
+    throw error;
+  });
+}
+
 export function clearCaptureSession(stationId: string) {
   return invoke<CaptureSessionStatus>("clear_capture_session", { stationId }).catch((error) => {
     if (isInvokeUnavailable(error)) {

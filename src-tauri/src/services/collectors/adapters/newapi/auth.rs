@@ -23,6 +23,7 @@ pub(super) struct NewApiAuthContext {
     pub kind: NewApiAuthKind,
     pub secret: String,
     pub user_id: String,
+    pub session_source: String,
 }
 
 impl NewApiAuthContext {
@@ -31,6 +32,7 @@ impl NewApiAuthContext {
             kind: NewApiAuthKind::AccessToken,
             secret: secret.into(),
             user_id: user_id.into(),
+            session_source: "unknown".to_string(),
         }
     }
 
@@ -39,7 +41,19 @@ impl NewApiAuthContext {
             kind: NewApiAuthKind::Cookie,
             secret: secret.into(),
             user_id: user_id.into(),
+            session_source: "unknown".to_string(),
         }
+    }
+
+    pub fn with_session_source(mut self, session_source: impl Into<String>) -> Self {
+        let session_source = session_source.into();
+        let trimmed = session_source.trim();
+        self.session_source = if trimmed.is_empty() {
+            "unknown".to_string()
+        } else {
+            trimmed.to_string()
+        };
+        self
     }
 
     pub fn authorization_value(&self) -> Option<String> {

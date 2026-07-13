@@ -2,6 +2,7 @@ import type { StationType } from "@/lib/types/stations";
 
 export type ProviderPresetId =
   | "custom"
+  | "kamiapi"
   | "deepseek"
   | "qwen"
   | "zhipu"
@@ -31,6 +32,13 @@ export const providerPresets: ProviderPreset[] = [
     description: "手动填写供应商名称、接口地址和站点类型。",
     stationType: "custom",
     baseUrl: "",
+  },
+  {
+    id: "kamiapi",
+    name: "卡米API",
+    description: "NewAPI 魔改站，推荐使用网页登录授权完成会话采集。",
+    stationType: "newapi",
+    baseUrl: "https://www.kamiapi.top",
   },
   {
     id: "deepseek",

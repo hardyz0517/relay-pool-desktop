@@ -253,6 +253,7 @@ pub fn run() {
             commands::get_capture_session_status,
             commands::record_capture_event,
             commands::finish_capture_session,
+            commands::finish_web_authorization_session,
             commands::clear_capture_session,
             commands::close_capture_session,
         ])
