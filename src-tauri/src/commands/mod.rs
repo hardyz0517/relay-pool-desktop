@@ -19,7 +19,8 @@ use crate::{
         },
         collector_runs::CollectorRun,
         credentials::{
-            StationCredentials, UpdateStationCredentialsInput, UpdateStationSessionInput,
+            PersistStationSessionInput, StationCredentials, UpdateStationCredentialsInput,
+            UpdateStationSessionInput,
         },
         group_facts::{
             GroupRateRecord, StationGroupBinding, UpdateStationKeyGroupBindingInput,
@@ -1285,6 +1286,41 @@ pub fn finish_capture_session(
         snapshot,
         events: Vec::new(),
     })
+}
+
+#[tauri::command]
+pub async fn finish_web_authorization_session(
+    app: tauri::AppHandle,
+    database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
+    sessions: State<'_, capture::session::CaptureSessionStore>,
+    station_id: String,
+) -> Result<CollectorRunResult, String> {
+    let station = database.station_for_collector(&station_id)?;
+    let cookie_header =
+        read_capture_window_cookie_header(app, &station_id, &station.base_url).await?;
+    let urls = collectors::url::collector_base_urls(&station.base_url);
+    let verified = capture::web_authorization::verify_newapi_cookie_session(
+        &urls.management_base_url,
+        &cookie_header,
+        Duration::from_secs(20),
+    )?;
+
+    database.persist_station_session_with_data_key(
+        PersistStationSessionInput {
+            station_id: station_id.clone(),
+            access_token: None,
+            refresh_token: None,
+            cookie: Some(verified.cookie_header),
+            newapi_user_id: Some(verified.newapi_user_id),
+            token_expires_at: None,
+            session_expires_at: None,
+            session_source: verified.session_source,
+        },
+        secrets.data_key(),
+    )?;
+
+    finish_capture_session(database, sessions, station_id)
 }
 
 fn capture_window_label(station_id: &str) -> String {
