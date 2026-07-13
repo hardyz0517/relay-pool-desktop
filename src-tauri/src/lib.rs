@@ -7,28 +7,16 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::Manager;
 use tauri::WindowEvent;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TrayBehavior {
-    MinimizeToTray,
-    CloseToTray,
-    Disabled,
-}
+#[derive(Debug, Clone, Copy)]
+struct WindowLifecyclePolicy;
 
-impl TrayBehavior {
-    fn from_setting(value: &str) -> Self {
-        match value {
-            "close-to-tray" => Self::CloseToTray,
-            "disabled" => Self::Disabled,
-            _ => Self::MinimizeToTray,
-        }
-    }
-
+impl WindowLifecyclePolicy {
     fn hides_on_close(self) -> bool {
-        matches!(self, Self::CloseToTray)
+        true
     }
 
     fn hides_on_minimize(self) -> bool {
-        matches!(self, Self::MinimizeToTray)
+        false
     }
 }
 
@@ -38,15 +26,6 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
-}
-
-fn current_tray_behavior<R: tauri::Runtime, M: Manager<R>>(manager: &M) -> TrayBehavior {
-    manager
-        .app_handle()
-        .try_state::<services::database::AppDatabase>()
-        .and_then(|database| database.get_settings().ok())
-        .map(|settings| TrayBehavior::from_setting(&settings.tray_behavior))
-        .unwrap_or(TrayBehavior::MinimizeToTray)
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -127,7 +106,7 @@ pub fn run() {
                 return;
             }
 
-            let behavior = current_tray_behavior(window);
+            let behavior = WindowLifecyclePolicy;
             match event {
                 WindowEvent::CloseRequested { api, .. } if behavior.hides_on_close() => {
                     api.prevent_close();
@@ -264,37 +243,12 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::TrayBehavior;
+    use super::WindowLifecyclePolicy;
 
     #[test]
-    fn tray_behavior_maps_persisted_values() {
-        assert_eq!(
-            TrayBehavior::from_setting("minimize-to-tray"),
-            TrayBehavior::MinimizeToTray
-        );
-        assert_eq!(
-            TrayBehavior::from_setting("close-to-tray"),
-            TrayBehavior::CloseToTray
-        );
-        assert_eq!(
-            TrayBehavior::from_setting("disabled"),
-            TrayBehavior::Disabled
-        );
-        assert_eq!(
-            TrayBehavior::from_setting("unexpected"),
-            TrayBehavior::MinimizeToTray
-        );
-    }
-
-    #[test]
-    fn tray_behavior_keeps_close_and_minimize_modes_separate() {
-        assert!(TrayBehavior::CloseToTray.hides_on_close());
-        assert!(!TrayBehavior::CloseToTray.hides_on_minimize());
-
-        assert!(TrayBehavior::MinimizeToTray.hides_on_minimize());
-        assert!(!TrayBehavior::MinimizeToTray.hides_on_close());
-
-        assert!(!TrayBehavior::Disabled.hides_on_close());
-        assert!(!TrayBehavior::Disabled.hides_on_minimize());
+    fn fixed_window_policy_hides_only_on_close() {
+        let behavior = WindowLifecyclePolicy;
+        assert!(behavior.hides_on_close());
+        assert!(!behavior.hides_on_minimize());
     }
 }

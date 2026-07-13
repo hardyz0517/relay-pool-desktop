@@ -3690,42 +3690,15 @@ mod tests {
         let upstream_port = upstream.local_addr().expect("upstream addr").port();
 
         let handle = thread::spawn(move || {
-            let request_timeout = Duration::from_secs(5);
             for _ in 0..2 {
                 let (mut server_stream, _) = upstream.accept().expect("accept upstream");
-                let _ = server_stream.set_read_timeout(Some(request_timeout));
-                let mut buf = [0_u8; 4096];
-                let mut read = 0;
-                let deadline = std::time::Instant::now() + request_timeout;
-                loop {
-                    match server_stream.read(&mut buf[read..]) {
-                        Ok(0) => break,
-                        Ok(count) => {
-                            read += count;
-                            if read >= buf.len() {
-                                break;
-                            }
-                            if String::from_utf8_lossy(&buf[..read])
-                                .to_lowercase()
-                                .contains("\r\n\r\n")
-                            {
-                                break;
-                            }
-                        }
-                        Err(error)
-                            if error.kind() == std::io::ErrorKind::WouldBlock
-                                || error.kind() == std::io::ErrorKind::TimedOut =>
-                        {
-                            if read > 0 || std::time::Instant::now() >= deadline {
-                                break;
-                            }
-                            thread::sleep(Duration::from_millis(5));
-                        }
-                        Err(error) => panic!("read upstream request: {error}"),
-                    }
-                }
-                let request_text = String::from_utf8_lossy(&buf[..read]).to_lowercase();
-                if !request_text.contains("accept: text/event-stream") {
+                let upstream_request =
+                    read_http_request(&mut server_stream).expect("read complete upstream request");
+                let accepts_sse = upstream_request
+                    .headers
+                    .get("accept")
+                    .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"));
+                if !accepts_sse {
                     let body = b"{\"id\":\"probe-ok\",\"output_text\":\"pong\"}";
                     let header = format!(
                         "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
@@ -3778,7 +3751,7 @@ mod tests {
             headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
             body: serde_json::to_vec(&serde_json::json!({
                 "model": "gpt-5.4",
-                "input": "ping",
+                "input": "x".repeat(128 * 1024),
                 "stream": true
             }))
             .expect("body"),
@@ -3786,7 +3759,13 @@ mod tests {
 
         let response = forward_responses_request(&context, &request);
 
-        assert_eq!(response.status_code, 200);
+        let response_body = response
+            .body_bytes()
+            .map(|body| String::from_utf8_lossy(body).into_owned());
+        assert_eq!(
+            response.status_code, 200,
+            "unexpected proxy response: {response_body:?}"
+        );
         assert!(response.stream);
         assert_eq!(response.model.as_deref(), Some("gpt-5.4"));
         assert_eq!(response.content_type, "text/event-stream");
@@ -4651,7 +4630,6 @@ mod tests {
                 collector_timeout_seconds: settings.collector_timeout_seconds,
                 collector_max_concurrency: settings.collector_max_concurrency,
                 allow_depleted_fallback: settings.allow_depleted_fallback,
-                tray_behavior: settings.tray_behavior,
                 developer_mode_enabled: settings.developer_mode_enabled,
             })
             .expect("enable automatic routing");

@@ -22,7 +22,6 @@ pub struct AppSettings {
     pub collector_timeout_seconds: u16,
     pub collector_max_concurrency: u16,
     pub allow_depleted_fallback: bool,
-    pub tray_behavior: String,
     pub developer_mode_enabled: bool,
     pub data_dir: String,
     pub pending_data_dir: Option<String>,
@@ -48,7 +47,6 @@ pub struct UpdateSettingsInput {
     pub collector_timeout_seconds: u16,
     pub collector_max_concurrency: u16,
     pub allow_depleted_fallback: bool,
-    pub tray_behavior: String,
     pub developer_mode_enabled: bool,
 }
 
@@ -72,7 +70,6 @@ mod tests {
             "collectorTimeoutSeconds": 15,
             "collectorMaxConcurrency": 3,
             "allowDepletedFallback": false,
-            "trayBehavior": "minimize-to-tray",
             "developerModeEnabled": false
         }))
         .expect("old clients may omit scheduler fields");

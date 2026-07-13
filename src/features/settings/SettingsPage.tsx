@@ -23,7 +23,6 @@ import {
   DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   type AppSettings,
   type CollectorProxyMode,
-  type TrayBehavior,
   type UpdateSettingsInput,
 } from "@/lib/types/settings";
 
@@ -31,7 +30,6 @@ type SettingsFormState = {
   localProxyPort: string;
   collectorProxyMode: CollectorProxyMode;
   collectorProxyUrl: string;
-  trayBehavior: TrayBehavior;
   developerModeEnabled: boolean;
 };
 
@@ -53,7 +51,6 @@ const fallbackSettings: AppSettings = {
   collectorTimeoutSeconds: 15,
   collectorMaxConcurrency: 3,
   allowDepletedFallback: false,
-  trayBehavior: "minimize-to-tray",
   developerModeEnabled: false,
   dataDir: "仅桌面端可读取",
   pendingDataDir: null,
@@ -646,7 +643,6 @@ function settingsToForm(settings: AppSettings): SettingsFormState {
     localProxyPort: String(settings.localProxyPort),
     collectorProxyMode: settings.collectorProxyMode,
     collectorProxyUrl: settings.collectorProxyUrl ?? "",
-    trayBehavior: settings.trayBehavior,
     developerModeEnabled: settings.developerModeEnabled,
   };
 }
@@ -662,7 +658,6 @@ function formToInput(form: SettingsFormState, settings: AppSettings): UpdateSett
         ? form.collectorProxyUrl.trim()
         : null,
     schedulerAdvancedSettings: settings.schedulerAdvancedSettings,
-    trayBehavior: form.trayBehavior,
     developerModeEnabled: form.developerModeEnabled,
   };
 }
