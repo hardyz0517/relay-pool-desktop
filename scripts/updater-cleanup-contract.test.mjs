@@ -5,11 +5,16 @@ import path from "node:path";
 const commands = await readFile("src-tauri/src/commands/mod.rs", "utf8");
 const tauriLib = await readFile("src-tauri/src/lib.rs", "utf8");
 const updaterApi = await readFile("src/lib/api/updater.ts", "utf8").catch(() => "");
+const proxyApi = await readFile("src/lib/api/proxy.ts", "utf8").catch(() => "");
+const provider = await readFile("src/features/updater/UpdaterProvider.tsx", "utf8").catch(() => "");
 
-assert.ok(commands.includes("pub fn cleanup_before_update"));
-assert.ok(commands.includes("proxy.cleanup_before_update"));
-assert.ok(tauriLib.includes("commands::cleanup_before_update"));
-assert.ok(updaterApi.includes('invoke<ProxyStatus>("cleanup_before_update")'));
+assert.ok(commands.includes("pub fn prepare_local_proxy_for_update"));
+assert.ok(commands.includes("proxy.prepare_for_update"));
+assert.ok(tauriLib.includes("commands::prepare_local_proxy_for_update"));
+assert.ok(proxyApi.includes('invoke<ProxyStatus>("prepare_local_proxy_for_update")'));
+assert.ok(provider.includes("prepareLocalProxyForUpdate"));
+assert.ok(!updaterApi.includes("cleanup_before_update"));
+assert.ok(!provider.includes("cleanupBeforeUpdate"));
 
 const featureFiles = [];
 async function collect(dir) {
@@ -22,7 +27,11 @@ async function collect(dir) {
 await collect("src/features");
 for (const file of featureFiles) {
   const source = await readFile(file, "utf8");
-  assert.ok(!source.includes('invoke("cleanup_before_update"'), `${file} bypasses updater API`);
+  assert.ok(
+    !source.includes('invoke("prepare_local_proxy_for_update"') &&
+      !source.includes('invoke<ProxyStatus>("prepare_local_proxy_for_update"'),
+    `${file} bypasses the shared proxy API`,
+  );
 }
 
-console.log("updater cleanup boundary checks passed");
+console.log("updater drain-aware preparation boundary checks passed");

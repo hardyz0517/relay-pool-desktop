@@ -2,7 +2,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
-import type { ProxyStatus } from "@/lib/types/proxy";
 import {
   coordinateUpdateCheck,
   type PublishedUpdateInspection,
@@ -93,10 +92,6 @@ export async function downloadPendingUpdate(
       onProgress({ downloadedBytes, totalBytes });
     }
   });
-}
-
-export function cleanupBeforeUpdate() {
-  return invoke<ProxyStatus>("cleanup_before_update");
 }
 
 export async function installPendingUpdateAndRelaunch() {
