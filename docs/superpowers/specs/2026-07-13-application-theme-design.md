@@ -278,7 +278,8 @@ matchMedia change
 
 ### 品牌与状态令牌
 
-- `primary`、`primary-foreground`：主操作和必要强调，保持现有蓝色方向。
+- `primary`：链接、选中边界和必要强调；在深色背景上允许使用更明亮的蓝色。
+- `primary-solid`、`primary-foreground`：主按钮等实色操作；与前景独立满足正文对比度，不强行复用链接色。
 - `success-{surface,foreground,border}`：运行、健康、成功。
 - `warning-{surface,foreground,border}`：待处理、风险、降级。
 - `danger-{surface,foreground,border}`：错误、失败、危险操作。
@@ -444,8 +445,12 @@ matchMedia change
 - `src/theme/nativeTheme.ts`
 - `src/theme/ThemeProvider.tsx`
 - 对应主题测试文件
+- `src/components/ui/SegmentedControl.test.tsx`
 - `src/features/settings/ThemeSettings.tsx`
 - `src/features/settings/ThemeSettings.test.tsx`
+- `src/features/channels/channelStatusViewModel.test.ts`
+- `src/features/stations/groupVisualStyles.ts`
+- `src/features/stations/groupVisualMeta.test.ts`
 - `scripts/theme-audit.mjs`
 
 计划修改：
