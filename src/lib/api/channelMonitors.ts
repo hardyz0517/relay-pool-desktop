@@ -4,6 +4,8 @@ import type {
   ChannelMonitorRequestTemplate,
   ChannelMonitorRun,
   ChannelMonitorSummary,
+  ChannelStatusSummary,
+  ChannelStatusWindowSummary,
   CreateChannelMonitorInput,
   CreateChannelMonitorTemplateInput,
   UpdateChannelMonitorInput,
@@ -48,6 +50,20 @@ export function listChannelMonitorSummaries(options: ChannelMonitorSummaryOption
           latestRun: recentRuns[0] ?? null,
         };
       });
+    }
+    throw error;
+  });
+}
+
+export function listChannelStatusSummaries() {
+  return invoke<ChannelStatusSummary[]>("list_channel_status_summaries").catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      return memoryMonitors.map((monitor) => ({
+        monitor: copyMonitor(monitor),
+        recent: buildMemoryStatusWindow(monitor.id, "recent"),
+        last24h: buildMemoryStatusWindow(monitor.id, "24h"),
+        last7d: buildMemoryStatusWindow(monitor.id, "7d"),
+      }));
     }
     throw error;
   });
@@ -298,6 +314,52 @@ function copyTemplate(template: ChannelMonitorRequestTemplate): ChannelMonitorRe
 
 function copyRun(run: ChannelMonitorRun): ChannelMonitorRun {
   return { ...run };
+}
+
+function buildMemoryStatusWindow(
+  monitorId: string,
+  window: "recent" | "24h" | "7d",
+): ChannelStatusWindowSummary {
+  const now = Date.now();
+  const cutoff =
+    window === "recent" ? null : now - (window === "24h" ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000);
+  const runs = (memoryRuns.get(monitorId) ?? [])
+    .map(copyRun)
+    .filter((run) => cutoff === null || toTime(run.startedAt) >= cutoff)
+    .sort((left, right) => toTime(right.startedAt) - toTime(left.startedAt))
+    .slice(0, 60);
+  const successCount = runs.filter((run) => run.status === "success").length;
+  const failureCount = runs.filter((run) => run.status === "failed").length;
+  const warningCount = runs.filter((run) => run.status === "warning" || run.status === "skipped").length;
+  const avgLatencyMs = averageNullable(runs.map((run) => run.latencyMs ?? run.durationMs));
+
+  return {
+    window,
+    totalCount: runs.length,
+    successCount,
+    failureCount,
+    warningCount,
+    availabilityPercent: runs.length === 0 ? null : (successCount / runs.length) * 100,
+    avgLatencyMs,
+    avgEndpointPingMs: null,
+    lastCheckedAt: runs[0]?.finishedAt ?? runs[0]?.startedAt ?? null,
+    latestStatus: runs[0]?.status ?? null,
+    latestErrorMessage: runs.find((run) => run.errorMessage)?.errorMessage ?? null,
+    timeline: runs.map((run) => ({
+      status: run.status,
+      latencyMs: run.latencyMs ?? run.durationMs,
+      endpointPingMs: null,
+      checkedAt: run.finishedAt ?? run.startedAt,
+    })),
+  };
+}
+
+function averageNullable(values: Array<number | null | undefined>) {
+  const present = values.filter((value): value is number => typeof value === "number");
+  if (present.length === 0) {
+    return null;
+  }
+  return Math.round(present.reduce((sum, value) => sum + value, 0) / present.length);
 }
 
 function toTime(value: string) {

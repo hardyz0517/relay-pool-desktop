@@ -1,16 +1,21 @@
-import { listChannelMonitorSummaries, listChannelMonitorTemplates } from "@/lib/api/channelMonitors";
+import {
+  listChannelMonitorSummaries,
+  listChannelMonitorTemplates,
+  listChannelStatusSummaries,
+} from "@/lib/api/channelMonitors";
 import { listRequestLogs } from "@/lib/api/proxy";
 import { listStationKeyHealth } from "@/lib/api/routing";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
-import type { ChannelMonitorRequestTemplate, ChannelMonitorSummary } from "@/lib/types/channelMonitors";
+import type {
+  ChannelMonitorRequestTemplate,
+  ChannelMonitorSummary,
+  ChannelStatusSummary,
+} from "@/lib/types/channelMonitors";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { StationKeyHealth } from "@/lib/types/routing";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
-
-export const CHANNEL_STATUS_MONITOR_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
-export const CHANNEL_STATUS_MONITOR_RUN_LIMIT = 7 * 24 * 60;
 
 export type ChannelMonitoringWorkspace = {
   monitorSummaries: ChannelMonitorSummary[];
@@ -23,7 +28,7 @@ export type ChannelStatusWorkspace = {
   keyPoolItems: KeyPoolItem[];
   requestLogs: RequestLog[];
   stationKeyHealth: StationKeyHealth[];
-  monitorSummaries: ChannelMonitorSummary[];
+  channelStatusSummaries: ChannelStatusSummary[];
 };
 
 export async function loadChannelMonitoringWorkspace(): Promise<ChannelMonitoringWorkspace> {
@@ -43,18 +48,17 @@ export async function loadChannelMonitoringWorkspace(): Promise<ChannelMonitorin
 }
 
 export async function loadChannelStatusWorkspace(): Promise<ChannelStatusWorkspace> {
-  const runSince = String(Date.now() - CHANNEL_STATUS_MONITOR_LOOKBACK_MS);
-  const [keyPoolItems, requestLogs, stationKeyHealth, monitorSummaries] = await Promise.all([
+  const [keyPoolItems, requestLogs, stationKeyHealth, channelStatusSummaries] = await Promise.all([
     listKeyPoolItems(),
     listRequestLogs(),
     listStationKeyHealth(),
-    listChannelMonitorSummaries({ runSince, runLimit: CHANNEL_STATUS_MONITOR_RUN_LIMIT }),
+    listChannelStatusSummaries(),
   ]);
 
   return {
     keyPoolItems,
     requestLogs,
     stationKeyHealth,
-    monitorSummaries,
+    channelStatusSummaries,
   };
 }
