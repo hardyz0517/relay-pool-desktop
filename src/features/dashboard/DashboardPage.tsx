@@ -77,9 +77,9 @@ const dashboardMetricToneClassName: Record<MetricTone, string> = {
 
 const dashboardMetricIconClassName: Record<MetricTone, string> = {
   neutral: "bg-slate-100",
-  good: "bg-emerald-50",
-  warning: "bg-amber-50",
-  danger: "bg-rose-50",
+  good: "bg-emerald-100",
+  warning: "bg-amber-100",
+  danger: "bg-rose-100",
 };
 
 export function DashboardPage() {
@@ -189,7 +189,6 @@ export function DashboardPage() {
   }, [requestLogs]);
 
   const todayRequests = todayLogs.length;
-  const recentError = requestLogs.find((log) => log.status === "failed")?.errorMessage ?? "最近没有代理错误。";
   const proxyRunning = proxyStatus?.running ?? false;
   const proxyBaseUrl = proxyStatus
     ? `http://${proxyStatus.bindAddr}:${proxyStatus.port}/v1`
@@ -498,7 +497,7 @@ export function DashboardPage() {
             {unreadRisks > 0 ? `${unreadRisks} 未读` : "无未读风险"}
           </StatusBadge>
         </header>
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
           <DashboardMetricTile
             label="严重未解决"
             value={p9RiskBreakdown.unresolvedCritical}
@@ -655,24 +654,19 @@ export function DashboardPage() {
 
         <section className="grid gap-3">
           <h2 className="truncate text-[13px] font-semibold text-slate-800">
-            Key 健康
+            秘钥健康
           </h2>
-          <div className="grid gap-3">
-            <div className="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-3">
-              {(Object.keys(stationKeyStatusLabels) as StationKeyStatus[]).map((key) => (
-                <DashboardMetricTile
-                  key={key}
-                  label={stationKeyStatusLabels[key]}
-                  value={keyPoolItems.filter((item) => item.status === key).length}
-                  detail="密钥"
-                  icon={Server}
-                  tone={metricToneForHealth(key)}
-                />
-              ))}
-            </div>
-            <div className="rounded-[8px] bg-slate-50/60 px-3 py-2.5 text-xs leading-5 text-slate-700">
-              已知余额总计 {totalBalance.toFixed(2)} - 余额告警 {lowBalanceStations} - 最近错误：{recentError}
-            </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {(Object.keys(stationKeyStatusLabels) as StationKeyStatus[]).map((key) => (
+              <DashboardMetricTile
+                key={key}
+                label={stationKeyStatusLabels[key]}
+                value={keyPoolItems.filter((item) => item.status === key).length}
+                detail="密钥"
+                icon={Server}
+                tone={metricToneForHealth(key)}
+              />
+            ))}
           </div>
         </section>
       </div>
@@ -702,15 +696,15 @@ function DashboardMetricTile({
   tone?: MetricTone;
 }) {
   return (
-    <div className="flex min-h-[78px] items-center gap-3 rounded-[8px] border border-border bg-slate-50/60 px-3 py-2.5">
+    <div className="flex min-h-[96px] items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_8px_rgba(15,23,42,0.08)]">
       <div
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${dashboardMetricIconClassName[tone]} ${dashboardMetricToneClassName[tone]}`}
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] ${dashboardMetricIconClassName[tone]} ${dashboardMetricToneClassName[tone]}`}
       >
         <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs text-muted-foreground">{label}</div>
-        <div className={`mt-0.5 truncate text-[21px] font-semibold leading-7 ${dashboardMetricToneClassName[tone]}`}>
+        <div className={`mt-0.5 truncate text-[22px] font-semibold leading-7 ${dashboardMetricToneClassName[tone]}`}>
           {value}
         </div>
         {detail && (

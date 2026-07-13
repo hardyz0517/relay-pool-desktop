@@ -12,28 +12,38 @@ assert.ok(
 
 assert.match(
   dashboardSource,
-  /<section className="grid gap-3">\s*<header className="flex flex-wrap items-center justify-between gap-3">\s*<h2 className="truncate text-\[13px\] font-semibold text-slate-800">\s*当前风险\s*<\/h2>[\s\S]*?<div className="grid gap-3 md:grid-cols-4">/,
-  "current risk section should use the same 12px title-to-card spacing as dashboard metric panels",
+  /<section className="grid gap-3">\s*<header className="flex flex-wrap items-center justify-between gap-3">[\s\S]*?<StatusBadge[\s\S]*?<div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">/,
+  "current risk section should use the same 12px spacing and responsive grid as dashboard metric panels",
 );
 
-for (const sectionTitle of ["路由队列", "最近使用", "Key 健康"]) {
-  assert.match(
-    dashboardSource,
-    new RegExp(
-      `<section className="grid gap-3">\\s*<h2 className="truncate text-\\[13px\\] font-semibold text-slate-800">\\s*${sectionTitle}\\s*<\\/h2>\\s*<div className="grid gap-3`,
-    ),
-    `${sectionTitle} should use the same 12px title-to-card spacing as dashboard metric panels`,
-  );
-}
+assert.ok(
+  dashboardSource.includes(
+    'className="flex min-h-[96px] items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_8px_rgba(15,23,42,0.08)]"',
+  ),
+  "dashboard metric tiles should match the white elevated card style used by MetricPanel cards",
+);
+
+assert.ok(
+  dashboardSource.includes(
+    "flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px]",
+  ),
+  "dashboard metric tile icons should match the metric panel icon container shape",
+);
+
+assert.match(
+  dashboardSource,
+  /<h2 className="truncate text-\[13px\] font-semibold text-slate-800">\s*秘钥健康\s*<\/h2>\s*<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">[\s\S]*?stationKeyStatusLabels/,
+  "key health cards should use the requested title and desktop five-column rhythm",
+);
 
 assert.doesNotMatch(
   dashboardSource,
-  /<SectionCard\s+title="当前风险"[\s\S]*?<div className="mb-3 grid gap-2 md:grid-cols-4">/,
-  "current risk summary should not use the padded SectionCard spacing that pushes cards farther from the title",
+  /recentError|已知余额总计/,
+  "key health should not render the bottom balance and recent-error summary line",
 );
 
 assert.doesNotMatch(
   dashboardSource,
-  /<SectionCard\s+title="(?:路由队列|最近使用|Key 健康)"/,
-  "lower dashboard sections should not use the padded SectionCard header spacing",
+  /<SectionCard\s+title=(?:(?!<\/SectionCard>)[\s\S])*?<DashboardMetricTile/,
+  "dashboard metric tiles should not fall back to padded SectionCard wrappers",
 );
