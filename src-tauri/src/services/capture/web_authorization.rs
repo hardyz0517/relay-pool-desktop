@@ -99,6 +99,20 @@ mod tests {
     }
 
     #[test]
+    fn cookie_pairs_ignore_empty_names_and_values() {
+        let pairs = vec![
+            ("".to_string(), "abc".to_string()),
+            ("session".to_string(), "".to_string()),
+            ("session".to_string(), "abc".to_string()),
+        ];
+
+        assert_eq!(
+            build_cookie_header_from_pairs(&pairs).as_deref(),
+            Some("session=abc")
+        );
+    }
+
+    #[test]
     fn extracts_verified_user_id_from_self_payload() {
         let payload = json!({
             "success": true,

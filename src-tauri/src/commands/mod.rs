@@ -1294,6 +1294,32 @@ fn capture_window_label(station_id: &str) -> String {
     )
 }
 
+async fn read_capture_window_cookie_header(
+    app: tauri::AppHandle,
+    station_id: &str,
+    station_base_url: &str,
+) -> Result<String, String> {
+    let label = capture_window_label(station_id);
+    let window = app
+        .get_webview_window(&label)
+        .ok_or_else(|| "网页登录授权窗口不存在，请重新打开授权窗口。".to_string())?;
+    let urls = collectors::url::collector_base_urls(station_base_url);
+    let target = tauri::Url::parse(&urls.management_base_url)
+        .map_err(|error| format!("站点管理地址无法用于读取 Cookie: {error}"))?;
+
+    let cookies = tauri::async_runtime::spawn_blocking(move || window.cookies_for_url(target))
+        .await
+        .map_err(|error| format!("读取网页登录授权 Cookie 任务失败: {error}"))?
+        .map_err(|error| format!("读取网页登录授权 Cookie 失败: {error}"))?;
+
+    let pairs = cookies
+        .into_iter()
+        .map(|cookie| (cookie.name().to_string(), cookie.value().to_string()))
+        .collect::<Vec<_>>();
+    capture::web_authorization::build_cookie_header_from_pairs(&pairs)
+        .ok_or_else(|| "网页登录授权未捕获到可用 Cookie，请确认已在授权窗口完成登录。".to_string())
+}
+
 fn capture_request_belongs_to_station(station_base_url: &str, request_url: &str) -> bool {
     let urls = collectors::url::collector_base_urls(station_base_url);
     let belongs = [&urls.management_base_url, &urls.upstream_api_base_url]
