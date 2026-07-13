@@ -27,12 +27,14 @@ jobs:
       - run: node scripts/updater-cleanup-contract.test.mjs
       - run: node scripts/updater-current-version-fallback.test.mjs
       - run: node scripts/updater-timeout-recovery.test.mjs
+      - run: node --test scripts/updater-check-coordinator.test.ts
       - run: node scripts/dashboard-update-action.test.mjs
       - run: node --test scripts/updater-error-message.test.ts
       - run: node --test scripts/updater-state-flow.test.ts
       - run: node scripts/updater-ui-contract.test.mjs
       - run: pnpm build
-      - run: cargo test --manifest-path .\src-tauri\Cargo.toml cleanup_before_update -- --nocapture
+      - run: cargo test --manifest-path .\src-tauri\Cargo.toml services::updater -- --nocapture
+      - run: cargo test --manifest-path .\src-tauri\Cargo.toml prepare_for_update -- --nocapture
       - run: cargo check --manifest-path .\src-tauri\Cargo.toml
       - uses: tauri-apps/tauri-action@fce9c6108b31ea247710505d3aaaa893ee6768d4
         env:

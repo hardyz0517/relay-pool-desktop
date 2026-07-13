@@ -2,7 +2,10 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
-import type { ProxyStatus } from "@/lib/types/proxy";
+import {
+  coordinateUpdateCheck,
+  type PublishedUpdateInspection,
+} from "@/lib/api/updaterCheckCoordinator";
 
 export type AvailableAppUpdate = {
   currentVersion: string;
@@ -20,14 +23,12 @@ export type DownloadProgress = {
   totalBytes: number | null;
 };
 
-type PublishedUpdateManifest = {
-  version: string;
-  notes: string | null;
+type UpdaterNetworkConfig = {
+  proxyUrl: string | null;
 };
 
 let pendingUpdate: Update | null = null;
 let nativeUpdateCheckInFlight: Promise<Update | null> | null = null;
-const UPDATE_MANIFEST_URL = "https://github.com/hardyz0517/relay-pool-desktop/releases/latest/download/latest.json";
 
 export async function currentAppVersion() {
   return isTauri() ? getVersion() : "0.0.0";
@@ -38,40 +39,38 @@ export async function checkForAppUpdate(): Promise<AppUpdateCheckResult> {
   if (!isTauri()) return { kind: "unsupported", currentVersion };
 
   await closePendingUpdateBeforeCheck();
-  try {
-    pendingUpdate = await withTimeout(
-      startNativeUpdateCheck(),
-      12_000,
-      "更新检查超时",
-    );
-  } catch (updateError) {
-    abandonNativeUpdateCheck();
-    const latestManifest = await withTimeout(
-      fetchLatestManifestVersion(),
-      6_000,
-      "更新清单检查超时",
-    ).catch(() => null);
-    if (latestManifest && versionsMatch(latestManifest.version, currentVersion)) {
-      return { kind: "current", currentVersion };
-    }
-    const manifestUpdate = latestManifest && isVersionNewer(latestManifest.version, currentVersion)
-      ? {
-          currentVersion,
-          version: latestManifest.version,
-          notes: latestManifest.notes,
-        }
-      : null;
-    if (manifestUpdate) return { kind: "available", update: manifestUpdate };
-    throw updateError;
-  }
-  if (!pendingUpdate) return { kind: "current", currentVersion };
+  const network = await invoke<UpdaterNetworkConfig>("updater_network_config")
+    .catch(() => ({ proxyUrl: null }));
+  const result = await coordinateUpdateCheck({
+    currentVersion,
+    proxyUrl: network.proxyUrl,
+    checkNative: async (proxyUrl) => {
+      try {
+        return await withTimeout(
+          startNativeUpdateCheck(proxyUrl),
+          12_000,
+          "更新检查超时",
+        );
+      } catch (error) {
+        abandonNativeUpdateCheck();
+        throw error;
+      }
+    },
+    inspectPublished: (version) =>
+      invoke<PublishedUpdateInspection>("inspect_latest_update_manifest", {
+        currentVersion: version,
+      }),
+  });
+  if (result.kind === "current") return result;
+
+  pendingUpdate = result.update;
 
   return {
     kind: "available",
     update: {
-      currentVersion: pendingUpdate.currentVersion,
-      version: pendingUpdate.version,
-      notes: pendingUpdate.body ?? null,
+      currentVersion: result.update.currentVersion,
+      version: result.update.version,
+      notes: result.update.body ?? null,
     },
   };
 }
@@ -79,7 +78,6 @@ export async function checkForAppUpdate(): Promise<AppUpdateCheckResult> {
 export async function downloadPendingUpdate(
   onProgress: (progress: DownloadProgress) => void,
 ) {
-  await ensurePendingUpdateForInstall();
   if (!pendingUpdate) throw new Error("没有可下载的应用更新");
   let downloadedBytes = 0;
   let totalBytes: number | null = null;
@@ -94,10 +92,6 @@ export async function downloadPendingUpdate(
       onProgress({ downloadedBytes, totalBytes });
     }
   });
-}
-
-export function cleanupBeforeUpdate() {
-  return invoke<ProxyStatus>("cleanup_before_update");
 }
 
 export async function installPendingUpdateAndRelaunch() {
@@ -120,10 +114,12 @@ async function closePendingUpdateBeforeCheck() {
   }
 }
 
-function startNativeUpdateCheck() {
+function startNativeUpdateCheck(proxyUrl: string | null) {
   if (!nativeUpdateCheckInFlight) {
     let trackedUpdateCheck: Promise<Update | null>;
-    trackedUpdateCheck = check({ timeout: 10_000 }).finally(() => {
+    trackedUpdateCheck = check(
+      proxyUrl ? { timeout: 10_000, proxy: proxyUrl } : { timeout: 10_000 },
+    ).finally(() => {
       if (nativeUpdateCheckInFlight === trackedUpdateCheck) {
         nativeUpdateCheckInFlight = null;
       }
@@ -143,40 +139,6 @@ function abandonNativeUpdateCheck() {
   );
 }
 
-async function ensurePendingUpdateForInstall() {
-  if (pendingUpdate) return;
-  const update = await withTimeout(
-    startNativeUpdateCheck(),
-    20_000,
-    "准备更新下载超时",
-  );
-  if (update) {
-    pendingUpdate = update;
-  }
-}
-
-async function fetchLatestManifestVersion() {
-  const desktopVersion = await invoke<string | null>("latest_update_manifest_version").catch(() => null);
-  if (desktopVersion) return { version: desktopVersion, notes: null };
-  return fetchLatestManifestVersionFromBrowser();
-}
-
-async function fetchLatestManifestVersionFromBrowser() {
-  try {
-    const response = await fetch(UPDATE_MANIFEST_URL, { cache: "no-store" });
-    if (!response.ok) return null;
-    const manifest = (await response.json()) as { version?: unknown; notes?: unknown };
-    return typeof manifest.version === "string"
-      ? {
-          version: manifest.version,
-          notes: typeof manifest.notes === "string" ? manifest.notes : null,
-        }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
   return new Promise<T>((resolve, reject) => {
     const timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
@@ -191,32 +153,4 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
       },
     );
   });
-}
-
-function versionsMatch(left: string, right: string) {
-  return normalizeVersion(left) === normalizeVersion(right);
-}
-
-function isVersionNewer(candidate: string, current: string) {
-  const candidateParts = versionParts(candidate);
-  const currentParts = versionParts(current);
-  const length = Math.max(candidateParts.length, currentParts.length);
-  for (let index = 0; index < length; index += 1) {
-    const candidatePart = candidateParts[index] ?? 0;
-    const currentPart = currentParts[index] ?? 0;
-    if (candidatePart > currentPart) return true;
-    if (candidatePart < currentPart) return false;
-  }
-  return false;
-}
-
-function versionParts(version: string) {
-  return normalizeVersion(version)
-    .split(/[.-]/)
-    .map((part) => Number.parseInt(part, 10))
-    .filter((part) => Number.isFinite(part));
-}
-
-function normalizeVersion(version: string) {
-  return version.trim().replace(/^v/i, "");
 }

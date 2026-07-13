@@ -65,6 +65,7 @@ use crate::{
         },
         remote_keys,
         secrets::SecretManager,
+        updater::{self, PublishedUpdateInspection, UpdaterNetworkConfig},
     },
 };
 
@@ -72,9 +73,6 @@ const STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::fro
 const STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const STATION_KEY_CONNECTIVITY_CANDIDATE_LIMIT: usize = 2;
 const DEFAULT_STATION_KEY_CONNECTIVITY_MODEL: &str = "gpt-4.1-mini";
-const UPDATE_MANIFEST_URL: &str =
-    "https://github.com/hardyz0517/relay-pool-desktop/releases/latest/download/latest.json";
-
 #[tauri::command]
 pub fn app_status() -> AppStatus {
     AppStatus::default()
@@ -187,24 +185,19 @@ pub fn open_external_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn latest_update_manifest_version() -> Result<Option<String>, String> {
-    let response = ureq::get(UPDATE_MANIFEST_URL)
-        .timeout(Duration::from_secs(10))
-        .set("Accept", "application/json")
-        .call()
-        .map_err(|error| format!("读取更新清单失败: {error}"))?;
-    if !(200..300).contains(&response.status()) {
-        return Ok(None);
-    }
-    let body = response
-        .into_string()
-        .map_err(|error| format!("读取更新清单内容失败: {error}"))?;
-    let value = serde_json::from_str::<Value>(&body)
-        .map_err(|error| format!("解析更新清单失败: {error}"))?;
-    Ok(value
-        .get("version")
-        .and_then(Value::as_str)
-        .map(str::to_string))
+pub fn updater_network_config() -> UpdaterNetworkConfig {
+    updater::network_config()
+}
+
+#[tauri::command]
+pub async fn inspect_latest_update_manifest(
+    current_version: String,
+) -> Result<PublishedUpdateInspection, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        updater::inspect_latest_update_manifest(&current_version)
+    })
+    .await
+    .map_err(|error| format!("Updater manifest task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -2508,10 +2501,7 @@ mod tests {
         assert!(result.ok);
         assert_eq!(result.status_code, 200);
         assert_eq!(result.duration_ms, 18);
-        assert_eq!(
-            result.message,
-            "Responses 直连返回 HTTP 503，Chat Completions 兼容探测正常"
-        );
+        assert_eq!(result.message, "Chat Completions 连通正常");
     }
 
     #[test]
@@ -2566,9 +2556,9 @@ mod tests {
 
         assert_eq!(body["model"], "claude-test");
         assert_eq!(body["messages"][0]["role"], "user");
-        assert_eq!(body["messages"][0]["content"], "ping");
+        assert_eq!(body["messages"][0]["content"], "hi");
         assert_eq!(body["stream"], false);
-        assert_eq!(body["max_tokens"], 16);
+        assert_eq!(body["max_tokens"], 32);
     }
 
     #[test]

@@ -15,6 +15,7 @@ import { openExternalUrl } from "@/lib/api/external";
 import { chooseDataDir, getLocalAccessKey, getSettings, resetDataDir, SETTINGS_UPDATED_EVENT, updateLocalAccessKey, updateSettings } from "@/lib/api/settings";
 import type { ProxyStatus } from "@/lib/types/proxy";
 import { useUpdater } from "@/features/updater/UpdaterProvider";
+import { isUpdaterBusyPhase } from "@/features/updater/updateState";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import {
   appSettingsToUpdateInput,
@@ -529,7 +530,7 @@ function UpdateSettingsCard({
           <ExternalLink className="h-4 w-4" />
           更新日志
         </Button>
-        <Button disabled={state.phase === "checking"} type="button" onClick={onCheckForUpdates}>
+        <Button disabled={isUpdaterBusyPhase(state.phase)} type="button" onClick={onCheckForUpdates}>
           <RefreshCw className={state.phase === "checking" ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
           检查更新
         </Button>

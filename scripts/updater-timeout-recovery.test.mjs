@@ -6,8 +6,8 @@ const workflowSource = await readFile(".github/workflows/release.yml", "utf8");
 
 assert.match(
   updaterApiSource,
-  /catch \(updateError\) \{[\s\S]*abandonNativeUpdateCheck\(\)[\s\S]*fetchLatestManifestVersion/,
-  "a timed-out native check must be detached before the manifest fallback reports an update",
+  /checkNative:[\s\S]*catch \(error\) \{[\s\S]*abandonNativeUpdateCheck\(\)[\s\S]*throw error/,
+  "a timed-out native check must be detached before manifest inspection starts",
 );
 
 assert.match(

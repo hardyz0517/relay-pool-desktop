@@ -7,6 +7,8 @@ export type UpdaterPhase =
   | "installing"
   | "failed";
 
+export type UpdaterFailureOperation = "check" | "download" | "prepare" | "install";
+
 export type UpdaterState = {
   phase: UpdaterPhase;
   currentVersion: string;
@@ -15,6 +17,7 @@ export type UpdaterState = {
   downloadedBytes: number;
   totalBytes: number | null;
   error: string | null;
+  failedOperation: UpdaterFailureOperation | null;
   lastCheckedAt: string | null;
 };
 
@@ -33,7 +36,7 @@ export type UpdaterEvent =
   | { type: "CLEANUP_STARTED" }
   | { type: "INSTALL_STARTED" }
   | { type: "DISMISSED" }
-  | { type: "FAILED"; message: string };
+  | { type: "FAILED"; operation: UpdaterFailureOperation; message: string };
 
 export const initialUpdaterState: UpdaterState = {
   phase: "idle",
@@ -43,15 +46,32 @@ export const initialUpdaterState: UpdaterState = {
   downloadedBytes: 0,
   totalBytes: null,
   error: null,
+  failedOperation: null,
   lastCheckedAt: null,
 };
+
+export function isUpdaterBusyPhase(phase: UpdaterPhase) {
+  return phase === "checking" ||
+    phase === "downloading" ||
+    phase === "cleaning" ||
+    phase === "installing";
+}
 
 export function reduceUpdaterState(state: UpdaterState, event: UpdaterEvent): UpdaterState {
   switch (event.type) {
     case "CURRENT_VERSION":
       return { ...state, currentVersion: event.version };
     case "CHECK_STARTED":
-      return { ...state, phase: "checking", error: null };
+      return {
+        ...state,
+        phase: "checking",
+        version: null,
+        notes: null,
+        downloadedBytes: 0,
+        totalBytes: null,
+        error: null,
+        failedOperation: null,
+      };
     case "UP_TO_DATE":
       return {
         ...state,
@@ -63,6 +83,7 @@ export function reduceUpdaterState(state: UpdaterState, event: UpdaterEvent): Up
         totalBytes: null,
         lastCheckedAt: event.checkedAt,
         error: null,
+        failedOperation: null,
       };
     case "UPDATE_AVAILABLE":
       return {
@@ -74,6 +95,7 @@ export function reduceUpdaterState(state: UpdaterState, event: UpdaterEvent): Up
         downloadedBytes: 0,
         totalBytes: null,
         error: null,
+        failedOperation: null,
         lastCheckedAt: new Date().toISOString(),
       };
     case "DOWNLOAD_STARTED":
@@ -85,8 +107,24 @@ export function reduceUpdaterState(state: UpdaterState, event: UpdaterEvent): Up
     case "INSTALL_STARTED":
       return { ...state, phase: "installing" };
     case "DISMISSED":
-      return { ...state, phase: "idle", version: null, notes: null, error: null };
+      return {
+        ...state,
+        phase: "idle",
+        version: null,
+        notes: null,
+        error: null,
+        failedOperation: null,
+      };
     case "FAILED":
-      return { ...state, phase: "failed", error: event.message };
+      return {
+        ...state,
+        phase: "failed",
+        version: event.operation === "check" ? null : state.version,
+        notes: event.operation === "check" ? null : state.notes,
+        downloadedBytes: event.operation === "check" ? 0 : state.downloadedBytes,
+        totalBytes: event.operation === "check" ? null : state.totalBytes,
+        error: event.message,
+        failedOperation: event.operation,
+      };
   }
 }

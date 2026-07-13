@@ -86,7 +86,7 @@ pub fn agent_builder_for_proxy(proxy: &ProxyConfig) -> Result<ureq::AgentBuilder
     }
 }
 
-fn current_system_proxy_url() -> Option<String> {
+pub(crate) fn current_system_proxy_url() -> Option<String> {
     current_windows_system_proxy_url()
 }
 

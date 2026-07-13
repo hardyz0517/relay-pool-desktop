@@ -35,11 +35,16 @@ test("confirmed update advances through download, cleanup, and install", async (
 test("failed check remains retryable", async () => {
   const { initialUpdaterState, reduceUpdaterState } = await import(modulePath.href);
   const checking = reduceUpdaterState(initialUpdaterState, { type: "CHECK_STARTED" });
-  const failed = reduceUpdaterState(checking, { type: "FAILED", message: "offline" });
+  const failed = reduceUpdaterState(checking, {
+    type: "FAILED",
+    operation: "check",
+    message: "offline",
+  });
   const retried = reduceUpdaterState(failed, { type: "CHECK_STARTED" });
 
   assert.equal(failed.phase, "failed");
   assert.equal(failed.error, "offline");
+  assert.equal(failed.failedOperation, "check");
   assert.equal(retried.phase, "checking");
   assert.equal(retried.error, null);
 });
@@ -61,4 +66,55 @@ test("up-to-date result clears stale available update details", async () => {
   assert.equal(current.phase, "idle");
   assert.equal(current.version, null);
   assert.equal(current.notes, null);
+});
+
+test("check failures clear stale update details", async () => {
+  const { initialUpdaterState, reduceUpdaterState } = await import(modulePath.href);
+  const available = reduceUpdaterState(initialUpdaterState, {
+    type: "UPDATE_AVAILABLE",
+    currentVersion: "0.2.2",
+    version: "0.2.3",
+    notes: "Fixes",
+  });
+  const checking = reduceUpdaterState(available, { type: "CHECK_STARTED" });
+  const failed = reduceUpdaterState(checking, {
+    type: "FAILED",
+    operation: "check",
+    message: "offline",
+  });
+
+  assert.equal(failed.version, null);
+  assert.equal(failed.notes, null);
+  assert.equal(failed.failedOperation, "check");
+});
+
+test("install-stage failures retain the target update details", async () => {
+  const { initialUpdaterState, reduceUpdaterState } = await import(modulePath.href);
+  const available = reduceUpdaterState(initialUpdaterState, {
+    type: "UPDATE_AVAILABLE",
+    currentVersion: "0.2.2",
+    version: "0.2.3",
+    notes: "Fixes",
+  });
+  const failed = reduceUpdaterState(available, {
+    type: "FAILED",
+    operation: "prepare",
+    message: "active requests did not drain",
+  });
+
+  assert.equal(failed.version, "0.2.3");
+  assert.equal(failed.notes, "Fixes");
+  assert.equal(failed.failedOperation, "prepare");
+});
+
+test("all updater operations that own shared resources are busy", async () => {
+  const { isUpdaterBusyPhase } = await import(modulePath.href);
+
+  assert.equal(isUpdaterBusyPhase("checking"), true);
+  assert.equal(isUpdaterBusyPhase("downloading"), true);
+  assert.equal(isUpdaterBusyPhase("cleaning"), true);
+  assert.equal(isUpdaterBusyPhase("installing"), true);
+  assert.equal(isUpdaterBusyPhase("available"), false);
+  assert.equal(isUpdaterBusyPhase("failed"), false);
+  assert.equal(isUpdaterBusyPhase("idle"), false);
 });

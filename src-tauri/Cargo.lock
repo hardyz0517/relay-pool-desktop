@@ -3054,6 +3054,7 @@ dependencies = [
  "rand 0.8.6",
  "rfd",
  "rusqlite",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

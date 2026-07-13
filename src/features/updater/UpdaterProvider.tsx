@@ -10,15 +10,20 @@ import {
   type ReactNode,
 } from "react";
 import { UpdateDialog } from "./UpdateDialog";
-import { initialUpdaterState, reduceUpdaterState, type UpdaterState } from "./updateState";
+import {
+  initialUpdaterState,
+  reduceUpdaterState,
+  type UpdaterFailureOperation,
+  type UpdaterState,
+} from "./updateState";
 import {
   checkForAppUpdate,
-  cleanupBeforeUpdate,
   closePendingUpdate,
   currentAppVersion,
   downloadPendingUpdate,
   installPendingUpdateAndRelaunch,
 } from "@/lib/api/updater";
+import { prepareLocalProxyForUpdate } from "@/lib/api/proxy";
 import { normalizeUpdaterError } from "@/lib/api/updaterErrors";
 import { useToast } from "@/components/ui";
 
@@ -43,13 +48,17 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
   const installingRef = useRef(false);
 
   const checkNow = useCallback(async (options?: UpdateCheckOptions) => {
-    if (checkingRef.current) return;
+    if (checkingRef.current || installingRef.current) return;
     const shouldNotify = options?.notify ?? true;
     checkingRef.current = true;
     dispatch({ type: "CHECK_STARTED" });
     try {
       const result = await checkForAppUpdate();
-      if (result.kind === "available") {
+      if (result.kind === "unsupported") {
+        const message = "当前环境不支持应用内更新检查。";
+        dispatch({ type: "FAILED", operation: "check", message });
+        if (shouldNotify) toast.error("无法检查更新", message);
+      } else if (result.kind === "available") {
         dispatch({
           type: "UPDATE_AVAILABLE",
           currentVersion: result.update.currentVersion,
@@ -69,7 +78,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       const message = normalizeUpdaterError(error);
-      dispatch({ type: "FAILED", message });
+      dispatch({ type: "FAILED", operation: "check", message });
       if (shouldNotify) toast.error("检查更新未完成", message);
     } finally {
       checkingRef.current = false;
@@ -94,23 +103,30 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
   }, [state.phase]);
 
   const install = useCallback(async () => {
-    if (installingRef.current) return;
+    if (checkingRef.current || installingRef.current || state.phase !== "available") return;
     installingRef.current = true;
+    let operation: UpdaterFailureOperation = "download";
     dispatch({ type: "DOWNLOAD_STARTED" });
     try {
       await downloadPendingUpdate((progress) => {
         dispatch({ type: "DOWNLOAD_PROGRESS", ...progress });
       });
+      operation = "prepare";
       dispatch({ type: "CLEANUP_STARTED" });
-      await cleanupBeforeUpdate();
+      await prepareLocalProxyForUpdate();
+      operation = "install";
       dispatch({ type: "INSTALL_STARTED" });
       await installPendingUpdateAndRelaunch();
     } catch (error) {
-      dispatch({ type: "FAILED", message: normalizeUpdaterError(error) });
+      dispatch({
+        type: "FAILED",
+        operation,
+        message: normalizeUpdaterError(error),
+      });
     } finally {
       installingRef.current = false;
     }
-  }, []);
+  }, [state.phase]);
 
   const showUpdateDialog = useCallback(() => {
     if (state.phase === "available" || state.phase === "failed") {
