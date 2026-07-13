@@ -1,5 +1,6 @@
 pub mod redaction;
 pub mod session;
+pub mod web_authorization;
 
 use serde_json::{json, Value};
 
