@@ -95,6 +95,7 @@ export function startCaptureSession(stationId: string) {
         captureCount: 0,
         recognizedFieldCount: 0,
         pendingConfirmationCount: 0,
+        webAuthorizationCandidate: false,
         lastError: null,
       };
     }
@@ -115,6 +116,7 @@ export function getCaptureSessionStatus(stationId: string) {
         captureCount: 0,
         recognizedFieldCount: 0,
         pendingConfirmationCount: 0,
+        webAuthorizationCandidate: false,
         lastError: null,
       };
     }
@@ -149,6 +151,7 @@ export function clearCaptureSession(stationId: string) {
         captureCount: 0,
         recognizedFieldCount: 0,
         pendingConfirmationCount: 0,
+        webAuthorizationCandidate: false,
         lastError: null,
       };
     }
@@ -165,6 +168,7 @@ export function closeCaptureSession(stationId: string) {
         captureCount: 0,
         recognizedFieldCount: 0,
         pendingConfirmationCount: 0,
+        webAuthorizationCandidate: false,
         lastError: null,
       };
     }

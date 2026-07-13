@@ -70,7 +70,7 @@ assert.ok(captureCapability, "manual authorization capture windows must have an 
 assert.deepEqual(
   captureCapability.json.permissions,
   ["record-capture-event"],
-  "capture windows should only be able to invoke the capture event command",
+  "capture windows should only be able to invoke the capture authorization command group",
 );
 assert.deepEqual(
   captureCapability.json.remote?.urls,
@@ -88,7 +88,12 @@ assert.ok(
 const permissionText = fs.readFileSync(permissionPath, "utf8");
 assert.match(permissionText, /\[\[permission\]\]/);
 assert.match(permissionText, /identifier\s*=\s*"record-capture-event"/);
-assert.match(permissionText, /commands\.allow\s*=\s*\[\s*"record_capture_event"\s*\]/);
+const captureAllowedCommands = readTomlArray(permissionText, "commands.allow");
+assert.deepEqual(
+  captureAllowedCommands,
+  ["record_capture_event", "finish_web_authorization_session"],
+  "capture windows should only be able to record sanitized events and finish verified web authorization",
+);
 
 const buildScript = fs.readFileSync(path.join(repoRoot, "src-tauri", "build.rs"), "utf8");
 assert.match(

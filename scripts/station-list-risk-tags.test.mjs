@@ -161,6 +161,19 @@ assert.ok(
 );
 
 assert.ok(
+  pageSource.includes('station.stationType === "sub2api"') &&
+    pageSource.includes('station.stationType === "newapi"') &&
+    pageSource.includes("onAuthorize(station)"),
+  "station list manual authorization action should be available for both Sub2API and NewAPI rows",
+);
+
+assert.ok(
+  pageSource.includes("startManualAuthorization(station.id)") &&
+    !pageSource.includes("finishWebAuthorizationSession(station.id)"),
+  "station row authorization should start the automatic popup flow without a second required finish action",
+);
+
+assert.ok(
   pageSource.includes("STATION_ISSUE_FILTER_OPTIONS") &&
     pageSource.includes("filterStationAssetRowsByIssue(stationAssetRows, issueFilter)") &&
     pageSource.includes('ariaLabel="筛选问题标签"') &&

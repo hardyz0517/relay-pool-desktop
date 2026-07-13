@@ -1217,12 +1217,15 @@ pub fn record_capture_event(
     if !capture_request_belongs_to_station(&station.base_url, &input.request_url) {
         return Err("捕获事件不属于当前站点 Base URL，已拒绝。".to_string());
     }
+    let web_authorization_candidate = web_authorization_candidate_from_input(&input);
     if let Some(session) = capture::extract_session_credentials(&input) {
         database.persist_station_session_with_data_key(session, secrets.data_key())?;
     }
     let station_id = input.station_id.clone();
     let event = capture::sanitize_event(input);
-    sessions.push_event(&station_id, event)
+    let mut status = sessions.push_event(&station_id, event)?;
+    status.web_authorization_candidate = web_authorization_candidate;
+    Ok(status)
 }
 
 #[tauri::command]
@@ -1386,6 +1389,30 @@ fn url_has_base_prefix(request_url: &str, base_url: &str) -> bool {
     !base.is_empty() && (request == base || request.starts_with(&format!("{base}/")))
 }
 
+fn web_authorization_candidate_from_input(input: &CapturedHttpEventInput) -> bool {
+    let fallback_path;
+    let request_path = if let Some(path) = input.request_path.as_deref() {
+        path
+    } else {
+        fallback_path = path_from_request_url(&input.request_url);
+        &fallback_path
+    };
+    capture::web_authorization::is_newapi_completion_candidate(
+        request_path,
+        input.status,
+        input.response_json.as_ref(),
+    )
+}
+
+fn path_from_request_url(url: &str) -> String {
+    let without_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
+    let path = without_scheme
+        .find('/')
+        .map(|index| &without_scheme[index..])
+        .unwrap_or("/");
+    path.split(['?', '#']).next().unwrap_or("/").to_string()
+}
+
 fn capture_script(
     station_id: &str,
     window_label: &str,
@@ -1417,9 +1444,21 @@ fn capture_script(
     try {{ return headers && headers.get ? (headers.get("content-type") || "") : ""; }}
     catch (_) {{ return ""; }}
   }};
+  const tryFinishWebAuthorization = (status) => {{
+    if (!invoke || !status || !status.webAuthorizationCandidate) return;
+    if (window.__relayPoolAuthorizationFinishInFlight) return;
+    window.__relayPoolAuthorizationFinishInFlight = true;
+    invoke("finish_web_authorization_session", {{ stationId }})
+      .catch(() => undefined)
+      .finally(() => {{
+        window.__relayPoolAuthorizationFinishInFlight = false;
+      }});
+  }};
   const send = (input) => {{
     if (!invoke) return;
-    invoke("record_capture_event", {{ input }}).catch(() => undefined);
+    invoke("record_capture_event", {{ input }})
+      .then(tryFinishWebAuthorization)
+      .catch(() => undefined);
   }};
   const buildBase = (url, method, startedAt) => ({{
     stationId,
@@ -2205,6 +2244,39 @@ mod tests {
             "https://relay.example.com/v1",
             "https://other.example.com/api/v1/auth/login"
         ));
+    }
+
+    #[test]
+    fn captured_newapi_self_event_marks_web_authorization_candidate() {
+        let input = CapturedHttpEventInput {
+            station_id: "station-1".to_string(),
+            source_window_id: "capture-station-1".to_string(),
+            page_url: "https://relay.example/console".to_string(),
+            request_url: "https://relay.example/api/user/self".to_string(),
+            request_path: Some("/api/user/self".to_string()),
+            method: "GET".to_string(),
+            status: Some(200),
+            content_type: Some("application/json".to_string()),
+            started_at: None,
+            finished_at: None,
+            duration_ms: None,
+            response_kind: Some("json".to_string()),
+            response_size: None,
+            response_json: Some(json!({ "success": true, "data": { "id": 42 } })),
+            response_text: None,
+            error_message: None,
+        };
+
+        assert!(web_authorization_candidate_from_input(&input));
+    }
+
+    #[test]
+    fn capture_script_invokes_web_authorization_finish_after_candidate() {
+        let script = capture_script("station-1", "capture-station-1", None, None);
+
+        assert!(script.contains("finish_web_authorization_session"));
+        assert!(script.contains("webAuthorizationCandidate"));
+        assert!(script.contains("__relayPoolAuthorizationFinishInFlight"));
     }
 
     #[test]

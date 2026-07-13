@@ -642,9 +642,9 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     setError(null);
     try {
       await startManualAuthorization(station.id);
-      toast.success("人工授权窗口已打开");
+      toast.success("授权窗口已打开，登录成功后会自动保存会话");
     } catch (requestError) {
-      toast.error("打开人工授权失败", readError(requestError));
+      toast.error("打开授权窗口失败", readError(requestError));
     } finally {
       setStationAction(null);
     }
@@ -1163,7 +1163,7 @@ function StationAssetListRow({
 }
 
 function supportsManualAuthorization(station: Station) {
-  return station.stationType === "sub2api";
+  return station.stationType === "sub2api" || station.stationType === "newapi";
 }
 
 function rowNeedsManualAuthorization(row: StationAssetRow) {

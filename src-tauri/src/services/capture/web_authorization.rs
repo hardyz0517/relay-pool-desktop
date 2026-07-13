@@ -37,6 +37,21 @@ pub(crate) fn extract_verified_user_id(payload: &Value) -> Option<String> {
     super::extract_newapi_user_id(payload)
 }
 
+pub(crate) fn is_newapi_completion_candidate(
+    request_path: &str,
+    status: Option<i64>,
+    response_json: Option<&Value>,
+) -> bool {
+    matches!(status, Some(200..=299))
+        && request_path
+            .split('?')
+            .next()
+            .unwrap_or(request_path)
+            .trim_end_matches('/')
+            .eq_ignore_ascii_case("/api/user/self")
+        && response_json.and_then(extract_verified_user_id).is_some()
+}
+
 pub(crate) fn verify_newapi_cookie_session(
     management_base_url: &str,
     cookie_header: &str,
@@ -130,6 +145,48 @@ mod tests {
             VerifiedWebAuthorizationSession::new("session=abc".to_string(), "42".to_string());
 
         assert_eq!(session.session_source, "web_authorization");
+    }
+
+    #[test]
+    fn recognizes_successful_newapi_self_candidate() {
+        let payload = json!({
+            "success": true,
+            "data": {
+                "id": 42
+            }
+        });
+
+        assert!(is_newapi_completion_candidate(
+            "/api/user/self",
+            Some(200),
+            Some(&payload),
+        ));
+    }
+
+    #[test]
+    fn rejects_unauthenticated_or_unrelated_completion_candidates() {
+        let payload = json!({
+            "success": true,
+            "data": {
+                "id": 42
+            }
+        });
+
+        assert!(!is_newapi_completion_candidate(
+            "/api/user/self",
+            Some(401),
+            Some(&payload),
+        ));
+        assert!(!is_newapi_completion_candidate(
+            "/api/token",
+            Some(200),
+            Some(&payload),
+        ));
+        assert!(!is_newapi_completion_candidate(
+            "/api/user/self",
+            Some(200),
+            Some(&json!({ "success": true })),
+        ));
     }
 }
 

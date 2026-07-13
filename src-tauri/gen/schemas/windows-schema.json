@@ -183,10 +183,10 @@
           "markdownDescription": "Allow the main Relay Pool Desktop window to invoke normal app commands."
         },
         {
-          "description": "Allow manual authorization capture windows to report sanitized HTTP events.",
+          "description": "Allow manual authorization capture windows to report sanitized HTTP events and finish verified Web authorization.",
           "type": "string",
           "const": "record-capture-event",
-          "markdownDescription": "Allow manual authorization capture windows to report sanitized HTTP events."
+          "markdownDescription": "Allow manual authorization capture windows to report sanitized HTTP events and finish verified Web authorization."
         },
         {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",

@@ -54,5 +54,6 @@ pub struct CaptureSessionStatus {
     pub capture_count: usize,
     pub recognized_field_count: usize,
     pub pending_confirmation_count: usize,
+    pub web_authorization_candidate: bool,
     pub last_error: Option<String>,
 }

@@ -109,6 +109,7 @@ commands.allow = [
   "start_capture_session",
   "get_capture_session_status",
   "finish_capture_session",
+  "finish_web_authorization_session",
   "clear_capture_session",
   "close_capture_session",
 ]

@@ -74,5 +74,6 @@ export type CaptureSessionStatus = {
   captureCount: number;
   recognizedFieldCount: number;
   pendingConfirmationCount: number;
+  webAuthorizationCandidate: boolean;
   lastError: string | null;
 };

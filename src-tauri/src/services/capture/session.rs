@@ -56,6 +56,7 @@ impl CaptureSessionStore {
                 capture_count: 0,
                 recognized_field_count: 0,
                 pending_confirmation_count: 0,
+                web_authorization_candidate: false,
                 last_error: None,
             }))
     }
@@ -77,6 +78,7 @@ impl CaptureSessionStore {
             capture_count: 0,
             recognized_field_count: 0,
             pending_confirmation_count: 0,
+            web_authorization_candidate: false,
             last_error: None,
         })
     }
@@ -108,6 +110,7 @@ impl CaptureSession {
             capture_count: self.events.len(),
             recognized_field_count,
             pending_confirmation_count,
+            web_authorization_candidate: false,
             last_error: self.last_error.clone(),
         }
     }
