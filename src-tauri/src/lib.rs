@@ -50,6 +50,7 @@ pub fn run() {
             commands::reorder_local_routing_keys,
             commands::start_local_proxy,
             commands::stop_local_proxy,
+            commands::prepare_local_proxy_for_update,
             commands::restart_local_proxy,
             commands::list_request_logs,
             commands::clear_request_logs,

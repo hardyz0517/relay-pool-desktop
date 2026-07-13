@@ -53,6 +53,21 @@ export function stopLocalProxy() {
   });
 }
 
+export function prepareLocalProxyForUpdate() {
+  return invoke<ProxyStatus>("prepare_local_proxy_for_update").catch((error) => {
+    if (isInvokeUnavailable(error)) {
+      memoryProxyStatus = {
+        ...memoryProxyStatus,
+        running: false,
+        lifecycle: "stopped",
+        activeRequests: 0,
+      };
+      return memoryProxyStatus;
+    }
+    throw error;
+  });
+}
+
 export function restartLocalProxy() {
   return invoke<ProxyStatus>("restart_local_proxy").catch((error) => {
     if (isInvokeUnavailable(error)) {
