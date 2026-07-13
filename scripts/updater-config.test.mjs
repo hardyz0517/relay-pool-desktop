@@ -47,6 +47,16 @@ assert.match(
 );
 assert.match(
   workflow,
+  /node --test scripts\/updater-check-coordinator\.test\.ts/,
+  "release workflow must run behavioral updater coordinator tests",
+);
+assert.match(
+  workflow,
+  /cargo test[^\r\n]*services::updater/,
+  "release workflow must run focused Rust updater service tests",
+);
+assert.match(
+  workflow,
   /node scripts\/dashboard-update-action\.test\.mjs/,
   "release workflow must guard the dashboard update prompt action",
 );
