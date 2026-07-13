@@ -30,10 +30,9 @@ export type LocalRoutingSettings = {
 };
 
 export type LocalRoutingSummary = {
-  enabledCandidateCount: number;
-  healthyCandidateCount: number;
-  eligibleUnderMultiplierLimitCount: number;
-  degradedCandidateCount: number;
+  candidateCount: number;
+  previewEligibleCandidateCount: number;
+  previewExcludedCandidateCount: number;
   cooldownCandidateCount: number;
   lastDecisionAt: string | null;
 };
@@ -57,6 +56,8 @@ export type LocalRoutingCandidateRow = {
   routingGroupScope: RoutingGroupFilter;
   routingGroupMatch: boolean;
   schedulerRejectReason: string | null;
+  previewEligible: boolean;
+  previewRejectReasons: string[];
   facts: DecisionFact[];
 };
 

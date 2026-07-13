@@ -56,10 +56,9 @@ pub struct LocalRoutingSettingsView {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalRoutingSummary {
-    pub enabled_candidate_count: i64,
-    pub healthy_candidate_count: i64,
-    pub eligible_under_multiplier_limit_count: i64,
-    pub degraded_candidate_count: i64,
+    pub candidate_count: i64,
+    pub preview_eligible_candidate_count: i64,
+    pub preview_excluded_candidate_count: i64,
     pub cooldown_candidate_count: i64,
     pub last_decision_at: Option<String>,
 }
@@ -85,6 +84,8 @@ pub struct LocalRoutingCandidateRow {
     pub routing_group_scope: RoutingGroupFilter,
     pub routing_group_match: bool,
     pub scheduler_reject_reason: Option<String>,
+    pub preview_eligible: bool,
+    pub preview_reject_reasons: Vec<String>,
     pub facts: Vec<DecisionFact>,
 }
 

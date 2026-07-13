@@ -104,7 +104,7 @@ pub fn decision_reasons(decision: &SchedulerCandidateDecision) -> Vec<String> {
     reasons
 }
 
-fn rejection_code_label(code: CandidateRejectionCode) -> &'static str {
+pub fn rejection_code_label(code: CandidateRejectionCode) -> &'static str {
     match code {
         CandidateRejectionCode::AssetUnavailable => "asset_unavailable",
         CandidateRejectionCode::RoutingGroupMismatch => "routing_group_mismatch",

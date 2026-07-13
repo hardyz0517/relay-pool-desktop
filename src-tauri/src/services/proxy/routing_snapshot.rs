@@ -10,13 +10,20 @@ use crate::{
         database::{now_millis_for_services, AppDatabase},
         proxy::{
             router::RouteCandidateEconomics,
-            routing_health::error_summary_indicates_offline,
+            routing_health::{error_summary_indicates_offline, health_is_blocked},
             routing_types::{
                 DecisionFact, DecisionFactKind, DecisionFactSeverity, LocalRoutingCandidateRow,
                 LocalRoutingSettingsView, LocalRoutingSummary, LocalRoutingWorkspace,
                 RouteDecisionEvent, RouteDecisionStatus, RouteDecisionSummary, RouteHealthState,
             },
-            scheduler::types::{EffectiveMultiplierFact, MultiplierRejectReason},
+            scheduler::{
+                eligibility::evaluate_candidate,
+                explanation::rejection_code_label,
+                types::{
+                    EffectiveMultiplierFact, MultiplierRejectReason, ScheduleRequest,
+                    SchedulerCandidate,
+                },
+            },
         },
     },
 };
@@ -45,11 +52,24 @@ pub fn load_local_routing_workspace(
     let candidates = database.local_routing_read_candidates()?;
     let request_logs = database.list_request_logs()?;
     let latest_log = request_logs.first();
+    let now_ms = now_millis_for_services() as i64;
+    let preview_request = settings
+        .max_rate_multiplier
+        .filter(|limit| limit.is_finite() && *limit >= 0.0)
+        .map(|limit| {
+            preview_schedule_request(settings.default_routing_group_filter.clone(), limit, now_ms)
+        });
     let rows = candidates
         .iter()
         .enumerate()
         .map(|(index, candidate)| {
-            candidate_row(index, candidate, &settings.default_routing_group_filter)
+            candidate_row(
+                index,
+                candidate,
+                &settings.default_routing_group_filter,
+                preview_request.as_ref(),
+                now_ms,
+            )
         })
         .collect::<Vec<_>>();
 
@@ -67,37 +87,7 @@ pub fn load_local_routing_workspace(
             routing_group_filter: settings.default_routing_group_filter.clone(),
             fallback_enabled: settings.allow_depleted_fallback,
         },
-        summary: LocalRoutingSummary {
-            enabled_candidate_count: rows.iter().filter(|row| row.enabled).count() as i64,
-            healthy_candidate_count: rows
-                .iter()
-                .filter(|row| row.health_state == RouteHealthState::Ready)
-                .count() as i64,
-            eligible_under_multiplier_limit_count: settings
-                .max_rate_multiplier
-                .map(|limit| {
-                    rows.iter()
-                        .filter(|row| {
-                            row.enabled
-                                && row.routing_group_match
-                                && row
-                                    .effective_multiplier
-                                    .map(|multiplier| multiplier <= limit)
-                                    .unwrap_or(false)
-                        })
-                        .count() as i64
-                })
-                .unwrap_or(0),
-            degraded_candidate_count: rows
-                .iter()
-                .filter(|row| row.health_state == RouteHealthState::Degraded)
-                .count() as i64,
-            cooldown_candidate_count: rows
-                .iter()
-                .filter(|row| row.health_state == RouteHealthState::Cooldown)
-                .count() as i64,
-            last_decision_at: latest_log.map(|log| log.started_at.clone()),
-        },
+        summary: build_local_routing_summary(&rows, latest_log.map(|log| log.started_at.clone())),
         candidates: rows,
         latest_decision,
         recent_events: recent_events(&request_logs),
@@ -108,9 +98,14 @@ fn candidate_row(
     index: usize,
     candidate: &LocalRoutingReadCandidate,
     routing_group_filter: &RoutingGroupFilter,
+    preview_request: Option<&ScheduleRequest>,
+    now_ms: i64,
 ) -> LocalRoutingCandidateRow {
-    let health_state = health_state(candidate);
+    let health_state = health_state(candidate, now_ms);
     let routing_group_match = local_candidate_group_matches(routing_group_filter, candidate);
+    let scheduler_candidate = scheduler_candidate_from_read_candidate(candidate, now_ms);
+    let (preview_eligible, preview_reject_reasons) =
+        preview_decision(preview_request, &scheduler_candidate);
     let mut facts = Vec::new();
     facts.push(DecisionFact {
         kind: DecisionFactKind::Policy,
@@ -233,7 +228,137 @@ fn candidate_row(
         scheduler_reject_reason: candidate
             .scheduler_multiplier_reject_reason
             .map(|reason| multiplier_reject_reason_label(reason).to_string()),
+        preview_eligible,
+        preview_reject_reasons,
         facts,
+    }
+}
+
+fn preview_schedule_request(
+    filter: RoutingGroupFilter,
+    max_rate_multiplier: f64,
+    now_ms: i64,
+) -> ScheduleRequest {
+    ScheduleRequest {
+        endpoint: RouteEndpointKind::ChatCompletions,
+        requested_model: None,
+        mapped_model: None,
+        routing_group_filter: filter,
+        stream: false,
+        uses_tools: false,
+        uses_vision: false,
+        uses_reasoning: false,
+        max_rate_multiplier,
+        session_hash: None,
+        previous_response_id: None,
+        excluded_key_ids: Vec::new(),
+        now_ms,
+    }
+}
+
+fn preview_decision(
+    request: Option<&ScheduleRequest>,
+    candidate: &SchedulerCandidate,
+) -> (bool, Vec<String>) {
+    let Some(request) = request else {
+        return (
+            false,
+            vec!["routing_multiplier_limit_not_configured".to_string()],
+        );
+    };
+
+    match evaluate_candidate(request, candidate) {
+        Ok(()) => (true, Vec::new()),
+        Err(rejection) => (
+            false,
+            rejection
+                .reasons
+                .into_iter()
+                .map(rejection_code_label)
+                .map(str::to_string)
+                .collect(),
+        ),
+    }
+}
+
+fn scheduler_candidate_from_read_candidate(
+    candidate: &LocalRoutingReadCandidate,
+    now_ms: i64,
+) -> SchedulerCandidate {
+    SchedulerCandidate {
+        station_key_id: candidate.station_key_id.clone(),
+        station_id: candidate.station_id.clone(),
+        priority: 0,
+        max_concurrency: 0,
+        load_factor: None,
+        group_binding_id: candidate.scheduler_group_binding_id.clone().or_else(|| {
+            candidate
+                .economics
+                .as_ref()
+                .and_then(|economics| economics.group_binding_id.clone())
+        }),
+        group_id_hash: candidate.scheduler_group_id_hash.clone(),
+        group_type: candidate.scheduler_group_type.clone(),
+        station_enabled: true,
+        key_enabled: true,
+        schedulable: true,
+        supports_chat_completions: candidate.capabilities.supports_chat_completions,
+        supports_responses: candidate.capabilities.supports_responses,
+        supports_embeddings: candidate.capabilities.supports_embeddings,
+        supports_stream: candidate.capabilities.supports_stream,
+        supports_tools: candidate.capabilities.supports_tools,
+        supports_vision: candidate.capabilities.supports_vision,
+        supports_reasoning: candidate.capabilities.supports_reasoning,
+        model_allowlist: candidate.capabilities.model_allowlist.clone(),
+        model_blocklist: candidate.capabilities.model_blocklist.clone(),
+        health_blocked: health_is_blocked(candidate.health.as_ref(), now_ms),
+        balance_depleted: candidate
+            .economics
+            .as_ref()
+            .and_then(|economics| economics.balance_status.as_deref())
+            .map(|status| matches!(status, "depleted" | "insufficient" | "blocked"))
+            .unwrap_or(false),
+        effective_multiplier: candidate
+            .scheduler_effective_multiplier
+            .clone()
+            .or_else(|| {
+                let economics = candidate.economics.as_ref()?;
+                let value = economics.rate_multiplier?;
+                Some(EffectiveMultiplierFact {
+                    station_key_id: candidate.station_key_id.clone(),
+                    value,
+                    source: economics
+                        .pricing_source
+                        .clone()
+                        .unwrap_or_else(|| "economics".to_string()),
+                    collected_at_ms: economics
+                        .balance_collected_at
+                        .as_deref()
+                        .and_then(|value| value.parse::<i64>().ok()),
+                    valid_until_ms: None,
+                    confidence: economics.price_confidence.unwrap_or(1.0),
+                    group_binding_id: economics.group_binding_id.clone(),
+                })
+            }),
+        multiplier_reject_reason: candidate.scheduler_multiplier_reject_reason,
+    }
+}
+
+fn build_local_routing_summary(
+    rows: &[LocalRoutingCandidateRow],
+    last_decision_at: Option<String>,
+) -> LocalRoutingSummary {
+    LocalRoutingSummary {
+        candidate_count: rows.len() as i64,
+        preview_eligible_candidate_count: rows.iter().filter(|row| row.preview_eligible).count()
+            as i64,
+        preview_excluded_candidate_count: rows.iter().filter(|row| !row.preview_eligible).count()
+            as i64,
+        cooldown_candidate_count: rows
+            .iter()
+            .filter(|row| row.health_state == RouteHealthState::Cooldown)
+            .count() as i64,
+        last_decision_at,
     }
 }
 
@@ -270,8 +395,7 @@ fn multiplier_reject_reason_label(reason: MultiplierRejectReason) -> &'static st
     }
 }
 
-fn health_state(candidate: &LocalRoutingReadCandidate) -> RouteHealthState {
-    let now = now_millis_for_services() as i64;
+fn health_state(candidate: &LocalRoutingReadCandidate, now_ms: i64) -> RouteHealthState {
     let Some(health) = &candidate.health else {
         return RouteHealthState::Unknown;
     };
@@ -287,7 +411,7 @@ fn health_state(candidate: &LocalRoutingReadCandidate) -> RouteHealthState {
         .cooldown_until
         .as_deref()
         .and_then(|value| value.parse::<i64>().ok())
-        .map(|until| until > now)
+        .map(|until| until > now_ms)
         .unwrap_or(false)
     {
         return RouteHealthState::Cooldown;
@@ -397,5 +521,172 @@ fn endpoint_from_path(path: &str) -> RouteEndpointKind {
         RouteEndpointKind::Models
     } else {
         RouteEndpointKind::ChatCompletions
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_summary_counts_the_same_decisions_exposed_on_rows() {
+        let rows = preview_rows_for_test(
+            vec![
+                preview_candidate("eligible", PreviewFixture::Eligible),
+                preview_candidate("group-mismatch", PreviewFixture::GroupMismatch),
+                preview_candidate("low-confidence", PreviewFixture::LowConfidence),
+                preview_candidate("cooldown", PreviewFixture::Cooldown),
+            ],
+            Some(1.0),
+        );
+
+        assert!(rows[0].preview_eligible);
+        assert_eq!(
+            rows[1].preview_reject_reasons,
+            vec!["routing_group_mismatch"]
+        );
+        assert_eq!(
+            rows[2].preview_reject_reasons,
+            vec!["multiplier_evidence_low_confidence"],
+        );
+        assert_eq!(rows[3].preview_reject_reasons, vec!["health_blocked"]);
+
+        let summary = build_local_routing_summary(&rows, None);
+        assert_eq!(summary.candidate_count, 4);
+        assert_eq!(summary.preview_eligible_candidate_count, 1);
+        assert_eq!(summary.preview_excluded_candidate_count, 3);
+        assert_eq!(summary.cooldown_candidate_count, 1);
+    }
+
+    #[test]
+    fn missing_multiplier_limit_blocks_preview_without_guessing() {
+        let rows = preview_rows_for_test(
+            vec![
+                preview_candidate("eligible", PreviewFixture::Eligible),
+                preview_candidate("group-mismatch", PreviewFixture::GroupMismatch),
+            ],
+            None,
+        );
+
+        assert!(rows.iter().all(|row| !row.preview_eligible));
+        assert!(rows.iter().all(|row| {
+            row.preview_reject_reasons == vec!["routing_multiplier_limit_not_configured"]
+        }));
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum PreviewFixture {
+        Eligible,
+        GroupMismatch,
+        LowConfidence,
+        Cooldown,
+    }
+
+    fn preview_rows_for_test(
+        candidates: Vec<LocalRoutingReadCandidate>,
+        max_rate_multiplier: Option<f64>,
+    ) -> Vec<LocalRoutingCandidateRow> {
+        let request = max_rate_multiplier.map(|limit| {
+            preview_schedule_request(
+                RoutingGroupFilter::GroupType(PricingGroupType::Gpt),
+                limit,
+                60_000,
+            )
+        });
+
+        candidates
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| {
+                candidate_row(
+                    index,
+                    candidate,
+                    &RoutingGroupFilter::GroupType(PricingGroupType::Gpt),
+                    request.as_ref(),
+                    60_000,
+                )
+            })
+            .collect()
+    }
+
+    fn preview_candidate(id: &str, fixture: PreviewFixture) -> LocalRoutingReadCandidate {
+        let mut candidate = LocalRoutingReadCandidate {
+            station_key_id: id.to_string(),
+            station_id: format!("station-{id}"),
+            station_name: format!("Station {id}"),
+            key_name: format!("Key {id}"),
+            capabilities: station_key_capabilities(id),
+            health: Some(station_key_health(id)),
+            economics: Some(RouteCandidateEconomics {
+                balance_status: Some("normal".to_string()),
+                ..Default::default()
+            }),
+            scheduler_group_binding_id: Some(format!("binding-{id}")),
+            scheduler_group_id_hash: Some(format!("hash-{id}")),
+            scheduler_group_type: Some(PricingGroupType::Gpt),
+            scheduler_effective_multiplier: Some(EffectiveMultiplierFact {
+                station_key_id: id.to_string(),
+                value: 0.5,
+                source: "test".to_string(),
+                collected_at_ms: Some(1_000),
+                valid_until_ms: Some(120_000),
+                confidence: 1.0,
+                group_binding_id: Some(format!("binding-{id}")),
+            }),
+            scheduler_multiplier_reject_reason: None,
+        };
+
+        match fixture {
+            PreviewFixture::Eligible => {}
+            PreviewFixture::GroupMismatch => {
+                candidate.scheduler_group_type = Some(PricingGroupType::Claude);
+            }
+            PreviewFixture::LowConfidence => {
+                candidate.scheduler_effective_multiplier = None;
+                candidate.scheduler_multiplier_reject_reason =
+                    Some(MultiplierRejectReason::LowConfidence);
+            }
+            PreviewFixture::Cooldown => {
+                if let Some(health) = &mut candidate.health {
+                    health.cooldown_until = Some("61000".to_string());
+                }
+            }
+        }
+
+        candidate
+    }
+
+    fn station_key_capabilities(id: &str) -> StationKeyCapabilities {
+        StationKeyCapabilities {
+            station_key_id: id.to_string(),
+            supports_chat_completions: true,
+            supports_responses: true,
+            supports_embeddings: false,
+            supports_stream: true,
+            supports_tools: false,
+            supports_vision: false,
+            supports_reasoning: false,
+            model_allowlist: Vec::new(),
+            model_blocklist: Vec::new(),
+            preferred_models: Vec::new(),
+            only_use_as_backup: false,
+            routing_tags: Vec::new(),
+            updated_at: "0".to_string(),
+        }
+    }
+
+    fn station_key_health(id: &str) -> StationKeyHealth {
+        StationKeyHealth {
+            station_key_id: id.to_string(),
+            last_success_at: None,
+            last_failure_at: None,
+            consecutive_failures: 0,
+            success_count: 1,
+            failure_count: 0,
+            avg_latency_ms: None,
+            last_error_summary: None,
+            cooldown_until: None,
+            updated_at: "0".to_string(),
+        }
     }
 }

@@ -39,25 +39,31 @@ assert.match(localRoutingApi, /routingGroupFilter:\s*settings\.defaultRoutingGro
 
 assert.match(localRoutingTypes, /maxRateMultiplier: number \| null/);
 assert.match(localRoutingTypes, /routingGroupFilter: RoutingGroupFilter/);
-assert.match(localRoutingTypes, /eligibleUnderMultiplierLimitCount: number/);
+assert.match(localRoutingTypes, /previewEligibleCandidateCount: number/);
+assert.match(localRoutingTypes, /previewExcludedCandidateCount: number/);
 assert.match(localRoutingTypes, /effectiveMultiplier: number \| null/);
 assert.match(localRoutingTypes, /effectiveMultiplierSource: string \| null/);
 assert.match(localRoutingTypes, /effectiveMultiplierConfidence: number \| null/);
 assert.match(localRoutingTypes, /routingGroupScope: RoutingGroupFilter/);
 assert.match(localRoutingTypes, /routingGroupMatch: boolean/);
 assert.match(localRoutingTypes, /schedulerRejectReason: string \| null/);
+assert.match(localRoutingTypes, /previewEligible: boolean/);
+assert.match(localRoutingTypes, /previewRejectReasons: string\[\]/);
 
 assert.match(rustRoutingTypes, /pub max_rate_multiplier: Option<f64>/);
 assert.match(rustRoutingTypes, /pub routing_group_filter: RoutingGroupFilter/);
-assert.match(rustRoutingTypes, /pub eligible_under_multiplier_limit_count: i64/);
+assert.match(rustRoutingTypes, /pub preview_eligible_candidate_count: i64/);
+assert.match(rustRoutingTypes, /pub preview_excluded_candidate_count: i64/);
 assert.match(rustRoutingTypes, /pub effective_multiplier: Option<f64>/);
-assert.match(rustSnapshot, /eligible_under_multiplier_limit_count/);
+assert.match(rustSnapshot, /preview_eligible_candidate_count/);
+assert.match(rustSnapshot, /preview_excluded_candidate_count/);
+assert.match(rustSnapshot, /evaluate_candidate/);
 assert.match(rustSnapshot, /settings\.max_rate_multiplier/);
 assert.match(rustSnapshot, /settings\.default_routing_group_filter/);
 
 assert.match(statusTab, /maxRateMultiplier/);
-assert.match(statusTab, /eligibleUnderMultiplierLimitCount/);
-assert.match(statusTab, /倍率未知或过期不参与路由/);
+assert.match(statusTab, /previewEligibleCandidateCount/);
+assert.match(statusTab, /previewExcludedCandidateCount/);
 assert.match(statusTab, /分组筛选/);
 assert.match(statusTab, /自动路由/);
 

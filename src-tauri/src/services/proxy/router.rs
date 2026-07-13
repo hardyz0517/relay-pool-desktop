@@ -8,6 +8,7 @@ use crate::{
     services::proxy::RouteCandidate,
 };
 
+use crate::services::proxy::routing_health::health_is_blocked;
 use crate::services::proxy::scheduler::{
     types::{
         EffectiveMultiplierFact, ScheduleRequest, SchedulerCandidate, SchedulerCandidateDecision,
@@ -137,7 +138,7 @@ pub fn select_route_candidates_with_scheduler(
     };
     let scheduler_candidates = candidates
         .iter()
-        .map(rich_candidate_to_scheduler_candidate)
+        .map(|candidate| rich_candidate_to_scheduler_candidate(candidate, request.now_ms))
         .collect::<Vec<_>>();
     let decision = scheduler.schedule(&scheduler_request, &scheduler_candidates, advanced);
 
@@ -194,7 +195,10 @@ pub fn select_route_candidates_with_scheduler(
     })
 }
 
-fn rich_candidate_to_scheduler_candidate(candidate: &RichRouteCandidate) -> SchedulerCandidate {
+fn rich_candidate_to_scheduler_candidate(
+    candidate: &RichRouteCandidate,
+    now_ms: i64,
+) -> SchedulerCandidate {
     SchedulerCandidate {
         station_key_id: candidate.candidate.station_key_id.clone(),
         station_id: candidate.candidate.station_id.clone(),
@@ -221,12 +225,7 @@ fn rich_candidate_to_scheduler_candidate(candidate: &RichRouteCandidate) -> Sche
         supports_reasoning: candidate.capabilities.supports_reasoning,
         model_allowlist: candidate.capabilities.model_allowlist.clone(),
         model_blocklist: candidate.capabilities.model_blocklist.clone(),
-        health_blocked: candidate
-            .health
-            .as_ref()
-            .and_then(|health| health.cooldown_until.as_deref())
-            .and_then(|value| value.parse::<i64>().ok())
-            .is_some_and(|cooldown_until| cooldown_until > 1_800_000_000_000),
+        health_blocked: health_is_blocked(candidate.health.as_ref(), now_ms),
         balance_depleted: candidate
             .economics
             .as_ref()

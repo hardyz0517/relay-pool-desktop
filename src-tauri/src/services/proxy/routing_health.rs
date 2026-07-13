@@ -1,3 +1,4 @@
+use crate::models::routing::StationKeyHealth;
 use crate::services::proxy::{
     routing_failure::{
         ClassifiedRouteFailure, RouteFailureAction, RouteFailureKind, RouteFailureScope,
@@ -82,6 +83,22 @@ pub fn error_summary_indicates_offline(summary: &str) -> bool {
         || lower.contains("http 403")
 }
 
+pub fn health_is_blocked(health: Option<&StationKeyHealth>, now_ms: i64) -> bool {
+    let Some(health) = health else {
+        return false;
+    };
+    let cooldown_active = health
+        .cooldown_until
+        .as_deref()
+        .and_then(|value| value.parse::<i64>().ok())
+        .is_some_and(|until_ms| until_ms > now_ms);
+    let offline = health
+        .last_error_summary
+        .as_deref()
+        .is_some_and(error_summary_indicates_offline);
+    cooldown_active || offline
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,5 +173,40 @@ mod tests {
         assert!(!error_summary_indicates_offline(
             "temporary_network: upstream timeout"
         ));
+    }
+
+    #[test]
+    fn health_block_uses_current_time_instead_of_a_fixed_epoch_threshold() {
+        let mut health = station_key_health();
+        health.cooldown_until = Some("61000".to_string());
+        assert!(health_is_blocked(Some(&health), 60_000));
+
+        health.cooldown_until = Some("59999".to_string());
+        assert!(!health_is_blocked(Some(&health), 60_000));
+
+        health.cooldown_until = Some("invalid".to_string());
+        assert!(!health_is_blocked(Some(&health), 60_000));
+    }
+
+    #[test]
+    fn explicit_offline_health_is_blocked() {
+        let mut health = station_key_health();
+        health.last_error_summary = Some("connection refused http 401".to_string());
+        assert!(health_is_blocked(Some(&health), 60_000));
+    }
+
+    fn station_key_health() -> crate::models::routing::StationKeyHealth {
+        crate::models::routing::StationKeyHealth {
+            station_key_id: "key".to_string(),
+            last_success_at: None,
+            last_failure_at: None,
+            consecutive_failures: 0,
+            success_count: 0,
+            failure_count: 0,
+            avg_latency_ms: None,
+            last_error_summary: None,
+            cooldown_until: None,
+            updated_at: "0".to_string(),
+        }
     }
 }
