@@ -56,6 +56,7 @@ pub fn run() {
             commands::start_local_proxy,
             commands::stop_local_proxy,
             commands::cleanup_before_update,
+            commands::prepare_local_proxy_for_update,
             commands::restart_local_proxy,
             commands::list_request_logs,
             commands::clear_request_logs,

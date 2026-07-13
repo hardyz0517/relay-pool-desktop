@@ -13247,6 +13247,7 @@ mod tests {
     use crate::models::pricing::{
         UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
     };
+    use crate::models::proxy::ProxyLifecycle;
     use crate::models::routing::{PricingGroupType, RouteEndpointKind, RoutingGroupFilter};
 
     fn test_station(database: &AppDatabase, name: &str) -> Station {
@@ -16517,6 +16518,7 @@ mod tests {
         let workspace = database
             .load_local_routing_workspace(crate::models::proxy::ProxyStatus {
                 running: false,
+                lifecycle: ProxyLifecycle::Stopped,
                 bind_addr: "127.0.0.1".to_string(),
                 port: 8787,
                 started_at: None,
@@ -16667,6 +16669,7 @@ mod tests {
         let workspace = database
             .load_local_routing_workspace(crate::models::proxy::ProxyStatus {
                 running: false,
+                lifecycle: ProxyLifecycle::Stopped,
                 bind_addr: "127.0.0.1".to_string(),
                 port: 8787,
                 started_at: None,
@@ -16744,6 +16747,7 @@ mod tests {
         let workspace = database
             .load_local_routing_workspace(crate::models::proxy::ProxyStatus {
                 running: false,
+                lifecycle: ProxyLifecycle::Stopped,
                 bind_addr: "127.0.0.1".to_string(),
                 port: 8787,
                 started_at: None,
@@ -17594,6 +17598,7 @@ mod tests {
         let workspace = database
             .load_local_routing_workspace(crate::models::proxy::ProxyStatus {
                 running: false,
+                lifecycle: ProxyLifecycle::Stopped,
                 bind_addr: "127.0.0.1".to_string(),
                 port: 8787,
                 started_at: None,

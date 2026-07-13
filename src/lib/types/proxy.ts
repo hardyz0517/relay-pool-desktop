@@ -1,5 +1,8 @@
+export type ProxyLifecycle = "stopped" | "running" | "draining";
+
 export type ProxyStatus = {
   running: boolean;
+  lifecycle: ProxyLifecycle;
   bindAddr: string;
   port: number;
   startedAt: string | null;

@@ -61,6 +61,7 @@ const fallbackSettings: AppSettings = {
 
 const fallbackProxyStatus: ProxyStatus = {
   running: false,
+  lifecycle: "stopped",
   bindAddr: "127.0.0.1",
   port: 8787,
   startedAt: null,

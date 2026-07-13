@@ -7,7 +7,7 @@ use std::{
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use serde_json::{json, Value};
@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use crate::{
     models::{
         pricing::{BalanceSnapshot, RequestCostEstimate, RequestUsage},
-        proxy::{CreateRequestLogInput, ProxyStatus},
+        proxy::{CreateRequestLogInput, ProxyLifecycle, ProxyStatus},
         routing::{
             RouteCandidateExplanation, RouteEndpointKind, RoutingGroupFilter, RoutingPolicy,
         },
@@ -52,18 +52,24 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct ProxyRuntimeState {
     inner: Mutex<ProxyRuntimeInner>,
+    lifecycle_operation: Mutex<()>,
 }
 #[derive(Debug, Default)]
 struct ProxyRuntimeInner {
     running: bool,
+    lifecycle: ProxyLifecycle,
     port: u16,
     started_at: Option<String>,
     last_error: Option<String>,
     request_count: Option<Arc<AtomicU64>>,
     stop_signal: Option<Arc<AtomicBool>>,
     active_requests: Option<Arc<AtomicU32>>,
+    accepting_requests: Option<Arc<AtomicBool>>,
+    admission_gate: Option<Arc<Mutex<()>>>,
     handle: Option<JoinHandle<()>>,
 }
+
+const UPDATE_DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 struct ProxyServerContext {
     database: AppDatabase,
@@ -163,7 +169,8 @@ impl ProxyRuntimeState {
     pub fn status(&self, default_port: u16) -> ProxyStatus {
         let inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
         ProxyStatus {
-            running: inner.running,
+            running: inner.lifecycle != ProxyLifecycle::Stopped,
+            lifecycle: inner.lifecycle,
             bind_addr: "127.0.0.1".to_string(),
             port: if inner.port == 0 {
                 default_port
@@ -191,6 +198,19 @@ impl ProxyRuntimeState {
         data_key: [u8; 32],
         port: u16,
     ) -> Result<ProxyStatus, String> {
+        let _operation = self
+            .lifecycle_operation
+            .lock()
+            .map_err(|_| "proxy lifecycle operation lock is poisoned".to_string())?;
+        self.start_unlocked(database, data_key, port)
+    }
+
+    fn start_unlocked(
+        &self,
+        database: AppDatabase,
+        data_key: [u8; 32],
+        port: u16,
+    ) -> Result<ProxyStatus, String> {
         if port == 0 {
             return Err("本地代理端口必须大于 0".to_string());
         }
@@ -210,6 +230,8 @@ impl ProxyRuntimeState {
             .map_err(|error| format!("配置本地代理监听失败: {error}"))?;
 
         let stop_signal = Arc::new(AtomicBool::new(false));
+        let accepting_requests = Arc::new(AtomicBool::new(true));
+        let admission_gate = Arc::new(Mutex::new(()));
         let active_requests = Arc::new(AtomicU32::new(0));
         let request_count = Arc::new(AtomicU64::new(0));
         let thread_stop = Arc::clone(&stop_signal);
@@ -222,37 +244,63 @@ impl ProxyRuntimeState {
             route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
             probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
         });
-        let handle = thread::spawn(move || run_server(listener, thread_stop, context));
+        let thread_accepting = Arc::clone(&accepting_requests);
+        let thread_admission_gate = Arc::clone(&admission_gate);
+        let handle = thread::spawn(move || {
+            run_server(
+                listener,
+                thread_stop,
+                thread_accepting,
+                thread_admission_gate,
+                context,
+            )
+        });
 
         inner.running = true;
+        inner.lifecycle = ProxyLifecycle::Running;
         inner.port = port;
         inner.started_at = Some(now_string());
         inner.last_error = None;
         inner.request_count = Some(Arc::clone(&request_count));
         inner.stop_signal = Some(stop_signal);
         inner.active_requests = Some(active_requests);
+        inner.accepting_requests = Some(accepting_requests);
+        inner.admission_gate = Some(admission_gate);
         inner.handle = Some(handle);
         Ok(self.status_from_inner(&inner, port))
     }
 
     pub fn stop(&self, default_port: u16) -> Result<ProxyStatus, String> {
+        let _operation = self
+            .lifecycle_operation
+            .lock()
+            .map_err(|_| "proxy lifecycle operation lock is poisoned".to_string())?;
+        self.stop_unlocked(default_port)
+    }
+
+    fn stop_unlocked(&self, default_port: u16) -> Result<ProxyStatus, String> {
         let (handle, wake_port) = {
             let mut inner = self
                 .inner
                 .lock()
                 .map_err(|_| "代理状态锁已损坏".to_string())?;
+            if let (Some(admission_gate), Some(accepting_requests)) = (
+                inner.admission_gate.as_ref().cloned(),
+                inner.accepting_requests.as_ref().cloned(),
+            ) {
+                let _admission = admission_gate
+                    .lock()
+                    .map_err(|_| "proxy admission gate is poisoned".to_string())?;
+                accepting_requests.store(false, Ordering::Relaxed);
+            }
             if let Some(stop_signal) = &inner.stop_signal {
                 stop_signal.store(true, Ordering::Relaxed);
             }
-            inner.running = false;
             let wake_port = if inner.port == 0 {
                 default_port
             } else {
                 inner.port
             };
-            inner.stop_signal = None;
-            inner.active_requests = None;
-            inner.request_count = None;
             (inner.handle.take(), wake_port)
         };
 
@@ -261,7 +309,99 @@ impl ProxyRuntimeState {
             let _ = handle.join();
         }
 
-        Ok(self.status(default_port))
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| "proxy state lock is poisoned".to_string())?;
+        inner.running = false;
+        inner.lifecycle = ProxyLifecycle::Stopped;
+        inner.stop_signal = None;
+        inner.active_requests = None;
+        inner.accepting_requests = None;
+        inner.admission_gate = None;
+        inner.request_count = None;
+        Ok(self.status_from_inner(&inner, default_port))
+    }
+
+    pub fn prepare_for_update(
+        &self,
+        default_port: u16,
+        timeout: Duration,
+    ) -> Result<ProxyStatus, String> {
+        let _operation = self
+            .lifecycle_operation
+            .lock()
+            .map_err(|_| "proxy lifecycle operation lock is poisoned".to_string())?;
+        let (accepting_requests, active_requests, admission_gate) = {
+            let mut inner = self
+                .inner
+                .lock()
+                .map_err(|_| "proxy state lock is poisoned".to_string())?;
+            if !inner.running {
+                return Ok(self.status_from_inner(&inner, default_port));
+            }
+
+            let accepting_requests = inner
+                .accepting_requests
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| "proxy request acceptance state is missing".to_string())?;
+            let active_requests = inner
+                .active_requests
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| "proxy active request counter is missing".to_string())?;
+            let admission_gate = inner
+                .admission_gate
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| "proxy admission gate is missing".to_string())?;
+            let _admission = admission_gate
+                .lock()
+                .map_err(|_| "proxy admission gate is poisoned".to_string())?;
+            accepting_requests.store(false, Ordering::Relaxed);
+            inner.lifecycle = ProxyLifecycle::Draining;
+            drop(_admission);
+            (accepting_requests, active_requests, admission_gate)
+        };
+
+        let deadline = Instant::now() + timeout;
+        while active_requests.load(Ordering::Relaxed) > 0 {
+            if Instant::now() >= deadline {
+                let mut inner = self
+                    .inner
+                    .lock()
+                    .map_err(|_| "proxy state lock is poisoned".to_string())?;
+                let owns_drain = inner.running
+                    && inner.lifecycle == ProxyLifecycle::Draining
+                    && inner
+                        .accepting_requests
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &accepting_requests))
+                    && inner
+                        .active_requests
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &active_requests))
+                    && inner
+                        .admission_gate
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &admission_gate));
+                if owns_drain {
+                    let _admission = admission_gate
+                        .lock()
+                        .map_err(|_| "proxy admission gate is poisoned".to_string())?;
+                    accepting_requests.store(true, Ordering::Relaxed);
+                    inner.lifecycle = ProxyLifecycle::Running;
+                }
+                return Err(format!(
+                    "update preparation timed out with {} active request(s)",
+                    active_requests.load(Ordering::Relaxed)
+                ));
+            }
+            thread::sleep(UPDATE_DRAIN_POLL_INTERVAL);
+        }
+
+        self.stop_unlocked(default_port)
     }
 
     pub fn cleanup_before_update(&self, default_port: u16) -> Result<ProxyStatus, String> {
@@ -274,13 +414,18 @@ impl ProxyRuntimeState {
         data_key: [u8; 32],
         port: u16,
     ) -> Result<ProxyStatus, String> {
-        let _ = self.stop(port)?;
-        self.start(database, data_key, port)
+        let _operation = self
+            .lifecycle_operation
+            .lock()
+            .map_err(|_| "proxy lifecycle operation lock is poisoned".to_string())?;
+        let _ = self.stop_unlocked(port)?;
+        self.start_unlocked(database, data_key, port)
     }
 
     fn status_from_inner(&self, inner: &ProxyRuntimeInner, default_port: u16) -> ProxyStatus {
         ProxyStatus {
-            running: inner.running,
+            running: inner.lifecycle != ProxyLifecycle::Stopped,
+            lifecycle: inner.lifecycle,
             bind_addr: "127.0.0.1".to_string(),
             port: if inner.port == 0 {
                 default_port
@@ -306,18 +451,35 @@ impl ProxyRuntimeState {
 fn run_server(
     listener: TcpListener,
     stop_signal: Arc<AtomicBool>,
+    accepting_requests: Arc<AtomicBool>,
+    admission_gate: Arc<Mutex<()>>,
     context: Arc<ProxyServerContext>,
 ) {
     while !stop_signal.load(Ordering::Relaxed) {
         match listener.accept() {
-            Ok((stream, _)) => {
+            Ok((mut stream, _)) => {
                 if stop_signal.load(Ordering::Relaxed) {
                     let _ = stream.shutdown(Shutdown::Both);
                     break;
                 }
+
+                let active_request_guard = {
+                    let _admission = admission_gate
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner());
+                    should_accept_proxy_request(&accepting_requests)
+                        .then(|| ActiveRequestGuard::new(Arc::clone(&context.active_requests)))
+                };
+                let Some(active_request_guard) = active_request_guard else {
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 1\r\nConnection: close\r\nContent-Length: 54\r\n\r\n{\"error\":{\"message\":\"application update in progress\"}}",
+                    );
+                    let _ = stream.shutdown(Shutdown::Both);
+                    continue;
+                };
                 let context = Arc::clone(&context);
                 thread::spawn(move || {
-                    let _guard = ActiveRequestGuard::new(Arc::clone(&context.active_requests));
+                    let _guard = active_request_guard;
                     handle_connection(stream, &context);
                 });
             }
@@ -327,6 +489,10 @@ fn run_server(
             Err(_) => break,
         }
     }
+}
+
+fn should_accept_proxy_request(accepting_requests: &AtomicBool) -> bool {
+    accepting_requests.load(Ordering::Relaxed)
 }
 
 struct ActiveRequestGuard {
@@ -2972,12 +3138,238 @@ mod tests {
         stations::CreateStationInput,
     };
     use std::{
-        io::Read,
+        io::{Read, Write},
         net::TcpListener,
-        sync::atomic::{AtomicU32, AtomicU64},
+        sync::{
+            atomic::{AtomicBool, AtomicU32, AtomicU64},
+            mpsc,
+        },
         thread,
         time::Duration,
     };
+
+    fn running_proxy_for_drain_test(active_count: u32) -> ProxyRuntimeState {
+        ProxyRuntimeState {
+            inner: Mutex::new(ProxyRuntimeInner {
+                running: true,
+                lifecycle: ProxyLifecycle::Running,
+                port: 8787,
+                started_at: Some("test".to_string()),
+                last_error: None,
+                request_count: Some(Arc::new(AtomicU64::new(0))),
+                stop_signal: Some(Arc::new(AtomicBool::new(false))),
+                active_requests: Some(Arc::new(AtomicU32::new(active_count))),
+                accepting_requests: Some(Arc::new(AtomicBool::new(true))),
+                admission_gate: Some(Arc::new(Mutex::new(()))),
+                handle: None,
+            }),
+            lifecycle_operation: Mutex::new(()),
+        }
+    }
+
+    fn drain_test_active_requests(proxy: &ProxyRuntimeState) -> Arc<AtomicU32> {
+        proxy
+            .inner
+            .lock()
+            .expect("proxy lock")
+            .active_requests
+            .as_ref()
+            .cloned()
+            .expect("active counter")
+    }
+
+    fn drain_test_accepting_requests(proxy: &ProxyRuntimeState) -> bool {
+        proxy
+            .inner
+            .lock()
+            .expect("proxy lock")
+            .accepting_requests
+            .as_ref()
+            .expect("accepting flag")
+            .load(Ordering::Relaxed)
+    }
+
+    fn drain_test_accepting_handle(proxy: &ProxyRuntimeState) -> Arc<AtomicBool> {
+        proxy
+            .inner
+            .lock()
+            .expect("proxy lock")
+            .accepting_requests
+            .as_ref()
+            .cloned()
+            .expect("accepting flag")
+    }
+
+    fn wait_for_lifecycle(proxy: &ProxyRuntimeState, expected: ProxyLifecycle) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while proxy.status(8787).lifecycle != expected {
+            assert!(
+                Instant::now() < deadline,
+                "lifecycle did not become {expected:?}"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn prepare_for_update_drains_active_requests_before_stopping() {
+        let proxy = running_proxy_for_drain_test(1);
+        let active = drain_test_active_requests(&proxy);
+        let worker = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(40));
+            active.store(0, Ordering::Relaxed);
+        });
+
+        let status = proxy
+            .prepare_for_update(8787, Duration::from_millis(250))
+            .expect("drain succeeds");
+
+        worker.join().expect("worker joins");
+        assert!(!status.running);
+        assert_eq!(status.lifecycle, ProxyLifecycle::Stopped);
+    }
+
+    #[test]
+    fn prepare_for_update_timeout_restores_running_proxy() {
+        let port = TcpListener::bind(("127.0.0.1", 0))
+            .expect("reserve proxy port")
+            .local_addr()
+            .expect("reserved address")
+            .port();
+        let proxy = ProxyRuntimeState::default();
+        proxy
+            .start(
+                AppDatabase::new_in_memory_for_tests().expect("database"),
+                crate::services::secrets::crypto::generate_data_key(),
+                port,
+            )
+            .expect("start proxy");
+        let active = drain_test_active_requests(&proxy);
+        active.store(1, Ordering::Relaxed);
+
+        let error = proxy
+            .prepare_for_update(port, Duration::from_millis(20))
+            .expect_err("drain times out");
+
+        assert!(error.contains("active request"));
+        let status = proxy.status(port);
+        assert!(status.running);
+        assert_eq!(status.lifecycle, ProxyLifecycle::Running);
+        assert!(drain_test_accepting_requests(&proxy));
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect after recovery");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout");
+        stream
+            .write_all(b"OPTIONS /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .expect("write request");
+        let mut response = String::new();
+        stream.read_to_string(&mut response).expect("read response");
+        assert!(response.starts_with("HTTP/1.1 204"), "{response}");
+        assert!(!response.contains("503 Service Unavailable"));
+
+        active.store(0, Ordering::Relaxed);
+        proxy.stop(port).expect("stop proxy");
+    }
+
+    #[test]
+    fn concurrent_prepare_for_update_calls_are_serialized() {
+        let proxy = Arc::new(running_proxy_for_drain_test(1));
+        let active = drain_test_active_requests(&proxy);
+        let first_proxy = Arc::clone(&proxy);
+        let first =
+            thread::spawn(move || first_proxy.prepare_for_update(8787, Duration::from_secs(1)));
+        wait_for_lifecycle(&proxy, ProxyLifecycle::Draining);
+
+        let second_proxy = Arc::clone(&proxy);
+        let (second_tx, second_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let _ =
+                second_tx.send(second_proxy.prepare_for_update(8787, Duration::from_millis(25)));
+        });
+
+        assert!(
+            second_rx.recv_timeout(Duration::from_millis(75)).is_err(),
+            "second drain must wait for the first lifecycle operation"
+        );
+        active.store(0, Ordering::Relaxed);
+
+        let first_status = first
+            .join()
+            .expect("first drain joins")
+            .expect("first drain succeeds");
+        let second_status = second_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("second drain completes")
+            .expect("stopped proxy is already prepared");
+        assert_eq!(first_status.lifecycle, ProxyLifecycle::Stopped);
+        assert_eq!(second_status.lifecycle, ProxyLifecycle::Stopped);
+    }
+
+    #[test]
+    fn stop_during_drain_timeout_cannot_reopen_admission() {
+        let proxy = Arc::new(running_proxy_for_drain_test(1));
+        let accepting = drain_test_accepting_handle(&proxy);
+        let drain_proxy = Arc::clone(&proxy);
+        let drain =
+            thread::spawn(move || drain_proxy.prepare_for_update(8787, Duration::from_millis(100)));
+        wait_for_lifecycle(&proxy, ProxyLifecycle::Draining);
+
+        let stop_proxy = Arc::clone(&proxy);
+        let stop = thread::spawn(move || stop_proxy.stop(8787));
+
+        assert!(drain.join().expect("drain joins").is_err());
+        let stopped = stop.join().expect("stop joins").expect("stop succeeds");
+        assert_eq!(stopped.lifecycle, ProxyLifecycle::Stopped);
+        assert_eq!(proxy.status(8787).lifecycle, ProxyLifecycle::Stopped);
+        assert!(!accepting.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn draining_proxy_rejects_new_requests_without_incrementing_active_count() {
+        let active_requests = Arc::new(AtomicU32::new(2));
+        let accepting_requests = Arc::new(AtomicBool::new(false));
+        let admission_gate = Arc::new(Mutex::new(()));
+        let stop_signal = Arc::new(AtomicBool::new(false));
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind proxy listener");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let port = listener.local_addr().expect("listener address").port();
+        let mut context = proxy_context(AppDatabase::new_in_memory_for_tests().expect("database"));
+        context.active_requests = Arc::clone(&active_requests);
+        let before = active_requests.load(Ordering::Relaxed);
+        let thread_stop = Arc::clone(&stop_signal);
+        let thread_accepting = Arc::clone(&accepting_requests);
+        let thread_gate = Arc::clone(&admission_gate);
+        let handle = thread::spawn(move || {
+            run_server(
+                listener,
+                thread_stop,
+                thread_accepting,
+                thread_gate,
+                Arc::new(context),
+            )
+        });
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect while draining");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("read rejection");
+
+        stop_signal.store(true, Ordering::Relaxed);
+        handle.join().expect("server joins");
+
+        assert!(response.starts_with("HTTP/1.1 503 Service Unavailable"));
+        assert!(response.contains("Retry-After: 1"));
+        assert!(response.contains("application update in progress"));
+        assert_eq!(active_requests.load(Ordering::Relaxed), before);
+    }
 
     #[test]
     fn proxy_status_reports_localhost_bind_only() {

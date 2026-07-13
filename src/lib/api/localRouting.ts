@@ -25,6 +25,7 @@ function previewWorkspace(settings: AppSettings): LocalRoutingWorkspace {
   return {
     proxyStatus: {
       running: false,
+      lifecycle: "stopped",
       bindAddr: "127.0.0.1",
       port: settings.localProxyPort,
       startedAt: null,

@@ -298,6 +298,15 @@ pub fn cleanup_before_update(
 }
 
 #[tauri::command]
+pub fn prepare_local_proxy_for_update(
+    database: State<'_, AppDatabase>,
+    proxy: State<'_, ProxyRuntimeState>,
+) -> Result<ProxyStatus, String> {
+    let settings = database.get_settings()?;
+    proxy.prepare_for_update(settings.local_proxy_port, Duration::from_secs(30))
+}
+
+#[tauri::command]
 pub fn restart_local_proxy(
     database: State<'_, AppDatabase>,
     secrets: State<'_, SecretManager>,
