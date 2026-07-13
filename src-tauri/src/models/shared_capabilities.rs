@@ -88,3 +88,38 @@ pub struct ChannelMonitorSummary {
     pub runs_load_status: ChannelMonitorRunsLoadStatus,
     pub latest_run: Option<ChannelMonitorRun>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelStatusTimelinePoint {
+    pub status: String,
+    pub latency_ms: Option<i64>,
+    pub endpoint_ping_ms: Option<i64>,
+    pub checked_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelStatusWindowSummary {
+    pub window: String,
+    pub total_count: i64,
+    pub success_count: i64,
+    pub failure_count: i64,
+    pub warning_count: i64,
+    pub availability_percent: Option<f64>,
+    pub avg_latency_ms: Option<i64>,
+    pub avg_endpoint_ping_ms: Option<i64>,
+    pub last_checked_at: Option<String>,
+    pub latest_status: Option<String>,
+    pub latest_error_message: Option<String>,
+    pub timeline: Vec<ChannelStatusTimelinePoint>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelStatusSummary {
+    pub monitor: ChannelMonitor,
+    pub recent: ChannelStatusWindowSummary,
+    pub last24h: ChannelStatusWindowSummary,
+    pub last7d: ChannelStatusWindowSummary,
+}

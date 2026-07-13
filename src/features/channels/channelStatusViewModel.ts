@@ -1,10 +1,17 @@
 import type { RequestLog } from "@/lib/types/proxy";
 import type { StationKeyHealth } from "@/lib/types/routing";
-import type { ChannelMonitor, ChannelMonitorRun } from "@/lib/types/channelMonitors";
+import type {
+  ChannelMonitor,
+  ChannelMonitorRun,
+  ChannelStatusSummary,
+  ChannelStatusTimelinePoint,
+  ChannelStatusWindowSummary,
+} from "@/lib/types/channelMonitors";
 import type { StationKeyStatus } from "@/lib/types/stationKeys";
 import { toTimestampMillis } from "@/lib/time";
 
 export type RecentOutcome = "success" | "warning" | "failed" | "unknown";
+export type ChannelWindow = "recent" | "24h" | "7d";
 
 export type ChannelAvailabilityState = {
   status: StationKeyStatus;
@@ -69,6 +76,25 @@ export function buildMonitorRecentOutcomes(runs: MonitorRunSummary[]) {
       .slice(-60)
       .map(monitorRunToOutcome),
   );
+}
+
+export function buildMonitorTimelineOutcomes(
+  timeline: Array<Pick<ChannelStatusTimelinePoint, "status">>,
+) {
+  return padRecentOutcomes([...timeline].reverse().slice(-60).map(monitorRunToOutcome));
+}
+
+export function selectChannelStatusWindowSummary(
+  summary: Pick<ChannelStatusSummary, "recent" | "last24h" | "last7d">,
+  timeWindow: ChannelWindow,
+): ChannelStatusWindowSummary {
+  if (timeWindow === "24h") {
+    return summary.last24h;
+  }
+  if (timeWindow === "7d") {
+    return summary.last7d;
+  }
+  return summary.recent;
 }
 
 export function availabilityToneClassName(channel: ChannelAvailabilityState) {

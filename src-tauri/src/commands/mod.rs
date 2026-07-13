@@ -43,7 +43,7 @@ use crate::{
         secrets::{SecretMigrationReport, SecretScanFinding},
         settings::{AppSettings, UpdateSettingsInput},
         shared_capabilities::{
-            ChannelMonitorSummary, SaveStationKeyWithDefaultsInput,
+            ChannelMonitorSummary, ChannelStatusSummary, SaveStationKeyWithDefaultsInput,
             SaveStationKeyWithDefaultsResult, StationGroupOption,
         },
         station_keys::KeyPoolItem,
@@ -550,6 +550,13 @@ pub fn list_channel_monitor_summaries(
     database: State<'_, AppDatabase>,
 ) -> Result<Vec<ChannelMonitorSummary>, String> {
     database.list_channel_monitor_summaries()
+}
+
+#[tauri::command]
+pub fn list_channel_status_summaries(
+    database: State<'_, AppDatabase>,
+) -> Result<Vec<ChannelStatusSummary>, String> {
+    database.list_channel_status_summaries()
 }
 
 #[tauri::command]

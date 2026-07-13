@@ -86,6 +86,7 @@ pub fn run() {
             commands::list_station_endpoint_health,
             commands::list_channel_monitors,
             commands::list_channel_monitor_summaries,
+            commands::list_channel_status_summaries,
             commands::create_channel_monitor,
             commands::update_channel_monitor,
             commands::delete_channel_monitor,

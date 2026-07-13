@@ -22,11 +22,13 @@ await esbuild.build({
 const {
   availabilityToneClassName,
   buildMonitorRecentOutcomes,
+  buildMonitorTimelineOutcomes,
   buildRecentOutcomes,
   enabledStationKeyMonitorsByKey,
   monitorRunToStationKeyStatus,
   orderChannelsBySavedOrder,
   resolveChannelLatencyMetrics,
+  selectChannelStatusWindowSummary,
 } = await import(pathToFileURL(outFile).href);
 
 assert.equal(
@@ -147,4 +149,31 @@ assert.deepEqual(
   monitorOutcomes.slice(-3),
   ["success", "failed", "warning"],
   "monitor outcomes should preserve chronological run order in the newest slots",
+);
+
+const backendSummary = {
+  recent: { window: "recent", totalCount: 3, availabilityPercent: 66.67 },
+  last24h: { window: "24h", totalCount: 1, availabilityPercent: 100 },
+  last7d: { window: "7d", totalCount: 2, availabilityPercent: 50 },
+};
+assert.equal(
+  selectChannelStatusWindowSummary(backendSummary, "24h").availabilityPercent,
+  100,
+  "24h cards should use backend 24h summary instead of frontend raw-run slicing",
+);
+assert.equal(
+  selectChannelStatusWindowSummary(backendSummary, "7d").availabilityPercent,
+  50,
+  "7d cards should use backend 7d summary",
+);
+
+const timelineOutcomes = buildMonitorTimelineOutcomes([
+  { status: "warning" },
+  { status: "failed" },
+  { status: "success" },
+]);
+assert.deepEqual(
+  timelineOutcomes.slice(-3),
+  ["success", "failed", "warning"],
+  "backend timeline points arrive newest-first and should render oldest-to-newest in the strip",
 );

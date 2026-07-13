@@ -17,8 +17,9 @@ assert.ok(
 assert.ok(
   querySource.includes("export type ChannelStatusWorkspace") &&
     querySource.includes("requestLogs: RequestLog[]") &&
-    querySource.includes("stationKeyHealth: StationKeyHealth[]"),
-  "channel query service should expose status raw facts workspace shape",
+    querySource.includes("stationKeyHealth: StationKeyHealth[]") &&
+    querySource.includes("channelStatusSummaries: ChannelStatusSummary[]"),
+  "channel query service should expose status backend summary workspace shape",
 );
 
 assert.ok(
@@ -33,8 +34,9 @@ assert.ok(
 assert.ok(
   querySource.includes("export async function loadChannelStatusWorkspace()") &&
     querySource.includes("listRequestLogs()") &&
-    querySource.includes("listStationKeyHealth()"),
-  "channel query service should orchestrate status raw fact reads",
+    querySource.includes("listStationKeyHealth()") &&
+    querySource.includes("listChannelStatusSummaries()"),
+  "channel query service should orchestrate status summary reads",
 );
 
 assert.ok(
@@ -61,10 +63,11 @@ assert.ok(
 assert.ok(
   statusSource.includes('import { loadChannelStatusWorkspace } from "@/lib/queries/channelQueries";') &&
     statusSource.includes("const workspace = await loadChannelStatusWorkspace()") &&
-    statusSource.includes("const nextMonitors = workspace.monitorSummaries.map((summary) => summary.monitor)") &&
+    statusSource.includes("const nextMonitors = workspace.channelStatusSummaries.map((summary) => summary.monitor)") &&
     statusSource.includes("setKeys(workspace.keyPoolItems)") &&
     statusSource.includes("setLogs(workspace.requestLogs)") &&
-    statusSource.includes("setHealth(workspace.stationKeyHealth)"),
+    statusSource.includes("setHealth(workspace.stationKeyHealth)") &&
+    statusSource.includes("setStatusSummaries(workspace.channelStatusSummaries)"),
   "channel status tab should consume the status query service without changing state assignments",
 );
 

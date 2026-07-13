@@ -1,9 +1,17 @@
-import { listChannelMonitorSummaries, listChannelMonitorTemplates } from "@/lib/api/channelMonitors";
+import {
+  listChannelMonitorSummaries,
+  listChannelMonitorTemplates,
+  listChannelStatusSummaries,
+} from "@/lib/api/channelMonitors";
 import { listRequestLogs } from "@/lib/api/proxy";
 import { listStationKeyHealth } from "@/lib/api/routing";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
-import type { ChannelMonitorRequestTemplate, ChannelMonitorSummary } from "@/lib/types/channelMonitors";
+import type {
+  ChannelMonitorRequestTemplate,
+  ChannelMonitorSummary,
+  ChannelStatusSummary,
+} from "@/lib/types/channelMonitors";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { StationKeyHealth } from "@/lib/types/routing";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
@@ -20,7 +28,7 @@ export type ChannelStatusWorkspace = {
   keyPoolItems: KeyPoolItem[];
   requestLogs: RequestLog[];
   stationKeyHealth: StationKeyHealth[];
-  monitorSummaries: ChannelMonitorSummary[];
+  channelStatusSummaries: ChannelStatusSummary[];
 };
 
 export async function loadChannelMonitoringWorkspace(): Promise<ChannelMonitoringWorkspace> {
@@ -40,17 +48,17 @@ export async function loadChannelMonitoringWorkspace(): Promise<ChannelMonitorin
 }
 
 export async function loadChannelStatusWorkspace(): Promise<ChannelStatusWorkspace> {
-  const [keyPoolItems, requestLogs, stationKeyHealth, monitorSummaries] = await Promise.all([
+  const [keyPoolItems, requestLogs, stationKeyHealth, channelStatusSummaries] = await Promise.all([
     listKeyPoolItems(),
     listRequestLogs(),
     listStationKeyHealth(),
-    listChannelMonitorSummaries(),
+    listChannelStatusSummaries(),
   ]);
 
   return {
     keyPoolItems,
     requestLogs,
     stationKeyHealth,
-    monitorSummaries,
+    channelStatusSummaries,
   };
 }
