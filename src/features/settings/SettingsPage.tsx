@@ -156,7 +156,7 @@ export function SettingsPage() {
     const nextForm = { ...form, developerModeEnabled: !form.developerModeEnabled };
     await commitSettingsForm(
       nextForm,
-      nextForm.developerModeEnabled ? "高级工具已显示" : "高级工具已隐藏",
+      nextForm.developerModeEnabled ? "开发者模式已开启" : "开发者模式已关闭",
     );
   }
 
@@ -471,15 +471,14 @@ export function SettingsPage() {
           <SettingRow
             control={
               <SwitchControl
-                ariaLabel="显示高级工具"
+                ariaLabel="开发者模式"
                 checked={form.developerModeEnabled}
                 disabled={saving || loading}
                 onCheckedChange={() => void handleDeveloperModeToggle()}
                 showLabel={false}
               />
             }
-            description="在侧边栏显示采集中心。"
-            label="显示高级工具"
+            label="开发者模式"
           />
         </SectionCard>
 

@@ -28,11 +28,13 @@ assert.match(settings, /title="网络与代理"/);
 assert.match(settings, /label="默认网络出口"/);
 assert.match(settings, /title="数据"/);
 assert.match(settings, /title="高级"/);
-assert.match(settings, /label="显示高级工具"/);
-assert.match(settings, /在侧边栏显示采集中心/);
+assert.match(settings, /label="开发者模式"/);
+assert.doesNotMatch(settings, /label="显示高级工具"/);
+assert.doesNotMatch(settings, /在侧边栏显示采集中心/);
 assert.doesNotMatch(settings, /onOpenModelBasePrices/);
 
-assert.match(scaffold, /max-w-\[1080px\]/);
+assert.match(scaffold, /width === "settings"[\s\S]*?max-w-none/);
+assert.doesNotMatch(scaffold, /max-w-\[1080px\]/);
 assert.doesNotMatch(app, /<SettingsPage onOpenModelBasePrices=/);
 assert.doesNotMatch(shellPageRegistry, /<SettingsPage onOpenModelBasePrices=/);
 assert.match(shellPageRegistry, /return <SettingsPage \/>/);

@@ -7,13 +7,13 @@ const routingFieldsSource = await readFile(
 );
 const switchControlSource = await readFile("src/components/ui/SwitchControl.tsx", "utf8");
 
-const settingsSwitch = settingsSource.match(/ariaLabel="显示高级工具"[\s\S]*?\/>/);
+const settingsSwitch = settingsSource.match(/ariaLabel="开发者模式"[\s\S]*?\/>/);
 if (!settingsSwitch) {
-  console.error("显示高级工具 switch should be present in settings page.");
+  console.error("开发者模式 switch should be present in settings page.");
   process.exit(1);
 }
 if (!settingsSwitch[0].includes("showLabel={false}")) {
-  console.error("显示高级工具 switch should explicitly hide inline state text.");
+  console.error("开发者模式 switch should explicitly hide inline state text.");
   process.exit(1);
 }
 
@@ -27,8 +27,13 @@ if (!routingSwitch[0].includes("showLabel={false}")) {
   process.exit(1);
 }
 
-if (settingsSource.includes("允许余额耗尽兜底") || settingsSource.includes("开发者模式")) {
+if (settingsSource.includes("允许余额耗尽兜底") || settingsSource.includes("显示高级工具")) {
   console.error("settings page should not render old routing/developer toggle labels.");
+  process.exit(1);
+}
+
+if (settingsSource.includes("在侧边栏显示采集中心")) {
+  console.error("developer mode row should not describe itself as only showing collector center.");
   process.exit(1);
 }
 
