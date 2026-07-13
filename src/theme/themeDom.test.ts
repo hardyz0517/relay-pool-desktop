@@ -17,9 +17,21 @@ describe("theme DOM", () => {
     const removeEventListener = vi.fn();
     const media = { matches: true, addEventListener, removeEventListener } as unknown as MediaQueryList;
     expect(systemPrefersDark(() => media)).toBe(true);
-    const dispose = subscribeToSystemTheme(vi.fn(), () => media);
+    const listener = vi.fn();
+    const dispose = subscribeToSystemTheme(listener, () => media);
     expect(addEventListener).toHaveBeenCalledWith("change", expect.any(Function));
+    const handleChange = addEventListener.mock.calls[0][1] as (event: MediaQueryListEvent) => void;
+    handleChange({ matches: true } as MediaQueryListEvent);
+    handleChange({ matches: false } as MediaQueryListEvent);
+    expect(listener).toHaveBeenNthCalledWith(1, true);
+    expect(listener).toHaveBeenNthCalledWith(2, false);
     dispose();
-    expect(removeEventListener).toHaveBeenCalledWith("change", expect.any(Function));
+    expect(removeEventListener).toHaveBeenCalledWith("change", handleChange);
+  });
+
+  it("falls back when matchMedia is unavailable", () => {
+    expect(systemPrefersDark(null)).toBe(false);
+    const dispose = subscribeToSystemTheme(vi.fn(), null);
+    expect(dispose).not.toThrow();
   });
 });
