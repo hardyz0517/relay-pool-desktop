@@ -23,8 +23,7 @@ import type {
   StationDetailDiagnosticItem,
   StationDetailViewModel,
 } from "../stationDetailViewModels";
-import { groupVisualMetaFor } from "../groupVisualMeta";
-import { Sub2ApiPlatformIcon } from "./Sub2ApiPlatformIcon";
+import { StationGroupNameBadge, StationGroupRateBadge } from "./StationGroupChip";
 
 export type StationDetailRefreshAction = "balance" | "groups" | "full";
 
@@ -277,7 +276,7 @@ export function StationDetailContent({
                   {viewModel.groupRows.map((row) => (
                     <tr key={row.id} className="border-t border-border transition-colors hover:bg-slate-50/70">
                       <TableCell className="max-w-[220px] pl-0">
-                        <GroupNameBadge
+                        <StationGroupNameBadge
                           groupName={row.groupName}
                           rawJsonRedacted={row.rawJsonRedacted}
                           effectiveGroupCategory={row.effectiveGroupCategory}
@@ -290,9 +289,12 @@ export function StationDetailContent({
                         )}
                       </TableCell>
                       <TableCell>
-                        <span className={cn("inline-flex h-6 items-center rounded-full px-2.5 font-semibold", groupVisualMetaFor(row.groupName, row.rawJsonRedacted, row.effectiveGroupCategory).rateBadgeClassName)}>
-                          {row.effectiveRate}
-                        </span>
+                        <StationGroupRateBadge
+                          groupName={row.groupName}
+                          rawJsonRedacted={row.rawJsonRedacted}
+                          effectiveGroupCategory={row.effectiveGroupCategory}
+                          label={row.effectiveRate}
+                        />
                       </TableCell>
                       <TableCell>{row.defaultRate}</TableCell>
                       <TableCell>{row.userRate}</TableCell>
@@ -335,31 +337,6 @@ function usageCardVisualFor(label: string) {
     return usageCardVisualMeta.totalToken;
   }
   return usageCardVisualMeta.request;
-}
-
-function GroupNameBadge({
-  groupName,
-  rawJsonRedacted,
-  effectiveGroupCategory,
-}: {
-  groupName: string;
-  rawJsonRedacted: Record<string, unknown> | null;
-  effectiveGroupCategory: StationDetailViewModel["groupRows"][number]["effectiveGroupCategory"];
-}) {
-  const visualMeta = groupVisualMetaFor(groupName, rawJsonRedacted, effectiveGroupCategory);
-
-  return (
-    <span
-      className={cn(
-        "inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border px-2 text-xs font-semibold",
-        visualMeta.badgeClassName,
-      )}
-      title={`${visualMeta.label} · ${groupName}`}
-    >
-      <Sub2ApiPlatformIcon platform={visualMeta.platform} className={visualMeta.iconClassName} />
-      <span className="truncate">{groupName}</span>
-    </span>
-  );
 }
 
 function TableHead({

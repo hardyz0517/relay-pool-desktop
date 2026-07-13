@@ -2,6 +2,7 @@ import {
   effectiveGroupCategory,
   groupCategoryDefinitions,
   groupCategoryFromPlatform,
+  inferGroupCategoryFromEvidence,
   type StationGroupCategory,
 } from "@/lib/groupCategories";
 
@@ -61,11 +62,14 @@ const groupVisualMetaByPlatform: Record<StationGroupVisualPlatform, StationGroup
 };
 
 export function groupVisualMetaFor(
-  _groupName: string,
+  groupName: string,
   rawJsonRedacted?: Record<string, unknown> | null,
   groupCategory?: StationGroupCategory | null,
 ): StationGroupVisualMeta {
-  const effectiveCategory = effectiveGroupCategory(platformCategoryFromGroupEvidence(rawJsonRedacted), groupCategory);
+  const effectiveCategory = effectiveGroupCategory(
+    inferGroupCategoryFromEvidence({ groupName, rawJsonRedacted }),
+    groupCategory ?? platformCategoryFromGroupEvidence(rawJsonRedacted),
+  );
   const platform =
     groupCategoryDefinitions.find((definition) => definition.value === effectiveCategory)?.visualPlatform ??
     "generic";

@@ -5,14 +5,13 @@ import { Button, EmptyState, IconButton, PageForm, SectionCard, SelectControl, u
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { listKeyPoolItems, saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
-import { formatRate } from "@/lib/formatters";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
+import { StationGroupOptionLabel } from "@/features/stations/components/StationGroupChip";
 import {
   buildStationGroupOptionsFromCurrentFactsForSelect,
   findMatchingGroupOption,
-  formatStationGroupOptionLabel,
 } from "@/features/stations/groupOptionViewModels";
 
 type EditKeyPageProps = {
@@ -271,9 +270,9 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
             <aside className="grid content-start gap-[var(--shell-page-gap)]">
               <SectionCard title="可选项">
                 <div className="grid gap-3">
-                  <Field label="分组绑定">
+                  <Field label="分组">
                     <SelectControl
-                      ariaLabel="分组绑定"
+                      ariaLabel="分组"
                       className={inputClassName}
                       value={form.groupBindingId}
                       options={[
@@ -310,19 +309,9 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
                       />
                     </Field>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Field label="分组（随绑定同步）">
-                      <input
-                        className={`${inputClassName} bg-slate-50 text-slate-500`}
-                        value={form.groupName}
-                        placeholder="选择分组绑定后自动填充"
-                        readOnly
-                      />
-                    </Field>
-                    <Field label="档位">
-                      <input className={inputClassName} value={form.tierLabel} onChange={(event) => setForm({ ...form, tierLabel: event.target.value })} />
-                    </Field>
-                  </div>
+                  <Field label="档位">
+                    <input className={inputClassName} value={form.tierLabel} onChange={(event) => setForm({ ...form, tierLabel: event.target.value })} />
+                  </Field>
                   <CheckField label="启用" checked={form.enabled} onChange={(checked) => setForm({ ...form, enabled: checked })} />
                   <CheckField label="仅作为备用密钥" checked={form.onlyUseAsBackup} onChange={(checked) => setForm({ ...form, onlyUseAsBackup: checked })} />
                   <Field label="路由标签">
@@ -460,16 +449,13 @@ async function loadCurrentStationGroupOptions(stationId: string) {
 }
 
 function currentGroupOption(sourceItem: KeyPoolItem | null, options: StationGroupOption[]) {
-  if (
-    !sourceItem?.groupBindingId ||
-    options.some((option) => option.groupBindingId === sourceItem.groupBindingId || option.value === sourceItem.groupBindingId)
-  ) {
+  if (!sourceItem?.groupBindingId || findMatchingGroupOption(keyPoolItemGroupRow(sourceItem), options)) {
     return [];
   }
   return [
     {
       value: sourceItem.groupBindingId,
-      label: `${sourceItem.groupName ?? "当前绑定"} · ${formatRate(sourceItem.rateMultiplier)} · 当前`,
+      label: <StationGroupOptionLabel option={keyPoolItemGroupOption(sourceItem)} suffix="当前" />,
     },
   ];
 }
@@ -493,7 +479,22 @@ function groupNameForEditSelection(
 }
 
 function groupOptionLabel(option: StationGroupOption) {
-  return formatStationGroupOptionLabel(option);
+  return <StationGroupOptionLabel option={option} />;
+}
+
+function keyPoolItemGroupOption(item: KeyPoolItem) {
+  return {
+    groupName: item.groupName ?? "当前绑定",
+    rateMultiplier: item.rateMultiplier,
+  };
+}
+
+function keyPoolItemGroupRow(item: KeyPoolItem) {
+  return {
+    groupBindingId: item.groupBindingId,
+    groupIdHash: item.groupIdHash,
+    groupName: item.groupName ?? "",
+  };
 }
 
 function linesToList(value: string) {

@@ -22,7 +22,6 @@ import { getStationKeyCapabilities } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
 import { KEY_POOL_ITEMS_UPDATED_EVENT, deleteStationKey, listKeyPoolItems, reorderKeyPool, saveStationKeyWithDefaults, testStationKeyConnectivity, updateStationKey } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
-import { formatRate } from "@/lib/formatters";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import { keyPoolQueryOptions, stationsQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
@@ -33,10 +32,10 @@ import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { Station } from "@/lib/types/stations";
 import type { KeyPoolItem, StationKeyConnectivityTestResult, StationKeyStatus } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
+import { StationGroupOptionLabel } from "@/features/stations/components/StationGroupChip";
 import {
   buildStationGroupOptionsFromCurrentFactsForSelect,
   findMatchingGroupOption,
-  formatStationGroupOptionLabel,
 } from "@/features/stations/groupOptionViewModels";
 import {
   createStationKeyMonitorInput,
@@ -1282,9 +1281,9 @@ function KeyEditDialog({
           />
         </Field>
         <div className="grid gap-3 md:grid-cols-3">
-          <Field label="分组绑定">
+          <Field label="分组">
             <SelectControl
-              ariaLabel="分组绑定"
+              ariaLabel="分组"
               className={inputClassName}
               value={form.groupBindingId}
               options={[
@@ -1303,14 +1302,6 @@ function KeyEditDialog({
                   groupName: groupNameForDialogSelection(groupBindingId, sourceItem, groupOptions, form.groupName),
                 });
               }}
-            />
-          </Field>
-          <Field label="分组（随绑定同步）">
-            <input
-              className={`${inputClassName} bg-slate-50 text-slate-500`}
-              value={form.groupName}
-              placeholder="选择分组绑定后自动填充"
-              readOnly
             />
           </Field>
           <Field label="档位">
@@ -1455,16 +1446,13 @@ async function loadCurrentStationGroupOptions(stationId: string) {
 }
 
 function currentGroupOption(sourceItem: KeyPoolItem | null, options: StationGroupOption[]) {
-  if (
-    !sourceItem?.groupBindingId ||
-    options.some((option) => option.groupBindingId === sourceItem.groupBindingId || option.value === sourceItem.groupBindingId)
-  ) {
+  if (!sourceItem?.groupBindingId || findMatchingGroupOption(keyPoolItemGroupRow(sourceItem), options)) {
     return [];
   }
   return [
     {
       value: sourceItem.groupBindingId,
-      label: `${sourceItem.groupName ?? "当前绑定"} · ${formatRate(sourceItem.rateMultiplier)} · 当前`,
+      label: <StationGroupOptionLabel option={keyPoolItemGroupOption(sourceItem)} suffix="当前" />,
     },
   ];
 }
@@ -1491,7 +1479,22 @@ function groupNameForDialogSelection(
 }
 
 function groupOptionLabel(option: StationGroupOption) {
-  return formatStationGroupOptionLabel(option);
+  return <StationGroupOptionLabel option={option} />;
+}
+
+function keyPoolItemGroupOption(item: KeyPoolItem) {
+  return {
+    groupName: item.groupName ?? "当前绑定",
+    rateMultiplier: item.rateMultiplier,
+  };
+}
+
+function keyPoolItemGroupRow(item: KeyPoolItem) {
+  return {
+    groupBindingId: item.groupBindingId,
+    groupIdHash: item.groupIdHash,
+    groupName: item.groupName ?? "",
+  };
 }
 
 const selectClassName =

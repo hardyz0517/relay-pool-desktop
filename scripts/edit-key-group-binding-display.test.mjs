@@ -19,8 +19,19 @@ assert.ok(
 for (const [sourceName, source] of [
   ["edit-key page", editKeySource],
   ["legacy key-pool dialog", keyPoolSource],
-  ["add-key page", addKeySource],
 ]) {
+  assert.ok(
+    source.includes("StationGroupOptionLabel"),
+    `${sourceName} should use the shared station-style group option chip without backend source suffixes`,
+  );
+  const groupOptionLabelBody = source.match(/function groupOptionLabel\([\s\S]*?\n}/)?.[0] ?? "";
+  assert.ok(
+    groupOptionLabelBody && !groupOptionLabelBody.includes("rateSource"),
+    `${sourceName} group option label should not append raw rateSource values like sub2api_groups_rates`,
+  );
+}
+
+for (const [sourceName, source] of [["add-key page", addKeySource]]) {
   assert.ok(
     source.includes("formatStationGroupOptionLabel(option)"),
     `${sourceName} should use the shared group option label without backend source suffixes`,
