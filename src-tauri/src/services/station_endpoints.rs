@@ -154,9 +154,15 @@ fn meaningful_path_segments(url: &Url) -> Vec<&str> {
 }
 
 fn origins_match(left: &Url, right: &Url) -> bool {
-    left.scheme() == right.scheme()
+    is_http_origin(left)
+        && is_http_origin(right)
+        && left.scheme() == right.scheme()
         && left.host_str() == right.host_str()
         && left.port_or_known_default() == right.port_or_known_default()
+}
+
+fn is_http_origin(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https") && url.host_str().is_some()
 }
 
 fn trim_trailing_path_slashes(url: &mut Url) {
@@ -241,6 +247,75 @@ mod tests {
             "https://relay.example/apix/user/self",
             "https://relay.example/api",
         ));
+    }
+
+    #[test]
+    fn opaque_urls_do_not_share_an_http_origin() {
+        assert!(!same_origin("data:text/plain,left", "data:text/plain,right").unwrap());
+    }
+
+    #[test]
+    fn opaque_urls_do_not_belong_to_hierarchical_bases() {
+        assert!(!url_belongs_to_base(
+            "data:text/plain,left",
+            "data:text/plain,right",
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_station_endpoint_components() {
+        let cases = [
+            (
+                "credentials",
+                "https://user:secret@relay.example",
+                "https://api.example/v1",
+            ),
+            (
+                "query",
+                "https://relay.example?tenant=one",
+                "https://api.example/v1",
+            ),
+            (
+                "fragment",
+                "https://relay.example",
+                "https://api.example/v1#responses",
+            ),
+            (
+                "unsupported scheme",
+                "ftp://relay.example",
+                "https://api.example/v1",
+            ),
+        ];
+
+        for (name, website_url, api_base_url) in cases {
+            assert!(
+                normalize_station_endpoints(website_url, api_base_url).is_err(),
+                "{name} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_traversal_resource_paths() {
+        for path in ["/v1/../responses", "/v1/./models", "../chat/completions"] {
+            assert!(
+                build_api_url("https://relay.example/v1", path).is_err(),
+                "{path} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn differing_ports_do_not_share_an_origin_or_base() {
+        let cases = [
+            ("https://relay.example:443", "https://relay.example:8443"),
+            ("http://relay.example:80", "http://relay.example:8080"),
+        ];
+
+        for (left, right) in cases {
+            assert!(!same_origin(left, right).unwrap());
+            assert!(!url_belongs_to_base(left, right));
+        }
     }
 
     #[test]
