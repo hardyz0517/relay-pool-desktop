@@ -4,6 +4,8 @@
 
 **当前版本：v0.2.2（技术预览）**：核心管理与本地路由流程已经可以运行，Windows 预览安装包与应用内更新检查已经通过 GitHub Releases 提供。接口、数据结构、兼容范围和安装方式仍可能变化，请在真实凭据环境中谨慎升级。
 
+**交流群**：欢迎加入 [RelayPoolDesktop 交流群](https://qm.qq.com/q/G1bJsrIbOG)，反馈问题、交流中转站适配和预览版本使用体验。
+
 Relay Pool Desktop 是一款面向个人开发者的本地桌面工具。它将多个 AI 中转站账号和 API Key 汇集到一个可观察、可控制的 Key 池中，并向 Codex、Claude Code、Gemini CLI、CCSwitch 等本地客户端提供固定的 OpenAI-compatible 入口。
 
 你无需在每个客户端里反复更换上游地址和 Key。Relay Pool Desktop 在本机负责采集站点信息、筛选可用 Key、执行路由与失败切换，并记录足以排查问题的请求元数据。
