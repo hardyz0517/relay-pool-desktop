@@ -157,7 +157,9 @@ mod verification_tests {
             let (mut stream, _) = listener.accept().expect("accept request");
             let mut buffer = [0_u8; 4096];
             let _ = stream.read(&mut buffer);
-            stream.write_all(response.as_bytes()).expect("write response");
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
         });
         format!("http://{address}")
     }

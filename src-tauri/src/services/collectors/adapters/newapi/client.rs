@@ -184,14 +184,12 @@ fn resolve_auth_context(
         .clone()
         .filter(|value| !value.trim().is_empty());
     if let (Some(access_token), Some(user_id)) = (session.access_token.clone(), user_id.clone()) {
-        return Ok(
-            auth::NewApiAuthContext::access_token(access_token, user_id)
-                .with_session_source(session_source),
-        );
+        return Ok(auth::NewApiAuthContext::access_token(access_token, user_id)
+            .with_session_source(session_source));
     }
     if let (Some(cookie), Some(user_id)) = (session.cookie.clone(), user_id) {
         return Ok(
-            auth::NewApiAuthContext::cookie(cookie, user_id).with_session_source(session_source),
+            auth::NewApiAuthContext::cookie(cookie, user_id).with_session_source(session_source)
         );
     }
     let Some(username) = credentials
@@ -375,7 +373,10 @@ fn manual_reauthorization_error_for_source(
 }
 
 fn is_web_authorization_source(session_source: &str) -> bool {
-    matches!(session_source.trim(), "web_authorization" | "webview_capture")
+    matches!(
+        session_source.trim(),
+        "web_authorization" | "webview_capture"
+    )
 }
 
 fn manual_required_error(message: impl Into<String>) -> NewApiRequestError {
