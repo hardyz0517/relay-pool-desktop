@@ -44,10 +44,9 @@ function previewWorkspace(settings: AppSettings): LocalRoutingWorkspace {
       fallbackEnabled: true,
     },
     summary: {
-      enabledCandidateCount: 0,
-      healthyCandidateCount: 0,
-      eligibleUnderMultiplierLimitCount: 0,
-      degradedCandidateCount: 0,
+      candidateCount: 0,
+      previewEligibleCandidateCount: 0,
+      previewExcludedCandidateCount: 0,
       cooldownCandidateCount: 0,
       lastDecisionAt: null,
     },
