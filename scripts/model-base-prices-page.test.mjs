@@ -69,10 +69,9 @@ assertIncludes(
   "模型基准价格",
   "Pricing page should expose a top-right model base price entry.",
 );
-assertIncludes(
-  settingsPage,
-  "模型基准价格",
-  "Settings should expose a model base price entry.",
+assert.ok(
+  !settingsPage.includes("模型基准价格"),
+  "Settings should not expose a model base price entry.",
 );
 assertIncludes(
   economicsApi,

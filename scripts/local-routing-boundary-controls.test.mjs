@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 
-const editor = await readFile("src/features/routing/LocalRoutingSettingsEditor.tsx", "utf8");
-const fields = await readFile("src/features/routing/LocalRoutingSettingsFields.tsx", "utf8");
-const editTab = await readFile("src/features/routing/LocalRoutingEditTab.tsx", "utf8");
+const readSource = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+
+const fieldsSource = readSource("src/features/routing/LocalRoutingSettingsFields.tsx");
+const editorSource = readSource("src/features/routing/LocalRoutingSettingsEditor.tsx");
+const editTabSource = readSource("src/features/routing/LocalRoutingEditTab.tsx");
 
 for (const label of [
   "倍率限制",
@@ -12,21 +14,38 @@ for (const label of [
   "默认低余额阈值",
   "余额耗尽兜底",
 ]) {
-  assert.ok(fields.includes(label), `routing boundary should render ${label}`);
+  assert.match(fieldsSource, new RegExp(label), `missing boundary label: ${label}`);
 }
 
-assert.match(fields, /suffix="×"/);
-assert.match(fields, /suffix="CNY"/);
-assert.match(fields, /关闭时自动路由不可用/);
-assert.match(fields, /站点未单独设置时使用/);
+for (const snippet of [
+  'suffix="×"',
+  'suffix="CNY"',
+  "关闭时自动路由不可用",
+  "站点未单独设置时使用",
+  "showLabel={false}",
+]) {
+  assert.ok(fieldsSource.includes(snippet), `missing fields source snippet: ${snippet}`);
+}
 
-assert.match(editor, /handleBoundarySave/);
-assert.match(editor, /保存路由边界/);
-assert.match(editor, /eligibleUnderMultiplierLimitCount/);
-assert.match(editor, /enabledCandidateCount/);
-assert.doesNotMatch(editor, /queueBoundaryAutoSave/);
-assert.doesNotMatch(editor, /boundarySaveTimeoutRef/);
+for (const snippet of [
+  "handleBoundarySave",
+  "保存路由边界",
+  "eligibleUnderMultiplierLimitCount",
+  "enabledCandidateCount",
+]) {
+  assert.ok(editorSource.includes(snippet), `missing editor source snippet: ${snippet}`);
+}
 
-assert.match(editTab, /<LocalRoutingSettingsEditor workspace={workspace} \/>/);
+for (const removedSnippet of ["queueBoundaryAutoSave", "boundarySaveTimeoutRef"]) {
+  assert.ok(
+    !editorSource.includes(removedSnippet),
+    `editor should not include removed autosave snippet: ${removedSnippet}`,
+  );
+}
 
-console.log("local routing boundary controls contract ok");
+assert.ok(
+  editTabSource.includes("<LocalRoutingSettingsEditor workspace={workspace} />"),
+  "LocalRoutingEditTab should pass workspace to LocalRoutingSettingsEditor",
+);
+
+console.log("local routing boundary controls source contract ok");

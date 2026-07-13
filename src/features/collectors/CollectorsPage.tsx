@@ -36,6 +36,7 @@ import type {
 import type { CollectorRun, CollectorTaskType } from "@/lib/types/collectorRuns";
 import { stationTypeLabels, type Station } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
+import { CollectorAdvancedSettings } from "./CollectorAdvancedSettings";
 
 type TaskStatus =
   | "idle"
@@ -502,6 +503,8 @@ export function CollectorsPage() {
           </div>
 
           <div className="space-y-3">
+            <CollectorAdvancedSettings />
+
             <InspectorPanel title="高级选项">
               <details className="group rounded-[10px] border border-slate-100 bg-slate-50/70">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-slate-700">

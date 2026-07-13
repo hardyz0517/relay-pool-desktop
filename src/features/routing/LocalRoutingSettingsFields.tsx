@@ -40,8 +40,11 @@ export function LocalRoutingBoundaryFields({
   disabled,
   errors,
   groupOptions,
+  onMaxRateLimitEnabledChange,
   onMaxRateMultiplierChange,
   onGroupPresetChange,
+  onLowBalanceThresholdCnyChange,
+  onAllowDepletedFallbackChange,
   onNumericChange,
   onBooleanChange,
 }: {
@@ -49,8 +52,11 @@ export function LocalRoutingBoundaryFields({
   disabled: boolean;
   errors: LocalRoutingSettingsErrors;
   groupOptions: SelectOption<RoutingGroupPreset>[];
+  onMaxRateLimitEnabledChange: () => void;
   onMaxRateMultiplierChange: (value: string) => void;
   onGroupPresetChange: (value: RoutingGroupPreset) => void;
+  onLowBalanceThresholdCnyChange: (value: string) => void;
+  onAllowDepletedFallbackChange: () => void;
   onNumericChange: NumericChangeHandler;
   onBooleanChange: BooleanChangeHandler;
 }) {
@@ -59,28 +65,75 @@ export function LocalRoutingBoundaryFields({
 
   return (
     <>
-      <CompactSettingRow label="倍率上限">
-        <LabeledNumberInput
-          hideLabel
-          id="routing-max-rate-multiplier"
-          label="倍率上限"
-          value={draft.maxRateMultiplier}
-          error={errors.maxRateMultiplier}
+      <CompactSettingRow
+        label="倍率限制"
+        description={
+          draft.maxRateLimitEnabled
+            ? "超过上限的 Key 不参与自动路由。"
+            : "关闭时自动路由不可用。"
+        }
+      >
+        <SwitchControl
+          ariaLabel="倍率限制"
+          checked={draft.maxRateLimitEnabled}
           disabled={disabled}
-          min="0"
-          step="0.01"
-          placeholder="未设置"
-          onChange={onMaxRateMultiplierChange}
+          onCheckedChange={onMaxRateLimitEnabledChange}
+          showLabel={false}
+          className="h-6 min-w-0 border-0 bg-transparent p-0 shadow-none hover:bg-transparent"
         />
       </CompactSettingRow>
-      <CompactSettingRow label="分组筛选">
+      {draft.maxRateLimitEnabled ? (
+        <CompactSettingRow label="倍率上限">
+          <LabeledNumberInput
+            hideLabel
+            id="routing-max-rate-multiplier"
+            label="倍率上限"
+            value={draft.maxRateMultiplier}
+            error={errors.maxRateMultiplier}
+            disabled={disabled}
+            min="0"
+            step="0.01"
+            placeholder="例如 1.00"
+            suffix="×"
+            onChange={onMaxRateMultiplierChange}
+          />
+        </CompactSettingRow>
+      ) : null}
+      <CompactSettingRow label="候选分组">
         <SelectControl<RoutingGroupPreset>
-          ariaLabel="分组筛选"
+          ariaLabel="候选分组"
           className="w-full sm:w-[220px]"
           disabled={disabled}
           value={draft.defaultRoutingGroupPreset}
           options={groupOptions}
           onChange={onGroupPresetChange}
+        />
+      </CompactSettingRow>
+      <CompactSettingRow label="默认低余额阈值" description="站点未单独设置时使用。">
+        <LabeledNumberInput
+          hideLabel
+          id="routing-low-balance-threshold-cny"
+          label="默认低余额阈值"
+          value={draft.lowBalanceThresholdCny}
+          error={errors.lowBalanceThresholdCny}
+          disabled={disabled}
+          min="0"
+          step="0.01"
+          suffix="CNY"
+          onChange={onLowBalanceThresholdCnyChange}
+        />
+      </CompactSettingRow>
+      <CompactSettingRow
+        label="余额耗尽兜底"
+        description="开启后，余额耗尽的 Key 仅在没有其他候选时参与兜底。"
+      >
+        <SwitchControl
+          ariaLabel="余额耗尽兜底"
+          checked={draft.allowDepletedFallback}
+          disabled={disabled}
+          onCheckedChange={onAllowDepletedFallbackChange}
+          showLabel={false}
+          className="h-6 min-w-0 border-0 bg-transparent p-0 shadow-none hover:bg-transparent"
         />
       </CompactSettingRow>
       {boundaryNumericFields.map(([field, meta]) => (
@@ -166,10 +219,21 @@ export function LocalRoutingSchedulerFields({
   );
 }
 
-function CompactSettingRow({ label, children }: { label: string; children: ReactNode }) {
+function CompactSettingRow({
+  label,
+  description,
+  children,
+}: {
+  label: string;
+  description?: string;
+  children: ReactNode;
+}) {
   return (
     <div className="grid min-h-12 grid-cols-1 items-center gap-2 border-b border-border px-3 py-2 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_minmax(180px,260px)] sm:gap-4">
-      <div className="text-sm font-medium text-slate-800">{label}</div>
+      <div className="grid gap-1">
+        <div className="text-sm font-medium text-slate-800">{label}</div>
+        {description ? <div className="text-xs text-muted-foreground">{description}</div> : null}
+      </div>
       <div className="min-w-0 w-full justify-self-stretch sm:w-auto sm:justify-self-end">
         {children}
       </div>
@@ -302,6 +366,7 @@ function LabeledNumberInput({
   max,
   step,
   placeholder,
+  suffix,
   hideLabel = false,
   onChange,
 }: {
@@ -314,6 +379,7 @@ function LabeledNumberInput({
   max?: string;
   step?: string;
   placeholder?: string;
+  suffix?: string;
   hideLabel?: boolean;
   onChange: (value: string) => void;
 }) {
@@ -321,20 +387,31 @@ function LabeledNumberInput({
   return (
     <label className="grid min-w-0 content-start gap-1.5" htmlFor={id}>
       <span className={hideLabel ? "sr-only" : "text-xs font-medium text-slate-600"}>{label}</span>
-      <input
-        id={id}
-        aria-describedby={error ? errorId : undefined}
-        aria-invalid={Boolean(error)}
-        className={cn(inputClassName, error && "border-rose-300 focus:border-rose-400 focus:ring-rose-100")}
-        disabled={disabled}
-        max={max}
-        min={min}
-        placeholder={placeholder}
-        step={step}
-        type="number"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      />
+      <span className="relative block">
+        <input
+          id={id}
+          aria-describedby={error ? errorId : undefined}
+          aria-invalid={Boolean(error)}
+          className={cn(
+            inputClassName,
+            suffix && "pr-12",
+            error && "border-rose-300 focus:border-rose-400 focus:ring-rose-100",
+          )}
+          disabled={disabled}
+          max={max}
+          min={min}
+          placeholder={placeholder}
+          step={step}
+          type="number"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        {suffix ? (
+          <span className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs font-medium text-muted-foreground">
+            {suffix}
+          </span>
+        ) : null}
+      </span>
       {error ? <span id={errorId} className="text-xs text-rose-700">{error}</span> : null}
     </label>
   );

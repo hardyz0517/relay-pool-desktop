@@ -31,14 +31,18 @@ export type SchedulerDraft = {
 };
 
 export type LocalRoutingSettingsDraft = {
+  maxRateLimitEnabled: boolean;
   maxRateMultiplier: string;
   defaultRoutingGroupPreset: RoutingGroupPreset;
   currentRoutingGroupFilter: RoutingGroupFilter;
+  lowBalanceThresholdCny: string;
+  allowDepletedFallback: boolean;
   scheduler: SchedulerDraft;
 };
 
 export type LocalRoutingSettingsErrorKey =
   | "maxRateMultiplier"
+  | "lowBalanceThresholdCny"
   | "baseWeights"
   | keyof SchedulerAdvancedSettings;
 
@@ -47,12 +51,17 @@ export type LocalRoutingSettingsErrors = Partial<Record<LocalRoutingSettingsErro
 export type LocalRoutingSettingsValue = {
   maxRateMultiplier: number | null;
   defaultRoutingGroupFilter: RoutingGroupFilter;
+  lowBalanceThresholdCny: number;
+  allowDepletedFallback: boolean;
   schedulerAdvancedSettings: SchedulerAdvancedSettings;
 };
 
 export type LocalRoutingBoundarySettingsValue = Pick<
   LocalRoutingSettingsValue,
-  "maxRateMultiplier" | "defaultRoutingGroupFilter"
+  | "maxRateMultiplier"
+  | "defaultRoutingGroupFilter"
+  | "lowBalanceThresholdCny"
+  | "allowDepletedFallback"
 > & {
   schedulerAdvancedPatch: Pick<SchedulerAdvancedSettings, "multiplierMinConfidence">;
 };
@@ -146,10 +155,13 @@ export function createLocalRoutingSettingsDraft(settings: AppSettings): LocalRou
   ) as SchedulerDraft;
 
   return {
+    maxRateLimitEnabled: settings.maxRateMultiplier != null,
     maxRateMultiplier:
       settings.maxRateMultiplier == null ? "" : String(settings.maxRateMultiplier),
     defaultRoutingGroupPreset: routingGroupFilterToPreset(settings.defaultRoutingGroupFilter),
     currentRoutingGroupFilter: settings.defaultRoutingGroupFilter,
+    lowBalanceThresholdCny: String(settings.lowBalanceThresholdCny),
+    allowDepletedFallback: settings.allowDepletedFallback,
     scheduler,
   };
 }
@@ -174,6 +186,8 @@ export function parseLocalRoutingSettingsDraft(
     value: {
       maxRateMultiplier: boundary.value.maxRateMultiplier,
       defaultRoutingGroupFilter: boundary.value.defaultRoutingGroupFilter,
+      lowBalanceThresholdCny: boundary.value.lowBalanceThresholdCny,
+      allowDepletedFallback: boundary.value.allowDepletedFallback,
       schedulerAdvancedSettings: scheduler.value.schedulerAdvancedSettings,
     },
   };
@@ -183,11 +197,20 @@ export function parseLocalRoutingBoundaryDraft(
   draft: LocalRoutingSettingsDraft,
 ): ParsedLocalRoutingBoundaryDraft {
   const errors: LocalRoutingSettingsErrors = {};
-  const maxRateMultiplier = parseNullableNonNegativeNumber(
-    draft.maxRateMultiplier,
-    "倍率上限必须是大于或等于 0 的数字",
+  const maxRateMultiplier = draft.maxRateLimitEnabled
+    ? parseRequiredNonNegativeNumber(
+        draft.maxRateMultiplier,
+        "倍率上限必须是大于或等于 0 的数字",
+        (message) => {
+          errors.maxRateMultiplier = message;
+        },
+      )
+    : null;
+  const lowBalanceThresholdCny = parseRequiredNonNegativeNumber(
+    draft.lowBalanceThresholdCny,
+    "默认低余额阈值必须是大于或等于 0 的数字",
     (message) => {
-      errors.maxRateMultiplier = message;
+      errors.lowBalanceThresholdCny = message;
     },
   );
   const multiplierMinConfidence = parseSchedulerNumber(
@@ -209,6 +232,8 @@ export function parseLocalRoutingBoundaryDraft(
         draft.defaultRoutingGroupPreset,
         draft.currentRoutingGroupFilter,
       ),
+      lowBalanceThresholdCny,
+      allowDepletedFallback: draft.allowDepletedFallback,
       schedulerAdvancedPatch: {
         multiplierMinConfidence: multiplierMinConfidence ?? 0,
       },
@@ -286,19 +311,20 @@ function parseSchedulerNumber(
   return value;
 }
 
-function parseNullableNonNegativeNumber(
+function parseRequiredNonNegativeNumber(
   rawValue: string,
   invalidMessage: string,
   reportError: (message: string) => void,
 ) {
   const trimmed = rawValue.trim();
   if (!trimmed) {
-    return null;
+    reportError(invalidMessage);
+    return 0;
   }
   const value = Number(trimmed);
   if (!Number.isFinite(value) || value < 0) {
     reportError(invalidMessage);
-    return null;
+    return 0;
   }
   return value;
 }

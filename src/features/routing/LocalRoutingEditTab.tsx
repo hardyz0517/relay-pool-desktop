@@ -128,7 +128,7 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
 
   return (
     <div className="grid gap-3">
-      <LocalRoutingSettingsEditor />
+      <LocalRoutingSettingsEditor workspace={workspace} />
 
       <SectionCard
         title="候选预览与顺序修正"

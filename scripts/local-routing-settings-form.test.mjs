@@ -12,7 +12,11 @@ try {
     "/src/features/routing/localRoutingSettingsForm.ts",
   );
   const settingsModule = await vite.ssrLoadModule("/src/lib/types/settings.ts");
-  const { createLocalRoutingSettingsDraft, parseLocalRoutingSettingsDraft } = formModule;
+  const {
+    createLocalRoutingSettingsDraft,
+    parseLocalRoutingBoundaryDraft,
+    parseLocalRoutingSettingsDraft,
+  } = formModule;
   const { DEFAULT_SCHEDULER_ADVANCED_SETTINGS, appSettingsToUpdateInput } = settingsModule;
 
   const baseSettings = {
@@ -41,6 +45,10 @@ try {
   };
 
   const validDraft = createLocalRoutingSettingsDraft(baseSettings);
+  assert.equal(validDraft.maxRateLimitEnabled, true);
+  assert.equal(validDraft.lowBalanceThresholdCny, "15");
+  assert.equal(validDraft.allowDepletedFallback, false);
+
   const validResult = parseLocalRoutingSettingsDraft(validDraft);
   assert.equal(validResult.ok, true);
   assert.equal(validDraft.maxRateLimitEnabled, true);
@@ -56,6 +64,7 @@ try {
 
   const enabledLimitWithoutCeilingResult = parseLocalRoutingSettingsDraft({
     ...validDraft,
+    maxRateLimitEnabled: true,
     maxRateMultiplier: "",
   });
   assert.equal(enabledLimitWithoutCeilingResult.ok, false);
@@ -78,10 +87,37 @@ try {
     assert.match(result.errors.lowBalanceThresholdCny, /大于或等于 0/);
   }
 
-  const depletedFallbackResult = parseLocalRoutingSettingsDraft({
+  const inlineDepletedFallbackResult = parseLocalRoutingSettingsDraft({
     ...validDraft,
     allowDepletedFallback: true,
   });
+  assert.equal(inlineDepletedFallbackResult.ok, true);
+  assert.equal(inlineDepletedFallbackResult.value.allowDepletedFallback, true);
+
+  for (const maxRateMultiplier of ["", "not-a-number", "-1"]) {
+    const result = parseLocalRoutingBoundaryDraft({
+      ...validDraft,
+      maxRateLimitEnabled: true,
+      maxRateMultiplier,
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.errors.maxRateMultiplier, /倍率上限/);
+  }
+
+  for (const lowBalanceThresholdCny of ["", "-0.01", "not-a-number"]) {
+    const result = parseLocalRoutingSettingsDraft({
+      ...validDraft,
+      lowBalanceThresholdCny,
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.errors.lowBalanceThresholdCny, /低余额阈值/);
+  }
+
+  const depletedFallbackDraft = createLocalRoutingSettingsDraft({
+    ...baseSettings,
+    allowDepletedFallback: true,
+  });
+  const depletedFallbackResult = parseLocalRoutingSettingsDraft(depletedFallbackDraft);
   assert.equal(depletedFallbackResult.ok, true);
   assert.equal(depletedFallbackResult.value.allowDepletedFallback, true);
 
@@ -93,6 +129,17 @@ try {
   const specificResult = parseLocalRoutingSettingsDraft(specificDraft);
   assert.equal(specificResult.ok, true);
   assert.deepEqual(specificResult.value.defaultRoutingGroupFilter, specificFilter);
+
+  const boundaryResult = parseLocalRoutingBoundaryDraft(validDraft);
+  assert.equal(boundaryResult.ok, true);
+  assert.equal(boundaryResult.value.maxRateMultiplier, 2);
+  assert.deepEqual(boundaryResult.value.defaultRoutingGroupFilter, "all_groups");
+  assert.equal(boundaryResult.value.lowBalanceThresholdCny, 15);
+  assert.equal(boundaryResult.value.allowDepletedFallback, false);
+  assert.equal(
+    boundaryResult.value.schedulerAdvancedPatch.multiplierMinConfidence,
+    DEFAULT_SCHEDULER_ADVANCED_SETTINGS.multiplierMinConfidence,
+  );
 
   for (const topK of ["0", "1.5", "65536"]) {
     const result = parseLocalRoutingSettingsDraft({
