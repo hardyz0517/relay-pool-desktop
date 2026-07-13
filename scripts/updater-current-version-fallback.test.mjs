@@ -6,32 +6,31 @@ const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf
 const tauriLibSource = await readFile("src-tauri/src/lib.rs", "utf8");
 
 assert.ok(
-  updaterApiSource.includes("fetchLatestManifestVersion") &&
-    updaterApiSource.includes("fetchLatestManifestVersionFromBrowser") &&
-    updaterApiSource.includes("UPDATE_MANIFEST_URL") &&
-    updaterApiSource.includes('invoke<string | null>("latest_update_manifest_version")') &&
+  updaterApiSource.includes("coordinateUpdateCheck") &&
+    updaterApiSource.includes('invoke<UpdaterNetworkConfig>("updater_network_config")') &&
+    updaterApiSource.includes('invoke<PublishedUpdateInspection>("inspect_latest_update_manifest"') &&
     updaterApiSource.includes("withTimeout") &&
     updaterApiSource.includes("更新检查超时") &&
-    updaterApiSource.includes("versionsMatch") &&
-    updaterApiSource.includes("isVersionNewer") &&
     updaterApiSource.includes("nativeUpdateCheckInFlight") &&
     updaterApiSource.includes("startNativeUpdateCheck") &&
-    updaterApiSource.includes("ensurePendingUpdateForInstall") &&
-    updaterApiSource.includes('return { kind: "available", update: manifestUpdate }') &&
-    updaterApiSource.includes("return { kind: \"current\", currentVersion }") &&
-    /catch \(updateError\)[\s\S]*fetchLatestManifestVersion[\s\S]*throw updateError/.test(updaterApiSource),
-  "updater should fall back to latest.json and report current or available when the published version can be compared",
+    updaterApiSource.includes("check(") &&
+    /proxyUrl \? \{ timeout: 10_000, proxy: proxyUrl \}/.test(updaterApiSource),
+  "updater should share system proxy configuration with the authoritative native check",
 );
 
 assert.ok(
-  /export async function downloadPendingUpdate[\s\S]*ensurePendingUpdateForInstall\(\)[\s\S]*没有可下载的应用更新/.test(updaterApiSource),
-  "download should prepare a native updater resource before failing when manifest fallback found an update",
+  !updaterApiSource.includes("fetchLatestManifestVersionFromBrowser") &&
+    !updaterApiSource.includes("UPDATE_MANIFEST_URL") &&
+    !updaterApiSource.includes("isVersionNewer") &&
+    !updaterApiSource.includes("versionParts") &&
+    !updaterApiSource.includes("ensurePendingUpdateForInstall"),
+  "updater must not use a CORS browser fallback or expose manifest-only updates as installable",
 );
 
 assert.ok(
-  tauriCommandsSource.includes("pub fn latest_update_manifest_version") &&
-    tauriCommandsSource.includes("UPDATE_MANIFEST_URL") &&
-    tauriCommandsSource.includes('get("version")') &&
-    tauriLibSource.includes("commands::latest_update_manifest_version"),
-  "desktop backend should expose a latest_update_manifest_version command for the updater fallback",
+  tauriCommandsSource.includes("pub fn updater_network_config") &&
+    tauriCommandsSource.includes("pub async fn inspect_latest_update_manifest") &&
+    tauriLibSource.includes("commands::updater_network_config") &&
+    tauriLibSource.includes("commands::inspect_latest_update_manifest"),
+  "desktop backend should expose shared updater network and manifest inspection commands",
 );
