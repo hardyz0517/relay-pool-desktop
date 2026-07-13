@@ -8538,8 +8538,10 @@ fn record_station_key_success_in_connection(
              ON CONFLICT(station_key_id) DO UPDATE SET
                 endpoint_revision = excluded.endpoint_revision,
                 last_success_at = excluded.last_success_at,
+                last_failure_at = excluded.last_failure_at,
                 consecutive_failures = 0,
                 success_count = excluded.success_count,
+                failure_count = excluded.failure_count,
                 total_duration_ms = excluded.total_duration_ms,
                 avg_latency_ms = excluded.avg_latency_ms,
                 last_error_summary = NULL,
@@ -8629,6 +8631,7 @@ fn record_station_key_failure_state_in_connection(
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(station_key_id) DO UPDATE SET
                 endpoint_revision = excluded.endpoint_revision,
+                last_success_at = excluded.last_success_at,
                 last_failure_at = excluded.last_failure_at,
                 consecutive_failures = excluded.consecutive_failures,
                 success_count = excluded.success_count,
@@ -13719,7 +13722,7 @@ mod tests {
     }
 
     #[test]
-    fn station_endpoint_migration_derives_legacy_urls_and_revisions() {
+    fn station_endpoint_migration_separates_legacy_root_and_versioned_urls() {
         let connection = Connection::open_in_memory().expect("connection");
         create_legacy_station_endpoint_schema(&connection);
         connection
@@ -13824,6 +13827,13 @@ mod tests {
         );
 
         migrate_station_endpoint_urls(&connection).expect("repeat endpoint migration");
+        assert_eq!(
+            table_columns(&connection, "stations")
+                .iter()
+                .filter(|column| column.as_str() == "api_base_url")
+                .count(),
+            1
+        );
         assert_eq!(
             connection
                 .query_row("SELECT COUNT(*) FROM stations", [], |row| row
@@ -13959,6 +13969,26 @@ mod tests {
                 note: None,
             })
             .expect("station")
+    }
+
+    fn change_test_station_endpoint(database: &AppDatabase, station: &Station) -> Station {
+        database
+            .update_station(UpdateStationInput {
+                id: station.id.clone(),
+                name: station.name.clone(),
+                station_type: station.station_type.clone(),
+                website_url: "https://replacement.example.test".to_string(),
+                api_base_url: "https://replacement.example.test/v1".to_string(),
+                api_key: None,
+                collector_proxy_mode: station.collector_proxy_mode.clone(),
+                collector_proxy_url: station.collector_proxy_url.clone(),
+                enabled: station.enabled,
+                credit_per_cny: station.credit_per_cny,
+                low_balance_threshold_cny: station.low_balance_threshold_cny,
+                collection_interval_minutes: station.collection_interval_minutes,
+                note: station.note.clone(),
+            })
+            .expect("change station endpoint")
     }
 
     fn set_station_type_for_test(database: &AppDatabase, station_id: &str, station_type: &str) {
@@ -17632,6 +17662,75 @@ mod tests {
         assert_eq!(health.consecutive_failures, 0);
         assert_eq!(health.avg_latency_ms, Some(123));
         assert_eq!(health.last_success_at.as_deref(), Some("1000"));
+        assert_eq!(health.cooldown_until, None);
+    }
+
+    #[test]
+    fn station_key_health_success_resets_prior_revision_failure_state() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "revision-success-key");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+
+        database
+            .record_station_key_failure(&key.id, "old endpoint timeout", "1000")
+            .expect("old endpoint failure");
+        let updated_station = change_test_station_endpoint(&database, &station);
+        assert_eq!(
+            updated_station.endpoint_revision,
+            station.endpoint_revision + 1
+        );
+
+        database
+            .record_station_key_success(&key.id, 45, "2000")
+            .expect("new endpoint success");
+        let health = database.get_station_key_health(key.id).expect("health");
+
+        assert_eq!(health.last_success_at.as_deref(), Some("2000"));
+        assert_eq!(health.last_failure_at, None);
+        assert_eq!(health.success_count, 1);
+        assert_eq!(health.failure_count, 0);
+        assert_eq!(health.consecutive_failures, 0);
+        assert_eq!(health.avg_latency_ms, Some(45));
+        assert_eq!(health.last_error_summary, None);
+        assert_eq!(health.cooldown_until, None);
+    }
+
+    #[test]
+    fn station_key_health_failure_resets_prior_revision_success_state() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "revision-failure-key");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+
+        database
+            .record_station_key_success(&key.id, 123, "1000")
+            .expect("old endpoint success");
+        let updated_station = change_test_station_endpoint(&database, &station);
+        assert_eq!(
+            updated_station.endpoint_revision,
+            station.endpoint_revision + 1
+        );
+
+        database
+            .record_station_key_failure(&key.id, "new endpoint timeout", "2000")
+            .expect("new endpoint failure");
+        let health = database.get_station_key_health(key.id).expect("health");
+
+        assert_eq!(health.last_success_at, None);
+        assert_eq!(health.last_failure_at.as_deref(), Some("2000"));
+        assert_eq!(health.success_count, 0);
+        assert_eq!(health.failure_count, 1);
+        assert_eq!(health.consecutive_failures, 1);
+        assert_eq!(health.avg_latency_ms, None);
+        assert_eq!(
+            health.last_error_summary.as_deref(),
+            Some("new endpoint timeout")
+        );
         assert_eq!(health.cooldown_until, None);
     }
 
