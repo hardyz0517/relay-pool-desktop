@@ -14,6 +14,11 @@ assert.ok(provider.includes("downloadPendingUpdate"));
 assert.ok(provider.includes("prepareLocalProxyForUpdate"));
 assert.ok(provider.includes("installPendingUpdateAndRelaunch"));
 assert.ok(provider.includes("installingRef"), "install flow must be guarded against repeated clicks");
+assert.match(
+  provider,
+  /const install = useCallback[\s\S]*if \(checkingRef\.current \|\| installingRef\.current \|\| state\.phase !== "available"\) return/,
+  "install must not start while an update check owns the native update resource",
+);
 assert.ok(
   /const install = useCallback[\s\S]*catch \(error\)[\s\S]*normalizeUpdaterError\(error\)/.test(provider),
   "install failures should use updater-specific error normalization",

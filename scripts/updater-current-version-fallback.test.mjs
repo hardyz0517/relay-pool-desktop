@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 const updaterApiSource = await readFile("src/lib/api/updater.ts", "utf8");
 const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
 const tauriLibSource = await readFile("src-tauri/src/lib.rs", "utf8");
+const mainWindowPermissions = await readFile("src-tauri/permissions/main-window.toml", "utf8");
 
 assert.ok(
   updaterApiSource.includes("coordinateUpdateCheck") &&
@@ -33,4 +34,11 @@ assert.ok(
     tauriLibSource.includes("commands::updater_network_config") &&
     tauriLibSource.includes("commands::inspect_latest_update_manifest"),
   "desktop backend should expose shared updater network and manifest inspection commands",
+);
+
+assert.ok(
+  mainWindowPermissions.includes('"updater_network_config"') &&
+    mainWindowPermissions.includes('"inspect_latest_update_manifest"') &&
+    !mainWindowPermissions.includes('"latest_update_manifest_version"'),
+  "the main window must be allowed to invoke the new updater commands instead of the removed fallback command",
 );

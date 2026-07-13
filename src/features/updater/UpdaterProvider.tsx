@@ -103,7 +103,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
   }, [state.phase]);
 
   const install = useCallback(async () => {
-    if (installingRef.current || state.phase !== "available") return;
+    if (checkingRef.current || installingRef.current || state.phase !== "available") return;
     installingRef.current = true;
     let operation: UpdaterFailureOperation = "download";
     dispatch({ type: "DOWNLOAD_STARTED" });
