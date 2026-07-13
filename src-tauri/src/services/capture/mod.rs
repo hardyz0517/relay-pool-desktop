@@ -160,6 +160,19 @@ pub fn summarize_events(events: &[CapturedHttpEvent]) -> (Value, Value, Value) {
     (summary, normalized, raw)
 }
 
+pub(crate) fn web_authorization_summary(
+    status: &str,
+    session_source: Option<&str>,
+    cookie_present: bool,
+) -> Value {
+    json!({
+        "mode": "web_authorization",
+        "status": status,
+        "sessionSource": session_source.unwrap_or("none"),
+        "cookiePresent": cookie_present,
+    })
+}
+
 pub fn event_field_counts(events: &[CapturedHttpEvent]) -> (usize, usize) {
     let fields = extract_fields(events);
     let pending = fields
@@ -743,8 +756,21 @@ mod tests {
 
         let session = super::extract_session_credentials(&input).expect("captured session");
 
-        assert_eq!(session.access_token.as_deref(), Some("captured-access-token"));
+        assert_eq!(
+            session.access_token.as_deref(),
+            Some("captured-access-token")
+        );
         assert_eq!(session.newapi_user_id.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn web_authorization_summary_reports_session_source_without_cookie_value() {
+        let summary = super::web_authorization_summary("success", Some("web_authorization"), true);
+        let serialized = summary.to_string();
+
+        assert!(serialized.contains("web_authorization"));
+        assert!(serialized.contains("cookiePresent"));
+        assert!(!serialized.contains("session=abc"));
     }
 
     #[test]

@@ -1261,8 +1261,22 @@ pub fn finish_capture_session(
     sessions: State<'_, capture::session::CaptureSessionStore>,
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
+    finish_capture_session_from_events(&database, &sessions, station_id, None)
+}
+
+fn finish_capture_session_from_events(
+    database: &AppDatabase,
+    sessions: &capture::session::CaptureSessionStore,
+    station_id: String,
+    web_authorization_summary: Option<Value>,
+) -> Result<CollectorRunResult, String> {
     let events = sessions.take_events(&station_id)?;
-    let (summary, normalized, raw) = capture::summarize_events(&events);
+    let (mut summary, normalized, raw) = capture::summarize_events(&events);
+    if let Some(web_authorization_summary) = web_authorization_summary {
+        if let Some(summary) = summary.as_object_mut() {
+            summary.insert("webAuthorization".to_string(), web_authorization_summary);
+        }
+    }
     let status = normalized
         .get("status")
         .and_then(serde_json::Value::as_str)
@@ -1320,7 +1334,16 @@ pub async fn finish_web_authorization_session(
         secrets.data_key(),
     )?;
 
-    finish_capture_session(database, sessions, station_id)
+    finish_capture_session_from_events(
+        &database,
+        &sessions,
+        station_id,
+        Some(capture::web_authorization_summary(
+            "success",
+            Some("web_authorization"),
+            true,
+        )),
+    )
 }
 
 fn capture_window_label(station_id: &str) -> String {
