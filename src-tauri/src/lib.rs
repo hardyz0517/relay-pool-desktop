@@ -2,13 +2,101 @@ mod commands;
 mod models;
 mod services;
 
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
+use tauri::WindowEvent;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrayBehavior {
+    MinimizeToTray,
+    CloseToTray,
+    Disabled,
+}
+
+impl TrayBehavior {
+    fn from_setting(value: &str) -> Self {
+        match value {
+            "close-to-tray" => Self::CloseToTray,
+            "disabled" => Self::Disabled,
+            _ => Self::MinimizeToTray,
+        }
+    }
+
+    fn hides_on_close(self) -> bool {
+        matches!(self, Self::CloseToTray)
+    }
+
+    fn hides_on_minimize(self) -> bool {
+        matches!(self, Self::MinimizeToTray)
+    }
+}
+
+fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn current_tray_behavior<R: tauri::Runtime, M: Manager<R>>(manager: &M) -> TrayBehavior {
+    manager
+        .app_handle()
+        .try_state::<services::database::AppDatabase>()
+        .and_then(|database| database.get_settings().ok())
+        .map(|settings| TrayBehavior::from_setting(&settings.tray_behavior))
+        .unwrap_or(TrayBehavior::MinimizeToTray)
+}
+
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+    let mut tray = TrayIconBuilder::with_id("main-tray")
+        .tooltip("Relay Pool Desktop")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| {
+            let menu_id = event.id();
+            if menu_id.as_ref() == "show" {
+                show_main_window(app);
+            }
+            if menu_id.as_ref() == "quit" {
+                app.exit(0);
+            }
+        })
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            }
+            | TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } => show_main_window(tray.app_handle()),
+            _ => {}
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+
+    tray.build(app)?;
+    Ok(())
+}
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            setup_tray(app)?;
             let secret_manager = services::secrets::SecretManager::initialize()?;
             let database = services::database::AppDatabase::initialize(app.handle())?;
             let data_key = *secret_manager.data_key();
@@ -33,6 +121,29 @@ pub fn run() {
             app.manage(services::capture::session::CaptureSessionStore::default());
             app.manage(services::proxy::runtime::ProxyRuntimeState::default());
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+
+            let behavior = current_tray_behavior(window);
+            match event {
+                WindowEvent::CloseRequested { api, .. } if behavior.hides_on_close() => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    window.app_handle().exit(0);
+                }
+                WindowEvent::Resized(_) if behavior.hides_on_minimize() => {
+                    if window.is_minimized().unwrap_or(false) {
+                        let _ = window.hide();
+                    }
+                }
+                _ => {}
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_status,
@@ -147,4 +258,41 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Relay Pool Desktop");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TrayBehavior;
+
+    #[test]
+    fn tray_behavior_maps_persisted_values() {
+        assert_eq!(
+            TrayBehavior::from_setting("minimize-to-tray"),
+            TrayBehavior::MinimizeToTray
+        );
+        assert_eq!(
+            TrayBehavior::from_setting("close-to-tray"),
+            TrayBehavior::CloseToTray
+        );
+        assert_eq!(
+            TrayBehavior::from_setting("disabled"),
+            TrayBehavior::Disabled
+        );
+        assert_eq!(
+            TrayBehavior::from_setting("unexpected"),
+            TrayBehavior::MinimizeToTray
+        );
+    }
+
+    #[test]
+    fn tray_behavior_keeps_close_and_minimize_modes_separate() {
+        assert!(TrayBehavior::CloseToTray.hides_on_close());
+        assert!(!TrayBehavior::CloseToTray.hides_on_minimize());
+
+        assert!(TrayBehavior::MinimizeToTray.hides_on_minimize());
+        assert!(!TrayBehavior::MinimizeToTray.hides_on_close());
+
+        assert!(!TrayBehavior::Disabled.hides_on_close());
+        assert!(!TrayBehavior::Disabled.hides_on_minimize());
+    }
 }

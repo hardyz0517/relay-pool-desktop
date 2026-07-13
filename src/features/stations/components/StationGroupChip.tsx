@@ -69,6 +69,48 @@ export function StationGroupRateBadge({
   );
 }
 
+export function StationGroupInlineBadge({
+  groupName,
+  rawJsonRedacted = null,
+  effectiveGroupCategory = null,
+  rateMultiplier,
+  label,
+  fallback = "倍率未知",
+}: StationGroupVisualInput & {
+  rateMultiplier?: number | null;
+  label?: string;
+  fallback?: string;
+}) {
+  const visualMeta = groupVisualMetaFor(groupName, rawJsonRedacted, effectiveGroupCategory);
+  const rateLabel =
+    label ??
+    (rateMultiplier === null || rateMultiplier === undefined
+      ? fallback
+      : `${formatMultiplier(rateMultiplier)}x`);
+  const inlineBadgeClassName =
+    visualMeta.platform === "openai" ? "bg-green-50 text-green-700" : visualMeta.rateBadgeClassName;
+  const inlineIconClassName =
+    visualMeta.platform === "openai" ? "text-green-700" : visualMeta.iconClassName;
+
+  return (
+    <span
+      className={cn(
+        "inline-flex h-6 max-w-full items-center gap-2 rounded-md px-2 text-xs font-medium",
+        inlineBadgeClassName,
+      )}
+      title={`${visualMeta.label} · ${groupName} · ${rateLabel}`}
+    >
+      <span className="inline-flex min-w-0 items-center gap-1.5">
+        <Sub2ApiPlatformIcon platform={visualMeta.platform} className={inlineIconClassName} />
+        <span className="truncate">{groupName}</span>
+      </span>
+      <span className="inline-flex h-5 shrink-0 items-center rounded-md bg-black/10 px-1.5 text-[10px] font-semibold leading-none">
+        {rateLabel}
+      </span>
+    </span>
+  );
+}
+
 export function StationGroupOptionLabel({
   option,
   suffix,
@@ -80,12 +122,7 @@ export function StationGroupOptionLabel({
 
   return (
     <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
-      <StationGroupNameBadge
-        groupName={groupName}
-        rawJsonRedacted={option.rawJsonRedacted}
-        effectiveGroupCategory={option.effectiveGroupCategory}
-      />
-      <StationGroupRateBadge
+      <StationGroupInlineBadge
         groupName={groupName}
         rawJsonRedacted={option.rawJsonRedacted}
         effectiveGroupCategory={option.effectiveGroupCategory}

@@ -6016,7 +6016,11 @@ fn channel_status_window_facts_from_connection(
         if let Some(since_ms) = since_ms {
             connection.query_row(aggregate_sql, params![monitor_id, since_ms], read_aggregate)
         } else {
-            connection.query_row(aggregate_sql, params![monitor_id, timeline_limit], read_aggregate)
+            connection.query_row(
+                aggregate_sql,
+                params![monitor_id, timeline_limit],
+                read_aggregate,
+            )
         }
         .map_err(|error| format!("聚合渠道状态窗口失败: {error}"))?;
 
@@ -16937,10 +16941,7 @@ mod tests {
             .iter()
             .map(|item| item.id.as_str())
             .collect::<Vec<_>>();
-        let priorities = items
-            .iter()
-            .map(|item| item.priority)
-            .collect::<Vec<_>>();
+        let priorities = items.iter().map(|item| item.priority).collect::<Vec<_>>();
 
         assert_eq!(ids, vec![second_key.id.as_str(), first_key.id.as_str()]);
         assert_eq!(priorities, vec![0, 0]);

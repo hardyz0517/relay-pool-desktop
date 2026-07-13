@@ -1,4 +1,4 @@
-import { formatTrimmedDecimal } from "@/lib/formatters";
+import { effectiveRateMultiplierForCredit, formatTrimmedDecimal } from "@/lib/formatters";
 import { currentStationBalanceFor } from "@/lib/projections/balanceFacts";
 import {
   buildCurrentStationGroupFacts,
@@ -254,22 +254,33 @@ export function buildUsageCards(station: Station, balances: BalanceSnapshot[]): 
 export function buildGroupRows(
   bindings: StationGroupBinding[],
   rates: GroupRateRecord[],
+  creditPerCny = 1,
 ): StationDetailGroupRow[] {
   return buildCurrentStationGroupFacts({ bindings, rates })
     .filter(isDisplayableStationGroupCurrentFact)
-    .map(groupRowFromCurrentFact);
+    .map((fact) => groupRowFromCurrentFact(fact, creditPerCny));
 }
 
-function groupRowFromCurrentFact(fact: StationGroupCurrentFact): StationDetailGroupRow {
-  const defaultRate = fact.sourceRate?.defaultRateMultiplier ?? fact.sourceBinding?.defaultRateMultiplier ?? null;
-  const userRate = fact.sourceRate?.userRateMultiplier ?? fact.sourceBinding?.userRateMultiplier ?? null;
+function groupRowFromCurrentFact(
+  fact: StationGroupCurrentFact,
+  creditPerCny: number,
+): StationDetailGroupRow {
+  const defaultRate = effectiveRateMultiplierForCredit(
+    fact.sourceRate?.defaultRateMultiplier ?? fact.sourceBinding?.defaultRateMultiplier ?? null,
+    creditPerCny,
+  );
+  const userRate = effectiveRateMultiplierForCredit(
+    fact.sourceRate?.userRateMultiplier ?? fact.sourceBinding?.userRateMultiplier ?? null,
+    creditPerCny,
+  );
+  const effectiveRate = effectiveRateMultiplierForCredit(fact.rateMultiplier, creditPerCny);
   const warning = groupWarningForFact(fact);
   return {
     id: fact.groupBindingId ?? fact.identityKey,
     groupName: fact.groupName || "未命名分组",
     rawJsonRedacted: fact.sourceRate?.rawJsonRedacted ?? fact.sourceBinding?.rawJsonRedacted ?? null,
     effectiveGroupCategory: fact.effectiveGroupCategory,
-    effectiveRate: formatRate(fact.rateMultiplier, "未确定"),
+    effectiveRate: formatRate(effectiveRate, "未确定"),
     defaultRate: formatRate(defaultRate),
     userRate: formatRate(userRate, "未覆盖"),
     bindingStatus: formatBindingStatusLabel(fact.bindingStatus),
@@ -332,6 +343,7 @@ export function buildStationDetailViewModel({
     groupRows: buildGroupRows(
       groupBindings.filter((binding) => binding.stationId === station.id),
       groupRates.filter((rate) => rate.stationId === station.id),
+      station.creditPerCny,
     ),
     groupEmptyMessage: "暂无站点分组倍率记录",
     loginItems: buildLoginItems(credentials, stationKeyEnabledCount, stationKeyTotalCount),

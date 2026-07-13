@@ -23,6 +23,7 @@ async function importStationDetailViewModels() {
   const tempRoot = await mkdtemp(join(tmpdir(), "relay-station-detail-"));
   const detailPath = join(tempRoot, "stationDetailViewModels.mjs");
   const groupFactsPath = join(tempRoot, "groupFacts.mjs");
+  const groupCategoriesPath = join(tempRoot, "groupCategories.mjs");
   const balanceFactsPath = join(tempRoot, "balanceFacts.mjs");
   const timePath = join(tempRoot, "time.mjs");
   const formattersPath = join(tempRoot, "formatters.mjs");
@@ -35,7 +36,7 @@ async function importStationDetailViewModels() {
   );
   await writeFile(
     formattersPath,
-    "export function formatTrimmedDecimal(value, digits) { return Number(value).toFixed(digits).replace(/\\.0+$/, '').replace(/(\\.\\d*?)0+$/, '$1'); }",
+    "export function formatTrimmedDecimal(value, digits) { return Number(value).toFixed(digits).replace(/\\.0+$/, '').replace(/(\\.\\d*?)0+$/, '$1'); }\nexport function effectiveRateMultiplierForCredit(value, creditPerCny) { return value == null || !Number.isFinite(value) ? null : value / (Number.isFinite(creditPerCny) && creditPerCny > 0 ? creditPerCny : 1); }",
     "utf8",
   );
   await writeFile(
@@ -52,7 +53,10 @@ async function importStationDetailViewModels() {
     "utf8",
   );
 
-  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath);
+  await transpileTsFile("src/lib/groupCategories.ts", groupCategoriesPath);
+  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath, [
+    ['@/lib/groupCategories', "./groupCategories.mjs"],
+  ]);
   await transpileTsFile("src/lib/projections/balanceFacts.ts", balanceFactsPath, [
     ['@/lib/time', "./time.mjs"],
   ]);
@@ -99,6 +103,7 @@ const rows = buildGroupRows(
       checkedAt: "2026-07-07T12:34:00.000Z",
     }),
   ],
+  10,
 );
 
 assert.equal(rows.length, 1, "station detail should show the collected station group");
@@ -113,13 +118,13 @@ assert.equal(
 );
 assert.equal(
   rows[0].effectiveRate,
-  "0.8x",
-  "station detail should show the shared current fact effective rate instead of page-local rate precedence",
+  "0.08x",
+  "station detail should show the exchange-ratio-adjusted current fact effective rate",
 );
 assert.equal(
   rows[0].defaultRate,
-  "0.22x",
-  "station detail should show the latest collected default rate instead of stale remote_scan rate",
+  "0.022x",
+  "station detail should show the exchange-ratio-adjusted latest collected default rate",
 );
 assert.match(rows[0].lastChecked, /07\/07/, "station detail should use the latest collected check time");
 

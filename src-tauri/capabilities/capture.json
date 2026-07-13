@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "capture",
+  "description": "Manual authorization capture windows can report sanitized HTTP events back to Relay Pool Desktop.",
+  "local": false,
+  "remote": {
+    "urls": ["http://*", "https://*"]
+  },
+  "windows": ["capture-*"],
+  "permissions": ["record-capture-event"]
+}

@@ -84,7 +84,7 @@ const dashboardMetricIconClassName: Record<MetricTone, string> = {
 
 export function DashboardPage() {
   const toast = useToast();
-  const { state: updaterState, installNow } = useUpdater();
+  const { state: updaterState, showUpdateDialog } = useUpdater();
   const queryClient = useQueryClient();
   const refreshEnabled = usePageRefreshEnabled();
   const proxyStatusQuery = useActivityQuery(refreshEnabled, proxyStatusQueryOptions(false));
@@ -244,7 +244,7 @@ export function DashboardPage() {
       title={`升级到 ${updaterState.version ?? "新版本"}`}
       variant="outline"
       className="h-8 w-8 border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 hover:text-cyan-800"
-      onClick={() => void installNow()}
+      onClick={showUpdateDialog}
     >
       <ArrowUp className="h-4 w-4" />
     </IconButton>

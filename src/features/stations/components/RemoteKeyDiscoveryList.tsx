@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link2 } from "lucide-react";
 import { Button, SelectControl, StatusBadge, SwitchControl, type StatusTone } from "@/components/ui";
+import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import type { RemoteKeyMatchStatus, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
+import { formatMultiplier } from "../groupOptionViewModels";
 
 type RemoteKeyDiscoveryListProps = {
   keys: RemoteStationKey[];
   localKeys: StationKey[];
+  creditPerCny?: number;
   loading?: boolean;
   localKeyIdsCreatedByRemote?: Record<string, string>;
   onBind: (remoteKeyId: string, stationKeyId: string) => void;
@@ -31,6 +34,7 @@ const selectClassName =
 export function RemoteKeyDiscoveryList({
   keys,
   localKeys,
+  creditPerCny = 1,
   loading = false,
   localKeyIdsCreatedByRemote = {},
   onBind,
@@ -124,7 +128,7 @@ export function RemoteKeyDiscoveryList({
                   </span>
                   <span className="min-w-0 truncate">{key.groupName || "默认分组"}</span>
                   <span className="tabular-nums">
-                    {key.rateMultiplier === null ? "未采集" : `${key.rateMultiplier}x`}
+                    {formatRemoteKeyRate(key.rateMultiplier, creditPerCny)}
                   </span>
                   <span
                     className={cn(
@@ -194,6 +198,11 @@ export function RemoteKeyDiscoveryList({
       </div>
     </div>
   );
+}
+
+function formatRemoteKeyRate(rateMultiplier: number | null, creditPerCny: number) {
+  const effectiveRate = effectiveRateMultiplierForCredit(rateMultiplier, creditPerCny);
+  return effectiveRate === null ? "未采集" : `${formatMultiplier(effectiveRate)}x`;
 }
 
 function RemoteKeyEmptyState({ children }: { children: string }) {

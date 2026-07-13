@@ -22,14 +22,18 @@ async function transpileTsFile(sourcePath, outputPath, replacements = []) {
 async function importModules() {
   const tempRoot = await mkdtemp(join(tmpdir(), "relay-group-options-"));
   const groupFactsPath = join(tempRoot, "groupFacts.mjs");
+  const groupCategoriesPath = join(tempRoot, "groupCategories.mjs");
   const groupOptionsPath = join(tempRoot, "groupOptionViewModels.mjs");
   const formattersPath = join(tempRoot, "formatters.mjs");
   await writeFile(
     formattersPath,
-    "export function formatCompactMultiplier(value, fallback = '未采集倍率') { return value == null ? fallback : String(Number(value.toFixed(3))); }",
+    "export function formatCompactMultiplier(value, fallback = '未采集倍率') { return value == null ? fallback : String(Number(value.toFixed(3))); }\nexport function effectiveRateMultiplierForCredit(value, creditPerCny) { return value == null || !Number.isFinite(value) ? null : value / (Number.isFinite(creditPerCny) && creditPerCny > 0 ? creditPerCny : 1); }",
     "utf8",
   );
-  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath);
+  await transpileTsFile("src/lib/groupCategories.ts", groupCategoriesPath);
+  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath, [
+    ['@/lib/groupCategories', "./groupCategories.mjs"],
+  ]);
   await transpileTsFile("src/features/stations/groupOptionViewModels.ts", groupOptionsPath, [
     ['@/lib/formatters', "./formatters.mjs"],
     ['@/lib/projections/groupFacts', "./groupFacts.mjs"],
@@ -53,7 +57,7 @@ const currentFacts = buildCurrentStationGroupFacts({
   rates: [],
 });
 
-const options = buildStationGroupOptionsFromCurrentFactsForSelect(currentFacts);
+const options = buildStationGroupOptionsFromCurrentFactsForSelect(currentFacts, 10);
 assert.deepEqual(
   options,
   [
@@ -62,12 +66,15 @@ assert.deepEqual(
       groupBindingId: "binding-current",
       groupIdHash: "remote-current",
       groupName: "current",
-      rateMultiplier: 0.8,
+      rateMultiplier: 0.08,
+      inferredGroupCategory: "unknown",
+      groupCategoryOverride: null,
+      effectiveGroupCategory: "unknown",
       rateSource: "test",
       selectableForRemoteKey: true,
     },
   ],
-  "selectable group options should come from displayable current group facts",
+  "selectable group options should expose exchange-ratio-adjusted display multipliers",
 );
 
 const groupOptionSource = await readFile("src/features/stations/groupOptionViewModels.ts", "utf8");

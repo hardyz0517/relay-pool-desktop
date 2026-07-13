@@ -12,6 +12,7 @@ import {
   RefreshCw,
   RotateCw,
   Server,
+  ShieldCheck,
   WalletCards,
   type LucideIcon,
 } from "lucide-react";
@@ -26,13 +27,15 @@ import type {
 import { StationGroupNameBadge, StationGroupRateBadge } from "./StationGroupChip";
 
 export type StationDetailRefreshAction = "balance" | "groups" | "full";
+export type StationDetailLoadingAction = StationDetailRefreshAction | "authorize";
 
 export type StationDetailContentProps = {
   viewModel: StationDetailViewModel;
-  loadingAction: StationDetailRefreshAction | null;
+  loadingAction: StationDetailLoadingAction | null;
   sectionError: string | null;
   onBack: () => void;
   onEdit: () => void;
+  onAuthorize: () => void;
   onRefresh: (action: StationDetailRefreshAction) => void;
 };
 
@@ -89,6 +92,7 @@ export function StationDetailContent({
   sectionError,
   onBack,
   onEdit,
+  onAuthorize,
   onRefresh,
 }: StationDetailContentProps) {
   const station = viewModel.station;
@@ -132,6 +136,11 @@ export function StationDetailContent({
             <RotateCw className={cn("h-3.5 w-3.5", loadingAction === "full" && "animate-spin")} />
             重新采集
           </Button>
+          {station.stationType === "sub2api" && (
+            <IconButton label={`重新授权 ${station.name}`} disabled={actionBusy} onClick={onAuthorize}>
+              <ShieldCheck className={cn("h-4 w-4", loadingAction === "authorize" && "animate-pulse")} />
+            </IconButton>
+          )}
           <Button variant="ghost" size="sm" onClick={onEdit}>
             <Edit3 className="h-3.5 w-3.5" />
             编辑供应商

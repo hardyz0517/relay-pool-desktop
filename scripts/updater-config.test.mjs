@@ -40,5 +40,15 @@ assert.match(workflow, /windows-latest/, "release workflow must build on Windows
 assert.match(workflow, /releaseDraft:\s*true/, "release must start as a Draft");
 assert.match(workflow, /TAURI_SIGNING_PRIVATE_KEY/, "release workflow must use updater signing key");
 assert.match(workflow, /--target x86_64-pc-windows-msvc/, "release must target Windows x86_64");
+assert.match(
+  workflow,
+  /node scripts\/updater-current-version-fallback\.test\.mjs/,
+  "release workflow must guard updater manifest fallback behavior",
+);
+assert.match(
+  workflow,
+  /node scripts\/dashboard-update-action\.test\.mjs/,
+  "release workflow must guard the dashboard update prompt action",
+);
 
 console.log("updater configuration contract checks passed");

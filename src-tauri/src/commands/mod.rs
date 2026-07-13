@@ -1143,12 +1143,24 @@ pub fn get_latest_collector_snapshot(
 pub async fn start_capture_session(
     app: tauri::AppHandle,
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     sessions: State<'_, capture::session::CaptureSessionStore>,
     station_id: String,
 ) -> Result<CaptureSessionStatus, String> {
     let station = database.station_for_collector(&station_id)?;
+    let credentials = database.get_station_credentials(station_id.clone())?;
+    let login_password = if credentials.password_present {
+        database.get_station_login_password_with_data_key(station_id.clone(), secrets.data_key())?
+    } else {
+        None
+    };
     let label = capture_window_label(&station_id);
-    let script = capture_script(&station_id, &label);
+    let script = capture_script(
+        &station_id,
+        &label,
+        credentials.login_username.as_deref(),
+        login_password.as_deref(),
+    );
     let app_handle = app.clone();
     let label_for_start = label.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -1172,8 +1184,9 @@ pub async fn start_capture_session(
             .build()
             .map_err(|error| format!("打开网页登录窗口失败: {error}"))?;
             if let Some(window) = app_handle.get_webview_window(&label_for_start) {
-                let target = station
-                    .base_url
+                let target_url =
+                    collectors::url::collector_base_urls(&station.base_url).management_base_url;
+                let target = target_url
                     .parse()
                     .map_err(|error| format!("Base URL 无法作为网页登录地址打开: {error}"))?;
                 let navigator = window.clone();
@@ -1202,15 +1215,16 @@ pub fn get_capture_session_status(
 #[tauri::command]
 pub fn record_capture_event(
     database: State<'_, AppDatabase>,
+    secrets: State<'_, SecretManager>,
     sessions: State<'_, capture::session::CaptureSessionStore>,
     input: CapturedHttpEventInput,
 ) -> Result<CaptureSessionStatus, String> {
     let station = database.station_for_collector(&input.station_id)?;
-    if !input
-        .request_url
-        .starts_with(station.base_url.trim_end_matches('/'))
-    {
+    if !capture_request_belongs_to_station(&station.base_url, &input.request_url) {
         return Err("捕获事件不属于当前站点 Base URL，已拒绝。".to_string());
+    }
+    if let Some(session) = capture::extract_session_credentials(&input) {
+        database.persist_station_session_with_data_key(session, secrets.data_key())?;
     }
     let station_id = input.station_id.clone();
     let event = capture::sanitize_event(input);
@@ -1280,7 +1294,30 @@ fn capture_window_label(station_id: &str) -> String {
     )
 }
 
-fn capture_script(station_id: &str, window_label: &str) -> String {
+fn capture_request_belongs_to_station(station_base_url: &str, request_url: &str) -> bool {
+    let urls = collectors::url::collector_base_urls(station_base_url);
+    let belongs = [&urls.management_base_url, &urls.upstream_api_base_url]
+        .into_iter()
+        .any(|base_url| url_has_base_prefix(request_url, base_url));
+    belongs
+}
+
+fn url_has_base_prefix(request_url: &str, base_url: &str) -> bool {
+    let request = request_url.trim();
+    let base = base_url.trim().trim_end_matches('/');
+    !base.is_empty() && (request == base || request.starts_with(&format!("{base}/")))
+}
+
+fn capture_script(
+    station_id: &str,
+    window_label: &str,
+    login_username: Option<&str>,
+    login_password: Option<&str>,
+) -> String {
+    let login_username_json =
+        serde_json::to_string(&login_username).unwrap_or_else(|_| "null".to_string());
+    let login_password_json =
+        serde_json::to_string(&login_password).unwrap_or_else(|_| "null".to_string());
     format!(
         r#"
 (() => {{
@@ -1288,6 +1325,8 @@ fn capture_script(station_id: &str, window_label: &str) -> String {
   window.__relayPoolCaptureInstalled = true;
   const stationId = {station_id:?};
   const sourceWindowId = {window_label:?};
+  const loginUsername = {login_username_json};
+  const loginPassword = {login_password_json};
   const limit = 4000;
   const invoke = (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke)
     ? window.__TAURI_INTERNALS__.invoke
@@ -1313,6 +1352,61 @@ fn capture_script(station_id: &str, window_label: &str) -> String {
     method,
     startedAt,
   }});
+  const setNativeValue = (element, value) => {{
+    if (!element || value == null || element.value === value) return false;
+    const prototype = Object.getPrototypeOf(element);
+    const descriptor = prototype ? Object.getOwnPropertyDescriptor(prototype, "value") : null;
+    if (descriptor && descriptor.set) descriptor.set.call(element, value);
+    else element.value = value;
+    element.dispatchEvent(new Event("input", {{ bubbles: true }}));
+    element.dispatchEvent(new Event("change", {{ bubbles: true }}));
+    return true;
+  }};
+  const candidateInput = (selectors) => {{
+    for (const selector of selectors) {{
+      const found = document.querySelector(selector);
+      if (found && !found.disabled && !found.readOnly) return found;
+    }}
+    return null;
+  }};
+  const fillLoginForm = () => {{
+    try {{
+      setNativeValue(candidateInput([
+        "input[type='email']",
+        "input[name='email']",
+        "input[name='username']",
+        "input[name='user']",
+        "input[autocomplete='username']",
+        "input[placeholder*='邮箱']",
+        "input[placeholder*='账号']",
+        "input[placeholder*='email' i]",
+      ]), loginUsername);
+      setNativeValue(candidateInput([
+        "input[type='password']",
+        "input[name='password']",
+        "input[autocomplete='current-password']",
+        "input[placeholder*='密码']",
+        "input[placeholder*='password' i]",
+      ]), loginPassword);
+      for (const checkbox of Array.from(document.querySelectorAll("input[type='checkbox']"))) {{
+        const label = checkbox.closest("label") || (checkbox.id ? document.querySelector(`label[for="${{checkbox.id}}"]`) : null);
+        const text = `${{checkbox.name || ""}} ${{checkbox.id || ""}} ${{label ? label.textContent || "" : ""}}`.toLowerCase();
+        if (text.includes("agreement") || text.includes("attestation") || text.includes("region") || text.includes("大陆") || text.includes("中华人民共和国") || text.includes("独立陈述")) {{
+          if (!checkbox.checked) {{
+            checkbox.checked = true;
+            checkbox.dispatchEvent(new Event("input", {{ bubbles: true }}));
+            checkbox.dispatchEvent(new Event("change", {{ bubbles: true }}));
+          }}
+        }}
+      }}
+    }} catch (_) {{}}
+  }};
+  fillLoginForm();
+  const fillTimer = window.setInterval(fillLoginForm, 800);
+  window.setTimeout(() => window.clearInterval(fillTimer), 15000);
+  try {{
+    new MutationObserver(fillLoginForm).observe(document.documentElement, {{ childList: true, subtree: true }});
+  }} catch (_) {{}}
   const originalFetch = window.fetch;
   window.fetch = async function(input, init) {{
     const url = typeof input === "string" ? input : (input && input.url) || String(input);
@@ -2018,6 +2112,22 @@ fn record_station_key_connectivity_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_request_belongs_to_management_base_when_station_url_uses_v1() {
+        assert!(capture_request_belongs_to_station(
+            "https://relay.example.com/v1",
+            "https://relay.example.com/api/v1/auth/login"
+        ));
+    }
+
+    #[test]
+    fn capture_request_rejects_other_station_origins() {
+        assert!(!capture_request_belongs_to_station(
+            "https://relay.example.com/v1",
+            "https://other.example.com/api/v1/auth/login"
+        ));
+    }
 
     #[test]
     #[cfg(target_os = "windows")]

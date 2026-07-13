@@ -13,9 +13,19 @@ assert.ok(
     updaterApiSource.includes("withTimeout") &&
     updaterApiSource.includes("更新检查超时") &&
     updaterApiSource.includes("versionsMatch") &&
+    updaterApiSource.includes("isVersionNewer") &&
+    updaterApiSource.includes("nativeUpdateCheckInFlight") &&
+    updaterApiSource.includes("startNativeUpdateCheck") &&
+    updaterApiSource.includes("ensurePendingUpdateForInstall") &&
+    updaterApiSource.includes('return { kind: "available", update: manifestUpdate }') &&
     updaterApiSource.includes("return { kind: \"current\", currentVersion }") &&
     /catch \(updateError\)[\s\S]*fetchLatestManifestVersion[\s\S]*throw updateError/.test(updaterApiSource),
-  "updater should fall back to latest.json and report current when the published version matches the installed version",
+  "updater should fall back to latest.json and report current or available when the published version can be compared",
+);
+
+assert.ok(
+  /export async function downloadPendingUpdate[\s\S]*ensurePendingUpdateForInstall\(\)[\s\S]*没有可下载的应用更新/.test(updaterApiSource),
+  "download should prepare a native updater resource before failing when manifest fallback found an update",
 );
 
 assert.ok(

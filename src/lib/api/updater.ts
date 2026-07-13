@@ -20,7 +20,13 @@ export type DownloadProgress = {
   totalBytes: number | null;
 };
 
+type PublishedUpdateManifest = {
+  version: string;
+  notes: string | null;
+};
+
 let pendingUpdate: Update | null = null;
+let nativeUpdateCheckInFlight: Promise<Update | null> | null = null;
 const UPDATE_MANIFEST_URL = "https://github.com/hardyz0517/relay-pool-desktop/releases/latest/download/latest.json";
 
 export async function currentAppVersion() {
@@ -31,22 +37,31 @@ export async function checkForAppUpdate(): Promise<AppUpdateCheckResult> {
   const currentVersion = await currentAppVersion();
   if (!isTauri()) return { kind: "unsupported", currentVersion };
 
-  await closePendingUpdate();
+  await closePendingUpdateBeforeCheck();
   try {
     pendingUpdate = await withTimeout(
-      check({ timeout: 10_000 }),
+      startNativeUpdateCheck(),
       12_000,
       "更新检查超时",
     );
   } catch (updateError) {
-    const latestVersion = await withTimeout(
+    abandonNativeUpdateCheck();
+    const latestManifest = await withTimeout(
       fetchLatestManifestVersion(),
       6_000,
       "更新清单检查超时",
     ).catch(() => null);
-    if (latestVersion && versionsMatch(latestVersion, currentVersion)) {
+    if (latestManifest && versionsMatch(latestManifest.version, currentVersion)) {
       return { kind: "current", currentVersion };
     }
+    const manifestUpdate = latestManifest && isVersionNewer(latestManifest.version, currentVersion)
+      ? {
+          currentVersion,
+          version: latestManifest.version,
+          notes: latestManifest.notes,
+        }
+      : null;
+    if (manifestUpdate) return { kind: "available", update: manifestUpdate };
     throw updateError;
   }
   if (!pendingUpdate) return { kind: "current", currentVersion };
@@ -64,6 +79,7 @@ export async function checkForAppUpdate(): Promise<AppUpdateCheckResult> {
 export async function downloadPendingUpdate(
   onProgress: (progress: DownloadProgress) => void,
 ) {
+  await ensurePendingUpdateForInstall();
   if (!pendingUpdate) throw new Error("没有可下载的应用更新");
   let downloadedBytes = 0;
   let totalBytes: number | null = null;
@@ -96,9 +112,52 @@ export async function closePendingUpdate() {
   await update?.close();
 }
 
+async function closePendingUpdateBeforeCheck() {
+  try {
+    await withTimeout(closePendingUpdate(), 3_000, "清理旧更新检查超时");
+  } catch {
+    // A stale resource should not block a fresh check; pendingUpdate is already cleared.
+  }
+}
+
+function startNativeUpdateCheck() {
+  if (!nativeUpdateCheckInFlight) {
+    let trackedUpdateCheck: Promise<Update | null>;
+    trackedUpdateCheck = check({ timeout: 10_000 }).finally(() => {
+      if (nativeUpdateCheckInFlight === trackedUpdateCheck) {
+        nativeUpdateCheckInFlight = null;
+      }
+    });
+    nativeUpdateCheckInFlight = trackedUpdateCheck;
+  }
+  return nativeUpdateCheckInFlight;
+}
+
+function abandonNativeUpdateCheck() {
+  const abandonedUpdateCheck = nativeUpdateCheckInFlight;
+  nativeUpdateCheckInFlight = null;
+  if (!abandonedUpdateCheck) return;
+  void abandonedUpdateCheck.then(
+    (update) => update?.close(),
+    () => undefined,
+  );
+}
+
+async function ensurePendingUpdateForInstall() {
+  if (pendingUpdate) return;
+  const update = await withTimeout(
+    startNativeUpdateCheck(),
+    20_000,
+    "准备更新下载超时",
+  );
+  if (update) {
+    pendingUpdate = update;
+  }
+}
+
 async function fetchLatestManifestVersion() {
   const desktopVersion = await invoke<string | null>("latest_update_manifest_version").catch(() => null);
-  if (desktopVersion) return desktopVersion;
+  if (desktopVersion) return { version: desktopVersion, notes: null };
   return fetchLatestManifestVersionFromBrowser();
 }
 
@@ -106,8 +165,13 @@ async function fetchLatestManifestVersionFromBrowser() {
   try {
     const response = await fetch(UPDATE_MANIFEST_URL, { cache: "no-store" });
     if (!response.ok) return null;
-    const manifest = (await response.json()) as { version?: unknown };
-    return typeof manifest.version === "string" ? manifest.version : null;
+    const manifest = (await response.json()) as { version?: unknown; notes?: unknown };
+    return typeof manifest.version === "string"
+      ? {
+          version: manifest.version,
+          notes: typeof manifest.notes === "string" ? manifest.notes : null,
+        }
+      : null;
   } catch {
     return null;
   }
@@ -131,6 +195,26 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 
 function versionsMatch(left: string, right: string) {
   return normalizeVersion(left) === normalizeVersion(right);
+}
+
+function isVersionNewer(candidate: string, current: string) {
+  const candidateParts = versionParts(candidate);
+  const currentParts = versionParts(current);
+  const length = Math.max(candidateParts.length, currentParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const candidatePart = candidateParts[index] ?? 0;
+    const currentPart = currentParts[index] ?? 0;
+    if (candidatePart > currentPart) return true;
+    if (candidatePart < currentPart) return false;
+  }
+  return false;
+}
+
+function versionParts(version: string) {
+  return normalizeVersion(version)
+    .split(/[.-]/)
+    .map((part) => Number.parseInt(part, 10))
+    .filter((part) => Number.isFinite(part));
 }
 
 function normalizeVersion(version: string) {

@@ -23,6 +23,7 @@ import { createStation, listStations, updateStation } from "@/lib/api/stations";
 import { getSettings } from "@/lib/api/settings";
 import { readError } from "@/lib/errors";
 import { inferGroupCategoryFromEvidence, normalizeGroupCategory } from "@/lib/groupCategories";
+import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import {
@@ -256,7 +257,7 @@ function groupRowHasMeaningfulContent(row: StationGroupDraft) {
   );
 }
 
-function groupDraftToOption(row: StationGroupDraft): StationKeyGroupOption | null {
+function groupDraftToOption(row: StationGroupDraft, creditPerCny = 1): StationKeyGroupOption | null {
   if (row.deleteRequested || !row.groupName.trim()) {
     return null;
   }
@@ -269,7 +270,7 @@ function groupDraftToOption(row: StationGroupDraft): StationKeyGroupOption | nul
     groupBindingId: row.groupBindingId,
     groupIdHash: row.groupIdHash,
     groupName: row.groupName.trim(),
-    rateMultiplier: parseDraftRateMultiplier(row.rateMultiplier),
+    rateMultiplier: effectiveRateMultiplierForCredit(parseDraftRateMultiplier(row.rateMultiplier), creditPerCny),
     inferredGroupCategory: row.inferredGroupCategory,
     groupCategoryOverride: row.groupCategoryOverride,
     effectiveGroupCategory: row.groupCategoryOverride ?? row.inferredGroupCategory,
@@ -281,6 +282,7 @@ function groupDraftToOption(row: StationGroupDraft): StationKeyGroupOption | nul
 function mergeKeyRowsWithSavedGroupOptions(
   rows: StationKeyDraft[],
   groups: StationKeyGroupOption[],
+  creditPerCny = 1,
 ): StationKeyDraft[] {
   return rows.map((row) => {
     if (row.deleteRequested || (!row.groupBindingId && !row.groupIdHash && !row.groupName.trim())) {
@@ -295,7 +297,10 @@ function mergeKeyRowsWithSavedGroupOptions(
       groupBindingId: group.groupBindingId,
       groupIdHash: group.groupIdHash,
       groupName: group.groupName,
-      rateMultiplier: group.rateMultiplier === null ? row.rateMultiplier : formatMultiplier(group.rateMultiplier),
+      rateMultiplier:
+        group.rateMultiplier === null
+          ? row.rateMultiplier
+          : formatMultiplier(effectiveRateMultiplierForCredit(group.rateMultiplier, creditPerCny)),
       inferredGroupCategory: group.inferredGroupCategory,
       groupCategoryOverride: group.groupCategoryOverride,
     };
@@ -331,9 +336,11 @@ function mergeGroupRowsWithSavedOptions(
 function groupBindingsToCurrentOptions(
   bindings: StationGroupBinding[],
   rates: GroupRateRecord[],
+  creditPerCny = 1,
 ) {
   return buildStationGroupOptionsFromCurrentFactsForSelect(
     buildCurrentStationGroupFacts({ bindings, rates }),
+    creditPerCny,
   );
 }
 
@@ -627,7 +634,7 @@ function buildManualGroupKeyHash(groupName: string) {
   return `manual:${encodeURIComponent(normalizedName || "unnamed")}`;
 }
 
-function collectRemoteGroupOptions(remoteKeys: RemoteStationKey[]) {
+function collectRemoteGroupOptions(remoteKeys: RemoteStationKey[], creditPerCny = 1) {
   const seen = new Set<string>();
   const groups: StationGroupOption[] = [];
   remoteKeys.forEach((key) => {
@@ -645,7 +652,7 @@ function collectRemoteGroupOptions(remoteKeys: RemoteStationKey[]) {
       groupBindingId: null,
       groupIdHash: key.groupIdHash,
       groupName,
-      rateMultiplier: key.rateMultiplier,
+      rateMultiplier: effectiveRateMultiplierForCredit(key.rateMultiplier, creditPerCny),
       inferredGroupCategory: inferGroupCategoryFromEvidence({ groupName, rawJsonRedacted: null }),
       groupCategoryOverride: null,
       effectiveGroupCategory: inferGroupCategoryFromEvidence({ groupName, rawJsonRedacted: null }),
@@ -786,6 +793,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   const [createRemoteOpen, setCreateRemoteOpen] = useState(false);
   const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const currentCreditPerCny = useMemo(() => parseCreditPerCny(form.creditPerCny), [form.creditPerCny]);
 
   const editableGroupOptions = useMemo(() => {
     const deletedCurrentGroups = currentGroupOptions.filter((option) =>
@@ -794,15 +802,15 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     return normalizeStationGroupOptions([
       ...currentGroupOptions.filter((option) => !deletedCurrentGroups.includes(option)),
       ...groupRows.flatMap((row) => {
-        const option = groupDraftToOption(row);
+        const option = groupDraftToOption(row, currentCreditPerCny);
         return option ? [option] : [];
       }),
     ]);
-  }, [currentGroupOptions, groupRows]);
+  }, [currentCreditPerCny, currentGroupOptions, groupRows]);
 
   const remoteGroupOptions = useMemo(
-    () => mergeRemoteGroupOptions(editableGroupOptions, collectRemoteGroupOptions(remoteKeys)),
-    [editableGroupOptions, remoteKeys],
+    () => mergeRemoteGroupOptions(editableGroupOptions, collectRemoteGroupOptions(remoteKeys, currentCreditPerCny)),
+    [currentCreditPerCny, editableGroupOptions, remoteKeys],
   );
 
   const remoteUnsupportedReason = remoteCapability?.unsupportedReason ?? null;
@@ -886,7 +894,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         setForm(formFromStation(station, credentials));
         setLocalStationKeys(keys);
         setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(discoveredRemoteKeysResult.keys, keys));
-        setCurrentGroupOptions(groupBindingsToCurrentOptions(groupBindings, groupRates));
+        setCurrentGroupOptions(groupBindingsToCurrentOptions(groupBindings, groupRates, station.creditPerCny));
         setGroupRows(dedupeGroupRows(groupBindingsToDrafts(groupBindings, groupRates)));
         setKeyRows(keys.length ? keys.map(keyToDraft) : []);
         setRemoteCapability(capabilityResult.capability);
@@ -997,7 +1005,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     const savedGroupOptions = await saveGroupRows(station.id, groupRows);
     if (savedGroupOptions.length) {
       setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
-      rowsToSave = mergeKeyRowsWithSavedGroupOptions(rowsToSave, savedGroupOptions);
+      rowsToSave = mergeKeyRowsWithSavedGroupOptions(rowsToSave, savedGroupOptions, currentCreditPerCny);
     }
     await saveKeyRows(station.id, rowsToSave);
     if (form.loginUsername.trim() || form.loginPassword.trim()) {
@@ -1058,7 +1066,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           note: form.note.trim() ? form.note.trim() : null,
         });
         const savedGroupOptions = await saveGroupRows(activeStationId, groupRows);
-        const rowsToSave = mergeKeyRowsWithSavedGroupOptions(keyRows, savedGroupOptions);
+        const rowsToSave = mergeKeyRowsWithSavedGroupOptions(keyRows, savedGroupOptions, currentCreditPerCny);
         setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
         setKeyRows(rowsToSave);
         await saveKeyRows(activeStationId, rowsToSave);
@@ -1114,7 +1122,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         }
       }
       const savedGroupOptions = await saveGroupRows(station.id, groupRows);
-      rowsToSave = mergeKeyRowsWithSavedGroupOptions(rowsToSave, savedGroupOptions);
+      rowsToSave = mergeKeyRowsWithSavedGroupOptions(rowsToSave, savedGroupOptions, currentCreditPerCny);
       setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
       setKeyRows(rowsToSave);
       await saveKeyRows(station.id, rowsToSave);
@@ -1219,7 +1227,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         getRemoteKeyCapability(targetStationId).catch(() => null),
       ]);
       const syncedGroupRows = dedupeGroupRows(groupBindingsToDrafts(groupBindings, groupRates));
-      setCurrentGroupOptions(groupBindingsToCurrentOptions(groupBindings, groupRates));
+      setCurrentGroupOptions(groupBindingsToCurrentOptions(groupBindings, groupRates, currentCreditPerCny));
       setRemoteCapability(capability);
       setRemoteCapabilityError(null);
       setGroupRows(syncedGroupRows);
@@ -1350,6 +1358,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     await updateStationKey({
       ...result.stationKey,
       apiKey: null,
+      rateMultiplier: effectiveRateMultiplierForCredit(remoteKey.rateMultiplier, currentCreditPerCny),
       note: remoteLocalKeyNote(remoteKey),
     });
     const nextRemoteKeys = (await bindRemoteStationKey(remoteKey.id, result.stationKey.id)).filter(
@@ -1646,6 +1655,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                   ) : (
                     <>
                       <RemoteKeyDiscoveryList
+                        creditPerCny={currentCreditPerCny}
                         keys={remoteKeys}
                         loading={remoteLoading}
                         localKeyIdsCreatedByRemote={remoteCreatedLocalKeyIds}
@@ -1774,6 +1784,11 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function normalizeCollectionIntervalMinutes(value: string) {
   const interval = Number(value.trim() || "5");
   return Number.isInteger(interval) && interval > 0 ? interval : 5;
+}
+
+function parseCreditPerCny(value: string) {
+  const parsed = Number(value.trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
 }
 
 function syncRowsWithGroupRateOptions(

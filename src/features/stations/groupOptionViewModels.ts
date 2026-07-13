@@ -1,4 +1,4 @@
-import { formatCompactMultiplier } from "@/lib/formatters";
+import { effectiveRateMultiplierForCredit, formatCompactMultiplier } from "@/lib/formatters";
 import {
   buildStationGroupOptionsFromCurrentFacts,
   isDisplayableStationGroupCurrentFact,
@@ -68,10 +68,14 @@ export function normalizeStationGroupOptions(options: StationGroupOption[]) {
 
 export function buildStationGroupOptionsFromCurrentFactsForSelect(
   facts: StationGroupCurrentFact[],
+  creditPerCny = 1,
 ) {
   return normalizeStationGroupOptions(
     buildStationGroupOptionsFromCurrentFacts(
       facts.filter(isDisplayableStationGroupCurrentFact),
-    ),
+    ).map((option) => ({
+      ...option,
+      rateMultiplier: effectiveRateMultiplierForCredit(option.rateMultiplier, creditPerCny),
+    })),
   );
 }

@@ -3,7 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import { Button, EmptyState, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { listChangeEventsForStation } from "@/lib/api/changeEvents";
-import { collectStationTask, getLatestCollectorSnapshot } from "@/lib/api/collector";
+import { collectStationTask, getLatestCollectorSnapshot, startManualAuthorization } from "@/lib/api/collector";
 import { listCollectorRuns } from "@/lib/api/collectorRuns";
 import { listBalanceSnapshotsForStation } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
@@ -22,6 +22,7 @@ import {
 } from "./stationDetailViewModels";
 import {
   StationDetailContent,
+  type StationDetailLoadingAction,
   type StationDetailRefreshAction,
 } from "./components/StationDetailContent";
 
@@ -75,7 +76,7 @@ export function StationDetailPage({
   const [initialLoading, setInitialLoading] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
   const [sectionError, setSectionError] = useState<string | null>(null);
-  const [loadingAction, setLoadingAction] = useState<StationDetailRefreshAction | null>(null);
+  const [loadingAction, setLoadingAction] = useState<StationDetailLoadingAction | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -245,6 +246,24 @@ export function StationDetailPage({
     }
   }, [isRefreshCurrent, loadDetail, loadingAction, stationId, toast]);
 
+  const handleManualAuthorization = useCallback(async () => {
+    if (!stationId || loadingAction) {
+      return;
+    }
+    setLoadingAction("authorize");
+    setSectionError(null);
+    try {
+      await startManualAuthorization(stationId);
+      toast.success("人工授权窗口已打开");
+    } catch (requestError) {
+      const message = readError(requestError);
+      setSectionError(message);
+      toast.error("打开人工授权失败", message);
+    } finally {
+      setLoadingAction(null);
+    }
+  }, [loadingAction, stationId, toast]);
+
   if (initialLoading) {
     return (
       <div className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
@@ -275,6 +294,7 @@ export function StationDetailPage({
       sectionError={sectionError}
       onBack={onBack}
       onEdit={() => onEditProvider(viewModel.station.id)}
+      onAuthorize={() => void handleManualAuthorization()}
       onRefresh={(action) => void handleRefresh(action)}
     />
   );

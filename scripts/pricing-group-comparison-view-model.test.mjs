@@ -21,15 +21,20 @@ async function transpileTsFile(sourcePath, outputPath, replacements = []) {
 
 async function importPricingComparisonViewModel() {
   const tempRoot = await mkdtemp(join(tmpdir(), "relay-pricing-group-view-model-"));
+  const groupCategoriesPath = join(tempRoot, "groupCategories.mjs");
   const groupFactsPath = join(tempRoot, "groupFacts.mjs");
   const pricingFactsPath = join(tempRoot, "pricingFacts.mjs");
   const viewModelPath = join(tempRoot, "pricingComparisonViewModel.mjs");
-  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath);
+  await transpileTsFile("src/lib/groupCategories.ts", groupCategoriesPath);
+  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath, [
+    ['@/lib/groupCategories', "./groupCategories.mjs"],
+  ]);
   await transpileTsFile("src/lib/projections/pricingFacts.ts", pricingFactsPath, [
     ['@/lib/projections/groupFacts', "./groupFacts.mjs"],
   ]);
   await transpileTsFile("src/features/pricing/pricingComparisonViewModel.ts", viewModelPath, [
     ["../../lib/projections/pricingFacts", "./pricingFacts.mjs"],
+    ["../../lib/groupCategories", "./groupCategories.mjs"],
   ]);
   return import(`file://${viewModelPath.replaceAll("\\", "/")}`);
 }

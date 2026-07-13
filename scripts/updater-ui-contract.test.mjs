@@ -13,6 +13,11 @@ assert.ok(provider.includes("checkNow({ notify: false })"), "startup update chec
 assert.ok(provider.includes("downloadPendingUpdate"));
 assert.ok(provider.includes("cleanupBeforeUpdate"));
 assert.ok(provider.includes("installPendingUpdateAndRelaunch"));
+assert.ok(provider.includes("installingRef"), "install flow must be guarded against repeated clicks");
+assert.ok(
+  /const install = useCallback[\s\S]*catch \(error\)[\s\S]*normalizeUpdaterError\(error\)/.test(provider),
+  "install failures should use updater-specific error normalization",
+);
 assert.ok(provider.includes("setDialogOpen(false)"), "up-to-date retry must close stale dialog");
 assert.ok(provider.includes("currentAppVersion()") && provider.includes(".catch(() => undefined)"), "version initialization errors must be handled");
 assert.ok(!provider.includes("toast.loading"), "update checks should not show loading toast");

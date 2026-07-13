@@ -20,12 +20,12 @@ import {
   installPendingUpdateAndRelaunch,
 } from "@/lib/api/updater";
 import { normalizeUpdaterError } from "@/lib/api/updaterErrors";
-import { readError } from "@/lib/errors";
 import { useToast } from "@/components/ui";
 
 type UpdaterContextValue = {
   state: UpdaterState;
   checkNow: (options?: UpdateCheckOptions) => Promise<void>;
+  showUpdateDialog: () => void;
   installNow: () => Promise<void>;
 };
 
@@ -40,6 +40,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reduceUpdaterState, initialUpdaterState);
   const [dialogOpen, setDialogOpen] = useState(false);
   const checkingRef = useRef(false);
+  const installingRef = useRef(false);
 
   const checkNow = useCallback(async (options?: UpdateCheckOptions) => {
     if (checkingRef.current) return;
@@ -93,6 +94,8 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
   }, [state.phase]);
 
   const install = useCallback(async () => {
+    if (installingRef.current) return;
+    installingRef.current = true;
     dispatch({ type: "DOWNLOAD_STARTED" });
     try {
       await downloadPendingUpdate((progress) => {
@@ -103,11 +106,22 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "INSTALL_STARTED" });
       await installPendingUpdateAndRelaunch();
     } catch (error) {
-      dispatch({ type: "FAILED", message: readError(error) });
+      dispatch({ type: "FAILED", message: normalizeUpdaterError(error) });
+    } finally {
+      installingRef.current = false;
     }
   }, []);
 
-  const value = useMemo(() => ({ state, checkNow, installNow: install }), [checkNow, install, state]);
+  const showUpdateDialog = useCallback(() => {
+    if (state.phase === "available" || state.phase === "failed") {
+      setDialogOpen(true);
+    }
+  }, [state.phase]);
+
+  const value = useMemo(
+    () => ({ state, checkNow, showUpdateDialog, installNow: install }),
+    [checkNow, install, showUpdateDialog, state],
+  );
 
   return (
     <UpdaterContext.Provider value={value}>

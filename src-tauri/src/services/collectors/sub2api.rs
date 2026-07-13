@@ -903,7 +903,10 @@ fn login_attempt_from_response(path: &str, status: u16, parsed: &Value) -> Login
         return LoginAttempt {
             token: None,
             login_message: Some(shorten_error(&parsed.to_string())),
-            manual_required: Some("接口需要验证码、2FA 或额外登录步骤。".to_string()),
+            manual_required: Some(
+                "接口需要验证码、2FA 或额外登录步骤；请使用网页登录捕获完成验证后再采集。"
+                    .to_string(),
+            ),
         };
     }
     LoginAttempt {
@@ -956,6 +959,15 @@ fn extract_token(value: &Value) -> Option<String> {
 
 fn needs_manual_login(value: &Value, status: u16) -> bool {
     if matches!(status, 401 | 403) {
+        return true;
+    }
+    let text = value.to_string().to_lowercase();
+    if text.contains("geetest")
+        || text.contains("captcha")
+        || text.contains("turnstile")
+        || text.contains("verification_failed")
+        || text.contains("验证码")
+    {
         return true;
     }
     value
@@ -2098,6 +2110,24 @@ mod tests {
         assert!(manual_required.contains("代理"));
         assert!(!manual_required.contains("验证码"));
         assert!(!manual_required.contains("2FA"));
+    }
+
+    #[test]
+    fn login_geetest_failure_reports_web_login_capture_needed() {
+        let attempt = login_attempt_from_response(
+            "/api/v1/auth/login",
+            400,
+            &json!({
+                "code": 400,
+                "message": "geetest verification failed",
+                "reason": "GEETEST_VERIFICATION_FAILED"
+            }),
+        );
+
+        assert_eq!(attempt.token, None);
+        let manual_required = attempt.manual_required.expect("manual required");
+        assert!(manual_required.contains("验证码"));
+        assert!(manual_required.contains("网页登录捕获"));
     }
 
     #[test]

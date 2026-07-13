@@ -102,6 +102,10 @@ export function startCaptureSession(stationId: string) {
   });
 }
 
+export function startManualAuthorization(stationId: string) {
+  return startCaptureSession(stationId);
+}
+
 export function getCaptureSessionStatus(stationId: string) {
   return invoke<CaptureSessionStatus>("get_capture_session_status", { stationId }).catch((error) => {
     if (isInvokeUnavailable(error)) {

@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "record-capture-event"
+description = "Allow manual authorization capture windows to report sanitized HTTP events."
+commands.allow = ["record_capture_event"]

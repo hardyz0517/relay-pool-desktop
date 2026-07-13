@@ -3,7 +3,10 @@ pub mod session;
 
 use serde_json::{json, Value};
 
-use crate::models::capture::{CapturedHttpEvent, CapturedHttpEventInput};
+use crate::models::{
+    capture::{CapturedHttpEvent, CapturedHttpEventInput},
+    credentials::PersistStationSessionInput,
+};
 
 pub fn sanitize_event(input: CapturedHttpEventInput) -> CapturedHttpEvent {
     let request_path = input
@@ -169,6 +172,80 @@ pub fn event_field_counts(events: &[CapturedHttpEvent]) -> (usize, usize) {
         })
         .count();
     (fields.len(), pending)
+}
+
+pub fn extract_session_credentials(
+    input: &CapturedHttpEventInput,
+) -> Option<PersistStationSessionInput> {
+    let status = input.status?;
+    if !(200..=299).contains(&status) || !is_auth_capture_path(input) {
+        return None;
+    }
+    let json = input.response_json.as_ref()?;
+    let access_token = find_string_field(json, &["access_token", "accessToken", "token"]);
+    let refresh_token = find_string_field(json, &["refresh_token", "refreshToken"]);
+    let cookie = find_string_field(
+        json,
+        &["cookie", "session", "session_cookie", "sessionCookie"],
+    );
+    if access_token.is_none() && refresh_token.is_none() && cookie.is_none() {
+        return None;
+    }
+    Some(PersistStationSessionInput {
+        station_id: input.station_id.clone(),
+        access_token,
+        refresh_token,
+        cookie,
+        newapi_user_id: find_string_field(
+            json,
+            &["newapi_user_id", "newapiUserId", "user_id", "userId"],
+        ),
+        token_expires_at: find_string_field(
+            json,
+            &[
+                "token_expires_at",
+                "tokenExpiresAt",
+                "expires_at",
+                "expiresAt",
+            ],
+        ),
+        session_expires_at: find_string_field(json, &["session_expires_at", "sessionExpiresAt"]),
+        session_source: "webview_capture".to_string(),
+    })
+}
+
+fn is_auth_capture_path(input: &CapturedHttpEventInput) -> bool {
+    let path = input
+        .request_path
+        .as_deref()
+        .map(str::to_string)
+        .unwrap_or_else(|| path_from_url(&input.request_url));
+    let lower = path.to_lowercase();
+    lower.contains("/auth/login")
+        || lower.contains("/auth/refresh")
+        || lower.ends_with("/login")
+        || lower.ends_with("/session")
+}
+
+fn find_string_field(value: &Value, names: &[&str]) -> Option<String> {
+    match value {
+        Value::Object(map) => {
+            for name in names {
+                if let Some(text) = map.get(*name).and_then(Value::as_str) {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed.to_string());
+                    }
+                }
+            }
+            map.values()
+                .find_map(|child| find_string_field(child, names))
+        }
+        Value::Array(items) => items
+            .iter()
+            .find_map(|child| find_string_field(child, names)),
+        _ => None,
+    }
 }
 
 fn extract_fields(events: &[CapturedHttpEvent]) -> Vec<Value> {
@@ -527,5 +604,71 @@ mod tests {
         assert_eq!(summary["recognized"]["modelCount"], json!(1));
         assert_eq!(normalized["status"], json!("needs_confirmation"));
         assert_eq!(raw["events"][0]["path"], json!("/api/ratio_config"));
+    }
+
+    #[test]
+    fn extracts_login_session_tokens_from_raw_auth_response() {
+        let input = CapturedHttpEventInput {
+            station_id: "station-1".to_string(),
+            source_window_id: "window-1".to_string(),
+            page_url: "https://relay.example/login".to_string(),
+            request_url: "https://relay.example/api/v1/auth/login".to_string(),
+            request_path: Some("/api/v1/auth/login".to_string()),
+            method: "POST".to_string(),
+            status: Some(200),
+            content_type: Some("application/json".to_string()),
+            started_at: None,
+            finished_at: None,
+            duration_ms: None,
+            response_kind: None,
+            response_size: None,
+            response_json: Some(json!({
+                "data": {
+                    "access_token": "captured-access-token",
+                    "refresh_token": "captured-refresh-token",
+                    "expires_in": 3600
+                }
+            })),
+            response_text: None,
+            error_message: None,
+        };
+
+        let session = super::extract_session_credentials(&input).expect("captured session");
+
+        assert_eq!(
+            session.access_token.as_deref(),
+            Some("captured-access-token")
+        );
+        assert_eq!(
+            session.refresh_token.as_deref(),
+            Some("captured-refresh-token")
+        );
+        assert_eq!(session.session_source, "webview_capture");
+    }
+
+    #[test]
+    fn ignores_non_auth_token_fields_for_session_capture() {
+        let input = CapturedHttpEventInput {
+            station_id: "station-1".to_string(),
+            source_window_id: "window-1".to_string(),
+            page_url: "https://relay.example/dashboard".to_string(),
+            request_url: "https://relay.example/api/v1/keys".to_string(),
+            request_path: Some("/api/v1/keys".to_string()),
+            method: "GET".to_string(),
+            status: Some(200),
+            content_type: Some("application/json".to_string()),
+            started_at: None,
+            finished_at: None,
+            duration_ms: None,
+            response_kind: None,
+            response_size: None,
+            response_json: Some(json!({
+                "data": [{ "name": "key", "token": "not-a-login-session" }]
+            })),
+            response_text: None,
+            error_message: None,
+        };
+
+        assert!(super::extract_session_credentials(&input).is_none());
     }
 }

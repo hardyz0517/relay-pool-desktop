@@ -6,23 +6,30 @@ const updaterProviderSource = await readFile("src/features/updater/UpdaterProvid
 
 assert.ok(
   updaterProviderSource.includes("installNow: () => Promise<void>") &&
+    updaterProviderSource.includes("showUpdateDialog: () => void") &&
     updaterProviderSource.includes("installNow: install") &&
+    updaterProviderSource.includes("showUpdateDialog") &&
     updaterProviderSource.includes("if (shouldNotify) setDialogOpen(true);"),
-  "updater provider should expose the existing install flow to page-level actions",
+  "updater provider should expose install and confirmation-dialog actions to page-level actions",
 );
 
 assert.ok(
   dashboardSource.includes('import { useUpdater } from "@/features/updater/UpdaterProvider";') &&
-    dashboardSource.includes("const { state: updaterState, installNow } = useUpdater();"),
-  "dashboard should consume the shared updater state and install action",
+    dashboardSource.includes("const { state: updaterState, showUpdateDialog } = useUpdater();"),
+  "dashboard should consume the shared updater state and confirmation-dialog action",
 );
 
 assert.ok(
   dashboardSource.includes("const updateAction = updaterState.phase === \"available\"") &&
     dashboardSource.includes("<IconButton") &&
     dashboardSource.includes("<ArrowUp") &&
-    dashboardSource.includes("onClick={() => void installNow()}"),
-  "dashboard should render a top-right arrow upgrade icon only when an update is available",
+    dashboardSource.includes("onClick={showUpdateDialog}"),
+  "dashboard should render a top-right arrow that opens the update confirmation only when an update is available",
+);
+
+assert.ok(
+  !dashboardSource.includes("onClick={() => void installNow()}"),
+  "dashboard update arrow must not bypass the confirmation dialog by installing directly",
 );
 
 assert.ok(

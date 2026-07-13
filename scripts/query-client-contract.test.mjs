@@ -39,13 +39,13 @@ async function assertStaticContract() {
   const notifierSource = await text("src/lib/query/QueryErrorNotifier.tsx");
   assert.match(
     notifierSource,
-    /errorUpdatedAt/,
-    "QueryErrorNotifier must use errorUpdatedAt for event-level dedupe",
+    /createQueryErrorNotificationCycle/,
+    "QueryErrorNotifier must suppress repeated notifications during one continuous query failure",
   );
   assert.match(
     notifierSource,
-    /lastNotifiedAt/,
-    "QueryErrorNotifier must track lastNotifiedAt to avoid duplicate toasts",
+    /event\.action\.type === "success"/,
+    "QueryErrorNotifier must reset the notification cycle after a successful refresh",
   );
   assert.match(
     notifierSource,

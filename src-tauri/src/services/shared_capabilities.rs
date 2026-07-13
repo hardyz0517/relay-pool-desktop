@@ -221,8 +221,10 @@ pub fn channel_status_summaries_from_database(
         .into_iter()
         .map(|monitor| {
             let recent = database.channel_status_window_facts(&monitor.id, None, 60)?;
-            let last24h = database.channel_status_window_facts(&monitor.id, Some(last24h_since), 60)?;
-            let last7d = database.channel_status_window_facts(&monitor.id, Some(last7d_since), 60)?;
+            let last24h =
+                database.channel_status_window_facts(&monitor.id, Some(last24h_since), 60)?;
+            let last7d =
+                database.channel_status_window_facts(&monitor.id, Some(last7d_since), 60)?;
 
             Ok(ChannelStatusSummary {
                 monitor,

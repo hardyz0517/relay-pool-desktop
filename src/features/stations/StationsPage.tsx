@@ -39,6 +39,7 @@ import {
   collectStationTask,
   getLatestCollectorSnapshot,
   listCollectorSnapshots,
+  startManualAuthorization,
 } from "@/lib/api/collector";
 import { listCollectorRuns } from "@/lib/api/collectorRuns";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
@@ -99,7 +100,7 @@ type StationKeyFormState = {
 };
 
 type DialogMode = "create" | "edit" | "detail" | null;
-type StationAction = "collect" | "balance";
+type StationAction = "collect" | "balance" | "authorize";
 
 const emptyForm: StationFormState = {
   name: "",
@@ -622,6 +623,22 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     }
   }
 
+  async function handleManualAuthorization(station: Station) {
+    if (stationAction !== null) {
+      return;
+    }
+    setStationAction({ stationId: station.id, action: "authorize" });
+    setError(null);
+    try {
+      await startManualAuthorization(station.id);
+      toast.success("人工授权窗口已打开");
+    } catch (requestError) {
+      toast.error("打开人工授权失败", readError(requestError));
+    } finally {
+      setStationAction(null);
+    }
+  }
+
   async function handleRefreshBalance(station: Station) {
     if (stationAction !== null) {
       return;
@@ -760,6 +777,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
                       active={row.station.id === selectedStationId}
                       loadingAction={stationAction?.stationId === row.station.id ? stationAction.action : null}
                       row={row}
+                      onAuthorize={(station) => void handleManualAuthorization(station)}
                       onCollect={(station) => void handleRunCollect(station)}
                       onDelete={handleDelete}
                       onEdit={openEdit}
@@ -780,6 +798,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
                     onCollect={() => undefined}
                     onDelete={() => undefined}
                     onEdit={() => undefined}
+                    onAuthorize={() => undefined}
                     onOpen={() => undefined}
                     onRefreshBalance={() => undefined}
                   />
@@ -920,6 +939,7 @@ type StationAssetListRowProps = {
   dragListeners?: ReturnType<typeof useSortable>["listeners"];
   onOpen: (station: Station) => void;
   onEdit: (station: Station) => void;
+  onAuthorize: (station: Station) => void;
   onCollect: (station: Station) => void;
   onDelete: (station: Station) => void;
   onRefreshBalance: (station: Station) => void;
@@ -956,6 +976,7 @@ function StationAssetListRow({
   dragListeners,
   onOpen,
   onEdit,
+  onAuthorize,
   onCollect,
   onDelete,
   onRefreshBalance,
@@ -1083,6 +1104,19 @@ function StationAssetListRow({
         <IconButton className="text-slate-500 hover:text-slate-900" label={`管理 Key ${station.name}`} onClick={() => onEdit(station)}>
           <KeyRound className="h-4 w-4" />
         </IconButton>
+        {supportsManualAuthorization(station) && (
+          <IconButton
+            className={cn(
+              "text-slate-500 hover:text-slate-900",
+              rowNeedsManualAuthorization(row) && "text-amber-600 hover:bg-amber-50 hover:text-amber-700",
+            )}
+            disabled={actionDisabled || !station.enabled}
+            label={`重新授权 ${station.name}`}
+            onClick={() => onAuthorize(station)}
+          >
+            <ShieldCheck className={cn("h-4 w-4", loadingAction === "authorize" && "animate-pulse")} />
+          </IconButton>
+        )}
         <IconButton
           className="text-slate-500 hover:text-slate-900"
           disabled={actionDisabled || !station.enabled}
@@ -1100,6 +1134,19 @@ function StationAssetListRow({
         </IconButton>
       </div>
     </div>
+  );
+}
+
+function supportsManualAuthorization(station: Station) {
+  return station.stationType === "sub2api";
+}
+
+function rowNeedsManualAuthorization(row: StationAssetRow) {
+  const summary = row.latestSnapshot?.summaryJson ?? {};
+  return (
+    row.latestSnapshot?.status === "manual_required" ||
+    summary.loginRequired === true ||
+    summary.loginStatus === "manual_required"
   );
 }
 
