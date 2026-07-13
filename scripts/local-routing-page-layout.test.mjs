@@ -19,15 +19,9 @@ function assertExcludes(source, needle, label) {
   }
 }
 
-function assertOccurrenceCount(source, needle, expectedCount, label) {
-  const count = source.split(needle).length - 1;
-  if (count !== expectedCount) {
-    throw new Error(`${label} should include ${needle} ${expectedCount} times, found ${count}`);
-  }
-}
-
 function assertNotSharedWorkspacePromiseAll(source) {
-  const sharedLoadPattern = /Promise\.all\(\[\s*loadRoutingWorkspace\(\),\s*loadLocalRoutingWorkspace\(\),?\s*\]\)/;
+  const sharedLoadPattern =
+    /Promise\.all\(\[\s*loadRoutingWorkspace\(\),\s*loadLocalRoutingWorkspace\(\),?\s*\]\)/;
   if (sharedLoadPattern.test(source)) {
     throw new Error("RoutingPage should load legacy and local routing workspaces independently");
   }
@@ -44,12 +38,20 @@ assertIncludes(routingPage, "SegmentedControl", "RoutingPage");
 assertIncludes(routingPage, "activeTab", "RoutingPage");
 assertIncludes(routingPage, "状态", "RoutingPage");
 assertIncludes(routingPage, "编辑", "RoutingPage");
-assertIncludes(statusTab, "本地端点", "LocalRoutingStatusTab");
-assertIncludes(statusTab, "当前秘钥", "LocalRoutingStatusTab");
-assertIncludes(statusTab, "lg:[&>*]:h-full", "LocalRoutingStatusTab");
-assertOccurrenceCount(statusTab, "grid-rows-[auto_minmax(0,1fr)]", 2, "LocalRoutingStatusTab");
-assertIncludes(statusTab, 'contentClassName="grid h-full content-center gap-3"', "LocalRoutingStatusTab");
-assertIncludes(statusTab, "formatDecisionTime(workspace.summary.lastDecisionAt)", "LocalRoutingStatusTab");
+assertIncludes(statusTab, "本地路由状态", "LocalRoutingStatusTab");
+assertIncludes(statusTab, "最近一次路由", "LocalRoutingStatusTab");
+assertIncludes(statusTab, "候选顺序预览", "LocalRoutingStatusTab");
+assertIncludes(statusTab, "previewEligibleCandidateCount", "LocalRoutingStatusTab");
+assertIncludes(statusTab, "previewExcludedCandidateCount", "LocalRoutingStatusTab");
+assertExcludes(statusTab, "当前秘钥", "LocalRoutingStatusTab");
+assertExcludes(statusTab, "当前密钥", "LocalRoutingStatusTab");
+assertExcludes(statusTab, "eligibleUnderMultiplierLimitCount", "LocalRoutingStatusTab");
+assertExcludes(statusTab, "healthyCandidateCount", "LocalRoutingStatusTab");
+assertExcludes(statusTab, "function Metric(", "LocalRoutingStatusTab");
+assertExcludes(statusTab, "lg:[&>*]:h-full", "LocalRoutingStatusTab");
+assertExcludes(statusTab, "grid-rows-[auto_minmax(0,1fr)]", "LocalRoutingStatusTab");
+assertExcludes(statusTab, 'contentClassName="grid h-full content-center gap-3"', "LocalRoutingStatusTab");
+assertExcludes(statusTab, "formatDecisionTime(workspace.summary.lastDecisionAt)", "LocalRoutingStatusTab");
 assertExcludes(statusTab, "{workspace.summary.lastDecisionAt ??", "LocalRoutingStatusTab");
 assertExcludes(statusTab, "latestDecision?.reason", "LocalRoutingStatusTab");
 assertIncludes(statusTab, "倍率上限", "LocalRoutingStatusTab");

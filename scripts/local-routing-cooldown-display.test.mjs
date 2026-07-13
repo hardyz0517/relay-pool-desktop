@@ -1,25 +1,23 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const candidateRowSource = await readFile(
-  "src/features/routing/LocalRoutingCandidateRow.tsx",
+const routingPageSource = await readFile("src/features/routing/RoutingPage.tsx", "utf8");
+const statusTabSource = await readFile("src/features/routing/LocalRoutingStatusTab.tsx", "utf8");
+const statusRowSource = await readFile(
+  "src/features/routing/LocalRoutingStatusCandidateRow.tsx",
   "utf8",
+).catch(() => "");
+const editRowSource = await readFile("src/features/routing/LocalRoutingCandidateRow.tsx", "utf8");
+const clockSource = await readFile("src/features/routing/useCooldownClock.ts", "utf8").catch(
+  () => "",
 );
 
-assert.match(
-  candidateRowSource,
-  /const isCoolingDown = candidate\.healthState === "cooldown";/,
-  "candidate rows should derive active cooldown from healthState, not stale cooldownUntil timestamps",
-);
-
-assert.match(
-  candidateRowSource,
-  /\{\s*label:\s*"冷却",\s*value:\s*isCoolingDown \? "进行中" : "无",\s*tone:\s*isCoolingDown \? "warning" : "neutral"\s*\}/,
-  "candidate cooldown metric should only show 进行中 while the backend says the health state is cooldown",
-);
-
-assert.doesNotMatch(
-  candidateRowSource,
-  /candidate\.cooldownUntil \? "进行中" : "无"/,
-  "candidate rows should not show stale, expired cooldownUntil values as active cooldowns",
-);
+assert.match(routingPageSource, /useCooldownClock/);
+assert.match(routingPageSource, /refreshEnabled\s*&&\s*activeTab\s*===\s*"status"/);
+assert.match(statusTabSource, /nowMs=\{nowMs\}/);
+assert.match(statusRowSource, /buildCooldownDisplay/);
+assert.doesNotMatch(statusRowSource + editRowSource, /setInterval|setTimeout/);
+assert.doesNotMatch(statusRowSource, /candidate\.cooldownUntil\s*\?\s*"/);
+assert.match(clockSource, /window\.setInterval/);
+assert.match(clockSource, /window\.clearInterval/);
+assert.match(clockSource, /notifiedDeadlinesRef/);
