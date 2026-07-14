@@ -21,23 +21,23 @@ assert.ok(
 );
 
 [
-  ['id: "zhipu"', 'name: "智谱 GLM"', 'baseUrl: "https://open.bigmodel.cn/api/paas/v4"'],
-  ['id: "kimi"', 'name: "Kimi"', 'baseUrl: "https://api.moonshot.ai/v1"'],
-  ['id: "doubao"', 'name: "豆包"', 'baseUrl: "https://ark.cn-beijing.volces.com/api/v3"'],
-  ['id: "hunyuan"', 'name: "腾讯混元"', 'baseUrl: "https://api.hunyuan.cloud.tencent.com/v1"'],
-  ['id: "qianfan"', 'name: "百度千帆"', 'baseUrl: "https://qianfan.baidubce.com/v2"'],
-  ['id: "stepfun"', 'name: "阶跃星辰"', 'baseUrl: "https://api.stepfun.com/v1"'],
-  ['id: "mimo"', 'name: "小米 MiMo"', 'baseUrl: "https://api.xiaomimimo.com/v1"'],
-  ['id: "lingyiwanwu"', 'name: "零一万物"', 'baseUrl: "https://api.lingyiwanwu.com/v1"'],
-  ['id: "baichuan"', 'name: "百川智能"', 'baseUrl: "https://api.baichuan-ai.com/v1"'],
-].forEach(([idSnippet, nameSnippet, baseUrlSnippet]) => {
+  ['id: "zhipu"', 'name: "智谱 GLM"', 'apiBaseUrl: "https://open.bigmodel.cn/api/paas/v4"'],
+  ['id: "kimi"', 'name: "Kimi"', 'apiBaseUrl: "https://api.moonshot.ai/v1"'],
+  ['id: "doubao"', 'name: "豆包"', 'apiBaseUrl: "https://ark.cn-beijing.volces.com/api/v3"'],
+  ['id: "hunyuan"', 'name: "腾讯混元"', 'apiBaseUrl: "https://api.hunyuan.cloud.tencent.com/v1"'],
+  ['id: "qianfan"', 'name: "百度千帆"', 'apiBaseUrl: "https://qianfan.baidubce.com/v2"'],
+  ['id: "stepfun"', 'name: "阶跃星辰"', 'apiBaseUrl: "https://api.stepfun.com/v1"'],
+  ['id: "mimo"', 'name: "小米 MiMo"', 'apiBaseUrl: "https://api.xiaomimimo.com/v1"'],
+  ['id: "lingyiwanwu"', 'name: "零一万物"', 'apiBaseUrl: "https://api.lingyiwanwu.com/v1"'],
+  ['id: "baichuan"', 'name: "百川智能"', 'apiBaseUrl: "https://api.baichuan-ai.com/v1"'],
+].forEach(([idSnippet, nameSnippet, apiBaseUrlSnippet]) => {
   assert.ok(presetsSource.includes(idSnippet), `supplier presets should include ${idSnippet}`);
   assert.ok(presetsSource.includes(nameSnippet), `supplier presets should label ${nameSnippet}`);
-  assert.ok(presetsSource.includes(baseUrlSnippet), `supplier presets should use ${baseUrlSnippet}`);
+  assert.ok(presetsSource.includes(apiBaseUrlSnippet), `supplier presets should use ${apiBaseUrlSnippet}`);
 });
 
 assert.ok(
-  presetsSource.includes('baseUrl: "https://api.minimax.io/v1"'),
+  presetsSource.includes('apiBaseUrl: "https://api.minimax.io/v1"'),
   "MiniMax preset should use the current OpenAI-compatible official API host",
 );
 

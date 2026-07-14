@@ -22,6 +22,7 @@ async function transpileTsFile(sourcePath, outputPath, replacements = []) {
 async function importRuntimeSnapshot() {
   const tempRoot = await mkdtemp(join(tmpdir(), "relay-runtime-snapshot-"));
   const groupFactsPath = join(tempRoot, "groupFacts.mjs");
+  const groupCategoriesPath = join(tempRoot, "groupCategories.mjs");
   const pricingFactsPath = join(tempRoot, "pricingFacts.mjs");
   const balanceFactsPath = join(tempRoot, "balanceFacts.mjs");
   const runtimeSnapshotPath = join(tempRoot, "runtimeSnapshot.mjs");
@@ -32,7 +33,10 @@ async function importRuntimeSnapshot() {
     "export function toTimestampMillis(value) { return value ? Date.parse(value) : Number.NaN; }",
     "utf8",
   );
-  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath);
+  await transpileTsFile("src/lib/groupCategories.ts", groupCategoriesPath);
+  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath, [
+    ['@/lib/groupCategories', "./groupCategories.mjs"],
+  ]);
   await transpileTsFile("src/lib/projections/pricingFacts.ts", pricingFactsPath, [
     ['@/lib/projections/groupFacts', "./groupFacts.mjs"],
   ]);
@@ -52,7 +56,14 @@ const { buildRuntimeRouteSnapshot } = await importRuntimeSnapshot();
 
 const snapshot = buildRuntimeRouteSnapshot({
   generatedAt: "2026-07-08T00:00:00.000Z",
-  stations: [station({ id: "station-a", name: "Alpha", baseUrl: "https://alpha.example/v1" })],
+  stations: [
+    station({
+      id: "station-a",
+      name: "Alpha",
+      websiteUrl: "https://alpha.example",
+      apiBaseUrl: "https://alpha.example/v1",
+    }),
+  ],
   stationKeys: [
     key({
       id: "key-a",
@@ -153,7 +164,9 @@ function station(overrides) {
     id: "station",
     name: "Station",
     stationType: "sub2api",
-    baseUrl: "https://station.example/v1",
+    websiteUrl: "https://station.example",
+    apiBaseUrl: "https://station.example/v1",
+    endpointRevision: 1,
     apiKeyMasked: "sk-station",
     apiKeyPresent: true,
     keyCount: 1,

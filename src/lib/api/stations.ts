@@ -18,7 +18,9 @@ function ensureMemoryStations() {
     id: station.id,
     name: station.name,
     stationType: station.type,
-    baseUrl: `https://${station.baseUrlHost}/v1`,
+    websiteUrl: `https://${station.baseUrlHost}`,
+    apiBaseUrl: `https://${station.baseUrlHost}/v1`,
+    endpointRevision: 1,
     collectorProxyMode: "inherit",
     collectorProxyUrl: null,
     apiKeyMasked: "sk-local-****",
@@ -65,7 +67,9 @@ export function createStation(input: StationInput) {
         id: `mock-${Date.now()}`,
         name: input.name,
         stationType: input.stationType,
-        baseUrl: input.baseUrl,
+        websiteUrl: input.websiteUrl,
+        apiBaseUrl: input.apiBaseUrl,
+        endpointRevision: 1,
         collectorProxyMode: input.collectorProxyMode,
         collectorProxyUrl: input.collectorProxyUrl,
         apiKeyMasked: "sk-mock-****",
@@ -101,11 +105,17 @@ export function updateStation(input: StationUpdateInput) {
       const nextStations = updateMemoryStations((stations) =>
         stations.map((station) =>
           station.id === input.id
-            ? {
+            ? (() => {
+                const endpointChanged =
+                  endpointRevisionKey(station.websiteUrl) !== endpointRevisionKey(input.websiteUrl) ||
+                  endpointRevisionKey(station.apiBaseUrl) !== endpointRevisionKey(input.apiBaseUrl);
+                return {
                 ...station,
                 name: input.name,
                 stationType: input.stationType,
-                baseUrl: input.baseUrl,
+                websiteUrl: input.websiteUrl,
+                apiBaseUrl: input.apiBaseUrl,
+                endpointRevision: endpointChanged ? station.endpointRevision + 1 : station.endpointRevision,
                 collectorProxyMode: input.collectorProxyMode,
                 collectorProxyUrl: input.collectorProxyUrl,
                 apiKeyMasked: input.apiKey ? "sk-mock-****" : station.apiKeyMasked,
@@ -117,7 +127,8 @@ export function updateStation(input: StationUpdateInput) {
                 collectionIntervalMinutes: input.collectionIntervalMinutes,
                 note: input.note,
                 updatedAt: now,
-              }
+                };
+              })()
             : station,
         ),
       );
@@ -141,7 +152,7 @@ export function deleteStation(id: string) {
   });
 }
 
-export function openStationBaseUrl(url: string) {
+export function openStationWebsite(url: string) {
   return invoke<void>("open_external_url", { url }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       window.open(url, "_blank", "noopener,noreferrer");
@@ -149,6 +160,10 @@ export function openStationBaseUrl(url: string) {
     }
     throw error;
   });
+}
+
+function endpointRevisionKey(value: string) {
+  return value.trim().replace(/\/+$/, "");
 }
 
 export function reorderStations(stationIds: string[]) {

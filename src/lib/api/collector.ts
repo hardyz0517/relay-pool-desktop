@@ -181,6 +181,7 @@ function createMemoryRun(stationId: string, source: string, status: string): Col
   const snapshot: CollectorSnapshot = {
     id: `snapshot-${Date.now()}`,
     stationId,
+    endpointRevision: 1,
     source,
     status,
     fetchedAt: now,

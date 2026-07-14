@@ -22,8 +22,12 @@ async function transpileTsFile(sourcePath, outputPath, replacements = []) {
 async function importPricingProjection() {
   const tempRoot = await mkdtemp(join(tmpdir(), "relay-pricing-projection-"));
   const groupFactsPath = join(tempRoot, "groupFacts.mjs");
+  const groupCategoriesPath = join(tempRoot, "groupCategories.mjs");
   const pricingFactsPath = join(tempRoot, "pricingFacts.mjs");
-  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath);
+  await transpileTsFile("src/lib/groupCategories.ts", groupCategoriesPath);
+  await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath, [
+    ['@/lib/groupCategories', "./groupCategories.mjs"],
+  ]);
   await transpileTsFile("src/lib/projections/pricingFacts.ts", pricingFactsPath, [
     ['@/lib/projections/groupFacts', "./groupFacts.mjs"],
   ]);
@@ -167,7 +171,9 @@ function station(id, name, creditPerCny) {
     id,
     name,
     stationType: "sub2api",
-    baseUrl: `https://${id}.example.test`,
+    websiteUrl: `https://${id}.example.test`,
+    apiBaseUrl: `https://${id}.example.test/v1`,
+    endpointRevision: 1,
     apiKeyMasked: "sk-...",
     apiKeyPresent: true,
     keyCount: 1,

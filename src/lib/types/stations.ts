@@ -13,7 +13,9 @@ export type Station = {
   id: string;
   name: string;
   stationType: StationType;
-  baseUrl: string;
+  websiteUrl: string;
+  apiBaseUrl: string;
+  endpointRevision: number;
   collectorProxyMode: StationProxyMode;
   collectorProxyUrl: string | null;
   apiKeyMasked: string;
@@ -38,7 +40,8 @@ export type Station = {
 export type StationInput = {
   name: string;
   stationType: StationType;
-  baseUrl: string;
+  websiteUrl: string;
+  apiBaseUrl: string;
   apiKey: string;
   collectorProxyMode: StationProxyMode;
   collectorProxyUrl: string | null;

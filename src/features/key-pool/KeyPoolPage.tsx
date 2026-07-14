@@ -147,7 +147,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         return false;
       }
       if (query.trim()) {
-        const text = `${item.name} ${item.stationBaseUrl} ${item.stationName} ${item.groupName ?? ""} ${item.tierLabel ?? ""}`.toLowerCase();
+        const text = `${item.name} ${item.stationApiBaseUrl} ${item.stationName} ${item.groupName ?? ""} ${item.tierLabel ?? ""}`.toLowerCase();
         if (!text.includes(query.trim().toLowerCase())) {
           return false;
         }
@@ -1017,7 +1017,7 @@ function KeyRowContent({
         </div>
         <div className="min-w-0">
           <div className="min-w-0 truncate text-[13px] font-semibold text-slate-900">{item.name}</div>
-          <div className="mt-0.5 truncate text-xs text-muted-foreground">{formatStationBaseUrl(item.stationBaseUrl)}</div>
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">{formatStationBaseUrl(item.stationApiBaseUrl)}</div>
         </div>
       </div>
 

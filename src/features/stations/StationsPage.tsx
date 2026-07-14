@@ -24,7 +24,7 @@ import { usePageRefreshEnabled } from "@/components/shell/PageActivity";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
-import { createStation, deleteStation, openStationBaseUrl, reorderStations, updateStation } from "@/lib/api/stations";
+import { createStation, deleteStation, openStationWebsite, reorderStations, updateStation } from "@/lib/api/stations";
 import {
   clearStationCredentials,
   createStationKey,
@@ -78,7 +78,8 @@ import {
 type StationFormState = {
   name: string;
   stationType: StationType;
-  baseUrl: string;
+  websiteUrl: string;
+  apiBaseUrl: string;
   apiKey: string;
   enabled: boolean;
   creditPerCny: string;
@@ -108,7 +109,8 @@ type StationAction = "collect" | "balance" | "authorize";
 const emptyForm: StationFormState = {
   name: "",
   stationType: "sub2api",
-  baseUrl: "",
+  websiteUrl: "",
+  apiBaseUrl: "",
   apiKey: "",
   enabled: true,
   creditPerCny: "1",
@@ -408,7 +410,8 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     setForm({
       name: station.name,
       stationType: station.stationType,
-      baseUrl: station.baseUrl,
+      websiteUrl: station.websiteUrl,
+      apiBaseUrl: station.apiBaseUrl,
       apiKey: "",
       enabled: station.enabled,
       creditPerCny: String(station.creditPerCny),
@@ -853,7 +856,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
               <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-semibold text-slate-900">{detailStation.name}</div>
-                  <div className="truncate text-xs text-muted-foreground">{detailStation.baseUrl}</div>
+                  <div className="truncate text-xs text-muted-foreground">{detailStation.websiteUrl}</div>
                 </div>
                 <IconButton
                   className="shrink-0 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 active:bg-slate-200"
@@ -1074,15 +1077,15 @@ function StationAssetListRow({
         <button
           type="button"
           aria-label={`在浏览器打开 ${station.name}`}
-          title={station.baseUrl}
+          title={station.websiteUrl}
           className="mt-1 block max-w-full truncate text-left text-xs font-medium text-[hsl(var(--accent))] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)]"
           onClick={(event) => {
             event.stopPropagation();
-            void openStationBaseUrl(station.baseUrl);
+            void openStationWebsite(station.websiteUrl);
           }}
           onKeyDown={(event) => event.stopPropagation()}
         >
-          {formatStationDisplayUrl(station.baseUrl)}
+          {formatStationDisplayUrl(station.websiteUrl)}
         </button>
       </div>
 
@@ -1267,9 +1270,14 @@ function StationDialogs({
               />
             </Field>
           </div>
-          <Field label="基础地址">
-            <input className={inputClassName} value={form.baseUrl} onChange={(event) => onChange({ ...form, baseUrl: event.target.value })} placeholder="https://example.com/v1" required />
-          </Field>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="前端网址">
+              <input className={inputClassName} value={form.websiteUrl} onChange={(event) => onChange({ ...form, websiteUrl: event.target.value })} placeholder="https://example.com" required />
+            </Field>
+            <Field label="API Base URL">
+              <input className={inputClassName} value={form.apiBaseUrl} onChange={(event) => onChange({ ...form, apiBaseUrl: event.target.value })} placeholder="https://api.example.com/v1" required />
+            </Field>
+          </div>
           <Field label={dialogMode === "edit" ? "密钥（留空保留旧值）" : "密钥"}>
             <input className={inputClassName} value={form.apiKey} onChange={(event) => onChange({ ...form, apiKey: event.target.value })} placeholder={dialogMode === "edit" ? "留空保留旧密钥" : "sk-..."} required={dialogMode !== "edit"} />
           </Field>
@@ -1369,7 +1377,8 @@ function DetailBody({
       <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80">
         <PropertyRow label="站点名称" value={activeDialogStation.name} />
         <PropertyRow label="站点类型" value={stationTypeLabels[activeDialogStation.stationType]} />
-        <PropertyRow label="基础地址" value={<code className="text-xs">{activeDialogStation.baseUrl}</code>} />
+        <PropertyRow label="前端网址" value={<code className="text-xs">{activeDialogStation.websiteUrl}</code>} />
+        <PropertyRow label="API Base URL" value={<code className="text-xs">{activeDialogStation.apiBaseUrl}</code>} />
         <PropertyRow label="余额" value={activeDialogStation.balanceCny === null ? "未采集" : `¥${activeDialogStation.balanceCny.toFixed(2)}`} />
         <PropertyRow label="密钥数量" value={keyCountLabel} />
         <PropertyRow label="状态" value={stationStatusLabels[activeDialogStation.status]} />
@@ -1623,7 +1632,8 @@ function formToInput(form: StationFormState): StationInput {
   return {
     name: form.name.trim(),
     stationType: form.stationType,
-    baseUrl: form.baseUrl.trim(),
+    websiteUrl: form.websiteUrl.trim(),
+    apiBaseUrl: form.apiBaseUrl.trim(),
     apiKey: form.apiKey.trim(),
     collectorProxyMode: "inherit",
     collectorProxyUrl: null,

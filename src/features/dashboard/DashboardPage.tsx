@@ -572,7 +572,7 @@ export function DashboardPage() {
                 key={key.id}
                 icon={<KeyRound className="h-4 w-4" />}
                 title={key.name}
-                subtitle={`${key.stationName} - ${key.stationBaseUrl}`}
+                subtitle={`${key.stationName} - ${key.stationApiBaseUrl}`}
                 badges={
                   <StatusBadge tone={key.enabled ? "healthy" : "disabled"}>
                     {key.enabled ? "可用" : "停用"}

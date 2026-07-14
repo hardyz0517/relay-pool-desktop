@@ -19,7 +19,7 @@ import { listPricingRules } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getSettings } from "@/lib/api/settings";
 import { listStationKeys } from "@/lib/api/stationKeys";
-import { listStations, openStationBaseUrl } from "@/lib/api/stations";
+import { listStations, openStationWebsite } from "@/lib/api/stations";
 import { Sub2ApiPlatformIcon } from "@/features/stations/components/Sub2ApiPlatformIcon";
 import { groupVisualMetaFor } from "@/features/stations/groupVisualMeta";
 import { groupCategoryDefinitions } from "@/lib/groupCategories";
@@ -145,20 +145,20 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
       stations,
     ],
   );
-  const stationBaseUrls = useMemo(
-    () => new Map(stations.map((station) => [station.id, station.baseUrl])),
+  const stationWebsites = useMemo(
+    () => new Map(stations.map((station) => [station.id, station.websiteUrl])),
     [stations],
   );
 
   async function handleOpenStation(stationId: string, stationName: string) {
-    const baseUrl = stationBaseUrls.get(stationId);
-    if (!baseUrl) {
+    const websiteUrl = stationWebsites.get(stationId);
+    if (!websiteUrl) {
       toast.error("打开中转站网址失败", `未找到 ${stationName} 的配置地址`);
       return;
     }
 
     try {
-      await openStationBaseUrl(baseUrl);
+      await openStationWebsite(websiteUrl);
     } catch (error) {
       toast.error("打开中转站网址失败", readError(error));
     }
