@@ -1289,7 +1289,7 @@ function StationDialogs({
             </Button>
           </div>
           {endpointOriginWarnings.length > 0 && (
-            <div className="rounded-[var(--surface-radius)] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <div className="rounded-[var(--surface-radius)] border border-warning-border bg-warning-surface px-3 py-2 text-xs text-warning-foreground">
               {endpointOriginWarnings.map((warning) => (
                 <div key={warning}>{warning}</div>
               ))}
