@@ -216,7 +216,7 @@ export function StationDetailContent({
             return (
               <div
                 key={card.label}
-                className="flex min-h-[96px] items-center gap-3 rounded-[12px] border border-border bg-surface px-4 py-3 shadow-surface"
+                className="flex min-h-[84px] items-center gap-3 rounded-[12px] border border-border bg-surface px-4 py-3 shadow-surface"
               >
                 <div
                   className={cn(
@@ -231,7 +231,6 @@ export function StationDetailContent({
                   <div className={cn("mt-0.5 truncate text-[22px] font-semibold leading-7", visual.valueClassName)}>
                     {card.value}
                   </div>
-                  <div className="mt-0.5 truncate text-xs text-muted-foreground">{card.helper}</div>
                 </div>
               </div>
             );
