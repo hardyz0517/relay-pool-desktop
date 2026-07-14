@@ -426,7 +426,7 @@ export function LocalRoutingSettingsEditor({ workspace }: LocalRoutingSettingsEd
     return (
       <SectionCard title="自动调度">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <span className="text-sm text-rose-700">{loadError ?? "设置加载失败"}</span>
+          <span className="text-sm text-danger-foreground">{loadError ?? "设置加载失败"}</span>
           <Button type="button" variant="outline" onClick={() => void loadCurrentSettings()}>
             <RefreshCw className="h-4 w-4" />
             重试
@@ -479,11 +479,11 @@ export function LocalRoutingSettingsEditor({ workspace }: LocalRoutingSettingsEd
           onBooleanChange={updateBooleanField}
           onNumericChange={updateBoundaryNumericField}
         />
-        <div className="border-t border-border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
+        <div className="border-t border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
           当前预览：{previewEligibleCandidateCount} / {candidateCount} 个候选可参与路由。
         </div>
         {boundarySaveError ? (
-          <div className="border-t border-rose-100 bg-rose-50 px-4 py-2 text-xs text-rose-700">
+          <div className="border-t border-danger-border bg-danger-surface px-4 py-2 text-xs text-danger-foreground">
             {boundarySaveError}
           </div>
         ) : null}
@@ -516,7 +516,7 @@ export function LocalRoutingSettingsEditor({ workspace }: LocalRoutingSettingsEd
           onBooleanChange={updateBooleanField}
         />
         {schedulerSaveError ? (
-          <div className="border-t border-rose-100 bg-rose-50 px-4 py-2 text-xs text-rose-700">
+          <div className="border-t border-danger-border bg-danger-surface px-4 py-2 text-xs text-danger-foreground">
             {schedulerSaveError}
           </div>
         ) : null}

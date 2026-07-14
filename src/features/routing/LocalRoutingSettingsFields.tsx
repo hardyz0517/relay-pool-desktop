@@ -21,7 +21,7 @@ type NumericChangeHandler = (field: SchedulerNumericField, value: string) => voi
 type BooleanChangeHandler = (field: SchedulerBooleanField) => void;
 
 const inputClassName =
-  "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-2.5 text-sm text-slate-800 outline-none transition-colors hover:border-slate-300 focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)] disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500";
+  "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-surface px-2.5 text-sm text-foreground outline-none transition-colors hover:border-input focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:cursor-not-allowed disabled:bg-surface-subtle disabled:text-muted-foreground";
 
 const numericFieldEntries = Object.entries(SCHEDULER_NUMERIC_FIELD_META) as Array<[
   SchedulerNumericField,
@@ -184,7 +184,7 @@ export function LocalRoutingSchedulerFields({
         onBooleanChange={onBooleanChange}
       />
       {errors.baseWeights ? (
-        <div className="border-b border-rose-100 bg-rose-50 px-4 py-2 text-xs text-rose-700">
+        <div className="border-b border-danger-border bg-danger-surface px-4 py-2 text-xs text-danger-foreground">
           {errors.baseWeights}
         </div>
       ) : null}
@@ -231,7 +231,7 @@ function CompactSettingRow({
   return (
     <div className="grid min-h-12 grid-cols-1 items-center gap-2 border-b border-border px-3 py-2 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_minmax(180px,260px)] sm:gap-4">
       <div className="grid gap-1">
-        <div className="text-sm font-medium text-slate-800">{label}</div>
+        <div className="text-sm font-medium text-foreground">{label}</div>
         {description ? <div className="text-xs text-muted-foreground">{description}</div> : null}
       </div>
       <div className="min-w-0 w-full justify-self-stretch sm:w-auto sm:justify-self-end">
@@ -255,7 +255,7 @@ function PromotedBooleanSettingRow({
   const meta = SCHEDULER_BOOLEAN_FIELD_META[field];
   return (
     <div className="flex min-h-12 items-center justify-between gap-4 border-b border-border px-4 py-2">
-      <span className="text-sm font-medium text-slate-800">{meta.label}</span>
+      <span className="text-sm font-medium text-foreground">{meta.label}</span>
       <SwitchControl
         ariaLabel={meta.label}
         checked={draft.scheduler[field]}
@@ -296,7 +296,7 @@ function SchedulerFieldGroup({
       aria-label={title}
       className="border-b border-border px-4 py-3 last:border-b-0"
     >
-      <h3 className="mb-3 text-xs font-semibold text-slate-700">{title}</h3>
+      <h3 className="mb-3 text-xs font-semibold text-foreground">{title}</h3>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {numericFields.map(([field]) => (
           <SchedulerNumberInput
@@ -310,7 +310,7 @@ function SchedulerFieldGroup({
         ))}
         {booleanFields.map(([field, meta]) => (
           <label key={field} className="grid min-w-0 content-start gap-1.5">
-            <span className="text-xs font-medium text-slate-600">{meta.label}</span>
+            <span className="text-xs font-medium text-muted-foreground">{meta.label}</span>
             <SwitchControl
               ariaLabel={meta.label}
               checked={draft.scheduler[field]}
@@ -386,7 +386,7 @@ function LabeledNumberInput({
   const errorId = `${id}-error`;
   return (
     <label className="grid min-w-0 content-start gap-1.5" htmlFor={id}>
-      <span className={hideLabel ? "sr-only" : "text-xs font-medium text-slate-600"}>{label}</span>
+      <span className={hideLabel ? "sr-only" : "text-xs font-medium text-muted-foreground"}>{label}</span>
       <span className="relative block">
         <input
           id={id}
@@ -395,7 +395,7 @@ function LabeledNumberInput({
           className={cn(
             inputClassName,
             suffix && "pr-12",
-            error && "border-rose-300 focus:border-rose-400 focus:ring-rose-100",
+            error && "border-danger-border focus:border-danger-border focus:ring-danger-border/40",
           )}
           disabled={disabled}
           max={max}
@@ -412,7 +412,7 @@ function LabeledNumberInput({
           </span>
         ) : null}
       </span>
-      {error ? <span id={errorId} className="text-xs text-rose-700">{error}</span> : null}
+      {error ? <span id={errorId} className="text-xs text-danger-foreground">{error}</span> : null}
     </label>
   );
 }

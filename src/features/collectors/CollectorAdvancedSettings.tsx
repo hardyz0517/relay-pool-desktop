@@ -153,7 +153,7 @@ export function CollectorAdvancedSettings() {
         />
       </SettingRow>
       <details className="group border-t border-border">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-3 text-sm font-medium text-slate-700">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-3 text-sm font-medium text-foreground">
           自定义周期与执行参数
           <ChevronDown className="h-4 w-4 text-muted-foreground transition group-open:rotate-180" />
         </summary>
@@ -173,7 +173,7 @@ export function CollectorAdvancedSettings() {
 function SettingRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="grid min-h-12 items-center gap-2 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(180px,260px)] sm:gap-4">
-      <span className="text-sm font-medium text-slate-800">{label}</span>
+      <span className="text-sm font-medium text-foreground">{label}</span>
       <div className="min-w-0 w-full justify-self-stretch sm:w-auto sm:justify-self-end">
         {children}
       </div>
@@ -204,16 +204,16 @@ function NumberField({
 
   return (
     <label className="grid min-w-0 gap-1.5" htmlFor={id}>
-      <span className="text-xs font-medium text-slate-700">{label}</span>
+      <span className="text-xs font-medium text-foreground">{label}</span>
       <div className="relative min-w-0">
         <input
           id={id}
           aria-describedby={error ? errorId : undefined}
           aria-invalid={Boolean(error)}
           className={cn(
-            "h-8 w-full rounded-[var(--surface-radius)] border border-border bg-white px-2.5 text-sm text-slate-800 outline-none focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]",
+            "h-8 w-full rounded-[var(--surface-radius)] border border-border bg-surface px-2.5 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30",
             suffix && "pr-12",
-            error && "border-rose-300 focus:border-rose-400 focus:ring-rose-100",
+            error && "border-danger-border focus:border-danger-border focus:ring-danger-border/40",
           )}
           min={min}
           max={max}
@@ -228,7 +228,7 @@ function NumberField({
           </span>
         ) : null}
       </div>
-      {error ? <span id={errorId} className="text-xs text-rose-700">{error}</span> : null}
+      {error ? <span id={errorId} className="text-xs text-danger-foreground">{error}</span> : null}
     </label>
   );
 }

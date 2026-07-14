@@ -23,7 +23,7 @@ const endpointLabels: Record<RouteEndpointKind, string> = {
   embeddings: "向量",
 };
 
-const routeMetricValueClassName = "text-[20px] leading-6 text-slate-900";
+const routeMetricValueClassName = "text-[20px] leading-6 text-foreground";
 
 export function LocalRoutingStatusTab({
   workspace,
@@ -68,12 +68,12 @@ export function LocalRoutingStatusTab({
       <SectionCard title="本地路由状态">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-teal-50 text-teal-700">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-selected text-primary">
               <Server className="h-5 w-5" />
             </span>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="truncate text-sm font-semibold text-slate-900">
+                <span className="truncate text-sm font-semibold text-foreground">
                   {workspace.settings.bindAddr}:{workspace.settings.port}
                 </span>
                 <StatusBadge tone={workspace.proxyStatus.running ? "healthy" : "disabled"}>
@@ -127,8 +127,8 @@ export function LocalRoutingStatusTab({
             tone: workspace.summary.previewExcludedCandidateCount > 0 ? "warning" : "good",
             valueClassName:
               workspace.summary.previewExcludedCandidateCount > 0
-                ? "text-[20px] leading-6 text-amber-700"
-                : "text-[20px] leading-6 text-emerald-700",
+                ? "text-[20px] leading-6 text-warning-foreground"
+                : "text-[20px] leading-6 text-success-foreground",
           },
           {
             label: "最近一次路由",
@@ -148,7 +148,7 @@ export function LocalRoutingStatusTab({
                   : latestDecision.tone === "healthy"
                     ? "good"
                     : "neutral",
-            valueClassName: "text-sm leading-6 text-slate-900",
+            valueClassName: "text-sm leading-6 text-foreground",
           },
         ]}
       />
@@ -157,7 +157,7 @@ export function LocalRoutingStatusTab({
         <div className="mb-2 flex items-center justify-between gap-3">
           <h2
             id="local-routing-candidates-title"
-            className="text-sm font-semibold text-slate-900"
+            className="text-sm font-semibold text-foreground"
           >
             候选顺序预览
           </h2>
@@ -171,7 +171,7 @@ export function LocalRoutingStatusTab({
             description="当前配置下没有可预览的路由密钥。"
           />
         ) : (
-          <div className="overflow-hidden rounded-[var(--surface-radius)] border border-slate-200 bg-white divide-y divide-slate-100">
+          <div className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface divide-y divide-border">
             {workspace.candidates.map((candidate, index) => (
               <LocalRoutingStatusCandidateRow
                 key={candidate.stationKeyId}

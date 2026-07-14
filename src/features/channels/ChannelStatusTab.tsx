@@ -35,7 +35,8 @@ import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { stationTypeLabels } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import {
-  availabilityToneClassName,
+  availabilityTone,
+  type AvailabilityTone,
   buildMonitorTimelineOutcomes,
   buildRecentOutcomes,
   type ChannelWindow,
@@ -46,6 +47,13 @@ import {
   selectChannelStatusWindowSummary,
   type RecentOutcome,
 } from "./channelStatusViewModel";
+
+const availabilityToneClassName: Record<AvailabilityTone, string> = {
+  muted: "text-muted-foreground",
+  danger: "text-danger-foreground",
+  warning: "text-warning-foreground",
+  success: "text-success-foreground",
+};
 
 type ChannelHealth = {
   id: string;
@@ -85,10 +93,10 @@ const statusLabel: Record<StationKeyStatus, string> = {
 };
 
 const outcomeClassName: Record<RecentOutcome, string> = {
-  success: "bg-emerald-500/85",
-  warning: "bg-amber-400/90",
-  failed: "bg-rose-500/90",
-  unknown: "bg-slate-300",
+  success: "bg-success-foreground",
+  warning: "bg-warning-foreground",
+  failed: "bg-danger-solid",
+  unknown: "bg-muted-foreground/45",
 };
 
 export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
@@ -196,7 +204,7 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
         </div>
       </div>
 
-      {error && <div className="rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+      {error && <div className="rounded-xl border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{error}</div>}
       {channels.length === 0 ? (
         <EmptyState
           title={loading ? "正在读取渠道状态" : "暂无可展示的密钥"}
@@ -260,7 +268,7 @@ function ChannelHealthCard({
   return (
     <section
       className={cn(
-        "relative rounded-[var(--surface-radius)] border border-border bg-white p-3.5 pt-6 shadow-[var(--surface-shadow)] transition-shadow",
+        "relative rounded-[var(--surface-radius)] border border-border bg-surface p-3.5 pt-6 shadow-[var(--surface-shadow)] transition-shadow",
         isDragging && "shadow-[var(--surface-shadow-hover)]",
       )}
     >
@@ -268,7 +276,7 @@ function ChannelHealthCard({
         type="button"
         aria-label={`拖拽排序 ${channel.keyName}`}
         title="拖拽排序"
-        className="absolute left-1/2 top-2 inline-flex h-5 w-12 -translate-x-1/2 cursor-grab flex-col items-center justify-center gap-[2px] rounded-[6px] text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)]"
+        className="absolute left-1/2 top-2 inline-flex h-5 w-12 -translate-x-1/2 cursor-grab flex-col items-center justify-center gap-[2px] rounded-[6px] text-muted-foreground/45 transition-colors hover:bg-muted hover:text-muted-foreground active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
         {...dragAttributes}
         {...dragListeners}
       >
@@ -282,12 +290,12 @@ function ChannelHealthCard({
             <Server className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <div className="truncate text-[15px] font-semibold leading-5 text-slate-900">{channel.keyName}</div>
+            <div className="truncate text-[15px] font-semibold leading-5 text-foreground">{channel.keyName}</div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
-              <span className="shrink-0 rounded-[6px] bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium leading-4 text-emerald-700">
+              <span className="shrink-0 rounded-[6px] bg-success-surface px-1.5 py-0.5 text-[11px] font-medium leading-4 text-success-foreground">
                 {typeLabel}
               </span>
-              <span className="min-w-0 truncate text-xs text-slate-500">
+              <span className="min-w-0 truncate text-xs text-muted-foreground">
                 {channel.stationName} · {channel.modelSummary}
               </span>
             </div>
@@ -305,13 +313,13 @@ function ChannelHealthCard({
         <ChannelMetric icon={Radio} label="端点 PING" value={formatLatency(channel.endpointPingMs)} />
       </div>
 
-      <div className="mt-3 border-t border-slate-100 pt-3">
+      <div className="mt-3 border-t border-border pt-3">
         <div className="flex items-end justify-between gap-3">
-          <div className="min-w-0 text-xs font-medium text-slate-500">{channel.availabilityLabel}</div>
+          <div className="min-w-0 text-xs font-medium text-muted-foreground">{channel.availabilityLabel}</div>
           <div
             className={cn(
               "shrink-0 text-3xl font-semibold leading-8 tracking-normal",
-              availabilityToneClassName(channel),
+              availabilityToneClassName[availabilityTone(channel)],
             )}
           >
             {availability}
@@ -319,8 +327,8 @@ function ChannelHealthCard({
         </div>
       </div>
 
-      <div className="mt-2.5 border-t border-slate-100 pt-2.5">
-        <div className="mb-1.5 flex items-center justify-between text-[11px] text-slate-400">
+      <div className="mt-2.5 border-t border-border pt-2.5">
+        <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted-foreground/70">
           <span>较早</span>
           <span>最后检查 {formatCompactTime(channel.lastCheckedAt)}</span>
         </div>
@@ -333,7 +341,7 @@ function ChannelHealthCard({
             />
           ))}
         </div>
-        <div className="mt-1 flex justify-between text-[10px] leading-3 text-slate-400">
+        <div className="mt-1 flex justify-between text-[10px] leading-3 text-muted-foreground/70">
           <span>过去</span>
           <span>现在</span>
         </div>
@@ -353,12 +361,12 @@ function ChannelMetric({
   value: string;
 }) {
   return (
-    <div className="min-w-0 rounded-[8px] border border-slate-100 bg-slate-50/70 px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400">
+    <div className="min-w-0 rounded-[8px] border border-border bg-surface-subtle px-3 py-2.5">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground/70">
         <Icon className="h-3.5 w-3.5" />
         <span className="truncate">{label}</span>
       </div>
-      <div className="mt-2 truncate text-[18px] font-semibold leading-6 text-slate-800">{value}</div>
+      <div className="mt-2 truncate text-[18px] font-semibold leading-6 text-foreground">{value}</div>
     </div>
   );
 }
@@ -514,15 +522,15 @@ function outcomeLabel(outcome: RecentOutcome) {
 
 function iconTone(status: StationKeyStatus) {
   if (status === "healthy") {
-    return "bg-emerald-100 text-emerald-700";
+    return "bg-success-surface text-success-foreground";
   }
   if (status === "warning") {
-    return "bg-amber-100 text-amber-700";
+    return "bg-warning-surface text-warning-foreground";
   }
   if (status === "error") {
-    return "bg-rose-100 text-rose-700";
+    return "bg-danger-surface text-danger-foreground";
   }
-  return "bg-slate-100 text-slate-500";
+  return "bg-muted text-muted-foreground";
 }
 
 function formatCompactTime(value: string | null) {

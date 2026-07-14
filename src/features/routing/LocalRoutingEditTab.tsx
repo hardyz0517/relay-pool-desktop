@@ -136,7 +136,7 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
         contentClassName="grid gap-2"
       >
         {syncError && (
-          <div className="rounded-[var(--surface-radius)] border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          <div className="rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-xs text-danger-foreground">
             {syncError}
           </div>
         )}
@@ -147,7 +147,7 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
         ) : (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={candidateIds} strategy={verticalListSortingStrategy}>
-              <div className="divide-y divide-slate-100">
+              <div className="divide-y divide-border">
                 {candidates.map((candidate, index) => (
                   <SortableLocalRoutingCandidateRow
                     key={candidate.stationKeyId}
