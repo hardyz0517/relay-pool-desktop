@@ -924,17 +924,17 @@ function buildConnectivityConsoleLines({
 
   if (testing) {
     const progressLines = progressLabel
-      ? [{ text: progressLabel, className: "text-sky-300" }]
+      ? [{ text: progressLabel, className: "text-info-foreground" }]
       : [];
     const fallbackLines = streamFallbackReason
       ? [
-          { text: "流式失败，已清空部分输出并回退非流式请求。", className: "text-amber-300" },
-          { text: `原因：${streamFallbackReason}`, className: "text-amber-200" },
+          { text: "流式失败，已清空部分输出并回退非流式请求。", className: "text-warning-foreground" },
+          { text: `原因：${streamFallbackReason}`, className: "text-warning-foreground/80" },
         ]
       : [];
     const responseLines = displayedResponseText
-      ? [{ text: displayedResponseText, className: "font-semibold text-emerald-300" }]
-      : [{ text: "等待流式片段...", className: "text-slate-400" }];
+      ? [{ text: displayedResponseText, className: "font-semibold text-success-foreground" }]
+      : [{ text: "等待流式片段...", className: "text-muted-foreground" }];
     return [...lines, ...progressLines, ...fallbackLines, ...responseLines];
   }
   if (result) {
@@ -942,10 +942,10 @@ function buildConnectivityConsoleLines({
       ...lines,
       {
         text: result.responseMode === "stream" ? "响应模式：流式响应" : "响应模式：非流式回退",
-        className: result.responseMode === "stream" ? "text-emerald-300" : "text-amber-300",
+        className: result.responseMode === "stream" ? "text-success-foreground" : "text-warning-foreground",
       },
       ...(result.streamFallbackReason
-        ? [{ text: `回退原因：${result.streamFallbackReason}`, className: "text-amber-200" }]
+        ? [{ text: `回退原因：${result.streamFallbackReason}`, className: "text-warning-foreground/80" }]
         : []),
       {
         text: displayedResponseText,
