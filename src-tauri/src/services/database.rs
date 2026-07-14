@@ -10,7 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{params, params_from_iter, types::Type, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, types::Type, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
@@ -96,7 +96,7 @@ use crate::services::secrets::{
     },
 };
 use crate::services::station_endpoints::{
-    legacy_api_base_url, legacy_website_url, normalize_station_endpoints,
+    legacy_api_base_url, legacy_website_url, normalize_station_endpoints, same_origin,
 };
 
 static NEXT_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -395,8 +395,33 @@ impl AppDatabase {
             true,
         )?;
 
-        let connection = self.connection()?;
-        update_station_in_connection(&connection, input, data_key)
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始更新站点事务失败: {error}"))?;
+        let station = update_station_in_connection(&transaction, input, data_key)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("提交更新站点事务失败: {error}"))?;
+        Ok(station)
+    }
+
+    pub(crate) fn with_station_endpoint_revision<T>(
+        &self,
+        station_id: &str,
+        expected_revision: i64,
+        operation: impl FnOnce(&Transaction<'_>) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始站点端点事务失败: {error}"))?;
+        ensure_station_endpoint_revision(&transaction, station_id, expected_revision)?;
+        let output = operation(&transaction)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("提交站点端点事务失败: {error}"))?;
+        Ok(output)
     }
 
     pub fn delete_station(&self, id: String) -> Result<(), String> {
@@ -6606,13 +6631,19 @@ fn update_station_in_connection(
     let collector_proxy_mode = normalize_proxy_mode(&input.collector_proxy_mode, true);
     let collector_proxy_url = normalize_proxy_url(input.collector_proxy_url);
     let endpoints = normalize_station_endpoints(&input.website_url, &input.api_base_url)?;
-    let endpoint_revision = if endpoints.website_url != existing_website_url
-        || endpoints.api_base_url != existing_api_base_url
-    {
+    let website_url_changed = endpoints.website_url != existing_website_url;
+    let api_base_url_changed = endpoints.api_base_url != existing_api_base_url;
+    let endpoints_changed = website_url_changed || api_base_url_changed;
+    let website_origin_changed =
+        endpoints_changed && !same_origin(&existing_website_url, &endpoints.website_url)?;
+    let api_origin_changed =
+        endpoints_changed && !same_origin(&existing_api_base_url, &endpoints.api_base_url)?;
+    let endpoint_revision = if endpoints_changed {
         existing_endpoint_revision.max(1) + 1
     } else {
         existing_endpoint_revision.max(1)
     };
+    let next_enabled = input.enabled && !api_origin_changed;
     let now = now_string();
 
     connection
@@ -6632,9 +6663,12 @@ fn update_station_in_connection(
                     low_balance_threshold_cny = ?12,
                     collection_interval_minutes = ?13,
                     status = CASE WHEN ?10 = 0 THEN 'disabled'
+                                  WHEN ?17 = 1 THEN 'unchecked'
                                   WHEN status = 'disabled' THEN 'unchecked'
                                   ELSE status END,
                     note = ?14,
+                    last_checked_at = CASE WHEN ?17 = 1 THEN NULL ELSE last_checked_at END,
+                    last_pricing_fetched_at = CASE WHEN ?17 = 1 THEN NULL ELSE last_pricing_fetched_at END,
                     updated_at = ?15
               WHERE id = ?16",
             params![
@@ -6647,18 +6681,102 @@ fn update_station_in_connection(
                 next_secret_id,
                 collector_proxy_mode,
                 collector_proxy_url,
-                bool_to_i64(input.enabled),
+                bool_to_i64(next_enabled),
                 input.credit_per_cny,
                 input.low_balance_threshold_cny,
                 input.collection_interval_minutes,
                 normalize_optional_string(input.note),
                 now,
                 input.id,
+                bool_to_i64(endpoints_changed),
             ],
         )
         .map_err(|error| format!("更新站点失败: {error}"))?;
 
+    if website_origin_changed {
+        clear_station_origin_bound_login_material(connection, &input.id)?;
+    }
+    if api_base_url_changed {
+        clear_station_endpoint_health_state(connection, &input.id)?;
+    }
+
     station_by_id(connection, &input.id)
+}
+
+fn clear_station_endpoint_health_state(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "DELETE FROM station_endpoint_health WHERE station_id = ?1",
+            params![station_id],
+        )
+        .map_err(|error| format!("清理站点端点健康状态失败: {error}"))?;
+    connection
+        .execute(
+            "DELETE FROM station_key_health
+              WHERE station_key_id IN (
+                    SELECT id FROM station_keys WHERE station_id = ?1
+              )",
+            params![station_id],
+        )
+        .map_err(|error| format!("清理 Station Key 健康状态失败: {error}"))?;
+    Ok(())
+}
+
+fn clear_station_origin_bound_login_material(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<(), String> {
+    let secret_ids = connection
+        .query_row(
+            "SELECT login_password_secret_id, access_token_secret_id,
+                    refresh_token_secret_id, cookie_secret_id
+               FROM station_credentials
+              WHERE station_id = ?1",
+            params![station_id],
+            |row| {
+                Ok([
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ])
+            },
+        )
+        .optional()
+        .map_err(|error| format!("读取站点登录凭据失败: {error}"))?
+        .unwrap_or([None, None, None, None]);
+
+    connection
+        .execute(
+            "UPDATE station_credentials
+                SET login_password = NULL,
+                    login_password_secret_id = NULL,
+                    remember_password = 0,
+                    login_status = 'unknown',
+                    login_error = NULL,
+                    last_login_at = NULL,
+                    session_status = 'none',
+                    session_expires_at = NULL,
+                    access_token_secret_id = NULL,
+                    refresh_token_secret_id = NULL,
+                    cookie_secret_id = NULL,
+                    newapi_user_id = NULL,
+                    token_expires_at = NULL,
+                    token_refreshed_at = NULL,
+                    session_source = 'none',
+                    updated_at = ?1
+              WHERE station_id = ?2",
+            params![now_string(), station_id],
+        )
+        .map_err(|error| format!("清理站点登录凭据失败: {error}"))?;
+
+    for secret_id in secret_ids.into_iter().flatten() {
+        delete_unreferenced_secret_by_id(connection, &secret_id)?;
+    }
+    Ok(())
 }
 
 fn validate_station_exists(connection: &Connection, station_id: &str) -> Result<(), String> {
@@ -6688,6 +6806,18 @@ fn station_endpoint_revision(connection: &Connection, station_id: &str) -> Resul
         .optional()
         .map_err(|error| format!("read station endpoint revision failed: {error}"))?
         .ok_or_else(|| "station does not exist".to_string())
+}
+
+fn ensure_station_endpoint_revision(
+    connection: &Connection,
+    station_id: &str,
+    expected_revision: i64,
+) -> Result<(), String> {
+    let current = station_endpoint_revision(connection, station_id)?;
+    if current != expected_revision {
+        return Err("station_endpoint_revision_changed".to_string());
+    }
+    Ok(())
 }
 
 fn station_key_endpoint_revision(
@@ -13989,6 +14119,239 @@ mod tests {
                 note: station.note.clone(),
             })
             .expect("change station endpoint")
+    }
+
+    fn update_test_station_urls(
+        database: &AppDatabase,
+        station: &Station,
+        website_url: String,
+        api_base_url: String,
+        enabled: bool,
+    ) -> Station {
+        database
+            .update_station(UpdateStationInput {
+                id: station.id.clone(),
+                name: station.name.clone(),
+                station_type: station.station_type.clone(),
+                website_url,
+                api_base_url,
+                api_key: None,
+                collector_proxy_mode: station.collector_proxy_mode.clone(),
+                collector_proxy_url: station.collector_proxy_url.clone(),
+                enabled,
+                credit_per_cny: station.credit_per_cny,
+                low_balance_threshold_cny: station.low_balance_threshold_cny,
+                collection_interval_minutes: station.collection_interval_minutes,
+                note: station.note.clone(),
+            })
+            .expect("update station URLs")
+    }
+
+    fn update_test_station_name(database: &AppDatabase, station: &Station, name: &str) -> Station {
+        database
+            .update_station(UpdateStationInput {
+                id: station.id.clone(),
+                name: name.to_string(),
+                station_type: station.station_type.clone(),
+                website_url: station.website_url.clone(),
+                api_base_url: station.api_base_url.clone(),
+                api_key: None,
+                collector_proxy_mode: station.collector_proxy_mode.clone(),
+                collector_proxy_url: station.collector_proxy_url.clone(),
+                enabled: station.enabled,
+                credit_per_cny: station.credit_per_cny,
+                low_balance_threshold_cny: station.low_balance_threshold_cny,
+                collection_interval_minutes: station.collection_interval_minutes,
+                note: station.note.clone(),
+            })
+            .expect("rename station")
+    }
+
+    fn seed_station_and_key_health(database: &AppDatabase, station_id: &str) {
+        let key = database
+            .list_station_keys(station_id.to_string())
+            .expect("station keys")
+            .remove(0);
+        database
+            .upsert_station_endpoint_health(station_id, "success", Some(38), "1000", None)
+            .expect("endpoint health");
+        database
+            .record_station_key_success(&key.id, 45, "1000")
+            .expect("key health");
+        let connection = database.connection().expect("connection");
+        connection
+            .execute(
+                "UPDATE stations
+                    SET status = 'healthy',
+                        last_checked_at = '1000',
+                        last_pricing_fetched_at = '1000'
+                  WHERE id = ?1",
+                params![station_id],
+            )
+            .expect("seed station collection state");
+    }
+
+    fn assert_station_key_health_cleared(database: &AppDatabase, station_id: &str) {
+        let key = database
+            .list_station_keys(station_id.to_string())
+            .expect("station keys")
+            .remove(0);
+        let health = database.get_station_key_health(key.id).expect("key health");
+        assert_eq!(health.last_success_at, None);
+        assert_eq!(health.last_failure_at, None);
+        assert_eq!(health.success_count, 0);
+        assert_eq!(health.failure_count, 0);
+        assert_eq!(health.consecutive_failures, 0);
+        assert_eq!(health.avg_latency_ms, None);
+        assert_eq!(health.last_error_summary, None);
+        assert_eq!(health.cooldown_until, None);
+    }
+
+    fn assert_station_health_rows_deleted(database: &AppDatabase, station_id: &str) {
+        let key = database
+            .list_station_keys(station_id.to_string())
+            .expect("station keys")
+            .remove(0);
+        let connection = database.connection().expect("connection");
+        let endpoint_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM station_endpoint_health WHERE station_id = ?1",
+                params![station_id],
+                |row| row.get(0),
+            )
+            .expect("count endpoint health rows");
+        let key_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM station_key_health WHERE station_key_id = ?1",
+                params![key.id],
+                |row| row.get(0),
+            )
+            .expect("count key health rows");
+        assert_eq!(endpoint_rows, 0);
+        assert_eq!(key_rows, 0);
+    }
+
+    fn station_with_saved_credentials(database: &AppDatabase) -> Station {
+        let station = test_station(database, "saved-login-material");
+        let data_key = [17_u8; 32];
+        database
+            .update_station_credentials_with_data_key(
+                UpdateStationCredentialsInput {
+                    station_id: station.id.clone(),
+                    login_username: Some("user@example.com".to_string()),
+                    login_password: Some("saved-password".to_string()),
+                    remember_password: true,
+                },
+                &data_key,
+            )
+            .expect("saved password");
+        database
+            .persist_station_session_with_data_key(
+                PersistStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: Some("saved-access-token".to_string()),
+                    refresh_token: None,
+                    cookie: Some("session=saved-cookie".to_string()),
+                    newapi_user_id: Some("42".to_string()),
+                    token_expires_at: None,
+                    session_expires_at: None,
+                    session_source: "password_login".to_string(),
+                },
+                &data_key,
+            )
+            .expect("saved session");
+        station
+    }
+
+    #[test]
+    fn api_origin_change_disables_station_increments_revision_and_clears_health() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "origin-change");
+        seed_station_and_key_health(&database, &station.id);
+
+        let updated = update_test_station_urls(
+            &database,
+            &station,
+            station.website_url.clone(),
+            "https://new-api.example/v1".to_string(),
+            true,
+        );
+
+        assert!(!updated.enabled);
+        assert_eq!(updated.endpoint_revision, station.endpoint_revision + 1);
+        assert_eq!(updated.status, "disabled");
+        assert_eq!(updated.last_checked_at, None);
+        assert_eq!(updated.last_pricing_fetched_at, None);
+        assert_eq!(
+            database
+                .get_station_endpoint_health(updated.id.clone())
+                .unwrap()
+                .status,
+            "unchecked"
+        );
+        assert_station_key_health_cleared(&database, &updated.id);
+    }
+
+    #[test]
+    fn api_namespace_change_clears_health_without_forcing_disable() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "api-path-change");
+        seed_station_and_key_health(&database, &station.id);
+
+        let updated = update_test_station_urls(
+            &database,
+            &station,
+            station.website_url.clone(),
+            "https://example.test/api/v3".to_string(),
+            true,
+        );
+
+        assert!(updated.enabled);
+        assert_eq!(updated.endpoint_revision, station.endpoint_revision + 1);
+        assert_eq!(updated.status, "unchecked");
+        assert_eq!(updated.last_checked_at, None);
+        assert_eq!(updated.last_pricing_fetched_at, None);
+        assert_station_health_rows_deleted(&database, &updated.id);
+    }
+
+    #[test]
+    fn website_origin_change_clears_secret_login_material_but_keeps_username() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = station_with_saved_credentials(&database);
+
+        let updated = update_test_station_urls(
+            &database,
+            &station,
+            "https://new-console.example".to_string(),
+            station.api_base_url.clone(),
+            true,
+        );
+
+        let credentials = database
+            .get_station_credentials(updated.id)
+            .expect("credentials");
+        assert_eq!(
+            credentials.login_username.as_deref(),
+            Some("user@example.com")
+        );
+        assert!(!credentials.password_present);
+        assert!(!credentials.access_token_present);
+        assert!(!credentials.refresh_token_present);
+        assert!(!credentials.cookie_present);
+        assert_eq!(credentials.newapi_user_id, None);
+        assert_eq!(credentials.session_status, "none");
+        assert_eq!(updated.endpoint_revision, station.endpoint_revision + 1);
+    }
+
+    #[test]
+    fn unrelated_station_edit_does_not_increment_endpoint_revision() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "rename-only");
+
+        let updated = update_test_station_name(&database, &station, "Renamed");
+
+        assert_eq!(updated.name, "Renamed");
+        assert_eq!(updated.endpoint_revision, station.endpoint_revision);
     }
 
     fn set_station_type_for_test(database: &AppDatabase, station_id: &str, station_type: &str) {
