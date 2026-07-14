@@ -42,15 +42,6 @@ pub fn extract_chat_request_metadata(body: &Value) -> (Option<String>, bool) {
     (model, stream)
 }
 
-pub fn build_upstream_url(base_url: &str, path: &str) -> String {
-    let base = base_url.trim_end_matches('/');
-    let path = path.trim_start_matches('/');
-    if base.ends_with("/v1") && path.starts_with("v1/") {
-        return format!("{}/{}", base, path.trim_start_matches("v1/"));
-    }
-    format!("{}/{}", base, path)
-}
-
 pub fn should_fallback(status: u16) -> bool {
     if status < 400 {
         return false;
@@ -166,20 +157,6 @@ mod tests {
 
         assert!(redacted.ends_with("..."));
         assert!(redacted.len() <= 163);
-    }
-
-    #[test]
-    fn build_upstream_url_normalizes_slashes() {
-        let url = build_upstream_url("https://station.example/api/", "/v1/chat/completions");
-
-        assert_eq!(url, "https://station.example/api/v1/chat/completions");
-    }
-
-    #[test]
-    fn build_upstream_url_avoids_duplicate_v1_segment() {
-        let url = build_upstream_url("https://station.example/v1", "/v1/models");
-
-        assert_eq!(url, "https://station.example/v1/models");
     }
 
     #[test]

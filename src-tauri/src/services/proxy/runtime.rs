@@ -28,7 +28,7 @@ use crate::{
                 extract_responses_metadata, normalize_responses_request, render_responses_response,
                 should_try_chat_fallback, upstream_responses_path,
             },
-            build_upstream_url, enabled_candidates, extract_chat_request_metadata,
+            enabled_candidates, extract_chat_request_metadata,
             observability::{ObservedUsage, RequestObservation, SseUsageObserver},
             openai_error, redact_error_message,
             router::{select_route_candidates_with_scheduler, RouteRequest},
@@ -46,6 +46,7 @@ use crate::{
             },
             should_fallback, RouteCandidate,
         },
+        station_endpoints::build_api_url,
     },
 };
 
@@ -1682,7 +1683,8 @@ fn send_probe_request(
     upstream_path: &str,
     body: &[u8],
 ) -> Result<(), SwitchProbeError> {
-    let url = build_upstream_url(&candidate.upstream_base_url, upstream_path);
+    let url = build_api_url(&candidate.upstream_base_url, upstream_path)
+        .map_err(|error| SwitchProbeError::Transport(redact_error_message(&error)))?;
     let proxy = ProxyConfig {
         mode: candidate.collector_proxy_mode.clone(),
         url: candidate.collector_proxy_url.clone(),
@@ -2597,7 +2599,8 @@ fn forward_to_candidate_with_body(
     body: &[u8],
     stream: bool,
 ) -> Result<ProxyResponse, String> {
-    let url = build_upstream_url(&candidate.upstream_base_url, upstream_path);
+    let url = build_api_url(&candidate.upstream_base_url, upstream_path)
+        .map_err(|error| redact_error_message(&error))?;
     let proxy = ProxyConfig {
         mode: candidate.collector_proxy_mode.clone(),
         url: candidate.collector_proxy_url.clone(),

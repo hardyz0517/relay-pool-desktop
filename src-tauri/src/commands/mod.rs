@@ -60,11 +60,10 @@ use crate::{
         database::{now_millis_for_services, AppDatabase},
         endpoint_ping::ping_station_endpoint as probe_station_endpoint,
         pricing::{pricing_context_from_pricing_parts, RequestPricingParts},
-        proxy::{
-            build_upstream_url, redact_error_message, runtime::ProxyRuntimeState, should_fallback,
-        },
+        proxy::{redact_error_message, runtime::ProxyRuntimeState, should_fallback},
         remote_keys,
         secrets::SecretManager,
+        station_endpoints::build_api_url,
         updater::{self, PublishedUpdateInspection, UpdaterNetworkConfig},
     },
 };
@@ -1806,12 +1805,12 @@ fn test_station_key_connectivity_blocking(
 fn build_station_key_connectivity_probe_url(
     base_url: &str,
     kind: StationKeyConnectivityProbeKind,
-) -> String {
+) -> Result<String, String> {
     let path = match kind {
         StationKeyConnectivityProbeKind::Responses => "/v1/responses",
         StationKeyConnectivityProbeKind::ChatCompletions => "/v1/chat/completions",
     };
-    build_upstream_url(base_url, path)
+    build_api_url(base_url, path)
 }
 
 fn build_station_key_connectivity_probe_body(
@@ -2037,7 +2036,16 @@ fn send_station_key_connectivity_probe(
     model: &str,
     kind: StationKeyConnectivityProbeKind,
 ) -> StationKeyConnectivityProbeResult {
-    let url = build_station_key_connectivity_probe_url(base_url, kind);
+    let url = match build_station_key_connectivity_probe_url(base_url, kind) {
+        Ok(url) => url,
+        Err(error) => {
+            return StationKeyConnectivityProbeResult::failure(
+                0,
+                0,
+                redact_error_message(&format!("API Base URL 无效: {error}")),
+            );
+        }
+    };
     let body = build_station_key_connectivity_probe_body(model, kind);
     let started = Instant::now();
     let response_result = ureq::post(&url)
@@ -2078,7 +2086,7 @@ fn send_station_key_connectivity_probe(
 }
 
 fn discover_station_key_connectivity_models(base_url: &str, api_key: &str) -> Option<Vec<String>> {
-    let url = build_upstream_url(base_url, "/v1/models");
+    let url = build_api_url(base_url, "/v1/models").ok()?;
     let response = ureq::get(&url)
         .timeout(STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT)
         .set("Authorization", &format!("Bearer {api_key}"))
@@ -2432,9 +2440,21 @@ mod tests {
         let url = build_station_key_connectivity_probe_url(
             "https://relay.example/v1",
             StationKeyConnectivityProbeKind::Responses,
-        );
+        )
+        .expect("build responses probe URL");
 
         assert_eq!(url, "https://relay.example/v1/responses");
+    }
+
+    #[test]
+    fn station_key_connectivity_probe_uses_complete_api_namespace() {
+        let url = build_station_key_connectivity_probe_url(
+            "https://relay.example/api/v3",
+            StationKeyConnectivityProbeKind::Responses,
+        )
+        .expect("build API namespace responses probe URL");
+
+        assert_eq!(url, "https://relay.example/api/v3/responses");
     }
 
     #[test]
