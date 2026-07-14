@@ -1527,6 +1527,19 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                   />
                 </Field>
               </div>
+              <div className="mt-2 flex justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    setForm((current) => ({
+                      ...current,
+                      apiBaseUrl: current.websiteUrl,
+                    }))
+                  }
+                >
+                  复制前端网址
+                </Button>
+              </div>
               <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
                 <Field label="登录用户名 / 邮箱">
                   <input

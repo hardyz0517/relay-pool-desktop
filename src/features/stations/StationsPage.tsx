@@ -1241,6 +1241,11 @@ function StationDialogs({
     );
   }
 
+  const endpointOriginWarnings =
+    dialogMode === "edit" && activeDialogStation
+      ? stationEndpointOriginWarnings(activeDialogStation, form)
+      : [];
+
   return (
     <>
       <Dialog
@@ -1278,6 +1283,18 @@ function StationDialogs({
               <input className={inputClassName} value={form.apiBaseUrl} onChange={(event) => onChange({ ...form, apiBaseUrl: event.target.value })} placeholder="https://api.example.com/v1" required />
             </Field>
           </div>
+          <div className="flex justify-end">
+            <Button variant="outline" onClick={() => onChange({ ...form, apiBaseUrl: form.websiteUrl })}>
+              复制前端网址
+            </Button>
+          </div>
+          {endpointOriginWarnings.length > 0 && (
+            <div className="rounded-[var(--surface-radius)] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {endpointOriginWarnings.map((warning) => (
+                <div key={warning}>{warning}</div>
+              ))}
+            </div>
+          )}
           <Field label={dialogMode === "edit" ? "密钥（留空保留旧值）" : "密钥"}>
             <input className={inputClassName} value={form.apiKey} onChange={(event) => onChange({ ...form, apiKey: event.target.value })} placeholder={dialogMode === "edit" ? "留空保留旧密钥" : "sk-..."} required={dialogMode !== "edit"} />
           </Field>
@@ -1704,6 +1721,26 @@ function formatStationDisplayUrl(baseUrl: string) {
     return `${url.protocol}//${url.host}`;
   } catch {
     return baseUrl.replace(/\/+$/, "");
+  }
+}
+
+function stationEndpointOriginWarnings(station: Station, form: StationFormState) {
+  const warnings: string[] = [];
+  if (endpointOriginKey(station.websiteUrl) !== endpointOriginKey(form.websiteUrl)) {
+    warnings.push("前端网址 origin 变化后，保存的登录状态会被清除。");
+  }
+  if (endpointOriginKey(station.apiBaseUrl) !== endpointOriginKey(form.apiBaseUrl)) {
+    warnings.push("API origin 变化后，站点会被禁用，现有 Key 将不会路由，直到重新验证并启用。");
+  }
+  return warnings;
+}
+
+function endpointOriginKey(value: string) {
+  try {
+    const url = new URL(value.trim());
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return value.trim().replace(/\/+$/, "");
   }
 }
 
