@@ -2,7 +2,7 @@ use std::{
     collections::{hash_map::DefaultHasher, HashSet},
     fs,
     hash::{Hash, Hasher},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex, MutexGuard,
@@ -101,11 +101,39 @@ use crate::services::station_endpoints::{
 
 static NEXT_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
+const DATABASE_FILE: &str = "relay-pool-desktop.sqlite3";
+const DEFAULT_SETTINGS: [(&str, &str); 18] = [
+    ("local_proxy_port", "8787"),
+    ("local_key", "sk-local-pool-change-me"),
+    ("default_routing_strategy", "cost_stable_first"),
+    ("collector_proxy_mode", "direct"),
+    ("collector_proxy_url", ""),
+    ("max_rate_multiplier", ""),
+    ("default_routing_group_filter", "all_groups"),
+    ("scheduler_advanced_settings_json", ""),
+    ("low_balance_threshold_cny", "15"),
+    ("collector_interval_minutes", "30"),
+    ("balance_interval_minutes", "5"),
+    ("group_rate_interval_minutes", "20"),
+    ("model_list_interval_minutes", "60"),
+    ("pricing_refresh_interval_minutes", "60"),
+    ("collector_timeout_seconds", "15"),
+    ("collector_max_concurrency", "3"),
+    ("allow_depleted_fallback", "false"),
+    ("developer_mode_enabled", "false"),
+];
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DataDirConfig {
     pending_data_dir: Option<String>,
+    source_data_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DataDirConfigPaths {
+    pending_data_dir: Option<PathBuf>,
+    source_data_dir: Option<PathBuf>,
 }
 #[derive(Clone)]
 pub struct AppDatabase {
@@ -117,32 +145,204 @@ pub struct AppDatabase {
     pending_data_dir: Arc<Mutex<Option<PathBuf>>>,
 }
 
-fn read_data_dir_config(config_path: &PathBuf) -> Result<Option<PathBuf>, String> {
+fn read_data_dir_config(config_path: &PathBuf) -> Result<DataDirConfigPaths, String> {
     if !config_path.exists() {
-        return Ok(None);
+        return Ok(DataDirConfigPaths::default());
     }
     let raw = fs::read_to_string(config_path)
         .map_err(|error| format!("读取数据目录配置 {} 失败: {error}", config_path.display()))?;
     let config = serde_json::from_str::<DataDirConfig>(&raw)
         .map_err(|error| format!("解析数据目录配置 {} 失败: {error}", config_path.display()))?;
-    Ok(config
-        .pending_data_dir
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty()))
+    Ok(DataDirConfigPaths {
+        pending_data_dir: config
+            .pending_data_dir
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty()),
+        source_data_dir: config
+            .source_data_dir
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty()),
+    })
 }
 
-fn write_data_dir_config(config_path: &PathBuf, data_dir: &PathBuf) -> Result<(), String> {
+fn write_data_dir_config(
+    config_path: &PathBuf,
+    data_dir: &PathBuf,
+    source_data_dir: Option<&Path>,
+) -> Result<(), String> {
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("无法创建数据目录配置目录 {}: {error}", parent.display()))?;
     }
     let config = DataDirConfig {
         pending_data_dir: Some(data_dir.to_string_lossy().to_string()),
+        source_data_dir: source_data_dir.map(|path| path.to_string_lossy().to_string()),
     };
     let raw = serde_json::to_string_pretty(&config)
         .map_err(|error| format!("序列化数据目录配置失败: {error}"))?;
     fs::write(config_path, raw)
         .map_err(|error| format!("写入数据目录配置 {} 失败: {error}", config_path.display()))
+}
+
+fn mark_data_dir_initialized(config_path: &PathBuf, data_dir: &Path) -> Result<(), String> {
+    write_data_dir_config(config_path, &data_dir.to_path_buf(), Some(data_dir))
+}
+
+fn resolve_configured_data_dir(
+    default_data_dir: &Path,
+) -> Result<(PathBuf, Option<PathBuf>, Option<PathBuf>), String> {
+    let data_dir_config_path = default_data_dir.join(DATA_DIR_CONFIG_FILE);
+    let config = read_data_dir_config(&data_dir_config_path)?;
+    let configured_data_dir = config
+        .pending_data_dir
+        .clone()
+        .unwrap_or_else(|| default_data_dir.to_path_buf());
+    Ok((
+        configured_data_dir,
+        config.pending_data_dir,
+        config.source_data_dir,
+    ))
+}
+
+fn prepare_configured_database(
+    default_data_dir: &Path,
+    configured_data_dir: &Path,
+    source_data_dir: Option<&Path>,
+) -> Result<PathBuf, String> {
+    fs::create_dir_all(configured_data_dir).map_err(|error| {
+        format!(
+            "无法创建应用数据目录 {}: {error}",
+            configured_data_dir.display()
+        )
+    })?;
+
+    let db_path = configured_data_dir.join(DATABASE_FILE);
+    let source_data_dir = source_data_dir.unwrap_or(default_data_dir);
+    if configured_data_dir != source_data_dir
+        && should_copy_source_database(source_data_dir, &db_path)?
+    {
+        let source_db_path = source_data_dir.join(DATABASE_FILE);
+        fs::copy(&source_db_path, &db_path).map_err(|error| {
+            format!(
+                "无法将现有数据库 {} 复制到新数据目录 {}: {error}",
+                source_db_path.display(),
+                db_path.display()
+            )
+        })?;
+    }
+
+    Ok(db_path)
+}
+
+fn should_copy_source_database(
+    source_data_dir: &Path,
+    target_db_path: &Path,
+) -> Result<bool, String> {
+    let source_db_path = source_data_dir.join(DATABASE_FILE);
+    let Some(source_state) = inspect_sqlite_user_state(&source_db_path)? else {
+        return Ok(false);
+    };
+    if !source_state.has_user_state() {
+        return Ok(false);
+    }
+
+    let target_has_user_state = inspect_sqlite_user_state(target_db_path)?
+        .map(|state| state.has_user_state())
+        .unwrap_or(false);
+    Ok(!target_has_user_state)
+}
+
+struct SqliteUserState {
+    station_count: i64,
+    has_custom_settings: bool,
+}
+
+impl SqliteUserState {
+    fn has_user_state(&self) -> bool {
+        self.station_count > 0 || self.has_custom_settings
+    }
+}
+
+fn inspect_sqlite_user_state(db_path: &Path) -> Result<Option<SqliteUserState>, String> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("无法检查 SQLite 数据库 {}: {error}", db_path.display()))?;
+    let has_stations_table: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'stations'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("无法检查 SQLite 表结构 {}: {error}", db_path.display()))?;
+    if has_stations_table == 0 {
+        return Ok(Some(SqliteUserState {
+            station_count: 0,
+            has_custom_settings: false,
+        }));
+    }
+
+    let station_count = connection
+        .query_row("SELECT COUNT(*) FROM stations", [], |row| row.get(0))
+        .map_err(|error| format!("无法检查站点数量 {}: {error}", db_path.display()))?;
+    let has_settings_table: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'settings'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| {
+            format!(
+                "Cannot inspect SQLite schema {}: {error}",
+                db_path.display()
+            )
+        })?;
+    let has_custom_settings = if has_settings_table == 0 {
+        false
+    } else {
+        sqlite_has_custom_settings(&connection, db_path)?
+    };
+
+    Ok(Some(SqliteUserState {
+        station_count,
+        has_custom_settings,
+    }))
+}
+
+fn sqlite_has_custom_settings(connection: &Connection, db_path: &Path) -> Result<bool, String> {
+    let mut statement = connection
+        .prepare("SELECT key, value FROM settings")
+        .map_err(|error| format!("Cannot inspect settings {}: {error}", db_path.display()))?;
+    let mut rows = statement
+        .query([])
+        .map_err(|error| format!("Cannot inspect settings {}: {error}", db_path.display()))?;
+    while let Some(row) = rows
+        .next()
+        .map_err(|error| format!("Cannot inspect settings {}: {error}", db_path.display()))?
+    {
+        let key: String = row.get(0).map_err(|error| {
+            format!("Cannot inspect setting key {}: {error}", db_path.display())
+        })?;
+        let value: String = row.get(1).map_err(|error| {
+            format!(
+                "Cannot inspect setting value {}: {error}",
+                db_path.display()
+            )
+        })?;
+        if !matches!(default_setting_value(&key), Some(default_value) if default_value == value) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn default_setting_value(key: &str) -> Option<&'static str> {
+    DEFAULT_SETTINGS
+        .iter()
+        .find_map(|(setting_key, value)| (*setting_key == key).then_some(*value))
 }
 
 impl AppDatabase {
@@ -152,10 +352,8 @@ impl AppDatabase {
             .app_data_dir()
             .map_err(|error| format!("无法解析应用数据目录: {error}"))?;
         let data_dir_config_path = default_data_dir.join(DATA_DIR_CONFIG_FILE);
-        let pending_data_dir = read_data_dir_config(&data_dir_config_path)?;
-        let configured_data_dir = pending_data_dir
-            .clone()
-            .unwrap_or_else(|| default_data_dir.clone());
+        let (configured_data_dir, pending_data_dir, source_data_dir) =
+            resolve_configured_data_dir(&default_data_dir)?;
 
         fs::create_dir_all(&configured_data_dir).map_err(|error| {
             format!(
@@ -164,7 +362,16 @@ impl AppDatabase {
             )
         })?;
 
-        let db_path = configured_data_dir.join("relay-pool-desktop.sqlite3");
+        let db_path = prepare_configured_database(
+            &default_data_dir,
+            &configured_data_dir,
+            source_data_dir.as_deref(),
+        )?;
+        if pending_data_dir.is_some()
+            && source_data_dir.as_deref() != Some(configured_data_dir.as_path())
+        {
+            mark_data_dir_initialized(&data_dir_config_path, &configured_data_dir)?;
+        }
         let connection = Connection::open(&db_path)
             .map_err(|error| format!("无法打开 SQLite 数据库 {}: {error}", db_path.display()))?;
 
@@ -624,7 +831,7 @@ impl AppDatabase {
     pub fn set_pending_data_dir(&self, data_dir: PathBuf) -> Result<AppSettings, String> {
         fs::create_dir_all(&data_dir)
             .map_err(|error| format!("无法创建数据目录 {}: {error}", data_dir.display()))?;
-        write_data_dir_config(&self.data_dir_config_path, &data_dir)?;
+        write_data_dir_config(&self.data_dir_config_path, &data_dir, Some(&self.data_dir))?;
         {
             let mut pending = self
                 .pending_data_dir
@@ -642,7 +849,11 @@ impl AppDatabase {
                 self.default_data_dir.display()
             )
         })?;
-        write_data_dir_config(&self.data_dir_config_path, &self.default_data_dir)?;
+        write_data_dir_config(
+            &self.data_dir_config_path,
+            &self.default_data_dir,
+            Some(&self.data_dir),
+        )?;
         {
             let mut pending = self
                 .pending_data_dir
@@ -3229,28 +3440,7 @@ fn migrate_plaintext_password_rows(
 }
 
 fn seed_default_settings(connection: &Connection) -> rusqlite::Result<()> {
-    let defaults = [
-        ("local_proxy_port", "8787"),
-        ("local_key", "sk-local-pool-change-me"),
-        ("default_routing_strategy", "cost_stable_first"),
-        ("collector_proxy_mode", "direct"),
-        ("collector_proxy_url", ""),
-        ("max_rate_multiplier", ""),
-        ("default_routing_group_filter", "all_groups"),
-        ("scheduler_advanced_settings_json", ""),
-        ("low_balance_threshold_cny", "15"),
-        ("collector_interval_minutes", "30"),
-        ("balance_interval_minutes", "5"),
-        ("group_rate_interval_minutes", "20"),
-        ("model_list_interval_minutes", "60"),
-        ("pricing_refresh_interval_minutes", "60"),
-        ("collector_timeout_seconds", "15"),
-        ("collector_max_concurrency", "3"),
-        ("allow_depleted_fallback", "false"),
-        ("developer_mode_enabled", "false"),
-    ];
-
-    for (key, value) in defaults {
+    for (key, value) in DEFAULT_SETTINGS {
         connection.execute(
             "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?1, ?2, ?3)",
             params![key, value, now_string()],
@@ -15308,6 +15498,158 @@ mod tests {
             settings.collector_proxy_url.as_deref(),
             Some("http://127.0.0.1:7890")
         );
+    }
+
+    #[test]
+    fn pending_data_dir_activation_preserves_existing_database() {
+        let unique = generate_id("data-dir-test");
+        let root = std::env::temp_dir().join(unique);
+        let default_data_dir = root.join("default");
+        let custom_data_dir = root.join("custom");
+        fs::create_dir_all(&default_data_dir).expect("default data dir");
+
+        let current_db_path = default_data_dir.join(DATABASE_FILE);
+        let current_connection = Connection::open(&current_db_path).expect("current db");
+        initialize_schema(&current_connection).expect("schema");
+        migrate_secret_schema(&current_connection).expect("secret schema");
+        seed_default_settings(&current_connection).expect("settings");
+        upsert_setting(&current_connection, "local_proxy_port", "9988").expect("custom settings");
+        current_connection
+            .execute(
+                "INSERT INTO stations (
+                    id, name, station_type, website_url, api_base_url, api_key,
+                    enabled, priority, created_at, updated_at
+                 ) VALUES ('station-imported', 'imported station', 'openai-compatible',
+                    'https://example.test', 'https://example.test/v1', 'sk-test', 1, 0, '1', '1')",
+                [],
+            )
+            .expect("station");
+        drop(current_connection);
+
+        fs::create_dir_all(&custom_data_dir).expect("custom data dir");
+        let empty_custom_connection =
+            Connection::open(custom_data_dir.join("relay-pool-desktop.sqlite3"))
+                .expect("empty custom db");
+        initialize_schema(&empty_custom_connection).expect("custom schema");
+        drop(empty_custom_connection);
+
+        let config_path = default_data_dir.join(DATA_DIR_CONFIG_FILE);
+        write_data_dir_config(&config_path, &custom_data_dir, Some(&default_data_dir))
+            .expect("write config");
+
+        let (configured_data_dir, _pending_data_dir, source_data_dir) =
+            resolve_configured_data_dir(&default_data_dir).expect("resolve configured data dir");
+        let activated_db_path = prepare_configured_database(
+            &default_data_dir,
+            &configured_data_dir,
+            source_data_dir.as_deref(),
+        )
+        .expect("prepare configured database");
+
+        assert_eq!(activated_db_path, custom_data_dir.join(DATABASE_FILE));
+        let activated_connection = Connection::open(&activated_db_path).expect("activated db");
+        let local_proxy_port: String = activated_connection
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'local_proxy_port'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("local proxy port");
+        assert_eq!(local_proxy_port, "9988");
+        let station_count: i64 = activated_connection
+            .query_row("SELECT COUNT(*) FROM stations", [], |row| row.get(0))
+            .expect("station count");
+        assert_eq!(station_count, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pending_data_dir_activation_preserves_settings_without_stations() {
+        let unique = generate_id("data-dir-settings-test");
+        let root = std::env::temp_dir().join(unique);
+        let default_data_dir = root.join("default");
+        let custom_data_dir = root.join("custom");
+        fs::create_dir_all(&default_data_dir).expect("default data dir");
+
+        let current_db_path = default_data_dir.join(DATABASE_FILE);
+        let current_connection = Connection::open(&current_db_path).expect("current db");
+        initialize_schema(&current_connection).expect("schema");
+        seed_default_settings(&current_connection).expect("settings");
+        upsert_setting(&current_connection, "local_proxy_port", "9988").expect("custom port");
+        drop(current_connection);
+
+        fs::create_dir_all(&custom_data_dir).expect("custom data dir");
+        let empty_custom_connection =
+            Connection::open(custom_data_dir.join(DATABASE_FILE)).expect("empty custom db");
+        initialize_schema(&empty_custom_connection).expect("custom schema");
+        seed_default_settings(&empty_custom_connection).expect("custom defaults");
+        drop(empty_custom_connection);
+
+        let config_path = default_data_dir.join(DATA_DIR_CONFIG_FILE);
+        write_data_dir_config(&config_path, &custom_data_dir, Some(&default_data_dir))
+            .expect("write config");
+
+        let (configured_data_dir, _pending_data_dir, source_data_dir) =
+            resolve_configured_data_dir(&default_data_dir).expect("resolve configured data dir");
+        let activated_db_path = prepare_configured_database(
+            &default_data_dir,
+            &configured_data_dir,
+            source_data_dir.as_deref(),
+        )
+        .expect("prepare configured database");
+
+        let activated_connection = Connection::open(&activated_db_path).expect("activated db");
+        let local_proxy_port: String = activated_connection
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'local_proxy_port'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("local proxy port");
+        assert_eq!(local_proxy_port, "9988");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pending_data_dir_activation_does_not_overwrite_custom_target_database() {
+        let unique = generate_id("data-dir-target-test");
+        let root = std::env::temp_dir().join(unique);
+        let source_data_dir = root.join("source");
+        let custom_data_dir = root.join("custom");
+        fs::create_dir_all(&source_data_dir).expect("source data dir");
+        fs::create_dir_all(&custom_data_dir).expect("custom data dir");
+
+        let source_connection =
+            Connection::open(source_data_dir.join(DATABASE_FILE)).expect("source db");
+        initialize_schema(&source_connection).expect("source schema");
+        seed_default_settings(&source_connection).expect("source settings");
+        upsert_setting(&source_connection, "local_proxy_port", "9988").expect("source port");
+        drop(source_connection);
+
+        let target_connection =
+            Connection::open(custom_data_dir.join(DATABASE_FILE)).expect("target db");
+        initialize_schema(&target_connection).expect("target schema");
+        seed_default_settings(&target_connection).expect("target settings");
+        upsert_setting(&target_connection, "local_proxy_port", "8899").expect("target port");
+        drop(target_connection);
+
+        let activated_db_path =
+            prepare_configured_database(&source_data_dir, &custom_data_dir, Some(&source_data_dir))
+                .expect("prepare configured database");
+
+        let activated_connection = Connection::open(&activated_db_path).expect("activated db");
+        let local_proxy_port: String = activated_connection
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'local_proxy_port'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("local proxy port");
+        assert_eq!(local_proxy_port, "8899");
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
