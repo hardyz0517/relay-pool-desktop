@@ -43,6 +43,7 @@ export function ConfirmDialog({
             {cancelLabel}
           </Button>
           <Button
+            className="border-danger-solid bg-danger-solid text-on-solid shadow-surface hover:bg-danger-solid/90"
             disabled={confirming}
             variant="danger"
             onClick={onConfirm}
