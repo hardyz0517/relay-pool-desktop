@@ -79,3 +79,51 @@ export function buildStationGroupOptionsFromCurrentFactsForSelect(
     })),
   );
 }
+
+export function buildStationGroupOptionFromRawMultiplierForSelect(
+  binding: {
+    id: string;
+    groupIdHash: string | null;
+    groupName: string;
+    defaultRateMultiplier: number | null;
+    userRateMultiplier: number | null;
+    effectiveRateMultiplier: number | null;
+    inferredGroupCategory: StationGroupOption["inferredGroupCategory"] | null;
+    groupCategoryOverride: StationGroupOption["groupCategoryOverride"];
+    rateSource: string | null;
+  },
+  creditPerCny = 1,
+): StationGroupOption {
+  const rateMultiplier = firstNumber(
+    binding.userRateMultiplier,
+    binding.effectiveRateMultiplier,
+    binding.defaultRateMultiplier,
+  );
+  const inferredGroupCategory = binding.inferredGroupCategory ?? "unknown";
+  const effectiveGroupCategory = binding.groupCategoryOverride ?? inferredGroupCategory;
+  return {
+    value: binding.id
+      ? `binding:${binding.id}`
+      : binding.groupIdHash
+        ? `remote:${binding.groupIdHash}`
+        : `name:${binding.groupName.trim()}`,
+    groupBindingId: binding.id,
+    groupIdHash: binding.groupIdHash,
+    groupName: binding.groupName,
+    rateMultiplier: effectiveRateMultiplierForCredit(rateMultiplier, creditPerCny),
+    inferredGroupCategory,
+    groupCategoryOverride: binding.groupCategoryOverride,
+    effectiveGroupCategory,
+    rateSource: binding.rateSource,
+    selectableForRemoteKey: Boolean(binding.id || binding.groupIdHash),
+  };
+}
+
+function firstNumber(...values: Array<number | null | undefined>) {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return null;
+}

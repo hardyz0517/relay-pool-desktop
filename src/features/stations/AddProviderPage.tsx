@@ -56,6 +56,7 @@ import {
 import { CreateRemoteKeyDialog } from "./components/CreateRemoteKeyDialog";
 import { RemoteKeyDiscoveryList } from "./components/RemoteKeyDiscoveryList";
 import {
+  buildStationGroupOptionFromRawMultiplierForSelect,
   buildStationGroupOptionsFromCurrentFactsForSelect,
   findMatchingGroupOption,
   formatMultiplier,
@@ -282,7 +283,6 @@ function groupDraftToOption(row: StationGroupDraft, creditPerCny = 1): StationKe
 function mergeKeyRowsWithSavedGroupOptions(
   rows: StationKeyDraft[],
   groups: StationKeyGroupOption[],
-  creditPerCny = 1,
 ): StationKeyDraft[] {
   return rows.map((row) => {
     if (row.deleteRequested || (!row.groupBindingId && !row.groupIdHash && !row.groupName.trim())) {
@@ -298,9 +298,7 @@ function mergeKeyRowsWithSavedGroupOptions(
       groupIdHash: group.groupIdHash,
       groupName: group.groupName,
       rateMultiplier:
-        group.rateMultiplier === null
-          ? row.rateMultiplier
-          : formatMultiplier(effectiveRateMultiplierForCredit(group.rateMultiplier, creditPerCny)),
+        group.rateMultiplier === null ? row.rateMultiplier : formatMultiplier(group.rateMultiplier),
       inferredGroupCategory: group.inferredGroupCategory,
       groupCategoryOverride: group.groupCategoryOverride,
     };
@@ -325,7 +323,7 @@ function mergeGroupRowsWithSavedOptions(
         groupBindingId: group.groupBindingId,
         groupIdHash: group.groupIdHash,
         groupName: group.groupName,
-        rateMultiplier: group.rateMultiplier === null ? row.rateMultiplier : formatMultiplier(group.rateMultiplier),
+        rateMultiplier: row.rateMultiplier,
         inferredGroupCategory: normalizeGroupCategory(group.inferredGroupCategory) ?? "unknown",
         groupCategoryOverride: group.groupCategoryOverride,
       };
@@ -515,7 +513,7 @@ function validateGroupRows(rows: StationGroupDraft[]) {
     });
 }
 
-async function saveGroupRows(targetStationId: string, rows: StationGroupDraft[]) {
+async function saveGroupRows(targetStationId: string, rows: StationGroupDraft[], creditPerCny = 1) {
   validateGroupRows(rows);
   const savedOptions: StationKeyGroupOption[] = [];
   const existingBindings = await listStationGroupBindings(targetStationId);
@@ -557,23 +555,7 @@ async function saveGroupRows(targetStationId: string, rows: StationGroupDraft[])
       rawJsonRedacted: null,
     };
     const saved = await upsertStationGroupBinding(input);
-    savedOptions.push({
-      value: saved.id
-        ? `binding:${saved.id}`
-        : saved.groupIdHash
-          ? `remote:${saved.groupIdHash}`
-          : `name:${saved.groupName.trim()}`,
-      groupBindingId: saved.id,
-      groupIdHash: saved.groupIdHash,
-      groupName: saved.groupName,
-      rateMultiplier:
-        saved.userRateMultiplier ?? saved.effectiveRateMultiplier ?? saved.defaultRateMultiplier,
-      inferredGroupCategory: saved.inferredGroupCategory ?? "unknown",
-      groupCategoryOverride: saved.groupCategoryOverride,
-      effectiveGroupCategory: saved.groupCategoryOverride ?? saved.inferredGroupCategory ?? "unknown",
-      rateSource: saved.rateSource,
-      selectableForRemoteKey: Boolean(saved.id || saved.groupIdHash),
-    });
+    savedOptions.push(buildStationGroupOptionFromRawMultiplierForSelect(saved, creditPerCny));
   }
 
   return savedOptions;
@@ -1002,10 +984,10 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         );
       }
     }
-    const savedGroupOptions = await saveGroupRows(station.id, groupRows);
+    const savedGroupOptions = await saveGroupRows(station.id, groupRows, currentCreditPerCny);
     if (savedGroupOptions.length) {
       setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
-      rowsToSave = mergeKeyRowsWithSavedGroupOptions(rowsToSave, savedGroupOptions, currentCreditPerCny);
+      rowsToSave = mergeKeyRowsWithSavedGroupOptions(rowsToSave, savedGroupOptions);
     }
     await saveKeyRows(station.id, rowsToSave);
     if (form.loginUsername.trim() || form.loginPassword.trim()) {
@@ -1065,8 +1047,8 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           collectionIntervalMinutes: normalizeCollectionIntervalMinutes(form.collectionIntervalMinutes),
           note: form.note.trim() ? form.note.trim() : null,
         });
-        const savedGroupOptions = await saveGroupRows(activeStationId, groupRows);
-        const rowsToSave = mergeKeyRowsWithSavedGroupOptions(keyRows, savedGroupOptions, currentCreditPerCny);
+        const savedGroupOptions = await saveGroupRows(activeStationId, groupRows, currentCreditPerCny);
+        const rowsToSave = mergeKeyRowsWithSavedGroupOptions(keyRows, savedGroupOptions);
         setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
         setKeyRows(rowsToSave);
         await saveKeyRows(activeStationId, rowsToSave);
@@ -1121,8 +1103,8 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           );
         }
       }
-      const savedGroupOptions = await saveGroupRows(station.id, groupRows);
-      rowsToSave = mergeKeyRowsWithSavedGroupOptions(rowsToSave, savedGroupOptions, currentCreditPerCny);
+      const savedGroupOptions = await saveGroupRows(station.id, groupRows, currentCreditPerCny);
+      rowsToSave = mergeKeyRowsWithSavedGroupOptions(rowsToSave, savedGroupOptions);
       setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
       setKeyRows(rowsToSave);
       await saveKeyRows(station.id, rowsToSave);
