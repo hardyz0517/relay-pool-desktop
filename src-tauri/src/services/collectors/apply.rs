@@ -219,6 +219,7 @@ pub fn apply_collector_facts(
             today_output_token_count: balance.today_output_token_count,
             total_input_token_count: balance.total_input_token_count,
             total_output_token_count: balance.total_output_token_count,
+            account_concurrency_limit: balance.account_concurrency_limit,
             low_balance_threshold: None,
             status: balance.status,
             source: balance.source,
@@ -343,6 +344,7 @@ fn apply_collector_facts_in_connection(
                 today_output_token_count: balance.today_output_token_count,
                 total_input_token_count: balance.total_input_token_count,
                 total_output_token_count: balance.total_output_token_count,
+                account_concurrency_limit: balance.account_concurrency_limit,
                 low_balance_threshold: None,
                 status: balance.status,
                 source: balance.source,
@@ -529,6 +531,7 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
             today_output_token_count,
             total_input_token_count,
             total_output_token_count,
+            account_concurrency_limit,
             currency,
             credit_unit,
             confidence,
@@ -595,6 +598,9 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
                     .iter()
                     .map(|balance| balance.total_output_token_count),
             );
+            let account_concurrency_limit = key_balances
+                .iter()
+                .find_map(|balance| balance.account_concurrency_limit);
             let currency =
                 shared_text_value(key_balances.iter().map(|balance| balance.currency.as_str()))
                     .unwrap_or("CNY")
@@ -631,6 +637,7 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
                     today_output_token_count,
                     total_input_token_count,
                     total_output_token_count,
+                    account_concurrency_limit,
                     currency,
                     credit_unit,
                     confidence,
@@ -661,6 +668,7 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
             today_output_token_count,
             total_input_token_count,
             total_output_token_count,
+            account_concurrency_limit,
             currency,
             credit_unit,
             status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
@@ -847,6 +855,7 @@ mod tests {
             today_output_token_count: None,
             total_input_token_count: None,
             total_output_token_count: None,
+            account_concurrency_limit: None,
             currency: "CNY".to_string(),
             credit_unit: None,
             status: "normal".to_string(),
@@ -879,6 +888,7 @@ mod tests {
             total_token_count: None,
             total_input_token_count: None,
             total_output_token_count: None,
+            account_concurrency_limit: None,
             currency: "CNY".to_string(),
             credit_unit: None,
             status: "normal".to_string(),
@@ -966,6 +976,24 @@ mod tests {
             .expect("station balance");
         assert_eq!(station_balance.value, Some(11.0));
         assert_eq!(station_balance.source, "station_key_balance_aggregate");
+    }
+
+    #[test]
+    fn applies_account_concurrency_limit_to_station_balance_snapshot() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = create_test_station(&database);
+        let mut profile = station_balance(&station.id, 66.78);
+        profile.source = "sub2api_profile".to_string();
+        profile.account_concurrency_limit = Some(5);
+
+        let mut facts = crate::services::collectors::facts::CollectorFacts::default();
+        facts.balances.push(profile);
+
+        apply_collector_facts(&database, facts).expect("apply facts");
+        let balances = database
+            .list_balance_snapshots_for_station(station.id)
+            .expect("balances");
+        assert_eq!(balances[0].account_concurrency_limit, Some(5));
     }
 
     #[test]

@@ -187,7 +187,7 @@ export function StationDetailContent({
           <WalletCards className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold text-foreground">余额</h2>
         </div>
-        <div className="grid gap-3 p-4 md:grid-cols-3">
+        <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
           {viewModel.balanceCards.map((card) => (
             <div
               key={card.label}

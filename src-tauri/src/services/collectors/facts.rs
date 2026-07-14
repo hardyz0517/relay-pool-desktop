@@ -20,6 +20,7 @@ pub struct CollectedBalanceFact {
     pub today_output_token_count: Option<i64>,
     pub total_input_token_count: Option<i64>,
     pub total_output_token_count: Option<i64>,
+    pub account_concurrency_limit: Option<i64>,
     pub currency: String,
     pub credit_unit: Option<String>,
     pub status: String,

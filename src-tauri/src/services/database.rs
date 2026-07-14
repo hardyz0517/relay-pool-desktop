@@ -2142,6 +2142,7 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             today_output_token_count INTEGER,
             total_input_token_count INTEGER,
             total_output_token_count INTEGER,
+            account_concurrency_limit INTEGER,
             low_balance_threshold REAL,
             status TEXT NOT NULL,
             source TEXT NOT NULL,
@@ -2587,6 +2588,12 @@ fn migrate_p9_fact_schema(connection: &Connection) -> rusqlite::Result<()> {
         connection,
         "balance_snapshots",
         "total_output_token_count",
+        "INTEGER",
+    )?;
+    add_column_if_missing(
+        connection,
+        "balance_snapshots",
+        "account_concurrency_limit",
         "INTEGER",
     )?;
 
@@ -7504,6 +7511,7 @@ fn migrate_pricing_tables(connection: &Connection) -> rusqlite::Result<()> {
             today_output_token_count INTEGER,
             total_input_token_count INTEGER,
             total_output_token_count INTEGER,
+            account_concurrency_limit INTEGER,
             low_balance_threshold REAL,
             status TEXT NOT NULL,
             source TEXT NOT NULL,
@@ -10044,7 +10052,7 @@ fn list_balance_snapshots_from_connection(
                     today_consumption, total_consumption, today_base_consumption, total_base_consumption,
                     today_token_count, total_token_count,
                     today_input_token_count, today_output_token_count, total_input_token_count,
-                    total_output_token_count, low_balance_threshold, status, source, confidence,
+                    total_output_token_count, account_concurrency_limit, low_balance_threshold, status, source, confidence,
                     collected_at, created_at, updated_at
                FROM balance_snapshots
               ORDER BY updated_at DESC, created_at DESC",
@@ -10068,7 +10076,7 @@ fn list_current_station_balance_snapshots_from_connection(
                     b.today_consumption, b.total_consumption, b.today_base_consumption, b.total_base_consumption,
                     b.today_token_count, b.total_token_count,
                     b.today_input_token_count, b.today_output_token_count, b.total_input_token_count,
-                    b.total_output_token_count, b.low_balance_threshold, b.status, b.source, b.confidence,
+                    b.total_output_token_count, b.account_concurrency_limit, b.low_balance_threshold, b.status, b.source, b.confidence,
                     b.collected_at, b.created_at, b.updated_at
                FROM balance_snapshots b
               WHERE b.id IN (
@@ -10104,7 +10112,7 @@ fn list_balance_snapshots_for_station_from_connection(
                     today_consumption, total_consumption, today_base_consumption, total_base_consumption,
                     today_token_count, total_token_count,
                     today_input_token_count, today_output_token_count, total_input_token_count,
-                    total_output_token_count, low_balance_threshold, status, source, confidence,
+                    total_output_token_count, account_concurrency_limit, low_balance_threshold, status, source, confidence,
                     collected_at, created_at, updated_at
                FROM balance_snapshots
               WHERE station_id = ?1
@@ -10144,9 +10152,9 @@ pub(crate) fn upsert_balance_snapshot_in_connection(
                 today_consumption, total_consumption, today_base_consumption, total_base_consumption,
                 today_token_count, total_token_count,
                 today_input_token_count, today_output_token_count, total_input_token_count,
-                total_output_token_count, low_balance_threshold, status, source, confidence,
+                total_output_token_count, account_concurrency_limit, low_balance_threshold, status, source, confidence,
                 collected_at, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
              ON CONFLICT(id) DO UPDATE SET
                 station_id = excluded.station_id,
                 station_key_id = excluded.station_key_id,
@@ -10168,6 +10176,7 @@ pub(crate) fn upsert_balance_snapshot_in_connection(
                 today_output_token_count = excluded.today_output_token_count,
                 total_input_token_count = excluded.total_input_token_count,
                 total_output_token_count = excluded.total_output_token_count,
+                account_concurrency_limit = excluded.account_concurrency_limit,
                 low_balance_threshold = excluded.low_balance_threshold,
                 status = excluded.status,
                 source = excluded.source,
@@ -10196,6 +10205,7 @@ pub(crate) fn upsert_balance_snapshot_in_connection(
                 input.today_output_token_count,
                 input.total_input_token_count,
                 input.total_output_token_count,
+                input.account_concurrency_limit,
                 input.low_balance_threshold,
                 normalize_balance_status(input.status)?,
                 input.source.trim(),
@@ -10293,13 +10303,14 @@ fn row_to_balance_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<BalanceS
         today_output_token_count: row.get(18)?,
         total_input_token_count: row.get(19)?,
         total_output_token_count: row.get(20)?,
-        low_balance_threshold: row.get(21)?,
-        status: row.get(22)?,
-        source: row.get(23)?,
-        confidence: row.get(24)?,
-        collected_at: row.get(25)?,
-        created_at: row.get(26)?,
-        updated_at: row.get(27)?,
+        account_concurrency_limit: row.get(21)?,
+        low_balance_threshold: row.get(22)?,
+        status: row.get(23)?,
+        source: row.get(24)?,
+        confidence: row.get(25)?,
+        collected_at: row.get(26)?,
+        created_at: row.get(27)?,
+        updated_at: row.get(28)?,
     })
 }
 
@@ -10344,7 +10355,7 @@ fn balance_snapshot_by_id(connection: &Connection, id: &str) -> Result<BalanceSn
                     today_consumption, total_consumption, today_base_consumption, total_base_consumption,
                     today_token_count, total_token_count,
                     today_input_token_count, today_output_token_count, total_input_token_count,
-                    total_output_token_count, low_balance_threshold, status, source, confidence,
+                    total_output_token_count, account_concurrency_limit, low_balance_threshold, status, source, confidence,
                     collected_at, created_at, updated_at
                FROM balance_snapshots
               WHERE id = ?1",
@@ -15215,6 +15226,7 @@ mod tests {
                 today_output_token_count: None,
                 total_input_token_count: None,
                 total_output_token_count: None,
+                account_concurrency_limit: None,
                 low_balance_threshold: None,
                 status: "depleted".to_string(),
                 source: "test".to_string(),
@@ -16768,6 +16780,7 @@ mod tests {
                 today_output_token_count: None,
                 total_input_token_count: None,
                 total_output_token_count: None,
+                account_concurrency_limit: None,
                 low_balance_threshold: None,
                 status: "normal".to_string(),
                 source: "test".to_string(),
@@ -16798,6 +16811,7 @@ mod tests {
                 today_output_token_count: None,
                 total_input_token_count: None,
                 total_output_token_count: None,
+                account_concurrency_limit: None,
                 low_balance_threshold: None,
                 status: "normal".to_string(),
                 source: "test".to_string(),
@@ -17506,6 +17520,7 @@ mod tests {
                 today_output_token_count: None,
                 total_input_token_count: None,
                 total_output_token_count: None,
+                account_concurrency_limit: None,
                 low_balance_threshold: Some(10.0),
                 status: "depleted".to_string(),
                 source: "test".to_string(),
@@ -17547,6 +17562,7 @@ mod tests {
                 today_output_token_count: None,
                 total_input_token_count: None,
                 total_output_token_count: None,
+                account_concurrency_limit: None,
                 low_balance_threshold: Some(10.0),
                 status: "depleted".to_string(),
                 source: "test".to_string(),
@@ -17594,6 +17610,7 @@ mod tests {
                 today_output_token_count: None,
                 total_input_token_count: None,
                 total_output_token_count: None,
+                account_concurrency_limit: None,
                 low_balance_threshold: Some(10.0),
                 status: "depleted".to_string(),
                 source: "test".to_string(),
@@ -17639,6 +17656,7 @@ mod tests {
                 today_output_token_count: None,
                 total_input_token_count: None,
                 total_output_token_count: None,
+                account_concurrency_limit: None,
                 low_balance_threshold: Some(10.0),
                 status: "low".to_string(),
                 source: "test".to_string(),
@@ -20231,6 +20249,7 @@ mod tests {
                 today_output_token_count: Some(234),
                 total_input_token_count: Some(50000),
                 total_output_token_count: Some(6789),
+                account_concurrency_limit: None,
                 low_balance_threshold: Some(5.0),
                 status: "normal".to_string(),
                 source: "collector".to_string(),

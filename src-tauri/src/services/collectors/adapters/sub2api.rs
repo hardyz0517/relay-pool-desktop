@@ -200,6 +200,7 @@ pub fn parse_usage_balance(
                 "completionTokens",
             ],
         ),
+        account_concurrency_limit: None,
         currency: "CNY".to_string(),
         credit_unit: payload
             .pointer("/quota/unit")
@@ -225,6 +226,26 @@ fn parse_i64_field(payload: &Value, names: &[&str]) -> Option<i64> {
         parse_optional_i64(payload.get(*name))
             .or_else(|| parse_optional_i64(payload.pointer(&format!("/data/{name}"))))
     })
+}
+
+fn parse_account_concurrency_limit(payload: &Value) -> Option<i64> {
+    parse_i64_field(
+        payload,
+        &[
+            "concurrency_limit",
+            "concurrent_limit",
+            "concurrency",
+            "request_concurrency",
+            "parallel_limit",
+            "max_concurrency",
+            "concurrencyLimit",
+            "concurrentLimit",
+            "requestConcurrency",
+            "parallelLimit",
+            "maxConcurrency",
+        ],
+    )
+    .filter(|value| *value > 0)
 }
 
 fn parse_optional_f64(value: Option<&Value>) -> Option<f64> {
@@ -1570,18 +1591,21 @@ pub fn collect_balance(
             }
         }
     }
+    let account_profile_balance = collect_account_profile_balance(
+        database,
+        data_key,
+        &station,
+        &proxy,
+        &mut endpoint_results,
+        &budget,
+        &policy,
+    )?;
     if facts.balances.is_empty() {
-        if let Some(balance) = collect_account_balance_fallback(
-            database,
-            data_key,
-            &station,
-            &proxy,
-            &mut endpoint_results,
-            &budget,
-            &policy,
-        )? {
+        if let Some(balance) = account_profile_balance {
             facts.balances.push(balance);
         }
+    } else if let Some(profile_balance) = account_profile_balance {
+        merge_account_profile_balance(&mut facts.balances, profile_balance);
     }
     if !facts.balances.is_empty() {
         if let Some(stats) = collect_dashboard_usage_stats(
@@ -1629,7 +1653,7 @@ pub fn collect_balance(
     })
 }
 
-fn collect_account_balance_fallback(
+fn collect_account_profile_balance(
     database: &AppDatabase,
     data_key: &[u8; 32],
     station: &crate::models::stations::Station,
@@ -1696,6 +1720,33 @@ fn collect_account_balance_fallback(
     }
 
     Ok(None)
+}
+
+fn merge_account_profile_balance(
+    balances: &mut Vec<CollectedBalanceFact>,
+    profile_balance: CollectedBalanceFact,
+) {
+    let Some(limit) = profile_balance.account_concurrency_limit else {
+        return;
+    };
+    if let Some(station_balance) = balances.iter_mut().find(|balance| {
+        balance.station_id == profile_balance.station_id && balance.scope == "station"
+    }) {
+        station_balance.account_concurrency_limit = Some(limit);
+        return;
+    }
+
+    let mut merged_into_key_balance = false;
+    for key_balance in balances.iter_mut().filter(|balance| {
+        balance.station_id == profile_balance.station_id && balance.scope == "station_key"
+    }) {
+        key_balance.account_concurrency_limit = Some(limit);
+        merged_into_key_balance = true;
+    }
+
+    if !merged_into_key_balance {
+        balances.push(profile_balance);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1955,6 +2006,9 @@ fn merge_dashboard_usage_stats(
             .map(|balance| balance.credit_unit.as_deref()),
     )
     .map(ToString::to_string);
+    let account_concurrency_limit = key_balances
+        .iter()
+        .find_map(|balance| balance.account_concurrency_limit);
     let confidence = key_balances
         .iter()
         .map(|balance| balance.confidence)
@@ -1983,6 +2037,7 @@ fn merge_dashboard_usage_stats(
         today_output_token_count: None,
         total_input_token_count: None,
         total_output_token_count: None,
+        account_concurrency_limit,
         currency,
         credit_unit,
         status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
@@ -2164,6 +2219,7 @@ fn parse_account_balance(
                 "completionTokens",
             ],
         ),
+        account_concurrency_limit: parse_account_concurrency_limit(payload),
         currency,
         credit_unit: None,
         status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
@@ -2244,6 +2300,50 @@ mod tests {
         assert_eq!(fact.used_value, Some(2.5));
         assert_eq!(fact.total_value, Some(12.5));
         assert_eq!(fact.currency, "CNY");
+    }
+
+    #[test]
+    fn parse_account_balance_reads_profile_concurrency_limit() {
+        let fact = parse_account_balance(
+            "station-1",
+            &json!({
+                "data": {
+                    "balance": 66.78,
+                    "concurrency_limit": 5
+                }
+            }),
+            1.0,
+        )
+        .expect("profile fact");
+
+        assert_eq!(fact.value, Some(66.78));
+        assert_eq!(fact.account_concurrency_limit, Some(5));
+        assert_eq!(fact.scope, "station");
+    }
+
+    #[test]
+    fn parse_account_balance_accepts_common_concurrency_aliases() {
+        for (field, expected) in [
+            ("concurrent_limit", 4),
+            ("concurrency", 5),
+            ("request_concurrency", 6),
+            ("parallel_limit", 7),
+            ("max_concurrency", 8),
+            ("concurrencyLimit", 9),
+        ] {
+            let fact = parse_account_balance(
+                "station-1",
+                &json!({
+                    "data": {
+                        "balance": 1.0,
+                        field: expected
+                    }
+                }),
+                1.0,
+            )
+            .expect("profile fact");
+            assert_eq!(fact.account_concurrency_limit, Some(expected), "field {field}");
+        }
     }
 
     #[test]
@@ -3125,6 +3225,7 @@ mod tests {
         assert_eq!(station_balance.today_output_token_count, Some(4567));
         assert_eq!(station_balance.total_input_token_count, Some(4300000));
         assert_eq!(station_balance.total_output_token_count, Some(267890));
+        assert_eq!(station_balance.account_concurrency_limit, Some(5));
         assert!(output.summary_json["endpointResults"]
             .as_array()
             .expect("endpoint results")
@@ -3351,7 +3452,7 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
             let base_url = format!("http://{}", listener.local_addr().expect("addr"));
             thread::spawn(move || {
-                for stream in listener.incoming().take(2).flatten() {
+                for stream in listener.incoming().take(3).flatten() {
                     handle_balance_dashboard_stats_request(stream);
                 }
             });
@@ -3700,6 +3801,15 @@ mod tests {
                 "200 OK",
                 json!({
                     "remaining": 100.0
+                }),
+            ),
+            "/api/v1/user/profile" if dashboard_authorized => (
+                "200 OK",
+                json!({
+                    "data": {
+                        "balance": 999.0,
+                        "concurrency_limit": 5
+                    }
                 }),
             ),
             "/api/v1/usage/dashboard/stats" if dashboard_authorized => (

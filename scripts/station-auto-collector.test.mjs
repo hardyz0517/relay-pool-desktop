@@ -89,14 +89,28 @@ assert.ok(
   "Sub2API auth recovery should share the collection task budget",
 );
 
-const accountBalanceFallbackSource = sub2apiAdapterSource.match(
-  /fn collect_account_balance_fallback[\s\S]*?\r?\n}\r?\n\r?\nfn parse_account_balance/,
+const accountProfileBalanceSource = sub2apiAdapterSource.match(
+  /fn collect_account_profile_balance[\s\S]*?\r?\n}\r?\n\r?\nfn merge_account_profile_balance/,
 )?.[0];
-assert.ok(accountBalanceFallbackSource, "Sub2API account balance fallback should exist");
+assert.ok(accountProfileBalanceSource, "Sub2API account profile balance collector should exist");
 assert.ok(
-  accountBalanceFallbackSource.includes("login_and_store_access_token_with_budget") &&
-    !accountBalanceFallbackSource.includes("login_and_store_access_token(database"),
-  "Sub2API account balance fallback login should use the shared collection task budget",
+  accountProfileBalanceSource.includes("login_and_store_access_token_with_budget") &&
+    !accountProfileBalanceSource.includes("login_and_store_access_token(database"),
+  "Sub2API account profile balance login should use the shared collection task budget",
+);
+
+assert.ok(
+  sub2apiAdapterSource.indexOf("let account_profile_balance = collect_account_profile_balance") > -1 &&
+    sub2apiAdapterSource.indexOf("let account_profile_balance = collect_account_profile_balance") <
+      sub2apiAdapterSource.indexOf("if facts.balances.is_empty()"),
+  "Sub2API balance collection should read the account profile before deciding whether usage fallback is needed",
+);
+
+assert.ok(
+  sub2apiAdapterSource.includes("fn merge_account_profile_balance") &&
+    sub2apiAdapterSource.includes("account_concurrency_limit") &&
+    sub2apiAdapterSource.includes("parse_account_concurrency_limit"),
+  "Sub2API account profile collection should parse and merge account concurrency limit",
 );
 
 assert.ok(
