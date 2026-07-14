@@ -28,6 +28,11 @@ const config = {
         "control-active": token("control-active"),
         "control-active-foreground": token("control-active-foreground"),
         "control-active-border": token("control-active-border"),
+        "channel-health-surface": token("channel-health-surface"),
+        "channel-health-label": token("channel-health-label"),
+        "channel-health-foreground": token("channel-health-foreground"),
+        "channel-health-emphasis": token("channel-health-emphasis"),
+        "channel-health-bar": token("channel-health-bar"),
         "on-solid": token("on-solid"),
         primary: {
           DEFAULT: token("primary"),

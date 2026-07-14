@@ -6,6 +6,7 @@ const pairs = [
   ["foreground", "background"], ["foreground", "surface"],
   ["muted-foreground", "surface"], ["selected-foreground", "selected"],
   ["control-active-foreground", "control-active"],
+  ["channel-health-label", "channel-health-surface"],
   ["primary", "surface"], ["primary-foreground", "primary-solid"],
   ["on-solid", "danger-solid"],
   ...["success", "warning", "danger", "info"].map((tone) => [`${tone}-foreground`, `${tone}-surface`]),
@@ -99,6 +100,15 @@ describe("theme token contrast", () => {
     ]) {
       expect(readToken(variables, token)[1], token).toBeGreaterThanOrEqual(72);
     }
+  });
+
+  it("keeps light channel health indicators close to the Sub2 emerald scale", () => {
+    const variables = parseVariables(themeBlock("light"));
+    expect(readToken(variables, "channel-health-emphasis")).toEqual([142, 71, 45]);
+    expect(readToken(variables, "channel-health-bar")).toEqual([160, 84, 39]);
+    expect(readToken(variables, "channel-health-emphasis")[2]).toBeGreaterThan(
+      readToken(variables, "success-foreground")[2],
+    );
   });
 
   it.each(["light", "dark"] as const)("keeps %s text pairs readable", (theme) => {

@@ -32,6 +32,11 @@
   --control-active: 0 0% 100%;
   --control-active-foreground: 222 22% 12%;
   --control-active-border: 220 13% 89%;
+  --channel-health-surface: 149 80% 90%;
+  --channel-health-label: 163 94% 24%;
+  --channel-health-foreground: 160 84% 39%;
+  --channel-health-emphasis: 142 71% 45%;
+  --channel-health-bar: 160 84% 39%;
   --on-solid: 0 0% 100%;
   --primary: 211 100% 42%;
   --primary-solid: 211 100% 42%;
@@ -83,6 +88,11 @@
   --control-active: 215 22% 23%;
   --control-active-foreground: 174 84% 80%;
   --control-active-border: 174 72% 36%;
+  --channel-health-surface: 154 35% 16%;
+  --channel-health-label: 151 58% 72%;
+  --channel-health-foreground: 160 76% 72%;
+  --channel-health-emphasis: 142 70% 58%;
+  --channel-health-bar: 160 70% 45%;
   --on-solid: 0 0% 100%;
   --primary: 211 95% 70%;
   --primary-solid: 211 85% 45%;

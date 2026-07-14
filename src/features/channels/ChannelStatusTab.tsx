@@ -52,7 +52,7 @@ const availabilityToneClassName: Record<AvailabilityTone, string> = {
   muted: "text-muted-foreground",
   danger: "text-danger-foreground",
   warning: "text-warning-foreground",
-  success: "text-success-foreground",
+  success: "text-channel-health-emphasis",
 };
 
 type ChannelHealth = {
@@ -93,7 +93,7 @@ const statusLabel: Record<StationKeyStatus, string> = {
 };
 
 const outcomeClassName: Record<RecentOutcome, string> = {
-  success: "bg-success-foreground",
+  success: "bg-channel-health-bar",
   warning: "bg-warning-foreground",
   failed: "bg-danger-solid",
   unknown: "bg-muted-foreground/45",
@@ -292,7 +292,7 @@ function ChannelHealthCard({
           <div className="min-w-0">
             <div className="truncate text-[15px] font-semibold leading-5 text-foreground">{channel.keyName}</div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
-              <span className="shrink-0 rounded-[6px] bg-success-surface px-1.5 py-0.5 text-[11px] font-medium leading-4 text-success-foreground">
+              <span className="shrink-0 rounded-[6px] bg-channel-health-surface px-1.5 py-0.5 text-[11px] font-medium leading-4 text-channel-health-label">
                 {typeLabel}
               </span>
               <span className="min-w-0 truncate text-xs text-muted-foreground">
@@ -302,7 +302,13 @@ function ChannelHealthCard({
           </div>
         </div>
         <div className="flex shrink-0 items-start gap-1.5">
-          <StatusBadge tone={statusTone[channel.status]} className="h-6 border-0 px-2.5">
+          <StatusBadge
+            tone={statusTone[channel.status]}
+            className={cn(
+              "h-6 border-0 px-2.5",
+              channel.status === "healthy" && "bg-channel-health-surface text-channel-health-label",
+            )}
+          >
             {cooldownActive ? "冷却中" : statusLabel[channel.status]}
           </StatusBadge>
         </div>
@@ -522,7 +528,7 @@ function outcomeLabel(outcome: RecentOutcome) {
 
 function iconTone(status: StationKeyStatus) {
   if (status === "healthy") {
-    return "bg-success-surface text-success-foreground";
+    return "bg-channel-health-surface text-channel-health-foreground";
   }
   if (status === "warning") {
     return "bg-warning-surface text-warning-foreground";
