@@ -28,13 +28,13 @@ export function DataTableLite<T>({
   headerVariant = "default",
 }: DataTableLiteProps<T>) {
   return (
-    <div className={cn("overflow-auto rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]", className)}>
-      <table className="w-full border-collapse bg-white text-left text-[13px]">
+    <div className={cn("overflow-auto rounded-[var(--surface-radius)] border border-border bg-surface shadow-surface", className)}>
+      <table className="w-full border-collapse bg-surface text-left text-[13px]">
         <thead
           className={cn(
             headerVariant === "plain"
-              ? "border-b border-border bg-white text-xs font-medium text-slate-500"
-              : "bg-teal-50/70 text-[11px] font-medium uppercase tracking-wide text-slate-500",
+              ? "border-b border-border bg-surface text-xs font-medium text-muted-foreground"
+              : "bg-surface-subtle text-[11px] font-medium uppercase tracking-wide text-muted-foreground",
           )}
         >
           <tr>
@@ -53,9 +53,9 @@ export function DataTableLite<T>({
                 key={rowKey}
                 onClick={() => onRowClick?.(row)}
                 className={cn(
-                  "h-9 text-slate-700",
-                  onRowClick && "cursor-pointer hover:bg-teal-50/55",
-                  selectedKey === rowKey && "bg-teal-50 text-slate-800",
+                  "h-9 text-foreground",
+                  onRowClick && "cursor-pointer hover:bg-hover",
+                  selectedKey === rowKey && "bg-selected text-selected-foreground",
                 )}
               >
                 {columns.map((column) => (

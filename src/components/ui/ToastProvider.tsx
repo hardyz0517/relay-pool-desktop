@@ -110,26 +110,26 @@ function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: () => vo
     <div
       role={toast.intent === "error" ? "alert" : "status"}
       className={cn(
-        "pointer-events-auto grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 rounded-[var(--surface-radius)] border bg-white px-3 py-3 text-sm shadow-[0_18px_46px_rgba(15,23,42,0.14)] motion-safe:animate-[toastIn_150ms_ease-out]",
-        toast.intent === "success" && "border-emerald-200",
-        toast.intent === "error" && "border-rose-200",
+        "pointer-events-auto grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 rounded-[var(--surface-radius)] border bg-popover px-3 py-3 text-sm shadow-popover motion-safe:animate-[toastIn_150ms_ease-out]",
+        toast.intent === "success" && "border-success-border",
+        toast.intent === "error" && "border-danger-border",
         toast.intent === "info" && "border-border",
-        toast.intent === "loading" && "border-cyan-200",
+        toast.intent === "loading" && "border-info-border",
       )}
     >
       <span
         className={cn(
           "mt-0.5 flex h-5 w-5 items-center justify-center",
-          toast.intent === "success" && "text-emerald-600",
-          toast.intent === "error" && "text-rose-600",
-          toast.intent === "info" && "text-slate-500",
-          toast.intent === "loading" && "text-cyan-600",
+          toast.intent === "success" && "text-success-foreground",
+          toast.intent === "error" && "text-danger-foreground",
+          toast.intent === "info" && "text-muted-foreground",
+          toast.intent === "loading" && "text-info-foreground",
         )}
       >
         <Icon className={cn("h-4 w-4", toast.intent === "loading" && "animate-spin")} />
       </span>
       <div className="min-w-0">
-        <div className="font-medium text-slate-900">{toast.title}</div>
+        <div className="font-medium text-foreground">{toast.title}</div>
         {toast.description ? (
           <div className="mt-0.5 line-clamp-3 text-xs leading-5 text-muted-foreground">
             {toast.description}
@@ -139,7 +139,7 @@ function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: () => vo
       <button
         type="button"
         aria-label="关闭提示"
-        className="cursor-pointer rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent)/0.2)]"
+        className="cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-hover hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring/30"
         onClick={onDismiss}
       >
         <X className="h-3.5 w-3.5" />

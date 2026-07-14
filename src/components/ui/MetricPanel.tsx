@@ -32,48 +32,48 @@ type MetricPanelProps = {
 };
 
 const toneClassName: Record<MetricTone, string> = {
-  neutral: "text-slate-700",
-  good: "text-emerald-700",
-  warning: "text-amber-700",
-  danger: "text-rose-700",
+  neutral: "text-foreground",
+  good: "text-success-foreground",
+  warning: "text-warning-foreground",
+  danger: "text-danger-foreground",
 };
 
 const accentClassName: Record<MetricAccent, { icon: string; value: string }> = {
   slate: {
-    icon: "bg-slate-100 text-slate-600",
-    value: "text-slate-800",
+    icon: "bg-muted text-muted-foreground",
+    value: "text-foreground",
   },
   emerald: {
-    icon: "bg-emerald-100 text-emerald-700",
-    value: "text-emerald-700",
+    icon: "bg-success-surface text-success-foreground",
+    value: "text-success-foreground",
   },
   green: {
-    icon: "bg-green-100 text-green-700",
-    value: "text-green-700",
+    icon: "bg-success-surface text-success-foreground",
+    value: "text-success-foreground",
   },
   blue: {
-    icon: "bg-blue-100 text-blue-700",
-    value: "text-blue-700",
+    icon: "bg-info-surface text-info-foreground",
+    value: "text-info-foreground",
   },
   amber: {
-    icon: "bg-amber-100 text-amber-700",
-    value: "text-amber-700",
+    icon: "bg-warning-surface text-warning-foreground",
+    value: "text-warning-foreground",
   },
   indigo: {
-    icon: "bg-indigo-100 text-indigo-700",
-    value: "text-indigo-700",
+    icon: "bg-info-surface text-info-foreground",
+    value: "text-info-foreground",
   },
   violet: {
-    icon: "bg-violet-100 text-violet-700",
-    value: "text-violet-700",
+    icon: "bg-platform-image-surface text-platform-image-foreground",
+    value: "text-platform-image-foreground",
   },
   purple: {
-    icon: "bg-purple-100 text-purple-700",
-    value: "text-purple-700",
+    icon: "bg-platform-image-surface text-platform-image-foreground",
+    value: "text-platform-image-foreground",
   },
   rose: {
-    icon: "bg-rose-100 text-rose-700",
-    value: "text-rose-700",
+    icon: "bg-danger-surface text-danger-foreground",
+    value: "text-danger-foreground",
   },
 };
 
@@ -95,7 +95,7 @@ export function MetricPanel({
       {(title || description) && (
         <header>
           {title && (
-            <h2 className="truncate text-[13px] font-semibold text-slate-800">
+            <h2 className="truncate text-[13px] font-semibold text-foreground">
               {title}
             </h2>
           )}
@@ -114,7 +114,7 @@ export function MetricPanel({
           return (
             <div
               key={label}
-              className="flex min-h-[96px] items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_8px_rgba(15,23,42,0.08)]"
+              className="flex min-h-[96px] items-center gap-3 rounded-[12px] border border-border bg-surface px-4 py-3 shadow-surface"
             >
               {Icon && (
                 <div

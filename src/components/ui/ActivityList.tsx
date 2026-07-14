@@ -21,7 +21,7 @@ export function ActivityItem({ title, meta, detail, marker }: ActivityItemProps)
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">
           {marker}
-          <div className="truncate font-medium text-slate-800">{title}</div>
+          <div className="truncate font-medium text-foreground">{title}</div>
         </div>
         {detail && (
           <div className="mt-0.5 truncate text-xs text-muted-foreground">{detail}</div>

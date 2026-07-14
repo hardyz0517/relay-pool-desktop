@@ -44,10 +44,10 @@ function RowContent({
     NonNullable<ObjectRowMetric["tone"]>,
     string
   > = {
-    neutral: "text-slate-700",
-    good: "text-emerald-700",
-    warning: "text-amber-700",
-    danger: "text-rose-700",
+    neutral: "text-foreground",
+    good: "text-success-foreground",
+    warning: "text-warning-foreground",
+    danger: "text-danger-foreground",
   };
 
   return (
@@ -60,10 +60,10 @@ function RowContent({
           tabIndex={dragHandleProps?.disabled ? -1 : 0}
           disabled={dragHandleProps?.disabled}
           className={cn(
-            "flex h-8 w-5 shrink-0 items-center justify-center text-slate-300",
+            "flex h-8 w-5 shrink-0 items-center justify-center text-muted-foreground/55",
             dragHandleProps?.disabled
               ? "cursor-not-allowed"
-              : "cursor-grab active:cursor-grabbing hover:text-slate-500",
+              : "cursor-grab active:cursor-grabbing hover:text-muted-foreground",
           )}
           ref={dragHandleProps?.ref}
           {...dragHandleProps?.attributes}
@@ -73,13 +73,13 @@ function RowContent({
         </button>
       )}
       {icon && (
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-slate-100 text-slate-600">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-muted text-muted-foreground">
           {icon}
         </div>
       )}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="min-w-0 truncate text-[13px] font-semibold text-slate-800">
+          <div className="min-w-0 truncate text-[13px] font-semibold text-foreground">
             {title}
           </div>
           {badges && (
@@ -136,10 +136,10 @@ export function ObjectRow({
   ...props
 }: ObjectRowProps) {
   const rowClassName = cn(
-    "group flex min-h-[64px] w-full items-center gap-3 rounded-[var(--surface-radius)] border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.35)]",
+    "group flex min-h-[64px] w-full items-center gap-3 rounded-[var(--surface-radius)] border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
     selected
-      ? "border-[hsl(var(--accent)/0.35)] bg-[hsl(var(--accent)/0.06)]"
-      : "border-border bg-white hover:bg-slate-50",
+      ? "border-ring/30 bg-selected"
+      : "border-border bg-surface hover:bg-hover",
     onClick && "cursor-pointer",
     className,
   );

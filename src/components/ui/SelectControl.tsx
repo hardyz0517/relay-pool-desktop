@@ -238,14 +238,14 @@ export function SelectControl<T extends string>({
         onClick={() => !disabled && setOpen((current) => !current)}
         onKeyDown={handleTriggerKeyDown}
         className={cn(
-          "inline-flex h-8 min-w-[132px] cursor-pointer items-center justify-between gap-2 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-left text-sm text-slate-800 shadow-[0_1px_2px_rgba(15,23,42,0.04)] outline-none transition duration-150 hover:border-[hsl(var(--accent)/0.35)] hover:bg-slate-50 focus:border-[hsl(var(--accent)/0.45)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)] disabled:cursor-not-allowed disabled:opacity-60",
-          open && "border-[hsl(var(--accent)/0.45)] bg-white ring-2 ring-[hsl(var(--accent)/0.14)]",
+          "inline-flex h-8 min-w-[132px] cursor-pointer items-center justify-between gap-2 rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-left text-sm text-foreground shadow-surface outline-none transition duration-150 hover:border-ring/30 hover:bg-hover focus:border-ring/40 focus:ring-2 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-60",
+          open && "border-ring/40 bg-surface ring-2 ring-ring/20",
           className,
         )}
       >
         <span className="flex min-w-0 items-center gap-1.5">
           {selectedOption?.leadingIcon ? (
-            <span className="shrink-0 text-slate-400">{selectedOption.leadingIcon}</span>
+            <span className="shrink-0 text-muted-foreground">{selectedOption.leadingIcon}</span>
           ) : null}
           <span className="min-w-0 truncate">
             {selectedOption?.triggerLabel ?? selectedOption?.label ?? placeholder}
@@ -253,8 +253,8 @@ export function SelectControl<T extends string>({
         </span>
         <ChevronDown
           className={cn(
-            "h-4 w-4 shrink-0 text-slate-500 transition-transform duration-150",
-            open && "rotate-180 text-slate-700",
+            "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150",
+            open && "rotate-180 text-foreground",
           )}
         />
       </button>
@@ -268,7 +268,7 @@ export function SelectControl<T extends string>({
           aria-label={ariaLabel}
           onKeyDown={handleMenuKeyDown}
           className={cn(
-            "fixed z-[80] overflow-auto rounded-[var(--surface-radius)] border border-border bg-white p-1 text-sm text-slate-800 shadow-[0_18px_48px_rgba(15,23,42,0.14)] outline-none motion-safe:animate-[selectMenuIn_140ms_ease-out]",
+            "fixed z-[80] overflow-auto rounded-[var(--surface-radius)] border border-border bg-popover p-1 text-sm text-foreground shadow-popover outline-none motion-safe:animate-[selectMenuIn_140ms_ease-out]",
             menuClassName,
           )}
           style={{
@@ -286,7 +286,7 @@ export function SelectControl<T extends string>({
                 {option.sectionLabel ? (
                   <div
                     role="presentation"
-                    className="mt-1 border-t border-slate-100 px-2.5 pb-1 pt-2 text-[10px] font-medium text-muted-foreground"
+                    className="mt-1 border-t border-border px-2.5 pb-1 pt-2 text-[10px] font-medium text-muted-foreground"
                   >
                     {option.sectionLabel}
                   </div>
@@ -304,13 +304,13 @@ export function SelectControl<T extends string>({
                   onClick={() => chooseOption(option)}
                   className={cn(
                     "flex min-h-8 w-full cursor-pointer items-center justify-between gap-3 rounded-[calc(var(--surface-radius)-3px)] px-2.5 py-1.5 text-left transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-45",
-                    active ? "bg-[hsl(var(--accent)/0.08)] text-slate-950" : "hover:bg-slate-50",
+                    active ? "bg-selected text-selected-foreground" : "hover:bg-hover",
                     selected && "font-medium",
                   )}
                 >
                   <span className="flex min-w-0 items-center gap-2">
                     {option.leadingIcon ? (
-                      <span className="shrink-0 text-slate-400">{option.leadingIcon}</span>
+                      <span className="shrink-0 text-muted-foreground">{option.leadingIcon}</span>
                     ) : null}
                     <span className="min-w-0">
                       <span className="block truncate">{option.label}</span>
@@ -321,7 +321,7 @@ export function SelectControl<T extends string>({
                       ) : null}
                     </span>
                   </span>
-                  {selected ? <Check className="h-4 w-4 shrink-0 text-[hsl(var(--accent))]" /> : null}
+                  {selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
                 </button>
               </Fragment>
             );
