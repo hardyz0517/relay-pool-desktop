@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, Check } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
+import { Button, ConfirmDialog, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
 import { listStationGroupOptions } from "@/lib/api/groupFacts";
 import { listStations } from "@/lib/api/stations";
 import { saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
@@ -49,9 +49,12 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
   const [stations, setStations] = useState<Station[]>([]);
   const [groupOptions, setGroupOptions] = useState<StationGroupOption[]>([]);
   const [form, setForm] = useState<AddKeyFormState>(emptyForm);
+  const [initialFormSnapshot, setInitialFormSnapshot] = useState(() => serializeAddKeyForm(emptyForm));
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasUnsavedChanges = serializeAddKeyForm(form) !== initialFormSnapshot;
 
   const bindingOptions = groupOptions
     .filter((option) => option.groupBindingId)
@@ -72,10 +75,13 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
           ? nextStations.find((item) => item.id === initialStationId) ?? null
           : null;
         if (station) {
-          setForm(createFormForStation(station));
+          const nextForm = createFormForStation(station);
+          setForm(nextForm);
+          setInitialFormSnapshot(serializeAddKeyForm(nextForm));
           void refreshGroupOptions(station.id, alive);
         } else {
           setForm(emptyForm);
+          setInitialFormSnapshot(serializeAddKeyForm(emptyForm));
           setGroupOptions([]);
         }
       })
@@ -130,6 +136,14 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
     }
   }
 
+  function requestExit() {
+    if (hasUnsavedChanges) {
+      setDiscardConfirmOpen(true);
+      return;
+    }
+    onBack();
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form.stationId) {
@@ -179,7 +193,7 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
       title="添加密钥"
       stickyHeader
       backAction={
-        <IconButton label="返回密钥池" onClick={onBack}>
+        <IconButton label="返回密钥池" onClick={requestExit}>
           <ArrowLeft className="h-4 w-4" />
         </IconButton>
       }
@@ -189,7 +203,7 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
         onSubmit={handleSubmit}
         footer={
           <>
-            <Button variant="secondary" onClick={onBack} disabled={saving}>
+            <Button variant="secondary" onClick={requestExit} disabled={saving}>
               取消
             </Button>
             <Button type="submit" disabled={saving || loading || stations.length === 0}>
@@ -321,6 +335,18 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
           </aside>
         </section>
       </PageForm>
+      <ConfirmDialog
+        open={discardConfirmOpen}
+        title="放弃未保存修改？"
+        description="当前新增密钥还没有保存，退出后这些修改会丢失。"
+        confirmLabel="放弃修改"
+        cancelLabel="继续编辑"
+        onCancel={() => setDiscardConfirmOpen(false)}
+        onConfirm={() => {
+          setDiscardConfirmOpen(false);
+          onBack();
+        }}
+      />
     </PageScaffold>
   );
 }
@@ -378,6 +404,10 @@ function createFormForStation(station: Station): AddKeyFormState {
     stationApiBaseUrl: station.apiBaseUrl,
     name: `${station.name} Key`,
   };
+}
+
+function serializeAddKeyForm(form: AddKeyFormState) {
+  return JSON.stringify(form);
 }
 
 function selectedGroupOption(options: StationGroupOption[], value: string) {

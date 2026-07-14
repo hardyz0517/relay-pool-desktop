@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ArrowLeft, Check, KeyRound, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
+import { Button, ConfirmDialog, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
 import { collectStationTask, testStationLoginInput } from "@/lib/api/collector";
 import { listGroupRateRecords, listStationGroupBindings, upsertStationGroupBinding } from "@/lib/api/groupFacts";
 import {
@@ -107,6 +107,68 @@ const defaultPreset = providerPresets[0];
 const inputClassName =
   "h-8 rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30";
 const remoteLocalKeyNotePrefix = "由远端发现开关自动创建";
+
+function createDefaultProviderForm(): AddProviderFormState {
+  return {
+    presetId: defaultPreset.id,
+    name: getPresetDefaultStationName(defaultPreset),
+    stationType: defaultPreset.stationType,
+    websiteUrl: defaultPreset.websiteUrl,
+    apiBaseUrl: defaultPreset.apiBaseUrl,
+    apiKey: "",
+    collectorProxyMode: "inherit",
+    collectorProxyUrl: "",
+    enabled: true,
+    creditPerCny: "1",
+    loginUsername: "",
+    loginPassword: "",
+    rememberPassword: false,
+    lowBalanceThresholdCny: "",
+    collectionIntervalMinutes: "5",
+    note: "",
+  };
+}
+
+function serializeProviderDraft(
+  form: AddProviderFormState,
+  groupRows: StationGroupDraft[],
+  keyRows: StationKeyDraft[],
+) {
+  return JSON.stringify({
+    form,
+    groupRows: normalizeProviderGroupRowsForDirtyCheck(groupRows),
+    keyRows: normalizeProviderKeyRowsForDirtyCheck(keyRows),
+  });
+}
+
+function normalizeProviderGroupRowsForDirtyCheck(rows: StationGroupDraft[]) {
+  return rows.map((row) => ({
+    groupBindingId: row.groupBindingId,
+    groupKeyHash: row.groupKeyHash,
+    groupIdHash: row.groupIdHash,
+    groupName: row.groupName,
+    rateMultiplier: row.rateMultiplier,
+    inferredGroupCategory: row.inferredGroupCategory,
+    groupCategoryOverride: row.groupCategoryOverride,
+    source: row.source,
+    deleteRequested: row.deleteRequested,
+  }));
+}
+
+function normalizeProviderKeyRowsForDirtyCheck(rows: StationKeyDraft[]) {
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    apiKey: row.apiKey,
+    groupBindingId: row.groupBindingId,
+    groupIdHash: row.groupIdHash,
+    groupName: row.groupName,
+    rateMultiplier: row.rateMultiplier,
+    enabled: row.enabled,
+    note: row.note,
+    deleteRequested: row.deleteRequested,
+  }));
+}
 
 function getPresetDefaultStationName(preset: (typeof providerPresets)[number]) {
   return preset.id === "custom" ? "" : preset.name;
@@ -738,24 +800,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   const toast = useToast();
   const editing = Boolean(stationId);
   const [activeStationId, setActiveStationId] = useState<string | null>(stationId ?? null);
-  const [form, setForm] = useState<AddProviderFormState>({
-    presetId: defaultPreset.id,
-    name: getPresetDefaultStationName(defaultPreset),
-    stationType: defaultPreset.stationType,
-    websiteUrl: defaultPreset.websiteUrl,
-    apiBaseUrl: defaultPreset.apiBaseUrl,
-    apiKey: "",
-    collectorProxyMode: "inherit",
-    collectorProxyUrl: "",
-    enabled: true,
-    creditPerCny: "1",
-    loginUsername: "",
-    loginPassword: "",
-    rememberPassword: false,
-    lowBalanceThresholdCny: "",
-    collectionIntervalMinutes: "5",
-    note: "",
-  });
+  const [form, setForm] = useState<AddProviderFormState>(createDefaultProviderForm);
   const [loading, setLoading] = useState(Boolean(stationId));
   const [saving, setSaving] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
@@ -778,7 +823,12 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   const [createRemoteOpen, setCreateRemoteOpen] = useState(false);
   const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [initialDraftSnapshot, setInitialDraftSnapshot] = useState(() =>
+    serializeProviderDraft(createDefaultProviderForm(), [], [createEmptyStationKeyDraft(0)]),
+  );
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const currentCreditPerCny = useMemo(() => parseCreditPerCny(form.creditPerCny), [form.creditPerCny]);
+  const hasUnsavedChanges = serializeProviderDraft(form, groupRows, keyRows) !== initialDraftSnapshot;
 
   const editableGroupOptions = useMemo(() => {
     const deletedCurrentGroups = currentGroupOptions.filter((option) =>
@@ -841,9 +891,12 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   useEffect(() => {
     setActiveStationId(stationId ?? null);
     if (!stationId) {
+      const nextForm = createDefaultProviderForm();
+      const nextKeyRows = [createEmptyStationKeyDraft(0)];
+      setForm(nextForm);
       setGroupRows([]);
       setCurrentGroupOptions([]);
-      setKeyRows([createEmptyStationKeyDraft(0)]);
+      setKeyRows(nextKeyRows);
       setLocalStationKeys([]);
       setRemoteCreatedLocalKeyIds({});
       setRemoteCapability(draftRemoteCapability(defaultPreset.stationType));
@@ -851,6 +904,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       setRemoteListError(null);
       setRemoteKeys([]);
       setCreateRemoteOpen(false);
+      setInitialDraftSnapshot(serializeProviderDraft(nextForm, [], nextKeyRows));
       setLoading(false);
       return;
     }
@@ -879,17 +933,21 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         if (!station) {
           throw new Error("未找到要编辑的供应商");
         }
-        setForm(formFromStation(station, credentials));
+        const nextForm = formFromStation(station, credentials);
+        const nextGroupRows = dedupeGroupRows(groupBindingsToDrafts(groupBindings, groupRates));
+        const nextKeyRows = keys.length ? keys.map(keyToDraft) : [];
+        setForm(nextForm);
         setLocalStationKeys(keys);
         setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(discoveredRemoteKeysResult.keys, keys));
         setCurrentGroupOptions(groupBindingsToCurrentOptions(groupBindings, groupRates, station.creditPerCny));
-        setGroupRows(dedupeGroupRows(groupBindingsToDrafts(groupBindings, groupRates)));
-        setKeyRows(keys.length ? keys.map(keyToDraft) : []);
+        setGroupRows(nextGroupRows);
+        setKeyRows(nextKeyRows);
         setRemoteCapability(capabilityResult.capability);
         setRemoteCapabilityError(capabilityResult.error);
         setRemoteListError(discoveredRemoteKeysResult.error);
         setRemoteKeys(discoveredRemoteKeysResult.keys);
         setConnectionTest({ status: "idle", message: null });
+        setInitialDraftSnapshot(serializeProviderDraft(nextForm, nextGroupRows, nextKeyRows));
       })
       .catch((requestError) => {
         if (!alive) {
@@ -1399,12 +1457,20 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     ]);
   }
 
+  function requestExit() {
+    if (hasUnsavedChanges) {
+      setDiscardConfirmOpen(true);
+      return;
+    }
+    onBack();
+  }
+
   return (
     <PageScaffold
       title={editing ? "编辑供应商" : "添加新供应商"}
       stickyHeader
       backAction={
-        <IconButton label="返回中转站" onClick={onBack}>
+        <IconButton label="返回中转站" onClick={requestExit}>
           <ArrowLeft className="h-4 w-4" />
         </IconButton>
       }
@@ -1414,7 +1480,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         onSubmit={handleSubmit}
         footer={
           <>
-            <Button variant="secondary" onClick={onBack} disabled={saving}>
+            <Button variant="secondary" onClick={requestExit} disabled={saving}>
               取消
             </Button>
             <Button type="submit" disabled={saving || loading}>
@@ -1790,6 +1856,18 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         saving={remoteLoading}
         onClose={() => setCreateRemoteOpen(false)}
         onSubmit={handleCreateRemoteKey}
+      />
+      <ConfirmDialog
+        open={discardConfirmOpen}
+        title="放弃未保存修改？"
+        description={editing ? "当前供应商修改还没有保存，退出后这些修改会丢失。" : "当前新增供应商还没有保存，退出后这些修改会丢失。"}
+        confirmLabel="放弃修改"
+        cancelLabel="继续编辑"
+        onCancel={() => setDiscardConfirmOpen(false)}
+        onConfirm={() => {
+          setDiscardConfirmOpen(false);
+          onBack();
+        }}
       />
     </PageScaffold>
   );

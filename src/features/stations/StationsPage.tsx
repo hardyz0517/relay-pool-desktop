@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   closestCenter,
   type DraggableAttributes,
@@ -1041,6 +1041,39 @@ function StationAssetListRow({
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}
       >
+        <button
+          type="button"
+          aria-label={`拖拽排序 ${station.name}`}
+          className="inline-flex h-7 w-5 cursor-grab items-center justify-center rounded-[6px] text-muted-foreground/45 transition-colors hover:bg-muted hover:text-muted-foreground active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+          {...dragAttributes}
+          {...dragListeners}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-xs font-semibold text-muted-foreground shadow-surface">
+        {stationAvatarLabel(station.name)}
+      </div>
+
+      <div className="min-w-0 flex-[1_1_calc(100%-5rem)] md:flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="truncate text-[15px] font-semibold leading-5 text-foreground">{station.name}</div>
+          <span className="hidden rounded-full border border-border bg-surface/80 px-2 py-0.5 text-[11px] font-medium leading-4 text-muted-foreground sm:inline-flex">
+            {stationTypeLabels[station.stationType]}
+          </span>
+          {issueTags.map((tag) => (
+            <span
+              key={tag.label}
+              className={cn(
+                "hidden rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 sm:inline-flex",
+                stationIssueTagClassName(tag.tone),
+              )}
+              title={tag.title ?? tag.label}
+            >
+              {tag.label}
+            </span>
+          ))}
+        </div>
         <button
           type="button"
           aria-label={`在浏览器打开 ${station.name}`}

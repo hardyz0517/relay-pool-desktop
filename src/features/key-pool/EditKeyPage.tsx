@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, Check, KeyRound } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, EmptyState, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
+import { Button, ConfirmDialog, EmptyState, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { listKeyPoolItems, saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
@@ -73,9 +73,12 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
   const [sourceItem, setSourceItem] = useState<KeyPoolItem | null>(null);
   const [groupOptions, setGroupOptions] = useState<StationGroupOption[]>([]);
   const [form, setForm] = useState<EditKeyFormState>(emptyForm);
+  const [initialFormSnapshot, setInitialFormSnapshot] = useState(() => serializeEditKeyForm(emptyForm));
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasUnsavedChanges = serializeEditKeyForm(form) !== initialFormSnapshot;
 
   const bindingOptions = [
     ...groupOptions
@@ -94,6 +97,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
     setSourceItem(null);
     setGroupOptions([]);
     setForm(emptyForm);
+    setInitialFormSnapshot(serializeEditKeyForm(emptyForm));
 
     if (!stationKeyId) {
       setLoading(false);
@@ -118,7 +122,9 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
         }
         setSourceItem(item);
         setGroupOptions(nextGroupOptions);
-        setForm(formFromItem(item, nextGroupOptions));
+        const nextForm = formFromItem(item, nextGroupOptions);
+        setForm(nextForm);
+        setInitialFormSnapshot(serializeEditKeyForm(nextForm));
       })
       .catch((requestError) => {
         if (!alive) {
@@ -188,12 +194,20 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
     }
   }
 
+  function requestExit() {
+    if (hasUnsavedChanges) {
+      setDiscardConfirmOpen(true);
+      return;
+    }
+    onBack();
+  }
+
   return (
     <PageScaffold
       title="编辑密钥"
       stickyHeader
       backAction={
-        <IconButton label="返回密钥池" onClick={onBack}>
+        <IconButton label="返回密钥池" onClick={requestExit}>
           <ArrowLeft className="h-4 w-4" />
         </IconButton>
       }
@@ -218,7 +232,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
           onSubmit={handleSubmit}
           footer={
             <>
-              <Button variant="secondary" onClick={onBack} disabled={saving}>
+              <Button variant="secondary" onClick={requestExit} disabled={saving}>
                 取消
               </Button>
               <Button type="submit" disabled={saving}>
@@ -340,6 +354,18 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
           </section>
         </PageForm>
       )}
+      <ConfirmDialog
+        open={discardConfirmOpen}
+        title="放弃未保存修改？"
+        description="当前密钥修改还没有保存，退出后这些修改会丢失。"
+        confirmLabel="放弃修改"
+        cancelLabel="继续编辑"
+        onCancel={() => setDiscardConfirmOpen(false)}
+        onConfirm={() => {
+          setDiscardConfirmOpen(false);
+          onBack();
+        }}
+      />
     </PageScaffold>
   );
 }
@@ -396,6 +422,10 @@ function formFromItem(item: KeyPoolItem, options: StationGroupOption[] = []): Ed
     onlyUseAsBackup: item.onlyUseAsBackup,
     routingTags: "",
   };
+}
+
+function serializeEditKeyForm(form: EditKeyFormState) {
+  return JSON.stringify(form);
 }
 
 function groupBindingValueFromItem(item: KeyPoolItem, options: StationGroupOption[]) {
