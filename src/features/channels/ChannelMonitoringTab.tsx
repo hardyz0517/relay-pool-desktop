@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Copy, Edit3, LayoutTemplate, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button, ConfirmDialog, EmptyState, IconButton, StatusBadge, useToast } from "@/components/ui";
+import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   usePageActivation,
   usePageRefreshEnabled,
@@ -30,6 +31,7 @@ import {
 } from "./channelMonitorViewModel";
 
 type ChannelMonitoringTabProps = {
+  headerActions?: ReactNode;
   onHealthChanged: () => void;
 };
 
@@ -41,7 +43,7 @@ type ActionState = {
 const monitorGridClassName =
   "w-full grid-cols-[minmax(0,0.9fr)_minmax(0,1.15fr)_minmax(0,1.15fr)_minmax(0,0.75fr)_minmax(0,0.75fr)] items-center gap-3";
 
-export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabProps) {
+export function ChannelMonitoringTab({ headerActions, onHealthChanged }: ChannelMonitoringTabProps) {
   const toast = useToast();
   const refreshEnabled = usePageRefreshEnabled();
   useActivityQuery(refreshEnabled, channelMonitoringQueryOptions());
@@ -202,8 +204,23 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
     }
   }
 
+  if (formOpen) {
+    return (
+      <ChannelMonitorForm
+        open={formOpen}
+        monitor={editingMonitor}
+        stations={stations}
+        keys={keys}
+        templates={templates}
+        saving={saving}
+        onClose={closeForm}
+        onSubmit={handleSave}
+      />
+    );
+  }
+
   return (
-    <>
+    <PageScaffold title="渠道监控" actions={headerActions}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-2">
           <SummaryPill label="监控" value={`${summary.total}`} />
@@ -256,16 +273,6 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
         />
       )}
 
-      <ChannelMonitorForm
-        open={formOpen}
-        monitor={editingMonitor}
-        stations={stations}
-        keys={keys}
-        templates={templates}
-        saving={saving}
-        onClose={closeForm}
-        onSubmit={handleSave}
-      />
       <ChannelMonitorTemplateManager
         open={templateManagerOpen}
         templates={templates}
@@ -281,7 +288,7 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
         onCancel={() => setPendingDeleteMonitor(null)}
         onConfirm={() => void handleConfirmDelete()}
       />
-    </>
+    </PageScaffold>
   );
 }
 

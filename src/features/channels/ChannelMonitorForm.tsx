@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Check } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, IconButton, PageForm, SelectControl, SwitchControl } from "@/components/ui";
+import { Button, IconButton, PageForm, SectionCard, SelectControl, SwitchControl } from "@/components/ui";
 import type { ChannelMonitor, ChannelMonitorRequestTemplate, CreateChannelMonitorInput } from "@/lib/types/channelMonitors";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
@@ -146,169 +146,178 @@ export function ChannelMonitorForm({
   }
 
   return (
-    <div className="absolute -inset-[var(--shell-page-gap)] z-30 overflow-y-auto overflow-x-hidden bg-background p-[var(--shell-page-gap)]">
-      <PageScaffold
-        title={monitor ? "编辑渠道监控" : "新增渠道监控"}
-        description="配置本地探测任务"
-        stickyHeader
-        backAction={
-          <IconButton label="返回监控列表" onClick={onClose} disabled={saving}>
-            <ArrowLeft className="h-4 w-4" />
-          </IconButton>
+    <PageScaffold
+      title={monitor ? "编辑渠道监控" : "新增渠道监控"}
+      stickyHeader
+      backAction={
+        <IconButton label="返回监控列表" onClick={onClose} disabled={saving}>
+          <ArrowLeft className="h-4 w-4" />
+        </IconButton>
+      }
+    >
+      <PageForm
+        id="channel-monitor-form"
+        className="w-full"
+        onSubmit={handleSubmit}
+        footer={
+          <>
+            <Button variant="secondary" onClick={onClose} disabled={saving}>
+              取消
+            </Button>
+            <Button type="submit" disabled={!canSubmit}>
+              <Check className="h-4 w-4" />
+              {saving ? "保存中" : "保存"}
+            </Button>
+          </>
         }
       >
-        <PageForm
-          id="channel-monitor-form"
-          className="min-h-[520px]"
-          onSubmit={handleSubmit}
-          footer={
-            <div className="flex w-full min-w-0 items-center justify-between gap-3">
-              <div className="min-w-0 truncate text-xs text-danger-foreground">{validationError ?? ""}</div>
-              <div className="flex shrink-0 justify-end gap-2">
-                <Button variant="outline" onClick={onClose} disabled={saving}>
-                  取消
-                </Button>
-                <Button type="submit" disabled={!canSubmit}>
-                  {saving ? "保存中" : "保存"}
-                </Button>
+        <section className="grid gap-[var(--shell-page-gap)]">
+          <SectionCard title="监控目标">
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1.3fr)_12rem_12rem]">
+              <Field label="监控名称">
+                <input
+                  className={inputClassName}
+                  value={draft.name}
+                  onChange={(event) => updateDraft({ name: event.target.value })}
+                />
+              </Field>
+              <Field label="目标类型">
+                <SelectControl
+                  ariaLabel="目标类型"
+                  className={inputClassName}
+                  value={draft.targetType}
+                  options={targetTypeOptions}
+                  onChange={handleTargetTypeChange}
+                />
+              </Field>
+              <Field label="启用状态">
+                <SwitchControl
+                  checked={draft.enabled}
+                  ariaLabel="启用监控"
+                  onCheckedChange={() => updateDraft({ enabled: !draft.enabled })}
+                  onLabel="启用"
+                  offLabel="停用"
+                  className="h-8"
+                />
+              </Field>
+            </div>
+
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <Field label="中转站">
+                <SelectControl
+                  ariaLabel="中转站"
+                  className={inputClassName}
+                  value={draft.stationId}
+                  options={stationOptions}
+                  placeholder="请选择中转站"
+                  onChange={handleStationChange}
+                />
+              </Field>
+              <Field label="站点密钥">
+                <SelectControl
+                  ariaLabel="站点密钥"
+                  className={inputClassName}
+                  value={draft.stationKeyId}
+                  options={keyOptions}
+                  placeholder={isStationTarget ? "中转站目标不需要选择密钥" : "请选择密钥"}
+                  disabled={isStationTarget}
+                  onChange={(stationKeyId) => updateDraft({ stationKeyId })}
+                />
+              </Field>
+            </div>
+          </SectionCard>
+
+          <SectionCard title="探测请求">
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="OpenAI 协议" className="md:col-span-2">
+                <div className="grid gap-2 rounded-[8px] border border-info-border bg-info-surface p-2 md:grid-cols-2">
+                  {protocolOptions.map((option) => {
+                    const active = selectedProtocol === option.value;
+                    const disabled = !monitorTemplateOptionsForProtocol(templates, option.value).some((template) => template.enabled);
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`min-h-[64px] rounded-[8px] border bg-surface px-3 py-2 text-left transition ${
+                          active
+                            ? "border-primary text-primary shadow-surface"
+                            : "border-border text-muted-foreground hover:border-primary hover:bg-selected"
+                        } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+                        disabled={disabled}
+                        onClick={() => handleProtocolChange(option.value)}
+                      >
+                        <div className="text-sm font-semibold">{option.title}</div>
+                        <div className="mt-1 text-xs leading-5 text-muted-foreground">{option.description}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Field>
+
+              <Field label="请求模板">
+                <SelectControl
+                  ariaLabel="请求模板"
+                  className={inputClassName}
+                  value={draft.templateId}
+                  options={templateOptions}
+                  placeholder="请选择模板"
+                  onChange={(templateId) => updateDraft({ templateId })}
+                />
+              </Field>
+              <Field label="检测模型">
+                <input
+                  className={inputClassName}
+                  value={draft.detectionModel}
+                  placeholder="例如 gpt-4o-mini"
+                  onChange={(event) => updateDraft({ detectionModel: event.target.value })}
+                />
+              </Field>
+            </div>
+          </SectionCard>
+
+          <SectionCard title="调度设置">
+            <div className="grid gap-3 md:grid-cols-5">
+              <Field label="间隔（秒）">
+                <NumberInput value={draft.intervalSeconds} onChange={(intervalSeconds) => updateDraft({ intervalSeconds })} />
+              </Field>
+              <Field label="抖动（秒）">
+                <NumberInput value={draft.jitterSeconds} onChange={(jitterSeconds) => updateDraft({ jitterSeconds })} />
+              </Field>
+              <Field label="超时（秒）">
+                <NumberInput value={draft.timeoutSeconds} onChange={(timeoutSeconds) => updateDraft({ timeoutSeconds })} />
+              </Field>
+              <Field label="最大并发">
+                <NumberInput
+                  value={draft.maxConcurrency}
+                  disabled={!isStationTarget}
+                  onChange={(maxConcurrency) => updateDraft({ maxConcurrency })}
+                />
+              </Field>
+              <Field label="失败阈值">
+                <NumberInput
+                  value={draft.consecutiveFailureThreshold}
+                  onChange={(consecutiveFailureThreshold) => updateDraft({ consecutiveFailureThreshold })}
+                />
+              </Field>
+            </div>
+
+            <Field label="备注" className="mt-3">
+              <textarea
+                className={`${inputClassName} min-h-20 resize-none py-2`}
+                value={draft.note}
+                onChange={(event) => updateDraft({ note: event.target.value })}
+              />
+            </Field>
+
+            {validationError && (
+              <div className="mt-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
+                {validationError}
               </div>
-            </div>
-          }
-        >
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1.3fr)_12rem_12rem]">
-          <Field label="监控名称">
-            <input
-              className={inputClassName}
-              value={draft.name}
-              onChange={(event) => updateDraft({ name: event.target.value })}
-            />
-          </Field>
-          <Field label="目标类型">
-            <SelectControl
-              ariaLabel="目标类型"
-              className={inputClassName}
-              value={draft.targetType}
-              options={targetTypeOptions}
-              onChange={handleTargetTypeChange}
-            />
-          </Field>
-          <Field label="启用状态">
-            <SwitchControl
-              checked={draft.enabled}
-              ariaLabel="启用监控"
-              onCheckedChange={() => updateDraft({ enabled: !draft.enabled })}
-              onLabel="启用"
-              offLabel="停用"
-              className="h-8"
-            />
-          </Field>
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-2">
-          <Field label="中转站">
-            <SelectControl
-              ariaLabel="中转站"
-              className={inputClassName}
-              value={draft.stationId}
-              options={stationOptions}
-              placeholder="请选择中转站"
-              onChange={handleStationChange}
-            />
-          </Field>
-          <Field label="站点密钥">
-            <SelectControl
-              ariaLabel="站点密钥"
-              className={inputClassName}
-              value={draft.stationKeyId}
-              options={keyOptions}
-              placeholder={isStationTarget ? "中转站目标不需要选择密钥" : "请选择密钥"}
-              disabled={isStationTarget}
-              onChange={(stationKeyId) => updateDraft({ stationKeyId })}
-            />
-          </Field>
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-2">
-          <Field label="OpenAI 协议" className="md:col-span-2">
-            <div className="grid gap-2 rounded-[8px] border border-info-border bg-info-surface p-2 md:grid-cols-2">
-              {protocolOptions.map((option) => {
-                const active = selectedProtocol === option.value;
-                const disabled = !monitorTemplateOptionsForProtocol(templates, option.value).some((template) => template.enabled);
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={`min-h-[64px] rounded-[8px] border bg-surface px-3 py-2 text-left transition ${
-                      active
-                        ? "border-primary text-primary shadow-surface"
-                        : "border-border text-muted-foreground hover:border-primary hover:bg-selected"
-                    } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
-                    disabled={disabled}
-                    onClick={() => handleProtocolChange(option.value)}
-                  >
-                    <div className="text-sm font-semibold">{option.title}</div>
-                    <div className="mt-1 text-xs leading-5 text-muted-foreground">{option.description}</div>
-                  </button>
-                );
-              })}
-            </div>
-          </Field>
-
-          <Field label="请求模板">
-            <SelectControl
-              ariaLabel="请求模板"
-              className={inputClassName}
-              value={draft.templateId}
-              options={templateOptions}
-              placeholder="请选择模板"
-              onChange={(templateId) => updateDraft({ templateId })}
-            />
-          </Field>
-          <Field label="检测模型">
-            <input
-              className={inputClassName}
-              value={draft.detectionModel}
-              placeholder="例如 gpt-4o-mini"
-              onChange={(event) => updateDraft({ detectionModel: event.target.value })}
-            />
-          </Field>
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-5">
-          <Field label="间隔（秒）">
-            <NumberInput value={draft.intervalSeconds} onChange={(intervalSeconds) => updateDraft({ intervalSeconds })} />
-          </Field>
-          <Field label="抖动（秒）">
-            <NumberInput value={draft.jitterSeconds} onChange={(jitterSeconds) => updateDraft({ jitterSeconds })} />
-          </Field>
-          <Field label="超时（秒）">
-            <NumberInput value={draft.timeoutSeconds} onChange={(timeoutSeconds) => updateDraft({ timeoutSeconds })} />
-          </Field>
-          <Field label="最大并发">
-            <NumberInput
-              value={draft.maxConcurrency}
-              disabled={!isStationTarget}
-              onChange={(maxConcurrency) => updateDraft({ maxConcurrency })}
-            />
-          </Field>
-          <Field label="失败阈值">
-            <NumberInput
-              value={draft.consecutiveFailureThreshold}
-              onChange={(consecutiveFailureThreshold) => updateDraft({ consecutiveFailureThreshold })}
-            />
-          </Field>
-        </div>
-
-        <Field label="备注">
-          <textarea
-            className={`${inputClassName} min-h-20 resize-none py-2`}
-            value={draft.note}
-            onChange={(event) => updateDraft({ note: event.target.value })}
-          />
-        </Field>
-        </PageForm>
-      </PageScaffold>
-    </div>
+            )}
+          </SectionCard>
+        </section>
+      </PageForm>
+    </PageScaffold>
   );
 }
 

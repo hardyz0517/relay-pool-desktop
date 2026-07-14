@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const source = await readFile("src/features/channels/ChannelMonitoringTab.tsx", "utf8");
+const formSource = await readFile("src/features/channels/ChannelMonitorForm.tsx", "utf8");
+const pageSource = await readFile("src/features/channels/ChannelStatusPage.tsx", "utf8");
 
 assert.ok(
   !source.includes("min-w-[780px]") && !source.includes("min-w-[880px]"),
@@ -53,4 +55,34 @@ assert.ok(
 assert.ok(
   source.includes("lg:hidden") && source.includes("MonitorCardField"),
   "monitor list should render card fields on small windows",
+);
+
+assert.ok(
+  source.includes("if (formOpen)"),
+  "monitor form should replace the monitoring list content instead of rendering below the list",
+);
+
+assert.ok(
+  pageSource.includes('headerActions={channelPageTabs}'),
+  "channel monitoring tab should own its page scaffold so the monitor form can replace the Channel Status header",
+);
+
+assert.ok(
+  source.includes("headerActions?: ReactNode"),
+  "monitoring tab should accept the parent tab switcher as page actions for list mode only",
+);
+
+assert.ok(
+  !formSource.includes("absolute -inset-[var(--shell-page-gap)]"),
+  "monitor form should use the same in-flow page form pattern as station edit pages, not an absolute overlay",
+);
+
+assert.ok(
+  !formSource.includes('description="配置本地探测任务"'),
+  "monitor form header should not show the secondary description line",
+);
+
+assert.ok(
+  !formSource.includes("flex w-full min-w-0 items-center justify-between"),
+  "monitor form footer should let PageForm own footer alignment instead of adding a full-width split layout",
 );
