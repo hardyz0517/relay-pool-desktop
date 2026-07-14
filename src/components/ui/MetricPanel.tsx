@@ -40,40 +40,40 @@ const toneClassName: Record<MetricTone, string> = {
 
 const accentClassName: Record<MetricAccent, { icon: string; value: string }> = {
   slate: {
-    icon: "bg-muted text-muted-foreground",
-    value: "text-foreground",
+    icon: "bg-metric-slate-surface text-metric-slate-foreground",
+    value: "text-metric-slate-foreground",
   },
   emerald: {
-    icon: "bg-success-surface text-success-foreground",
-    value: "text-success-foreground",
+    icon: "bg-metric-emerald-surface text-metric-emerald-foreground",
+    value: "text-metric-emerald-foreground",
   },
   green: {
-    icon: "bg-success-surface text-success-foreground",
-    value: "text-success-foreground",
+    icon: "bg-metric-green-surface text-metric-green-foreground",
+    value: "text-metric-green-foreground",
   },
   blue: {
-    icon: "bg-info-surface text-info-foreground",
-    value: "text-info-foreground",
+    icon: "bg-metric-blue-surface text-metric-blue-foreground",
+    value: "text-metric-blue-foreground",
   },
   amber: {
-    icon: "bg-warning-surface text-warning-foreground",
-    value: "text-warning-foreground",
+    icon: "bg-metric-amber-surface text-metric-amber-foreground",
+    value: "text-metric-amber-foreground",
   },
   indigo: {
-    icon: "bg-info-surface text-info-foreground",
-    value: "text-info-foreground",
+    icon: "bg-metric-indigo-surface text-metric-indigo-foreground",
+    value: "text-metric-indigo-foreground",
   },
   violet: {
-    icon: "bg-platform-image-surface text-platform-image-foreground",
-    value: "text-platform-image-foreground",
+    icon: "bg-metric-violet-surface text-metric-violet-foreground",
+    value: "text-metric-violet-foreground",
   },
   purple: {
-    icon: "bg-platform-image-surface text-platform-image-foreground",
-    value: "text-platform-image-foreground",
+    icon: "bg-metric-purple-surface text-metric-purple-foreground",
+    value: "text-metric-purple-foreground",
   },
   rose: {
-    icon: "bg-danger-surface text-danger-foreground",
-    value: "text-danger-foreground",
+    icon: "bg-metric-rose-surface text-metric-rose-foreground",
+    value: "text-metric-rose-foreground",
   },
 };
 

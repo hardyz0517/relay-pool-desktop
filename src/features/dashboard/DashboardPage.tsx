@@ -617,7 +617,7 @@ export function DashboardPage() {
                 return (
               <div
                 key={request.id}
-                className="grid min-h-[72px] grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3 rounded-[8px] bg-surface-subtle px-4 py-3"
+                className="grid min-h-[72px] grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3 rounded-[8px] border border-border bg-surface px-4 py-3 shadow-surface transition-colors hover:bg-surface-subtle"
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-info-surface text-info-foreground">
                   <FlaskConical className="h-5 w-5" />

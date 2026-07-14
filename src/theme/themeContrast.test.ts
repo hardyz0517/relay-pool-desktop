@@ -5,9 +5,13 @@ const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 const pairs = [
   ["foreground", "background"], ["foreground", "surface"],
   ["muted-foreground", "surface"], ["selected-foreground", "selected"],
+  ["control-active-foreground", "control-active"],
   ["primary", "surface"], ["primary-foreground", "primary-solid"],
   ["on-solid", "danger-solid"],
   ...["success", "warning", "danger", "info"].map((tone) => [`${tone}-foreground`, `${tone}-surface`]),
+  ...["slate", "emerald", "green", "blue", "amber", "indigo", "violet", "purple", "rose"].map(
+    (accent) => [`metric-${accent}-foreground`, `metric-${accent}-surface`],
+  ),
   ...["anthropic", "openai", "gemini", "grok", "image", "generic"].map(
     (platform) => [`platform-${platform}-foreground`, `platform-${platform}-surface`],
   ),
@@ -68,6 +72,35 @@ function contrast(foreground: Hsl, background: Hsl) {
 }
 
 describe("theme token contrast", () => {
+  it("keeps the light canvas white instead of gray", () => {
+    const variables = parseVariables(themeBlock("light"));
+    expect(readToken(variables, "background")).toEqual([0, 0, 100]);
+    expect(readToken(variables, "surface")).toEqual([0, 0, 100]);
+    expect(readToken(variables, "surface-subtle")[2]).toBeGreaterThanOrEqual(98.5);
+    expect(readToken(variables, "surface-inset")[2]).toBeGreaterThanOrEqual(97);
+  });
+
+  it("keeps light dashboard accents saturated instead of gray", () => {
+    const variables = parseVariables(themeBlock("light"));
+    for (const token of [
+      "success-foreground",
+      "warning-foreground",
+      "danger-foreground",
+      "info-foreground",
+      "platform-image-foreground",
+      "metric-emerald-foreground",
+      "metric-green-foreground",
+      "metric-blue-foreground",
+      "metric-amber-foreground",
+      "metric-indigo-foreground",
+      "metric-violet-foreground",
+      "metric-purple-foreground",
+      "metric-rose-foreground",
+    ]) {
+      expect(readToken(variables, token)[1], token).toBeGreaterThanOrEqual(72);
+    }
+  });
+
   it.each(["light", "dark"] as const)("keeps %s text pairs readable", (theme) => {
     const variables = parseVariables(themeBlock(theme));
     for (const [foreground, background] of pairs) {

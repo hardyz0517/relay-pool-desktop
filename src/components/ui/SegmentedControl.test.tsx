@@ -16,6 +16,24 @@ const options: Array<{ value: Mode; label: string; icon: typeof Sun }> = [
 ];
 
 describe("SegmentedControl icons", () => {
+  it("uses the segmented active token instead of the switch thumb token", async () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+
+    await act(async () => root.render(
+      <SegmentedControl ariaLabel="外观模式" options={options} value="dark" onChange={vi.fn()} />,
+    ));
+
+    const activeTrack = host.querySelector<HTMLElement>('[aria-hidden="true"]')!;
+    const selectedOption = host.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')!;
+
+    expect(activeTrack.className).toContain("bg-control-active");
+    expect(activeTrack.className).not.toContain("bg-control-thumb");
+    expect(selectedOption.className).toContain("text-control-active-foreground");
+
+    await act(async () => root.unmount());
+  });
+
   it("keeps labels accessible and layout tracks stable", async () => {
     const onChange = vi.fn();
     const host = document.createElement("div");

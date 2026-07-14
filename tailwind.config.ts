@@ -25,6 +25,9 @@ const config = {
         "selected-foreground": token("selected-foreground"),
         scrim: token("scrim"),
         "control-thumb": token("control-thumb"),
+        "control-active": token("control-active"),
+        "control-active-foreground": token("control-active-foreground"),
+        "control-active-border": token("control-active-border"),
         "on-solid": token("on-solid"),
         primary: {
           DEFAULT: token("primary"),
@@ -52,6 +55,15 @@ const config = {
           foreground: token("info-foreground"),
           border: token("info-border"),
         },
+        metric: Object.fromEntries(
+          ["slate", "emerald", "green", "blue", "amber", "indigo", "violet", "purple", "rose"].map((accent) => [
+            accent,
+            {
+              surface: token(`metric-${accent}-surface`),
+              foreground: token(`metric-${accent}-foreground`),
+            },
+          ]),
+        ),
         platform: Object.fromEntries(
           ["anthropic", "openai", "gemini", "grok", "image", "generic"].map((platform) => [
             platform,

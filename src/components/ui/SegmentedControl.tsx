@@ -101,7 +101,7 @@ export function SegmentedControl<T extends string>({
     >
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute left-0.5 top-0.5 h-[calc(100%-4px)] rounded-[calc(var(--surface-radius)-3px)] bg-control-thumb shadow-surface transition-transform duration-200 ease-out"
+        className="pointer-events-none absolute left-0.5 top-0.5 h-[calc(100%-4px)] rounded-[calc(var(--surface-radius)-3px)] bg-control-active shadow-surface ring-1 ring-control-active-border transition-transform duration-200 ease-out"
         style={activeStyle}
       />
       {options.map((option) => {
@@ -119,7 +119,7 @@ export function SegmentedControl<T extends string>({
             onClick={() => selectOption(option.value)}
             className={cn(
               "relative z-10 h-7 min-w-0 cursor-pointer rounded-[calc(var(--surface-radius)-3px)] px-3 text-xs font-medium leading-7 text-muted-foreground transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-default disabled:opacity-45",
-              selected ? "text-foreground" : "hover:text-foreground",
+              selected ? "text-control-active-foreground" : "hover:text-foreground",
             )}
           >
             <span className="flex min-w-0 items-center justify-center gap-1.5">
