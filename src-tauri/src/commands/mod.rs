@@ -61,11 +61,10 @@ use crate::{
         database::{now_millis_for_services, AppDatabase},
         endpoint_ping::ping_station_endpoint as probe_station_endpoint,
         pricing::{pricing_context_from_pricing_parts, RequestPricingParts},
-        proxy::{
-            build_upstream_url, redact_error_message, runtime::ProxyRuntimeState, should_fallback,
-        },
+        proxy::{redact_error_message, runtime::ProxyRuntimeState, should_fallback},
         remote_keys,
         secrets::SecretManager,
+        station_endpoints::{build_api_url, url_belongs_to_base},
         updater::{self, PublishedUpdateInspection, UpdaterNetworkConfig},
     },
 };
@@ -681,7 +680,7 @@ fn ping_station_endpoint_for_tests(
         .ok_or_else(|| "未找到要 PING 的中转站".to_string())?;
     let checked_at = now_millis_for_services().to_string();
     let probe = probe_station_endpoint(
-        &station.base_url,
+        &station.api_base_url,
         Duration::from_secs(timeout_seconds.max(1)),
     );
     let health = database.upsert_station_endpoint_health(
@@ -1197,6 +1196,7 @@ pub async fn start_capture_session(
         None
     };
     let label = capture_window_label(&station_id);
+    let endpoint_revision = station.endpoint_revision;
     let script = capture_script(
         &station_id,
         &label,
@@ -1226,8 +1226,7 @@ pub async fn start_capture_session(
             .build()
             .map_err(|error| format!("打开网页登录窗口失败: {error}"))?;
             if let Some(window) = app_handle.get_webview_window(&label_for_start) {
-                let target_url =
-                    collectors::url::collector_base_urls(&station.base_url).management_base_url;
+                let target_url = station.website_url.clone();
                 let target = target_url
                     .parse()
                     .map_err(|error| format!("Base URL 无法作为网页登录地址打开: {error}"))?;
@@ -1243,7 +1242,7 @@ pub async fn start_capture_session(
     })
     .await
     .map_err(|error| format!("打开网页登录窗口失败: {error}"))??;
-    sessions.start(station_id, label)
+    sessions.start(station_id, label, endpoint_revision)
 }
 
 #[tauri::command]
@@ -1262,12 +1261,21 @@ pub fn record_capture_event(
     input: CapturedHttpEventInput,
 ) -> Result<CaptureSessionStatus, String> {
     let station = database.station_for_collector(&input.station_id)?;
-    if !capture_request_belongs_to_station(&station.base_url, &input.request_url) {
+    if !capture_request_belongs_to_station(
+        &station.website_url,
+        &station.api_base_url,
+        &input.request_url,
+    ) {
         return Err("捕获事件不属于当前站点 Base URL，已拒绝。".to_string());
     }
     let web_authorization_user_id = web_authorization_candidate_user_id_from_input(&input);
     if let Some(session) = capture::extract_session_credentials(&input) {
-        database.persist_station_session_with_data_key(session, secrets.data_key())?;
+        let expected_revision = sessions
+            .endpoint_revision(&input.station_id)?
+            .ok_or_else(capture_endpoint_revision_missing_message)?;
+        database
+            .persist_station_session_if_revision(session, expected_revision, secrets.data_key())
+            .map_err(capture_endpoint_revision_error)?;
     }
     let station_id = input.station_id.clone();
     let event = capture::sanitize_event(input);
@@ -1367,30 +1375,35 @@ pub async fn finish_web_authorization_session(
         .ok_or_else(|| {
             "网页登录授权尚未捕获到用户身份，请在授权窗口完成登录后重试。".to_string()
         })?;
+    let expected_revision = sessions
+        .endpoint_revision(&station_id)?
+        .ok_or_else(capture_endpoint_revision_missing_message)?;
     let cookie_header =
-        read_capture_window_cookie_header(app, &station_id, &station.base_url).await?;
-    let urls = collectors::url::collector_base_urls(&station.base_url);
+        read_capture_window_cookie_header(app, &station_id, &station.website_url).await?;
     let verified = capture::web_authorization::verify_newapi_cookie_session(
-        &urls.management_base_url,
+        &station.website_url,
         &cookie_header,
         &candidate.user_id,
         Duration::from_secs(20),
     )?;
 
     let (_, events) = sessions.commit_web_authorization(&station_id, &candidate, || {
-        database.persist_station_session_with_data_key(
-            PersistStationSessionInput {
-                station_id: station_id.clone(),
-                access_token: None,
-                refresh_token: None,
-                cookie: Some(verified.cookie_header),
-                newapi_user_id: Some(verified.newapi_user_id),
-                token_expires_at: None,
-                session_expires_at: None,
-                session_source: verified.session_source,
-            },
-            secrets.data_key(),
-        )
+        database
+            .persist_station_session_if_revision(
+                PersistStationSessionInput {
+                    station_id: station_id.clone(),
+                    access_token: None,
+                    refresh_token: None,
+                    cookie: Some(verified.cookie_header),
+                    newapi_user_id: Some(verified.newapi_user_id),
+                    token_expires_at: None,
+                    session_expires_at: None,
+                    session_source: verified.session_source,
+                },
+                expected_revision,
+                secrets.data_key(),
+            )
+            .map_err(capture_endpoint_revision_error)
     })?;
 
     finish_capture_session_with_events(
@@ -1415,14 +1428,13 @@ fn capture_window_label(station_id: &str) -> String {
 async fn read_capture_window_cookie_header(
     app: tauri::AppHandle,
     station_id: &str,
-    station_base_url: &str,
+    station_website_url: &str,
 ) -> Result<String, String> {
     let label = capture_window_label(station_id);
     let window = app
         .get_webview_window(&label)
         .ok_or_else(|| "网页登录授权窗口不存在，请重新打开授权窗口。".to_string())?;
-    let urls = collectors::url::collector_base_urls(station_base_url);
-    let target = tauri::Url::parse(&urls.management_base_url)
+    let target = tauri::Url::parse(station_website_url)
         .map_err(|error| format!("站点管理地址无法用于读取 Cookie: {error}"))?;
 
     let cookies = tauri::async_runtime::spawn_blocking(move || window.cookies_for_url(target))
@@ -1438,18 +1450,26 @@ async fn read_capture_window_cookie_header(
         .ok_or_else(|| "网页登录授权未捕获到可用 Cookie，请确认已在授权窗口完成登录。".to_string())
 }
 
-fn capture_request_belongs_to_station(station_base_url: &str, request_url: &str) -> bool {
-    let urls = collectors::url::collector_base_urls(station_base_url);
-    let belongs = [&urls.management_base_url, &urls.upstream_api_base_url]
+fn capture_request_belongs_to_station(
+    station_website_url: &str,
+    station_api_base_url: &str,
+    request_url: &str,
+) -> bool {
+    [station_website_url, station_api_base_url]
         .into_iter()
-        .any(|base_url| url_has_base_prefix(request_url, base_url));
-    belongs
+        .any(|base_url| url_belongs_to_base(request_url, base_url))
 }
 
-fn url_has_base_prefix(request_url: &str, base_url: &str) -> bool {
-    let request = request_url.trim();
-    let base = base_url.trim().trim_end_matches('/');
-    !base.is_empty() && (request == base || request.starts_with(&format!("{base}/")))
+fn capture_endpoint_revision_missing_message() -> String {
+    "endpoint_revision_changed: 捕获会话已过期，请重新打开网页登录 / 捕获窗口。".to_string()
+}
+
+fn capture_endpoint_revision_error(error: String) -> String {
+    if error == "station_endpoint_revision_changed" {
+        capture_endpoint_revision_missing_message()
+    } else {
+        error
+    }
 }
 
 fn web_authorization_candidate_user_id_from_input(
@@ -1830,7 +1850,7 @@ fn test_station_key_connectivity_blocking(
         })
         .unwrap_or(UpstreamApiFormat::Auto);
     let discovered_models =
-        discover_station_key_connectivity_models(&key.station_base_url, &api_key)
+        discover_station_key_connectivity_models(&key.station_api_base_url, &api_key)
             .unwrap_or_default();
     let requested_model = model.trim().to_string();
     let candidates = station_key_connectivity_model_candidates(
@@ -1844,7 +1864,7 @@ fn test_station_key_connectivity_blocking(
             capabilities.as_ref(),
             |kind| {
                 send_station_key_connectivity_probe(
-                    &key.station_base_url,
+                    &key.station_api_base_url,
                     &api_key,
                     candidate,
                     kind,
@@ -1877,12 +1897,12 @@ fn test_station_key_connectivity_blocking(
 fn build_station_key_connectivity_probe_url(
     base_url: &str,
     kind: StationKeyConnectivityProbeKind,
-) -> String {
+) -> Result<String, String> {
     let path = match kind {
         StationKeyConnectivityProbeKind::Responses => "/v1/responses",
         StationKeyConnectivityProbeKind::ChatCompletions => "/v1/chat/completions",
     };
-    build_upstream_url(base_url, path)
+    build_api_url(base_url, path)
 }
 
 fn build_station_key_connectivity_probe_body(
@@ -1969,7 +1989,9 @@ impl StationKeyConnectivitySseDecoder {
         if !self.terminal_seen {
             return Err("SSE stream ended without terminal signal".to_string());
         }
-        Ok(redact_error_message(&truncate_connectivity_reply(&self.message)))
+        Ok(redact_error_message(&truncate_connectivity_reply(
+            &self.message,
+        )))
     }
 
     fn consume_event(&mut self, event_text: &str) -> Result<Vec<String>, String> {
@@ -2303,15 +2325,13 @@ fn send_station_key_connectivity_probe(
         |mode| match mode {
             StationKeyConnectivityRequestMode::Stream => {
                 send_station_key_connectivity_stream_probe_attempt(
-                    base_url,
-                    api_key,
-                    model,
-                    kind,
-                    progress,
+                    base_url, api_key, model, kind, progress,
                 )
             }
             StationKeyConnectivityRequestMode::NonStream => {
-                send_station_key_connectivity_non_stream_probe_attempt(base_url, api_key, model, kind)
+                send_station_key_connectivity_non_stream_probe_attempt(
+                    base_url, api_key, model, kind,
+                )
             }
         },
         |event| emit_station_key_connectivity_event(progress, event),
@@ -2324,9 +2344,21 @@ fn send_station_key_connectivity_non_stream_probe_attempt(
     model: &str,
     kind: StationKeyConnectivityProbeKind,
 ) -> StationKeyConnectivityProbeResult {
-    let url = build_station_key_connectivity_probe_url(base_url, kind);
-    let body =
-        build_station_key_connectivity_probe_body(model, kind, StationKeyConnectivityRequestMode::NonStream);
+    let url = match build_station_key_connectivity_probe_url(base_url, kind) {
+        Ok(url) => url,
+        Err(error) => {
+            return StationKeyConnectivityProbeResult::failure(
+                0,
+                0,
+                redact_error_message(&format!("API Base URL 无效: {error}")),
+            );
+        }
+    };
+    let body = build_station_key_connectivity_probe_body(
+        model,
+        kind,
+        StationKeyConnectivityRequestMode::NonStream,
+    );
     let started = Instant::now();
     let response_result = ureq::post(&url)
         .timeout(STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT)
@@ -2373,9 +2405,21 @@ fn send_station_key_connectivity_stream_probe_attempt(
     kind: StationKeyConnectivityProbeKind,
     progress: &Channel<StationKeyConnectivityTestEvent>,
 ) -> StationKeyConnectivityProbeResult {
-    let url = build_station_key_connectivity_probe_url(base_url, kind);
-    let body =
-        build_station_key_connectivity_probe_body(model, kind, StationKeyConnectivityRequestMode::Stream);
+    let url = match build_station_key_connectivity_probe_url(base_url, kind) {
+        Ok(url) => url,
+        Err(error) => {
+            return StationKeyConnectivityProbeResult::failure(
+                0,
+                0,
+                redact_error_message(&format!("API Base URL 无效: {error}")),
+            );
+        }
+    };
+    let body = build_station_key_connectivity_probe_body(
+        model,
+        kind,
+        StationKeyConnectivityRequestMode::Stream,
+    );
     let started = Instant::now();
     let response_result = ureq::post(&url)
         .timeout(STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT)
@@ -2413,7 +2457,10 @@ fn send_station_key_connectivity_stream_probe_attempt(
         );
     }
 
-    let content_type = response.header("content-type").unwrap_or("").to_ascii_lowercase();
+    let content_type = response
+        .header("content-type")
+        .unwrap_or("")
+        .to_ascii_lowercase();
     if !content_type.contains("text/event-stream") {
         let (_status_code, _response_text) = response_text_pair(response);
         return StationKeyConnectivityProbeResult::failure(
@@ -2488,7 +2535,7 @@ fn send_station_key_connectivity_stream_probe_attempt(
 }
 
 fn discover_station_key_connectivity_models(base_url: &str, api_key: &str) -> Option<Vec<String>> {
-    let url = build_upstream_url(base_url, "/v1/models");
+    let url = build_api_url(base_url, "/v1/models").ok()?;
     let response = ureq::get(&url)
         .timeout(STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT)
         .set("Authorization", &format!("Bearer {api_key}"))
@@ -2651,6 +2698,7 @@ mod tests {
     #[test]
     fn capture_request_belongs_to_management_base_when_station_url_uses_v1() {
         assert!(capture_request_belongs_to_station(
+            "https://relay.example.com",
             "https://relay.example.com/v1",
             "https://relay.example.com/api/v1/auth/login"
         ));
@@ -2659,8 +2707,28 @@ mod tests {
     #[test]
     fn capture_request_rejects_other_station_origins() {
         assert!(!capture_request_belongs_to_station(
+            "https://relay.example.com",
             "https://relay.example.com/v1",
             "https://other.example.com/api/v1/auth/login"
+        ));
+    }
+
+    #[test]
+    fn capture_accepts_configured_origins_and_rejects_lookalikes() {
+        assert!(capture_request_belongs_to_station(
+            "https://console.example:443",
+            "https://api.example/v1",
+            "https://console.example/api/user/self",
+        ));
+        assert!(capture_request_belongs_to_station(
+            "https://console.example",
+            "https://api.example/v1",
+            "https://api.example/v1/models",
+        ));
+        assert!(!capture_request_belongs_to_station(
+            "https://console.example",
+            "https://api.example/v1",
+            "https://console.example.evil.test/api/user/self",
         ));
     }
 
@@ -2803,12 +2871,7 @@ mod tests {
             .push(br#"data: {"type":"response.output_text.delta","delta":"Hel"#)
             .unwrap()
             .is_empty());
-        assert_eq!(
-            decoder
-                .push(br#"lo"}"#)
-                .unwrap(),
-            Vec::<String>::new()
-        );
+        assert_eq!(decoder.push(br#"lo"}"#).unwrap(), Vec::<String>::new());
         assert_eq!(
             decoder
                 .push(b"\n\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"!\"}\n\ndata: {\"type\":\"response.completed\"}\n\n")
@@ -2895,7 +2958,10 @@ mod tests {
             vec![StationKeyConnectivityRequestMode::Stream]
         );
         assert!(result.ok);
-        assert_eq!(result.response_mode, StationKeyConnectivityResponseMode::Stream);
+        assert_eq!(
+            result.response_mode,
+            StationKeyConnectivityResponseMode::Stream
+        );
         assert_eq!(result.stream_fallback_reason, None);
         assert!(matches!(
             events.first(),
@@ -3030,9 +3096,21 @@ mod tests {
         let url = build_station_key_connectivity_probe_url(
             "https://relay.example/v1",
             StationKeyConnectivityProbeKind::Responses,
-        );
+        )
+        .expect("build responses probe URL");
 
         assert_eq!(url, "https://relay.example/v1/responses");
+    }
+
+    #[test]
+    fn station_key_connectivity_probe_uses_complete_api_namespace() {
+        let url = build_station_key_connectivity_probe_url(
+            "https://relay.example/api/v3",
+            StationKeyConnectivityProbeKind::Responses,
+        )
+        .expect("build API namespace responses probe URL");
+
+        assert_eq!(url, "https://relay.example/api/v3/responses");
     }
 
     #[test]

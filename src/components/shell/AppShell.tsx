@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Circle } from "lucide-react";
 import { markNavigation, navigationMarks } from "@/app/navigationPerformance";
 import { appRoutes } from "@/app/routes";
+import { LocalProxyRadarIcon } from "@/components/shell/LocalProxyRadarIcon";
 import { shellLayout } from "@/components/ui/layout";
 import { CHANGE_EVENTS_UPDATED_EVENT } from "@/lib/api/changeEvents";
 import { PROXY_STATUS_UPDATED_EVENT } from "@/lib/api/proxy";
@@ -131,10 +131,11 @@ export function AppShell({
             title={proxyRunning ? "本地代理运行中" : "本地代理未启动"}
             aria-label={proxyRunning ? "本地代理运行中" : "本地代理未启动"}
           >
-            <Circle
+            <LocalProxyRadarIcon
+              active={proxyRunning}
               className={cn(
-                "h-2.5 w-2.5 fill-current",
-                proxyRunning ? "text-success-foreground" : "text-warning-foreground",
+                "h-6 w-6",
+                proxyRunning ? "text-success-foreground" : "text-muted-foreground",
               )}
             />
           </span>

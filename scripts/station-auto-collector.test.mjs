@@ -10,7 +10,12 @@ const collectorsSource = await readFile("src-tauri/src/services/collectors/mod.r
 const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
 const sub2apiLoginSource = await readFile("src-tauri/src/services/collectors/sub2api.rs", "utf8");
 const sub2apiAdapterSource = await readFile("src-tauri/src/services/collectors/adapters/sub2api.rs", "utf8");
-const newapiAdapterSource = await readFile("src-tauri/src/services/collectors/adapters/newapi.rs", "utf8");
+const newapiAdapterSource = [
+  await readFile("src-tauri/src/services/collectors/adapters/newapi/mod.rs", "utf8"),
+  await readFile("src-tauri/src/services/collectors/adapters/newapi/client.rs", "utf8"),
+  await readFile("src-tauri/src/services/collectors/adapters/newapi/auth.rs", "utf8"),
+  await readFile("src-tauri/src/services/collectors/adapters/newapi/parsers.rs", "utf8"),
+].join("\n");
 const openaiCompatibleAdapterSource = await readFile(
   "src-tauri/src/services/collectors/adapters/openai_compatible.rs",
   "utf8",
@@ -52,14 +57,15 @@ assert.ok(
 );
 
 assert.ok(
-  stationsPageSource.includes("STATION_ASSET_REFRESH_INTERVAL_MS"),
-  "station asset page should poll for automatic collector results",
+  stationsPageSource.includes("useActivityQuery(refreshEnabled, stationsQueryOptions())") &&
+    stationsPageSource.includes("currentStationBalanceSnapshotsQueryOptions()"),
+  "station asset page should refresh automatic collector results through shared activity queries",
 );
 
 assert.ok(
-  stationsPageSource.includes("window.setInterval") &&
-    stationsPageSource.includes("refreshStations"),
-  "station asset polling should refresh the station list and balance snapshots",
+  stationsPageSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.balanceSnapshots })") &&
+    stationsPageSource.includes("queryClient.cancelQueries({ queryKey: queryKeys.balanceSnapshots })"),
+  "station asset refresh paths should update the station balance snapshots cache",
 );
 
 assert.ok(

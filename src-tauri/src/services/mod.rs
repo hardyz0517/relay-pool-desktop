@@ -15,5 +15,6 @@ pub mod routing;
 pub mod secrets;
 pub mod shared_capabilities;
 pub mod station_collectors;
+pub mod station_endpoints;
 pub mod stations;
 pub mod updater;

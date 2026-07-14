@@ -1,6 +1,7 @@
 export type CollectorSnapshot = {
   id: string;
   stationId: string;
+  endpointRevision: number;
   source: string;
   status: string;
   fetchedAt: string;
@@ -56,7 +57,7 @@ export type CollectorRunResult = {
 
 export type StationLoginTestInput = {
   stationType?: string;
-  baseUrl: string;
+  websiteUrl: string;
   loginUsername: string;
   loginPassword: string;
 };

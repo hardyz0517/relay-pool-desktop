@@ -22,6 +22,7 @@ export type RuntimeRouteSnapshotCandidate = {
   enabled: boolean;
   priority: number;
   upstreamBaseUrl: string;
+  endpointRevision: number;
   upstreamApiFormat: string;
   secretRef: RuntimeRouteSecretRef;
   groupBindingId: string | null;
@@ -125,7 +126,8 @@ export function buildRuntimeRouteSnapshot(input: {
           keyName: name,
           enabled,
           priority,
-          upstreamBaseUrl: station.baseUrl,
+          upstreamBaseUrl: station.apiBaseUrl,
+          endpointRevision: station.endpointRevision,
           upstreamApiFormat: stationUpstreamApiFormat ?? "auto",
           secretRef: {
             kind: "station_key_secret" as const,

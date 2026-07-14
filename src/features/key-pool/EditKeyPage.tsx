@@ -24,7 +24,7 @@ type EditKeyFormState = {
   id: string;
   stationId: string;
   stationName: string;
-  stationBaseUrl: string;
+  stationApiBaseUrl: string;
   name: string;
   apiKey: string;
   enabled: boolean;
@@ -45,7 +45,7 @@ const emptyForm: EditKeyFormState = {
   id: "",
   stationId: "",
   stationName: "",
-  stationBaseUrl: "",
+  stationApiBaseUrl: "",
   name: "",
   apiKey: "",
   enabled: true,
@@ -245,8 +245,8 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
                   </Field>
                 </div>
                 <div className="mt-3 grid gap-3">
-                  <Field label="Base URL">
-                    <input className={inputClassName} value={form.stationBaseUrl} disabled />
+                  <Field label="API Base URL">
+                    <input className={inputClassName} value={form.stationApiBaseUrl} disabled />
                   </Field>
                   <Field label="密钥">
                     <input
@@ -380,7 +380,7 @@ function formFromItem(item: KeyPoolItem, options: StationGroupOption[] = []): Ed
     id: item.id,
     stationId: item.stationId,
     stationName: item.stationName,
-    stationBaseUrl: item.stationBaseUrl,
+    stationApiBaseUrl: item.stationApiBaseUrl,
     name: item.name,
     apiKey: "",
     enabled: item.enabled,

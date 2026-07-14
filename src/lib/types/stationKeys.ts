@@ -37,7 +37,8 @@ export type StationKey = {
 export type KeyPoolItem = StationKey & {
   stationName: string;
   stationType: string;
-  stationBaseUrl: string;
+  stationApiBaseUrl: string;
+  stationEndpointRevision: number;
   stationUpstreamApiFormat: "auto" | "openai_chat_completions" | "openai_responses" | "custom_openai_compatible";
   capabilitySummary: string[];
   modelScopeSummary: string;

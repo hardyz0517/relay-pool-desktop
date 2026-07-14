@@ -149,7 +149,7 @@ fn update_station_endpoint_pings(
             update_station_endpoint_ping(
                 database,
                 &target.station_id,
-                &target.station_base_url,
+                &target.station_api_base_url,
                 monitor.timeout_seconds,
             )?;
         }
@@ -160,11 +160,11 @@ fn update_station_endpoint_pings(
 fn update_station_endpoint_ping(
     database: &AppDatabase,
     station_id: &str,
-    station_base_url: &str,
+    station_api_base_url: &str,
     timeout_seconds: i64,
 ) -> Result<(), String> {
     let timeout = Duration::from_secs(timeout_seconds.max(1) as u64);
-    let result = ping_station_endpoint(station_base_url, timeout);
+    let result = ping_station_endpoint(station_api_base_url, timeout);
     let checked_at = now_string();
     database.upsert_station_endpoint_health(
         station_id,
@@ -273,7 +273,7 @@ fn run_monitor_for_key(
             return insert_failed_key_run(
                 database,
                 monitor,
-                &target.id,
+                target,
                 &started_at,
                 &model,
                 None,
@@ -287,7 +287,7 @@ fn run_monitor_for_key(
             return insert_failed_key_run(
                 database,
                 monitor,
-                &target.id,
+                target,
                 &started_at,
                 &model,
                 None,
@@ -296,7 +296,7 @@ fn run_monitor_for_key(
         }
     };
     let result = run_monitor_probe(
-        &target.station_base_url,
+        &target.station_api_base_url,
         &api_key,
         &request,
         monitor.timeout_seconds,
@@ -323,20 +323,22 @@ fn insert_probe_run(
 ) -> Result<ChannelMonitorRun, String> {
     let finished_at = now_string();
     let duration_ms = duration_between(started_at, &finished_at);
-    if result.ok {
-        database.record_station_key_success(&target.id, result.latency_ms, &finished_at)?;
-    } else {
-        database.record_station_key_failure_with_threshold(
-            &target.id,
-            &short_error(
-                result
-                    .error_summary
-                    .as_deref()
-                    .unwrap_or("Channel monitor probe failed"),
-            ),
-            &finished_at,
-            monitor.consecutive_failure_threshold,
-        )?;
+    if target_endpoint_revision_matches(database, target) {
+        if result.ok {
+            database.record_station_key_success(&target.id, result.latency_ms, &finished_at)?;
+        } else {
+            database.record_station_key_failure_with_threshold(
+                &target.id,
+                &short_error(
+                    result
+                        .error_summary
+                        .as_deref()
+                        .unwrap_or("Channel monitor probe failed"),
+                ),
+                &finished_at,
+                monitor.consecutive_failure_threshold,
+            )?;
+        }
     }
     let error_message = result.error_summary.map(|error| short_error(&error));
     let first_token_ms = result.first_token_ms;
@@ -402,7 +404,7 @@ fn insert_monitor_request_log(
         lifecycle_status: Some("completed".to_string()),
         station_key_id: Some(target.id.clone()),
         station_id: Some(target.station_id.clone()),
-        upstream_base_url: Some(target.station_base_url.clone()),
+        upstream_base_url: Some(target.station_api_base_url.clone()),
         fallback_count: 0,
         error_message,
         route_policy: Some("channel_monitor".to_string()),
@@ -497,24 +499,26 @@ fn monitor_request_cost(
 fn insert_failed_key_run(
     database: &AppDatabase,
     monitor: &ChannelMonitor,
-    station_key_id: &str,
+    target: &KeyPoolItem,
     started_at: &str,
     model: &str,
     http_status: Option<i64>,
     error_message: String,
 ) -> Result<ChannelMonitorRun, String> {
     let finished_at = now_string();
-    database.record_station_key_failure_with_threshold(
-        station_key_id,
-        &error_message,
-        &finished_at,
-        monitor.consecutive_failure_threshold,
-    )?;
+    if target_endpoint_revision_matches(database, target) {
+        database.record_station_key_failure_with_threshold(
+            &target.id,
+            &error_message,
+            &finished_at,
+            monitor.consecutive_failure_threshold,
+        )?;
+    }
     database.insert_channel_monitor_run(CreateChannelMonitorRunInput {
         monitor_id: monitor.id.clone(),
         template_id: monitor.template_id.clone(),
         station_id: monitor.station_id.clone(),
-        station_key_id: Some(station_key_id.to_string()),
+        station_key_id: Some(target.id.clone()),
         status: "failed".to_string(),
         started_at: started_at.to_string(),
         finished_at: Some(finished_at.clone()),
@@ -525,6 +529,12 @@ fn insert_failed_key_run(
         fallback_model: None,
         error_message: Some(error_message),
     })
+}
+
+fn target_endpoint_revision_matches(database: &AppDatabase, target: &KeyPoolItem) -> bool {
+    database
+        .station_endpoint_revision_matches(&target.station_id, target.station_endpoint_revision)
+        .unwrap_or(false)
 }
 
 fn insert_skipped_run(
@@ -660,7 +670,7 @@ mod tests {
             },
             pricing::UpsertPricingRuleInput,
             station_keys::{CreateStationKeyInput, UpdateStationKeyInput},
-            stations::CreateStationInput,
+            stations::{CreateStationInput, UpdateStationInput},
         },
         services::database::AppDatabase,
     };
@@ -684,7 +694,8 @@ mod tests {
                 CreateStationInput {
                     name: "monitor cost station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url: "http://127.0.0.1:9".to_string(),
+                    website_url: "http://127.0.0.1:9".to_string(),
+                    api_base_url: "http://127.0.0.1:9/v1".to_string(),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-monitor-cost".to_string(),
@@ -760,7 +771,8 @@ mod tests {
                 CreateStationInput {
                     name: "manual monitor station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url,
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     api_key: "sk-manual-monitor".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -840,6 +852,112 @@ mod tests {
     }
 
     #[test]
+    fn stale_monitor_probe_run_does_not_restore_cleared_key_health() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = database
+            .create_station(CreateStationInput {
+                name: "stale monitor station".to_string(),
+                station_type: "openai-compatible".to_string(),
+                website_url: "http://127.0.0.1:9".to_string(),
+                api_base_url: "http://127.0.0.1:9/v1".to_string(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                api_key: "sk-stale-monitor".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+        let target = database
+            .list_key_pool_items()
+            .expect("key pool")
+            .into_iter()
+            .find(|item| item.station_id == station.id)
+            .expect("target");
+        let template = database
+            .create_channel_monitor_template(CreateChannelMonitorTemplateInput {
+                name: "Stale monitor template".to_string(),
+                endpoint_kind: "chat_completions".to_string(),
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                request_body_json: r#"{"model":"{{model}}","messages":[]}"#.to_string(),
+                enabled: true,
+                note: None,
+            })
+            .expect("template");
+        let monitor = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "Stale monitor".to_string(),
+                target_type: "station_key".to_string(),
+                station_id: station.id.clone(),
+                station_key_id: Some(target.id.clone()),
+                template_id: template.id,
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 5,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 3,
+                fallback_models: vec!["gpt-test".to_string()],
+                note: None,
+            })
+            .expect("monitor");
+        database
+            .update_station(UpdateStationInput {
+                id: station.id,
+                name: station.name,
+                station_type: station.station_type,
+                website_url: "https://replacement.example.test".to_string(),
+                api_base_url: "https://replacement.example.test/v1".to_string(),
+                api_key: None,
+                collector_proxy_mode: station.collector_proxy_mode,
+                collector_proxy_url: station.collector_proxy_url,
+                enabled: station.enabled,
+                credit_per_cny: station.credit_per_cny,
+                low_balance_threshold_cny: station.low_balance_threshold_cny,
+                collection_interval_minutes: station.collection_interval_minutes,
+                note: station.note,
+            })
+            .expect("bump endpoint revision");
+
+        let run = insert_probe_run(
+            &database,
+            &monitor,
+            &target,
+            "1000",
+            "gpt-test",
+            &RenderedMonitorRequest {
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                headers: std::collections::HashMap::new(),
+                body: br#"{"model":"gpt-test"}"#.to_vec(),
+                stream: false,
+                reasoning_effort: None,
+            },
+            MonitorProbeResult {
+                ok: true,
+                status_code: Some(200),
+                latency_ms: 42,
+                first_token_ms: None,
+                error_summary: None,
+                response_excerpt_redacted: None,
+                usage: None,
+            },
+        )
+        .expect("historical monitor run");
+        let health = database
+            .get_station_key_health(target.id)
+            .expect("key health");
+
+        assert_eq!(run.status, "success");
+        assert_eq!(health.success_count, 0);
+        assert_eq!(health.failure_count, 0);
+        assert_eq!(health.last_success_at, None);
+    }
+
+    #[test]
     fn successful_monitor_run_records_usage_in_request_logs() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let data_key = [7_u8; 32];
@@ -851,7 +969,8 @@ mod tests {
                 CreateStationInput {
                     name: "usage monitor station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url: base_url.clone(),
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-usage-monitor".to_string(),
@@ -969,7 +1088,10 @@ mod tests {
         assert_eq!(log.status, "success");
         assert_eq!(log.station_key_id.as_deref(), Some(key.id.as_str()));
         assert_eq!(log.station_id.as_deref(), Some(station.id.as_str()));
-        assert_eq!(log.upstream_base_url.as_deref(), Some(base_url.as_str()));
+        assert_eq!(
+            log.upstream_base_url.as_deref(),
+            Some(format!("{}/v1", base_url.trim_end_matches('/')).as_str())
+        );
         assert_eq!(log.prompt_tokens, Some(4));
         assert_eq!(log.completion_tokens, Some(6));
         assert_eq!(log.total_tokens, Some(10));
@@ -999,7 +1121,8 @@ mod tests {
                 CreateStationInput {
                     name: "missing secret station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url: "http://127.0.0.1:9".to_string(),
+                    website_url: "http://127.0.0.1:9".to_string(),
+                    api_base_url: "http://127.0.0.1:9/v1".to_string(),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-to-be-cleared".to_string(),
@@ -1080,7 +1203,8 @@ mod tests {
                 CreateStationInput {
                     name: "threshold station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url: "http://127.0.0.1:9".to_string(),
+                    website_url: "http://127.0.0.1:9".to_string(),
+                    api_base_url: "http://127.0.0.1:9/v1".to_string(),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-threshold".to_string(),
@@ -1210,7 +1334,8 @@ mod tests {
                 CreateStationInput {
                     name: "builtin template station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url,
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     api_key: "sk-builtin-template".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -1275,7 +1400,8 @@ mod tests {
                 CreateStationInput {
                     name: "responses low token station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url,
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     api_key: "sk-responses-low-token".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -1336,7 +1462,8 @@ mod tests {
                 CreateStationInput {
                     name: "responses fallback station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url,
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     api_key: "sk-responses-fallback".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -1398,7 +1525,8 @@ mod tests {
                 CreateStationInput {
                     name: "concurrent station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url,
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     api_key: "sk-concurrent-1".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -1476,7 +1604,8 @@ mod tests {
                 CreateStationInput {
                     name: "overlap station".to_string(),
                     station_type: "openai-compatible".to_string(),
-                    base_url,
+                    website_url: base_url.clone(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                     api_key: "sk-overlap".to_string(),
                     enabled: true,
                     credit_per_cny: 1.0,
@@ -1595,7 +1724,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "disabled key station".to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: "https://example.test".to_string(),
+                website_url: "https://example.test".to_string(),
+                api_base_url: "https://example.test/v1".to_string(),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-disabled-key".to_string(),
@@ -1669,7 +1799,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: name.to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: "https://example.test".to_string(),
+                website_url: "https://example.test".to_string(),
+                api_base_url: "https://example.test/v1".to_string(),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-test-monitor".to_string(),

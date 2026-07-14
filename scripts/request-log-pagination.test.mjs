@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 async function importTypeScriptModule(path) {
   const source = await readFile(path, "utf8");
   const match = source.match(
-    /export function paginateRequestLogs[\s\S]*?\n}\n/,
+    /export function paginateRequestLogs[\s\S]*?\r?\n}\r?\n/,
   );
   assert.ok(match, "request log view model should export paginateRequestLogs");
   const transformed = match[0]

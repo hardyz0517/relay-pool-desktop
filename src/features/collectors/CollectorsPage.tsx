@@ -366,7 +366,7 @@ export function CollectorsPage() {
           <div className="space-y-3">
             <SectionCard
               title="采集结论"
-              description={`${selectedStation.name} · ${stationTypeLabels[selectedStation.stationType]} · ${selectedStation.baseUrl}`}
+              description={`${selectedStation.name} · ${stationTypeLabels[selectedStation.stationType]} · ${selectedStation.websiteUrl}`}
               action={<StatusBadge tone={toneForConclusion(conclusion)}>{conclusion}</StatusBadge>}
             >
               <div className="grid gap-3">

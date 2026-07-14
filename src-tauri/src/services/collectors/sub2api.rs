@@ -15,7 +15,7 @@ use crate::{
     },
     services::{
         database::AppDatabase,
-        outbound::{agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
+        outbound::{credential_agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
     },
 };
 
@@ -106,6 +106,7 @@ pub fn collect_login_state(
         return Ok(login_state_manual_required(
             station_id,
             station.name,
+            station.endpoint_revision,
             "缺少登录账号，无法执行登录态采集。",
         ));
     };
@@ -113,6 +114,7 @@ pub fn collect_login_state(
         return Ok(login_state_manual_required(
             station_id,
             station.name,
+            station.endpoint_revision,
             "缺少登录密码，无法执行登录态采集。",
         ));
     }
@@ -122,23 +124,25 @@ pub fn collect_login_state(
         return Ok(login_state_manual_required(
             station_id,
             station.name,
+            station.endpoint_revision,
             "登录密码不可解密，无法执行登录态采集。",
         ));
     };
 
     let config = ProbeMode::Collect.config();
     let proxy = effective_station_proxy(database, &station)?;
-    let agent = agent_builder_for_proxy(&proxy)?
+    let agent = credential_agent_builder_for_proxy(&proxy)?
         .timeout_connect(config.connect_timeout)
         .timeout_read(config.read_timeout)
         .timeout_write(config.connect_timeout)
         .build();
 
-    let login_attempt = attempt_login(&agent, &station.base_url, &username, &login_password)?;
+    let login_attempt = attempt_login(&agent, &station.website_url, &username, &login_password)?;
     if let Some(result) = login_attempt.manual_required {
         return Ok(login_state_manual_required(
             station_id,
             station.name,
+            station.endpoint_revision,
             &result,
         ));
     }
@@ -147,11 +151,12 @@ pub fn collect_login_state(
         return Ok(login_state_manual_required(
             station_id,
             station.name,
+            station.endpoint_revision,
             "登录接口未返回可用 token，站点可能需要验证码、2FA 或魔改字段。",
         ));
     };
 
-    let endpoint_results = run_authenticated_probes(&agent, &station.base_url, &token, config);
+    let endpoint_results = run_authenticated_probes(&agent, &station.website_url, &token, config);
     build_login_state_snapshot(
         database,
         station_id,
@@ -184,7 +189,7 @@ fn run_probe(
 
     let config = mode.config();
     let proxy = effective_station_proxy(database, &station)?;
-    let probe_results = run_endpoint_probes(&station.base_url, config, &proxy);
+    let probe_results = run_endpoint_probes(&station.website_url, config, &proxy);
     let mut events = Vec::with_capacity(probe_results.len());
     let mut responses = Vec::with_capacity(probe_results.len());
     let mut first_error: Option<String> = None;
@@ -230,7 +235,7 @@ fn run_probe(
         "mode": mode.as_str(),
         "stationId": station_id,
         "stationName": station.name,
-        "baseUrl": station.base_url,
+        "baseUrl": station.website_url,
         "login": {
             "usernamePresent": credentials.login_username.is_some(),
             "passwordPresent": credentials.password_present,
@@ -396,7 +401,7 @@ fn run_endpoint_probes(
         let worker_base_url = base_url.to_string();
         let worker_proxy = proxy.clone();
         thread::spawn(move || {
-            let agent = match agent_builder_for_proxy(&worker_proxy) {
+            let agent = match credential_agent_builder_for_proxy(&worker_proxy) {
                 Ok(builder) => builder
                     .timeout_connect(config.connect_timeout)
                     .timeout_read(config.read_timeout)
@@ -599,7 +604,7 @@ pub(crate) fn test_login_credentials(
 ) -> Result<LoginProbeOutcome, String> {
     let config = ProbeMode::Collect.config();
     let proxy = ProxyConfig::direct();
-    let agent = agent_builder_for_proxy(&proxy)?
+    let agent = credential_agent_builder_for_proxy(&proxy)?
         .timeout_connect(config.connect_timeout)
         .timeout_read(config.read_timeout)
         .timeout_write(config.connect_timeout)
@@ -627,7 +632,7 @@ pub(crate) fn login_access_token_with_proxy(
     proxy: &ProxyConfig,
 ) -> Result<LoginTokenOutcome, String> {
     let config = ProbeMode::Collect.config();
-    let agent = agent_builder_for_proxy(proxy)?
+    let agent = credential_agent_builder_for_proxy(proxy)?
         .timeout_connect(config.connect_timeout)
         .timeout_read(config.read_timeout)
         .timeout_write(config.connect_timeout)
@@ -852,7 +857,7 @@ fn login_candidate_request(
     let timeout = remaining
         .min(config.read_timeout)
         .max(Duration::from_millis(1));
-    let agent = agent_builder_for_proxy(proxy)?
+    let agent = credential_agent_builder_for_proxy(proxy)?
         .timeout_connect(
             timeout
                 .min(config.connect_timeout)
@@ -1148,6 +1153,7 @@ fn build_login_state_snapshot(
 fn login_state_manual_required(
     station_id: String,
     station_name: String,
+    endpoint_revision: i64,
     message: &str,
 ) -> CollectorRunResult {
     let snapshot = crate::models::collector::CollectorSnapshot {
@@ -1156,6 +1162,7 @@ fn login_state_manual_required(
             crate::services::database::now_millis_for_services()
         ),
         station_id: station_id.clone(),
+        endpoint_revision,
         source: "login-state-collect".to_string(),
         status: "manual_required".to_string(),
         fetched_at: crate::services::database::now_millis_for_services().to_string(),
@@ -1989,7 +1996,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "collector test".to_string(),
                 station_type: "sub2api".to_string(),
-                base_url: server.base_url.clone(),
+                website_url: server.base_url.clone(),
+                api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-test-routing".to_string(),

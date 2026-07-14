@@ -20,7 +20,7 @@ type AddKeyPageProps = {
 type AddKeyFormState = {
   stationId: string;
   name: string;
-  baseUrl: string;
+  stationApiBaseUrl: string;
   apiKey: string;
   priority: string;
   groupBindingId: string;
@@ -32,7 +32,7 @@ type AddKeyFormState = {
 const emptyForm: AddKeyFormState = {
   stationId: "",
   name: "",
-  baseUrl: "",
+  stationApiBaseUrl: "",
   apiKey: "",
   priority: "0",
   groupBindingId: "",
@@ -118,7 +118,7 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
     setForm((current) => ({
       ...current,
       stationId,
-      baseUrl: station?.baseUrl ?? "",
+      stationApiBaseUrl: station?.apiBaseUrl ?? "",
       priority: station ? String(station.keyCount) : "0",
       groupBindingId: "",
       groupName: "",
@@ -228,7 +228,7 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
                         label={station.name}
                         selected={selected}
                         onClick={() => selectStation(station)}
-                        title={station.baseUrl}
+                        title={station.apiBaseUrl}
                       />
                     );
                   })}
@@ -255,12 +255,12 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
                 </Field>
               </div>
               <div className="mt-3 grid gap-3">
-                <Field label="Base URL">
+                <Field label="API Base URL">
                   <input
                     className={inputClassName}
-                    value={form.baseUrl}
-                    onChange={(event) => setForm({ ...form, baseUrl: event.target.value })}
+                    value={form.stationApiBaseUrl}
                     placeholder="https://api.example.com/v1"
+                    readOnly
                   />
                 </Field>
                 <Field label="密钥">
@@ -375,7 +375,7 @@ function createFormForStation(station: Station): AddKeyFormState {
   return {
     ...emptyForm,
     stationId: station.id,
-    baseUrl: station.baseUrl,
+    stationApiBaseUrl: station.apiBaseUrl,
     name: `${station.name} Key`,
   };
 }

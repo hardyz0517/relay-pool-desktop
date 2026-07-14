@@ -10,10 +10,8 @@ use crate::services::{
         redaction::{redact_monitor_json, redact_monitor_text},
         templates::{normalize_monitor_method, RenderedMonitorRequest},
     },
-    proxy::{
-        build_upstream_url,
-        observability::{ObservedUsage, SseUsageObserver},
-    },
+    proxy::observability::{ObservedUsage, SseUsageObserver},
+    station_endpoints::build_api_url,
 };
 
 const MAX_RESPONSE_EXCERPT_BYTES: u64 = 4096;
@@ -143,7 +141,7 @@ fn build_probe_url(base_url: &str, path: &str) -> Option<String> {
         return None;
     }
 
-    Some(build_upstream_url(base_url, path))
+    build_api_url(base_url, path).ok()
 }
 
 fn has_dot_segment(path: &str) -> bool {
@@ -330,7 +328,7 @@ mod tests {
 
     #[test]
     fn sends_probe_with_authorization_and_parses_success_response() {
-        let (base_url, received) = spawn_upstream(
+        let (origin, received) = spawn_upstream(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 28\r\n\r\n{\"ok\":true,\"token\":\"secret\"}",
         );
         let mut headers = HashMap::new();
@@ -343,6 +341,7 @@ mod tests {
             stream: false,
             reasoning_effort: None,
         };
+        let base_url = format!("{origin}/v1");
 
         let result = run_monitor_probe(&base_url, "sk-probe-key", &request, 2);
         let raw_request = received
@@ -364,8 +363,31 @@ mod tests {
     }
 
     #[test]
+    fn sends_probe_with_complete_api_namespace_without_duplicate_v1() {
+        let (origin, received) =
+            spawn_upstream("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
+        let request = RenderedMonitorRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: HashMap::new(),
+            body: br#"{"model":"gpt-test"}"#.to_vec(),
+            stream: false,
+            reasoning_effort: None,
+        };
+        let base_url = format!("{origin}/api/v3");
+
+        let result = run_monitor_probe(&base_url, "sk-probe-key", &request, 2);
+        let raw_request = received
+            .recv_timeout(Duration::from_secs(2))
+            .expect("upstream request");
+
+        assert!(result.ok);
+        assert!(raw_request.starts_with("POST /api/v3/chat/completions HTTP/1.1"));
+    }
+
+    #[test]
     fn streaming_probe_records_first_token_and_final_usage() {
-        let (base_url, received) = spawn_staged_upstream(&[
+        let (origin, received) = spawn_staged_upstream(&[
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"O\"}\n\n",
             "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":9,\"output_tokens\":4,\"input_tokens_details\":{\"cached_tokens\":3}}}}\n\n",
         ]);
@@ -377,6 +399,7 @@ mod tests {
             stream: true,
             reasoning_effort: Some("minimal".to_string()),
         };
+        let base_url = format!("{origin}/v1");
 
         let result = run_monitor_probe(&base_url, "sk-probe-key", &request, 2);
         received
@@ -394,7 +417,7 @@ mod tests {
 
     #[test]
     fn ignores_template_authorization_and_cookie_headers() {
-        let (base_url, received) =
+        let (origin, received) =
             spawn_upstream("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
         let mut headers = HashMap::new();
         headers.insert(
@@ -411,6 +434,7 @@ mod tests {
             stream: false,
             reasoning_effort: None,
         };
+        let base_url = format!("{origin}/v1");
 
         let result = run_monitor_probe(&base_url, "sk-real-key", &request, 2);
         let raw_request = received

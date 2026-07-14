@@ -22,11 +22,11 @@ use crate::{
                 AdapterOutput, CollectorTask, CreatedRemoteKey,
             },
             facts::{CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts},
-            url::{collector_base_urls, join_url},
         },
         database::AppDatabase,
         group_categories::infer_group_category,
         outbound::{resolve_proxy_config, ProxyConfig},
+        station_endpoints::{build_api_url, build_management_url},
     },
 };
 
@@ -497,11 +497,7 @@ pub fn scan_remote_keys(
     let station = database.station_for_collector(station_id)?;
     let proxy = effective_station_proxy(database, &station)?;
     let access_token = resolve_sub2api_access_token(database, data_key, &station)?;
-    let urls = collector_base_urls(&station.base_url);
-    let url = join_url(
-        &urls.management_base_url,
-        "/api/v1/keys?page=1&page_size=100",
-    );
+    let url = build_management_url(&station.website_url, "/api/v1/keys?page=1&page_size=100")?;
     let result = fetch_json_with_bearer(&url, &access_token, &proxy);
     let payload = result.payload.unwrap_or(Value::Null);
     if !result.ok {
@@ -522,11 +518,7 @@ pub fn scan_remote_key_full_secret(
     let station = database.station_for_collector(station_id)?;
     let proxy = effective_station_proxy(database, &station)?;
     let access_token = resolve_sub2api_access_token(database, data_key, &station)?;
-    let urls = collector_base_urls(&station.base_url);
-    let url = join_url(
-        &urls.management_base_url,
-        "/api/v1/keys?page=1&page_size=100",
-    );
+    let url = build_management_url(&station.website_url, "/api/v1/keys?page=1&page_size=100")?;
     let result = fetch_json_with_bearer(&url, &access_token, &proxy);
     let payload = result.payload.unwrap_or(Value::Null);
     if !result.ok {
@@ -560,8 +552,7 @@ pub fn create_remote_key(
     let station = database.station_for_collector(&input.station_id)?;
     let proxy = effective_station_proxy(database, &station)?;
     let access_token = resolve_sub2api_access_token(database, data_key, &station)?;
-    let urls = collector_base_urls(&station.base_url);
-    let url = join_url(&urls.management_base_url, "/api/v1/keys");
+    let url = build_management_url(&station.website_url, "/api/v1/keys")?;
     let mut body = json!({
         "name": input.name,
     });
@@ -994,9 +985,8 @@ pub fn collect_groups(
         },
     };
 
-    let urls = collector_base_urls(&station.base_url);
-    let available_url = join_url(&urls.management_base_url, "/api/v1/groups/available");
-    let rates_url = join_url(&urls.management_base_url, "/api/v1/groups/rates");
+    let available_url = build_management_url(&station.website_url, "/api/v1/groups/available")?;
+    let rates_url = build_management_url(&station.website_url, "/api/v1/groups/rates")?;
     let policy = collector_request_policy();
     let budget = CollectionAttemptBudget::new(policy.task_budget);
     let mut auth_refresh_started = false;
@@ -1143,7 +1133,7 @@ fn login_and_store_access_token(
     };
     let proxy = effective_station_proxy(database, station)?;
     let login = crate::services::collectors::sub2api::login_access_token_with_proxy(
-        &station.base_url,
+        &station.website_url,
         username,
         &password,
         &proxy,
@@ -1192,7 +1182,7 @@ fn login_and_store_access_token_with_budget(
     };
     let proxy = effective_station_proxy(database, station)?;
     let login = crate::services::collectors::sub2api::login_access_token_with_budget_and_proxy(
-        &station.base_url,
+        &station.website_url,
         username,
         &password,
         budget,
@@ -1242,7 +1232,7 @@ fn fetch_json_with_bearer(
     access_token: &str,
     proxy: &ProxyConfig,
 ) -> EndpointJsonResult {
-    let agent = match crate::services::outbound::agent_builder_for_proxy(proxy) {
+    let agent = match crate::services::outbound::credential_agent_builder_for_proxy(proxy) {
         Ok(builder) => builder.timeout(COLLECTOR_HTTP_TIMEOUT).build(),
         Err(error) => {
             return EndpointJsonResult {
@@ -1291,7 +1281,7 @@ fn fetch_recoverable_json_with_bearer(
     proxy: &ProxyConfig,
 ) -> RecoverableEndpointJsonResult {
     let started = std::time::Instant::now();
-    let agent = match crate::services::outbound::agent_builder_for_proxy(proxy) {
+    let agent = match crate::services::outbound::credential_agent_builder_for_proxy(proxy) {
         Ok(builder) => builder.timeout(timeout.min(COLLECTOR_HTTP_TIMEOUT)).build(),
         Err(error) => {
             return RecoverableEndpointJsonResult {
@@ -1412,7 +1402,7 @@ fn post_json_with_bearer(
     body: &Value,
     proxy: &ProxyConfig,
 ) -> EndpointJsonResult {
-    let agent = match crate::services::outbound::agent_builder_for_proxy(proxy) {
+    let agent = match crate::services::outbound::credential_agent_builder_for_proxy(proxy) {
         Ok(builder) => builder.timeout(COLLECTOR_HTTP_TIMEOUT).build(),
         Err(error) => {
             return EndpointJsonResult {
@@ -1507,8 +1497,7 @@ pub fn collect_balance(
     let station = database.station_for_collector(station_id)?;
     let proxy = effective_station_proxy(database, &station)?;
     let keys = routeable_keys_for_station(database, station_id)?;
-    let urls = collector_base_urls(&station.base_url);
-    let url = join_url(&urls.upstream_api_base_url, "/usage");
+    let url = build_api_url(&station.api_base_url, "/v1/usage")?;
     let mut facts = CollectorFacts::default();
     let mut endpoint_results = Vec::new();
     let policy = collector_request_policy();
@@ -1668,7 +1657,6 @@ fn collect_account_balance_fallback(
         }
     };
 
-    let urls = collector_base_urls(&station.base_url);
     let mut access_token = access_token;
     let mut auth_refresh_started = false;
     let mut auth_refresh = |_: &String, remaining: std::time::Duration| {
@@ -1681,7 +1669,7 @@ fn collect_account_balance_fallback(
             .flatten()
     };
     for path in ["/api/v1/user/profile", "/api/v1/auth/me"] {
-        let url = join_url(&urls.management_base_url, path);
+        let url = build_management_url(&station.website_url, path)?;
         let mut request = |token: &String, timeout: std::time::Duration| {
             fetch_recoverable_json_with_bearer(&url, token, timeout, proxy)
         };
@@ -1786,9 +1774,8 @@ fn collect_dashboard_usage_stats(
         }
     };
 
-    let urls = collector_base_urls(&station.base_url);
     let path = "/api/v1/usage/dashboard/stats";
-    let url = join_url(&urls.management_base_url, path);
+    let url = build_management_url(&station.website_url, path)?;
     let mut auth_refresh_started = false;
     let mut auth_refresh = |_: &String, remaining: std::time::Duration| {
         if auth_refresh_started {
@@ -2509,7 +2496,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "create remote key station".to_string(),
                 station_type: "sub2api".to_string(),
-                base_url: server.base_url.clone(),
+                website_url: server.base_url.clone(),
+                api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-station".to_string(),
@@ -2591,7 +2579,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "create remote key numeric station".to_string(),
                 station_type: "sub2api".to_string(),
-                base_url: server.base_url.clone(),
+                website_url: server.base_url.clone(),
+                api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-station".to_string(),
@@ -2721,7 +2710,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "group login station".to_string(),
                 station_type: "sub2api".to_string(),
-                base_url: server.base_url,
+                website_url: server.base_url.clone(),
+                api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-station".to_string(),
@@ -2773,7 +2763,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "stale token station".to_string(),
                 station_type: "sub2api".to_string(),
-                base_url: server.base_url,
+                website_url: server.base_url.clone(),
+                api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-station".to_string(),
@@ -2831,7 +2822,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "warm session station".to_string(),
                 station_type: "sub2api".to_string(),
-                base_url: server.base_url,
+                website_url: server.base_url.clone(),
+                api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-station".to_string(),
@@ -2874,7 +2866,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "flaky group station".to_string(),
                 station_type: "sub2api".to_string(),
-                base_url: server.base_url.clone(),
+                website_url: server.base_url.clone(),
+                api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-station".to_string(),
@@ -2915,7 +2908,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "auth then transient group station".to_string(),
                 station_type: "sub2api".to_string(),
-                base_url: server.base_url.clone(),
+                website_url: server.base_url.clone(),
+                api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-station".to_string(),
@@ -2973,7 +2967,8 @@ mod tests {
                 CreateStationInput {
                     name: "balance fallback station".to_string(),
                     station_type: "sub2api".to_string(),
-                    base_url: server.base_url,
+                    website_url: server.base_url.clone(),
+                    api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-invalid-for-usage".to_string(),
@@ -3020,7 +3015,8 @@ mod tests {
                 CreateStationInput {
                     name: "refresh balance fallback station".to_string(),
                     station_type: "sub2api".to_string(),
-                    base_url: server.base_url,
+                    website_url: server.base_url.clone(),
+                    api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-invalid-for-usage".to_string(),
@@ -3081,7 +3077,8 @@ mod tests {
                 CreateStationInput {
                     name: "dashboard stats balance station".to_string(),
                     station_type: "sub2api".to_string(),
-                    base_url: server.base_url,
+                    website_url: server.base_url.clone(),
+                    api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-dashboard-balance".to_string(),
@@ -3145,7 +3142,8 @@ mod tests {
                 CreateStationInput {
                     name: "fair balance station".to_string(),
                     station_type: "sub2api".to_string(),
-                    base_url: server.base_url.clone(),
+                    website_url: server.base_url.clone(),
+                    api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "sk-fallback".to_string(),

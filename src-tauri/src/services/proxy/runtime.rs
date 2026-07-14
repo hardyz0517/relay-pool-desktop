@@ -22,13 +22,13 @@ use crate::{
     },
     services::{
         database::{now_millis_for_services, AppDatabase},
-        outbound::{agent_builder_for_proxy, ProxyConfig},
+        outbound::{credential_agent_builder_for_proxy, ProxyConfig},
         proxy::{
             adapters::responses::{
                 extract_responses_metadata, normalize_responses_request, render_responses_response,
                 should_try_chat_fallback, upstream_responses_path,
             },
-            build_upstream_url, enabled_candidates, extract_chat_request_metadata,
+            enabled_candidates, extract_chat_request_metadata,
             observability::{ObservedUsage, RequestObservation, SseUsageObserver},
             openai_error, redact_error_message,
             router::{select_route_candidates_with_scheduler, RouteRequest},
@@ -46,6 +46,7 @@ use crate::{
             },
             should_fallback, RouteCandidate,
         },
+        station_endpoints::build_api_url,
     },
 };
 
@@ -116,6 +117,8 @@ struct ProxyResponse {
 #[derive(Debug, Clone)]
 struct PendingCandidateSuccess {
     station_key_id: String,
+    station_id: String,
+    station_endpoint_revision: i64,
     status_label: String,
     checked_at: String,
     duration_ms: i64,
@@ -584,6 +587,13 @@ fn commit_pending_successes(
         .map(|settings| settings.scheduler_advanced_settings)
         .unwrap_or_default();
     for success in pending_successes {
+        if !station_endpoint_revision_matches(
+            context,
+            &success.station_id,
+            success.station_endpoint_revision,
+        ) {
+            continue;
+        }
         let checked_at = completed_at.unwrap_or(success.checked_at.as_str());
         let duration_ms = completed_duration_ms.unwrap_or(success.duration_ms);
         let now_ms = checked_at
@@ -1479,6 +1489,9 @@ fn record_candidate_success(
     checked_at: &str,
     duration_ms: i64,
 ) {
+    if !candidate_endpoint_revision_matches(context, candidate) {
+        return;
+    }
     let _ = context.database.touch_station_key_usage(
         &candidate.station_key_id,
         status_label,
@@ -1500,6 +1513,9 @@ fn record_candidate_failure(
     error_summary: &str,
     failure_input: RouteFailureInput,
 ) {
+    if !candidate_endpoint_revision_matches(context, candidate) {
+        return;
+    }
     let classified = classify_route_failure(failure_input);
     let _ = context.database.touch_station_key_usage(
         &candidate.station_key_id,
@@ -1545,6 +1561,28 @@ fn record_candidate_failure(
         checked_at,
         cooldown_until.as_deref(),
     );
+}
+
+fn candidate_endpoint_revision_matches(
+    context: &ProxyServerContext,
+    candidate: &RouteCandidate,
+) -> bool {
+    station_endpoint_revision_matches(
+        context,
+        &candidate.station_id,
+        candidate.station_endpoint_revision,
+    )
+}
+
+fn station_endpoint_revision_matches(
+    context: &ProxyServerContext,
+    station_id: &str,
+    endpoint_revision: i64,
+) -> bool {
+    context
+        .database
+        .station_endpoint_revision_matches(station_id, endpoint_revision)
+        .unwrap_or(false)
 }
 
 fn route_health_state_from_record(
@@ -1682,12 +1720,13 @@ fn send_probe_request(
     upstream_path: &str,
     body: &[u8],
 ) -> Result<(), SwitchProbeError> {
-    let url = build_upstream_url(&candidate.upstream_base_url, upstream_path);
+    let url = build_api_url(&candidate.upstream_base_url, upstream_path)
+        .map_err(|error| SwitchProbeError::Transport(redact_error_message(&error)))?;
     let proxy = ProxyConfig {
         mode: candidate.collector_proxy_mode.clone(),
         url: candidate.collector_proxy_url.clone(),
     };
-    let agent = agent_builder_for_proxy(&proxy)
+    let agent = credential_agent_builder_for_proxy(&proxy)
         .map_err(SwitchProbeError::Transport)?
         .timeout(std::time::Duration::from_secs(10))
         .build();
@@ -2597,12 +2636,13 @@ fn forward_to_candidate_with_body(
     body: &[u8],
     stream: bool,
 ) -> Result<ProxyResponse, String> {
-    let url = build_upstream_url(&candidate.upstream_base_url, upstream_path);
+    let url = build_api_url(&candidate.upstream_base_url, upstream_path)
+        .map_err(|error| redact_error_message(&error))?;
     let proxy = ProxyConfig {
         mode: candidate.collector_proxy_mode.clone(),
         url: candidate.collector_proxy_url.clone(),
     };
-    let agent = agent_builder_for_proxy(&proxy)?
+    let agent = credential_agent_builder_for_proxy(&proxy)?
         .timeout(std::time::Duration::from_secs(45))
         .build();
     let mut upstream = agent
@@ -2923,6 +2963,8 @@ impl ProxyResponse {
         let session_hash = route_request.and_then(|request| request.session_hash.clone());
         self.pending_successes.push(PendingCandidateSuccess {
             station_key_id: candidate.station_key_id.clone(),
+            station_id: candidate.station_id.clone(),
+            station_endpoint_revision: candidate.station_endpoint_revision,
             status_label: self.status_label.clone(),
             checked_at,
             duration_ms,
@@ -3135,7 +3177,7 @@ mod tests {
         routing::{UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
         settings::UpdateSettingsInput,
         station_keys::{StationKey, UpdateStationKeyInput},
-        stations::CreateStationInput,
+        stations::{CreateStationInput, UpdateStationInput},
     };
     use std::{
         io::{Read, Write},
@@ -3636,7 +3678,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "Streaming station".to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: format!("http://127.0.0.1:{upstream_port}"),
+                website_url: format!("http://127.0.0.1:{upstream_port}"),
+                api_base_url: format!("http://127.0.0.1:{upstream_port}/v1"),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-test-streaming".to_string(),
@@ -3725,7 +3768,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "Responses streaming station".to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: format!("http://127.0.0.1:{upstream_port}"),
+                website_url: format!("http://127.0.0.1:{upstream_port}"),
+                api_base_url: format!("http://127.0.0.1:{upstream_port}/v1"),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-test-responses-streaming".to_string(),
@@ -4235,6 +4279,8 @@ mod tests {
             &context,
             &[PendingCandidateSuccess {
                 station_key_id: key.id.clone(),
+                station_id: candidate.station_id.clone(),
+                station_endpoint_revision: candidate.station_endpoint_revision,
                 status_label: "success".to_string(),
                 checked_at: "1001".to_string(),
                 duration_ms: 20_000,
@@ -4260,6 +4306,42 @@ mod tests {
                 1_002,
             ),
             Some(key.id)
+        );
+    }
+
+    #[test]
+    fn old_proxy_feedback_does_not_restore_cleared_key_health_or_scheduler_metrics() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key = create_test_station_key(&database, "stale-feedback", "http://127.0.0.1:1");
+        let context = proxy_context(database);
+        let candidate = context
+            .database
+            .proxy_route_candidates_with_data_key(&context.data_key)
+            .expect("candidates")
+            .into_iter()
+            .find(|candidate| candidate.station_key_id == key.id)
+            .expect("feedback candidate");
+
+        change_test_station_endpoint(&context.database, &candidate.station_id);
+        record_candidate_failure(
+            &context,
+            &candidate,
+            "error",
+            "1000",
+            "old failure",
+            RouteFailureInput::http_status(500, false),
+        );
+
+        let health = context
+            .database
+            .get_station_key_health(key.id.clone())
+            .expect("health");
+        assert_eq!(health.failure_count, 0);
+        assert_eq!(health.consecutive_failures, 0);
+        assert_eq!(health.last_failure_at, None);
+        assert_eq!(
+            context.scheduler.metrics_snapshot(&key.id).error_rate_ewma,
+            0.0
         );
     }
 
@@ -4344,7 +4426,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "First models station".to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: format!("http://127.0.0.1:{first_port}"),
+                website_url: format!("http://127.0.0.1:{first_port}"),
+                api_base_url: format!("http://127.0.0.1:{first_port}/v1"),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-first-models".to_string(),
@@ -4360,7 +4443,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "Second models station".to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: format!("http://127.0.0.1:{second_port}"),
+                website_url: format!("http://127.0.0.1:{second_port}"),
+                api_base_url: format!("http://127.0.0.1:{second_port}/v1"),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-second-models".to_string(),
@@ -4672,7 +4756,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: name.to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: base_url.to_string(),
+                website_url: base_url.to_string(),
+                api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: format!("sk-{name}"),
@@ -4687,6 +4772,32 @@ mod tests {
             .list_station_keys(station.id)
             .expect("keys")
             .remove(0)
+    }
+
+    fn change_test_station_endpoint(database: &AppDatabase, station_id: &str) {
+        let station = database
+            .list_stations()
+            .expect("stations")
+            .into_iter()
+            .find(|station| station.id == station_id)
+            .expect("station");
+        database
+            .update_station(UpdateStationInput {
+                id: station.id,
+                name: station.name,
+                station_type: station.station_type,
+                website_url: "https://replacement.example.test".to_string(),
+                api_base_url: "https://replacement.example.test/v1".to_string(),
+                api_key: None,
+                collector_proxy_mode: station.collector_proxy_mode,
+                collector_proxy_url: station.collector_proxy_url,
+                enabled: station.enabled,
+                credit_per_cny: station.credit_per_cny,
+                low_balance_threshold_cny: station.low_balance_threshold_cny,
+                collection_interval_minutes: station.collection_interval_minutes,
+                note: station.note,
+            })
+            .expect("change station endpoint");
     }
 
     fn default_capabilities_input(station_key_id: String) -> UpdateStationKeyCapabilitiesInput {

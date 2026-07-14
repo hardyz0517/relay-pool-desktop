@@ -4,14 +4,14 @@ import { readFile } from "node:fs/promises";
 const logsSource = await readFile("src/features/logs/LogsPage.tsx", "utf8");
 
 assert.ok(
-  logsSource.includes('import { getSettings } from "@/lib/api/settings";'),
-  "logs page should read the shared application settings",
+  logsSource.includes("settingsQueryOptions") &&
+    logsSource.includes("useActivityQuery(refreshEnabled, settingsQueryOptions())"),
+  "logs page should read the shared application settings through resource queries",
 );
 
 assert.ok(
-  logsSource.includes("const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);") &&
-    logsSource.includes("setDeveloperModeEnabled(settings.developerModeEnabled);"),
-  "logs page should default details to hidden and refresh the developer-mode setting",
+  logsSource.includes("const developerModeEnabled = settingsQuery.data?.developerModeEnabled ?? false;"),
+  "logs page should default details to hidden from the developer-mode query state",
 );
 
 assert.match(

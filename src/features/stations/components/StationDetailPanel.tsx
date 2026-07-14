@@ -40,7 +40,8 @@ export function StationDetailPanel({
       >
         <dl>
           <KeyValueRow label="站点类型" value={stationTypeLabels[station.stationType]} />
-          <KeyValueRow label="基础地址" value={station.baseUrl} />
+          <KeyValueRow label="前端网址" value={station.websiteUrl} />
+          <KeyValueRow label="API Base URL" value={station.apiBaseUrl} />
           <KeyValueRow
             label="密钥"
             value={<MaskedSecret value={station.apiKeyMasked} present={station.apiKeyPresent} />}

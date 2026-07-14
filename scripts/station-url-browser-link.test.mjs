@@ -8,14 +8,14 @@ const libSource = await readFile("src-tauri/src/lib.rs", "utf8");
 
 assert.match(
   stationsPageSource,
-  /import \{[^}]*openStationBaseUrl[^}]*\} from "@\/lib\/api\/stations"/,
-  "station row should use the stations API boundary for opening base URLs",
+  /import \{[^}]*openStationWebsite[^}]*\} from "@\/lib\/api\/stations"/,
+  "station row should use the stations API boundary for opening website URLs",
 );
 
 assert.match(
   stationsPageSource,
-  /<button[\s\S]*?type="button"[\s\S]*?aria-label=\{`在浏览器打开 \$\{station\.name\}`\}[\s\S]*?onClick=\{\(event\) => \{[\s\S]*?event\.stopPropagation\(\);[\s\S]*?void openStationBaseUrl\(station\.baseUrl\);[\s\S]*?\}\}/,
-  "station row base URL should be a button-like link that opens externally without triggering row details",
+  /<button[\s\S]*?type="button"[\s\S]*?aria-label=\{`在浏览器打开 \$\{station\.name\}`\}[\s\S]*?onClick=\{\(event\) => \{[\s\S]*?event\.stopPropagation\(\);[\s\S]*?void openStationWebsite\(station\.websiteUrl\);[\s\S]*?\}\}/,
+  "station row website URL should be a button-like link that opens externally without triggering row details",
 );
 
 assert.match(
@@ -32,7 +32,7 @@ assert.doesNotMatch(
 
 assert.match(
   stationsApiSource,
-  /export function openStationBaseUrl\(url: string\)[\s\S]*invoke<void>\("open_external_url", \{ url \}\)/,
+  /export function openStationWebsite\(url: string\)[\s\S]*invoke<void>\("open_external_url", \{ url \}\)/,
   "stations API should call the Tauri external URL opener command",
 );
 

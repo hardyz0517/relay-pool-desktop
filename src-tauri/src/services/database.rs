@@ -10,7 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{params, params_from_iter, types::Type, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, types::Type, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
@@ -95,6 +95,9 @@ use crate::services::secrets::{
         redact_value as redact_sensitive_value,
     },
 };
+use crate::services::station_endpoints::{
+    legacy_api_base_url, legacy_website_url, normalize_station_endpoints, same_origin,
+};
 
 static NEXT_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
@@ -167,6 +170,8 @@ impl AppDatabase {
 
         initialize_schema(&connection)
             .map_err(|error| format!("初始化 SQLite schema 失败: {error}"))?;
+        migrate_station_endpoint_urls(&connection)
+            .map_err(|error| format!("migrate station endpoint URLs failed: {error}"))?;
         migrate_secret_schema(&connection)
             .map_err(|error| format!("迁移凭据安全字段失败: {error}"))?;
         seed_default_settings(&connection)
@@ -214,6 +219,8 @@ impl AppDatabase {
             .map_err(|error| format!("无法打开内存 SQLite 数据库: {error}"))?;
         initialize_schema(&connection)
             .map_err(|error| format!("初始化 SQLite schema 失败: {error}"))?;
+        migrate_station_endpoint_urls(&connection)
+            .map_err(|error| format!("migrate station endpoint URLs failed: {error}"))?;
         migrate_secret_schema(&connection)
             .map_err(|error| format!("迁移凭据安全字段失败: {error}"))?;
         seed_default_settings(&connection)
@@ -352,7 +359,7 @@ impl AppDatabase {
         validate_station_fields(
             &input.name,
             &input.station_type,
-            &input.base_url,
+            &input.website_url,
             input.credit_per_cny,
             input.collection_interval_minutes,
         )?;
@@ -378,7 +385,7 @@ impl AppDatabase {
         validate_station_fields(
             &input.name,
             &input.station_type,
-            &input.base_url,
+            &input.website_url,
             input.credit_per_cny,
             input.collection_interval_minutes,
         )?;
@@ -388,8 +395,42 @@ impl AppDatabase {
             true,
         )?;
 
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始更新站点事务失败: {error}"))?;
+        let station = update_station_in_connection(&transaction, input, data_key)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("提交更新站点事务失败: {error}"))?;
+        Ok(station)
+    }
+
+    pub(crate) fn with_station_endpoint_revision<T>(
+        &self,
+        station_id: &str,
+        expected_revision: i64,
+        operation: impl FnOnce(&Transaction<'_>) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始站点端点事务失败: {error}"))?;
+        ensure_station_endpoint_revision(&transaction, station_id, expected_revision)?;
+        let output = operation(&transaction)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("提交站点端点事务失败: {error}"))?;
+        Ok(output)
+    }
+
+    pub(crate) fn station_endpoint_revision_matches(
+        &self,
+        station_id: &str,
+        expected_revision: i64,
+    ) -> Result<bool, String> {
         let connection = self.connection()?;
-        update_station_in_connection(&connection, input, data_key)
+        Ok(station_endpoint_revision(&connection, station_id)? == expected_revision)
     }
 
     pub fn delete_station(&self, id: String) -> Result<(), String> {
@@ -1172,6 +1213,20 @@ impl AppDatabase {
         station_credentials_from_connection(&connection, &station_id)
     }
 
+    pub fn persist_station_session_if_revision(
+        &self,
+        input: PersistStationSessionInput,
+        expected_revision: i64,
+        data_key: &[u8; 32],
+    ) -> Result<StationCredentials, String> {
+        let station_id = input.station_id.clone();
+        self.with_station_endpoint_revision(&station_id, expected_revision, |transaction| {
+            persist_station_session_from_connection(transaction, input, data_key)
+        })?;
+        let connection = self.connection()?;
+        station_credentials_from_connection(&connection, &station_id)
+    }
+
     pub fn resolve_station_session_with_data_key(
         &self,
         station_id: String,
@@ -1235,6 +1290,34 @@ impl AppDatabase {
             normalized_json,
             raw_json_redacted,
             error_message,
+        )
+    }
+
+    pub(crate) fn insert_collector_snapshot_for_revision(
+        &self,
+        station_id: &str,
+        endpoint_revision: i64,
+        source: &str,
+        status: &str,
+        summary_json: Value,
+        normalized_json: Value,
+        raw_json_redacted: Option<Value>,
+        error_message: Option<String>,
+        emit_change_events: bool,
+    ) -> Result<CollectorSnapshot, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, station_id)?;
+        insert_collector_snapshot_in_connection_with_revision(
+            &connection,
+            station_id,
+            endpoint_revision,
+            source,
+            status,
+            summary_json,
+            normalized_json,
+            raw_json_redacted,
+            error_message,
+            emit_change_events,
         )
     }
 
@@ -1584,6 +1667,15 @@ impl AppDatabase {
         create_collector_run_in_connection(&connection, input)
     }
 
+    pub(crate) fn create_collector_run_for_revision(
+        &self,
+        input: CreateCollectorRunInput,
+        endpoint_revision: i64,
+    ) -> Result<CollectorRun, String> {
+        let connection = self.connection()?;
+        create_collector_run_in_connection_with_revision(&connection, input, endpoint_revision)
+    }
+
     pub fn finish_collector_run(
         &self,
         input: FinishCollectorRunInput,
@@ -1804,12 +1896,13 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             station_type TEXT NOT NULL,
-            base_url TEXT NOT NULL,
+            website_url TEXT NOT NULL,
+            api_base_url TEXT NOT NULL,
+            endpoint_revision INTEGER NOT NULL DEFAULT 1,
             api_key TEXT NOT NULL,
             collector_proxy_mode TEXT NOT NULL DEFAULT 'inherit',
             collector_proxy_url TEXT,
             upstream_api_format TEXT NOT NULL DEFAULT 'auto',
-            upstream_api_base_path TEXT NOT NULL DEFAULT '/v1',
             enabled INTEGER NOT NULL DEFAULT 1,
             priority INTEGER NOT NULL DEFAULT 0,
             credit_per_cny REAL NOT NULL DEFAULT 1,
@@ -1966,6 +2059,7 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS collector_snapshots (
             id TEXT PRIMARY KEY,
             station_id TEXT NOT NULL,
+            endpoint_revision INTEGER NOT NULL DEFAULT 1,
             source TEXT NOT NULL,
             status TEXT NOT NULL,
             fetched_at TEXT NOT NULL,
@@ -2143,6 +2237,7 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
 
         CREATE TABLE IF NOT EXISTS station_key_health (
             station_key_id TEXT PRIMARY KEY,
+            endpoint_revision INTEGER NOT NULL DEFAULT 1,
             last_success_at TEXT,
             last_failure_at TEXT,
             consecutive_failures INTEGER NOT NULL DEFAULT 0,
@@ -2158,6 +2253,7 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
 
         CREATE TABLE IF NOT EXISTS station_endpoint_health (
             station_id TEXT PRIMARY KEY,
+            endpoint_revision INTEGER NOT NULL DEFAULT 1,
             status TEXT NOT NULL CHECK(status IN ('unchecked', 'success', 'failed')),
             latency_ms INTEGER CHECK(latency_ms IS NULL OR latency_ms >= 0),
             checked_at TEXT,
@@ -2320,6 +2416,7 @@ fn migrate_p9_fact_schema(connection: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS collector_runs (
             id TEXT PRIMARY KEY,
             station_id TEXT NOT NULL,
+            endpoint_revision INTEGER NOT NULL DEFAULT 1,
             parent_run_id TEXT,
             adapter TEXT NOT NULL,
             task_type TEXT NOT NULL,
@@ -6306,51 +6403,53 @@ fn channel_monitor_next_run_at(
 }
 
 fn row_to_station(row: &rusqlite::Row<'_>) -> rusqlite::Result<Station> {
-    let api_key: String = row.get(4)?;
-    let secret_masked: Option<String> = row.get(22)?;
-    let api_key_secret_id: Option<String> = row.get(23)?;
+    let api_key: String = row.get("api_key")?;
+    let secret_masked: Option<String> = row.get("api_key_masked")?;
+    let api_key_secret_id: Option<String> = row.get("api_key_secret_id")?;
     let api_key_masked = secret_masked.unwrap_or_else(|| mask_secret(&api_key));
     let api_key_present = api_key_secret_id.is_some() || !api_key.trim().is_empty();
 
     Ok(Station {
-        id: row.get(0)?,
-        name: row.get(1)?,
-        station_type: row.get(2)?,
-        base_url: row.get(3)?,
-        collector_proxy_mode: row.get(24)?,
-        collector_proxy_url: row.get(25)?,
+        id: row.get("id")?,
+        name: row.get("name")?,
+        station_type: row.get("station_type")?,
+        website_url: row.get("website_url")?,
+        api_base_url: row.get("api_base_url")?,
+        endpoint_revision: row.get("endpoint_revision")?,
+        collector_proxy_mode: row.get("collector_proxy_mode")?,
+        collector_proxy_url: row.get("collector_proxy_url")?,
         api_key_masked,
         api_key_present,
-        key_count: row.get(7)?,
-        enabled: i64_to_bool(row.get(8)?),
-        priority: row.get(9)?,
-        credit_per_cny: row.get(10)?,
-        balance_raw: row.get(11)?,
-        balance_cny: row.get(12)?,
-        low_balance_threshold_cny: row.get(13)?,
-        collection_interval_minutes: row.get(14)?,
-        status: row.get(15)?,
-        latency_ms: row.get(16)?,
-        last_checked_at: row.get(17)?,
-        last_pricing_fetched_at: row.get(18)?,
-        note: row.get(19)?,
-        created_at: row.get(20)?,
-        updated_at: row.get(21)?,
+        key_count: row.get("key_count")?,
+        enabled: i64_to_bool(row.get("enabled")?),
+        priority: row.get("priority")?,
+        credit_per_cny: row.get("credit_per_cny")?,
+        balance_raw: row.get("balance_raw")?,
+        balance_cny: row.get("balance_cny")?,
+        low_balance_threshold_cny: row.get("low_balance_threshold_cny")?,
+        collection_interval_minutes: row.get("collection_interval_minutes")?,
+        status: row.get("status")?,
+        latency_ms: row.get("latency_ms")?,
+        last_checked_at: row.get("last_checked_at")?,
+        last_pricing_fetched_at: row.get("last_pricing_fetched_at")?,
+        note: row.get("note")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
     })
 }
 
 fn list_stations_from_connection(connection: &Connection) -> Result<Vec<Station>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, name, station_type, base_url, api_key, upstream_api_format,
-                    upstream_api_base_path,
+            "SELECT id, name, station_type, website_url, api_base_url, endpoint_revision,
+                    api_key, upstream_api_format,
                     (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                     enabled, priority,
                     credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
                     collection_interval_minutes,
                     status, latency_ms, last_checked_at, last_pricing_fetched_at,
                     note, created_at, updated_at,
-                    (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id),
+                    (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id) AS api_key_masked,
                     api_key_secret_id,
                     collector_proxy_mode, collector_proxy_url
                FROM stations
@@ -6370,15 +6469,15 @@ fn list_stations_from_connection(connection: &Connection) -> Result<Vec<Station>
 fn station_by_id(connection: &Connection, id: &str) -> Result<Station, String> {
     connection
         .query_row(
-            "SELECT id, name, station_type, base_url, api_key, upstream_api_format,
-                    upstream_api_base_path,
+            "SELECT id, name, station_type, website_url, api_base_url, endpoint_revision,
+                    api_key, upstream_api_format,
                     (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                     enabled, priority,
                     credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
                     collection_interval_minutes,
                     status, latency_ms, last_checked_at, last_pricing_fetched_at,
                     note, created_at, updated_at,
-                    (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id),
+                    (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id) AS api_key_masked,
                     api_key_secret_id,
                     collector_proxy_mode, collector_proxy_url
                FROM stations
@@ -6398,15 +6497,15 @@ fn due_station_collectors_from_connection(
     let now_ms = parse_channel_monitor_run_time(now, "now")?;
     let mut statement = connection
         .prepare(
-            "SELECT id, name, station_type, base_url, api_key, upstream_api_format,
-                    upstream_api_base_path,
+            "SELECT id, name, station_type, website_url, api_base_url, endpoint_revision,
+                    api_key, upstream_api_format,
                     (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                     enabled, priority,
                     credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
                     collection_interval_minutes,
                     status, latency_ms, last_checked_at, last_pricing_fetched_at,
                     note, created_at, updated_at,
-                    (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id),
+                    (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id) AS api_key_masked,
                     api_key_secret_id,
                     collector_proxy_mode, collector_proxy_url
                FROM stations
@@ -6439,6 +6538,7 @@ fn create_station_in_connection(
     let now = now_string();
     let next_priority = next_station_priority(connection)?;
     let plaintext_api_key = input.api_key.trim().to_string();
+    let endpoints = normalize_station_endpoints(&input.website_url, &input.api_base_url)?;
     let collector_proxy_mode = normalize_proxy_mode(&input.collector_proxy_mode, true);
     let collector_proxy_url = normalize_proxy_url(input.collector_proxy_url);
     let stored_api_key = if data_key.is_some() {
@@ -6450,19 +6550,21 @@ fn create_station_in_connection(
     connection
         .execute(
             "INSERT INTO stations (
-                id, name, station_type, base_url, api_key, api_key_secret_id,
+                id, name, station_type, website_url, api_base_url, endpoint_revision,
+                api_key, api_key_secret_id,
                 collector_proxy_mode, collector_proxy_url, enabled, priority,
                 credit_per_cny, balance_raw, balance_cny, low_balance_threshold_cny,
                 collection_interval_minutes,
                 status, latency_ms, last_checked_at, last_pricing_fetched_at,
                 note, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9, ?10, NULL, NULL, ?11,
-                ?12, ?13, NULL, NULL, NULL, ?14, ?15, ?16)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, NULL, ?7, ?8, ?9, ?10, ?11, NULL, NULL, ?12,
+                ?13, ?14, NULL, NULL, NULL, ?15, ?16, ?17)",
             params![
                 id,
                 input.name.trim(),
                 input.station_type,
-                input.base_url.trim(),
+                endpoints.website_url,
+                endpoints.api_base_url,
                 stored_api_key,
                 collector_proxy_mode,
                 collector_proxy_url,
@@ -6534,16 +6636,32 @@ fn update_station_in_connection(
     input: UpdateStationInput,
     data_key: Option<&[u8; 32]>,
 ) -> Result<Station, String> {
-    let existing: Option<(String, Option<String>)> = connection
+    let existing: Option<(String, Option<String>, String, String, i64)> = connection
         .query_row(
-            "SELECT api_key, api_key_secret_id FROM stations WHERE id = ?1",
+            "SELECT api_key, api_key_secret_id, website_url, api_base_url, endpoint_revision
+               FROM stations WHERE id = ?1",
             params![input.id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .optional()
         .map_err(|error| format!("读取站点 API Key 失败: {error}"))?;
 
-    let Some((existing_api_key, existing_secret_id)) = existing else {
+    let Some((
+        existing_api_key,
+        existing_secret_id,
+        existing_website_url,
+        existing_api_base_url,
+        existing_endpoint_revision,
+    )) = existing
+    else {
         return Err("站点不存在，无法更新".to_string());
     };
 
@@ -6570,6 +6688,20 @@ fn update_station_in_connection(
     };
     let collector_proxy_mode = normalize_proxy_mode(&input.collector_proxy_mode, true);
     let collector_proxy_url = normalize_proxy_url(input.collector_proxy_url);
+    let endpoints = normalize_station_endpoints(&input.website_url, &input.api_base_url)?;
+    let website_url_changed = endpoints.website_url != existing_website_url;
+    let api_base_url_changed = endpoints.api_base_url != existing_api_base_url;
+    let endpoints_changed = website_url_changed || api_base_url_changed;
+    let website_origin_changed =
+        endpoints_changed && !same_origin(&existing_website_url, &endpoints.website_url)?;
+    let api_origin_changed =
+        endpoints_changed && !same_origin(&existing_api_base_url, &endpoints.api_base_url)?;
+    let endpoint_revision = if endpoints_changed {
+        existing_endpoint_revision.max(1) + 1
+    } else {
+        existing_endpoint_revision.max(1)
+    };
+    let next_enabled = input.enabled && !api_origin_changed;
     let now = now_string();
 
     connection
@@ -6577,41 +6709,132 @@ fn update_station_in_connection(
             "UPDATE stations
                 SET name = ?1,
                     station_type = ?2,
-                    base_url = ?3,
-                    api_key = ?4,
-                    api_key_secret_id = ?5,
-                    collector_proxy_mode = ?6,
-                    collector_proxy_url = ?7,
-                    enabled = ?8,
-                    credit_per_cny = ?9,
-                    low_balance_threshold_cny = ?10,
-                    collection_interval_minutes = ?11,
-                    status = CASE WHEN ?8 = 0 THEN 'disabled'
+                    website_url = ?3,
+                    api_base_url = ?4,
+                    endpoint_revision = ?5,
+                    api_key = ?6,
+                    api_key_secret_id = ?7,
+                    collector_proxy_mode = ?8,
+                    collector_proxy_url = ?9,
+                    enabled = ?10,
+                    credit_per_cny = ?11,
+                    low_balance_threshold_cny = ?12,
+                    collection_interval_minutes = ?13,
+                    status = CASE WHEN ?10 = 0 THEN 'disabled'
+                                  WHEN ?17 = 1 THEN 'unchecked'
                                   WHEN status = 'disabled' THEN 'unchecked'
                                   ELSE status END,
-                    note = ?12,
-                    updated_at = ?13
-              WHERE id = ?14",
+                    note = ?14,
+                    last_checked_at = CASE WHEN ?17 = 1 THEN NULL ELSE last_checked_at END,
+                    last_pricing_fetched_at = CASE WHEN ?17 = 1 THEN NULL ELSE last_pricing_fetched_at END,
+                    updated_at = ?15
+              WHERE id = ?16",
             params![
                 input.name.trim(),
                 input.station_type,
-                input.base_url.trim(),
+                endpoints.website_url,
+                endpoints.api_base_url,
+                endpoint_revision,
                 next_api_key,
                 next_secret_id,
                 collector_proxy_mode,
                 collector_proxy_url,
-                bool_to_i64(input.enabled),
+                bool_to_i64(next_enabled),
                 input.credit_per_cny,
                 input.low_balance_threshold_cny,
                 input.collection_interval_minutes,
                 normalize_optional_string(input.note),
                 now,
                 input.id,
+                bool_to_i64(endpoints_changed),
             ],
         )
         .map_err(|error| format!("更新站点失败: {error}"))?;
 
+    if website_origin_changed {
+        clear_station_origin_bound_login_material(connection, &input.id)?;
+    }
+    if api_base_url_changed {
+        clear_station_endpoint_health_state(connection, &input.id)?;
+    }
+
     station_by_id(connection, &input.id)
+}
+
+fn clear_station_endpoint_health_state(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "DELETE FROM station_endpoint_health WHERE station_id = ?1",
+            params![station_id],
+        )
+        .map_err(|error| format!("清理站点端点健康状态失败: {error}"))?;
+    connection
+        .execute(
+            "DELETE FROM station_key_health
+              WHERE station_key_id IN (
+                    SELECT id FROM station_keys WHERE station_id = ?1
+              )",
+            params![station_id],
+        )
+        .map_err(|error| format!("清理 Station Key 健康状态失败: {error}"))?;
+    Ok(())
+}
+
+fn clear_station_origin_bound_login_material(
+    connection: &Connection,
+    station_id: &str,
+) -> Result<(), String> {
+    let secret_ids = connection
+        .query_row(
+            "SELECT login_password_secret_id, access_token_secret_id,
+                    refresh_token_secret_id, cookie_secret_id
+               FROM station_credentials
+              WHERE station_id = ?1",
+            params![station_id],
+            |row| {
+                Ok([
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ])
+            },
+        )
+        .optional()
+        .map_err(|error| format!("读取站点登录凭据失败: {error}"))?
+        .unwrap_or([None, None, None, None]);
+
+    connection
+        .execute(
+            "UPDATE station_credentials
+                SET login_password = NULL,
+                    login_password_secret_id = NULL,
+                    remember_password = 0,
+                    login_status = 'unknown',
+                    login_error = NULL,
+                    last_login_at = NULL,
+                    session_status = 'none',
+                    session_expires_at = NULL,
+                    access_token_secret_id = NULL,
+                    refresh_token_secret_id = NULL,
+                    cookie_secret_id = NULL,
+                    newapi_user_id = NULL,
+                    token_expires_at = NULL,
+                    token_refreshed_at = NULL,
+                    session_source = 'none',
+                    updated_at = ?1
+              WHERE station_id = ?2",
+            params![now_string(), station_id],
+        )
+        .map_err(|error| format!("清理站点登录凭据失败: {error}"))?;
+
+    for secret_id in secret_ids.into_iter().flatten() {
+        delete_unreferenced_secret_by_id(connection, &secret_id)?;
+    }
+    Ok(())
 }
 
 fn validate_station_exists(connection: &Connection, station_id: &str) -> Result<(), String> {
@@ -6631,6 +6854,249 @@ fn validate_station_exists(connection: &Connection, station_id: &str) -> Result<
     Ok(())
 }
 
+fn station_endpoint_revision(connection: &Connection, station_id: &str) -> Result<i64, String> {
+    connection
+        .query_row(
+            "SELECT endpoint_revision FROM stations WHERE id = ?1",
+            params![station_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("read station endpoint revision failed: {error}"))?
+        .ok_or_else(|| "station does not exist".to_string())
+}
+
+fn ensure_station_endpoint_revision(
+    connection: &Connection,
+    station_id: &str,
+    expected_revision: i64,
+) -> Result<(), String> {
+    let current = station_endpoint_revision(connection, station_id)?;
+    if current != expected_revision {
+        return Err("station_endpoint_revision_changed".to_string());
+    }
+    Ok(())
+}
+
+fn station_key_endpoint_revision(
+    connection: &Connection,
+    station_key_id: &str,
+) -> Result<i64, String> {
+    connection
+        .query_row(
+            "SELECT s.endpoint_revision
+               FROM station_keys k
+               JOIN stations s ON s.id = k.station_id
+              WHERE k.id = ?1",
+            params![station_key_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("read station key endpoint revision failed: {error}"))?
+        .ok_or_else(|| "station key does not exist".to_string())
+}
+
+fn schema_columns(connection: &Connection, table: &str) -> Result<HashSet<String>, String> {
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| format!("read {table} schema failed: {error}"))?;
+    let columns = statement
+        .query_map([], |row| row.get(1))
+        .map_err(|error| format!("query {table} schema failed: {error}"))?
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(|error| format!("parse {table} schema failed: {error}"))?;
+    Ok(columns)
+}
+
+fn schema_table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            params![table],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|exists| exists != 0)
+        .map_err(|error| format!("check {table} schema failed: {error}"))
+}
+
+fn migrated_legacy_station_endpoints(legacy_url: &str) -> Result<(String, String), String> {
+    let api_base_url = legacy_api_base_url(legacy_url)?;
+    let legacy = normalize_station_endpoints(legacy_url, &api_base_url)?;
+    let website_url = if legacy.website_url.ends_with("/v1") {
+        legacy_website_url(&legacy.website_url)?
+    } else {
+        legacy.website_url
+    };
+    let endpoints = normalize_station_endpoints(&website_url, &legacy.api_base_url)?;
+    Ok((endpoints.website_url, endpoints.api_base_url))
+}
+
+fn migrate_station_endpoint_urls(connection: &Connection) -> Result<(), String> {
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| format!("start station endpoint migration failed: {error}"))?;
+    let columns = schema_columns(&transaction, "stations")?;
+    if columns.is_empty() {
+        return Err("station endpoint schema conflict: stations table is missing".to_string());
+    }
+
+    let has_base_url = columns.contains("base_url");
+    let has_website_url = columns.contains("website_url");
+    let has_api_base_url = columns.contains("api_base_url");
+    let endpoint_rows = match (has_base_url, has_website_url, has_api_base_url) {
+        (true, false, false) => {
+            let mut statement = transaction
+                .prepare("SELECT id, base_url FROM stations")
+                .map_err(|error| format!("read legacy station endpoints failed: {error}"))?;
+            let rows = statement
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .map_err(|error| format!("query legacy station endpoints failed: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("parse legacy station endpoints failed: {error}"))?;
+            rows.into_iter()
+                .map(|(id, legacy_url)| {
+                    let (website_url, api_base_url) =
+                        migrated_legacy_station_endpoints(&legacy_url)?;
+                    Ok((id, website_url, api_base_url))
+                })
+                .collect::<Result<Vec<_>, String>>()?
+        }
+        (true, false, true) => {
+            let mut statement = transaction
+                .prepare("SELECT id, base_url, api_base_url FROM stations")
+                .map_err(|error| format!("read transitional station endpoints failed: {error}"))?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|error| format!("query transitional station endpoints failed: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("parse transitional station endpoints failed: {error}"))?;
+            rows.into_iter()
+                .map(|(id, legacy_url, stored_api_base_url)| {
+                    let (website_url, expected_api_base_url) =
+                        migrated_legacy_station_endpoints(&legacy_url)?;
+                    let expected = normalize_station_endpoints(&website_url, &expected_api_base_url)?;
+                    let stored =
+                        normalize_station_endpoints(&expected.website_url, &stored_api_base_url)?;
+                    if stored.api_base_url != expected.api_base_url {
+                        return Err(format!(
+                            "station endpoint conflict for {id}: legacy URL derives {}, stored API URL is {}",
+                            expected.api_base_url, stored.api_base_url
+                        ));
+                    }
+                    Ok((id, expected.website_url, expected.api_base_url))
+                })
+                .collect::<Result<Vec<_>, String>>()?
+        }
+        (false, true, true) => {
+            let mut statement = transaction
+                .prepare("SELECT id, website_url, api_base_url FROM stations")
+                .map_err(|error| format!("read station endpoints failed: {error}"))?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|error| format!("query station endpoints failed: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("parse station endpoints failed: {error}"))?;
+            rows.into_iter()
+                .map(|(id, website_url, api_base_url)| {
+                    let endpoints = normalize_station_endpoints(&website_url, &api_base_url)?;
+                    Ok((id, endpoints.website_url, endpoints.api_base_url))
+                })
+                .collect::<Result<Vec<_>, String>>()?
+        }
+        (true, true, _) => {
+            return Err(
+                "station endpoint schema conflict: base_url and website_url coexist".to_string(),
+            )
+        }
+        _ => {
+            return Err(format!(
+                "station endpoint schema conflict: unsupported columns base_url={has_base_url}, website_url={has_website_url}, api_base_url={has_api_base_url}"
+            ))
+        }
+    };
+
+    if has_base_url {
+        transaction
+            .execute_batch("ALTER TABLE stations RENAME COLUMN base_url TO website_url;")
+            .map_err(|error| format!("rename legacy station URL failed: {error}"))?;
+    }
+    if !has_api_base_url {
+        transaction
+            .execute_batch("ALTER TABLE stations ADD COLUMN api_base_url TEXT NOT NULL DEFAULT '';")
+            .map_err(|error| format!("add station API URL failed: {error}"))?;
+    }
+    if !columns.contains("endpoint_revision") {
+        transaction
+            .execute_batch(
+                "ALTER TABLE stations ADD COLUMN endpoint_revision INTEGER NOT NULL DEFAULT 1;",
+            )
+            .map_err(|error| format!("add station endpoint revision failed: {error}"))?;
+    }
+    for (id, website_url, api_base_url) in endpoint_rows {
+        transaction
+            .execute(
+                "UPDATE stations
+                    SET website_url = ?2,
+                        api_base_url = ?3,
+                        endpoint_revision = CASE
+                            WHEN endpoint_revision IS NULL OR endpoint_revision < 1 THEN 1
+                            ELSE endpoint_revision
+                        END
+                  WHERE id = ?1",
+                params![id, website_url, api_base_url],
+            )
+            .map_err(|error| format!("backfill station endpoints failed: {error}"))?;
+    }
+
+    if columns.contains("upstream_api_base_path") {
+        transaction
+            .execute_batch("ALTER TABLE stations DROP COLUMN upstream_api_base_path;")
+            .map_err(|error| format!("remove legacy API base path failed: {error}"))?;
+    }
+    for table in [
+        "collector_snapshots",
+        "collector_runs",
+        "station_endpoint_health",
+        "station_key_health",
+    ] {
+        if !schema_table_exists(&transaction, table)? {
+            continue;
+        }
+        let table_columns = schema_columns(&transaction, table)?;
+        if !table_columns.contains("endpoint_revision") {
+            transaction
+                .execute_batch(&format!(
+                    "ALTER TABLE {table} ADD COLUMN endpoint_revision INTEGER NOT NULL DEFAULT 1;"
+                ))
+                .map_err(|error| format!("add {table} endpoint revision failed: {error}"))?;
+        }
+        transaction
+            .execute(
+                &format!(
+                    "UPDATE {table} SET endpoint_revision = 1 WHERE endpoint_revision IS NULL OR endpoint_revision < 1"
+                ),
+                [],
+            )
+            .map_err(|error| format!("backfill {table} endpoint revision failed: {error}"))?;
+    }
+
+    transaction
+        .commit()
+        .map_err(|error| format!("commit station endpoint migration failed: {error}"))
+}
+
 fn migrate_station_proxy_columns(connection: &Connection) -> rusqlite::Result<()> {
     let mut statement = connection.prepare("PRAGMA table_info(stations)")?;
     let rows = statement
@@ -6640,12 +7106,6 @@ fn migrate_station_proxy_columns(connection: &Connection) -> rusqlite::Result<()
     if !rows.iter().any(|column| column == "upstream_api_format") {
         connection.execute(
             "ALTER TABLE stations ADD COLUMN upstream_api_format TEXT NOT NULL DEFAULT 'auto'",
-            [],
-        )?;
-    }
-    if !rows.iter().any(|column| column == "upstream_api_base_path") {
-        connection.execute(
-            "ALTER TABLE stations ADD COLUMN upstream_api_base_path TEXT NOT NULL DEFAULT '/v1'",
             [],
         )?;
     }
@@ -7674,7 +8134,8 @@ fn list_key_pool_items_from_connection(
                 k.station_id,
                 s.name,
                 s.station_type,
-                s.base_url,
+                s.api_base_url,
+                s.endpoint_revision,
                 k.name,
                 k.api_key,
                 (SELECT masked_value FROM secrets WHERE secrets.id = k.api_key_secret_id),
@@ -7725,8 +8186,12 @@ fn list_key_pool_items_from_connection(
              FROM station_keys k
              INNER JOIN stations s ON s.id = k.station_id
              LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
-             LEFT JOIN station_key_health h ON h.station_key_id = k.id
-             LEFT JOIN station_endpoint_health eh ON eh.station_id = s.id
+             LEFT JOIN station_key_health h
+                    ON h.station_key_id = k.id
+                   AND h.endpoint_revision = s.endpoint_revision
+             LEFT JOIN station_endpoint_health eh
+                    ON eh.station_id = s.id
+                   AND eh.endpoint_revision = s.endpoint_revision
              ORDER BY COALESCE(k.routing_order, k.priority) ASC,
                       k.priority ASC,
                       k.created_at ASC,
@@ -7736,52 +8201,53 @@ fn list_key_pool_items_from_connection(
 
     let rows = statement
         .query_map([], |row| {
-            let api_key: String = row.get(6)?;
-            let secret_masked: Option<String> = row.get(7)?;
-            let api_key_secret_id: Option<String> = row.get(8)?;
+            let api_key: String = row.get(7)?;
+            let secret_masked: Option<String> = row.get(8)?;
+            let api_key_secret_id: Option<String> = row.get(9)?;
             let api_key_masked = secret_masked.unwrap_or_else(|| mask_secret(&api_key));
             let api_key_present = api_key_secret_id.is_some() || !api_key.trim().is_empty();
-            let supports_chat = i64_to_bool(row.get(30)?);
-            let supports_responses = i64_to_bool(row.get(31)?);
-            let supports_embeddings = i64_to_bool(row.get(32)?);
-            let supports_stream = i64_to_bool(row.get(33)?);
-            let supports_tools = i64_to_bool(row.get(34)?);
-            let supports_vision = i64_to_bool(row.get(35)?);
-            let supports_reasoning = i64_to_bool(row.get(36)?);
-            let allowlist = parse_json_string_list(row.get::<_, String>(37)?.as_str());
-            let blocklist = parse_json_string_list(row.get::<_, String>(38)?.as_str());
-            let preferred_models = parse_json_string_list(row.get::<_, String>(39)?.as_str());
-            let success_count = row.get::<_, Option<i64>>(42)?.unwrap_or(0);
-            let failure_count = row.get::<_, Option<i64>>(43)?.unwrap_or(0);
+            let supports_chat = i64_to_bool(row.get(31)?);
+            let supports_responses = i64_to_bool(row.get(32)?);
+            let supports_embeddings = i64_to_bool(row.get(33)?);
+            let supports_stream = i64_to_bool(row.get(34)?);
+            let supports_tools = i64_to_bool(row.get(35)?);
+            let supports_vision = i64_to_bool(row.get(36)?);
+            let supports_reasoning = i64_to_bool(row.get(37)?);
+            let allowlist = parse_json_string_list(row.get::<_, String>(38)?.as_str());
+            let blocklist = parse_json_string_list(row.get::<_, String>(39)?.as_str());
+            let preferred_models = parse_json_string_list(row.get::<_, String>(40)?.as_str());
+            let success_count = row.get::<_, Option<i64>>(43)?.unwrap_or(0);
+            let failure_count = row.get::<_, Option<i64>>(44)?.unwrap_or(0);
             Ok(KeyPoolItem {
                 id: row.get(0)?,
                 station_id: row.get(1)?,
                 station_name: row.get(2)?,
                 station_type: row.get(3)?,
-                station_base_url: row.get(4)?,
-                station_upstream_api_format: row.get(47)?,
-                name: row.get(5)?,
+                station_api_base_url: row.get(4)?,
+                station_endpoint_revision: row.get(5)?,
+                station_upstream_api_format: row.get(48)?,
+                name: row.get(6)?,
                 api_key_masked,
                 api_key_present,
-                enabled: i64_to_bool(row.get(9)?),
-                priority: row.get(10)?,
-                max_concurrency: row.get(11)?,
-                load_factor: row.get(12)?,
-                schedulable: i64_to_bool(row.get(13)?),
-                group_name: row.get(14)?,
-                tier_label: row.get(15)?,
-                group_binding_id: row.get(16)?,
-                group_id_hash: row.get(17)?,
-                rate_multiplier: row.get(18)?,
-                manual_rate_multiplier: row.get(19)?,
-                manual_rate_updated_at: row.get(20)?,
-                rate_source: row.get(21)?,
-                rate_collected_at: row.get(22)?,
-                balance_scope: row.get(23)?,
-                status: row.get(24)?,
-                last_checked_at: row.get(25)?,
-                last_used_at: row.get(26)?,
-                note: row.get(27)?,
+                enabled: i64_to_bool(row.get(10)?),
+                priority: row.get(11)?,
+                max_concurrency: row.get(12)?,
+                load_factor: row.get(13)?,
+                schedulable: i64_to_bool(row.get(14)?),
+                group_name: row.get(15)?,
+                tier_label: row.get(16)?,
+                group_binding_id: row.get(17)?,
+                group_id_hash: row.get(18)?,
+                rate_multiplier: row.get(19)?,
+                manual_rate_multiplier: row.get(20)?,
+                manual_rate_updated_at: row.get(21)?,
+                rate_source: row.get(22)?,
+                rate_collected_at: row.get(23)?,
+                balance_scope: row.get(24)?,
+                status: row.get(25)?,
+                last_checked_at: row.get(26)?,
+                last_used_at: row.get(27)?,
+                note: row.get(28)?,
                 capability_summary: summarize_capabilities(
                     supports_chat,
                     supports_responses,
@@ -7796,18 +8262,18 @@ fn list_key_pool_items_from_connection(
                     blocklist.len(),
                     preferred_models.len(),
                 ),
-                only_use_as_backup: i64_to_bool(row.get(40)?),
-                cooldown_until: row.get(41)?,
+                only_use_as_backup: i64_to_bool(row.get(41)?),
+                cooldown_until: row.get(42)?,
                 success_rate: success_rate(success_count, failure_count),
-                avg_latency_ms: row.get(44)?,
-                consecutive_failures: row.get(45)?,
-                last_error_summary: row.get(46)?,
-                endpoint_ping_status: row.get(48)?,
-                endpoint_ping_ms: row.get(49)?,
-                endpoint_ping_checked_at: row.get(50)?,
-                endpoint_ping_error: row.get(51)?,
-                created_at: row.get(28)?,
-                updated_at: row.get(29)?,
+                avg_latency_ms: row.get(45)?,
+                consecutive_failures: row.get(46)?,
+                last_error_summary: row.get(47)?,
+                endpoint_ping_status: row.get(49)?,
+                endpoint_ping_ms: row.get(50)?,
+                endpoint_ping_checked_at: row.get(51)?,
+                endpoint_ping_error: row.get(52)?,
+                created_at: row.get(29)?,
+                updated_at: row.get(30)?,
             })
         })
         .map_err(|error| format!("查询 Key 池失败: {error}"))?
@@ -8028,11 +8494,14 @@ fn list_station_key_health_from_connection(
 ) -> Result<Vec<StationKeyHealth>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT station_key_id, last_success_at, last_failure_at, consecutive_failures,
-                    success_count, failure_count, avg_latency_ms, last_error_summary,
-                    cooldown_until, updated_at
-               FROM station_key_health
-              ORDER BY updated_at DESC",
+            "SELECT h.station_key_id, h.last_success_at, h.last_failure_at, h.consecutive_failures,
+                    h.success_count, h.failure_count, h.avg_latency_ms, h.last_error_summary,
+                    h.cooldown_until, h.updated_at
+               FROM station_key_health h
+               JOIN station_keys k ON k.id = h.station_key_id
+               JOIN stations s ON s.id = k.station_id
+              WHERE h.endpoint_revision = s.endpoint_revision
+              ORDER BY h.updated_at DESC",
         )
         .map_err(|error| format!("读取 Key 健康状态失败: {error}"))?;
 
@@ -8052,11 +8521,14 @@ fn station_key_health_by_id(
     validate_station_key_exists(connection, station_key_id)?;
     let row = connection
         .query_row(
-            "SELECT station_key_id, last_success_at, last_failure_at, consecutive_failures,
-                    success_count, failure_count, avg_latency_ms, last_error_summary,
-                    cooldown_until, updated_at
-               FROM station_key_health
-              WHERE station_key_id = ?1",
+            "SELECT h.station_key_id, h.last_success_at, h.last_failure_at, h.consecutive_failures,
+                    h.success_count, h.failure_count, h.avg_latency_ms, h.last_error_summary,
+                    h.cooldown_until, h.updated_at
+               FROM station_key_health h
+               JOIN station_keys k ON k.id = h.station_key_id
+               JOIN stations s ON s.id = k.station_id
+              WHERE h.station_key_id = ?1
+                AND h.endpoint_revision = s.endpoint_revision",
             params![station_key_id],
             row_to_station_key_health,
         )
@@ -8101,9 +8573,12 @@ fn list_station_endpoint_health_from_connection(
 ) -> Result<Vec<StationEndpointHealth>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT station_id, status, latency_ms, checked_at, error_summary, updated_at
-               FROM station_endpoint_health
-              ORDER BY updated_at DESC",
+            "SELECT h.station_id, h.endpoint_revision, h.status, h.latency_ms,
+                    h.checked_at, h.error_summary, h.updated_at
+               FROM station_endpoint_health h
+               JOIN stations s ON s.id = h.station_id
+              WHERE h.endpoint_revision = s.endpoint_revision
+              ORDER BY h.updated_at DESC",
         )
         .map_err(|error| format!("读取端点 PING 状态失败: {error}"))?;
     let rows = statement
@@ -8118,18 +8593,20 @@ fn station_endpoint_health_by_id(
     connection: &Connection,
     station_id: &str,
 ) -> Result<StationEndpointHealth, String> {
-    validate_station_exists(connection, station_id)?;
+    let endpoint_revision = station_endpoint_revision(connection, station_id)?;
     let row = connection
         .query_row(
-            "SELECT station_id, status, latency_ms, checked_at, error_summary, updated_at
-               FROM station_endpoint_health
-              WHERE station_id = ?1",
-            params![station_id],
+            "SELECT h.station_id, h.endpoint_revision, h.status, h.latency_ms,
+                    h.checked_at, h.error_summary, h.updated_at
+               FROM station_endpoint_health h
+              WHERE h.station_id = ?1
+                AND h.endpoint_revision = ?2",
+            params![station_id, endpoint_revision],
             row_to_station_endpoint_health,
         )
         .optional()
         .map_err(|error| format!("读取端点 PING 状态失败: {error}"))?;
-    Ok(row.unwrap_or_else(|| default_station_endpoint_health(station_id)))
+    Ok(row.unwrap_or_else(|| default_station_endpoint_health(station_id, endpoint_revision)))
 }
 
 fn row_to_station_endpoint_health(
@@ -8137,17 +8614,22 @@ fn row_to_station_endpoint_health(
 ) -> rusqlite::Result<StationEndpointHealth> {
     Ok(StationEndpointHealth {
         station_id: row.get(0)?,
-        status: row.get(1)?,
-        latency_ms: row.get(2)?,
-        checked_at: row.get(3)?,
-        error_summary: row.get(4)?,
-        updated_at: row.get(5)?,
+        endpoint_revision: row.get(1)?,
+        status: row.get(2)?,
+        latency_ms: row.get(3)?,
+        checked_at: row.get(4)?,
+        error_summary: row.get(5)?,
+        updated_at: row.get(6)?,
     })
 }
 
-fn default_station_endpoint_health(station_id: &str) -> StationEndpointHealth {
+fn default_station_endpoint_health(
+    station_id: &str,
+    endpoint_revision: i64,
+) -> StationEndpointHealth {
     StationEndpointHealth {
         station_id: station_id.to_string(),
+        endpoint_revision,
         status: "unchecked".to_string(),
         latency_ms: None,
         checked_at: None,
@@ -8164,7 +8646,7 @@ fn upsert_station_endpoint_health_in_connection(
     checked_at: &str,
     error_summary: Option<&str>,
 ) -> Result<StationEndpointHealth, String> {
-    validate_station_exists(connection, station_id)?;
+    let endpoint_revision = station_endpoint_revision(connection, station_id)?;
     if !matches!(status, "unchecked" | "success" | "failed") {
         return Err("端点 PING 状态无效".to_string());
     }
@@ -8176,9 +8658,10 @@ fn upsert_station_endpoint_health_in_connection(
     connection
         .execute(
             "INSERT INTO station_endpoint_health (
-                station_id, status, latency_ms, checked_at, error_summary, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                station_id, endpoint_revision, status, latency_ms, checked_at, error_summary, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(station_id) DO UPDATE SET
+                endpoint_revision = excluded.endpoint_revision,
                 status = excluded.status,
                 latency_ms = excluded.latency_ms,
                 checked_at = excluded.checked_at,
@@ -8186,6 +8669,7 @@ fn upsert_station_endpoint_health_in_connection(
                 updated_at = excluded.updated_at",
             params![
                 station_id,
+                endpoint_revision,
                 status,
                 latency_ms,
                 checked_at,
@@ -8219,6 +8703,7 @@ fn record_station_key_success_in_connection(
 ) -> Result<(), String> {
     validate_station_key_exists(connection, station_key_id)?;
     let current = station_key_health_by_id(connection, station_key_id)?;
+    let endpoint_revision = station_key_endpoint_revision(connection, station_key_id)?;
     let success_count = current.success_count + 1;
     let total_duration_ms = current
         .avg_latency_ms
@@ -8234,14 +8719,17 @@ fn record_station_key_success_in_connection(
     connection
         .execute(
             "INSERT INTO station_key_health (
-                station_key_id, last_success_at, last_failure_at, consecutive_failures,
+                station_key_id, endpoint_revision, last_success_at, last_failure_at, consecutive_failures,
                 success_count, failure_count, total_duration_ms, avg_latency_ms,
                 last_error_summary, cooldown_until, updated_at
-             ) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7, NULL, NULL, ?8)
+             ) VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, NULL, NULL, ?9)
              ON CONFLICT(station_key_id) DO UPDATE SET
+                endpoint_revision = excluded.endpoint_revision,
                 last_success_at = excluded.last_success_at,
+                last_failure_at = excluded.last_failure_at,
                 consecutive_failures = 0,
                 success_count = excluded.success_count,
+                failure_count = excluded.failure_count,
                 total_duration_ms = excluded.total_duration_ms,
                 avg_latency_ms = excluded.avg_latency_ms,
                 last_error_summary = NULL,
@@ -8249,6 +8737,7 @@ fn record_station_key_success_in_connection(
                 updated_at = excluded.updated_at",
             params![
                 station_key_id,
+                endpoint_revision,
                 now,
                 current.last_failure_at,
                 success_count,
@@ -8317,17 +8806,20 @@ fn record_station_key_failure_state_in_connection(
     cooldown_until: Option<&str>,
 ) -> Result<(), String> {
     validate_station_key_exists(connection, station_key_id)?;
+    let endpoint_revision = station_key_endpoint_revision(connection, station_key_id)?;
     let failure_count = current.failure_count + 1;
     let cooldown_until = cooldown_until.map(ToString::to_string);
 
     connection
         .execute(
             "INSERT INTO station_key_health (
-                station_key_id, last_success_at, last_failure_at, consecutive_failures,
+                station_key_id, endpoint_revision, last_success_at, last_failure_at, consecutive_failures,
                 success_count, failure_count, total_duration_ms, avg_latency_ms,
                 last_error_summary, cooldown_until, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(station_key_id) DO UPDATE SET
+                endpoint_revision = excluded.endpoint_revision,
+                last_success_at = excluded.last_success_at,
                 last_failure_at = excluded.last_failure_at,
                 consecutive_failures = excluded.consecutive_failures,
                 success_count = excluded.success_count,
@@ -8339,6 +8831,7 @@ fn record_station_key_failure_state_in_connection(
                 updated_at = excluded.updated_at",
             params![
                 station_key_id,
+                endpoint_revision,
                 current.last_success_at,
                 now,
                 consecutive_failures,
@@ -8421,7 +8914,7 @@ fn proxy_route_candidates_from_connection_with_data_key(
     let global_proxy_url = read_setting_or_default(connection, "collector_proxy_url", "")?;
     let mut statement = connection
         .prepare(
-            "SELECT k.id, k.station_id, s.base_url, k.api_key, k.api_key_secret_id,
+            "SELECT k.id, k.station_id, s.endpoint_revision, s.api_base_url, k.api_key, k.api_key_secret_id,
                     s.upstream_api_format, COALESCE(k.routing_order, k.priority),
                     s.collector_proxy_mode, s.collector_proxy_url,
                     k.max_concurrency, k.load_factor
@@ -8439,20 +8932,21 @@ fn proxy_route_candidates_from_connection_with_data_key(
     let rows = statement
         .query_map([], |row| {
             let station_key_id: String = row.get(0)?;
-            let api_key: String = row.get(3)?;
+            let api_key: String = row.get(4)?;
             Ok(RouteCandidate {
                 station_key_id,
                 station_id: row.get(1)?,
-                upstream_base_url: row.get(2)?,
+                station_endpoint_revision: row.get(2)?,
+                upstream_base_url: row.get(3)?,
                 api_key,
-                upstream_api_format: parse_upstream_api_format(row.get::<_, String>(5)?),
-                priority: row.get(6)?,
-                max_concurrency: row.get(9)?,
-                load_factor: row.get(10)?,
+                upstream_api_format: parse_upstream_api_format(row.get::<_, String>(6)?),
+                priority: row.get(7)?,
+                max_concurrency: row.get(10)?,
+                load_factor: row.get(11)?,
                 collector_proxy_mode: {
                     let proxy = resolve_proxy_config(
-                        &row.get::<_, String>(7)?,
-                        row.get::<_, Option<String>>(8)?,
+                        &row.get::<_, String>(8)?,
+                        row.get::<_, Option<String>>(9)?,
                         &global_proxy_mode,
                         Some(global_proxy_url.clone()),
                     );
@@ -8460,8 +8954,8 @@ fn proxy_route_candidates_from_connection_with_data_key(
                 },
                 collector_proxy_url: {
                     let proxy = resolve_proxy_config(
-                        &row.get::<_, String>(7)?,
-                        row.get::<_, Option<String>>(8)?,
+                        &row.get::<_, String>(8)?,
+                        row.get::<_, Option<String>>(9)?,
                         &global_proxy_mode,
                         Some(global_proxy_url.clone()),
                     );
@@ -8511,7 +9005,8 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
             "SELECT
                 k.id,
                 k.station_id,
-                s.base_url,
+                s.endpoint_revision,
+                s.api_base_url,
                 k.api_key,
                 k.api_key_secret_id,
                 s.upstream_api_format,
@@ -8548,7 +9043,9 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
              FROM station_keys k
              JOIN stations s ON s.id = k.station_id
              LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
-             LEFT JOIN station_key_health h ON h.station_key_id = k.id
+             LEFT JOIN station_key_health h
+                    ON h.station_key_id = k.id
+                   AND h.endpoint_revision = s.endpoint_revision
              WHERE k.enabled = 1
                AND s.enabled = 1
                AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
@@ -8562,11 +9059,11 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
     let rows = statement
         .query_map([], |row| {
             let station_key_id = row.get::<_, String>(0)?;
-            let api_key: String = row.get(3)?;
-            let health_station_key_id = row.get::<_, Option<String>>(22)?;
+            let api_key: String = row.get(4)?;
+            let health_station_key_id = row.get::<_, Option<String>>(23)?;
             let proxy = resolve_proxy_config(
-                &row.get::<_, String>(32)?,
-                row.get::<_, Option<String>>(33)?,
+                &row.get::<_, String>(33)?,
+                row.get::<_, Option<String>>(34)?,
                 &global_proxy_mode,
                 Some(global_proxy_url.clone()),
             );
@@ -8574,44 +9071,45 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                 candidate: RouteCandidate {
                     station_key_id: station_key_id.clone(),
                     station_id: row.get(1)?,
-                    upstream_base_url: row.get(2)?,
+                    station_endpoint_revision: row.get(2)?,
+                    upstream_base_url: row.get(3)?,
                     api_key,
-                    upstream_api_format: parse_upstream_api_format(row.get::<_, String>(5)?),
-                    priority: row.get(6)?,
-                    max_concurrency: row.get(34)?,
-                    load_factor: row.get(35)?,
+                    upstream_api_format: parse_upstream_api_format(row.get::<_, String>(6)?),
+                    priority: row.get(7)?,
+                    max_concurrency: row.get(35)?,
+                    load_factor: row.get(36)?,
                     collector_proxy_mode: proxy.mode,
                     collector_proxy_url: proxy.url,
                 },
-                station_name: row.get(7)?,
-                key_name: row.get(8)?,
+                station_name: row.get(8)?,
+                key_name: row.get(9)?,
                 capabilities: StationKeyCapabilities {
                     station_key_id,
-                    supports_chat_completions: i64_to_bool(row.get(9)?),
-                    supports_responses: i64_to_bool(row.get(10)?),
-                    supports_embeddings: i64_to_bool(row.get(11)?),
-                    supports_stream: i64_to_bool(row.get(12)?),
-                    supports_tools: i64_to_bool(row.get(13)?),
-                    supports_vision: i64_to_bool(row.get(14)?),
-                    supports_reasoning: i64_to_bool(row.get(15)?),
-                    model_allowlist: parse_json_string_list(row.get::<_, String>(16)?.as_str()),
-                    model_blocklist: parse_json_string_list(row.get::<_, String>(17)?.as_str()),
-                    preferred_models: parse_json_string_list(row.get::<_, String>(18)?.as_str()),
-                    only_use_as_backup: i64_to_bool(row.get(19)?),
-                    routing_tags: parse_json_string_list(row.get::<_, String>(20)?.as_str()),
-                    updated_at: row.get(21)?,
+                    supports_chat_completions: i64_to_bool(row.get(10)?),
+                    supports_responses: i64_to_bool(row.get(11)?),
+                    supports_embeddings: i64_to_bool(row.get(12)?),
+                    supports_stream: i64_to_bool(row.get(13)?),
+                    supports_tools: i64_to_bool(row.get(14)?),
+                    supports_vision: i64_to_bool(row.get(15)?),
+                    supports_reasoning: i64_to_bool(row.get(16)?),
+                    model_allowlist: parse_json_string_list(row.get::<_, String>(17)?.as_str()),
+                    model_blocklist: parse_json_string_list(row.get::<_, String>(18)?.as_str()),
+                    preferred_models: parse_json_string_list(row.get::<_, String>(19)?.as_str()),
+                    only_use_as_backup: i64_to_bool(row.get(20)?),
+                    routing_tags: parse_json_string_list(row.get::<_, String>(21)?.as_str()),
+                    updated_at: row.get(22)?,
                 },
                 health: health_station_key_id.map(|station_key_id| StationKeyHealth {
                     station_key_id,
-                    last_success_at: row.get(23).ok().flatten(),
-                    last_failure_at: row.get(24).ok().flatten(),
-                    consecutive_failures: row.get(25).unwrap_or(0),
-                    success_count: row.get(26).unwrap_or(0),
-                    failure_count: row.get(27).unwrap_or(0),
-                    avg_latency_ms: row.get(28).ok().flatten(),
-                    last_error_summary: row.get(29).ok().flatten(),
-                    cooldown_until: row.get(30).ok().flatten(),
-                    updated_at: row.get(31).unwrap_or_else(|_| "0".to_string()),
+                    last_success_at: row.get(24).ok().flatten(),
+                    last_failure_at: row.get(25).ok().flatten(),
+                    consecutive_failures: row.get(26).unwrap_or(0),
+                    success_count: row.get(27).unwrap_or(0),
+                    failure_count: row.get(28).unwrap_or(0),
+                    avg_latency_ms: row.get(29).ok().flatten(),
+                    last_error_summary: row.get(30).ok().flatten(),
+                    cooldown_until: row.get(31).ok().flatten(),
+                    updated_at: row.get(32).unwrap_or_else(|_| "0".to_string()),
                 }),
                 economics: None,
                 scheduler_group_binding_id: None,
@@ -9621,7 +10119,7 @@ fn list_balance_snapshots_for_station_from_connection(
     Ok(rows)
 }
 
-fn upsert_balance_snapshot_in_connection(
+pub(crate) fn upsert_balance_snapshot_in_connection(
     connection: &Connection,
     input: UpsertBalanceSnapshotInput,
 ) -> Result<BalanceSnapshot, String> {
@@ -11710,8 +12208,36 @@ fn insert_collector_snapshot_in_connection(
     raw_json_redacted: Option<Value>,
     error_message: Option<String>,
 ) -> Result<CollectorSnapshot, String> {
+    let endpoint_revision = station_endpoint_revision(connection, station_id)?;
+    insert_collector_snapshot_in_connection_with_revision(
+        connection,
+        station_id,
+        endpoint_revision,
+        source,
+        status,
+        summary_json,
+        normalized_json,
+        raw_json_redacted,
+        error_message,
+        true,
+    )
+}
+
+pub(crate) fn insert_collector_snapshot_in_connection_with_revision(
+    connection: &Connection,
+    station_id: &str,
+    endpoint_revision: i64,
+    source: &str,
+    status: &str,
+    summary_json: Value,
+    normalized_json: Value,
+    raw_json_redacted: Option<Value>,
+    error_message: Option<String>,
+    emit_change_events: bool,
+) -> Result<CollectorSnapshot, String> {
     let id = generate_id("snapshot");
     let now = now_string();
+    validate_station_exists(connection, station_id)?;
     let summary_json = redact_sensitive_value(&summary_json);
     let normalized_json = redact_sensitive_value(&normalized_json);
     let raw_json_redacted = raw_json_redacted.map(|value| redact_sensitive_value(&value));
@@ -11725,12 +12251,13 @@ fn insert_collector_snapshot_in_connection(
     connection
         .execute(
             "INSERT INTO collector_snapshots (
-                id, station_id, source, status, fetched_at, summary_json,
+                id, station_id, endpoint_revision, source, status, fetched_at, summary_json,
                 normalized_json, raw_json_redacted, error_message, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 id,
                 station_id,
+                endpoint_revision,
                 source,
                 status,
                 now,
@@ -11746,7 +12273,7 @@ fn insert_collector_snapshot_in_connection(
         .map_err(|error| format!("保存采集快照失败: {error}"))?;
 
     let saved = collector_snapshot_by_id(connection, &id)?;
-    if saved.status == "failed" {
+    if emit_change_events && saved.status == "failed" {
         let task_type = collector_task_type_from_snapshot_source(&saved.source);
         let event = crate::services::change_events::collector_failed_event(
             &saved.station_id,
@@ -11755,83 +12282,85 @@ fn insert_collector_snapshot_in_connection(
         );
         let _ = upsert_change_event_in_connection(connection, event);
     }
-    if let Some(previous_snapshot) = previous_snapshot.as_ref() {
-        let previous_models = models_from_snapshot_value(&previous_snapshot.normalized_json);
-        let next_models = models_from_snapshot_value(&saved.normalized_json);
-        if should_emit_model_change_events(&saved.source) {
-            for model in next_models
-                .iter()
-                .filter(|model| !previous_models.contains(model))
-            {
-                let event = UpsertChangeEventInput {
-                    severity: crate::services::change_events::SEVERITY_INFO.to_string(),
-                    event_type: "model_added".to_string(),
-                    title: "模型新增".to_string(),
-                    message: format!("站点新增模型 {model}"),
-                    object_type: "station".to_string(),
-                    object_id: Some(saved.station_id.clone()),
-                    station_id: Some(saved.station_id.clone()),
-                    station_key_id: None,
-                    pricing_rule_id: None,
-                    request_log_id: None,
-                    old_value_json: None,
-                    new_value_json: Some(json!({ "model": model }).to_string()),
-                    impact_json: None,
-                    dedupe_key: crate::services::change_events::model_dedupe_key(
-                        &saved.station_id,
-                        "model_added",
-                        model,
-                    ),
-                    source: "collector".to_string(),
-                };
-                let _ = upsert_change_event_in_connection(connection, event);
-            }
-            for model in previous_models
-                .iter()
-                .filter(|model| !next_models.contains(model))
-            {
-                let event = UpsertChangeEventInput {
-                    severity: crate::services::change_events::SEVERITY_WARNING.to_string(),
-                    event_type: "model_removed".to_string(),
-                    title: "模型下架".to_string(),
-                    message: format!("站点下架模型 {model}"),
-                    object_type: "station".to_string(),
-                    object_id: Some(saved.station_id.clone()),
-                    station_id: Some(saved.station_id.clone()),
-                    station_key_id: None,
-                    pricing_rule_id: None,
-                    request_log_id: None,
-                    old_value_json: Some(json!({ "model": model }).to_string()),
-                    new_value_json: None,
-                    impact_json: Some(
-                        json!({ "routingRisk": "model_candidates_may_change" }).to_string(),
-                    ),
-                    dedupe_key: crate::services::change_events::model_dedupe_key(
-                        &saved.station_id,
-                        "model_removed",
-                        model,
-                    ),
-                    source: "collector".to_string(),
-                };
-                let _ = upsert_change_event_in_connection(connection, event);
-            }
-        }
-
-        let previous_rates =
-            rate_multipliers_from_snapshot_value(&previous_snapshot.normalized_json);
-        let next_rates = rate_multipliers_from_snapshot_value(&saved.normalized_json);
-        for (group_name, next_multiplier) in next_rates {
-            if let Some((_, old_multiplier)) = previous_rates
-                .iter()
-                .find(|(previous_group, _)| previous_group == &group_name)
-            {
-                if let Some(event) = crate::services::change_events::rate_changed_event(
-                    &saved.station_id,
-                    &group_name,
-                    *old_multiplier,
-                    next_multiplier,
-                ) {
+    if emit_change_events {
+        if let Some(previous_snapshot) = previous_snapshot.as_ref() {
+            let previous_models = models_from_snapshot_value(&previous_snapshot.normalized_json);
+            let next_models = models_from_snapshot_value(&saved.normalized_json);
+            if should_emit_model_change_events(&saved.source) {
+                for model in next_models
+                    .iter()
+                    .filter(|model| !previous_models.contains(model))
+                {
+                    let event = UpsertChangeEventInput {
+                        severity: crate::services::change_events::SEVERITY_INFO.to_string(),
+                        event_type: "model_added".to_string(),
+                        title: "模型新增".to_string(),
+                        message: format!("站点新增模型 {model}"),
+                        object_type: "station".to_string(),
+                        object_id: Some(saved.station_id.clone()),
+                        station_id: Some(saved.station_id.clone()),
+                        station_key_id: None,
+                        pricing_rule_id: None,
+                        request_log_id: None,
+                        old_value_json: None,
+                        new_value_json: Some(json!({ "model": model }).to_string()),
+                        impact_json: None,
+                        dedupe_key: crate::services::change_events::model_dedupe_key(
+                            &saved.station_id,
+                            "model_added",
+                            model,
+                        ),
+                        source: "collector".to_string(),
+                    };
                     let _ = upsert_change_event_in_connection(connection, event);
+                }
+                for model in previous_models
+                    .iter()
+                    .filter(|model| !next_models.contains(model))
+                {
+                    let event = UpsertChangeEventInput {
+                        severity: crate::services::change_events::SEVERITY_WARNING.to_string(),
+                        event_type: "model_removed".to_string(),
+                        title: "模型下架".to_string(),
+                        message: format!("站点下架模型 {model}"),
+                        object_type: "station".to_string(),
+                        object_id: Some(saved.station_id.clone()),
+                        station_id: Some(saved.station_id.clone()),
+                        station_key_id: None,
+                        pricing_rule_id: None,
+                        request_log_id: None,
+                        old_value_json: Some(json!({ "model": model }).to_string()),
+                        new_value_json: None,
+                        impact_json: Some(
+                            json!({ "routingRisk": "model_candidates_may_change" }).to_string(),
+                        ),
+                        dedupe_key: crate::services::change_events::model_dedupe_key(
+                            &saved.station_id,
+                            "model_removed",
+                            model,
+                        ),
+                        source: "collector".to_string(),
+                    };
+                    let _ = upsert_change_event_in_connection(connection, event);
+                }
+            }
+
+            let previous_rates =
+                rate_multipliers_from_snapshot_value(&previous_snapshot.normalized_json);
+            let next_rates = rate_multipliers_from_snapshot_value(&saved.normalized_json);
+            for (group_name, next_multiplier) in next_rates {
+                if let Some((_, old_multiplier)) = previous_rates
+                    .iter()
+                    .find(|(previous_group, _)| previous_group == &group_name)
+                {
+                    if let Some(event) = crate::services::change_events::rate_changed_event(
+                        &saved.station_id,
+                        &group_name,
+                        *old_multiplier,
+                        next_multiplier,
+                    ) {
+                        let _ = upsert_change_event_in_connection(connection, event);
+                    }
                 }
             }
         }
@@ -11844,21 +12373,22 @@ fn should_emit_model_change_events(source: &str) -> bool {
 }
 
 fn row_to_collector_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<CollectorSnapshot> {
-    let summary_string: String = row.get(5)?;
-    let normalized_string: String = row.get(6)?;
-    let raw_string: Option<String> = row.get(7)?;
+    let summary_string: String = row.get("summary_json")?;
+    let normalized_string: String = row.get("normalized_json")?;
+    let raw_string: Option<String> = row.get("raw_json_redacted")?;
 
     Ok(CollectorSnapshot {
-        id: row.get(0)?,
-        station_id: row.get(1)?,
-        source: row.get(2)?,
-        status: row.get(3)?,
-        fetched_at: row.get(4)?,
+        id: row.get("id")?,
+        station_id: row.get("station_id")?,
+        endpoint_revision: row.get("endpoint_revision")?,
+        source: row.get("source")?,
+        status: row.get("status")?,
+        fetched_at: row.get("fetched_at")?,
         summary_json: parse_json_value(&summary_string),
         normalized_json: parse_json_value(&normalized_string),
         raw_json_redacted: raw_string.as_deref().map(parse_json_value),
-        error_message: row.get(8)?,
-        created_at: row.get(9)?,
+        error_message: row.get("error_message")?,
+        created_at: row.get("created_at")?,
     })
 }
 
@@ -11916,6 +12446,7 @@ fn row_to_collector_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<CollectorRu
     Ok(CollectorRun {
         id: row.get("id")?,
         station_id: row.get("station_id")?,
+        endpoint_revision: row.get("endpoint_revision")?,
         parent_run_id: row.get("parent_run_id")?,
         adapter: row.get("adapter")?,
         task_type: row.get("task_type")?,
@@ -12034,7 +12565,7 @@ fn station_group_binding_by_id(
         .ok_or_else(|| "分组绑定不存在".to_string())
 }
 
-fn upsert_station_group_binding_in_connection(
+pub(crate) fn upsert_station_group_binding_in_connection(
     connection: &Connection,
     input: UpsertStationGroupBindingInput,
 ) -> Result<StationGroupBinding, String> {
@@ -12224,7 +12755,7 @@ fn disable_shadow_station_group_bindings(
     Ok(())
 }
 
-fn mark_missing_station_group_bindings_in_connection(
+pub(crate) fn mark_missing_station_group_bindings_in_connection(
     connection: &Connection,
     station_id: &str,
     rate_sources: Vec<String>,
@@ -12367,7 +12898,7 @@ fn list_group_rate_records_from_connection(
     Ok(rows)
 }
 
-fn insert_group_rate_record_if_changed_in_connection(
+pub(crate) fn insert_group_rate_record_if_changed_in_connection(
     connection: &Connection,
     input: InsertGroupRateRecordInput,
 ) -> Result<Option<GroupRateRecord>, String> {
@@ -12552,7 +13083,7 @@ fn validate_collector_task_type(value: &str) -> Result<String, String> {
 
 fn validate_collector_run_status(value: &str) -> Result<String, String> {
     match value.trim() {
-        "running" | "success" | "partial" | "failed" | "manual_required" => {
+        "running" | "success" | "partial" | "failed" | "manual_required" | "superseded" => {
             Ok(value.trim().to_string())
         }
         _ => Err("采集运行状态无效".to_string()),
@@ -12575,6 +13106,15 @@ fn create_collector_run_in_connection(
     connection: &Connection,
     input: CreateCollectorRunInput,
 ) -> Result<CollectorRun, String> {
+    let endpoint_revision = station_endpoint_revision(connection, &input.station_id)?;
+    create_collector_run_in_connection_with_revision(connection, input, endpoint_revision)
+}
+
+pub(crate) fn create_collector_run_in_connection_with_revision(
+    connection: &Connection,
+    input: CreateCollectorRunInput,
+    endpoint_revision: i64,
+) -> Result<CollectorRun, String> {
     validate_station_exists(connection, &input.station_id)?;
     if let Some(parent_run_id) = input.parent_run_id.as_deref() {
         collector_run_by_id(connection, parent_run_id)?;
@@ -12588,14 +13128,15 @@ fn create_collector_run_in_connection(
     connection
         .execute(
             "INSERT INTO collector_runs (
-                id, station_id, parent_run_id, adapter, task_type, status,
+                id, station_id, endpoint_revision, parent_run_id, adapter, task_type, status,
                 started_at, finished_at, duration_ms, endpoint_count, success_count,
                 failure_count, manual_action_required, error_code, error_message,
                 snapshot_id, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, 'running', ?6, NULL, NULL, 0, 0, 0, 0, NULL, NULL, NULL, ?7)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', ?7, NULL, NULL, 0, 0, 0, 0, NULL, NULL, NULL, ?8)",
             params![
                 id,
                 input.station_id,
+                endpoint_revision,
                 normalize_optional_string(input.parent_run_id),
                 input.adapter.trim(),
                 task_type,
@@ -12607,7 +13148,7 @@ fn create_collector_run_in_connection(
     collector_run_by_id(connection, &id)
 }
 
-fn finish_collector_run_in_connection(
+pub(crate) fn finish_collector_run_in_connection(
     connection: &Connection,
     input: FinishCollectorRunInput,
 ) -> Result<CollectorRun, String> {
@@ -12809,7 +13350,7 @@ fn collector_snapshot_by_id(
 ) -> Result<CollectorSnapshot, String> {
     connection
         .query_row(
-            "SELECT id, station_id, source, status, fetched_at, summary_json,
+            "SELECT id, station_id, endpoint_revision, source, status, fetched_at, summary_json,
                     normalized_json, raw_json_redacted, error_message, created_at
                FROM collector_snapshots
               WHERE id = ?1",
@@ -12827,7 +13368,7 @@ fn list_collector_snapshots_from_connection(
 ) -> Result<Vec<CollectorSnapshot>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, station_id, source, status, fetched_at, summary_json,
+            "SELECT id, station_id, endpoint_revision, source, status, fetched_at, summary_json,
                     normalized_json, raw_json_redacted, error_message, created_at
                FROM collector_snapshots
               WHERE station_id = ?1
@@ -12848,7 +13389,7 @@ fn latest_collector_snapshot_from_connection(
 ) -> Result<Option<CollectorSnapshot>, String> {
     connection
         .query_row(
-            "SELECT id, station_id, source, status, fetched_at, summary_json,
+            "SELECT id, station_id, endpoint_revision, source, status, fetched_at, summary_json,
                     normalized_json, raw_json_redacted, error_message, created_at
                FROM collector_snapshots
               WHERE station_id = ?1
@@ -13190,7 +13731,7 @@ fn upsert_setting(connection: &Connection, key: &str, value: &str) -> Result<(),
 fn validate_station_fields(
     name: &str,
     station_type: &str,
-    base_url: &str,
+    website_url: &str,
     credit_per_cny: f64,
     collection_interval_minutes: u16,
 ) -> Result<(), String> {
@@ -13203,7 +13744,7 @@ fn validate_station_fields(
     ) {
         return Err("站点类型无效".to_string());
     }
-    if base_url.trim().is_empty() {
+    if website_url.trim().is_empty() {
         return Err("Base URL 不能为空".to_string());
     }
     if credit_per_cny <= 0.0 {
@@ -13365,12 +13906,286 @@ mod tests {
     use crate::models::proxy::ProxyLifecycle;
     use crate::models::routing::{PricingGroupType, RouteEndpointKind, RoutingGroupFilter};
 
+    fn create_legacy_station_endpoint_schema(connection: &Connection) {
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE stations (
+                    id TEXT PRIMARY KEY,
+                    base_url TEXT NOT NULL,
+                    upstream_api_base_path TEXT NOT NULL DEFAULT '/v1'
+                );
+                CREATE TABLE collector_snapshots (
+                    id TEXT PRIMARY KEY,
+                    station_id TEXT NOT NULL,
+                    summary_json TEXT NOT NULL,
+                    normalized_json TEXT NOT NULL,
+                    raw_json_redacted TEXT
+                );
+                CREATE TABLE collector_runs (
+                    id TEXT PRIMARY KEY,
+                    station_id TEXT NOT NULL
+                );
+                CREATE TABLE station_endpoint_health (
+                    station_id TEXT PRIMARY KEY
+                );
+                CREATE TABLE station_key_health (
+                    station_key_id TEXT PRIMARY KEY
+                );
+                "#,
+            )
+            .expect("legacy station endpoint schema");
+    }
+
+    fn table_columns(connection: &Connection, table: &str) -> Vec<String> {
+        let mut statement = connection
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .expect("table info");
+        statement
+            .query_map([], |row| row.get(1))
+            .expect("query columns")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect columns")
+    }
+
+    #[test]
+    fn station_endpoint_migration_separates_legacy_root_and_versioned_urls() {
+        let connection = Connection::open_in_memory().expect("connection");
+        create_legacy_station_endpoint_schema(&connection);
+        connection
+            .execute_batch(
+                r#"
+                INSERT INTO stations (id, base_url) VALUES
+                    ('root', 'https://root.example'),
+                    ('v1', 'https://v1.example/v1'),
+                    ('ark', 'https://ark.example/api/v3');
+                INSERT INTO collector_snapshots (
+                    id, station_id, summary_json, normalized_json, raw_json_redacted
+                ) VALUES ('snapshot', 'root', '{"legacy":true}', '{"legacy":true}', '{"legacy":true}');
+                INSERT INTO collector_runs (id, station_id) VALUES ('run', 'root');
+                INSERT INTO station_endpoint_health (station_id) VALUES ('root');
+                INSERT INTO station_key_health (station_key_id) VALUES ('key');
+                "#,
+            )
+            .expect("legacy endpoint rows");
+
+        migrate_station_endpoint_urls(&connection).expect("migrate endpoints");
+
+        let rows = connection
+            .prepare(
+                "SELECT id, website_url, api_base_url, endpoint_revision
+                   FROM stations
+                  ORDER BY id",
+            )
+            .expect("station endpoints")
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .expect("query endpoints")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect endpoints");
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "ark".to_string(),
+                    "https://ark.example/api/v3".to_string(),
+                    "https://ark.example/api/v3".to_string(),
+                    1,
+                ),
+                (
+                    "root".to_string(),
+                    "https://root.example".to_string(),
+                    "https://root.example/v1".to_string(),
+                    1,
+                ),
+                (
+                    "v1".to_string(),
+                    "https://v1.example".to_string(),
+                    "https://v1.example/v1".to_string(),
+                    1,
+                ),
+            ]
+        );
+
+        let station_columns = table_columns(&connection, "stations");
+        assert!(!station_columns.iter().any(|column| column == "base_url"));
+        assert!(!station_columns
+            .iter()
+            .any(|column| column == "upstream_api_base_path"));
+        for table in [
+            "collector_snapshots",
+            "collector_runs",
+            "station_endpoint_health",
+            "station_key_health",
+        ] {
+            assert!(table_columns(&connection, table)
+                .iter()
+                .any(|column| column == "endpoint_revision"));
+            let revision: i64 = connection
+                .query_row(
+                    &format!("SELECT endpoint_revision FROM {table} LIMIT 1"),
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("derived endpoint revision");
+            assert_eq!(revision, 1, "{table}");
+        }
+        let historical_json: (String, String, String) = connection
+            .query_row(
+                "SELECT summary_json, normalized_json, raw_json_redacted
+                   FROM collector_snapshots WHERE id = 'snapshot'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("historical snapshot");
+        assert_eq!(
+            historical_json,
+            (
+                "{\"legacy\":true}".to_string(),
+                "{\"legacy\":true}".to_string(),
+                "{\"legacy\":true}".to_string(),
+            )
+        );
+
+        migrate_station_endpoint_urls(&connection).expect("repeat endpoint migration");
+        assert_eq!(
+            table_columns(&connection, "stations")
+                .iter()
+                .filter(|column| column.as_str() == "api_base_url")
+                .count(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM stations", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("station count"),
+            3
+        );
+    }
+
+    #[test]
+    fn station_endpoint_migration_accepts_matching_transitional_api_url() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE stations (
+                    id TEXT PRIMARY KEY,
+                    base_url TEXT NOT NULL,
+                    api_base_url TEXT NOT NULL,
+                    upstream_api_base_path TEXT NOT NULL DEFAULT '/v1'
+                );
+                INSERT INTO stations (id, base_url, api_base_url)
+                VALUES ('station', 'https://relay.example/', 'https://relay.example/v1/');
+                "#,
+            )
+            .expect("transitional schema");
+
+        migrate_station_endpoint_urls(&connection).expect("migrate transitional endpoints");
+
+        let endpoints: (String, String, i64) = connection
+            .query_row(
+                "SELECT website_url, api_base_url, endpoint_revision FROM stations",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("station endpoints");
+        assert_eq!(
+            endpoints,
+            (
+                "https://relay.example".to_string(),
+                "https://relay.example/v1".to_string(),
+                1,
+            )
+        );
+    }
+
+    #[test]
+    fn station_endpoint_migration_fails_closed_on_conflicting_states() {
+        let conflicting_values = Connection::open_in_memory().expect("connection");
+        conflicting_values
+            .execute_batch(
+                r#"
+                CREATE TABLE stations (
+                    id TEXT PRIMARY KEY,
+                    base_url TEXT NOT NULL,
+                    api_base_url TEXT NOT NULL
+                );
+                INSERT INTO stations (id, base_url, api_base_url)
+                VALUES ('station', 'https://relay.example', 'https://other.example/v1');
+                "#,
+            )
+            .expect("conflicting values schema");
+        let error = migrate_station_endpoint_urls(&conflicting_values)
+            .expect_err("conflicting endpoint values must fail");
+        assert!(error.to_string().contains("conflict"));
+        assert!(table_columns(&conflicting_values, "stations")
+            .iter()
+            .any(|column| column == "base_url"));
+
+        let conflicting_columns = Connection::open_in_memory().expect("connection");
+        conflicting_columns
+            .execute_batch(
+                r#"
+                CREATE TABLE stations (
+                    id TEXT PRIMARY KEY,
+                    base_url TEXT NOT NULL,
+                    website_url TEXT NOT NULL,
+                    api_base_url TEXT NOT NULL
+                );
+                "#,
+            )
+            .expect("conflicting columns schema");
+        let error = migrate_station_endpoint_urls(&conflicting_columns)
+            .expect_err("ambiguous endpoint columns must fail");
+        assert!(error.to_string().contains("conflict"));
+    }
+
+    #[test]
+    fn station_create_round_trips_both_urls() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = database
+            .create_station(CreateStationInput {
+                name: "separate endpoint roles".to_string(),
+                station_type: "openai-compatible".to_string(),
+                website_url: " https://console.example/ ".to_string(),
+                api_base_url: " https://gateway.example/v1/ ".to_string(),
+                api_key: "sk-test".to_string(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+
+        assert_eq!(station.website_url, "https://console.example");
+        assert_eq!(station.api_base_url, "https://gateway.example/v1");
+        assert_eq!(station.endpoint_revision, 1);
+        let loaded = database
+            .station_for_collector(&station.id)
+            .expect("stored station");
+        assert_eq!(loaded.website_url, station.website_url);
+        assert_eq!(loaded.api_base_url, station.api_base_url);
+        assert_eq!(loaded.endpoint_revision, 1);
+    }
+
     fn test_station(database: &AppDatabase, name: &str) -> Station {
         database
             .create_station(CreateStationInput {
                 name: name.to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: "https://example.test".to_string(),
+                website_url: "https://example.test".to_string(),
+                api_base_url: "https://example.test/v1".to_string(),
                 api_key: "sk-test-routing".to_string(),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
@@ -13381,6 +14196,259 @@ mod tests {
                 note: None,
             })
             .expect("station")
+    }
+
+    fn change_test_station_endpoint(database: &AppDatabase, station: &Station) -> Station {
+        database
+            .update_station(UpdateStationInput {
+                id: station.id.clone(),
+                name: station.name.clone(),
+                station_type: station.station_type.clone(),
+                website_url: "https://replacement.example.test".to_string(),
+                api_base_url: "https://replacement.example.test/v1".to_string(),
+                api_key: None,
+                collector_proxy_mode: station.collector_proxy_mode.clone(),
+                collector_proxy_url: station.collector_proxy_url.clone(),
+                enabled: station.enabled,
+                credit_per_cny: station.credit_per_cny,
+                low_balance_threshold_cny: station.low_balance_threshold_cny,
+                collection_interval_minutes: station.collection_interval_minutes,
+                note: station.note.clone(),
+            })
+            .expect("change station endpoint")
+    }
+
+    fn update_test_station_urls(
+        database: &AppDatabase,
+        station: &Station,
+        website_url: String,
+        api_base_url: String,
+        enabled: bool,
+    ) -> Station {
+        database
+            .update_station(UpdateStationInput {
+                id: station.id.clone(),
+                name: station.name.clone(),
+                station_type: station.station_type.clone(),
+                website_url,
+                api_base_url,
+                api_key: None,
+                collector_proxy_mode: station.collector_proxy_mode.clone(),
+                collector_proxy_url: station.collector_proxy_url.clone(),
+                enabled,
+                credit_per_cny: station.credit_per_cny,
+                low_balance_threshold_cny: station.low_balance_threshold_cny,
+                collection_interval_minutes: station.collection_interval_minutes,
+                note: station.note.clone(),
+            })
+            .expect("update station URLs")
+    }
+
+    fn update_test_station_name(database: &AppDatabase, station: &Station, name: &str) -> Station {
+        database
+            .update_station(UpdateStationInput {
+                id: station.id.clone(),
+                name: name.to_string(),
+                station_type: station.station_type.clone(),
+                website_url: station.website_url.clone(),
+                api_base_url: station.api_base_url.clone(),
+                api_key: None,
+                collector_proxy_mode: station.collector_proxy_mode.clone(),
+                collector_proxy_url: station.collector_proxy_url.clone(),
+                enabled: station.enabled,
+                credit_per_cny: station.credit_per_cny,
+                low_balance_threshold_cny: station.low_balance_threshold_cny,
+                collection_interval_minutes: station.collection_interval_minutes,
+                note: station.note.clone(),
+            })
+            .expect("rename station")
+    }
+
+    fn seed_station_and_key_health(database: &AppDatabase, station_id: &str) {
+        let key = database
+            .list_station_keys(station_id.to_string())
+            .expect("station keys")
+            .remove(0);
+        database
+            .upsert_station_endpoint_health(station_id, "success", Some(38), "1000", None)
+            .expect("endpoint health");
+        database
+            .record_station_key_success(&key.id, 45, "1000")
+            .expect("key health");
+        let connection = database.connection().expect("connection");
+        connection
+            .execute(
+                "UPDATE stations
+                    SET status = 'healthy',
+                        last_checked_at = '1000',
+                        last_pricing_fetched_at = '1000'
+                  WHERE id = ?1",
+                params![station_id],
+            )
+            .expect("seed station collection state");
+    }
+
+    fn assert_station_key_health_cleared(database: &AppDatabase, station_id: &str) {
+        let key = database
+            .list_station_keys(station_id.to_string())
+            .expect("station keys")
+            .remove(0);
+        let health = database.get_station_key_health(key.id).expect("key health");
+        assert_eq!(health.last_success_at, None);
+        assert_eq!(health.last_failure_at, None);
+        assert_eq!(health.success_count, 0);
+        assert_eq!(health.failure_count, 0);
+        assert_eq!(health.consecutive_failures, 0);
+        assert_eq!(health.avg_latency_ms, None);
+        assert_eq!(health.last_error_summary, None);
+        assert_eq!(health.cooldown_until, None);
+    }
+
+    fn assert_station_health_rows_deleted(database: &AppDatabase, station_id: &str) {
+        let key = database
+            .list_station_keys(station_id.to_string())
+            .expect("station keys")
+            .remove(0);
+        let connection = database.connection().expect("connection");
+        let endpoint_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM station_endpoint_health WHERE station_id = ?1",
+                params![station_id],
+                |row| row.get(0),
+            )
+            .expect("count endpoint health rows");
+        let key_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM station_key_health WHERE station_key_id = ?1",
+                params![key.id],
+                |row| row.get(0),
+            )
+            .expect("count key health rows");
+        assert_eq!(endpoint_rows, 0);
+        assert_eq!(key_rows, 0);
+    }
+
+    fn station_with_saved_credentials(database: &AppDatabase) -> Station {
+        let station = test_station(database, "saved-login-material");
+        let data_key = [17_u8; 32];
+        database
+            .update_station_credentials_with_data_key(
+                UpdateStationCredentialsInput {
+                    station_id: station.id.clone(),
+                    login_username: Some("user@example.com".to_string()),
+                    login_password: Some("saved-password".to_string()),
+                    remember_password: true,
+                },
+                &data_key,
+            )
+            .expect("saved password");
+        database
+            .persist_station_session_with_data_key(
+                PersistStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: Some("saved-access-token".to_string()),
+                    refresh_token: None,
+                    cookie: Some("session=saved-cookie".to_string()),
+                    newapi_user_id: Some("42".to_string()),
+                    token_expires_at: None,
+                    session_expires_at: None,
+                    session_source: "password_login".to_string(),
+                },
+                &data_key,
+            )
+            .expect("saved session");
+        station
+    }
+
+    #[test]
+    fn api_origin_change_disables_station_increments_revision_and_clears_health() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "origin-change");
+        seed_station_and_key_health(&database, &station.id);
+
+        let updated = update_test_station_urls(
+            &database,
+            &station,
+            station.website_url.clone(),
+            "https://new-api.example/v1".to_string(),
+            true,
+        );
+
+        assert!(!updated.enabled);
+        assert_eq!(updated.endpoint_revision, station.endpoint_revision + 1);
+        assert_eq!(updated.status, "disabled");
+        assert_eq!(updated.last_checked_at, None);
+        assert_eq!(updated.last_pricing_fetched_at, None);
+        assert_eq!(
+            database
+                .get_station_endpoint_health(updated.id.clone())
+                .unwrap()
+                .status,
+            "unchecked"
+        );
+        assert_station_key_health_cleared(&database, &updated.id);
+    }
+
+    #[test]
+    fn api_namespace_change_clears_health_without_forcing_disable() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "api-path-change");
+        seed_station_and_key_health(&database, &station.id);
+
+        let updated = update_test_station_urls(
+            &database,
+            &station,
+            station.website_url.clone(),
+            "https://example.test/api/v3".to_string(),
+            true,
+        );
+
+        assert!(updated.enabled);
+        assert_eq!(updated.endpoint_revision, station.endpoint_revision + 1);
+        assert_eq!(updated.status, "unchecked");
+        assert_eq!(updated.last_checked_at, None);
+        assert_eq!(updated.last_pricing_fetched_at, None);
+        assert_station_health_rows_deleted(&database, &updated.id);
+    }
+
+    #[test]
+    fn website_origin_change_clears_secret_login_material_but_keeps_username() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = station_with_saved_credentials(&database);
+
+        let updated = update_test_station_urls(
+            &database,
+            &station,
+            "https://new-console.example".to_string(),
+            station.api_base_url.clone(),
+            true,
+        );
+
+        let credentials = database
+            .get_station_credentials(updated.id)
+            .expect("credentials");
+        assert_eq!(
+            credentials.login_username.as_deref(),
+            Some("user@example.com")
+        );
+        assert!(!credentials.password_present);
+        assert!(!credentials.access_token_present);
+        assert!(!credentials.refresh_token_present);
+        assert!(!credentials.cookie_present);
+        assert_eq!(credentials.newapi_user_id, None);
+        assert_eq!(credentials.session_status, "none");
+        assert_eq!(updated.endpoint_revision, station.endpoint_revision + 1);
+    }
+
+    #[test]
+    fn unrelated_station_edit_does_not_increment_endpoint_revision() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "rename-only");
+
+        let updated = update_test_station_name(&database, &station, "Renamed");
+
+        assert_eq!(updated.name, "Renamed");
+        assert_eq!(updated.endpoint_revision, station.endpoint_revision);
     }
 
     fn set_station_type_for_test(database: &AppDatabase, station_id: &str, station_type: &str) {
@@ -14230,7 +15298,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "proxied station".to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: "https://proxied.example/v1".to_string(),
+                website_url: "https://proxied.example".to_string(),
+                api_base_url: "https://proxied.example/v1".to_string(),
                 api_key: "sk-test-routing".to_string(),
                 collector_proxy_mode: "manual".to_string(),
                 collector_proxy_url: Some("http://127.0.0.1:7890".to_string()),
@@ -14425,7 +15494,8 @@ mod tests {
                 CreateStationInput {
                     name: "login only station".to_string(),
                     station_type: "sub2api".to_string(),
-                    base_url: "https://relay.example.test".to_string(),
+                    website_url: "https://relay.example.test".to_string(),
+                    api_base_url: "https://relay.example.test/v1".to_string(),
                     collector_proxy_mode: "inherit".to_string(),
                     collector_proxy_url: None,
                     api_key: "".to_string(),
@@ -15605,7 +16675,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "responses station".to_string(),
                 station_type: "openai-compatible".to_string(),
-                base_url: "https://responses.example".to_string(),
+                website_url: "https://responses.example".to_string(),
+                api_base_url: "https://responses.example/v1".to_string(),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-responses".to_string(),
@@ -17054,6 +18125,75 @@ mod tests {
     }
 
     #[test]
+    fn station_key_health_success_resets_prior_revision_failure_state() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "revision-success-key");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+
+        database
+            .record_station_key_failure(&key.id, "old endpoint timeout", "1000")
+            .expect("old endpoint failure");
+        let updated_station = change_test_station_endpoint(&database, &station);
+        assert_eq!(
+            updated_station.endpoint_revision,
+            station.endpoint_revision + 1
+        );
+
+        database
+            .record_station_key_success(&key.id, 45, "2000")
+            .expect("new endpoint success");
+        let health = database.get_station_key_health(key.id).expect("health");
+
+        assert_eq!(health.last_success_at.as_deref(), Some("2000"));
+        assert_eq!(health.last_failure_at, None);
+        assert_eq!(health.success_count, 1);
+        assert_eq!(health.failure_count, 0);
+        assert_eq!(health.consecutive_failures, 0);
+        assert_eq!(health.avg_latency_ms, Some(45));
+        assert_eq!(health.last_error_summary, None);
+        assert_eq!(health.cooldown_until, None);
+    }
+
+    #[test]
+    fn station_key_health_failure_resets_prior_revision_success_state() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "revision-failure-key");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+
+        database
+            .record_station_key_success(&key.id, 123, "1000")
+            .expect("old endpoint success");
+        let updated_station = change_test_station_endpoint(&database, &station);
+        assert_eq!(
+            updated_station.endpoint_revision,
+            station.endpoint_revision + 1
+        );
+
+        database
+            .record_station_key_failure(&key.id, "new endpoint timeout", "2000")
+            .expect("new endpoint failure");
+        let health = database.get_station_key_health(key.id).expect("health");
+
+        assert_eq!(health.last_success_at, None);
+        assert_eq!(health.last_failure_at.as_deref(), Some("2000"));
+        assert_eq!(health.success_count, 0);
+        assert_eq!(health.failure_count, 1);
+        assert_eq!(health.consecutive_failures, 1);
+        assert_eq!(health.avg_latency_ms, None);
+        assert_eq!(
+            health.last_error_summary.as_deref(),
+            Some("new endpoint timeout")
+        );
+        assert_eq!(health.cooldown_until, None);
+    }
+
+    #[test]
     fn repeated_failures_enter_cooldown() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let station = test_station(&database, "failure-key");
@@ -18320,6 +19460,46 @@ mod tests {
         assert_eq!(session.cookie.as_deref(), Some("session=encrypted-at-rest"));
         assert_eq!(session.newapi_user_id.as_deref(), Some("42"));
         assert_eq!(credentials.session_source, "password_login");
+    }
+
+    #[test]
+    fn stale_endpoint_revision_rejects_session_persistence() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "stale-session");
+        let data_key = [43_u8; 32];
+        let old_revision = station.endpoint_revision;
+        let updated = update_test_station_urls(
+            &database,
+            &station,
+            "https://new-console.example".to_string(),
+            station.api_base_url.clone(),
+            true,
+        );
+        assert!(updated.endpoint_revision > old_revision);
+
+        let error = database
+            .persist_station_session_if_revision(
+                PersistStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: None,
+                    refresh_token: None,
+                    cookie: Some("session=stale".to_string()),
+                    newapi_user_id: Some("42".to_string()),
+                    token_expires_at: None,
+                    session_expires_at: None,
+                    session_source: "web_authorization".to_string(),
+                },
+                old_revision,
+                &data_key,
+            )
+            .expect_err("stale revision must be rejected");
+
+        assert_eq!(error, "station_endpoint_revision_changed");
+        let credentials = database
+            .get_station_credentials(station.id)
+            .expect("credentials");
+        assert!(!credentials.cookie_present);
+        assert!(!credentials.access_token_present);
     }
 
     #[test]

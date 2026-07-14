@@ -6,7 +6,9 @@ pub struct Station {
     pub id: String,
     pub name: String,
     pub station_type: String,
-    pub base_url: String,
+    pub website_url: String,
+    pub api_base_url: String,
+    pub endpoint_revision: i64,
     pub collector_proxy_mode: String,
     pub collector_proxy_url: Option<String>,
     pub api_key_masked: String,
@@ -32,6 +34,7 @@ pub struct Station {
 #[serde(rename_all = "camelCase")]
 pub struct StationEndpointHealth {
     pub station_id: String,
+    pub endpoint_revision: i64,
     pub status: String,
     pub latency_ms: Option<i64>,
     pub checked_at: Option<String>,
@@ -55,7 +58,8 @@ pub struct EndpointPingResult {
 pub struct CreateStationInput {
     pub name: String,
     pub station_type: String,
-    pub base_url: String,
+    pub website_url: String,
+    pub api_base_url: String,
     pub api_key: String,
     pub collector_proxy_mode: String,
     pub collector_proxy_url: Option<String>,
@@ -72,7 +76,8 @@ pub struct UpdateStationInput {
     pub id: String,
     pub name: String,
     pub station_type: String,
-    pub base_url: String,
+    pub website_url: String,
+    pub api_base_url: String,
     pub api_key: Option<String>,
     pub collector_proxy_mode: String,
     pub collector_proxy_url: Option<String>,

@@ -16,10 +16,10 @@ use crate::services::{
     collectors::{
         adapters::{AdapterOutput, CollectorTask, CreatedRemoteKey},
         facts::{CollectedBalanceFact, CollectorFacts},
-        url::{collector_base_urls, join_url},
     },
     database::AppDatabase,
-    outbound::{agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
+    outbound::{credential_agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
+    station_endpoints::build_management_url,
 };
 
 const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
@@ -1127,8 +1127,7 @@ fn fetch_status(
         &settings.collector_proxy_mode,
         settings.collector_proxy_url,
     );
-    let urls = collector_base_urls(&station.base_url);
-    let url = join_url(&urls.management_base_url, "/api/status");
+    let url = build_management_url(&station.website_url, "/api/status")?;
     let mut endpoint_results = Vec::new();
     let payload = get_newapi_public_json(&url, &proxy, &mut endpoint_results)?;
     let data = parsers::envelope_data(&payload).unwrap_or(&payload);
@@ -1158,7 +1157,7 @@ fn get_newapi_public_json(
     endpoint_results: &mut Vec<Value>,
 ) -> Result<Value, String> {
     let started = std::time::Instant::now();
-    let agent = match agent_builder_for_proxy(proxy) {
+    let agent = match credential_agent_builder_for_proxy(proxy) {
         Ok(builder) => builder.timeout(COLLECTOR_HTTP_TIMEOUT).build(),
         Err(error) => {
             let message = crate::services::secrets::mask::redact_text(&error);
@@ -1264,7 +1263,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "live newapi smoke".to_string(),
                 station_type: "newapi".to_string(),
-                base_url,
+                website_url: base_url.to_string(),
+                api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: String::new(),
@@ -1719,7 +1719,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "newapi station".to_string(),
                 station_type: "newapi".to_string(),
-                base_url: base_url.to_string(),
+                website_url: base_url.to_string(),
+                api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: String::new(),

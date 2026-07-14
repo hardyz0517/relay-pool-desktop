@@ -172,6 +172,62 @@ textarea {
   }
 }
 
+@keyframes localProxyRadarBreathe {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 rgb(20 184 166 / 0));
+    opacity: 0.88;
+    transform: scale(1);
+  }
+
+  50% {
+    filter: drop-shadow(0 0 6px rgb(20 184 166 / 0.34));
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
+.local-proxy-radar {
+  display: block;
+  overflow: visible;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.local-proxy-radar__pulse {
+  fill: currentColor;
+  opacity: 0.1;
+  stroke: currentColor;
+}
+
+.local-proxy-radar__wave {
+  opacity: 0.82;
+}
+
+.local-proxy-radar__core {
+  fill: currentColor;
+  stroke: none;
+}
+
+.local-proxy-radar--active {
+  animation: localProxyRadarBreathe 2.8s ease-in-out infinite;
+}
+
+.local-proxy-radar--active .local-proxy-radar__pulse {
+  opacity: 0.18;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .local-proxy-radar--active {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 .app-page-transition-stack {
   position: relative;
   height: 100%;

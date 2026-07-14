@@ -1030,6 +1030,7 @@ mod tests {
             candidate: RouteCandidate {
                 station_key_id: id.to_string(),
                 station_id: format!("station-{id}"),
+                station_endpoint_revision: 1,
                 upstream_base_url: "https://example.test/v1".to_string(),
                 api_key: format!("sk-{id}"),
                 upstream_api_format: UpstreamApiFormat::Auto,

@@ -26,12 +26,14 @@ impl CaptureSessionStore {
         &self,
         station_id: String,
         window_label: String,
+        endpoint_revision: i64,
     ) -> Result<CaptureSessionStatus, String> {
         let mut sessions = self.sessions()?;
         let session = CaptureSession {
             station_id: station_id.clone(),
             window_label,
             generation: NEXT_CAPTURE_SESSION_GENERATION.fetch_add(1, Ordering::Relaxed),
+            endpoint_revision,
             status: "capturing".to_string(),
             events: Vec::new(),
             web_authorization_user_id: None,
@@ -100,6 +102,13 @@ impl CaptureSessionStore {
         Ok((result, session.events))
     }
 
+    pub fn endpoint_revision(&self, station_id: &str) -> Result<Option<i64>, String> {
+        let sessions = self.sessions()?;
+        Ok(sessions
+            .get(station_id)
+            .map(|session| session.endpoint_revision))
+    }
+
     pub fn status(&self, station_id: &str) -> Result<CaptureSessionStatus, String> {
         let sessions = self.sessions()?;
         Ok(sessions
@@ -143,7 +152,7 @@ impl CaptureSessionStore {
     ) -> Result<std::sync::MutexGuard<'_, HashMap<String, CaptureSession>>, String> {
         self.sessions
             .lock()
-            .map_err(|_| "捕获会话状态锁已损坏".to_string())
+            .map_err(|_| "捕获会话状态锁已损坏。".to_string())
     }
 }
 
@@ -151,6 +160,7 @@ struct CaptureSession {
     station_id: String,
     window_label: String,
     generation: u64,
+    endpoint_revision: i64,
     status: String,
     events: Vec<CapturedHttpEvent>,
     web_authorization_user_id: Option<String>,
@@ -215,7 +225,7 @@ mod tests {
     fn authorization_candidate_is_retained_in_native_session_state() {
         let store = CaptureSessionStore::default();
         store
-            .start("station-1".to_string(), "capture-station-1".to_string())
+            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
             .expect("start capture");
 
         let status = push_authorization_candidate(&store, captured_event(), "42");
@@ -227,7 +237,7 @@ mod tests {
     fn stale_authorization_candidate_cannot_commit_after_session_restart() {
         let store = CaptureSessionStore::default();
         store
-            .start("station-1".to_string(), "capture-station-1".to_string())
+            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
             .expect("start first capture");
         push_authorization_candidate(&store, captured_event(), "42");
         let candidate = store
@@ -236,7 +246,7 @@ mod tests {
             .expect("candidate exists");
 
         store
-            .start("station-1".to_string(), "capture-station-1".to_string())
+            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
             .expect("replace capture");
         let mut persisted = false;
         let error = store
@@ -254,7 +264,7 @@ mod tests {
     fn current_authorization_candidate_commits_and_returns_its_events() {
         let store = CaptureSessionStore::default();
         store
-            .start("station-1".to_string(), "capture-station-1".to_string())
+            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
             .expect("start capture");
         push_authorization_candidate(&store, captured_event(), "42");
         let candidate = store
@@ -269,5 +279,15 @@ mod tests {
         assert_eq!(stored, "stored");
         assert_eq!(events.len(), 1);
         assert_eq!(store.status("station-1").expect("status").status, "idle");
+    }
+
+    #[test]
+    fn capture_session_retains_its_start_revision() {
+        let store = CaptureSessionStore::default();
+        store
+            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
+            .expect("start capture");
+
+        assert_eq!(store.endpoint_revision("station-1").unwrap(), Some(4));
     }
 }

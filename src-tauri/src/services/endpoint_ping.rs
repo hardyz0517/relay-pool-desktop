@@ -58,8 +58,7 @@ fn endpoint_ping_response_result(
 
 pub fn endpoint_ping_url(base_url: &str) -> String {
     let trimmed = base_url.trim().trim_end_matches('/');
-    let root = trimmed.strip_suffix("/v1").unwrap_or(trimmed);
-    format!("{}/", root.trim_end_matches('/'))
+    trimmed.to_string()
 }
 
 fn short_ping_error(message: &str) -> String {
@@ -151,9 +150,9 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_ping_normalizes_v1_base_url_to_root() {
+    fn endpoint_ping_keeps_api_namespace_instead_of_falling_back_to_website_root() {
         let url = endpoint_ping_url("https://relay.example.com/v1/");
 
-        assert_eq!(url, "https://relay.example.com/");
+        assert_eq!(url, "https://relay.example.com/v1");
     }
 }

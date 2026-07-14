@@ -5,14 +5,14 @@ const pricingPageSource = await readFile("src/features/pricing/PricingPage.tsx",
 
 assert.match(
   pricingPageSource,
-  /import \{[^}]*openStationBaseUrl[^}]*\} from "@\/lib\/api\/stations"/,
+  /import \{[^}]*openStationWebsite[^}]*\} from "@\/lib\/api\/stations"/,
   "pricing page should reuse the validated external URL opener",
 );
 
 assert.match(
   pricingPageSource,
-  /const stationBaseUrls = useMemo\([\s\S]*new Map\(stations\.map\(\(station\) => \[station\.id, station\.baseUrl\]\)\)[\s\S]*\[stations\]/,
-  "pricing rows should map station ids to their original configured base URLs",
+  /const stationWebsites = useMemo\([\s\S]*new Map\(stations\.map\(\(station\) => \[station\.id, station\.websiteUrl\]\)\)[\s\S]*\[stations\]/,
+  "pricing rows should map station ids to their website URLs",
 );
 
 assert.match(
@@ -23,8 +23,8 @@ assert.match(
 
 assert.match(
   pricingPageSource,
-  /await openStationBaseUrl\(baseUrl\)[\s\S]*toast\.error\("打开中转站网址失败", readError\(error\)\)/,
-  "clicking a station name should open its original URL and report failures",
+  /await openStationWebsite\(websiteUrl\)[\s\S]*toast\.error\("打开中转站网址失败", readError\(error\)\)/,
+  "clicking a station name should open its website URL and report failures",
 );
 
 console.log("pricing station browser link checks passed");

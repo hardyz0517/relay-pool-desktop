@@ -164,7 +164,7 @@ export function StationDetailContent({
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
               <span>{viewModel.stationTypeLabel}</span>
               <span className="max-w-full truncate font-mono text-[11px] text-muted-foreground">
-                {station.baseUrl}
+                {station.websiteUrl}
               </span>
               <span className="inline-flex items-center gap-1">
                 <Clock3 className="h-3.5 w-3.5" />

@@ -829,7 +829,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "remote key station".to_string(),
                 station_type: "sub2api".to_string(),
-                base_url: server.base_url,
+                website_url: server.base_url.clone(),
+                api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: String::new(),
@@ -911,7 +912,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "newapi remote key station".to_string(),
                 station_type: "newapi".to_string(),
-                base_url: server.base_url,
+                website_url: server.base_url.clone(),
+                api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: String::new(),
@@ -972,7 +974,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: "newapi create key station".to_string(),
                 station_type: "newapi".to_string(),
-                base_url: server.base_url,
+                website_url: server.base_url.clone(),
+                api_base_url: format!("{}/v1", server.base_url.trim_end_matches('/')),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: String::new(),
@@ -1078,7 +1081,8 @@ mod tests {
             .create_station(CreateStationInput {
                 name: format!("{station_type} station"),
                 station_type: station_type.to_string(),
-                base_url: "https://relay.example".to_string(),
+                website_url: "https://relay.example".to_string(),
+                api_base_url: "https://relay.example/v1".to_string(),
                 collector_proxy_mode: "inherit".to_string(),
                 collector_proxy_url: None,
                 api_key: "sk-test".to_string(),

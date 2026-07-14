@@ -15,6 +15,8 @@ assert.ok(
 );
 
 assert.ok(
-  pageScaffoldSource.includes("max-w-[1080px]"),
-  "settings width should remain bounded on wide desktop windows",
+  settingsPageSource.includes('<PageScaffold title="设置" width="settings">') &&
+    pageScaffoldSource.includes('width?: "full" | "settings"') &&
+    pageScaffoldSource.includes('width === "settings"'),
+  "settings page should use the dedicated settings scaffold width variant",
 );

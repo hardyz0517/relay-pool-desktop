@@ -26,7 +26,7 @@ async function importGroupOptionViewModels() {
   const viewModelsPath = join(tempRoot, "groupOptionViewModels.mjs");
   await writeFile(
     formattersPath,
-    "export function formatCompactMultiplier(value, fallback) { return value == null ? fallback : String(value); }\n",
+    "export function formatCompactMultiplier(value, fallback) { return value == null ? fallback : String(value); }\nexport function effectiveRateMultiplierForCredit(value, creditPerCny) { return value == null ? null : value / (creditPerCny || 1); }\n",
     "utf8",
   );
   await writeFile(

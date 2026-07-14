@@ -75,7 +75,8 @@ type AddProviderFormState = {
   presetId: ProviderPresetId;
   name: string;
   stationType: StationType;
-  baseUrl: string;
+  websiteUrl: string;
+  apiBaseUrl: string;
   apiKey: string;
   collectorProxyMode: StationProxyMode;
   collectorProxyUrl: string;
@@ -140,7 +141,8 @@ function formFromStation(station: Station, credentials: StationCredentials): Add
     presetId: preset.id,
     name: station.name,
     stationType: station.stationType,
-    baseUrl: station.baseUrl,
+    websiteUrl: station.websiteUrl,
+    apiBaseUrl: station.apiBaseUrl,
     apiKey: "",
     collectorProxyMode: station.collectorProxyMode,
     collectorProxyUrl: station.collectorProxyUrl ?? "",
@@ -740,7 +742,8 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     presetId: defaultPreset.id,
     name: getPresetDefaultStationName(defaultPreset),
     stationType: defaultPreset.stationType,
-    baseUrl: defaultPreset.baseUrl,
+    websiteUrl: defaultPreset.websiteUrl,
+    apiBaseUrl: defaultPreset.apiBaseUrl,
     apiKey: "",
     collectorProxyMode: "inherit",
     collectorProxyUrl: "",
@@ -803,7 +806,10 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     remoteCapabilityUnavailableReason ??
     (remoteListError ? `远端 Key 列表读取失败：${remoteListError}` : null);
   const createPageRemoteDraftReady =
-    Boolean(form.baseUrl.trim()) && Boolean(form.loginUsername.trim()) && Boolean(form.loginPassword.trim());
+    Boolean(form.websiteUrl.trim()) &&
+    Boolean(form.apiBaseUrl.trim()) &&
+    Boolean(form.loginUsername.trim()) &&
+    Boolean(form.loginPassword.trim());
   const scanRemoteDisabled =
     remoteLoading ||
     Boolean(remoteCapabilityError) ||
@@ -915,7 +921,8 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       presetId: preset.id,
       name: getPresetDefaultStationName(preset),
       stationType: preset.stationType,
-      baseUrl: preset.baseUrl,
+      websiteUrl: preset.websiteUrl,
+      apiBaseUrl: preset.apiBaseUrl,
     }));
     if (!activeStationId) {
       setRemoteCapability(draftRemoteCapability(preset.stationType));
@@ -941,8 +948,11 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     if (!form.name.trim()) {
       throw new Error("请填写供应商名称");
     }
-    if (!form.baseUrl.trim()) {
-      throw new Error("请填写基础地址");
+    if (!form.websiteUrl.trim()) {
+      throw new Error("请填写前端网址");
+    }
+    if (!form.apiBaseUrl.trim()) {
+      throw new Error("请填写 API Base URL");
     }
     const remoteActionStationType: StationType =
       form.stationType === "custom" || form.stationType === "openai-compatible"
@@ -954,7 +964,8 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     const station = await createStation({
       name: form.name.trim(),
       stationType: remoteActionStationType,
-      baseUrl: form.baseUrl.trim(),
+      websiteUrl: form.websiteUrl.trim(),
+      apiBaseUrl: form.apiBaseUrl.trim(),
       apiKey: stationApiKey,
       collectorProxyMode: form.collectorProxyMode,
       collectorProxyUrl: form.collectorProxyMode === "manual" && form.collectorProxyUrl.trim()
@@ -1011,8 +1022,12 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       toast.info("请填写供应商名称");
       return;
     }
-    if (!form.baseUrl.trim()) {
-      toast.info("请填写基础地址");
+    if (!form.websiteUrl.trim()) {
+      toast.info("请填写前端网址");
+      return;
+    }
+    if (!form.apiBaseUrl.trim()) {
+      toast.info("请填写 API Base URL");
       return;
     }
 
@@ -1033,7 +1048,8 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           id: activeStationId,
           name: form.name.trim(),
           stationType: form.stationType,
-          baseUrl: form.baseUrl.trim(),
+          websiteUrl: form.websiteUrl.trim(),
+          apiBaseUrl: form.apiBaseUrl.trim(),
           apiKey: form.apiKey.trim() ? form.apiKey.trim() : null,
           collectorProxyMode: form.collectorProxyMode,
           collectorProxyUrl: form.collectorProxyMode === "manual" && form.collectorProxyUrl.trim()
@@ -1075,7 +1091,8 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       const station = await createStation({
         name: form.name.trim(),
         stationType: form.stationType,
-        baseUrl: form.baseUrl.trim(),
+        websiteUrl: form.websiteUrl.trim(),
+        apiBaseUrl: form.apiBaseUrl.trim(),
         apiKey: stationApiKey,
         collectorProxyMode: form.collectorProxyMode,
         collectorProxyUrl: form.collectorProxyMode === "manual" && form.collectorProxyUrl.trim()
@@ -1135,8 +1152,8 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   }
 
   async function handleTestConnection() {
-    if (!form.baseUrl.trim()) {
-      toast.info("请填写基础地址");
+    if (!form.websiteUrl.trim()) {
+      toast.info("请填写前端网址");
       return;
     }
     if (!form.loginUsername.trim() || !form.loginPassword.trim()) {
@@ -1150,7 +1167,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     try {
       const result = await testStationLoginInput({
         stationType: form.stationType,
-        baseUrl: form.baseUrl.trim(),
+        websiteUrl: form.websiteUrl.trim(),
         loginUsername: form.loginUsername.trim(),
         loginPassword: form.loginPassword.trim(),
       });
@@ -1471,18 +1488,42 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                   />
                 </Field>
               </div>
-              <div className="mt-3 grid gap-3">
-                <Field label="基础地址">
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <Field label="前端网址">
                   <input
                     className={inputClassName}
-                    value={form.baseUrl}
+                    value={form.websiteUrl}
                     onChange={(event) => {
-                      setForm({ ...form, baseUrl: event.target.value });
+                      setForm({ ...form, websiteUrl: event.target.value });
                       setConnectionTest({ status: "idle", message: null });
                     }}
-                    placeholder="https://api.example.com"
+                    placeholder="https://example.com"
                   />
                 </Field>
+                <Field label="API Base URL">
+                  <input
+                    className={inputClassName}
+                    value={form.apiBaseUrl}
+                    onChange={(event) => {
+                      setForm({ ...form, apiBaseUrl: event.target.value });
+                      setConnectionTest({ status: "idle", message: null });
+                    }}
+                    placeholder="https://api.example.com/v1"
+                  />
+                </Field>
+              </div>
+              <div className="mt-2 flex justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    setForm((current) => ({
+                      ...current,
+                      apiBaseUrl: current.websiteUrl,
+                    }))
+                  }
+                >
+                  复制前端网址
+                </Button>
               </div>
               <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
                 <Field label="登录用户名 / 邮箱">

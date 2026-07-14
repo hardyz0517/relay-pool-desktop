@@ -18,6 +18,7 @@ pub mod scheduler;
 pub struct RouteCandidate {
     pub station_key_id: String,
     pub station_id: String,
+    pub station_endpoint_revision: i64,
     pub upstream_base_url: String,
     pub api_key: String,
     pub collector_proxy_mode: String,
@@ -40,15 +41,6 @@ pub fn extract_chat_request_metadata(body: &Value) -> (Option<String>, bool) {
         .map(ToString::to_string);
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     (model, stream)
-}
-
-pub fn build_upstream_url(base_url: &str, path: &str) -> String {
-    let base = base_url.trim_end_matches('/');
-    let path = path.trim_start_matches('/');
-    if base.ends_with("/v1") && path.starts_with("v1/") {
-        return format!("{}/{}", base, path.trim_start_matches("v1/"));
-    }
-    format!("{}/{}", base, path)
 }
 
 pub fn should_fallback(status: u16) -> bool {
@@ -169,20 +161,6 @@ mod tests {
     }
 
     #[test]
-    fn build_upstream_url_normalizes_slashes() {
-        let url = build_upstream_url("https://station.example/api/", "/v1/chat/completions");
-
-        assert_eq!(url, "https://station.example/api/v1/chat/completions");
-    }
-
-    #[test]
-    fn build_upstream_url_avoids_duplicate_v1_segment() {
-        let url = build_upstream_url("https://station.example/v1", "/v1/models");
-
-        assert_eq!(url, "https://station.example/v1/models");
-    }
-
-    #[test]
     fn should_fallback_only_for_retryable_upstream_statuses() {
         assert!(should_fallback(401));
         assert!(should_fallback(402));
@@ -199,6 +177,7 @@ mod tests {
         RouteCandidate {
             station_key_id: id.to_string(),
             station_id: format!("station-{id}"),
+            station_endpoint_revision: 1,
             upstream_base_url: "https://example.test/v1".to_string(),
             api_key: format!("sk-{id}"),
             collector_proxy_mode: "direct".to_string(),

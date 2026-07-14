@@ -123,8 +123,14 @@ assert.ok(
 );
 
 assert.ok(
-  !/const createRemoteDisabled =[\s\S]*?;\n/.exec(addProviderSource)?.[0].includes("!activeStationId"),
+  !/const createRemoteDisabled =[\s\S]*?;\r?\n/.exec(addProviderSource)?.[0].includes("!activeStationId"),
   "create supplier page should allow remote-key creation to autosave the station before opening or submitting",
+);
+
+assert.ok(
+  addProviderSource.includes("Boolean(form.websiteUrl.trim())") &&
+    addProviderSource.includes("Boolean(form.apiBaseUrl.trim())"),
+  "create-page remote-key autosave readiness should require both station endpoint roles",
 );
 
 assert.ok(
@@ -139,7 +145,7 @@ assert.ok(
 );
 
 assert.ok(
-  addProviderSource.includes("mergeRemoteGroupOptions(editableGroupOptions, collectRemoteGroupOptions(remoteKeys))"),
+  /mergeRemoteGroupOptions\(editableGroupOptions,\s*collectRemoteGroupOptions\(remoteKeys,\s*currentCreditPerCny\)\)/.test(addProviderSource),
   "create-remote-key group dropdown should include synced editable group rows, not only groups inferred from existing remote keys",
 );
 
