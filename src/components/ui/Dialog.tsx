@@ -62,17 +62,17 @@ export function Dialog({
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-white/35 p-4 backdrop-blur-[1px]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/45 p-4 backdrop-blur-[1px]"
     >
       <div
         className={cn(
-          "max-h-[calc(100vh-32px)] w-full max-w-[780px] overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[0_24px_70px_rgba(15,23,42,0.16)]",
+          "max-h-[calc(100vh-32px)] w-full max-w-[780px] overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-dialog",
           className,
         )}
       >
         <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
           <div className="min-w-0">
-            <div className="truncate text-[15px] font-semibold text-slate-800">{title}</div>
+            <div className="truncate text-[15px] font-semibold text-foreground">{title}</div>
             {description && (
               <div className="mt-0.5 truncate text-xs text-muted-foreground">{description}</div>
             )}

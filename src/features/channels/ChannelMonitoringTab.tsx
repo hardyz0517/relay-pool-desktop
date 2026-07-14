@@ -227,7 +227,7 @@ export function ChannelMonitoringTab({ onHealthChanged }: ChannelMonitoringTabPr
         </div>
       </div>
 
-      {error && <div className="rounded-[var(--surface-radius)] border border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+      {error && <div className="rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{error}</div>}
 
       {monitors.length === 0 ? (
         <EmptyState
@@ -308,14 +308,14 @@ function MonitorList({
 }) {
   return (
     <div className="min-w-0 overflow-hidden">
-      <div className={`hidden lg:grid ${monitorGridClassName} border-b border-slate-200 px-3 pb-2 text-[11px] font-medium text-slate-500`}>
+      <div className={`hidden lg:grid ${monitorGridClassName} border-b border-border px-3 pb-2 text-[11px] font-medium text-muted-foreground`}>
         <TableHeadCell>监控</TableHeadCell>
         <TableHeadCell>目标</TableHeadCell>
         <TableHeadCell>主模型</TableHeadCell>
         <TableHeadCell align="center">调度</TableHeadCell>
         <div className="min-w-0 truncate text-right">操作</div>
       </div>
-      <div className="space-y-2 lg:space-y-0 lg:divide-y lg:divide-slate-100">
+      <div className="space-y-2 lg:space-y-0 lg:divide-y lg:divide-border">
         {monitors.map((monitor) => (
           <MonitorRow
             key={monitor.id}
@@ -366,13 +366,13 @@ function MonitorRow({
   const primaryModelStatus = getPrimaryModelStatusView(latestRun, modelLabel);
   return (
     <>
-      <div className={`hidden lg:grid ${monitorGridClassName} group min-h-[62px] px-3 py-2.5 text-left text-[13px] text-slate-700 transition-colors hover:bg-slate-50/45`}>
+      <div className={`hidden lg:grid ${monitorGridClassName} group min-h-[62px] px-3 py-2.5 text-left text-[13px] text-foreground transition-colors hover:bg-surface-subtle`}>
         <div className="min-w-0">
-          <div className="truncate font-semibold text-slate-900">{monitor.name}</div>
+          <div className="truncate font-semibold text-foreground">{monitor.name}</div>
           {monitor.note && <div className="mt-0.5 truncate text-xs text-muted-foreground">{monitor.note}</div>}
         </div>
 
-        <div className="min-w-0 truncate text-slate-700">
+        <div className="min-w-0 truncate text-foreground">
           {targetLabel}
         </div>
 
@@ -400,7 +400,7 @@ function MonitorRow({
         />
       </div>
 
-      <section className="rounded-[var(--surface-radius)] border border-border bg-white p-3.5 text-[13px] shadow-[var(--surface-shadow)] lg:hidden">
+      <section className="rounded-[var(--surface-radius)] border border-border bg-surface p-3.5 text-[13px] shadow-[var(--surface-shadow)] lg:hidden">
         <div className="space-y-3">
           <MonitorCardField label="监控" value={monitor.name} strong />
           <MonitorCardField label="目标" value={targetLabel} />
@@ -416,9 +416,9 @@ function MonitorRow({
           </MonitorCardField>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-border pt-3">
           <IconButton
-            className={running ? "h-8 w-8 animate-pulse rounded-[7px] text-teal-700" : "h-8 w-8 rounded-[7px] text-slate-500 hover:bg-teal-50 hover:text-teal-700"}
+            className={running ? "h-8 w-8 animate-pulse rounded-[7px] text-primary" : "h-8 w-8 rounded-[7px] text-muted-foreground hover:bg-selected hover:text-primary"}
             disabled={Boolean(actionState)}
             label={running ? `检测中 ${monitor.name}` : `立即检测 ${monitor.name}`}
             onClick={() => void onRunNow(monitor)}
@@ -433,7 +433,7 @@ function MonitorRow({
             <Copy className="h-3.5 w-3.5" />
             {duplicating ? "复制中" : "复制"}
           </Button>
-          <Button size="sm" variant="ghost" className="text-rose-600 hover:bg-rose-50 hover:text-rose-600" disabled={Boolean(actionState)} onClick={() => void onDelete(monitor)}>
+          <Button size="sm" variant="ghost" className="text-danger-foreground hover:bg-danger-surface hover:text-danger-foreground" disabled={Boolean(actionState)} onClick={() => void onDelete(monitor)}>
             <Trash2 className="h-3.5 w-3.5" />
             {deleting ? "删除中" : "删除"}
           </Button>
@@ -471,20 +471,20 @@ function MonitorDesktopActions({
       onKeyDown={(event) => event.stopPropagation()}
     >
       <IconButton
-        className={running ? "h-7 w-7 shrink-0 animate-pulse rounded-[7px] text-teal-700" : "h-7 w-7 shrink-0 rounded-[7px] text-slate-500 hover:bg-teal-50 hover:text-teal-700"}
+        className={running ? "h-7 w-7 shrink-0 animate-pulse rounded-[7px] text-primary" : "h-7 w-7 shrink-0 rounded-[7px] text-muted-foreground hover:bg-selected hover:text-primary"}
         disabled={Boolean(actionState)}
         label={running ? `检测中 ${monitor.name}` : `立即检测 ${monitor.name}`}
         onClick={() => void onRunNow(monitor)}
       >
         <Play className="h-4 w-4" />
       </IconButton>
-      <IconButton className="h-7 w-7 shrink-0 rounded-[7px] text-slate-500 hover:bg-slate-100 hover:text-slate-800" disabled={Boolean(actionState)} label={`编辑 ${monitor.name}`} onClick={() => onEdit(monitor)}>
+      <IconButton className="h-7 w-7 shrink-0 rounded-[7px] text-muted-foreground hover:bg-muted hover:text-foreground" disabled={Boolean(actionState)} label={`编辑 ${monitor.name}`} onClick={() => onEdit(monitor)}>
         <Edit3 className="h-4 w-4" />
       </IconButton>
-      <IconButton className="h-7 w-7 shrink-0 rounded-[7px] text-slate-500 hover:bg-slate-100 hover:text-slate-800" disabled={Boolean(actionState)} label={duplicating ? `复制中 ${monitor.name}` : `复制 ${monitor.name}`} onClick={() => void onDuplicate(monitor)}>
+      <IconButton className="h-7 w-7 shrink-0 rounded-[7px] text-muted-foreground hover:bg-muted hover:text-foreground" disabled={Boolean(actionState)} label={duplicating ? `复制中 ${monitor.name}` : `复制 ${monitor.name}`} onClick={() => void onDuplicate(monitor)}>
         <Copy className="h-4 w-4" />
       </IconButton>
-      <IconButton className="h-7 w-7 shrink-0 rounded-[7px] text-slate-500 hover:bg-rose-50 hover:text-rose-600" disabled={Boolean(actionState)} label={deleting ? `删除中 ${monitor.name}` : `删除 ${monitor.name}`} onClick={() => void onDelete(monitor)}>
+      <IconButton className="h-7 w-7 shrink-0 rounded-[7px] text-muted-foreground hover:bg-danger-surface hover:text-danger-foreground" disabled={Boolean(actionState)} label={deleting ? `删除中 ${monitor.name}` : `删除 ${monitor.name}`} onClick={() => void onDelete(monitor)}>
         <Trash2 className="h-4 w-4" />
       </IconButton>
     </div>
@@ -500,7 +500,7 @@ function PrimaryModelCell({
 }) {
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <span className="min-w-0 truncate text-slate-800">{modelLabel}</span>
+      <span className="min-w-0 truncate text-foreground">{modelLabel}</span>
       <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
     </div>
   );
@@ -519,8 +519,8 @@ function MonitorCardField({
 }) {
   return (
     <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-start gap-3">
-      <div className="text-xs leading-5 text-slate-500">{label}</div>
-      <div className={`min-w-0 text-right leading-5 text-slate-800 ${strong ? "font-semibold text-slate-950" : ""}`}>
+      <div className="text-xs leading-5 text-muted-foreground">{label}</div>
+      <div className={`min-w-0 text-right leading-5 text-foreground ${strong ? "font-semibold text-foreground" : ""}`}>
         {value && <span className="break-words">{value}</span>}
         {children}
       </div>
@@ -581,11 +581,11 @@ function SummaryPill({
   return (
     <span className={`inline-flex h-8 items-center gap-1.5 rounded-[8px] border px-2.5 text-xs font-medium ${
       tone === "warning"
-        ? "border-amber-200 bg-amber-50 text-amber-700"
-        : "border-border bg-white text-slate-600"
+        ? "border-warning-border bg-warning-surface text-warning-foreground"
+        : "border-border bg-surface text-muted-foreground"
     }`}>
       <span>{label}</span>
-      <span className="text-sm font-semibold text-slate-800">{value}</span>
+      <span className="text-sm font-semibold text-foreground">{value}</span>
     </span>
   );
 }

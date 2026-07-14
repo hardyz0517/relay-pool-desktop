@@ -41,7 +41,7 @@ export function PageScaffold({
           {backAction}
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="truncate text-[18px] font-semibold leading-6 text-slate-900">
+              <h1 className="truncate text-[18px] font-semibold leading-6 text-foreground">
                 {title}
               </h1>
               {status}

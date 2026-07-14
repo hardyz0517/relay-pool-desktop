@@ -91,7 +91,7 @@ export function AppShell({
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background text-foreground">
       <aside
-        className="flex min-h-0 shrink-0 flex-col border-r border-border bg-white"
+        className="flex min-h-0 shrink-0 flex-col border-r border-border bg-surface"
         style={{ width: shellLayout.sidebarWidth }}
       >
         <nav className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto px-2 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -110,13 +110,13 @@ export function AppShell({
                 className={cn(
                   "relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-[var(--surface-radius)] transition-colors",
                   active
-                    ? "bg-slate-900 text-white"
-                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-900",
+                    ? "bg-selected text-selected-foreground"
+                    : "text-muted-foreground hover:bg-hover hover:text-foreground",
                 )}
               >
                 <Icon className="h-4.5 w-4.5" />
                 {route.id === "changes" && changeUnreadCount > 0 && (
-                  <span className="absolute right-1 top-1 min-w-4 rounded-full bg-rose-600 px-1 text-[10px] font-semibold leading-4 text-white">
+                  <span className="absolute right-1 top-1 min-w-4 rounded-full bg-danger-solid px-1 text-[10px] font-semibold leading-4 text-on-solid">
                     {changeUnreadCount > 99 ? "99+" : changeUnreadCount}
                   </span>
                 )}
@@ -127,14 +127,14 @@ export function AppShell({
 
         <div className="flex flex-col items-center gap-2 border-t border-border px-2 py-3">
           <span
-            className="flex h-10 w-10 items-center justify-center rounded-[var(--surface-radius)] border border-border bg-white"
+            className="flex h-10 w-10 items-center justify-center rounded-[var(--surface-radius)] border border-border bg-surface"
             title={proxyRunning ? "本地代理运行中" : "本地代理未启动"}
             aria-label={proxyRunning ? "本地代理运行中" : "本地代理未启动"}
           >
             <Circle
               className={cn(
                 "h-2.5 w-2.5 fill-current",
-                proxyRunning ? "text-emerald-500" : "text-amber-500",
+                proxyRunning ? "text-success-foreground" : "text-warning-foreground",
               )}
             />
           </span>

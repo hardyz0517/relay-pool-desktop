@@ -19,6 +19,8 @@ export type ChannelAvailabilityState = {
   availabilityPercent: number | null;
 };
 
+export type AvailabilityTone = "muted" | "danger" | "warning" | "success";
+
 export type OrderedChannel = {
   id: string;
 };
@@ -124,17 +126,17 @@ export function filterChannelMonitorRunsByWindow<TItem extends MonitorRunSummary
   return filterChannelItemsByWindow(runs, timeWindow, now);
 }
 
-export function availabilityToneClassName(channel: ChannelAvailabilityState) {
+export function availabilityTone(channel: ChannelAvailabilityState): AvailabilityTone {
   if (channel.status === "disabled" || channel.availabilityPercent === null) {
-    return "text-slate-500";
+    return "muted";
   }
   if (channel.availabilityPercent < 50) {
-    return "text-rose-600";
+    return "danger";
   }
   if (channel.availabilityPercent < 75) {
-    return "text-orange-600";
+    return "warning";
   }
-  return "text-emerald-600";
+  return "success";
 }
 
 export function buildRecentOutcomes(

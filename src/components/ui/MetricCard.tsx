@@ -12,17 +12,17 @@ type MetricCardProps = {
 };
 
 const toneClassName = {
-  neutral: "text-slate-500",
-  good: "text-emerald-700",
-  warning: "text-amber-700",
-  danger: "text-rose-700",
+  neutral: "text-muted-foreground",
+  good: "text-success-foreground",
+  warning: "text-warning-foreground",
+  danger: "text-danger-foreground",
 };
 
 const iconClassName = {
-  neutral: "bg-slate-100 text-slate-700",
-  good: "bg-emerald-100 text-emerald-700",
-  warning: "bg-amber-100 text-amber-700",
-  danger: "bg-rose-100 text-rose-700",
+  neutral: "bg-muted text-muted-foreground",
+  good: "bg-success-surface text-success-foreground",
+  warning: "bg-warning-surface text-warning-foreground",
+  danger: "bg-danger-surface text-danger-foreground",
 };
 
 export function MetricCard({
@@ -36,7 +36,7 @@ export function MetricCard({
   return (
     <div
       className={cn(
-        "flex min-h-[92px] items-center gap-3 rounded-[var(--surface-radius)] border border-border bg-white px-4 py-3 shadow-[var(--surface-shadow)]",
+        "flex min-h-[92px] items-center gap-3 rounded-[var(--surface-radius)] border border-border bg-surface px-4 py-3 shadow-surface",
         className,
       )}
     >
@@ -52,7 +52,7 @@ export function MetricCard({
       )}
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs text-muted-foreground">{label}</div>
-        <div className="mt-0.5 truncate text-[22px] font-semibold leading-7 text-slate-800">
+        <div className="mt-0.5 truncate text-[22px] font-semibold leading-7 text-foreground">
           {value}
         </div>
         {detail && (

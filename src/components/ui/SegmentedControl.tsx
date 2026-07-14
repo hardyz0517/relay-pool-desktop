@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type SegmentedControlOption<T extends string> = {
   value: T;
   label: string;
+  icon?: LucideIcon;
   disabled?: boolean;
 };
 
@@ -92,19 +94,20 @@ export function SegmentedControl<T extends string>({
       aria-disabled={!canUse}
       onKeyDown={handleKeyDown}
       className={cn(
-        "relative inline-grid h-8 min-w-0 items-center overflow-hidden rounded-[var(--surface-radius)] border border-slate-200 bg-slate-100/80 p-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]",
+        "relative inline-grid h-8 min-w-0 items-center overflow-hidden rounded-[var(--surface-radius)] border border-border bg-muted p-0.5",
         className,
       )}
       style={{ gridTemplateColumns: `repeat(${Math.max(options.length, 1)}, minmax(0, 1fr))` }}
     >
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute left-0.5 top-0.5 h-[calc(100%-4px)] rounded-[calc(var(--surface-radius)-3px)] bg-white shadow-[0_1px_3px_rgba(15,23,42,0.16)] transition-transform duration-200 ease-out"
+        className="pointer-events-none absolute left-0.5 top-0.5 h-[calc(100%-4px)] rounded-[calc(var(--surface-radius)-3px)] bg-control-thumb shadow-surface transition-transform duration-200 ease-out"
         style={activeStyle}
       />
       {options.map((option) => {
         const selected = option.value === selectedValue;
         const optionDisabled = disabled || option.disabled;
+        const Icon = option.icon;
 
         return (
           <button
@@ -115,11 +118,14 @@ export function SegmentedControl<T extends string>({
             disabled={optionDisabled}
             onClick={() => selectOption(option.value)}
             className={cn(
-              "relative z-10 h-7 min-w-0 cursor-pointer rounded-[calc(var(--surface-radius)-3px)] px-3 text-xs font-medium leading-7 text-slate-600 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)] disabled:cursor-default disabled:opacity-45",
-              selected ? "text-slate-900" : "hover:text-slate-900",
+              "relative z-10 h-7 min-w-0 cursor-pointer rounded-[calc(var(--surface-radius)-3px)] px-3 text-xs font-medium leading-7 text-muted-foreground transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-default disabled:opacity-45",
+              selected ? "text-foreground" : "hover:text-foreground",
             )}
           >
-            <span className="block truncate">{option.label}</span>
+            <span className="flex min-w-0 items-center justify-center gap-1.5">
+              {Icon ? <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" /> : null}
+              <span className="truncate">{option.label}</span>
+            </span>
           </button>
         );
       })}

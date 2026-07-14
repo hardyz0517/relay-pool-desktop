@@ -248,12 +248,12 @@ export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPagePr
           }
           contentClassName="overflow-hidden rounded-none border-0 bg-transparent p-0 shadow-none"
         >
-          <div className="flex flex-wrap items-center gap-2 border-b border-border bg-white px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2">
             <div className="relative min-w-[220px] flex-1">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
               <input
                 aria-label="搜索模型基准价格"
-                className="h-8 w-full rounded-[var(--surface-radius)] border border-border bg-white pl-8 pr-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]"
+                className="h-8 w-full rounded-[var(--surface-radius)] border border-border bg-surface pl-8 pr-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30"
                 placeholder="搜索模型、厂商或备注"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -277,7 +277,7 @@ export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPagePr
               {groupedRows.map((group) => (
                 <section key={group.provider} className="grid gap-3 px-4 py-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-slate-900">{group.label}</div>
+                    <div className="text-sm font-semibold text-foreground">{group.label}</div>
                     <div className="text-xs text-muted-foreground">{group.rows.length} 个模型</div>
                   </div>
 
@@ -286,9 +286,9 @@ export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPagePr
                       <TableColumnHeaderRow />
                       <tbody className="divide-y divide-border">
                         {group.rows.map((row) => (
-                          <tr key={row.id} className="h-10 text-slate-700 hover:bg-slate-50">
-                            <td className="px-2.5 font-medium text-slate-800">{row.model}</td>
-                            <td className="px-2 uppercase text-slate-600">{row.provider}</td>
+                          <tr key={row.id} className="h-10 text-foreground hover:bg-surface-subtle">
+                            <td className="px-2.5 font-medium text-foreground">{row.model}</td>
+                            <td className="px-2 uppercase text-muted-foreground">{row.provider}</td>
                             <td className="px-2 text-right">
                               <EditablePriceCell
                                 label={`${row.model} 输入价`}
@@ -333,7 +333,7 @@ export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPagePr
           )}
         </SectionCard>
 
-        {error && <div className="text-sm text-rose-700">{error}</div>}
+        {error && <div className="text-sm text-danger-foreground">{error}</div>}
       </div>
 
       <Dialog
@@ -376,7 +376,7 @@ export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPagePr
 function TableColumnHeaderRow() {
   return (
     <thead>
-      <tr className="border-b border-border bg-white text-[11px] font-medium text-slate-500">
+      <tr className="border-b border-border bg-surface text-[11px] font-medium text-muted-foreground">
         <th className="h-7 px-2.5">模型</th>
         <th className="h-7 px-2">供应商</th>
         <th className="h-7 px-2 text-right">输入价</th>
@@ -431,7 +431,7 @@ function EditablePriceCell({
         <input
           aria-label={label}
           autoFocus
-          className="h-7 rounded-[7px] border border-[hsl(var(--accent)/0.45)] bg-white px-1 text-center text-sm text-slate-900 outline-none ring-2 ring-[hsl(var(--accent)/0.16)]"
+          className="h-7 rounded-[7px] border border-ring bg-surface px-1 text-center text-sm text-foreground outline-none ring-2 ring-ring/30"
           inputMode="decimal"
           pattern="[0-9]*[.]?[0-9]*"
           style={{ width: numberBoxWidth }}
@@ -451,7 +451,7 @@ function EditablePriceCell({
             }
           }}
         />
-        <span className="whitespace-nowrap text-xs text-slate-500">$/M</span>
+        <span className="whitespace-nowrap text-xs text-muted-foreground">$/M</span>
       </span>
     );
   }
@@ -460,7 +460,7 @@ function EditablePriceCell({
     <span className="inline-flex h-7 items-center justify-end gap-0.5 tabular-nums">
       <button
         aria-label={`编辑${label}`}
-        className="inline-flex h-7 cursor-pointer items-center justify-center rounded-[7px] px-1 text-center text-slate-800 transition-colors hover:bg-white hover:ring-1 hover:ring-[hsl(var(--accent)/0.28)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)] disabled:cursor-default disabled:opacity-60"
+        className="inline-flex h-7 cursor-pointer items-center justify-center rounded-[7px] px-1 text-center text-foreground transition-colors hover:bg-surface hover:ring-1 hover:ring-ring/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-default disabled:opacity-60"
         disabled={saving}
         style={{ width: numberBoxWidth }}
         type="button"
@@ -469,7 +469,7 @@ function EditablePriceCell({
         {saving ? "保存中" : numberText}
       </button>
       {value !== null && (
-        <span className="whitespace-nowrap text-xs text-slate-500" aria-hidden="true">
+        <span className="whitespace-nowrap text-xs text-muted-foreground" aria-hidden="true">
           $/M
         </span>
       )}
@@ -489,7 +489,7 @@ function SelectField({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="grid gap-1 text-xs font-medium text-slate-600">
+    <label className="grid gap-1 text-xs font-medium text-muted-foreground">
       <span>{label}</span>
       <SelectControl
         ariaLabel={label}
@@ -564,18 +564,18 @@ function DateField({
   }, [open]);
 
   return (
-    <label className="grid gap-1 text-xs font-medium text-slate-600">
+    <label className="grid gap-1 text-xs font-medium text-muted-foreground">
       <span>{label}</span>
       <button
         ref={triggerRef}
         type="button"
         aria-label={label}
         aria-expanded={open}
-        className="flex h-8 min-w-0 cursor-pointer items-center justify-between gap-2 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-left text-sm text-slate-800 shadow-[0_1px_2px_rgba(15,23,42,0.04)] outline-none transition hover:border-[hsl(var(--accent)/0.35)] hover:bg-slate-50 focus:border-[hsl(var(--accent)/0.45)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]"
+        className="flex h-8 min-w-0 cursor-pointer items-center justify-between gap-2 rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-left text-sm text-foreground shadow-surface outline-none transition hover:border-ring hover:bg-surface-subtle focus:border-ring focus:ring-2 focus:ring-ring/30"
         onClick={() => setOpen((current) => !current)}
       >
         <span className="tabular-nums">{formatDisplayDate(value)}</span>
-        <CalendarDays className="h-4 w-4 shrink-0 text-slate-500" />
+        <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
       </button>
       {interactionActive && open && position ? (
         <DatePickerPanel
@@ -617,18 +617,18 @@ function DatePickerPanel({
   return createPortal(
     <div
       ref={panelRef}
-      className="fixed z-[70] w-[236px] rounded-[var(--surface-radius)] border border-border bg-white p-2 shadow-[0_18px_42px_rgba(15,23,42,0.14)]"
+      className="fixed z-[70] w-[236px] rounded-[var(--surface-radius)] border border-border bg-surface p-2 shadow-surface"
       style={{ left: position.left, top: position.top }}
     >
       <div className="mb-2 flex items-center justify-between">
-        <div className="px-1 text-xs font-semibold text-slate-800">
+        <div className="px-1 text-xs font-semibold text-foreground">
           {viewDate.getFullYear()}年{viewDate.getMonth() + 1}月
         </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
             aria-label="上个月"
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[7px] text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.18)]"
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[7px] text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
             onClick={() => onMonthChange(addMonths(viewDate, -1))}
           >
             <ChevronLeft className="h-4 w-4" />
@@ -636,14 +636,14 @@ function DatePickerPanel({
           <button
             type="button"
             aria-label="下个月"
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[7px] text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.18)]"
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[7px] text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
             onClick={() => onMonthChange(addMonths(viewDate, 1))}
           >
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
       </div>
-      <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-medium text-slate-500">
+      <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-medium text-muted-foreground">
         {["一", "二", "三", "四", "五", "六", "日"].map((day) => (
           <div key={day} className="h-6 leading-6">
             {day}
@@ -661,13 +661,13 @@ function DatePickerPanel({
               key={dateValue}
               type="button"
               className={[
-                "flex h-7 w-7 cursor-pointer items-center justify-center rounded-[7px] tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.2)]",
+                "flex h-7 w-7 cursor-pointer items-center justify-center rounded-[7px] tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
                 selected
-                  ? "bg-[hsl(var(--accent))] text-white shadow-[0_4px_12px_rgba(13,148,136,0.24)]"
+                  ? "bg-primary-solid text-primary-foreground shadow-surface"
                   : today
-                    ? "border border-[hsl(var(--accent)/0.35)] bg-[hsl(var(--accent)/0.06)] text-[hsl(var(--accent))]"
-                    : "text-slate-700 hover:bg-slate-100",
-                muted && !selected ? "text-slate-400" : "",
+                    ? "border border-ring bg-selected text-primary"
+                    : "text-foreground hover:bg-muted",
+                muted && !selected ? "text-muted-foreground/70" : "",
               ].join(" ")}
               onClick={() => onSelect(dateValue)}
             >
@@ -679,14 +679,14 @@ function DatePickerPanel({
       <div className="mt-2 flex justify-between border-t border-border pt-2">
         <button
           type="button"
-          className="h-7 cursor-pointer rounded-[7px] px-2 text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.18)]"
+          className="h-7 cursor-pointer rounded-[7px] px-2 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
           onClick={() => onSelect("")}
         >
           清除
         </button>
         <button
           type="button"
-          className="h-7 cursor-pointer rounded-[7px] px-2 text-xs font-medium text-[hsl(var(--accent))] transition hover:bg-[hsl(var(--accent)/0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.18)]"
+          className="h-7 cursor-pointer rounded-[7px] px-2 text-xs font-medium text-primary transition hover:bg-selected focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
           onClick={() => onSelect(todayValue)}
         >
           今天
@@ -709,10 +709,10 @@ function Field({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="grid gap-1 text-xs font-medium text-slate-600">
+    <label className="grid gap-1 text-xs font-medium text-muted-foreground">
       <span>{label}</span>
       <input
-        className="h-8 min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]"
+        className="h-8 min-w-0 rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30"
         min={numeric ? "0" : undefined}
         step={numeric ? "0.0001" : undefined}
         type={numeric ? "number" : "text"}

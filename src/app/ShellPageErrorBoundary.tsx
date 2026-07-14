@@ -25,8 +25,8 @@ export class ShellPageErrorBoundary extends Component<Props, State> {
     return (
       <div className="flex min-h-full items-center justify-center p-6" role="alert">
         <div className="grid max-w-sm gap-3 text-center">
-          <h2 className="text-base font-semibold text-slate-900">页面加载失败</h2>
-          <p className="text-sm text-slate-500">可以重试，或从侧边栏切换到其他页面。</p>
+          <h2 className="text-base font-semibold text-foreground">页面加载失败</h2>
+          <p className="text-sm text-muted-foreground">可以重试，或从侧边栏切换到其他页面。</p>
           <Button className="justify-self-center" onClick={this.retry} variant="secondary">
             重试
           </Button>

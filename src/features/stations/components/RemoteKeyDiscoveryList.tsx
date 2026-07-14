@@ -115,15 +115,15 @@ export function RemoteKeyDiscoveryList({
               return (
                 <div
                   key={key.id}
-                  className="grid min-h-9 grid-cols-[minmax(8rem,1fr)_5.5rem_minmax(8rem,1fr)_minmax(7rem,0.8fr)_5rem_minmax(8rem,1fr)_6.5rem_minmax(13rem,1.1fr)] items-center gap-2 rounded-[var(--surface-radius)] px-1 text-xs text-slate-700"
+                  className="grid min-h-9 grid-cols-[minmax(8rem,1fr)_5.5rem_minmax(8rem,1fr)_minmax(7rem,0.8fr)_5rem_minmax(8rem,1fr)_6.5rem_minmax(13rem,1.1fr)] items-center gap-2 rounded-[var(--surface-radius)] px-1 text-xs text-foreground"
                 >
-                  <span className="min-w-0 truncate font-medium text-slate-900">
+                  <span className="min-w-0 truncate font-medium text-foreground">
                     {key.remoteKeyName?.trim() || key.remoteKeyIdHash || "未命名 Key"}
                   </span>
                   <StatusBadge tone={matchStatusTone[key.matchStatus]} className="h-5 px-1.5 text-[11px]">
                     {matchStatusLabel[key.matchStatus]}
                   </StatusBadge>
-                  <span className="min-w-0 truncate font-mono text-[11px] text-slate-500">
+                  <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
                     {key.apiKeyMasked || key.apiKeyFingerprint || "未提供"}
                   </span>
                   <span className="min-w-0 truncate">{key.groupName || "默认分组"}</span>
@@ -133,7 +133,7 @@ export function RemoteKeyDiscoveryList({
                   <span
                     className={cn(
                       "min-w-0 truncate",
-                      matchedLocalKey ? "text-slate-800" : "text-muted-foreground",
+                      matchedLocalKey ? "text-foreground" : "text-muted-foreground",
                     )}
                   >
                     {matchedLocalKey ? matchedLocalKey.name : key.matchStatus === "possible" ? "待确认" : "未绑定"}
@@ -187,7 +187,7 @@ export function RemoteKeyDiscoveryList({
                         <span className="flex h-7 items-center text-muted-foreground">暂无本地 Key</span>
                       )
                     ) : (
-                      <span className="flex h-7 items-center text-emerald-600">已关联</span>
+                      <span className="flex h-7 items-center text-success-foreground">已关联</span>
                     )}
                   </div>
                 </div>
@@ -207,7 +207,7 @@ function formatRemoteKeyRate(rateMultiplier: number | null, creditPerCny: number
 
 function RemoteKeyEmptyState({ children }: { children: string }) {
   return (
-    <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
+    <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
       {children}
     </div>
   );

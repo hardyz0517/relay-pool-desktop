@@ -155,7 +155,7 @@ export function ChangeCenterPage() {
     >
       <div className="grid gap-[var(--shell-page-gap)]">
         <div className="grid gap-3 md:grid-cols-4">
-          <SummaryTile label="未读风险" value={riskCount} tone={riskCount > 0 ? "text-rose-700" : "text-emerald-700"} />
+          <SummaryTile label="未读风险" value={riskCount} tone={riskCount > 0 ? "text-danger-foreground" : "text-success-foreground"} />
           <SummaryTile label="严重" value={activeSeverityCount(events, "critical")} />
           <SummaryTile label="警告" value={activeSeverityCount(events, "warning")} />
           <SummaryTile label="信息" value={activeSeverityCount(events, "info")} />
@@ -164,7 +164,7 @@ export function ChangeCenterPage() {
         <div className="min-w-0">
           <div
             data-testid="change-center-toolbar-surface"
-            className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]"
+            className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]"
           >
             <Toolbar>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -226,9 +226,9 @@ export function ChangeCenterPage() {
           </div>
           <div
             data-testid="change-center-list-surface"
-            className="mt-3 min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]"
+            className="mt-3 min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]"
           >
-            {error && <div className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+            {error && <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{error}</div>}
             {filteredEvents.length === 0 ? (
               <EmptyState
                 title={loading ? "正在读取变更" : "暂无变更"}
@@ -236,7 +236,7 @@ export function ChangeCenterPage() {
               />
             ) : (
               <>
-                <div className="divide-y divide-border bg-white">
+                <div className="divide-y divide-border bg-surface">
                   {pageInfo.events.map((event) => (
                     <ChangeEventRow
                       key={event.id}
@@ -252,7 +252,7 @@ export function ChangeCenterPage() {
           {filteredEvents.length > 0 && (
             <div
               data-testid="change-center-pagination-surface"
-              className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-white px-3 py-2 text-xs text-slate-500"
+              className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-surface px-3 py-2 text-xs text-muted-foreground"
             >
               <div className="flex flex-wrap items-center gap-3">
                 <span>
@@ -267,7 +267,7 @@ export function ChangeCenterPage() {
                       setPageSize(Number(event.target.value));
                       setPage(1);
                     }}
-                    className="h-8 rounded-[4px] border border-border bg-white px-2 text-sm text-slate-700 outline-none transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+                    className="h-8 rounded-[4px] border border-border bg-surface px-2 text-sm text-foreground outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20"
                   >
                     {[20, 50, 100].map((size) => (
                       <option key={size} value={size}>{size}</option>
@@ -283,11 +283,11 @@ export function ChangeCenterPage() {
                   title="上一页"
                   onClick={() => setPage((current) => Math.max(1, current - 1))}
                   disabled={loading || saving || pageInfo.page <= 1}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-l-[4px] border border-border bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-200 disabled:cursor-not-allowed disabled:text-slate-300"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-l-[4px] border border-border bg-surface text-muted-foreground transition-colors hover:bg-surface-subtle hover:text-foreground focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:text-muted-foreground/45"
                 >
                   <ChevronLeft className="h-4 w-4" aria-hidden="true" />
                 </button>
-                <span className="inline-flex h-8 min-w-9 items-center justify-center border-y border-teal-400 bg-teal-50 px-2 font-medium text-teal-700">
+                <span className="inline-flex h-8 min-w-9 items-center justify-center border-y border-primary bg-info-surface px-2 font-medium text-info-foreground">
                   {pageInfo.page}
                 </span>
                 <button
@@ -296,7 +296,7 @@ export function ChangeCenterPage() {
                   title="下一页"
                   onClick={() => setPage((current) => Math.min(pageInfo.totalPages, current + 1))}
                   disabled={loading || saving || pageInfo.page >= pageInfo.totalPages}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-r-[4px] border border-border bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-200 disabled:cursor-not-allowed disabled:text-slate-300"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-r-[4px] border border-border bg-surface text-muted-foreground transition-colors hover:bg-surface-subtle hover:text-foreground focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:text-muted-foreground/45"
                 >
                   <ChevronRight className="h-4 w-4" aria-hidden="true" />
                 </button>
@@ -332,23 +332,23 @@ function ChangeEventRow({
     deferStationIdentifierFallback,
   });
   return (
-    <div className="grid min-h-[48px] w-full grid-cols-[56px_minmax(0,1fr)_88px] items-center gap-3 bg-white px-3 py-2 text-left">
+    <div className="grid min-h-[48px] w-full grid-cols-[56px_minmax(0,1fr)_88px] items-center gap-3 bg-surface px-3 py-2 text-left">
       <div className="flex flex-col items-start gap-1">
         <StatusBadge tone={severityTone[event.severity]}>{item.severityLabel}</StatusBadge>
       </div>
       <div className="min-w-0">
-        <div className="truncate text-[13px] font-semibold text-slate-900">{item.title}</div>
+        <div className="truncate text-[13px] font-semibold text-foreground">{item.title}</div>
       </div>
-      <div className="flex flex-col items-end text-xs text-slate-500">
-        <span className="font-medium text-slate-700">{formatChangeTime(event.detectedAt)}</span>
+      <div className="flex flex-col items-end text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">{formatChangeTime(event.detectedAt)}</span>
       </div>
     </div>
   );
 }
 
-function SummaryTile({ label, value, tone = "text-slate-800" }: { label: string; value: number; tone?: string }) {
+function SummaryTile({ label, value, tone = "text-foreground" }: { label: string; value: number; tone?: string }) {
   return (
-    <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 shadow-[var(--surface-shadow)]">
+    <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 shadow-[var(--surface-shadow)]">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className={`mt-1 text-2xl font-semibold ${tone}`}>{value}</div>
     </div>
@@ -357,6 +357,6 @@ function SummaryTile({ label, value, tone = "text-slate-800" }: { label: string;
 
 
 const inputClassName =
-  "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
+  "h-8 rounded-[12px] border border-info-border bg-info-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:bg-surface focus:ring-2 focus:ring-ring/20";
 
 const CHANGE_EVENTS_DEFAULT_PAGE_SIZE = 20;

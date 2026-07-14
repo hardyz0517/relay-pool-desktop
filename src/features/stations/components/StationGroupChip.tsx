@@ -4,6 +4,7 @@ import type { StationGroupOption } from "@/lib/types/groupFacts";
 import { cn } from "@/lib/utils";
 import { formatMultiplier } from "../groupOptionViewModels";
 import { groupVisualMetaFor } from "../groupVisualMeta";
+import { groupVisualClassNames } from "../groupVisualStyles";
 import { Sub2ApiPlatformIcon } from "./Sub2ApiPlatformIcon";
 
 type StationGroupVisualInput = {
@@ -23,16 +24,17 @@ export function StationGroupNameBadge({
   effectiveGroupCategory = null,
 }: StationGroupVisualInput) {
   const visualMeta = groupVisualMetaFor(groupName, rawJsonRedacted, effectiveGroupCategory);
+  const visualClassNames = groupVisualClassNames[visualMeta.platform];
 
   return (
     <span
       className={cn(
         "inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border px-2 text-xs font-semibold",
-        visualMeta.badgeClassName,
+        visualClassNames.badge,
       )}
       title={`${visualMeta.label} · ${groupName}`}
     >
-      <Sub2ApiPlatformIcon platform={visualMeta.platform} className={visualMeta.iconClassName} />
+      <Sub2ApiPlatformIcon platform={visualMeta.platform} className={visualClassNames.icon} />
       <span className="truncate">{groupName}</span>
     </span>
   );
@@ -51,6 +53,7 @@ export function StationGroupRateBadge({
   fallback?: string;
 }) {
   const visualMeta = groupVisualMetaFor(groupName, rawJsonRedacted, effectiveGroupCategory);
+  const visualClassNames = groupVisualClassNames[visualMeta.platform];
   const rateLabel =
     label ??
     (rateMultiplier === null || rateMultiplier === undefined
@@ -61,7 +64,7 @@ export function StationGroupRateBadge({
     <span
       className={cn(
         "inline-flex h-6 shrink-0 items-center rounded-[calc(var(--surface-radius)-3px)] px-2 text-[11px] font-semibold leading-none",
-        visualMeta.rateBadgeClassName,
+        visualClassNames.rateBadge,
       )}
     >
       {rateLabel}
@@ -82,15 +85,14 @@ export function StationGroupInlineBadge({
   fallback?: string;
 }) {
   const visualMeta = groupVisualMetaFor(groupName, rawJsonRedacted, effectiveGroupCategory);
+  const visualClassNames = groupVisualClassNames[visualMeta.platform];
   const rateLabel =
     label ??
     (rateMultiplier === null || rateMultiplier === undefined
       ? fallback
       : `${formatMultiplier(rateMultiplier)}x`);
-  const inlineBadgeClassName =
-    visualMeta.platform === "openai" ? "bg-green-50 text-green-700" : visualMeta.rateBadgeClassName;
-  const inlineIconClassName =
-    visualMeta.platform === "openai" ? "text-green-700" : visualMeta.iconClassName;
+  const inlineBadgeClassName = visualClassNames.rateBadge;
+  const inlineIconClassName = visualClassNames.icon;
 
   return (
     <span
@@ -104,7 +106,7 @@ export function StationGroupInlineBadge({
         <Sub2ApiPlatformIcon platform={visualMeta.platform} className={inlineIconClassName} />
         <span className="truncate">{groupName}</span>
       </span>
-      <span className="inline-flex h-5 shrink-0 items-center rounded-md bg-black/10 px-1.5 text-[10px] font-semibold leading-none">
+      <span className="inline-flex h-5 shrink-0 items-center rounded-md bg-muted px-1.5 text-[10px] font-semibold leading-none">
         {rateLabel}
       </span>
     </span>

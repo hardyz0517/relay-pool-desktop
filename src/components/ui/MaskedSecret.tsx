@@ -55,7 +55,7 @@ export function MaskedSecret({
 
   return (
     <span className="inline-flex min-w-0 items-center gap-1">
-      <code className="min-w-0 truncate rounded border border-border bg-slate-50 px-1.5 py-0.5 text-xs text-slate-700">
+      <code className="min-w-0 truncate rounded border border-border bg-surface-inset px-1.5 py-0.5 text-xs text-foreground">
         {displayValue}
       </code>
       {onReveal ? (

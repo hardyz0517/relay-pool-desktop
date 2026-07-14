@@ -29,10 +29,10 @@ export function SectionCard({
         <header className="flex min-h-[38px] flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             {title && (
-              <h2 className="text-sm font-semibold text-slate-950">{title}</h2>
+              <h2 className="text-sm font-semibold text-foreground">{title}</h2>
             )}
             {description && (
-              <p className="mt-0.5 break-words text-sm text-slate-600">{description}</p>
+              <p className="mt-0.5 break-words text-sm text-muted-foreground">{description}</p>
             )}
           </div>
           {action}
@@ -40,7 +40,7 @@ export function SectionCard({
       )}
       <div
         className={cn(
-          "overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white p-4 shadow-[var(--surface-shadow)]",
+          "overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface p-4 shadow-surface",
           contentClassName,
         )}
       >

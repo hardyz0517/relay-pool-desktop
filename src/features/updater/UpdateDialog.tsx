@@ -27,10 +27,10 @@ export function UpdateDialog({
     : null;
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/30 p-4 backdrop-blur-[2px]">
-      <div className="w-full max-w-lg overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[0_24px_70px_rgba(15,23,42,0.18)]">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-scrim/45 p-4 backdrop-blur-[2px]">
+      <div className="w-full max-w-lg overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-surface">
         <div className="border-b border-border px-5 py-4">
-          <div className="text-[15px] font-semibold text-slate-900">
+          <div className="text-[15px] font-semibold text-foreground">
             {state.phase === "checking"
               ? "正在检查更新"
               : checkFailed
@@ -48,35 +48,35 @@ export function UpdateDialog({
 
         <div className="grid gap-4 px-5 py-5">
           {state.phase === "checking" ? (
-            <div className="text-sm leading-6 text-slate-600" aria-live="polite">
+            <div className="text-sm leading-6 text-muted-foreground" aria-live="polite">
               正在读取更新清单…
             </div>
           ) : checkFailed ? (
-            <div className="text-sm leading-6 text-rose-700">{state.error}</div>
+            <div className="text-sm leading-6 text-danger-foreground">{state.error}</div>
           ) : showReleaseDetails ? (
             <>
               {state.notes ? (
-                <div className="max-h-40 overflow-auto whitespace-pre-wrap text-sm leading-6 text-slate-600">
+                <div className="max-h-40 overflow-auto whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
                   {state.notes}
                 </div>
               ) : (
-                <div className="text-sm text-slate-500">此版本没有附加发行说明。</div>
+                <div className="text-sm text-muted-foreground">此版本没有附加发行说明。</div>
               )}
 
-              <div className="flex items-start gap-2 border-l-2 border-amber-400 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-900">
+              <div className="flex items-start gap-2 border-l-2 border-warning-border bg-warning-surface px-3 py-2.5 text-xs leading-5 text-warning-foreground">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>安装前会等待本地代理请求结束，再停止代理并安装更新。</span>
               </div>
 
               {busy && (
                 <div className="grid gap-2" aria-live="polite">
-                  <div className="flex items-center justify-between text-xs text-slate-600">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>{phaseLabel(state.phase)}</span>
                     <span>{percent === null ? formatBytes(state.downloadedBytes) : `${percent}%`}</span>
                   </div>
-                  <div className="h-2 overflow-hidden rounded-sm bg-slate-100">
+                  <div className="h-2 overflow-hidden rounded-sm bg-muted">
                     <div
-                      className={percent === null ? "h-full w-1/3 animate-pulse bg-cyan-500" : "h-full bg-cyan-500 transition-[width]"}
+                      className={percent === null ? "h-full w-1/3 animate-pulse bg-primary-solid" : "h-full bg-primary-solid transition-[width]"}
                       style={percent === null ? undefined : { width: `${percent}%` }}
                     />
                   </div>
@@ -88,7 +88,7 @@ export function UpdateDialog({
                 </div>
               )}
 
-              {state.error && <div className="text-sm leading-6 text-rose-700">{state.error}</div>}
+              {state.error && <div className="text-sm leading-6 text-danger-foreground">{state.error}</div>}
             </>
           ) : null}
         </div>

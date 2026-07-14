@@ -39,8 +39,8 @@ export function LocalRoutingStatusCandidateRow({
     <div className="grid min-h-[68px] gap-3 px-3 py-2.5 sm:grid-cols-[minmax(220px,1.6fr)_minmax(120px,.8fr)_minmax(104px,.65fr)_minmax(92px,.55fr)_minmax(88px,.5fr)] sm:items-center">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-500">#{order}</span>
-          <span className="truncate text-[13px] font-semibold text-slate-900">
+          <span className="text-xs font-semibold text-muted-foreground">#{order}</span>
+          <span className="truncate text-[13px] font-semibold text-foreground">
             {candidate.keyName}
           </span>
         </div>
@@ -53,7 +53,7 @@ export function LocalRoutingStatusCandidateRow({
           {candidate.previewEligible ? "可参与" : "不参与"}
         </StatusBadge>
         {!candidate.previewEligible && primaryRejectReason ? (
-          <div className="mt-1 text-xs text-amber-700">
+          <div className="mt-1 text-xs text-warning-foreground">
             {formatPreviewRejectReason(primaryRejectReason)}
           </div>
         ) : null}
@@ -89,8 +89,8 @@ function MetricCell({
         <div
           className={
             tone === "warning"
-              ? "text-[13px] font-semibold text-amber-700"
-              : "text-[13px] font-semibold text-slate-800"
+              ? "text-[13px] font-semibold text-warning-foreground"
+              : "text-[13px] font-semibold text-foreground"
           }
         >
           {value}

@@ -266,7 +266,7 @@ export function StationDetailPage({
 
   if (initialLoading) {
     return (
-      <div className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
+      <div className="rounded-[var(--surface-radius)] border border-border bg-surface px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
         正在读取中转站详情...
       </div>
     );

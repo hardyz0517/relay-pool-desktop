@@ -40,7 +40,7 @@ type BusyState = {
 const allEndpointKindFilter = "__all__";
 
 const inputClassName =
-  "h-8 rounded-[8px] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:ring-2 focus:ring-teal-100";
+  "h-8 rounded-[8px] border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/20";
 
 const defaultRequestBodyJson = JSON.stringify(
   {
@@ -281,7 +281,7 @@ export function ChannelMonitorTemplateManager({
         className="max-w-[1040px]"
         footer={
           <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0 truncate text-xs text-rose-600">{error ?? validationError ?? ""}</div>
+            <div className="min-w-0 truncate text-xs text-danger-foreground">{error ?? validationError ?? ""}</div>
             <div className="flex shrink-0 justify-end gap-2">
               <Button variant="outline" onClick={onClose} disabled={busyState !== null}>
                 关闭
@@ -296,13 +296,13 @@ export function ChannelMonitorTemplateManager({
       <div className="grid gap-0 md:grid-cols-[minmax(0,0.95fr)_minmax(360px,1.05fr)]">
         <div className="border-b border-border md:border-b-0 md:border-r">
           <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
-            <div className="text-sm font-semibold text-slate-800">模板列表</div>
+            <div className="text-sm font-semibold text-foreground">模板列表</div>
             <Button size="sm" variant="outline" onClick={createTemplate} disabled={busyState !== null}>
               <Plus className="h-3.5 w-3.5" />
               新建
             </Button>
           </div>
-          <div className="flex flex-wrap gap-1.5 border-b border-border bg-slate-50/70 px-3 py-2">
+          <div className="flex flex-wrap gap-1.5 border-b border-border bg-surface-subtle px-3 py-2">
             {endpointKindOptions.map((option) => {
               const selected = option.value === endpointKindFilter;
               return (
@@ -312,8 +312,8 @@ export function ChannelMonitorTemplateManager({
                   className={cn(
                     "inline-flex h-7 items-center gap-1 rounded-[7px] border px-2 text-xs font-medium transition-colors",
                     selected
-                      ? "border-teal-200 bg-white text-teal-700 shadow-[var(--surface-shadow)]"
-                      : "border-transparent text-slate-600 hover:border-border hover:bg-white",
+                      ? "border-primary bg-surface text-primary shadow-[var(--surface-shadow)]"
+                      : "border-transparent text-muted-foreground hover:border-border hover:bg-surface",
                   )}
                   onClick={() => setEndpointKindFilter(option.value)}
                 >
@@ -348,8 +348,8 @@ export function ChannelMonitorTemplateManager({
                           <div
                             key={template.id}
                             className={cn(
-                              "grid gap-2 rounded-[8px] border bg-white px-3 py-2 text-left shadow-[var(--surface-shadow)]",
-                              selected ? "border-teal-300 ring-2 ring-teal-100" : "border-border",
+                              "grid gap-2 rounded-[8px] border bg-surface px-3 py-2 text-left shadow-[var(--surface-shadow)]",
+                              selected ? "border-ring ring-2 ring-ring/20" : "border-border",
                             )}
                           >
                             <button
@@ -358,7 +358,7 @@ export function ChannelMonitorTemplateManager({
                               onClick={() => editTemplate(template)}
                             >
                               <div className="flex min-w-0 items-center gap-2">
-                                <span className="truncate text-sm font-medium text-slate-800">{template.name}</span>
+                                <span className="truncate text-sm font-medium text-foreground">{template.name}</span>
                                 <StatusBadge tone={template.enabled ? "healthy" : "disabled"}>
                                   {template.enabled ? "启用" : "停用"}
                                 </StatusBadge>
@@ -370,7 +370,7 @@ export function ChannelMonitorTemplateManager({
                                 {template.endpointKind} · {template.method.toUpperCase()} {template.path}
                               </div>
                               {template.note && (
-                                <div className="line-clamp-2 text-[11px] text-slate-500">{template.note}</div>
+                                <div className="line-clamp-2 text-[11px] text-muted-foreground">{template.note}</div>
                               )}
                             </button>
                             <div className="flex flex-wrap items-center justify-end gap-1.5">
@@ -428,7 +428,7 @@ export function ChannelMonitorTemplateManager({
         <form id="channel-monitor-template-form" className="grid content-start gap-4 p-4" onSubmit={handleSubmit}>
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-slate-800">{draft.id ? "编辑模板" : "新建模板"}</div>
+              <div className="text-sm font-semibold text-foreground">{draft.id ? "编辑模板" : "新建模板"}</div>
               <div className="text-xs text-muted-foreground">
                 {editingBuiltIn ? "内置模板只读，可复制后调整。" : "保存为自定义请求模板。"}
               </div>

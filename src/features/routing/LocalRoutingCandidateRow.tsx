@@ -103,8 +103,8 @@ export function LocalRoutingCandidateRow({
           tabIndex={dragDisabled ? -1 : 0}
           disabled={dragDisabled}
           className={cn(
-            "flex h-7 w-5 items-center justify-center self-start text-slate-300 sm:self-center",
-            dragDisabled ? "cursor-not-allowed" : "cursor-grab active:cursor-grabbing hover:text-slate-500",
+            "flex h-7 w-5 items-center justify-center self-start text-muted-foreground/45 sm:self-center",
+            dragDisabled ? "cursor-not-allowed" : "cursor-grab active:cursor-grabbing hover:text-muted-foreground",
           )}
           {...dragAttributes}
           {...dragListeners}
@@ -114,8 +114,8 @@ export function LocalRoutingCandidateRow({
       ) : null}
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-500">#{order ?? candidate.priority + 1}</span>
-          <span className="truncate text-[13px] font-semibold text-slate-900">
+          <span className="text-xs font-semibold text-muted-foreground">#{order ?? candidate.priority + 1}</span>
+          <span className="truncate text-[13px] font-semibold text-foreground">
             {candidate.keyName}
           </span>
           {syncLabel && syncState !== "idle" ? (
@@ -137,12 +137,12 @@ export function LocalRoutingCandidateRow({
           </StatusBadge>
         </div>
         {!candidate.previewEligible && primaryRejectReason ? (
-          <div className="mt-1 text-xs text-amber-700">
+          <div className="mt-1 text-xs text-warning-foreground">
             {formatPreviewRejectReason(primaryRejectReason)}
           </div>
         ) : null}
         {!candidate.routingGroupMatch ? (
-          <div className="mt-1 text-xs text-amber-700">分组不匹配</div>
+          <div className="mt-1 text-xs text-warning-foreground">分组不匹配</div>
         ) : null}
       </MetricCell>
       <MetricCell label="有效倍率" value={multiplierLabel} detail={multiplierSourceLabel} />
@@ -176,8 +176,8 @@ function MetricCell({
         <div
           className={
             tone === "warning"
-              ? "text-[13px] font-semibold text-amber-700"
-              : "text-[13px] font-semibold text-slate-800"
+              ? "text-[13px] font-semibold text-warning-foreground"
+              : "text-[13px] font-semibold text-foreground"
           }
         >
           {value}

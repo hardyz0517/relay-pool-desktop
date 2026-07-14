@@ -9,11 +9,11 @@ type StatusBadgeProps = {
 };
 
 const toneClassName: Record<StatusTone, string> = {
-  healthy: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  warning: "border-amber-200 bg-amber-50 text-amber-700",
-  error: "border-rose-200 bg-rose-50 text-rose-700",
-  disabled: "border-slate-200 bg-slate-50 text-slate-500",
-  info: "border-blue-200 bg-blue-50 text-blue-700",
+  healthy: "border-success-border bg-success-surface text-success-foreground",
+  warning: "border-warning-border bg-warning-surface text-warning-foreground",
+  error: "border-danger-border bg-danger-surface text-danger-foreground",
+  disabled: "border-border bg-muted text-muted-foreground",
+  info: "border-info-border bg-info-surface text-info-foreground",
 };
 
 export function StatusBadge({

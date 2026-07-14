@@ -578,7 +578,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       title="密钥池"
       status={
         <div className="flex min-w-0 flex-wrap items-center gap-1.5" aria-label="密钥池状态">
-          <StatusBadge tone="info" className="bg-slate-50 text-slate-600">
+          <StatusBadge tone="info" className="bg-surface-subtle text-muted-foreground">
             {`${filteredItems.length} 密钥`}
           </StatusBadge>
           <StatusBadge tone={filteredEnabledCount > 0 ? "healthy" : "disabled"}>
@@ -631,7 +631,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       }
     >
       {loading ? (
-        <div className="rounded-[var(--surface-radius)] border border-cyan-100 bg-white/85 px-4 py-5 text-sm text-muted-foreground">
+        <div className="rounded-[var(--surface-radius)] border border-info-border bg-surface/85 px-4 py-5 text-sm text-muted-foreground">
           正在读取密钥池...
         </div>
       ) : filteredItems.length === 0 ? (
@@ -650,7 +650,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
           >
             <SortableContext items={filteredItems.map((item) => item.id)} strategy={verticalListSortingStrategy}>
               <div className="overflow-x-auto">
-                <div className={cn(keyPoolGridClassName, "border-b border-slate-200 px-3 pb-2 text-[11px] font-medium text-slate-500")}>
+                <div className={cn(keyPoolGridClassName, "border-b border-border px-3 pb-2 text-[11px] font-medium text-muted-foreground")}>
                   <div aria-hidden />
                   <TableHeadCell>名称</TableHeadCell>
                   <TableHeadCell align="center">状态</TableHeadCell>
@@ -659,7 +659,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
                   <TableHeadCell align="center">分组</TableHeadCell>
                   <div className="text-right">操作</div>
                 </div>
-                <div className="divide-y divide-slate-100">
+                <div className="divide-y divide-border">
                   {filteredItems.map((item) => (
                     <SortableKeyRow
                       key={item.id}
@@ -800,13 +800,13 @@ function KeyConnectivityTestDialog({
       onClose={onClose}
       footer={
         <div className="flex items-center justify-end gap-3">
-          <Button variant="ghost" className="bg-slate-100 text-slate-700 hover:bg-slate-200" onClick={onClose}>
+          <Button variant="ghost" className="bg-muted text-foreground hover:bg-hover" onClick={onClose}>
             关闭
           </Button>
           <Button
             className={cn(
-              "min-w-[74px] bg-emerald-500 hover:bg-emerald-600",
-              testing && "bg-teal-500 hover:bg-teal-500",
+              "min-w-[74px] bg-primary-solid hover:bg-primary-solid",
+              testing && "bg-primary-solid hover:bg-primary-solid",
             )}
             disabled={!item || testing}
             onClick={() => onTest(model)}
@@ -818,20 +818,20 @@ function KeyConnectivityTestDialog({
       }
     >
       <div data-testid="key-connectivity-test-dialog" className="space-y-4 px-5 py-4">
-        <div className="flex items-center justify-between gap-3 rounded-[10px] border border-slate-200 bg-slate-50/80 p-3">
+        <div className="flex items-center justify-between gap-3 rounded-[10px] border border-border bg-surface-subtle p-3">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-teal-500 text-white shadow-[0_1px_2px_rgba(15,118,110,0.2)]">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-primary-solid text-primary-foreground shadow-surface">
               <Activity className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <div className="truncate text-[13px] font-semibold text-slate-900">{item?.name ?? "密钥"}</div>
-              <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500">
-                <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-500">APIKEY</span>
+              <div className="truncate text-[13px] font-semibold text-foreground">{item?.name ?? "密钥"}</div>
+              <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span className="rounded bg-hover px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">APIKEY</span>
                 <span>密钥</span>
               </div>
             </div>
           </div>
-          <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+          <span className="rounded-full bg-success-surface px-2.5 py-1 text-[11px] font-semibold text-success-foreground">
             {item?.enabled ? "active" : "inactive"}
           </span>
         </div>
@@ -841,14 +841,14 @@ function KeyConnectivityTestDialog({
             value={model}
             options={modelOptions}
             ariaLabel="选择测试模型"
-            className="h-9 w-full rounded-[10px] border-slate-200 bg-white text-[13px]"
+            className="h-9 w-full rounded-[10px] border-border bg-surface text-[13px]"
             menuClassName="text-[13px]"
             disabled={testing}
             onChange={setModel}
           />
         </Field>
 
-        <div className="rounded-[10px] bg-slate-950 p-4 font-mono text-[12px] leading-5 text-slate-300 shadow-inner">
+        <div className="rounded-[10px] bg-surface-inset p-4 font-mono text-[12px] leading-5 text-muted-foreground/60 shadow-inner">
           {buildConnectivityConsoleLines({
             item,
             model,
@@ -877,7 +877,7 @@ function KeyConnectivityTestDialog({
           ))}
         </div>
 
-        <div className="flex items-center justify-between text-[11px] text-slate-500">
+        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
             <Bot className="h-3.5 w-3.5" />
             测试模型
@@ -916,10 +916,10 @@ function buildConnectivityConsoleLines({
   responseTypingComplete: boolean;
 }) {
   const lines = [
-    { text: testing ? "连接 API 中..." : `开始测试密钥：${item?.name ?? "密钥"}`, className: "text-sky-300" },
-    { text: `使用模型：${selectedModelLabel}`, className: "font-semibold text-cyan-300" },
-    { text: '发送测试消息："hi"', className: "text-slate-300" },
-    { text: "响应：", className: "font-semibold text-yellow-300" },
+    { text: testing ? "连接 API 中..." : `开始测试密钥：${item?.name ?? "密钥"}`, className: "text-info-foreground" },
+    { text: `使用模型：${selectedModelLabel}`, className: "font-semibold text-info-foreground" },
+    { text: '发送测试消息："hi"', className: "text-muted-foreground/60" },
+    { text: "响应：", className: "font-semibold text-warning-foreground" },
   ];
 
   if (testing) {
@@ -949,15 +949,15 @@ function buildConnectivityConsoleLines({
         : []),
       {
         text: displayedResponseText,
-        className: result.ok ? "font-semibold text-emerald-300" : "font-semibold text-rose-300",
+        className: result.ok ? "font-semibold text-success-foreground" : "font-semibold text-danger-foreground",
       },
       ...(responseTypingComplete
         ? [
             {
               text: result.ok ? "测试完成！" : "测试未通过。",
               className: result.ok
-                ? "mt-2 border-t border-slate-700 pt-2 text-emerald-300"
-                : "mt-2 border-t border-slate-700 pt-2 text-rose-300",
+                ? "mt-2 border-t border-border-strong pt-2 text-success-foreground"
+                : "mt-2 border-t border-border-strong pt-2 text-danger-foreground",
             },
           ]
         : []),
@@ -966,13 +966,13 @@ function buildConnectivityConsoleLines({
   if (error) {
     return [
       ...lines,
-      { text: displayedResponseText, className: "font-semibold text-rose-300" },
+      { text: displayedResponseText, className: "font-semibold text-danger-foreground" },
       ...(responseTypingComplete
-        ? [{ text: "测试失败。", className: "mt-2 border-t border-slate-700 pt-2 text-rose-300" }]
+        ? [{ text: "测试失败。", className: "mt-2 border-t border-border-strong pt-2 text-danger-foreground" }]
         : []),
     ];
   }
-  return [...lines, { text: `待测试模型 ${model}`, className: "text-slate-400" }];
+  return [...lines, { text: `待测试模型 ${model}`, className: "text-muted-foreground/70" }];
 }
 
 function formatConnectivityDuration(durationMs: number) {
@@ -1076,8 +1076,8 @@ function KeyRowContent({
     <div
       className={cn(
         keyPoolGridClassName,
-        "group min-h-[66px] px-3 py-2.5 text-left transition-colors hover:bg-slate-50/45",
-        overlay && "bg-slate-50",
+        "group min-h-[66px] px-3 py-2.5 text-left transition-colors hover:bg-surface-subtle",
+        overlay && "bg-surface-subtle",
       )}
     >
       <button
@@ -1087,8 +1087,8 @@ function KeyRowContent({
         tabIndex={dragDisabled ? -1 : 0}
         disabled={dragDisabled}
         className={cn(
-          "flex h-7 w-5 shrink-0 items-center justify-center text-slate-300",
-          dragDisabled ? "cursor-not-allowed" : "cursor-grab hover:text-slate-500 active:cursor-grabbing",
+          "flex h-7 w-5 shrink-0 items-center justify-center text-muted-foreground/60",
+          dragDisabled ? "cursor-not-allowed" : "cursor-grab hover:text-muted-foreground active:cursor-grabbing",
         )}
         {...dragAttributes}
         {...dragListeners}
@@ -1097,11 +1097,11 @@ function KeyRowContent({
       </button>
 
       <div className="flex min-w-0 items-center gap-2.5">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-slate-100 text-slate-600">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-muted text-muted-foreground">
           <KeyRound className="h-4 w-4" />
         </div>
         <div className="min-w-0">
-          <div className="min-w-0 truncate text-[13px] font-semibold text-slate-900">{item.name}</div>
+          <div className="min-w-0 truncate text-[13px] font-semibold text-foreground">{item.name}</div>
           <div className="mt-0.5 truncate text-xs text-muted-foreground">{formatStationBaseUrl(item.stationBaseUrl)}</div>
         </div>
       </div>
@@ -1109,7 +1109,7 @@ function KeyRowContent({
       <div className="flex min-w-0 justify-center">
         {testing ? (
           <span
-            className="inline-flex h-6 min-w-[4.75rem] items-center justify-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-2 text-xs font-medium text-teal-700 shadow-[0_1px_0_rgba(15,23,42,0.03)]"
+            className="inline-flex h-6 min-w-[4.75rem] items-center justify-center gap-1.5 rounded-full border border-primary bg-selected px-2 text-xs font-medium text-primary shadow-surface"
             aria-live="polite"
           >
             <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
@@ -1146,7 +1146,7 @@ function KeyRowContent({
       </div>
 
       <div className="flex min-w-0 justify-center">
-        <span className="inline-flex max-w-full items-center rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-100">
+        <span className="inline-flex max-w-full items-center rounded-full bg-success-surface px-2 py-1 text-xs font-medium text-success-foreground ring-1 ring-success-border/40">
           <span className="truncate">{item.stationName}</span>
         </span>
       </div>
@@ -1158,8 +1158,8 @@ function KeyRowContent({
       >
         <IconButton
           className={cn(
-            "text-slate-500 hover:bg-teal-50 hover:text-teal-700",
-            testing && "animate-pulse text-teal-700",
+            "text-muted-foreground hover:bg-selected hover:text-primary",
+            testing && "animate-pulse text-primary",
           )}
           disabled={overlay || testing || !item.apiKeyPresent}
           label={`测试连通性 ${item.name}`}
@@ -1167,10 +1167,10 @@ function KeyRowContent({
         >
           <Activity className="h-4 w-4" />
         </IconButton>
-        <IconButton className="text-slate-500 hover:bg-slate-100 hover:text-slate-800" label={`编辑 ${item.name}`} onClick={() => onEdit?.(item)}>
+        <IconButton className="text-muted-foreground hover:bg-muted hover:text-foreground" label={`编辑 ${item.name}`} onClick={() => onEdit?.(item)}>
           <Edit3 className="h-4 w-4" />
         </IconButton>
-        <IconButton className="text-slate-500 hover:bg-rose-50 hover:text-rose-600" label={`删除 ${item.name}`} onClick={() => onDelete?.(item)}>
+        <IconButton className="text-muted-foreground hover:bg-danger-surface hover:text-danger-foreground" label={`删除 ${item.name}`} onClick={() => onDelete?.(item)}>
           <Trash2 className="h-4 w-4" />
         </IconButton>
       </div>
@@ -1336,8 +1336,8 @@ function KeyEditDialog({
     >
       <form id="key-pool-edit-form" className="grid gap-4 p-5" onSubmit={onSave}>
         {creating && (
-          <div className="grid gap-2 rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/25 p-3">
-            <div className="text-xs font-semibold text-slate-700">预设中转站</div>
+          <div className="grid gap-2 rounded-[var(--surface-radius)] border border-info-border bg-info-surface p-3">
+            <div className="text-xs font-semibold text-foreground">预设中转站</div>
             <SelectControl
               ariaLabel="预设中转站"
               className={inputClassName}
@@ -1411,12 +1411,12 @@ function KeyEditDialog({
             />
           </Field>
         </div>
-        <label className="flex items-center gap-2 text-sm text-slate-700">
-          <input checked={form.enabled} className="h-4 w-4 accent-teal-600" type="checkbox" onChange={(event) => onFormChange({ ...form, enabled: event.target.checked })} />
+        <label className="flex items-center gap-2 text-sm text-foreground">
+          <input checked={form.enabled} className="h-4 w-4 accent-primary" type="checkbox" onChange={(event) => onFormChange({ ...form, enabled: event.target.checked })} />
           启用
         </label>
-        <div className="grid gap-2 rounded-[var(--surface-radius)] border border-cyan-100 bg-cyan-50/25 p-3">
-          <div className="text-xs font-semibold text-slate-700">协议能力</div>
+        <div className="grid gap-2 rounded-[var(--surface-radius)] border border-info-border bg-info-surface p-3">
+          <div className="text-xs font-semibold text-foreground">协议能力</div>
           <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
             <CheckField label="聊天补全" checked={form.supportsChatCompletions} onChange={(checked) => onFormChange({ ...form, supportsChatCompletions: checked })} />
             <CheckField label="响应接口" checked={form.supportsResponses} onChange={(checked) => onFormChange({ ...form, supportsResponses: checked })} />
@@ -1439,8 +1439,8 @@ function KeyEditDialog({
           </Field>
         </div>
         <div className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)]">
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input checked={form.onlyUseAsBackup} className="h-4 w-4 accent-teal-600" type="checkbox" onChange={(event) => onFormChange({ ...form, onlyUseAsBackup: event.target.checked })} />
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <input checked={form.onlyUseAsBackup} className="h-4 w-4 accent-primary" type="checkbox" onChange={(event) => onFormChange({ ...form, onlyUseAsBackup: event.target.checked })} />
             仅作为备用密钥
           </label>
           <Field label="路由标签">
@@ -1586,7 +1586,7 @@ function keyPoolItemGroupRow(item: KeyPoolItem) {
 }
 
 const selectClassName =
-  "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
+  "h-8 rounded-[12px] border border-info-border bg-info-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:bg-surface focus:ring-2 focus:ring-ring/20";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -1607,10 +1607,10 @@ function CheckField({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex items-center gap-2 text-sm text-slate-700">
+    <label className="flex items-center gap-2 text-sm text-foreground">
       <input
         checked={checked}
-        className="h-4 w-4 accent-teal-600"
+        className="h-4 w-4 accent-primary"
         type="checkbox"
         onChange={(event) => onChange(event.target.checked)}
       />
@@ -1723,4 +1723,4 @@ function isFutureTime(value: string | null) {
 }
 
 const inputClassName =
-  "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/40 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
+  "h-8 rounded-[12px] border border-info-border bg-info-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:bg-surface focus:ring-2 focus:ring-ring/20";

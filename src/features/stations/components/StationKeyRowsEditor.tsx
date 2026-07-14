@@ -34,7 +34,7 @@ type StationKeyRowsEditorProps = {
 };
 
 const inputClassName =
-  "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-2.5 text-xs text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.16)] disabled:bg-slate-50 disabled:text-slate-500";
+  "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-surface px-2.5 text-xs text-foreground outline-none transition placeholder:text-muted-foreground/70 focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:bg-surface-subtle disabled:text-muted-foreground";
 const selectClassName =
   "h-8 w-full min-w-0 px-2.5 text-xs shadow-none";
 const keyRowsGridTemplate = "minmax(7rem,1fr) minmax(11rem,1.35fr) minmax(8rem,0.9fr) 6rem 3.75rem 2.5rem";
@@ -193,7 +193,7 @@ export function StationKeyRowsEditor({
                 />
                 <Button
                   aria-label={`删除密钥 ${index + 1}`}
-                  className={cn("justify-self-end", row.id && "text-rose-700")}
+                  className={cn("justify-self-end", row.id && "text-danger-foreground")}
                   disabled={disabled}
                   size="icon"
                   variant="ghost"
@@ -208,7 +208,7 @@ export function StationKeyRowsEditor({
       </div>
 
       {visibleRows.length === 0 && (
-        <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
+        <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
           暂无本地密钥，点击添加后录入。
         </div>
       )}

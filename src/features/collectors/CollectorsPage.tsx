@@ -353,7 +353,7 @@ export function CollectorsPage() {
       }
     >
       {loading ? (
-        <div className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
+        <div className="rounded-[var(--surface-radius)] border border-border bg-surface px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
           正在读取站点和采集快照...
         </div>
       ) : !selectedStation ? (
@@ -370,13 +370,13 @@ export function CollectorsPage() {
               action={<StatusBadge tone={toneForConclusion(conclusion)}>{conclusion}</StatusBadge>}
             >
               <div className="grid gap-3">
-                <div className="rounded-[10px] bg-slate-50/70 p-3">
+                <div className="rounded-[10px] bg-surface-subtle p-3">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-white text-teal-700">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-surface text-primary">
                       <ShieldCheck className="h-5 w-5" />
                     </div>
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-800">
+                      <div className="text-sm font-semibold text-foreground">
                         {summary.message ?? fallbackMessage(latestSnapshot)}
                       </div>
                       <div className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -416,7 +416,7 @@ export function CollectorsPage() {
                   />
                 </div>
               )}
-              <div className="mt-3 rounded-[10px] bg-slate-50/70 px-3 py-2 text-xs leading-5 text-muted-foreground">
+              <div className="mt-3 rounded-[10px] bg-surface-subtle px-3 py-2 text-xs leading-5 text-muted-foreground">
                 {summary.diagnosis ??
                   summary.nextStep ??
                   (summary.loginRequired
@@ -431,7 +431,7 @@ export function CollectorsPage() {
                 <CompactFact label="站点类型" value={stationTypeLabels[selectedStation.stationType]} />
                 <CompactFact label="密钥" value={`${selectedStation.keyCount}`} />
               </div>
-              <div className="mt-3 rounded-[10px] bg-slate-50/70 px-3 py-2 text-sm text-slate-700">
+              <div className="mt-3 rounded-[10px] bg-surface-subtle px-3 py-2 text-sm text-foreground">
                 {summary.loginRequired
                   ? "这个站点当前更像需要登录后才能拿到完整信息。先测试登录，再做采集。"
                   : "已尽量使用登录态接口读取余额、分组、倍率、密钥和模型信息。"}
@@ -505,12 +505,12 @@ export function CollectorsPage() {
             <CollectorAdvancedSettings />
 
             <InspectorPanel title="高级选项">
-              <details className="group rounded-[10px] border border-slate-100 bg-slate-50/70">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-slate-700">
+              <details className="group rounded-[10px] border border-border bg-surface-subtle">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-foreground">
                   高级功能
                   <ChevronDown className="h-4 w-4 text-muted-foreground transition group-open:rotate-180" />
                 </summary>
-                <div className="border-t border-slate-200 p-3">
+                <div className="border-t border-border p-3">
                   <div className="space-y-2">
                     <Button
                       variant="outline"
@@ -521,7 +521,7 @@ export function CollectorsPage() {
                       <Radar className="h-4 w-4" />
                       {taskStatus === "detecting" ? "高级探测中" : "重新探测接口"}
                     </Button>
-                    <div className="rounded-[10px] bg-white/75 px-3 py-2 text-xs leading-5 text-slate-700">
+                    <div className="rounded-[10px] bg-surface/75 px-3 py-2 text-xs leading-5 text-foreground">
                       用于验证码、二次验证或魔改站网页登录授权，完成登录后会验证后台会话并保存可复用的登录态。
                     </div>
                     {captureActive ? (
@@ -569,16 +569,16 @@ export function CollectorsPage() {
             <SectionCard title="最近采集任务">
               <div className="grid gap-2">
                 {runs.length === 0 ? (
-                  <div className="rounded-[10px] border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-sm text-muted-foreground">
+                  <div className="rounded-[10px] border border-dashed border-border bg-surface-subtle px-3 py-4 text-sm text-muted-foreground">
                     暂无采集任务。
                   </div>
                 ) : (
                   runs.slice(0, 10).map((run) => (
                     <div
                       key={run.id}
-                      className="grid grid-cols-[5rem_7rem_minmax(0,1fr)_5rem] items-center gap-2 rounded-[10px] border border-slate-100 bg-slate-50/70 px-3 py-2 text-xs"
+                      className="grid grid-cols-[5rem_7rem_minmax(0,1fr)_5rem] items-center gap-2 rounded-[10px] border border-border bg-surface-subtle px-3 py-2 text-xs"
                     >
-                      <span className="font-medium text-slate-700">{taskTypeLabel(run.taskType)}</span>
+                      <span className="font-medium text-foreground">{taskTypeLabel(run.taskType)}</span>
                       <StatusBadge tone={toneForRunStatus(run.status)}>{runStatusLabel(run.status)}</StatusBadge>
                       <span className="truncate text-muted-foreground">
                         {run.errorMessage ?? `${run.successCount}/${run.endpointCount} 接口`}
@@ -619,7 +619,7 @@ export function CollectorsPage() {
                     );
                   })
                 ) : (
-                  <div className="rounded-[10px] border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-sm text-muted-foreground">
+                  <div className="rounded-[10px] border border-dashed border-border bg-surface-subtle px-3 py-4 text-sm text-muted-foreground">
                     暂无历史快照。
                   </div>
                 )}
@@ -627,20 +627,20 @@ export function CollectorsPage() {
             </InspectorPanel>
 
             <InspectorPanel title="开发者详情" description="默认收起，仅用于排查采集器。">
-              <details className="group rounded-[10px] border border-slate-100 bg-slate-50/70">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-slate-700">
+              <details className="group rounded-[10px] border border-border bg-surface-subtle">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-foreground">
                   脱敏快照 JSON
                   <span className="text-xs text-muted-foreground group-open:hidden">展开</span>
                   <span className="hidden text-xs text-muted-foreground group-open:inline">收起</span>
                 </summary>
-                <div className="border-t border-slate-200 p-3">
+                <div className="border-t border-border p-3">
                   <div className="mb-2 flex justify-end">
                     <Button variant="outline" className="h-7 px-2 text-xs" onClick={handleCopyDeveloperJson} disabled={!latestSnapshot}>
                       <Copy className="h-3.5 w-3.5" />
                       复制脱敏 JSON
                     </Button>
                   </div>
-                  <pre className="max-h-72 overflow-auto rounded-xl bg-white p-3 text-[11px] leading-5 text-slate-600">
+                  <pre className="max-h-72 overflow-auto rounded-xl bg-surface p-3 text-[11px] leading-5 text-muted-foreground">
                         {buildDeveloperJson(latestSnapshot) || "暂无快照。"}
                   </pre>
                 </div>
@@ -654,7 +654,7 @@ export function CollectorsPage() {
         <div
           className={cn(
             "fixed bottom-4 right-4 z-40 rounded-[var(--surface-radius)] border px-4 py-3 text-sm shadow-[var(--surface-shadow)]",
-            "border-cyan-200 bg-cyan-50 text-cyan-700",
+            "border-info-border bg-info-surface text-info-foreground",
           )}
         >
           {taskStatusLabel(taskStatus, summary)}
@@ -666,9 +666,9 @@ export function CollectorsPage() {
 
 function CompactFact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[10px] border border-slate-100 bg-slate-50/70 px-3 py-2">
+    <div className="rounded-[10px] border border-border bg-surface-subtle px-3 py-2">
       <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="mt-0.5 truncate text-sm font-semibold text-slate-800">{value}</div>
+      <div className="mt-0.5 truncate text-sm font-semibold text-foreground">{value}</div>
     </div>
   );
 }
@@ -676,7 +676,7 @@ function CompactFact({ label, value }: { label: string; value: string }) {
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="grid gap-1.5">
-      <span className="text-xs font-medium text-slate-700">{label}</span>
+      <span className="text-xs font-medium text-foreground">{label}</span>
       {children}
     </label>
   );
@@ -692,14 +692,14 @@ function DetailList({
   emptyText: string;
 }) {
   return (
-    <div className="rounded-[10px] border border-slate-100 bg-slate-50/70 px-3 py-2">
+    <div className="rounded-[10px] border border-border bg-surface-subtle px-3 py-2">
       <div className="text-[11px] text-muted-foreground">{title}</div>
       <div className="mt-1 flex flex-wrap gap-1.5">
         {items.length > 0 ? (
           items.map((item, index) => (
             <span
               key={`${item}-${index}`}
-              className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700"
+              className="rounded-md border border-border bg-surface-subtle px-2 py-1 text-xs font-medium text-foreground"
             >
               {item}
             </span>
@@ -928,7 +928,7 @@ function shortError(error: string) {
 
 
 const selectClassName =
-  "h-8 rounded-xl border border-cyan-100 bg-cyan-50/45 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
+  "h-8 rounded-xl border border-info-border bg-info-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:bg-surface focus:ring-2 focus:ring-ring/20";
 
 const inputClassName =
-  "h-9 w-full rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-teal-300 focus:ring-2 focus:ring-teal-100";
+  "h-9 w-full rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/70 focus:border-ring focus:ring-2 focus:ring-ring/20";

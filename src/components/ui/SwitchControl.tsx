@@ -26,9 +26,9 @@ export function SwitchControl({
       aria-checked={checked}
       aria-label={ariaLabel}
       className={cn(
-        "inline-flex items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)] disabled:cursor-default disabled:opacity-60",
+        "inline-flex items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-default disabled:opacity-60",
         showLabel
-          ? "h-8 min-w-[96px] justify-between gap-2 border border-border bg-white px-2 text-xs font-medium text-slate-700 shadow-[var(--surface-shadow)]"
+          ? "h-8 min-w-[96px] justify-between gap-2 border border-border bg-surface px-2 text-xs font-medium text-foreground shadow-surface"
           : "h-5 w-10 justify-center bg-transparent p-0",
         className,
       )}
@@ -39,14 +39,14 @@ export function SwitchControl({
     >
       {showLabel && <span className="min-w-7 text-left">{checked ? onLabel : offLabel}</span>}
       <span
-        className={cn(
-          "relative h-5 w-10 shrink-0 rounded-full transition-colors",
-          checked ? "bg-teal-500" : "bg-slate-200",
-        )}
+          className={cn(
+            "relative h-5 w-10 shrink-0 rounded-full transition-colors",
+            checked ? "bg-primary-solid" : "bg-muted",
+          )}
       >
         <span
           className={cn(
-            "absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-transform",
+            "absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-control-thumb shadow-sm ring-1 ring-border transition-transform",
             checked && "translate-x-5",
           )}
         />

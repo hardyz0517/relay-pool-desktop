@@ -15,6 +15,14 @@ const sizeClassName: Record<ButtonSize, string> = {
   icon: "h-8 w-8 rounded-[var(--surface-radius)] px-0",
 };
 
+const buttonVariants: Record<ButtonVariant, string> = {
+  primary: "bg-primary-solid text-primary-foreground shadow-surface hover:bg-primary-solid/90",
+  secondary: "border border-border bg-surface text-foreground hover:bg-hover",
+  ghost: "text-muted-foreground hover:bg-hover hover:text-foreground",
+  outline: "border border-border bg-surface text-foreground hover:bg-hover",
+  danger: "border border-danger-border bg-danger-surface text-danger-foreground hover:bg-danger-surface/80",
+};
+
 export function Button({
   className,
   variant = "primary",
@@ -26,18 +34,9 @@ export function Button({
     <button
       type={type}
       className={cn(
-        "inline-flex cursor-pointer items-center justify-center gap-2 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.35)] disabled:pointer-events-none disabled:cursor-default disabled:opacity-50",
+        "inline-flex cursor-pointer items-center justify-center gap-2 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:cursor-default disabled:opacity-50",
         sizeClassName[size],
-        variant === "primary" &&
-          "bg-[hsl(var(--accent))] text-white shadow-[0_1px_2px_rgba(10,132,255,0.22)] hover:bg-[#0077ed]",
-        variant === "secondary" &&
-          "border border-border bg-white text-slate-700 hover:bg-slate-50",
-        variant === "ghost" &&
-          "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
-        variant === "outline" &&
-          "border border-border bg-white text-slate-700 hover:bg-slate-50",
-        variant === "danger" &&
-          "border border-rose-200 bg-white text-rose-700 hover:bg-rose-50",
+        buttonVariants[variant],
         className,
       )}
       {...props}

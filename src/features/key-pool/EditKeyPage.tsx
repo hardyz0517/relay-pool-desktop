@@ -63,7 +63,7 @@ const emptyForm: EditKeyFormState = {
 };
 
 const inputClassName =
-  "h-8 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)] disabled:bg-slate-50 disabled:text-slate-500";
+  "h-8 rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:bg-surface-subtle disabled:text-muted-foreground";
 
 const KEEP_GROUP_BINDING_VALUE = "__keep__";
 const CLEAR_GROUP_BINDING_VALUE = "__clear__";
@@ -199,7 +199,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
       }
       status={
         sourceItem ? (
-          <span className="inline-flex h-6 items-center gap-1 rounded-[var(--surface-radius)] border border-border bg-white px-2 text-xs font-medium text-slate-600">
+          <span className="inline-flex h-6 items-center gap-1 rounded-[var(--surface-radius)] border border-border bg-surface px-2 text-xs font-medium text-muted-foreground">
             <KeyRound className="h-3.5 w-3.5" />
             {sourceItem.apiKeyMasked}
           </span>
@@ -207,7 +207,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
       }
     >
       {loading ? (
-        <div className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
+        <div className="rounded-[var(--surface-radius)] border border-border bg-surface px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
           正在读取密钥详情...
         </div>
       ) : !sourceItem ? (
@@ -259,7 +259,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
                   </Field>
                 </div>
                 {error && (
-                  <div className="mt-3 rounded-[var(--surface-radius)] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  <div className="mt-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
                     {error}
                   </div>
                 )}
@@ -363,10 +363,10 @@ function CheckField({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex items-center gap-2 text-sm text-slate-700">
+    <label className="flex items-center gap-2 text-sm text-foreground">
       <input
         checked={checked}
-        className="h-4 w-4 accent-teal-600"
+        className="h-4 w-4 accent-primary"
         type="checkbox"
         onChange={(event) => onChange(event.target.checked)}
       />

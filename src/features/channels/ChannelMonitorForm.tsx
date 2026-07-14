@@ -30,7 +30,7 @@ type ChannelMonitorFormProps = {
 };
 
 const inputClassName =
-  "h-8 rounded-[8px] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:ring-2 focus:ring-teal-100";
+  "h-8 rounded-[8px] border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/20";
 
 const protocolOptions: Array<{
   value: ChannelMonitorProtocol;
@@ -163,7 +163,7 @@ export function ChannelMonitorForm({
           onSubmit={handleSubmit}
           footer={
             <div className="flex w-full min-w-0 items-center justify-between gap-3">
-              <div className="min-w-0 truncate text-xs text-rose-600">{validationError ?? ""}</div>
+              <div className="min-w-0 truncate text-xs text-danger-foreground">{validationError ?? ""}</div>
               <div className="flex shrink-0 justify-end gap-2">
                 <Button variant="outline" onClick={onClose} disabled={saving}>
                   取消
@@ -230,7 +230,7 @@ export function ChannelMonitorForm({
 
         <div className="grid gap-3 md:grid-cols-2">
           <Field label="OpenAI 协议" className="md:col-span-2">
-            <div className="grid gap-2 rounded-[8px] border border-sky-100 bg-sky-50/35 p-2 md:grid-cols-2">
+            <div className="grid gap-2 rounded-[8px] border border-info-border bg-info-surface p-2 md:grid-cols-2">
               {protocolOptions.map((option) => {
                 const active = selectedProtocol === option.value;
                 const disabled = !monitorTemplateOptionsForProtocol(templates, option.value).some((template) => template.enabled);
@@ -238,10 +238,10 @@ export function ChannelMonitorForm({
                   <button
                     key={option.value}
                     type="button"
-                    className={`min-h-[64px] rounded-[8px] border bg-white px-3 py-2 text-left transition ${
+                    className={`min-h-[64px] rounded-[8px] border bg-surface px-3 py-2 text-left transition ${
                       active
-                        ? "border-teal-500 text-teal-700 shadow-[0_0_0_1px_rgba(20,184,166,0.16)]"
-                        : "border-border text-slate-600 hover:border-teal-200 hover:bg-teal-50/25"
+                        ? "border-primary text-primary shadow-surface"
+                        : "border-border text-muted-foreground hover:border-primary hover:bg-selected"
                     } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
                     disabled={disabled}
                     onClick={() => handleProtocolChange(option.value)}
