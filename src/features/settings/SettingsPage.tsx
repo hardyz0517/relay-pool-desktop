@@ -16,6 +16,7 @@ import { chooseDataDir, getLocalAccessKey, getSettings, resetDataDir, SETTINGS_U
 import type { ProxyStatus } from "@/lib/types/proxy";
 import { useUpdater } from "@/features/updater/UpdaterProvider";
 import { isUpdaterBusyPhase } from "@/features/updater/updateState";
+import { ThemeSettings } from "@/features/settings/ThemeSettings";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import {
   appSettingsToUpdateInput,
@@ -310,6 +311,8 @@ export function SettingsPage() {
   return (
     <PageScaffold title="设置" width="settings">
       <div className="grid min-w-0 gap-[var(--shell-page-gap)]">
+        <ThemeSettings />
+
         <SectionCard
           contentClassName="p-0"
           title="本地代理"
@@ -368,7 +371,7 @@ export function SettingsPage() {
             label="代理端口"
           />
           <SettingRow
-            control={<code className="break-all text-xs text-slate-700">http://127.0.0.1:{settings.localProxyPort}/v1</code>}
+            control={<code className="break-all text-xs text-muted-foreground">http://127.0.0.1:{settings.localProxyPort}/v1</code>}
             label="基础地址"
           />
           <SettingRow
@@ -431,7 +434,7 @@ export function SettingsPage() {
               <div className="flex w-full min-w-0 items-center gap-1.5">
                 <div
                   aria-label="当前数据目录"
-                  className="data-dir-path-field flex h-8 min-w-0 flex-1 items-center rounded-[var(--surface-radius)] border border-border bg-white px-3 text-left font-mono text-xs text-slate-700"
+                  className="data-dir-path-field flex h-8 min-w-0 flex-1 items-center rounded-[var(--surface-radius)] border border-border bg-control px-3 text-left font-mono text-xs text-foreground"
                   title={displayedDataDir}
                 >
                   <span className="block truncate">{displayedDataDir}</span>
@@ -491,7 +494,7 @@ export function SettingsPage() {
           />
         </SectionCard>
 
-        {error && <div className="text-sm text-rose-700">{error}</div>}
+        {error && <div className="text-sm text-danger-foreground">{error}</div>}
       </div>
     </PageScaffold>
   );
@@ -512,12 +515,12 @@ function UpdateSettingsCard({
     <div className="flex min-h-[88px] flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-50 text-sm text-cyan-700">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-info-surface text-sm text-info-foreground">
             ✺
           </span>
-          <div className="truncate text-base font-semibold text-slate-950">Relay Pool</div>
+          <div className="truncate text-base font-semibold text-foreground">Relay Pool</div>
         </div>
-        <div className="mt-2 inline-flex h-6 items-center rounded-full border border-border bg-white px-2 text-xs font-medium text-slate-700">
+        <div className="mt-2 inline-flex h-6 items-center rounded-full border border-border bg-muted px-2 text-xs font-medium text-muted-foreground">
           版本 v{state.currentVersion}
         </div>
       </div>
@@ -565,14 +568,14 @@ function LocalAccessKeyControl({
   onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void;
 }) {
   const fieldClassName =
-    "local-access-key-field h-8 w-[176px] flex-none rounded-[var(--surface-radius)] border border-border bg-slate-50 px-2 font-mono text-xs text-slate-700 transition";
+    "local-access-key-field h-8 w-[176px] flex-none rounded-[var(--surface-radius)] border border-border bg-control px-2 font-mono text-xs text-foreground transition";
   return (
     <div className="flex w-full min-w-0 items-center justify-start gap-1.5 sm:justify-end">
       {editing ? (
         <input
           ref={inputRef}
           aria-label="本地访问密钥"
-          className={`${fieldClassName} border-[hsl(var(--accent)/0.45)] bg-white text-slate-800 outline-none ring-2 ring-[hsl(var(--accent)/0.16)]`}
+          className={`${fieldClassName} border-ring bg-control text-foreground outline-none ring-2 ring-ring/20`}
           value={draft}
           onBlur={onBlur}
           onChange={(event) => onChange(event.target.value)}
@@ -580,7 +583,7 @@ function LocalAccessKeyControl({
         />
       ) : (
         <button
-          className={`${fieldClassName} cursor-text text-left hover:border-[hsl(var(--accent)/0.45)] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.2)]`}
+          className={`${fieldClassName} cursor-text text-left hover:border-ring hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30`}
           disabled={saving}
           type="button"
           onClick={onEdit}
@@ -631,7 +634,7 @@ function SettingRow({
       )}
     >
       <div className="min-w-0">
-        <div className="text-sm font-medium text-slate-800">{label}</div>
+        <div className="text-sm font-medium text-foreground">{label}</div>
         {description && (
           <div className="mt-0.5 break-words text-xs text-muted-foreground">{description}</div>
         )}
@@ -681,7 +684,7 @@ function generateLocalAccessKey() {
 }
 
 const inputClassName =
-  "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:bg-white focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";
+  "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-control px-3 text-sm text-foreground outline-none transition focus:border-ring focus:bg-control focus:ring-2 focus:ring-ring/30";
 
 function currentReleaseUrl(currentVersion: string) {
   const normalizedVersion = currentVersion.trim().replace(/^v/i, "");
