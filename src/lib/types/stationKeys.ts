@@ -167,7 +167,16 @@ export type StationKeyConnectivityTestResult = {
   durationMs: number;
   model: string;
   message: string;
+  responseMode: StationKeyConnectivityResponseMode;
+  streamFallbackReason: string | null;
 };
+
+export type StationKeyConnectivityResponseMode = "stream" | "non_stream_fallback";
+
+export type StationKeyConnectivityTestEvent =
+  | { type: "attemptStarted"; model: string; protocol: string }
+  | { type: "delta"; text: string }
+  | { type: "fallback"; reason: string };
 
 export type RemoteKeyMatchStatus = "matched" | "possible" | "unbound";
 

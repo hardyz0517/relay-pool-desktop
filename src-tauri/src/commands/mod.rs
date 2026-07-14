@@ -1,9 +1,10 @@
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::io::Read;
 use std::process::Command;
 use std::time::{Duration, Instant};
-use tauri::{Manager, State};
+use tauri::{ipc::Channel, Manager, State};
 
 use crate::{
     models::{
@@ -72,6 +73,7 @@ use crate::{
 const STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const STATION_KEY_CONNECTIVITY_CANDIDATE_LIMIT: usize = 2;
+const STATION_KEY_CONNECTIVITY_SSE_PENDING_LIMIT: usize = 64 * 1024;
 const DEFAULT_STATION_KEY_CONNECTIVITY_MODEL: &str = "gpt-4.1-mini";
 #[tauri::command]
 pub fn app_status() -> AppStatus {
@@ -708,6 +710,8 @@ pub struct StationKeyConnectivityTestResult {
     duration_ms: i64,
     model: String,
     message: String,
+    response_mode: StationKeyConnectivityResponseMode,
+    stream_fallback_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -716,12 +720,35 @@ enum StationKeyConnectivityProbeKind {
     ChatCompletions,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StationKeyConnectivityRequestMode {
+    Stream,
+    NonStream,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum StationKeyConnectivityResponseMode {
+    Stream,
+    NonStreamFallback,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum StationKeyConnectivityTestEvent {
+    AttemptStarted { model: String, protocol: String },
+    Delta { text: String },
+    Fallback { reason: String },
+}
+
 #[derive(Debug, Clone)]
 struct StationKeyConnectivityProbeResult {
     ok: bool,
     status_code: u16,
     duration_ms: i64,
     message: String,
+    response_mode: StationKeyConnectivityResponseMode,
+    stream_fallback_reason: Option<String>,
 }
 
 impl StationKeyConnectivityProbeResult {
@@ -731,6 +758,8 @@ impl StationKeyConnectivityProbeResult {
             status_code,
             duration_ms,
             message,
+            response_mode: StationKeyConnectivityResponseMode::Stream,
+            stream_fallback_reason: None,
         }
     }
 
@@ -740,7 +769,19 @@ impl StationKeyConnectivityProbeResult {
             status_code,
             duration_ms,
             message,
+            response_mode: StationKeyConnectivityResponseMode::Stream,
+            stream_fallback_reason: None,
         }
+    }
+
+    fn with_response_mode(mut self, response_mode: StationKeyConnectivityResponseMode) -> Self {
+        self.response_mode = response_mode;
+        self
+    }
+
+    fn with_stream_fallback_reason(mut self, reason: Option<String>) -> Self {
+        self.stream_fallback_reason = reason;
+        self
     }
 }
 
@@ -750,11 +791,18 @@ pub async fn test_station_key_connectivity(
     secrets: State<'_, SecretManager>,
     station_key_id: String,
     model: String,
+    progress: Channel<StationKeyConnectivityTestEvent>,
 ) -> Result<StationKeyConnectivityTestResult, String> {
     let database = database.inner().clone();
     let data_key = *secrets.data_key();
     tauri::async_runtime::spawn_blocking(move || {
-        test_station_key_connectivity_blocking(&database, &data_key, &station_key_id, &model)
+        test_station_key_connectivity_blocking(
+            &database,
+            &data_key,
+            &station_key_id,
+            &model,
+            progress,
+        )
     })
     .await
     .map_err(|error| format!("测试密钥连通性任务失败: {error}"))?
@@ -1756,6 +1804,7 @@ fn test_station_key_connectivity_blocking(
     data_key: &[u8; 32],
     station_key_id: &str,
     model: &str,
+    progress: Channel<StationKeyConnectivityTestEvent>,
 ) -> Result<StationKeyConnectivityTestResult, String> {
     let key = database
         .list_key_pool_items()?
@@ -1799,6 +1848,7 @@ fn test_station_key_connectivity_blocking(
                     &api_key,
                     candidate,
                     kind,
+                    &progress,
                 )
             },
         )
@@ -1819,6 +1869,8 @@ fn test_station_key_connectivity_blocking(
         duration_ms: result.duration_ms,
         model,
         message: result.message,
+        response_mode: result.response_mode,
+        stream_fallback_reason: result.stream_fallback_reason,
     })
 }
 
@@ -1836,12 +1888,14 @@ fn build_station_key_connectivity_probe_url(
 fn build_station_key_connectivity_probe_body(
     model: &str,
     kind: StationKeyConnectivityProbeKind,
+    mode: StationKeyConnectivityRequestMode,
 ) -> Value {
     match kind {
         StationKeyConnectivityProbeKind::Responses => json!({
-        "model": model,
+            "model": model,
             "input": "hi",
             "store": false,
+            "stream": matches!(mode, StationKeyConnectivityRequestMode::Stream),
             "max_output_tokens": 32,
         }),
         StationKeyConnectivityProbeKind::ChatCompletions => json!({
@@ -1850,10 +1904,147 @@ fn build_station_key_connectivity_probe_body(
                 "role": "user",
                 "content": "hi",
             }],
-            "stream": false,
+            "stream": matches!(mode, StationKeyConnectivityRequestMode::Stream),
             "max_tokens": 32,
         }),
     }
+}
+
+fn station_key_connectivity_protocol_label(kind: StationKeyConnectivityProbeKind) -> String {
+    match kind {
+        StationKeyConnectivityProbeKind::Responses => "responses".to_string(),
+        StationKeyConnectivityProbeKind::ChatCompletions => "chat_completions".to_string(),
+    }
+}
+
+fn emit_station_key_connectivity_event(
+    progress: &Channel<StationKeyConnectivityTestEvent>,
+    event: StationKeyConnectivityTestEvent,
+) {
+    let _ = progress.send(event);
+}
+
+fn redact_connectivity_error(message: &str) -> String {
+    redact_error_message(&truncate_connectivity_reply(message.trim()))
+}
+
+struct StationKeyConnectivitySseDecoder {
+    kind: StationKeyConnectivityProbeKind,
+    pending: Vec<u8>,
+    message: String,
+    terminal_seen: bool,
+}
+
+impl StationKeyConnectivitySseDecoder {
+    fn new(kind: StationKeyConnectivityProbeKind) -> Self {
+        Self {
+            kind,
+            pending: Vec::new(),
+            message: String::new(),
+            terminal_seen: false,
+        }
+    }
+
+    fn push(&mut self, chunk: &[u8]) -> Result<Vec<String>, String> {
+        self.pending.extend_from_slice(chunk);
+        if self.pending.len() > STATION_KEY_CONNECTIVITY_SSE_PENDING_LIMIT {
+            return Err("SSE pending buffer too large".to_string());
+        }
+
+        let mut deltas = Vec::new();
+        while let Some((boundary, separator_len)) = find_sse_event_boundary(&self.pending) {
+            let event_bytes = self.pending[..boundary].to_vec();
+            self.pending.drain(..boundary + separator_len);
+            let event_text = std::str::from_utf8(&event_bytes)
+                .map_err(|_| "SSE event contained invalid UTF-8".to_string())?;
+            deltas.extend(self.consume_event(event_text)?);
+        }
+        Ok(deltas)
+    }
+
+    fn finish(self) -> Result<String, String> {
+        if !self.pending.is_empty() {
+            return Err("SSE stream ended with incomplete event".to_string());
+        }
+        if !self.terminal_seen {
+            return Err("SSE stream ended without terminal signal".to_string());
+        }
+        Ok(redact_error_message(&truncate_connectivity_reply(&self.message)))
+    }
+
+    fn consume_event(&mut self, event_text: &str) -> Result<Vec<String>, String> {
+        let mut data_lines = Vec::new();
+        for raw_line in event_text.lines() {
+            let line = raw_line.trim_end_matches('\r');
+            if line.is_empty() || line.starts_with(':') {
+                continue;
+            }
+            if let Some(data) = line.strip_prefix("data:") {
+                data_lines.push(data.strip_prefix(' ').unwrap_or(data));
+            }
+        }
+        if data_lines.is_empty() {
+            return Ok(Vec::new());
+        }
+        let data = data_lines.join("\n");
+        if matches!(self.kind, StationKeyConnectivityProbeKind::ChatCompletions)
+            && data.trim() == "[DONE]"
+        {
+            self.terminal_seen = true;
+            return Ok(Vec::new());
+        }
+
+        let value = serde_json::from_str::<Value>(&data)
+            .map_err(|error| format!("Malformed SSE JSON: {error}"))?;
+        let delta = match self.kind {
+            StationKeyConnectivityProbeKind::Responses => self.consume_responses_event(&value),
+            StationKeyConnectivityProbeKind::ChatCompletions => self.consume_chat_event(&value),
+        };
+        Ok(delta.into_iter().collect())
+    }
+
+    fn consume_responses_event(&mut self, value: &Value) -> Option<String> {
+        match value.get("type").and_then(Value::as_str) {
+            Some("response.output_text.delta") => {
+                let delta = value.get("delta").and_then(Value::as_str)?;
+                self.message.push_str(delta);
+                Some(delta.to_string())
+            }
+            Some("response.completed") => {
+                self.terminal_seen = true;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn consume_chat_event(&mut self, value: &Value) -> Option<String> {
+        let delta = value
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("delta"))
+            .and_then(|delta| delta.get("content"))
+            .and_then(Value::as_str)?;
+        self.message.push_str(delta);
+        Some(delta.to_string())
+    }
+}
+
+fn find_sse_event_boundary(bytes: &[u8]) -> Option<(usize, usize)> {
+    for index in 0..bytes.len() {
+        if bytes[index] == b'\n' && bytes.get(index + 1) == Some(&b'\n') {
+            return Some((index, 2));
+        }
+        if bytes[index] == b'\r'
+            && bytes.get(index + 1) == Some(&b'\n')
+            && bytes.get(index + 2) == Some(&b'\r')
+            && bytes.get(index + 3) == Some(&b'\n')
+        {
+            return Some((index, 4));
+        }
+    }
+    None
 }
 
 fn should_try_station_key_connectivity_chat_fallback(
@@ -2008,6 +2199,57 @@ where
     })
 }
 
+fn run_station_key_connectivity_stream_first_probe<F, E>(
+    model: &str,
+    kind: StationKeyConnectivityProbeKind,
+    mut send_attempt: F,
+    mut emit_event: E,
+) -> StationKeyConnectivityProbeResult
+where
+    F: FnMut(StationKeyConnectivityRequestMode) -> StationKeyConnectivityProbeResult,
+    E: FnMut(StationKeyConnectivityTestEvent),
+{
+    emit_event(StationKeyConnectivityTestEvent::AttemptStarted {
+        model: model.to_string(),
+        protocol: station_key_connectivity_protocol_label(kind),
+    });
+
+    let stream_result = send_attempt(StationKeyConnectivityRequestMode::Stream);
+    if stream_result.ok {
+        return stream_result.with_response_mode(StationKeyConnectivityResponseMode::Stream);
+    }
+
+    let fallback_reason = redact_connectivity_error(&stream_result.message);
+    emit_event(StationKeyConnectivityTestEvent::Fallback {
+        reason: fallback_reason.clone(),
+    });
+    let fallback_result = send_attempt(StationKeyConnectivityRequestMode::NonStream);
+    let duration_ms = stream_result
+        .duration_ms
+        .saturating_add(fallback_result.duration_ms);
+
+    if fallback_result.ok {
+        return StationKeyConnectivityProbeResult::success(
+            fallback_result.status_code,
+            duration_ms,
+            fallback_result.message,
+        )
+        .with_response_mode(StationKeyConnectivityResponseMode::NonStreamFallback)
+        .with_stream_fallback_reason(Some(fallback_reason));
+    }
+
+    StationKeyConnectivityProbeResult::failure(
+        fallback_result.status_code,
+        duration_ms,
+        format!(
+            "Stream: {}; Non-stream fallback: {}",
+            stream_result.message, fallback_result.message
+        ),
+    )
+    .with_response_mode(StationKeyConnectivityResponseMode::NonStreamFallback)
+    .with_stream_fallback_reason(Some(fallback_reason))
+}
+
 fn run_station_key_connectivity_single_model_probe<F>(
     upstream_api_format: &UpstreamApiFormat,
     capabilities: Option<&StationKeyCapabilities>,
@@ -2033,11 +2275,9 @@ where
         .duration_ms
         .saturating_add(chat_result.duration_ms);
     if chat_result.ok {
-        return StationKeyConnectivityProbeResult::success(
-            chat_result.status_code,
-            duration_ms,
-            chat_result.message,
-        );
+        let mut chat_result = chat_result;
+        chat_result.duration_ms = duration_ms;
+        return chat_result;
     }
 
     StationKeyConnectivityProbeResult::failure(
@@ -2055,9 +2295,38 @@ fn send_station_key_connectivity_probe(
     api_key: &str,
     model: &str,
     kind: StationKeyConnectivityProbeKind,
+    progress: &Channel<StationKeyConnectivityTestEvent>,
+) -> StationKeyConnectivityProbeResult {
+    run_station_key_connectivity_stream_first_probe(
+        model,
+        kind,
+        |mode| match mode {
+            StationKeyConnectivityRequestMode::Stream => {
+                send_station_key_connectivity_stream_probe_attempt(
+                    base_url,
+                    api_key,
+                    model,
+                    kind,
+                    progress,
+                )
+            }
+            StationKeyConnectivityRequestMode::NonStream => {
+                send_station_key_connectivity_non_stream_probe_attempt(base_url, api_key, model, kind)
+            }
+        },
+        |event| emit_station_key_connectivity_event(progress, event),
+    )
+}
+
+fn send_station_key_connectivity_non_stream_probe_attempt(
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    kind: StationKeyConnectivityProbeKind,
 ) -> StationKeyConnectivityProbeResult {
     let url = build_station_key_connectivity_probe_url(base_url, kind);
-    let body = build_station_key_connectivity_probe_body(model, kind);
+    let body =
+        build_station_key_connectivity_probe_body(model, kind, StationKeyConnectivityRequestMode::NonStream);
     let started = Instant::now();
     let response_result = ureq::post(&url)
         .timeout(STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT)
@@ -2065,11 +2334,11 @@ fn send_station_key_connectivity_probe(
         .set("Content-Type", "application/json")
         .set("Accept", "application/json")
         .send_json(body);
-    let duration_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
     let (status_code, response_text) = match response_result {
         Ok(response) => response_text_pair(response),
         Err(ureq::Error::Status(_, response)) => response_text_pair(response),
         Err(error) => {
+            let duration_ms = elapsed_ms(started);
             return StationKeyConnectivityProbeResult::failure(
                 0,
                 duration_ms,
@@ -2077,6 +2346,7 @@ fn send_station_key_connectivity_probe(
             );
         }
     };
+    let duration_ms = elapsed_ms(started);
     if (200..300).contains(&status_code) {
         let message =
             extract_station_key_connectivity_reply(&response_text, kind).unwrap_or_else(|| {
@@ -2094,6 +2364,127 @@ fn send_station_key_connectivity_probe(
         duration_ms,
         response_error_message(&response_text, status_code),
     )
+}
+
+fn send_station_key_connectivity_stream_probe_attempt(
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    kind: StationKeyConnectivityProbeKind,
+    progress: &Channel<StationKeyConnectivityTestEvent>,
+) -> StationKeyConnectivityProbeResult {
+    let url = build_station_key_connectivity_probe_url(base_url, kind);
+    let body =
+        build_station_key_connectivity_probe_body(model, kind, StationKeyConnectivityRequestMode::Stream);
+    let started = Instant::now();
+    let response_result = ureq::post(&url)
+        .timeout(STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT)
+        .set("Authorization", &format!("Bearer {api_key}"))
+        .set("Content-Type", "application/json")
+        .set("Accept", "text/event-stream")
+        .send_json(body);
+
+    let response = match response_result {
+        Ok(response) => response,
+        Err(ureq::Error::Status(_, response)) => {
+            let (status_code, response_text) = response_text_pair(response);
+            return StationKeyConnectivityProbeResult::failure(
+                status_code,
+                elapsed_ms(started),
+                response_error_message(&response_text, status_code),
+            );
+        }
+        Err(error) => {
+            return StationKeyConnectivityProbeResult::failure(
+                0,
+                elapsed_ms(started),
+                redact_error_message(&format!("{error}")),
+            );
+        }
+    };
+
+    let status_code = response.status();
+    if !(200..300).contains(&status_code) {
+        let (status_code, response_text) = response_text_pair(response);
+        return StationKeyConnectivityProbeResult::failure(
+            status_code,
+            elapsed_ms(started),
+            response_error_message(&response_text, status_code),
+        );
+    }
+
+    let content_type = response.header("content-type").unwrap_or("").to_ascii_lowercase();
+    if !content_type.contains("text/event-stream") {
+        let (_status_code, _response_text) = response_text_pair(response);
+        return StationKeyConnectivityProbeResult::failure(
+            status_code,
+            elapsed_ms(started),
+            redact_connectivity_error(&format!(
+                "Expected text/event-stream response, got {}",
+                if content_type.is_empty() {
+                    "missing content-type"
+                } else {
+                    content_type.as_str()
+                }
+            )),
+        );
+    }
+
+    let mut reader = response.into_reader();
+    let mut decoder = StationKeyConnectivitySseDecoder::new(kind);
+    let mut buffer = [0_u8; 2048];
+    loop {
+        let count = match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(error) => {
+                return StationKeyConnectivityProbeResult::failure(
+                    status_code,
+                    elapsed_ms(started),
+                    redact_connectivity_error(&format!("Failed to read SSE stream: {error}")),
+                );
+            }
+        };
+        let deltas = match decoder.push(&buffer[..count]) {
+            Ok(deltas) => deltas,
+            Err(error) => {
+                return StationKeyConnectivityProbeResult::failure(
+                    status_code,
+                    elapsed_ms(started),
+                    redact_connectivity_error(&error),
+                );
+            }
+        };
+        for delta in deltas {
+            emit_station_key_connectivity_event(
+                progress,
+                StationKeyConnectivityTestEvent::Delta { text: delta },
+            );
+        }
+    }
+
+    match decoder.finish() {
+        Ok(message) if !message.trim().is_empty() => {
+            StationKeyConnectivityProbeResult::success(status_code, elapsed_ms(started), message)
+        }
+        Ok(_) => StationKeyConnectivityProbeResult::success(
+            status_code,
+            elapsed_ms(started),
+            match kind {
+                StationKeyConnectivityProbeKind::Responses => {
+                    "Responses streaming connected".to_string()
+                }
+                StationKeyConnectivityProbeKind::ChatCompletions => {
+                    "Chat Completions streaming connected".to_string()
+                }
+            },
+        ),
+        Err(error) => StationKeyConnectivityProbeResult::failure(
+            status_code,
+            elapsed_ms(started),
+            redact_connectivity_error(&error),
+        ),
+    }
 }
 
 fn discover_station_key_connectivity_models(base_url: &str, api_key: &str) -> Option<Vec<String>> {
@@ -2133,6 +2524,10 @@ fn response_text_pair(response: ureq::Response) -> (u16, String) {
     let status = response.status();
     let text = response.into_string().unwrap_or_default();
     (status, text)
+}
+
+fn elapsed_ms(started: Instant) -> i64 {
+    started.elapsed().as_millis().min(i64::MAX as u128) as i64
 }
 
 fn response_error_message(response_text: &str, status_code: u16) -> String {
@@ -2369,12 +2764,195 @@ mod tests {
         let body = build_station_key_connectivity_probe_body(
             "gpt-test",
             StationKeyConnectivityProbeKind::Responses,
+            StationKeyConnectivityRequestMode::NonStream,
         );
 
         assert_eq!(body["model"], "gpt-test");
         assert_eq!(body["input"], "hi");
         assert_eq!(body["store"], false);
         assert_eq!(body["max_output_tokens"], 32);
+    }
+
+    #[test]
+    fn station_key_connectivity_stream_bodies_request_streaming() {
+        let responses = build_station_key_connectivity_probe_body(
+            "gpt-test",
+            StationKeyConnectivityProbeKind::Responses,
+            StationKeyConnectivityRequestMode::Stream,
+        );
+        let chat = build_station_key_connectivity_probe_body(
+            "gpt-test",
+            StationKeyConnectivityProbeKind::ChatCompletions,
+            StationKeyConnectivityRequestMode::Stream,
+        );
+
+        assert_eq!(responses["model"], "gpt-test");
+        assert_eq!(responses["input"], "hi");
+        assert_eq!(responses["stream"], true);
+        assert_eq!(chat["model"], "gpt-test");
+        assert_eq!(chat["messages"][0]["content"], "hi");
+        assert_eq!(chat["stream"], true);
+    }
+
+    #[test]
+    fn station_key_connectivity_responses_sse_decodes_split_deltas() {
+        let mut decoder =
+            StationKeyConnectivitySseDecoder::new(StationKeyConnectivityProbeKind::Responses);
+
+        assert!(decoder
+            .push(br#"data: {"type":"response.output_text.delta","delta":"Hel"#)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            decoder
+                .push(br#"lo"}"#)
+                .unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            decoder
+                .push(b"\n\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"!\"}\n\ndata: {\"type\":\"response.completed\"}\n\n")
+                .unwrap(),
+            vec!["Hello".to_string(), "!".to_string()]
+        );
+        assert_eq!(decoder.finish().unwrap(), "Hello!");
+    }
+
+    #[test]
+    fn station_key_connectivity_chat_sse_decodes_crlf_comments_and_done() {
+        let mut decoder =
+            StationKeyConnectivitySseDecoder::new(StationKeyConnectivityProbeKind::ChatCompletions);
+
+        let deltas = decoder
+            .push(
+                b": keep-alive\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\r\n\r\ndata: [DONE]\r\n\r\n",
+            )
+            .unwrap();
+
+        assert_eq!(deltas, vec!["Hi".to_string()]);
+        assert_eq!(decoder.finish().unwrap(), "Hi");
+    }
+
+    #[test]
+    fn station_key_connectivity_sse_rejects_malformed_json() {
+        let mut decoder =
+            StationKeyConnectivitySseDecoder::new(StationKeyConnectivityProbeKind::Responses);
+
+        let error = decoder
+            .push(b"data: {not-json}\n\n")
+            .expect_err("malformed SSE JSON should fail the stream attempt");
+
+        assert!(error.contains("SSE"));
+    }
+
+    #[test]
+    fn station_key_connectivity_sse_rejects_missing_terminal_signal() {
+        let mut decoder =
+            StationKeyConnectivitySseDecoder::new(StationKeyConnectivityProbeKind::Responses);
+
+        let deltas = decoder
+            .push(b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
+            .unwrap();
+        assert_eq!(deltas, vec!["partial".to_string()]);
+
+        let error = decoder
+            .finish()
+            .expect_err("closing without response.completed should fail");
+
+        assert!(error.contains("terminal"));
+    }
+
+    #[test]
+    fn station_key_connectivity_sse_rejects_oversized_pending_data() {
+        let mut decoder =
+            StationKeyConnectivitySseDecoder::new(StationKeyConnectivityProbeKind::Responses);
+        let oversized = vec![b'a'; STATION_KEY_CONNECTIVITY_SSE_PENDING_LIMIT + 1];
+
+        let error = decoder
+            .push(&oversized)
+            .expect_err("oversized pending data should fail");
+
+        assert!(error.contains("too large"));
+    }
+
+    #[test]
+    fn station_key_connectivity_stream_success_does_not_retry_non_stream() {
+        let mut attempted_modes = Vec::new();
+        let mut events = Vec::new();
+
+        let result = run_station_key_connectivity_stream_first_probe(
+            "gpt-test",
+            StationKeyConnectivityProbeKind::Responses,
+            |mode| {
+                attempted_modes.push(mode);
+                StationKeyConnectivityProbeResult::success(200, 15, "stream ok".to_string())
+            },
+            |event| events.push(event),
+        );
+
+        assert_eq!(
+            attempted_modes,
+            vec![StationKeyConnectivityRequestMode::Stream]
+        );
+        assert!(result.ok);
+        assert_eq!(result.response_mode, StationKeyConnectivityResponseMode::Stream);
+        assert_eq!(result.stream_fallback_reason, None);
+        assert!(matches!(
+            events.first(),
+            Some(StationKeyConnectivityTestEvent::AttemptStarted { model, .. }) if model == "gpt-test"
+        ));
+    }
+
+    #[test]
+    fn station_key_connectivity_stream_failure_retries_once_non_stream() {
+        let mut attempted_modes = Vec::new();
+        let mut events = Vec::new();
+
+        let result = run_station_key_connectivity_stream_first_probe(
+            "gpt-test",
+            StationKeyConnectivityProbeKind::Responses,
+            |mode| {
+                attempted_modes.push(mode);
+                match mode {
+                    StationKeyConnectivityRequestMode::Stream => {
+                        StationKeyConnectivityProbeResult::failure(
+                            200,
+                            9,
+                            "missing terminal signal".to_string(),
+                        )
+                    }
+                    StationKeyConnectivityRequestMode::NonStream => {
+                        StationKeyConnectivityProbeResult::success(
+                            200,
+                            14,
+                            "fallback ok".to_string(),
+                        )
+                    }
+                }
+            },
+            |event| events.push(event),
+        );
+
+        assert_eq!(
+            attempted_modes,
+            vec![
+                StationKeyConnectivityRequestMode::Stream,
+                StationKeyConnectivityRequestMode::NonStream,
+            ]
+        );
+        assert!(result.ok);
+        assert_eq!(
+            result.response_mode,
+            StationKeyConnectivityResponseMode::NonStreamFallback
+        );
+        assert_eq!(
+            result.stream_fallback_reason,
+            Some("missing terminal signal".to_string())
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            StationKeyConnectivityTestEvent::Fallback { reason } if reason == "missing terminal signal"
+        )));
     }
 
     #[test]
@@ -2650,6 +3228,7 @@ mod tests {
         let body = build_station_key_connectivity_probe_body(
             "claude-test",
             StationKeyConnectivityProbeKind::ChatCompletions,
+            StationKeyConnectivityRequestMode::NonStream,
         );
 
         assert_eq!(body["model"], "claude-test");

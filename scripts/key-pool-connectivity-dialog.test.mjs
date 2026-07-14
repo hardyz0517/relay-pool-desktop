@@ -26,8 +26,19 @@ assert.ok(
 assert.ok(
   pageSource.includes("displayedResponseText") &&
     !pageSource.includes("window.setInterval") &&
-    pageSource.includes("responseTypingComplete"),
-  "connectivity dialog should reveal the final response without owning a retained-page interval",
+    pageSource.includes("responseTypingComplete") &&
+    pageSource.includes("connectivityRunTokenRef"),
+  "connectivity dialog should reveal real progress without owning a retained-page interval",
+);
+
+assert.ok(
+  pageSource.includes('event.type === "attemptStarted"') &&
+    pageSource.includes('event.type === "delta"') &&
+    pageSource.includes('event.type === "fallback"') &&
+    pageSource.includes("setDisplayedResponseText((current) => current + event.text)") &&
+    pageSource.includes("setDisplayedResponseText(\"\")") &&
+    pageSource.includes("setConnectivityStreamFallbackReason(event.reason)"),
+  "connectivity dialog should consume typed stream progress, append deltas, and clear partial text before fallback",
 );
 
 assert.ok(
@@ -40,16 +51,43 @@ assert.ok(
 );
 
 assert.ok(
-  /testStationKeyConnectivity\(stationKeyId: string,\s*model: string\)/.test(stationKeysApiSource) &&
-    /invoke<StationKeyConnectivityTestResult>\("test_station_key_connectivity", \{ stationKeyId,\s*model \}\)/.test(stationKeysApiSource),
-  "station key connectivity API should pass the selected model to Tauri",
+  stationKeysApiSource.includes('import { Channel, invoke } from "@tauri-apps/api/core"') &&
+    stationKeysApiSource.includes("StationKeyConnectivityTestEvent") &&
+    /testStationKeyConnectivity\(\s*stationKeyId: string,\s*model: string,\s*options: \{ onEvent\?: \(event: StationKeyConnectivityTestEvent\) => void \} = \{\},\s*\)/.test(stationKeysApiSource) &&
+    stationKeysApiSource.includes("const progress = new Channel<StationKeyConnectivityTestEvent>()") &&
+    stationKeysApiSource.includes("progress.onmessage = (event) => options.onEvent?.(event)") &&
+    /invoke<StationKeyConnectivityTestResult>\("test_station_key_connectivity", \{ stationKeyId,\s*model,\s*progress \}\)/.test(stationKeysApiSource),
+  "station key connectivity API should pass a request-scoped Tauri Channel to the selected-model probe",
 );
 
 assert.ok(
-  /pub async fn test_station_key_connectivity\([\s\S]*station_key_id: String,[\s\S]*model: String,[\s\S]*\)/.test(commandsSource) &&
-    /test_station_key_connectivity_blocking\(&database, &data_key, &station_key_id, &model\)/.test(commandsSource) &&
+  /pub async fn test_station_key_connectivity\([\s\S]*station_key_id: String,[\s\S]*model: String,[\s\S]*progress: Channel<StationKeyConnectivityTestEvent>,[\s\S]*\)/.test(commandsSource) &&
+    /test_station_key_connectivity_blocking\([\s\S]*&database,[\s\S]*&data_key,[\s\S]*&station_key_id,[\s\S]*&model,[\s\S]*progress,[\s\S]*\)/.test(commandsSource) &&
     /station_key_connectivity_model_candidates\(\s*capabilities\.as_ref\(\),\s*Some\(requested_model\.as_str\(\)\),\s*&discovered_models,\s*\)/.test(commandsSource),
-  "Tauri connectivity command should accept the selected model and prioritize it for the probe",
+  "Tauri connectivity command should accept a progress channel and prioritize the selected model for the probe",
+);
+
+assert.ok(
+  commandsSource.includes("enum StationKeyConnectivityResponseMode") &&
+    commandsSource.includes("response_mode: StationKeyConnectivityResponseMode") &&
+    commandsSource.includes("stream_fallback_reason: Option<String>") &&
+    commandsSource.includes("enum StationKeyConnectivityRequestMode") &&
+    commandsSource.includes("StationKeyConnectivityRequestMode::Stream") &&
+    commandsSource.includes("StationKeyConnectivityRequestMode::NonStream") &&
+    commandsSource.includes('set("Accept", "text/event-stream")') &&
+    commandsSource.includes('set("Accept", "application/json")'),
+  "connectivity result and request path should expose stream mode metadata and switch Accept headers between stream and fallback",
+);
+
+assert.ok(
+  commandsSource.includes("enum StationKeyConnectivityTestEvent") &&
+    commandsSource.includes("AttemptStarted") &&
+    commandsSource.includes("Delta") &&
+    commandsSource.includes("Fallback") &&
+    commandsSource.includes("StationKeyConnectivitySseDecoder") &&
+    commandsSource.includes("response.output_text.delta") &&
+    commandsSource.includes("[DONE]"),
+  "backend should emit typed progress events and parse real Responses/Chat SSE streams",
 );
 
 assert.ok(

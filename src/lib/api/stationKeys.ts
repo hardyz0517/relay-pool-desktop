@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   getStationKeyCapabilities,
   updateStationKeyCapabilities,
@@ -13,6 +13,7 @@ import type {
   RemoteKeyCapability,
   RemoteKeyScanResult,
   RemoteStationKey,
+  StationKeyConnectivityTestEvent,
   StationKeyConnectivityTestResult,
   StationCredentials,
   StationKey,
@@ -341,8 +342,14 @@ export function reorderKeyPool(keyIds: string[]) {
   }));
 }
 
-export function testStationKeyConnectivity(stationKeyId: string, model: string) {
-  return invoke<StationKeyConnectivityTestResult>("test_station_key_connectivity", { stationKeyId, model }).catch((error) => {
+export function testStationKeyConnectivity(
+  stationKeyId: string,
+  model: string,
+  options: { onEvent?: (event: StationKeyConnectivityTestEvent) => void } = {},
+) {
+  const progress = new Channel<StationKeyConnectivityTestEvent>();
+  progress.onmessage = (event) => options.onEvent?.(event);
+  return invoke<StationKeyConnectivityTestResult>("test_station_key_connectivity", { stationKeyId, model, progress }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       return {
         stationKeyId,
@@ -351,6 +358,8 @@ export function testStationKeyConnectivity(stationKeyId: string, model: string) 
         durationMs: 0,
         model,
         message: "浏览器预览模式：跳过真实连通性测试",
+        responseMode: "non_stream_fallback" as const,
+        streamFallbackReason: null,
       };
     }
     throw error;

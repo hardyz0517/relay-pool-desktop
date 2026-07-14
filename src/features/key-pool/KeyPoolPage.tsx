@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   closestCenter,
   type DraggableAttributes,
@@ -33,7 +33,7 @@ import type { ChannelMonitor, ChannelMonitorRequestTemplate } from "@/lib/types/
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { Station } from "@/lib/types/stations";
-import type { KeyPoolItem, StationKeyConnectivityTestResult, StationKeyStatus } from "@/lib/types/stationKeys";
+import type { KeyPoolItem, StationKeyConnectivityTestEvent, StationKeyConnectivityTestResult, StationKeyStatus } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
 import { StationGroupOptionLabel } from "@/features/stations/components/StationGroupChip";
 import {
@@ -104,12 +104,16 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const [connectivityCapabilities, setConnectivityCapabilities] = useState<StationKeyCapabilities | null>(null);
   const [connectivityTestResult, setConnectivityTestResult] = useState<StationKeyConnectivityTestResult | null>(null);
   const [connectivityTestError, setConnectivityTestError] = useState<string | null>(null);
+  const [displayedResponseText, setDisplayedResponseText] = useState("");
+  const [connectivityStreamFallbackReason, setConnectivityStreamFallbackReason] = useState<string | null>(null);
+  const [connectivityProgressLabel, setConnectivityProgressLabel] = useState<string | null>(null);
   const [pendingDeleteItem, setPendingDeleteItem] = useState<KeyPoolItem | null>(null);
   const [editForm, setEditForm] = useState<KeyPoolEditForm>(emptyEditForm);
   const [groupOptionsForEdit, setGroupOptionsForEdit] = useState<StationGroupOption[]>([]);
   const [testingKeyId, setTestingKeyId] = useState<string | null>(null);
   const [monitoringKeyId, setMonitoringKeyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const connectivityRunTokenRef = useRef(0);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const activeDragItem = useMemo(
@@ -309,6 +313,9 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     setConnectivityCapabilities(null);
     setConnectivityTestResult(null);
     setConnectivityTestError(null);
+    setDisplayedResponseText("");
+    setConnectivityStreamFallbackReason(null);
+    setConnectivityProgressLabel(null);
     void loadConnectivityCapabilities(item);
   }
 
@@ -326,13 +333,42 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       return;
     }
     const item = connectivityDialogItem;
+    const runToken = connectivityRunTokenRef.current + 1;
+    connectivityRunTokenRef.current = runToken;
     setTestingKeyId(item.id);
     setError(null);
     setConnectivityTestError(null);
     setConnectivityTestResult(null);
+    setDisplayedResponseText("");
+    setConnectivityStreamFallbackReason(null);
+    setConnectivityProgressLabel("正在请求流式响应...");
+    const handleConnectivityEvent = (event: StationKeyConnectivityTestEvent) => {
+      if (connectivityRunTokenRef.current !== runToken) {
+        return;
+      }
+      if (event.type === "attemptStarted") {
+        setDisplayedResponseText("");
+        setConnectivityStreamFallbackReason(null);
+        setConnectivityProgressLabel(`流式请求：${event.protocol} / ${event.model}`);
+        return;
+      }
+      if (event.type === "delta") {
+        setDisplayedResponseText((current) => current + event.text);
+        return;
+      }
+      if (event.type === "fallback") {
+        setDisplayedResponseText("");
+        setConnectivityStreamFallbackReason(event.reason);
+        setConnectivityProgressLabel("流式未完成，正在改用非流式重试...");
+      }
+    };
     try {
-      const result = await testStationKeyConnectivity(item.id, model);
+      const result = await testStationKeyConnectivity(item.id, model, { onEvent: handleConnectivityEvent });
+      if (connectivityRunTokenRef.current !== runToken) {
+        return;
+      }
       setConnectivityTestResult(result);
+      setConnectivityProgressLabel(null);
       await refresh();
       if (result.ok) {
         toast.success("连通性正常", `${item.name} · ${result.durationMs}ms · ${result.model}`);
@@ -340,11 +376,17 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         toast.error("连通性异常", `${result.statusCode || "网络"} · ${result.message}`);
       }
     } catch (requestError) {
+      if (connectivityRunTokenRef.current !== runToken) {
+        return;
+      }
       const message = readError(requestError);
       setConnectivityTestError(message);
+      setConnectivityProgressLabel(null);
       toast.error("测试连通性失败", message);
     } finally {
-      setTestingKeyId(null);
+      if (connectivityRunTokenRef.current === runToken) {
+        setTestingKeyId(null);
+      }
     }
   }
 
@@ -666,12 +708,21 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         capabilities={connectivityCapabilities}
         result={connectivityTestResult}
         error={connectivityTestError}
+        displayedResponseText={displayedResponseText}
+        streamFallbackReason={connectivityStreamFallbackReason}
+        progressLabel={connectivityProgressLabel}
+        onDisplayedResponseTextChange={setDisplayedResponseText}
         testing={Boolean(connectivityDialogItem && testingKeyId === connectivityDialogItem.id)}
         onClose={() => {
+          connectivityRunTokenRef.current += 1;
           setConnectivityDialogItem(null);
           setConnectivityCapabilities(null);
           setConnectivityTestResult(null);
           setConnectivityTestError(null);
+          setDisplayedResponseText("");
+          setConnectivityStreamFallbackReason(null);
+          setConnectivityProgressLabel(null);
+          setTestingKeyId(null);
         }}
         onTest={(model) => void handleRunConnectivityTest(model)}
       />
@@ -693,6 +744,10 @@ function KeyConnectivityTestDialog({
   capabilities,
   result,
   error,
+  displayedResponseText,
+  streamFallbackReason,
+  progressLabel,
+  onDisplayedResponseTextChange,
   testing,
   onClose,
   onTest,
@@ -701,12 +756,15 @@ function KeyConnectivityTestDialog({
   capabilities: StationKeyCapabilities | null;
   result: StationKeyConnectivityTestResult | null;
   error: string | null;
+  displayedResponseText: string;
+  streamFallbackReason: string | null;
+  progressLabel: string | null;
+  onDisplayedResponseTextChange: (value: string) => void;
   testing: boolean;
   onClose: () => void;
   onTest: (model: string) => void;
 }) {
   const [model, setModel] = useState(DEFAULT_KEY_CONNECTIVITY_TEST_MODEL);
-  const [displayedResponseText, setDisplayedResponseText] = useState("");
   const open = item !== null;
   const modelOptions = useMemo(
     () => buildKeyConnectivityModelOptions(capabilities),
@@ -724,13 +782,15 @@ function KeyConnectivityTestDialog({
   useEffect(() => {
     if (open) {
       setModel(modelOptions[0]?.value ?? DEFAULT_KEY_CONNECTIVITY_TEST_MODEL);
-      setDisplayedResponseText("");
+      onDisplayedResponseTextChange("");
     }
-  }, [modelOptions, open, item?.id]);
+  }, [modelOptions, onDisplayedResponseTextChange, open, item?.id]);
 
   useEffect(() => {
-    setDisplayedResponseText(fullResponseText);
-  }, [fullResponseText]);
+    if (completed) {
+      onDisplayedResponseTextChange(fullResponseText);
+    }
+  }, [completed, fullResponseText, onDisplayedResponseTextChange]);
 
   return (
     <Dialog
@@ -797,6 +857,8 @@ function KeyConnectivityTestDialog({
             result,
             error,
             displayedResponseText,
+            streamFallbackReason,
+            progressLabel,
             responseTypingComplete,
           }).map((line, index) => (
             <div key={`${line.text}-${index}`} className={line.className}>
@@ -838,6 +900,8 @@ function buildConnectivityConsoleLines({
   result,
   error,
   displayedResponseText,
+  streamFallbackReason,
+  progressLabel,
   responseTypingComplete,
 }: {
   item: KeyPoolItem | null;
@@ -847,6 +911,8 @@ function buildConnectivityConsoleLines({
   result: StationKeyConnectivityTestResult | null;
   error: string | null;
   displayedResponseText: string;
+  streamFallbackReason: string | null;
+  progressLabel: string | null;
   responseTypingComplete: boolean;
 }) {
   const lines = [
@@ -857,11 +923,30 @@ function buildConnectivityConsoleLines({
   ];
 
   if (testing) {
-    return lines;
+    const progressLines = progressLabel
+      ? [{ text: progressLabel, className: "text-sky-300" }]
+      : [];
+    const fallbackLines = streamFallbackReason
+      ? [
+          { text: "流式失败，已清空部分输出并回退非流式请求。", className: "text-amber-300" },
+          { text: `原因：${streamFallbackReason}`, className: "text-amber-200" },
+        ]
+      : [];
+    const responseLines = displayedResponseText
+      ? [{ text: displayedResponseText, className: "font-semibold text-emerald-300" }]
+      : [{ text: "等待流式片段...", className: "text-slate-400" }];
+    return [...lines, ...progressLines, ...fallbackLines, ...responseLines];
   }
   if (result) {
     return [
       ...lines,
+      {
+        text: result.responseMode === "stream" ? "响应模式：流式响应" : "响应模式：非流式回退",
+        className: result.responseMode === "stream" ? "text-emerald-300" : "text-amber-300",
+      },
+      ...(result.streamFallbackReason
+        ? [{ text: `回退原因：${result.streamFallbackReason}`, className: "text-amber-200" }]
+        : []),
       {
         text: displayedResponseText,
         className: result.ok ? "font-semibold text-emerald-300" : "font-semibold text-rose-300",
