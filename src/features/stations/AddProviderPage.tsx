@@ -103,7 +103,7 @@ type RemoteCreateInput = {
 const defaultPreset = providerPresets[0];
 
 const inputClassName =
-  "h-8 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";
+  "h-8 rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30";
 const remoteLocalKeyNotePrefix = "由远端发现开关自动创建";
 
 function getPresetDefaultStationName(preset: (typeof providerPresets)[number]) {
@@ -1439,16 +1439,16 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                         className={cn(
                           "relative flex h-8 min-w-0 cursor-pointer items-center gap-2 rounded-[var(--surface-radius)] px-2.5 text-left text-xs font-medium transition-colors",
                           selected
-                            ? "bg-[hsl(var(--accent))] text-white shadow-sm"
-                            : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900",
+                            ? "bg-primary-solid text-primary-foreground shadow-sm"
+                            : "bg-muted text-muted-foreground hover:bg-hover hover:text-foreground",
                         )}
                         onClick={() => applyPreset(preset.id)}
                         title={preset.description}
                       >
                         <span
                           className={cn(
-                            "flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-[5px] bg-white text-[10px] font-semibold text-slate-600",
-                            selected && "text-[hsl(var(--accent))]",
+                            "flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-[5px] bg-surface text-[10px] font-semibold text-muted-foreground",
+                            selected && "text-primary",
                           )}
                         >
                           {preset.name.slice(0, 1)}
@@ -1543,17 +1543,17 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                 <div
                   className={cn(
                     "mt-2 min-w-0 truncate text-xs",
-                    connectionTest.status === "success" && "text-emerald-600",
-                    connectionTest.status === "warning" && "text-amber-600",
-                    connectionTest.status === "error" && "text-rose-600",
-                    connectionTest.status === "testing" && "text-slate-500",
+                    connectionTest.status === "success" && "text-success-foreground",
+                    connectionTest.status === "warning" && "text-warning-foreground",
+                    connectionTest.status === "error" && "text-danger-foreground",
+                    connectionTest.status === "testing" && "text-muted-foreground",
                   )}
                 >
                   {connectionTest.message}
                 </div>
               )}
               {error && (
-                <div className="mt-3 rounded-[var(--surface-radius)] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                <div className="mt-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
                   {error}
                 </div>
               )}
@@ -1644,12 +1644,12 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
               />
               {activeStationId && (
                 <div className="mt-3 grid gap-2 border-t border-border pt-3">
-                  <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                  <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
                     <KeyRound className="h-3.5 w-3.5" />
                     远端发现
                   </div>
                   {remoteCapabilityError || (remoteUnsupportedReason && remoteCapability?.canListRemoteKeys !== true) ? (
-                    <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
+                    <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
                       {remoteDiscoveryReason}
                     </div>
                   ) : (
@@ -1668,7 +1668,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                         }
                       />
                       {remoteListError && (
-                        <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
+                        <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
                           {remoteDiscoveryReason}
                         </div>
                       )}

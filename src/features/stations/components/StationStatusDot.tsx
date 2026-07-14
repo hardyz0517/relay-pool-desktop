@@ -6,11 +6,11 @@ type StationStatusDotProps = {
 };
 
 const statusClassName: Record<StationStatus, string> = {
-  healthy: "bg-emerald-500",
-  warning: "bg-amber-500",
-  error: "bg-rose-500",
-  disabled: "bg-slate-400",
-  unchecked: "bg-blue-400",
+  healthy: "bg-success-foreground",
+  warning: "bg-warning-foreground",
+  error: "bg-danger-solid",
+  disabled: "bg-muted-foreground",
+  unchecked: "bg-info-foreground",
 };
 
 export function StationStatusDot({ status }: StationStatusDotProps) {

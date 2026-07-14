@@ -737,7 +737,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
       title="中转站资产"
       status={
         <div className="flex min-w-0 flex-wrap items-center gap-1.5" aria-label="中转站资产状态">
-          <StatusBadge tone="info" className="bg-slate-50 text-slate-600">
+          <StatusBadge tone="info" className="bg-surface-subtle text-muted-foreground">
             {`${filteredStationAssetRows.length} 站点`}
           </StatusBadge>
           <StatusBadge tone={collectedBalanceCount > 0 ? "healthy" : "disabled"}>
@@ -767,11 +767,11 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
       <div className="grid min-w-0 gap-3">
         <div>
           {loading ? (
-            <div className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
+            <div className="rounded-[var(--surface-radius)] border border-border bg-surface px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
               正在读取本地数据...
             </div>
           ) : loadError ? (
-            <div className="rounded-[var(--surface-radius)] border border-rose-100 bg-rose-50 px-4 py-5 text-sm text-rose-700 shadow-[var(--surface-shadow)]">
+            <div className="rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-4 py-5 text-sm text-danger-foreground shadow-[var(--surface-shadow)]">
               {loadError}
             </div>
           ) : stations.length === 0 ? (
@@ -837,14 +837,14 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
       {drawerStationId && detailStation && (
         <div
           className={cn(
-            "fixed inset-0 z-40 bg-slate-900/0 transition-colors duration-200 ease-out",
-            drawerVisible && !drawerClosing && "bg-slate-900/10",
+            "fixed inset-0 z-40 bg-transparent transition-colors duration-200 ease-out",
+            drawerVisible && !drawerClosing && "bg-scrim/20",
           )}
           onMouseDown={closeDrawer}
         >
           <div
             className={cn(
-              "absolute inset-y-0 right-0 w-[min(560px,calc(100vw-72px))] border-l border-border bg-white shadow-[0_24px_80px_rgba(15,23,42,0.18)] transition-transform duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform",
+              "absolute inset-y-0 right-0 w-[min(560px,calc(100vw-72px))] border-l border-border bg-surface shadow-surface transition-transform duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform",
               drawerVisible && !drawerClosing ? "translate-x-0" : "translate-x-full",
             )}
             onMouseDown={(event) => event.stopPropagation()}
@@ -852,11 +852,11 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
             <div className="flex h-full min-h-0 flex-col">
               <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-slate-900">{detailStation.name}</div>
+                  <div className="truncate text-sm font-semibold text-foreground">{detailStation.name}</div>
                   <div className="truncate text-xs text-muted-foreground">{detailStation.baseUrl}</div>
                 </div>
                 <IconButton
-                  className="shrink-0 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 active:bg-slate-200"
+                  className="shrink-0 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:bg-hover"
                   label="关闭详情抽屉"
                   onClick={closeDrawer}
                 >
@@ -1019,11 +1019,11 @@ function StationAssetListRow({
       tabIndex={0}
       aria-pressed={active}
       className={cn(
-        "group flex min-h-[78px] w-full cursor-pointer flex-wrap items-center gap-3 rounded-[14px] border px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)] md:flex-nowrap",
+        "group flex min-h-[78px] w-full cursor-pointer flex-wrap items-center gap-3 rounded-[14px] border px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 md:flex-nowrap",
         active
-          ? "border-[hsl(var(--accent))] bg-[linear-gradient(90deg,#eff6ff_0%,#f7fbff_42%,#ffffff_100%)]"
-          : "border-border bg-white hover:border-sky-200 hover:bg-slate-50/60",
-        overlay && "shadow-[0_18px_45px_rgba(15,23,42,0.16)]",
+          ? "border-primary/45 bg-selected"
+          : "border-border bg-surface hover:border-info-border hover:bg-surface-subtle",
+        overlay && "shadow-surface",
       )}
       onClick={() => onOpen(station)}
       onKeyDown={(event) => {
@@ -1041,21 +1041,21 @@ function StationAssetListRow({
         <button
           type="button"
           aria-label={`拖拽排序 ${station.name}`}
-          className="inline-flex h-7 w-5 cursor-grab items-center justify-center rounded-[6px] text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)]"
+          className="inline-flex h-7 w-5 cursor-grab items-center justify-center rounded-[6px] text-muted-foreground/45 transition-colors hover:bg-muted hover:text-muted-foreground active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
           {...dragAttributes}
           {...dragListeners}
         >
           <GripVertical className="h-4 w-4" />
         </button>
       </div>
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-600 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-xs font-semibold text-muted-foreground shadow-surface">
         {stationAvatarLabel(station.name)}
       </div>
 
       <div className="min-w-0 flex-[1_1_calc(100%-5rem)] md:flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="truncate text-[15px] font-semibold leading-5 text-slate-950">{station.name}</div>
-          <span className="hidden rounded-full border border-slate-200 bg-white/80 px-2 py-0.5 text-[11px] font-medium leading-4 text-slate-500 sm:inline-flex">
+          <div className="truncate text-[15px] font-semibold leading-5 text-foreground">{station.name}</div>
+          <span className="hidden rounded-full border border-border bg-surface/80 px-2 py-0.5 text-[11px] font-medium leading-4 text-muted-foreground sm:inline-flex">
             {stationTypeLabels[station.stationType]}
           </span>
           {issueTags.map((tag) => (
@@ -1075,7 +1075,7 @@ function StationAssetListRow({
           type="button"
           aria-label={`在浏览器打开 ${station.name}`}
           title={station.baseUrl}
-          className="mt-1 block max-w-full truncate text-left text-xs font-medium text-[hsl(var(--accent))] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)]"
+          className="mt-1 block max-w-full truncate text-left text-xs font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
           onClick={(event) => {
             event.stopPropagation();
             void openStationBaseUrl(station.baseUrl);
@@ -1088,7 +1088,7 @@ function StationAssetListRow({
 
       <div className="hidden shrink-0 items-center gap-5 md:flex">
         <div className="min-w-[78px] text-right">
-          <div className="flex items-center justify-end gap-1 text-[11px] leading-4 text-slate-400">
+          <div className="flex items-center justify-end gap-1 text-[11px] leading-4 text-muted-foreground/70">
             <Clock3 className="h-3 w-3" />
             <span>{lastCollectText}</span>
             <button
@@ -1096,7 +1096,7 @@ function StationAssetListRow({
               aria-label={`刷新余额 ${station.name}`}
               title={`刷新余额 ${station.name}`}
               disabled={actionDisabled || !station.enabled}
-              className="ml-0.5 inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-[5px] text-slate-400/80 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.22)] disabled:cursor-default disabled:opacity-40"
+              className="ml-0.5 inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-[5px] text-muted-foreground/70 transition-colors hover:bg-muted hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-default disabled:opacity-40"
               onClick={(event) => {
                 event.stopPropagation();
                 onRefreshBalance(station);
@@ -1108,12 +1108,12 @@ function StationAssetListRow({
               <RefreshCw className={cn("h-3 w-3", loadingAction === "balance" && "animate-spin")} />
             </button>
           </div>
-          <div className="mt-1 text-xs leading-4 text-slate-500">
+          <div className="mt-1 text-xs leading-4 text-muted-foreground">
             余额：
-            <span className={cn("font-semibold", balance.amount === "未采集" ? "text-slate-500" : "text-emerald-600")}>
+            <span className={cn("font-semibold", balance.amount === "未采集" ? "text-muted-foreground" : "text-success-foreground")}>
               {balance.amount}
             </span>
-            {balance.currency && <span className="ml-1 text-slate-500">{balance.currency}</span>}
+            {balance.currency && <span className="ml-1 text-muted-foreground">{balance.currency}</span>}
           </div>
         </div>
       </div>
@@ -1123,17 +1123,17 @@ function StationAssetListRow({
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}
       >
-        <IconButton className="text-slate-500 hover:text-slate-900" label={`编辑 ${station.name}`} onClick={() => onEdit(station)}>
+        <IconButton className="text-muted-foreground hover:text-foreground" label={`编辑 ${station.name}`} onClick={() => onEdit(station)}>
           <Edit3 className="h-4 w-4" />
         </IconButton>
-        <IconButton className="text-slate-500 hover:text-slate-900" label={`管理 Key ${station.name}`} onClick={() => onEdit(station)}>
+        <IconButton className="text-muted-foreground hover:text-foreground" label={`管理 Key ${station.name}`} onClick={() => onEdit(station)}>
           <KeyRound className="h-4 w-4" />
         </IconButton>
         {supportsManualAuthorization(station) && (
           <IconButton
             className={cn(
-              "text-slate-500 hover:text-slate-900",
-              rowNeedsManualAuthorization(row) && "text-amber-600 hover:bg-amber-50 hover:text-amber-700",
+              "text-muted-foreground hover:text-foreground",
+              rowNeedsManualAuthorization(row) && "text-warning-foreground hover:bg-warning-surface hover:text-warning-foreground",
             )}
             disabled={actionDisabled || !station.enabled}
             label={`重新授权 ${station.name}`}
@@ -1143,7 +1143,7 @@ function StationAssetListRow({
           </IconButton>
         )}
         <IconButton
-          className="text-slate-500 hover:text-slate-900"
+          className="text-muted-foreground hover:text-foreground"
           disabled={actionDisabled || !station.enabled}
           label={`采集信息 ${station.name}`}
           onClick={() => onCollect(station)}
@@ -1151,7 +1151,7 @@ function StationAssetListRow({
           <RefreshCw className={cn("h-4 w-4", loadingAction === "collect" && "animate-spin")} />
         </IconButton>
         <IconButton
-          className="text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+          className="text-muted-foreground/70 hover:bg-danger-surface hover:text-danger-foreground"
           label={`删除 ${station.name}`}
           onClick={() => onDelete(station)}
         >
@@ -1285,8 +1285,8 @@ function StationDialogs({
             </Field>
           </div>
           <div className="grid gap-3 md:grid-cols-3">
-            <label className="flex items-end gap-2 pb-2 text-sm text-slate-700">
-              <input checked={form.enabled} className="h-4 w-4 accent-teal-600" type="checkbox" onChange={(event) => onChange({ ...form, enabled: event.target.checked })} />
+            <label className="flex items-end gap-2 pb-2 text-sm text-foreground">
+              <input checked={form.enabled} className="h-4 w-4 accent-primary" type="checkbox" onChange={(event) => onChange({ ...form, enabled: event.target.checked })} />
               启用站点
             </label>
           </div>
@@ -1302,15 +1302,15 @@ function StationDialogs({
                 <input className={inputClassName} type="password" value={form.loginPassword} onChange={(event) => onChange({ ...form, loginPassword: event.target.value })} placeholder="留空保留旧密码" />
               </Field>
             </div>
-            <div className="mt-2 flex items-center gap-4 text-sm text-slate-700">
+            <div className="mt-2 flex items-center gap-4 text-sm text-foreground">
               <label className="flex items-center gap-2">
-                <input checked={form.rememberPassword} className="h-4 w-4 accent-teal-600" type="checkbox" onChange={(event) => onChange({ ...form, rememberPassword: event.target.checked })} />
+                <input checked={form.rememberPassword} className="h-4 w-4 accent-primary" type="checkbox" onChange={(event) => onChange({ ...form, rememberPassword: event.target.checked })} />
                 记住密码
               </label>
               <span className="text-xs text-muted-foreground">保存后密码会写入本地加密存储；留空不会覆盖旧密码。</span>
             </div>
             {credentials && (
-              <div className="mt-3 rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs text-slate-700 shadow-[var(--surface-shadow)]">
+              <div className="mt-3 rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-xs text-foreground shadow-[var(--surface-shadow)]">
                 当前登录状态: {credentials.loginStatus}
                 {credentials.loginError ? ` · ${credentials.loginError}` : ""}
               </div>
@@ -1366,7 +1366,7 @@ function DetailBody({
 }) {
   return (
     <div className="space-y-4 p-5">
-      <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80">
+      <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-info-border bg-surface/80">
         <PropertyRow label="站点名称" value={activeDialogStation.name} />
         <PropertyRow label="站点类型" value={stationTypeLabels[activeDialogStation.stationType]} />
         <PropertyRow label="基础地址" value={<code className="text-xs">{activeDialogStation.baseUrl}</code>} />
@@ -1379,7 +1379,7 @@ function DetailBody({
 
       <SectionBlock title="登录账号">
         {credentials ? (
-          <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-cyan-100 bg-white/80">
+          <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-info-border bg-surface/80">
             <PropertyRow label="登录用户名" value={credentials.loginUsername || "未设置"} />
             <PropertyRow label="密码" value={credentials.passwordPresent ? "已保存" : "未保存"} />
             <PropertyRow label="记住密码" value={credentials.rememberPassword ? "是" : "否"} />
@@ -1388,20 +1388,20 @@ function DetailBody({
             <PropertyRow label="登录错误" value={credentials.loginError ?? "无"} />
           </PropertyList>
         ) : (
-          <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">未保存登录账号。</div>
+          <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">未保存登录账号。</div>
         )}
       </SectionBlock>
 
       <SectionBlock title="密钥">
         <div className="space-y-2">
           {stationKeys.length === 0 ? (
-            <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无密钥。</div>
+            <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无密钥。</div>
           ) : (
             stationKeys.map((key) => (
-              <div key={key.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2.5 shadow-[var(--surface-shadow)]">
+              <div key={key.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[var(--surface-radius)] border border-border bg-surface px-3 py-2.5 shadow-[var(--surface-shadow)]">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <div className="truncate text-sm font-medium text-slate-800">{key.name}</div>
+                    <div className="truncate text-sm font-medium text-foreground">{key.name}</div>
                     <StatusBadge tone={statusTone[key.status]}>{stationKeyStatusLabels[key.status]}</StatusBadge>
                     <span className="text-[11px] text-muted-foreground">P{key.priority}</span>
                   </div>
@@ -1425,14 +1425,14 @@ function DetailBody({
       <SectionBlock title="分组绑定">
         <div className="space-y-2">
           {groupBindings.length === 0 ? (
-            <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无分组绑定事实。</div>
+            <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无分组绑定事实。</div>
           ) : (
             groupBindings.map((binding) => (
               <div
                 key={binding.id}
-                className="grid grid-cols-[minmax(0,1fr)_5rem_6rem_7rem] items-center gap-2 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs shadow-[var(--surface-shadow)]"
+                className="grid grid-cols-[minmax(0,1fr)_5rem_6rem_7rem] items-center gap-2 rounded-[var(--surface-radius)] border border-border bg-surface px-3 py-2 text-xs shadow-[var(--surface-shadow)]"
               >
-                <span className="truncate font-medium text-slate-700">{binding.groupName}</span>
+                <span className="truncate font-medium text-foreground">{binding.groupName}</span>
                 <span>{formatMultiplier(binding.effectiveRateMultiplier ?? binding.defaultRateMultiplier)}</span>
                 <StatusBadge tone={binding.bindingStatus === "missing" ? "warning" : "info"}>
                   {groupBindingStatusLabel(binding.bindingStatus)}
@@ -1447,14 +1447,14 @@ function DetailBody({
       <SectionBlock title="倍率历史">
         <div className="space-y-2">
           {rateRecords.length === 0 ? (
-            <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无倍率历史。</div>
+            <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无倍率历史。</div>
           ) : (
             rateRecords.slice(0, 8).map((record) => (
               <div
                 key={record.id}
-                className="grid grid-cols-[minmax(0,1fr)_5rem_7rem] items-center gap-2 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs shadow-[var(--surface-shadow)]"
+                className="grid grid-cols-[minmax(0,1fr)_5rem_7rem] items-center gap-2 rounded-[var(--surface-radius)] border border-border bg-surface px-3 py-2 text-xs shadow-[var(--surface-shadow)]"
               >
-                <span className="truncate font-medium text-slate-700">{record.groupName}</span>
+                <span className="truncate font-medium text-foreground">{record.groupName}</span>
                 <span>{formatMultiplier(record.effectiveRateMultiplier)}</span>
                 <span className="truncate text-muted-foreground">{formatNullableTime(record.checkedAt)}</span>
               </div>
@@ -1466,14 +1466,14 @@ function DetailBody({
       <SectionBlock title="采集任务">
         <div className="space-y-2">
           {collectorRuns.length === 0 ? (
-            <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无采集任务。</div>
+            <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无采集任务。</div>
           ) : (
             collectorRuns.slice(0, 8).map((run) => (
               <div
                 key={run.id}
-                className="grid grid-cols-[5rem_6rem_minmax(0,1fr)_5rem] items-center gap-2 rounded-[var(--surface-radius)] border border-border bg-white px-3 py-2 text-xs shadow-[var(--surface-shadow)]"
+                className="grid grid-cols-[5rem_6rem_minmax(0,1fr)_5rem] items-center gap-2 rounded-[var(--surface-radius)] border border-border bg-surface px-3 py-2 text-xs shadow-[var(--surface-shadow)]"
               >
-                <span className="font-medium text-slate-700">{collectorTaskTypeLabel(run.taskType)}</span>
+                <span className="font-medium text-foreground">{collectorTaskTypeLabel(run.taskType)}</span>
                 <StatusBadge tone={run.status === "success" ? "healthy" : run.status === "failed" ? "error" : run.status === "manual_required" ? "warning" : "info"}>
                   {collectorRunStatusLabel(run.status)}
                 </StatusBadge>
@@ -1487,30 +1487,30 @@ function DetailBody({
 
       <SectionBlock title="最新采集快照">
         {snapshot ? (
-          <div className="space-y-2 rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm shadow-[var(--surface-shadow)]">
+          <div className="space-y-2 rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-sm shadow-[var(--surface-shadow)]">
             <PropertyList>
               <PropertyRow label="来源" value={snapshot.source} />
               <PropertyRow label="状态" value={collectorRunStatusLabel(snapshot.status)} />
               <PropertyRow label="采集时间" value={snapshot.fetchedAt} />
               <PropertyRow label="错误" value={snapshot.errorMessage ?? "无"} />
             </PropertyList>
-            <pre className="max-h-40 overflow-auto rounded-[var(--surface-radius)] border border-border bg-white p-3 text-[11px] text-slate-600">{JSON.stringify(snapshot.summaryJson, null, 2)}</pre>
+            <pre className="max-h-40 overflow-auto rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-[11px] text-muted-foreground">{JSON.stringify(snapshot.summaryJson, null, 2)}</pre>
             <div className="text-xs text-muted-foreground">历史快照：{snapshots.length} 条</div>
           </div>
         ) : (
-          <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无快照。</div>
+          <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无快照。</div>
         )}
       </SectionBlock>
 
       <SectionBlock title="关联变更">
         {changeEvents.length === 0 ? (
-          <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无关联变更。</div>
+          <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无关联变更。</div>
         ) : (
           <div className="space-y-2">
             {changeEvents.slice(0, 6).map((event) => (
-              <div key={event.id} className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-sm shadow-[var(--surface-shadow)]">
+              <div key={event.id} className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-sm shadow-[var(--surface-shadow)]">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-slate-800">{event.title}</span>
+                  <span className="font-medium text-foreground">{event.title}</span>
                   <StatusBadge tone={event.severity === "critical" ? "error" : event.severity === "warning" ? "warning" : "info"}>
                     {event.severity === "critical" ? "严重" : event.severity === "warning" ? "警告" : "信息"}
                   </StatusBadge>
@@ -1522,7 +1522,7 @@ function DetailBody({
         )}
       </SectionBlock>
 
-      <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3 text-xs leading-5 text-slate-700 shadow-[var(--surface-shadow)]">
+      <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-xs leading-5 text-foreground shadow-[var(--surface-shadow)]">
         登录账号用于信息采集；保存的密码会加密存储，采集快照和使用记录会统一脱敏。
       </div>
     </div>
@@ -1531,9 +1531,9 @@ function DetailBody({
 
 function SectionBlock({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-[var(--surface-radius)] border border-border bg-white p-3 shadow-[var(--surface-shadow)]">
-      <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800">
-        <ShieldCheck className="h-4 w-4 text-teal-600" />
+    <section className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 shadow-[var(--surface-shadow)]">
+      <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
+        <ShieldCheck className="h-4 w-4 text-primary" />
         {title}
       </div>
       {children}
@@ -1598,8 +1598,8 @@ function KeyDialog({
             />
           </Field>
         </div>
-        <label className="flex items-center gap-2 text-sm text-slate-700">
-          <input checked={keyForm.enabled} className="h-4 w-4 accent-teal-600" type="checkbox" onChange={(event) => onKeyFormChange({ ...keyForm, enabled: event.target.checked })} />
+        <label className="flex items-center gap-2 text-sm text-foreground">
+          <input checked={keyForm.enabled} className="h-4 w-4 accent-primary" type="checkbox" onChange={(event) => onKeyFormChange({ ...keyForm, enabled: event.target.checked })} />
           启用
         </label>
         <Field label="备注">
@@ -1733,14 +1733,14 @@ function formatRelativeTime(value: string | null) {
 }
 
 function stationIssueTagClassName(tone: "info" | "warning" | "error" | "disabled") {
-  if (tone === "error") return "border-rose-200 bg-rose-50 text-rose-700";
-  if (tone === "warning") return "border-amber-200 bg-amber-50 text-amber-700";
-  if (tone === "disabled") return "border-slate-200 bg-slate-100 text-slate-500";
-  return "border-sky-200 bg-sky-50 text-sky-700";
+  if (tone === "error") return "border-danger-border bg-danger-surface text-danger-foreground";
+  if (tone === "warning") return "border-warning-border bg-warning-surface text-warning-foreground";
+  if (tone === "disabled") return "border-border bg-muted text-muted-foreground";
+  return "border-info-border bg-info-surface text-info-foreground";
 }
 
 const stationAssetSelectClassName =
-  "h-8 min-w-[148px] rounded-[12px] border border-border bg-white px-3 text-sm text-slate-800 shadow-[0_1px_2px_rgba(15,23,42,0.04)] outline-none transition focus:border-[hsl(var(--accent)/0.45)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";
+  "h-8 min-w-[148px] rounded-[12px] border border-border bg-surface px-3 text-sm text-foreground shadow-surface outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30";
 
 function formatNullableTime(value: string | null) {
   if (!value) {
@@ -1787,4 +1787,4 @@ function groupBindingStatusLabel(status: string) {
   return status;
 }
 
-const inputClassName = "h-8 rounded-[12px] border border-cyan-100 bg-cyan-50/40 px-3 text-sm text-slate-800 outline-none transition focus:border-teal-300 focus:bg-white focus:ring-2 focus:ring-teal-100";
+const inputClassName = "h-8 rounded-[12px] border border-info-border bg-info-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:bg-surface focus:ring-2 focus:ring-ring/20";

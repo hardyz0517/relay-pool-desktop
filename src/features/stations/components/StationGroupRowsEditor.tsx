@@ -26,7 +26,7 @@ type StationGroupRowsEditorProps = {
 };
 
 const inputClassName =
-  "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-white px-2.5 text-xs text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.16)] disabled:bg-slate-50 disabled:text-slate-500";
+  "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-surface px-2.5 text-xs text-foreground outline-none transition placeholder:text-muted-foreground/70 focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:bg-surface-subtle disabled:text-muted-foreground";
 const groupRowsGridTemplate = "minmax(9rem,1fr) 7.5rem 6rem 5.5rem 2.5rem";
 const autoGroupCategoryValue = "__auto__";
 type GroupCategorySelectValue = typeof autoGroupCategoryValue | StationGroupCategory;
@@ -143,7 +143,7 @@ export function StationGroupRowsEditor({
                 </span>
                 <Button
                   aria-label={`删除分组 ${index + 1}`}
-                  className={cn("justify-self-end", row.groupBindingId && "text-rose-700")}
+                  className={cn("justify-self-end", row.groupBindingId && "text-danger-foreground")}
                   disabled={disabled}
                   size="icon"
                   variant="ghost"
@@ -158,7 +158,7 @@ export function StationGroupRowsEditor({
       </div>
 
       {visibleRows.length === 0 && (
-        <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
+        <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
           暂无分组，可手动添加或从远端同步。
         </div>
       )}

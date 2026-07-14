@@ -85,7 +85,7 @@ export function StationDetailPanel({
       </div>
 
       <SectionCard title="支持模型摘要">
-        <div className="rounded-md border border-dashed border-border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
+        <div className="rounded-md border border-dashed border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
           模型列表将在采集器或手动模型配置接入后持久化。
         </div>
       </SectionCard>

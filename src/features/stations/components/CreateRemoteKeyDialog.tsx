@@ -22,7 +22,7 @@ type CreateRemoteKeyDialogProps = {
 };
 
 const inputClassName =
-  "h-8 w-full rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";
+  "h-8 w-full rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/70 focus:border-ring focus:ring-2 focus:ring-ring/30";
 
 export function CreateRemoteKeyDialog({
   open,
@@ -129,11 +129,11 @@ export function CreateRemoteKeyDialog({
           />
         </label>
         {normalizedGroups.length === 0 && (
-          <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
+          <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
             暂未发现远端分组，可先不指定分组创建。
           </div>
         )}
-        {error && <div className="text-xs text-rose-600">{error}</div>}
+        {error && <div className="text-xs text-danger-foreground">{error}</div>}
       </form>
     </Dialog>
   );
@@ -141,7 +141,7 @@ export function CreateRemoteKeyDialog({
 
 function RemoteGroupRateTag({ rateMultiplier }: { rateMultiplier: number | null }) {
   return (
-    <span className="shrink-0 rounded-[calc(var(--surface-radius)-3px)] border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium leading-none text-slate-600">
+    <span className="shrink-0 rounded-[calc(var(--surface-radius)-3px)] border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] font-medium leading-none text-muted-foreground">
       {rateMultiplier === null ? "倍率未采集" : `${formatMultiplier(rateMultiplier)}x`}
     </span>
   );

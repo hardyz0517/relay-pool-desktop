@@ -22,6 +22,7 @@ import { listStationKeys } from "@/lib/api/stationKeys";
 import { listStations, openStationBaseUrl } from "@/lib/api/stations";
 import { Sub2ApiPlatformIcon } from "@/features/stations/components/Sub2ApiPlatformIcon";
 import { groupVisualMetaFor } from "@/features/stations/groupVisualMeta";
+import { groupVisualClassNames } from "@/features/stations/groupVisualStyles";
 import { groupCategoryDefinitions } from "@/lib/groupCategories";
 import { cn } from "@/lib/utils";
 import type { PricingRule } from "@/lib/types/economics";
@@ -350,16 +351,17 @@ function PricingRowsTable({
 
 function PricingGroupBadge({ row }: { row: PricingComparisonRow }) {
   const visualMeta = groupVisualMetaFor(row.groupName, row.groupRawJsonRedacted, row.groupType);
+  const visualClassNames = groupVisualClassNames[visualMeta.platform];
 
   return (
     <span
       className={cn(
         "inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border px-2 text-xs font-semibold",
-        visualMeta.badgeClassName,
+        visualClassNames.badge,
       )}
       title={`${visualMeta.label} · ${row.groupName}`}
     >
-      <Sub2ApiPlatformIcon platform={visualMeta.platform} className={visualMeta.iconClassName} />
+      <Sub2ApiPlatformIcon platform={visualMeta.platform} className={visualClassNames.icon} />
       <span className="truncate">{row.groupName}</span>
     </span>
   );

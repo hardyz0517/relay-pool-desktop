@@ -48,41 +48,41 @@ const statusToneByDetailTone: Record<DetailTone, StatusTone> = {
 };
 
 const textToneClassName: Record<DetailTone, string> = {
-  neutral: "text-slate-700",
-  good: "text-emerald-700",
-  warning: "text-amber-700",
-  error: "text-rose-700",
-  muted: "text-slate-500",
+  neutral: "text-foreground",
+  good: "text-success-foreground",
+  warning: "text-warning-foreground",
+  error: "text-danger-foreground",
+  muted: "text-muted-foreground",
 };
 
 const surfaceToneClassName: Record<DetailTone, string> = {
-  neutral: "border-border bg-white",
-  good: "border-emerald-100 bg-emerald-50/60",
-  warning: "border-amber-100 bg-amber-50/70",
-  error: "border-rose-100 bg-rose-50/70",
-  muted: "border-border bg-slate-50",
+  neutral: "border-border bg-surface",
+  good: "border-success-border bg-success-surface",
+  warning: "border-warning-border bg-warning-surface",
+  error: "border-danger-border bg-danger-surface",
+  muted: "border-border bg-surface-subtle",
 };
 
 const usageCardVisualMeta = {
   request: {
     Icon: Activity,
-    iconClassName: "bg-green-100 text-green-700",
-    valueClassName: "text-green-700",
+    iconClassName: "bg-success-surface text-success-foreground",
+    valueClassName: "text-success-foreground",
   },
   consumption: {
     Icon: BadgeDollarSign,
-    iconClassName: "bg-purple-100 text-purple-700",
-    valueClassName: "text-purple-700",
+    iconClassName: "bg-platform-image-surface text-platform-image-foreground",
+    valueClassName: "text-platform-image-foreground",
   },
   todayToken: {
     Icon: BarChart3,
-    iconClassName: "bg-amber-100 text-amber-700",
-    valueClassName: "text-amber-700",
+    iconClassName: "bg-warning-surface text-warning-foreground",
+    valueClassName: "text-warning-foreground",
   },
   totalToken: {
     Icon: Server,
-    iconClassName: "bg-indigo-100 text-indigo-700",
-    valueClassName: "text-indigo-700",
+    iconClassName: "bg-platform-gemini-surface text-platform-gemini-foreground",
+    valueClassName: "text-platform-gemini-foreground",
   },
 } satisfies Record<string, { Icon: LucideIcon; iconClassName: string; valueClassName: string }>;
 
@@ -149,11 +149,11 @@ export function StationDetailContent({
       }
     >
       <div className="space-y-4">
-        <header className="rounded-[var(--surface-radius)] border border-border bg-white px-4 py-3 shadow-[var(--surface-shadow)]">
+        <header className="rounded-[var(--surface-radius)] border border-border bg-surface px-4 py-3 shadow-[var(--surface-shadow)]">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 space-y-2">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h2 className="min-w-0 truncate text-xl font-semibold tracking-normal text-slate-900">
+              <h2 className="min-w-0 truncate text-xl font-semibold tracking-normal text-foreground">
                 {station.name}
               </h2>
               <StatusBadge tone={statusToneByDetailTone[viewModel.statusTone]}>
@@ -163,7 +163,7 @@ export function StationDetailContent({
 
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
               <span>{viewModel.stationTypeLabel}</span>
-              <span className="max-w-full truncate font-mono text-[11px] text-slate-600">
+              <span className="max-w-full truncate font-mono text-[11px] text-muted-foreground">
                 {station.baseUrl}
               </span>
               <span className="inline-flex items-center gap-1">
@@ -176,16 +176,16 @@ export function StationDetailContent({
         </header>
 
         {sectionError && (
-          <div className="flex items-start gap-2 rounded-[var(--surface-radius)] border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          <div className="flex items-start gap-2 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-xs text-danger-foreground">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{sectionError}</span>
           </div>
         )}
 
-        <section className="rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+        <section className="rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-          <WalletCards className="h-4 w-4 text-slate-500" />
-          <h2 className="text-sm font-semibold text-slate-900">余额</h2>
+          <WalletCards className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold text-foreground">余额</h2>
         </div>
         <div className="grid gap-3 p-4 md:grid-cols-3">
           {viewModel.balanceCards.map((card) => (
@@ -206,10 +206,10 @@ export function StationDetailContent({
         </div>
       </section>
 
-      <section className="rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+      <section className="rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-          <BarChart3 className="h-4 w-4 text-slate-500" />
-          <h2 className="text-sm font-semibold text-slate-900">中转站用量</h2>
+          <BarChart3 className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold text-foreground">中转站用量</h2>
         </div>
         <div className="grid gap-3 p-4 md:grid-cols-4">
           {viewModel.usageCards.map((card) => {
@@ -217,7 +217,7 @@ export function StationDetailContent({
             return (
               <div
                 key={card.label}
-                className="flex min-h-[96px] items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_8px_rgba(15,23,42,0.08)]"
+                className="flex min-h-[96px] items-center gap-3 rounded-[12px] border border-border bg-surface px-4 py-3 shadow-surface"
               >
                 <div
                   className={cn(
@@ -240,21 +240,21 @@ export function StationDetailContent({
         </div>
       </section>
 
-      <section className="rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+      <section className="rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
         <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
-            <Layers3 className="h-4 w-4 text-slate-500" />
-            <h2 className="text-sm font-semibold text-slate-900">分组与倍率</h2>
+            <Layers3 className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold text-foreground">分组与倍率</h2>
           </div>
           <span className="text-xs text-muted-foreground">{viewModel.groupRows.length} 条记录</span>
         </div>
         <div className="p-4">
           {viewModel.groupRows.length === 0 ? (
             <div className="flex min-h-[148px] flex-col items-center justify-center px-4 py-8 text-center">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-muted-foreground">
                 <Layers3 className="h-4 w-4" />
               </div>
-              <div className="mt-3 text-sm font-medium text-slate-800">
+              <div className="mt-3 text-sm font-medium text-foreground">
                 {viewModel.groupEmptyMessage}
               </div>
               <p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">
@@ -283,7 +283,7 @@ export function StationDetailContent({
                 </thead>
                 <tbody>
                   {viewModel.groupRows.map((row) => (
-                    <tr key={row.id} className="border-t border-border transition-colors hover:bg-slate-50/70">
+                    <tr key={row.id} className="border-t border-border transition-colors hover:bg-surface-subtle">
                       <TableCell className="max-w-[220px] pl-0">
                         <StationGroupNameBadge
                           groupName={row.groupName}
@@ -291,7 +291,7 @@ export function StationDetailContent({
                           effectiveGroupCategory={row.effectiveGroupCategory}
                         />
                         {row.warning && (
-                          <div className="mt-1 inline-flex items-center gap-1 text-amber-700">
+                          <div className="mt-1 inline-flex items-center gap-1 text-warning-foreground">
                             <AlertTriangle className="h-3.5 w-3.5" />
                             {row.warning}
                           </div>
@@ -370,7 +370,7 @@ function TableCell({
   children: React.ReactNode;
 }) {
   return (
-    <td className={cn("border-b border-border px-3 py-2.5 align-top text-slate-700", className)}>
+    <td className={cn("border-b border-border px-3 py-2.5 align-top text-foreground", className)}>
       {children}
     </td>
   );
@@ -379,7 +379,7 @@ function TableCell({
 function RateHead({ title, helper }: { title: string; helper: string }) {
   return (
     <span className="block leading-tight">
-      <span className="block text-slate-600">{title}</span>
+      <span className="block text-muted-foreground">{title}</span>
       <span className="mt-0.5 block text-[11px] font-normal text-muted-foreground">{helper}</span>
     </span>
   );
@@ -395,10 +395,10 @@ function DiagnosticSection({
   items: StationDetailDiagnosticItem[];
 }) {
   return (
-    <section className="rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]">
+    <section className="rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
       <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <Icon className="h-4 w-4 text-slate-500" />
-        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+        <Icon className="h-4 w-4 text-muted-foreground" />
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
       </div>
       <dl className="divide-y divide-border px-4">
         {items.map((item) => (
