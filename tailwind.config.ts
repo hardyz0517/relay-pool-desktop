@@ -62,8 +62,6 @@ const config = {
             },
           ]),
         ),
-        accent: token("accent"),
-        "accent-foreground": token("accent-foreground"),
       },
       boxShadow: {
         surface: "var(--surface-shadow)",

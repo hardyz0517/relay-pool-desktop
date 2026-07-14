@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
+    "build": "pnpm theme:audit && tsc --noEmit && vite build",
     "test": "vitest run",
     "theme:audit": "node scripts/theme-audit.mjs",
     "preview": "vite preview --host 127.0.0.1",
