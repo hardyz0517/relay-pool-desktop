@@ -166,7 +166,7 @@ export function formatRate(value: number | null | undefined, fallback = "未采�
   if (value == null || !Number.isFinite(value)) {
     return fallback;
   }
-  return `${trimFixed(value, 3)}x`;
+  return `${trimFixed(value, 6)}x`;
 }
 
 export function latestByTime<T>(items: T[], selectTime: (item: T) => string | null | undefined) {

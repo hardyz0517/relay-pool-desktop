@@ -91,6 +91,14 @@ const rows = buildGroupRows(
       rateSource: "sub2api_groups_rates",
       lastCheckedAt: "2026-07-04T16:59:00.000Z",
     }),
+    groupBinding({
+      id: "binding-tiny-rate",
+      groupName: "tiny-rate",
+      defaultRateMultiplier: 0.001,
+      effectiveRateMultiplier: 0.001,
+      rateSource: "sub2api_groups_rates",
+      lastCheckedAt: "2026-07-07T12:00:00.000Z",
+    }),
   ],
   [
     groupRate({
@@ -102,31 +110,50 @@ const rows = buildGroupRows(
       source: "sub2api_groups_rates",
       checkedAt: "2026-07-07T12:34:00.000Z",
     }),
+    groupRate({
+      id: "rate-tiny-rate-latest",
+      groupBindingId: "binding-tiny-rate",
+      groupName: "tiny-rate",
+      groupKeyHash: "remote:tiny-rate",
+      defaultRateMultiplier: 0.001,
+      effectiveRateMultiplier: 0.001,
+      source: "sub2api_groups_rates",
+      checkedAt: "2026-07-07T12:35:00.000Z",
+    }),
   ],
   10,
 );
 
-assert.equal(rows.length, 1, "station detail should show the collected station group");
+assert.equal(rows.length, 2, "station detail should show the collected station groups");
 assert.ok(
   rows.every((row) => row.bindingStatus !== "缺失" && row.groupName !== "claude-retired"),
   "station detail should remove missing groups from the current group table",
 );
+const claudeRow = rows.find((row) => row.groupName === "claude-aws");
+const tinyRateRow = rows.find((row) => row.groupName === "tiny-rate");
+assert.ok(claudeRow, "station detail should include the collected claude group");
+assert.ok(tinyRateRow, "station detail should include the collected tiny-rate group");
 assert.equal(
-  rows[0].sourceLabel,
+  claudeRow.sourceLabel,
   "Sub2API 分组倍率接口",
   "station detail should show the latest collected rate source instead of stale remote_scan",
 );
 assert.equal(
-  rows[0].effectiveRate,
+  claudeRow.effectiveRate,
   "0.08x",
   "station detail should show the exchange-ratio-adjusted current fact effective rate",
 );
 assert.equal(
-  rows[0].defaultRate,
+  claudeRow.defaultRate,
   "0.022x",
   "station detail should show the exchange-ratio-adjusted latest collected default rate",
 );
-assert.match(rows[0].lastChecked, /07\/07/, "station detail should use the latest collected check time");
+assert.equal(
+  tinyRateRow.effectiveRate,
+  "0.0001x",
+  "station detail should preserve tiny exchange-ratio-adjusted group rates",
+);
+assert.match(claudeRow.lastChecked, /07\/07/, "station detail should use the latest collected check time");
 
 const detailSource = await readFile("src/features/stations/stationDetailViewModels.ts", "utf8");
 assert.ok(
