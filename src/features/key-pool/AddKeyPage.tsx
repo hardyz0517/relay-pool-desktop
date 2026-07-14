@@ -42,7 +42,7 @@ const emptyForm: AddKeyFormState = {
 };
 
 const inputClassName =
-  "h-8 rounded-[var(--surface-radius)] border border-border bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-[hsl(var(--accent)/0.5)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.18)]";
+  "h-8 rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30";
 
 export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPageProps) {
   const toast = useToast();
@@ -209,7 +209,7 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
                     selected
                     onClick={selectCustomConfig}
                   />
-                  <div className="rounded-[var(--surface-radius)] border border-border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">
+                  <div className="rounded-[var(--surface-radius)] border border-border bg-surface-subtle px-3 py-2 text-sm text-muted-foreground">
                     还没有可用中转站，请先添加供应商。
                   </div>
                 </div>
@@ -268,7 +268,7 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
                 </Field>
               </div>
               {error && (
-                <div className="mt-3 rounded-[var(--surface-radius)] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                <div className="mt-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
                   {error}
                 </div>
               )}
@@ -303,7 +303,7 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
                   </Field>
                   <Field label="分组（随绑定同步）">
                     <input
-                      className={`${inputClassName} bg-slate-50 text-slate-500`}
+                      className={`${inputClassName} bg-surface-subtle text-muted-foreground`}
                       value={form.groupName}
                       placeholder="选择分组绑定后自动填充"
                       readOnly
@@ -342,16 +342,16 @@ function PresetButton({
       className={cn(
         "relative flex h-8 w-[10rem] min-w-0 cursor-pointer items-center gap-2 rounded-[var(--surface-radius)] px-2.5 text-left text-xs font-medium transition-colors",
         selected
-          ? "bg-[hsl(var(--accent))] text-white shadow-sm"
-          : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900",
+          ? "bg-primary-solid text-primary-foreground shadow-sm"
+          : "bg-muted text-muted-foreground hover:bg-hover hover:text-foreground",
       )}
       onClick={onClick}
       title={title}
     >
       <span
         className={cn(
-          "flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-[5px] bg-white text-[10px] font-semibold text-slate-600",
-          selected && "text-[hsl(var(--accent))]",
+          "flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-[5px] bg-surface text-[10px] font-semibold text-muted-foreground",
+          selected && "text-primary",
         )}
       >
         {label.slice(0, 1)}

@@ -237,7 +237,7 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
         </Toolbar>
 
         {error && (
-          <div className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
             {error}
           </div>
         )}
@@ -276,11 +276,11 @@ function GroupPricingSection({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           {section.groupType === "image_generation" && (
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600">
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-surface text-muted-foreground">
               <Image className="h-4 w-4" />
             </span>
           )}
-          <h3 className="text-sm font-semibold text-slate-900">{section.title}</h3>
+          <h3 className="text-sm font-semibold text-foreground">{section.title}</h3>
         </div>
         <div className="text-xs text-muted-foreground">{section.rows.length} 个分组</div>
       </div>
@@ -322,7 +322,7 @@ function PricingRowsTable({
                   type="button"
                   aria-label={`在浏览器打开 ${row.stationName}`}
                   title={`打开 ${row.stationName}`}
-                  className="max-w-full truncate text-left font-medium text-slate-800 transition-colors hover:text-[hsl(var(--accent))] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.28)]"
+                  className="max-w-full truncate text-left font-medium text-foreground transition-colors hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
                   onClick={() => onOpenStation(row.stationId, row.stationName)}
                 >
                   {row.stationName}
@@ -331,10 +331,10 @@ function PricingRowsTable({
               <td className={tableCellClassName}>
                 <PricingGroupBadge row={row} />
                 {row.isCheapest && (
-                  <div className="mt-0.5 text-xs font-medium text-emerald-700">当前最低</div>
+                  <div className="mt-0.5 text-xs font-medium text-success-foreground">当前最低</div>
                 )}
               </td>
-              <td className={`${tableCellClassName} tabular-nums font-semibold text-slate-800`}>
+              <td className={`${tableCellClassName} tabular-nums font-semibold text-foreground`}>
                 {formatNullableMultiplier(row.effectiveMultiplier)}
               </td>
               <td className={updatedAtCellClassName}>
@@ -421,12 +421,12 @@ function formatDecimal(value: number, fractionDigits: number) {
 }
 
 const inputClassName =
-  "h-8 w-[220px] rounded-[var(--surface-radius)] border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-[hsl(var(--accent)/0.45)] focus:ring-2 focus:ring-[hsl(var(--accent)/0.16)]";
+  "h-8 w-[220px] rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/70 focus:border-ring focus:ring-2 focus:ring-ring/30";
 
 const tableScrollClassName = "overflow-x-auto border-y border-border";
 const tableClassName = "min-w-[720px] w-full table-fixed text-left text-sm";
 const tableHeaderClassName = "px-2.5 py-2 text-xs font-medium text-muted-foreground";
-const tableCellClassName = "px-2.5 py-2.5 align-top text-sm text-slate-700";
+const tableCellClassName = "px-2.5 py-2.5 align-top text-sm text-foreground";
 const updatedAtHeaderClassName = `${tableHeaderClassName} whitespace-nowrap`;
 const updatedAtCellClassName = `${tableCellClassName} whitespace-nowrap text-muted-foreground`;
-const cheapestRowClassName = "bg-emerald-50/70";
+const cheapestRowClassName = "bg-success-surface";
