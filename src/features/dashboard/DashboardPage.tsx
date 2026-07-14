@@ -69,17 +69,17 @@ const healthTone = {
 const RECENT_PERFORMANCE_WINDOW_MINUTES = 5;
 
 const dashboardMetricToneClassName: Record<MetricTone, string> = {
-  neutral: "text-slate-700",
-  good: "text-emerald-700",
-  warning: "text-amber-700",
-  danger: "text-rose-700",
+  neutral: "text-foreground",
+  good: "text-success-foreground",
+  warning: "text-warning-foreground",
+  danger: "text-danger-foreground",
 };
 
 const dashboardMetricIconClassName: Record<MetricTone, string> = {
-  neutral: "bg-slate-100",
-  good: "bg-emerald-100",
-  warning: "bg-amber-100",
-  danger: "bg-rose-100",
+  neutral: "bg-muted",
+  good: "bg-success-surface",
+  warning: "bg-warning-surface",
+  danger: "bg-danger-surface",
 };
 
 export function DashboardPage() {
@@ -243,7 +243,7 @@ export function DashboardPage() {
       label="升级到新版本"
       title={`升级到 ${updaterState.version ?? "新版本"}`}
       variant="outline"
-      className="h-8 w-8 border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 hover:text-cyan-800"
+      className="h-8 w-8 border-info-border bg-info-surface text-info-foreground hover:bg-info-surface hover:text-info-foreground"
       onClick={showUpdateDialog}
     >
       <ArrowUp className="h-4 w-4" />
@@ -264,30 +264,30 @@ export function DashboardPage() {
         >
           <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_136px] sm:items-center">
             <div className="grid min-w-0 gap-2 md:grid-cols-[minmax(220px,1.35fr)_minmax(170px,0.85fr)] md:items-center">
-              <div className="grid min-h-9 min-w-0 grid-cols-[56px_minmax(0,1fr)_28px] items-center gap-2 rounded-[8px] bg-slate-50/70 px-2">
-                <span className="text-xs font-medium text-slate-500">地址</span>
-                <code className="min-w-0 truncate text-[13px] font-semibold text-slate-900">
+              <div className="grid min-h-9 min-w-0 grid-cols-[56px_minmax(0,1fr)_28px] items-center gap-2 rounded-[8px] bg-surface-subtle px-2">
+                <span className="text-xs font-medium text-muted-foreground">地址</span>
+                <code className="min-w-0 truncate text-[13px] font-semibold text-foreground">
                   {proxyBaseUrl}
                 </code>
                 <Button
                   size="icon"
                   variant="ghost"
-                  className="h-7 w-7 shrink-0 text-slate-500 hover:text-slate-800"
+                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
                   aria-label="复制基础地址"
                   onClick={() => void copyText(proxyBaseUrl, "基础地址")}
                 >
                   <Copy className="h-4 w-4" />
                 </Button>
               </div>
-              <div className="grid min-h-9 min-w-0 grid-cols-[56px_minmax(0,1fr)_28px] items-center gap-2 rounded-[8px] bg-slate-50/70 px-2">
-                <span className="text-xs font-medium text-slate-500">密钥</span>
-                <code className="min-w-0 truncate text-[13px] font-medium text-slate-700">
+              <div className="grid min-h-9 min-w-0 grid-cols-[56px_minmax(0,1fr)_28px] items-center gap-2 rounded-[8px] bg-surface-subtle px-2">
+                <span className="text-xs font-medium text-muted-foreground">密钥</span>
+                <code className="min-w-0 truncate text-[13px] font-medium text-foreground">
                   {localKeyMasked}
                 </code>
                 <Button
                   size="icon"
                   variant="ghost"
-                  className="h-7 w-7 shrink-0 text-slate-500 hover:text-slate-800"
+                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
                   aria-label="复制本地访问密钥"
                   onClick={() => void copyLocalAccessKey()}
                 >
@@ -300,10 +300,10 @@ export function DashboardPage() {
                 type="button"
                 onClick={() => void (proxyRunning ? handleStopLocalProxy() : handleStartLocalProxy())}
                 disabled={startingLocalProxy || stoppingLocalProxy}
-                className={`flex h-16 w-16 shrink-0 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[8px] border px-2 py-2 text-[12px] font-medium leading-[14px] shadow-[0_1px_2px_rgba(15,23,42,0.08)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.35)] disabled:pointer-events-none disabled:cursor-default disabled:opacity-60 ${
+                className={`flex h-16 w-16 shrink-0 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[8px] border px-2 py-2 text-[12px] font-medium leading-[14px] shadow-surface transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:cursor-default disabled:opacity-60 ${
                   proxyRunning
-                    ? "border-[#EFF0F3] bg-[#EFF0F3] text-slate-700 hover:bg-slate-200"
-                    : "border-[#0060DF] bg-[#0060DF] text-white hover:bg-[#0052bf]"
+                    ? "border-border bg-surface text-foreground hover:bg-hover"
+                    : "border-primary bg-primary-solid text-primary-foreground hover:bg-primary-solid"
                 }`}
                 aria-label={proxyRunning ? "关闭本地路由" : "启动本地路由"}
               >
@@ -325,7 +325,7 @@ export function DashboardPage() {
                 type="button"
                 onClick={() => void handleImportToCCSwitch()}
                 disabled={importingCCSwitch}
-                className="flex h-16 w-16 shrink-0 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[8px] border border-slate-200 bg-white px-2 py-2 text-[12px] font-medium leading-[14px] text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent)/0.35)] disabled:pointer-events-none disabled:cursor-default disabled:opacity-50"
+                className="flex h-16 w-16 shrink-0 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[8px] border border-border bg-surface px-2 py-2 text-[12px] font-medium leading-[14px] text-muted-foreground transition-colors hover:bg-surface-subtle hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:cursor-default disabled:opacity-50"
                 aria-label="导入到 CCSwitch"
               >
                 <Upload className="h-4 w-4 shrink-0" />
@@ -351,7 +351,7 @@ export function DashboardPage() {
               detail: `${lowBalanceStations} 个余额告警`,
               icon: Wallet,
               tone: lowBalanceStations > 0 ? "warning" : "good",
-              valueClassName: "text-emerald-700",
+              valueClassName: "text-success-foreground",
               accent: "emerald",
             },
             {
@@ -368,7 +368,7 @@ export function DashboardPage() {
               detail: `总计：${formatCompactNumber(proxyRequestCount)}`,
               icon: Activity,
               tone: todayRequests > 0 ? "good" : "neutral",
-              valueClassName: "text-slate-900",
+              valueClassName: "text-foreground",
               accent: "green",
             },
             {
@@ -384,7 +384,7 @@ export function DashboardPage() {
               detail: `输入 ${formatCompactNumber(todayPromptTokens)} / 输出 ${formatCompactNumber(todayCompletionTokens)}`,
               icon: BarChart3,
               tone: todayTokens > 0 ? "good" : "neutral",
-              valueClassName: "text-slate-900",
+              valueClassName: "text-foreground",
               accent: "amber",
             },
             {
@@ -393,7 +393,7 @@ export function DashboardPage() {
               detail: `输入 ${formatCompactNumber(totalPromptTokens)} / 输出 ${formatCompactNumber(totalCompletionTokens)}`,
               icon: Server,
               tone: totalTokens > 0 ? "good" : "neutral",
-              valueClassName: "text-slate-900",
+              valueClassName: "text-foreground",
               accent: "indigo",
             },
             {
@@ -402,27 +402,27 @@ export function DashboardPage() {
               detail: averageResponseMs === null ? "暂无今日样本" : "今日平均",
               icon: Clock3,
               tone: averageResponseMs !== null && averageResponseMs > 15000 ? "warning" : "neutral",
-              valueClassName: "text-slate-900",
+              valueClassName: "text-foreground",
               accent: "rose",
             },
             {
               label: "性能概览",
               value: (
                 <>
-                  <span className="text-slate-900">{formatCompactNumber(recentPerformance.rpm)}</span>
+                  <span className="text-foreground">{formatCompactNumber(recentPerformance.rpm)}</span>
                   <span className="ml-1 text-sm font-medium text-muted-foreground">RPM</span>
                 </>
               ),
               detail: (
                 <>
-                  <span className="font-semibold text-slate-900">{formatCompactNumber(recentPerformance.tpm)}</span>
+                  <span className="font-semibold text-foreground">{formatCompactNumber(recentPerformance.tpm)}</span>
                   <span className="ml-1 text-muted-foreground">TPM</span>
                   <span className="text-muted-foreground">· {activeRequests} 活跃</span>
                 </>
               ),
               icon: Gauge,
               tone: recentPerformance.rpm > 0 || activeRequests > 0 ? "good" : "neutral",
-              valueClassName: "inline-flex items-baseline text-slate-900",
+              valueClassName: "inline-flex items-baseline text-foreground",
               accent: "violet",
             },
           ]}
@@ -436,7 +436,7 @@ export function DashboardPage() {
               detail: `总计：${formatCompactNumber(stationUsage.totalRequestCount)}`,
               icon: Activity,
               tone: stationUsage.todayRequestCount > 0 ? "good" : "neutral",
-              valueClassName: "text-slate-900",
+              valueClassName: "text-foreground",
               accent: "green",
             },
             {
@@ -445,7 +445,7 @@ export function DashboardPage() {
                 <>
                   <span title="实际花费">{formatUsdAmount(stationUsage.todayConsumption)}</span>
                   {stationUsage.todayBaseConsumption !== null && (
-                    <span className="ml-1 text-sm font-normal text-slate-400" title="1倍率 Token 花费">
+                    <span className="ml-1 text-sm font-normal text-muted-foreground/70" title="1倍率 Token 花费">
                       {`/ ${formatUsdAmount(stationUsage.todayBaseConsumption)}`}
                     </span>
                   )}
@@ -454,11 +454,11 @@ export function DashboardPage() {
               detail: (
                 <>
                   <span>总计：</span>
-                  <span className="font-semibold text-purple-600" title="实际花费">
+                  <span className="font-semibold text-platform-image-foreground" title="实际花费">
                     {formatUsdAmount(stationUsage.totalConsumption)}
                   </span>
                   {stationUsage.totalBaseConsumption !== null && (
-                    <span className="text-slate-400" title="1倍率 Token 花费">
+                    <span className="text-muted-foreground/70" title="1倍率 Token 花费">
                       {` / ${formatUsdAmount(stationUsage.totalBaseConsumption)}`}
                     </span>
                   )}
@@ -466,7 +466,7 @@ export function DashboardPage() {
               ),
               icon: BadgeDollarSign,
               tone: stationUsage.todayConsumption > 0 ? "good" : "neutral",
-              valueClassName: "inline-flex items-baseline text-purple-700",
+              valueClassName: "inline-flex items-baseline text-platform-image-foreground",
               accent: "purple",
             },
             {
@@ -475,7 +475,7 @@ export function DashboardPage() {
               detail: `输入: ${formatCompactNumber(stationUsage.todayInputTokenCount)} / 输出: ${formatCompactNumber(stationUsage.todayOutputTokenCount)}`,
               icon: BarChart3,
               tone: stationUsage.todayTokenCount > 0 ? "good" : "neutral",
-              valueClassName: "text-slate-900",
+              valueClassName: "text-foreground",
               accent: "amber",
             },
             {
@@ -484,7 +484,7 @@ export function DashboardPage() {
               detail: `输入: ${formatCompactNumber(stationUsage.totalInputTokenCount)} / 输出: ${formatCompactNumber(stationUsage.totalOutputTokenCount)}`,
               icon: Server,
               tone: stationUsage.totalTokenCount > 0 ? "good" : "neutral",
-              valueClassName: "text-slate-900",
+              valueClassName: "text-foreground",
               accent: "indigo",
             },
           ]}
@@ -493,7 +493,7 @@ export function DashboardPage() {
 
       <section className="grid min-w-0 gap-3">
         <header className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="truncate text-[13px] font-semibold text-slate-800">
+          <h2 className="truncate text-[13px] font-semibold text-foreground">
             当前风险
           </h2>
           <StatusBadge tone={unreadRisks > 0 ? "warning" : "healthy"}>
@@ -531,7 +531,7 @@ export function DashboardPage() {
           />
         </div>
         {activeRiskEvents.length === 0 ? (
-          <div className="rounded-[8px] bg-slate-50/60 px-3 py-2.5 text-sm text-muted-foreground">
+          <div className="rounded-[8px] bg-surface-subtle px-3 py-2.5 text-sm text-muted-foreground">
             当前没有未解决的严重或警告变更。
           </div>
         ) : (
@@ -552,17 +552,17 @@ export function DashboardPage() {
       </section>
 
       <section className="grid gap-3">
-        <h2 className="truncate text-[13px] font-semibold text-slate-800">
+        <h2 className="truncate text-[13px] font-semibold text-foreground">
           路由队列
         </h2>
         <div className="grid gap-3">
           {dashboardLoaded && keyPoolItems.length === 0 ? (
-            <div className="flex min-h-[164px] flex-col items-center justify-center rounded-[8px] border border-border bg-white px-4 py-8 text-center shadow-[var(--surface-shadow)]">
-              <div className="flex h-16 w-16 items-center justify-center rounded-[16px] bg-slate-100 text-slate-300">
+            <div className="flex min-h-[164px] flex-col items-center justify-center rounded-[8px] border border-border bg-surface px-4 py-8 text-center shadow-[var(--surface-shadow)]">
+              <div className="flex h-16 w-16 items-center justify-center rounded-[16px] bg-muted text-muted-foreground/45">
                 <Inbox className="h-7 w-7" strokeWidth={1.75} />
               </div>
-              <div className="mt-4 text-sm font-medium text-slate-800">暂无路由队列</div>
-              <p className="mt-2 text-sm text-slate-500">
+              <div className="mt-4 text-sm font-medium text-foreground">暂无路由队列</div>
+              <p className="mt-2 text-sm text-muted-foreground">
                 添加或导入 Key 后，可用路由将显示在这里。
               </p>
             </div>
@@ -594,17 +594,17 @@ export function DashboardPage() {
 
       <div className="grid min-h-0 gap-3">
         <section className="grid gap-3">
-          <h2 className="truncate text-[13px] font-semibold text-slate-800">
+          <h2 className="truncate text-[13px] font-semibold text-foreground">
             最近使用
           </h2>
           <div className="grid gap-3">
             {dashboardLoaded && requestLogs.length === 0 ? (
-              <div className="flex min-h-[260px] flex-col items-center justify-center rounded-[8px] border border-border bg-white px-4 py-10 text-center shadow-[var(--surface-shadow)]">
-                <div className="flex h-20 w-20 items-center justify-center rounded-[16px] bg-slate-100 text-slate-300">
+              <div className="flex min-h-[260px] flex-col items-center justify-center rounded-[8px] border border-border bg-surface px-4 py-10 text-center shadow-[var(--surface-shadow)]">
+                <div className="flex h-20 w-20 items-center justify-center rounded-[16px] bg-muted text-muted-foreground/45">
                   <Inbox className="h-8 w-8" strokeWidth={1.75} />
                 </div>
-                <div className="mt-5 text-base font-medium text-slate-800">暂无使用记录</div>
-                <p className="mt-2 text-sm text-slate-500">
+                <div className="mt-5 text-base font-medium text-foreground">暂无使用记录</div>
+                <p className="mt-2 text-sm text-muted-foreground">
                   开始使用 API 后，您的使用历史将显示在这里。
                 </p>
               </div>
@@ -617,27 +617,27 @@ export function DashboardPage() {
                 return (
               <div
                 key={request.id}
-                className="grid min-h-[72px] grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3 rounded-[8px] bg-slate-50 px-4 py-3"
+                className="grid min-h-[72px] grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3 rounded-[8px] bg-surface-subtle px-4 py-3"
               >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-teal-100 text-teal-700">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-info-surface text-info-foreground">
                   <FlaskConical className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-baseline gap-2">
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900">
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                       {request.model ?? request.path}
                     </span>
-                    <span className="max-w-[45%] shrink truncate text-xs text-slate-500">
+                    <span className="max-w-[45%] shrink truncate text-xs text-muted-foreground">
                       Key：{requestKeyName}
                     </span>
                   </div>
-                  <div className="mt-0.5 truncate text-xs text-slate-500">
+                  <div className="mt-0.5 truncate text-xs text-muted-foreground">
                     {formatDateTime(request.startedAt)}
                   </div>
                 </div>
                 <div className="min-w-[118px] text-right">
-                  <div className="whitespace-nowrap text-sm font-semibold text-slate-400">
-                    <span className="text-emerald-600">
+                  <div className="whitespace-nowrap text-sm font-semibold text-muted-foreground/70">
+                    <span className="text-success-foreground">
                       {formatRecentRequestCost(request.estimatedTotalCost, request.costCurrency, request.costStatus)}
                     </span>
                     <span className="mx-1">/</span>
@@ -645,7 +645,7 @@ export function DashboardPage() {
                       {formatRecentRequestCost(requestBaseCostValue(request), request.costCurrency, request.costStatus)}
                     </span>
                   </div>
-                  <div className="mt-0.5 whitespace-nowrap text-xs text-slate-500">
+                  <div className="mt-0.5 whitespace-nowrap text-xs text-muted-foreground">
                     {formatTokenCount(request.totalTokens)} tokens
                   </div>
                 </div>
@@ -657,7 +657,7 @@ export function DashboardPage() {
         </section>
 
         <section className="grid gap-3">
-          <h2 className="truncate text-[13px] font-semibold text-slate-800">
+          <h2 className="truncate text-[13px] font-semibold text-foreground">
             秘钥健康
           </h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -700,7 +700,7 @@ function DashboardMetricTile({
   tone?: MetricTone;
 }) {
   return (
-    <div className="flex min-h-[96px] min-w-0 items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_8px_rgba(15,23,42,0.08)]">
+    <div className="flex min-h-[96px] min-w-0 items-center gap-3 rounded-[12px] border border-border bg-surface px-4 py-3 shadow-surface">
       <div
         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] ${dashboardMetricIconClassName[tone]} ${dashboardMetricToneClassName[tone]}`}
       >
@@ -784,12 +784,12 @@ function DashboardCostTotals({ totals, compact = false }: { totals: DashboardCos
       const prefix = symbol || `${total.currency} `;
         return (
           <span key={total.currency}>
-            {index > 0 ? <span className="text-slate-400"> · </span> : null}
-            <span className={compact ? "text-purple-600" : undefined} title="实际花费">
+            {index > 0 ? <span className="text-muted-foreground/70"> · </span> : null}
+            <span className={compact ? "text-platform-image-foreground" : undefined} title="实际花费">
               {prefix}{total.totalCost.toFixed(4)}
             </span>
             <span
-              className={compact ? "font-normal text-slate-400" : "text-sm font-normal text-slate-400"}
+              className={compact ? "font-normal text-muted-foreground/70" : "text-sm font-normal text-muted-foreground/70"}
               title="1倍率 Token 花费"
             >
               {` / ${prefix}${total.baseTotalCost.toFixed(4)}`}

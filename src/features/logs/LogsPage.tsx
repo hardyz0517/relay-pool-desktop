@@ -138,7 +138,7 @@ export function LogsPage() {
         <div className="min-w-0">
           <div
             data-testid="request-log-toolbar-surface"
-            className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]"
+            className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]"
           >
             <Toolbar>
               <SegmentedControl
@@ -164,9 +164,9 @@ export function LogsPage() {
           </div>
           <div
             data-testid="request-log-table-surface"
-            className="mt-3 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]"
+            className="mt-3 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]"
           >
-            {error && <div className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+            {error && <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{error}</div>}
             {filteredLogs.length === 0 ? (
               <EmptyState
                 title={loading ? "正在读取使用记录" : "暂无使用记录"}
@@ -201,7 +201,7 @@ export function LogsPage() {
           >
             {selected ? (
               <div className="space-y-4 p-4">
-                <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white">
+                <PropertyList className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface">
                   <PropertyRow label="请求时间" value={formatLogTime(selected.startedAt)} />
                   <PropertyRow label="接口" value={`${selected.method} ${selected.path}`} />
                   <PropertyRow label="模型" value={selected.model ?? "未识别"} />
@@ -269,12 +269,12 @@ function RejectedCandidateList({ json }: { json: string | null }) {
     return null;
   }
   return (
-    <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3">
-      <div className="text-xs font-semibold text-slate-700">拒绝候选原因</div>
+    <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3">
+      <div className="text-xs font-semibold text-foreground">拒绝候选原因</div>
       <div className="mt-2 grid gap-2">
         {candidates.map((candidate, index) => (
-          <div key={`${candidate.stationKeyId ?? "candidate"}-${index}`} className="rounded-lg border border-slate-100 bg-slate-50/70 p-2 text-xs leading-5 text-muted-foreground">
-            <div className="font-medium text-slate-700">
+          <div key={`${candidate.stationKeyId ?? "candidate"}-${index}`} className="rounded-lg border border-border bg-surface-subtle p-2 text-xs leading-5 text-muted-foreground">
+            <div className="font-medium text-foreground">
               {candidate.keyName ?? candidate.stationKeyId ?? "未知密钥"}
               {candidate.stationName ? ` · ${candidate.stationName}` : ""}
             </div>
@@ -302,9 +302,9 @@ function EconomicContextPreview({ json }: { json: string | null }) {
     return null;
   }
   return (
-    <div className="rounded-[var(--surface-radius)] border border-border bg-white p-3">
-      <div className="text-xs font-semibold text-slate-700">经济上下文</div>
-      <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-slate-50 p-2 text-xs leading-5 text-slate-600">
+    <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3">
+      <div className="text-xs font-semibold text-foreground">经济上下文</div>
+      <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-surface-subtle p-2 text-xs leading-5 text-muted-foreground">
         {formatJson(json)}
       </pre>
     </div>
