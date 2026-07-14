@@ -80,6 +80,16 @@ assert.ok(concurrencyCard, "Sub2API station should show account concurrency card
 assert.equal(concurrencyCard.value, "5 路");
 assert.match(concurrencyCard.helper, /Sub2API/);
 
+const pendingSnapshot = { ...snapshot, id: "balance-pending", accountConcurrencyLimit: null };
+const pendingSub2apiCards = buildBalanceCards({ id: "station-a", stationType: "sub2api" }, [pendingSnapshot]);
+const pendingConcurrencyCard = pendingSub2apiCards.find((card) => card.label === "并发限制");
+
+assert.ok(
+  pendingConcurrencyCard,
+  "Sub2API station should keep the account concurrency card visible before the limit is collected",
+);
+assert.equal(pendingConcurrencyCard.value, "未采集");
+
 const newapiCards = buildBalanceCards({ id: "station-a", stationType: "newapi" }, [snapshot]);
 assert.ok(
   !newapiCards.some((card) => card.label === "并发限制"),

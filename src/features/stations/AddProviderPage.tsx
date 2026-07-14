@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { ArrowLeft, Check, KeyRound, Plus, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Check, KeyRound, LogIn, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
-import { collectStationTask, testStationLoginInput } from "@/lib/api/collector";
+import { collectStationTask, startManualAuthorization, testStationLoginInput } from "@/lib/api/collector";
 import { listGroupRateRecords, listStationGroupBindings, upsertStationGroupBinding } from "@/lib/api/groupFacts";
 import {
   bindRemoteStationKey,
@@ -804,6 +804,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   const [loading, setLoading] = useState(Boolean(stationId));
   const [saving, setSaving] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
+  const [startingAuthorization, setStartingAuthorization] = useState(false);
   const [connectionTest, setConnectionTest] = useState<ConnectionTestState>({
     status: "idle",
     message: null,
@@ -1248,6 +1249,26 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     }
   }
 
+  async function handleStartManualAuthorization() {
+    if (!activeStationId) {
+      toast.info("请先保存供应商后再打开网页登录授权");
+      return;
+    }
+
+    setStartingAuthorization(true);
+    setError(null);
+    try {
+      await startManualAuthorization(activeStationId);
+      toast.success("已打开网页登录授权窗口", "请在弹窗中完成登录，授权成功后会自动写回会话。");
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      toast.error("打开网页登录授权失败", message);
+    } finally {
+      setStartingAuthorization(false);
+    }
+  }
+
   async function handleScanRemoteKeys() {
     setRemoteLoading(true);
     setError(null);
@@ -1554,7 +1575,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                   />
                 </Field>
               </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
                 <Field label="前端网址">
                   <input
                     className={inputClassName}
@@ -1577,10 +1598,9 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                     placeholder="https://api.example.com/v1"
                   />
                 </Field>
-              </div>
-              <div className="mt-2 flex justify-end">
                 <Button
                   variant="outline"
+                  className="whitespace-nowrap px-2.5"
                   onClick={() =>
                     setForm((current) => ({
                       ...current,
@@ -1591,7 +1611,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                   复制前端网址
                 </Button>
               </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+              <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] md:items-end">
                 <Field label="登录用户名 / 邮箱">
                   <input
                     className={inputClassName}
@@ -1627,6 +1647,16 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
                   <ShieldCheck className="h-4 w-4" />
                   {testingConnection ? "测试中" : "测试连通性"}
                 </Button>
+                {editing && (
+                  <Button
+                    variant="outline"
+                    onClick={handleStartManualAuthorization}
+                    disabled={saving || loading || startingAuthorization}
+                  >
+                    <LogIn className="h-4 w-4" />
+                    {startingAuthorization ? "打开中" : "网页登录授权"}
+                  </Button>
+                )}
               </div>
               {connectionTest.message && (
                 <div

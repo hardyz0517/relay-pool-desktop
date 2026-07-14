@@ -213,19 +213,18 @@ export function buildBalanceCards(station: Station, balances: BalanceSnapshot[])
     },
   ];
 
-  if (
-    station.stationType === "sub2api" &&
-    typeof accountConcurrencyLimit === "number" &&
-    Number.isFinite(accountConcurrencyLimit) &&
-    accountConcurrencyLimit > 0
-  ) {
+  if (station.stationType === "sub2api") {
+    const hasConcurrencyLimit =
+      typeof accountConcurrencyLimit === "number" &&
+      Number.isFinite(accountConcurrencyLimit) &&
+      accountConcurrencyLimit > 0;
     cards.push({
       label: "并发限制",
-      value: `${accountConcurrencyLimit} 路`,
-      helper: currentBalance.collectedAt
+      value: hasConcurrencyLimit ? `${accountConcurrencyLimit} 路` : "未采集",
+      helper: hasConcurrencyLimit && currentBalance.collectedAt
         ? `来自 Sub2API 账号资料页：${formatDetailDate(currentBalance.collectedAt)}`
-        : "来自 Sub2API 账号资料页",
-      tone: "neutral",
+        : "等待 Sub2API 账号资料页采集",
+      tone: hasConcurrencyLimit ? "neutral" : "muted",
     });
   }
 
@@ -508,7 +507,7 @@ function formatUsageCount(value: number | null | undefined) {
 
 function formatUsageTokenCount(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) {
-    return "未采集";
+    return "-";
   }
   const absValue = Math.abs(value);
   if (absValue >= 1_000_000_000) {

@@ -86,3 +86,33 @@ assert.equal(totalToken.value, "1B");
 assert.equal(totalToken.helper, "输入: 93.9M / 输出: 5.8M");
 assert.ok(!String(totalToken.value).includes(","));
 assert.ok(!totalToken.helper.includes("93,859,016"));
+
+const missingTokenCards = buildUsageCards(station, [
+  {
+    id: "balance-missing-token",
+    stationId: "station-a",
+    scope: "station",
+    todayRequestCount: 1049,
+    totalRequestCount: 16038,
+    todayConsumption: 4.5767,
+    totalConsumption: 42.228,
+    todayTokenCount: null,
+    todayInputTokenCount: null,
+    todayOutputTokenCount: null,
+    totalTokenCount: null,
+    totalInputTokenCount: null,
+    totalOutputTokenCount: null,
+    status: "normal",
+    source: "newapi_user_self",
+    updatedAt: "2000",
+    collectedAt: "2000",
+  },
+]);
+
+const missingTodayToken = missingTokenCards.find((card) => card.label === "今日 Token");
+const missingTotalToken = missingTokenCards.find((card) => card.label === "累计 Token");
+
+assert.equal(missingTodayToken.value, "-");
+assert.equal(missingTodayToken.helper, "输入: - / 输出: -");
+assert.equal(missingTotalToken.value, "-");
+assert.equal(missingTotalToken.helper, "输入: - / 输出: -");

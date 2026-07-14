@@ -86,6 +86,29 @@ const usageCardVisualMeta = {
   },
 } satisfies Record<string, { Icon: LucideIcon; iconClassName: string; valueClassName: string }>;
 
+const balanceCardVisualMeta = {
+  current: {
+    Icon: WalletCards,
+    iconClassName: "bg-success-surface text-success-foreground",
+    valueClassName: "text-success-foreground",
+  },
+  threshold: {
+    Icon: AlertTriangle,
+    iconClassName: "bg-warning-surface text-warning-foreground",
+    valueClassName: "text-warning-foreground",
+  },
+  updatedAt: {
+    Icon: Clock3,
+    iconClassName: "bg-surface-subtle text-muted-foreground",
+    valueClassName: "text-foreground",
+  },
+  concurrency: {
+    Icon: Activity,
+    iconClassName: "bg-platform-gemini-surface text-platform-gemini-foreground",
+    valueClassName: "text-platform-gemini-foreground",
+  },
+} satisfies Record<string, { Icon: LucideIcon; iconClassName: string; valueClassName: string }>;
+
 export function StationDetailContent({
   viewModel,
   loadingAction,
@@ -187,22 +210,32 @@ export function StationDetailContent({
           <WalletCards className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold text-foreground">余额</h2>
         </div>
-        <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
-          {viewModel.balanceCards.map((card) => (
-            <div
-              key={card.label}
-              className={cn(
-                "min-h-[84px] rounded-[var(--surface-radius)] border px-3 py-2.5",
-                surfaceToneClassName[card.tone],
-              )}
-            >
-              <div className="text-xs text-muted-foreground">{card.label}</div>
-              <div className={cn("mt-1 truncate text-lg font-semibold", textToneClassName[card.tone])}>
-                {card.value}
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 p-4">
+          {viewModel.balanceCards.map((card) => {
+            const visual = balanceCardVisualFor(card.label);
+            return (
+              <div
+                key={card.label}
+                className="flex min-h-[96px] items-center gap-3 rounded-[12px] border border-border bg-surface px-4 py-3 shadow-surface"
+              >
+                <div
+                  className={cn(
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px]",
+                    visual.iconClassName,
+                  )}
+                >
+                  <visual.Icon className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs text-muted-foreground">{card.label}</div>
+                  <div className={cn("mt-0.5 truncate text-[22px] font-semibold leading-7", visual.valueClassName)}>
+                    {card.value}
+                  </div>
+                  <div className="mt-0.5 truncate text-xs text-muted-foreground">{card.helper}</div>
+                </div>
               </div>
-              <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{card.helper}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -346,6 +379,19 @@ function usageCardVisualFor(label: string) {
     return usageCardVisualMeta.totalToken;
   }
   return usageCardVisualMeta.request;
+}
+
+function balanceCardVisualFor(label: string) {
+  if (label.includes("并发")) {
+    return balanceCardVisualMeta.concurrency;
+  }
+  if (label.includes("阈值") || label.includes("低余额")) {
+    return balanceCardVisualMeta.threshold;
+  }
+  if (label.includes("更新") || label.includes("时间")) {
+    return balanceCardVisualMeta.updatedAt;
+  }
+  return balanceCardVisualMeta.current;
 }
 
 function TableHead({

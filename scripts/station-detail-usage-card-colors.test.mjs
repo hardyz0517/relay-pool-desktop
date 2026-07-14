@@ -13,11 +13,11 @@ assert.ok(
 );
 
 assert.ok(
-  source.includes("bg-green-100 text-green-700") &&
-    source.includes("bg-purple-100 text-purple-700") &&
-    source.includes("bg-amber-100 text-amber-700") &&
-    source.includes("bg-indigo-100 text-indigo-700"),
-  "station detail usage cards should mirror dashboard metric accent colors",
+  source.includes("bg-success-surface text-success-foreground") &&
+    source.includes("bg-platform-image-surface text-platform-image-foreground") &&
+    source.includes("bg-warning-surface text-warning-foreground") &&
+    source.includes("bg-platform-gemini-surface text-platform-gemini-foreground"),
+  "station detail usage cards should mirror dashboard metric semantic accents",
 );
 
 assert.ok(
