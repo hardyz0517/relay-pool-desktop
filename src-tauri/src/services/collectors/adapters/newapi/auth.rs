@@ -2,12 +2,8 @@ use serde_json::{json, Value};
 
 use crate::models::{credentials::PersistStationSessionInput, stations::Station};
 use crate::services::{
-    collectors::{
-        adapters::newapi::parsers,
-        url::{collector_base_urls, join_url},
-    },
-    database::AppDatabase,
-    secrets::mask::redact_text,
+    collectors::adapters::newapi::parsers, database::AppDatabase, secrets::mask::redact_text,
+    station_endpoints::build_management_url,
 };
 
 const LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
@@ -116,20 +112,19 @@ pub(crate) fn login_with_password(
 }
 
 pub(crate) fn test_login_credentials(
-    base_url: &str,
+    website_url: &str,
     login_username: &str,
     login_password: &str,
 ) -> Result<NewApiLoginProbeOutcome, String> {
-    request_password_login(base_url, login_username, login_password).map(|login| login.outcome)
+    request_password_login(website_url, login_username, login_password).map(|login| login.outcome)
 }
 
 fn request_password_login(
-    base_url: &str,
+    website_url: &str,
     login_username: &str,
     login_password: &str,
 ) -> Result<NewApiPasswordLogin, String> {
-    let urls = collector_base_urls(base_url);
-    let url = join_url(&urls.management_base_url, "/api/user/login");
+    let url = build_management_url(website_url, "/api/user/login")?;
     let response = match ureq::post(&url)
         .timeout(LOGIN_TIMEOUT)
         .set("Content-Type", "application/json")

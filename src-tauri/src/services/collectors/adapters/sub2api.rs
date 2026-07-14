@@ -22,11 +22,11 @@ use crate::{
                 AdapterOutput, CollectorTask, CreatedRemoteKey,
             },
             facts::{CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts},
-            url::join_url,
         },
         database::AppDatabase,
         group_categories::infer_group_category,
         outbound::{resolve_proxy_config, ProxyConfig},
+        station_endpoints::{build_api_url, build_management_url},
     },
 };
 
@@ -497,7 +497,7 @@ pub fn scan_remote_keys(
     let station = database.station_for_collector(station_id)?;
     let proxy = effective_station_proxy(database, &station)?;
     let access_token = resolve_sub2api_access_token(database, data_key, &station)?;
-    let url = join_url(&station.website_url, "/api/v1/keys?page=1&page_size=100");
+    let url = build_management_url(&station.website_url, "/api/v1/keys?page=1&page_size=100")?;
     let result = fetch_json_with_bearer(&url, &access_token, &proxy);
     let payload = result.payload.unwrap_or(Value::Null);
     if !result.ok {
@@ -518,7 +518,7 @@ pub fn scan_remote_key_full_secret(
     let station = database.station_for_collector(station_id)?;
     let proxy = effective_station_proxy(database, &station)?;
     let access_token = resolve_sub2api_access_token(database, data_key, &station)?;
-    let url = join_url(&station.website_url, "/api/v1/keys?page=1&page_size=100");
+    let url = build_management_url(&station.website_url, "/api/v1/keys?page=1&page_size=100")?;
     let result = fetch_json_with_bearer(&url, &access_token, &proxy);
     let payload = result.payload.unwrap_or(Value::Null);
     if !result.ok {
@@ -552,7 +552,7 @@ pub fn create_remote_key(
     let station = database.station_for_collector(&input.station_id)?;
     let proxy = effective_station_proxy(database, &station)?;
     let access_token = resolve_sub2api_access_token(database, data_key, &station)?;
-    let url = join_url(&station.website_url, "/api/v1/keys");
+    let url = build_management_url(&station.website_url, "/api/v1/keys")?;
     let mut body = json!({
         "name": input.name,
     });
@@ -985,8 +985,8 @@ pub fn collect_groups(
         },
     };
 
-    let available_url = join_url(&station.website_url, "/api/v1/groups/available");
-    let rates_url = join_url(&station.website_url, "/api/v1/groups/rates");
+    let available_url = build_management_url(&station.website_url, "/api/v1/groups/available")?;
+    let rates_url = build_management_url(&station.website_url, "/api/v1/groups/rates")?;
     let policy = collector_request_policy();
     let budget = CollectionAttemptBudget::new(policy.task_budget);
     let mut auth_refresh_started = false;
@@ -1497,7 +1497,7 @@ pub fn collect_balance(
     let station = database.station_for_collector(station_id)?;
     let proxy = effective_station_proxy(database, &station)?;
     let keys = routeable_keys_for_station(database, station_id)?;
-    let url = join_url(&station.api_base_url, "/usage");
+    let url = build_api_url(&station.api_base_url, "/v1/usage")?;
     let mut facts = CollectorFacts::default();
     let mut endpoint_results = Vec::new();
     let policy = collector_request_policy();
@@ -1669,7 +1669,7 @@ fn collect_account_balance_fallback(
             .flatten()
     };
     for path in ["/api/v1/user/profile", "/api/v1/auth/me"] {
-        let url = join_url(&station.website_url, path);
+        let url = build_management_url(&station.website_url, path)?;
         let mut request = |token: &String, timeout: std::time::Duration| {
             fetch_recoverable_json_with_bearer(&url, token, timeout, proxy)
         };
@@ -1775,7 +1775,7 @@ fn collect_dashboard_usage_stats(
     };
 
     let path = "/api/v1/usage/dashboard/stats";
-    let url = join_url(&station.website_url, path);
+    let url = build_management_url(&station.website_url, path)?;
     let mut auth_refresh_started = false;
     let mut auth_refresh = |_: &String, remaining: std::time::Duration| {
         if auth_refresh_started {

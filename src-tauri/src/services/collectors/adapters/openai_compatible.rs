@@ -4,10 +4,10 @@ use crate::services::{
     collectors::{
         adapters::{AdapterOutput, CollectorTask},
         facts::{CollectedModelFact, CollectorFacts},
-        url::join_url,
     },
     database::AppDatabase,
     outbound::{agent_builder_for_proxy, resolve_proxy_config},
+    station_endpoints::build_api_url,
 };
 
 const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
@@ -82,7 +82,7 @@ pub fn collect_models(
         }
     };
 
-    let url = join_url(&station.api_base_url, "/models");
+    let url = build_api_url(&station.api_base_url, "/v1/models")?;
     let settings = database.get_settings()?;
     let proxy = resolve_proxy_config(
         &station.collector_proxy_mode,

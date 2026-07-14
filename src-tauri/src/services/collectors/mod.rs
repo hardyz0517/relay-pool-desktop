@@ -3,7 +3,6 @@ pub mod apply;
 pub mod facts;
 pub mod session;
 pub mod sub2api;
-pub mod url;
 
 use serde_json::{json, Value};
 

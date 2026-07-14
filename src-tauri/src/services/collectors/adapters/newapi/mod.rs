@@ -16,10 +16,10 @@ use crate::services::{
     collectors::{
         adapters::{AdapterOutput, CollectorTask, CreatedRemoteKey},
         facts::{CollectedBalanceFact, CollectorFacts},
-        url::join_url,
     },
     database::AppDatabase,
     outbound::{agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
+    station_endpoints::build_management_url,
 };
 
 const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
@@ -1127,7 +1127,7 @@ fn fetch_status(
         &settings.collector_proxy_mode,
         settings.collector_proxy_url,
     );
-    let url = join_url(&station.website_url, "/api/status");
+    let url = build_management_url(&station.website_url, "/api/status")?;
     let mut endpoint_results = Vec::new();
     let payload = get_newapi_public_json(&url, &proxy, &mut endpoint_results)?;
     let data = parsers::envelope_data(&payload).unwrap_or(&payload);

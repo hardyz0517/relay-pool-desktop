@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::services::collectors::url::join_url;
+use crate::services::station_endpoints::build_management_url;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VerifiedWebAuthorizationSession {
@@ -62,7 +62,7 @@ pub(crate) fn verify_newapi_cookie_session(
         return Err("Web authorization did not capture a usable Cookie header.".to_string());
     }
 
-    let url = join_url(management_base_url, "/api/user/self");
+    let url = build_management_url(management_base_url, "/api/user/self")?;
     let started = Instant::now();
     let response = match ureq::get(&url)
         .timeout(timeout)

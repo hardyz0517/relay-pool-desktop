@@ -102,9 +102,11 @@ fn normalize_endpoint_url(
 }
 
 fn append_resource(base: &str, resource: &str) -> Result<String, String> {
-    if !is_valid_resource_path(resource) {
+    let (resource_path, resource_query) = split_resource_query(resource)?;
+    if !is_valid_resource_path(resource_path) {
         return Err("资源路径无效".to_string());
     }
+    let preserve_trailing_path_slash = resource_path.ends_with('/');
 
     let normalized = normalize_endpoint_url(base, "基础网址", false)?;
     let mut url = Url::parse(&normalized).map_err(|error| format!("基础网址无效: {error}"))?;
@@ -112,11 +114,35 @@ fn append_resource(base: &str, resource: &str) -> Result<String, String> {
         let mut segments = url
             .path_segments_mut()
             .map_err(|_| "基础网址无法追加资源路径".to_string())?;
-        for segment in resource.split('/').filter(|segment| !segment.is_empty()) {
+        for segment in resource_path
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+        {
             segments.push(segment);
         }
     }
-    normalized_url_string(url)
+    if preserve_trailing_path_slash && !url.path().ends_with('/') {
+        let mut path = url.path().to_string();
+        path.push('/');
+        url.set_path(&path);
+    }
+    url.set_query(resource_query);
+    let mut value = normalized_url_string(url)?;
+    if preserve_trailing_path_slash && resource_query.is_none() && !value.ends_with('/') {
+        value.push('/');
+    }
+    Ok(value)
+}
+
+fn split_resource_query(resource: &str) -> Result<(&str, Option<&str>), String> {
+    if resource.contains('#') {
+        return Err("资源路径无效".to_string());
+    }
+    let (path, query) = match resource.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (resource, None),
+    };
+    Ok((path, query))
 }
 
 fn is_valid_resource_path(resource: &str) -> bool {
@@ -190,6 +216,14 @@ mod tests {
             "https://relay.example/api/user/self"
         );
         assert_eq!(
+            build_management_url(
+                "https://relay.example/console",
+                "/api/token/?p=1&page_size=100",
+            )
+            .unwrap(),
+            "https://relay.example/console/api/token/?p=1&page_size=100"
+        );
+        assert_eq!(
             build_api_url("https://relay.example/v1", "/v1/responses").unwrap(),
             "https://relay.example/v1/responses"
         );
@@ -201,6 +235,23 @@ mod tests {
             build_api_url("https://relay.example/proxy/v1", "/v1/models").unwrap(),
             "https://relay.example/proxy/v1/models"
         );
+    }
+
+    #[test]
+    fn dual_origin_builders_keep_management_and_api_namespaces_disjoint() {
+        let management = build_management_url(
+            "https://console.example/app",
+            "/api/token/?p=1&page_size=100",
+        )
+        .unwrap();
+        let api = build_api_url("https://api.example/provider/api/v3", "/v1/usage").unwrap();
+
+        assert_eq!(
+            management,
+            "https://console.example/app/api/token/?p=1&page_size=100"
+        );
+        assert_eq!(api, "https://api.example/provider/api/v3/usage");
+        assert!(!same_origin(&management, &api).unwrap());
     }
 
     #[test]

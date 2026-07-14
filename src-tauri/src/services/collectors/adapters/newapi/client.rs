@@ -4,13 +4,11 @@ use serde_json::{json, Value};
 
 use crate::models::{credentials::StationSessionCredentialKind, stations::Station};
 use crate::services::{
-    collectors::{
-        adapters::newapi::{auth, parsers},
-        url::join_url,
-    },
+    collectors::adapters::newapi::{auth, parsers},
     database::AppDatabase,
     outbound::{agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
     secrets::mask::redact_text,
+    station_endpoints::build_management_url,
 };
 
 pub(super) const NEWAPI_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -256,7 +254,7 @@ fn execute_json_with_auth_context(
     body: Option<Value>,
     timeout: Duration,
 ) -> Result<NewApiResponse, NewApiRequestError> {
-    let url = join_url(base_url, path);
+    let url = build_management_url(base_url, path).map_err(permanent_error)?;
     let mut attempt = 0;
     loop {
         let started = Instant::now();
