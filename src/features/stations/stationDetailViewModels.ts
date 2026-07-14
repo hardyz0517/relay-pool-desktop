@@ -189,6 +189,7 @@ export function buildBalanceCards(station: Station, balances: BalanceSnapshot[])
   const threshold = currentBalance.lowBalanceThreshold;
   const balanceTone = balanceToneFor(currentValue, threshold, currentBalance.status);
   const accountConcurrencyLimit = currentBalance.sourceSnapshot?.accountConcurrencyLimit;
+  const balanceSnapshotTime = currentBalance.collectedAt ?? currentBalance.updatedAt;
 
   const cards: StationDetailBalanceCard[] = [
     {
@@ -206,8 +207,8 @@ export function buildBalanceCards(station: Station, balances: BalanceSnapshot[])
     {
       label: "余额更新时间",
       value: formatDetailDate(currentBalance.updatedAt),
-      helper: currentBalance.collectedAt
-        ? `采集时间：${formatDetailDate(currentBalance.collectedAt)}`
+      helper: balanceSnapshotTime
+        ? `快照写入：${formatDetailDate(balanceSnapshotTime)}`
         : "等待采集器写入余额快照",
       tone: currentBalance.source !== "missing" ? "neutral" : "muted",
     },
@@ -221,8 +222,8 @@ export function buildBalanceCards(station: Station, balances: BalanceSnapshot[])
     cards.push({
       label: "并发限制",
       value: hasConcurrencyLimit ? `${accountConcurrencyLimit} 路` : "未采集",
-      helper: hasConcurrencyLimit && currentBalance.collectedAt
-        ? `来自 Sub2API 账号资料页：${formatDetailDate(currentBalance.collectedAt)}`
+      helper: hasConcurrencyLimit && balanceSnapshotTime
+        ? `来自 Sub2API 账号资料页：${formatDetailDate(balanceSnapshotTime)}`
         : "等待 Sub2API 账号资料页采集",
       tone: hasConcurrencyLimit ? "neutral" : "muted",
     });

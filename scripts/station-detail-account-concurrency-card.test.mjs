@@ -80,6 +80,24 @@ assert.ok(concurrencyCard, "Sub2API station should show account concurrency card
 assert.equal(concurrencyCard.value, "5 路");
 assert.match(concurrencyCard.helper, /Sub2API/);
 
+const updatedOnlySnapshot = { ...snapshot, id: "balance-updated-only", collectedAt: null };
+const updatedOnlyCards = buildBalanceCards({ id: "station-a", stationType: "sub2api" }, [updatedOnlySnapshot]);
+const updatedOnlyBalanceTimeCard = updatedOnlyCards.find((card) => card.label === "余额更新时间");
+const updatedOnlyConcurrencyCard = updatedOnlyCards.find((card) => card.label === "并发限制");
+
+assert.ok(updatedOnlyBalanceTimeCard, "balance update card should exist when a snapshot has been written");
+assert.doesNotMatch(
+  updatedOnlyBalanceTimeCard.helper,
+  /等待/,
+  "balance update helper should not say it is waiting after the snapshot has an updated time",
+);
+assert.ok(updatedOnlyConcurrencyCard, "concurrency card should exist when a Sub2API snapshot has been written");
+assert.doesNotMatch(
+  updatedOnlyConcurrencyCard.helper,
+  /等待/,
+  "concurrency helper should not say it is waiting after the concurrency value has been collected",
+);
+
 const pendingSnapshot = { ...snapshot, id: "balance-pending", accountConcurrencyLimit: null };
 const pendingSub2apiCards = buildBalanceCards({ id: "station-a", stationType: "sub2api" }, [pendingSnapshot]);
 const pendingConcurrencyCard = pendingSub2apiCards.find((card) => card.label === "并发限制");
