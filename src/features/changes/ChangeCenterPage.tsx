@@ -242,6 +242,7 @@ export function ChangeCenterPage() {
                       key={event.id}
                       event={event}
                       stationNamesById={stationNamesById}
+                      deferStationIdentifierFallback={stationsQuery.isPending && stationsQuery.data === undefined}
                     />
                   ))}
                 </div>
@@ -320,11 +321,16 @@ export function ChangeCenterPage() {
 function ChangeEventRow({
   event,
   stationNamesById,
+  deferStationIdentifierFallback,
 }: {
   event: ChangeEvent;
   stationNamesById: Map<string, string>;
+  deferStationIdentifierFallback: boolean;
 }) {
-  const item = buildChangeEventListItem(event, { stationNamesById });
+  const item = buildChangeEventListItem(event, {
+    stationNamesById,
+    deferStationIdentifierFallback,
+  });
   return (
     <div className="grid min-h-[48px] w-full grid-cols-[56px_minmax(0,1fr)_88px] items-center gap-3 bg-white px-3 py-2 text-left">
       <div className="flex flex-col items-start gap-1">

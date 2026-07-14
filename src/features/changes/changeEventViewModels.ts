@@ -89,6 +89,7 @@ export type ChangeEventListItem = {
 
 export type ChangeEventListOptions = {
   stationNamesById?: Map<string, string> | Record<string, string>;
+  deferStationIdentifierFallback?: boolean;
 };
 
 export function filterChangeEvents(events: ChangeEvent[], filter: ChangeFilter, options: ChangeEventListOptions = {}) {
@@ -478,7 +479,8 @@ function formatStationSubject(
   impact: Record<string, unknown> | null,
   options: ChangeEventListOptions,
 ) {
-  return `中转站 ${resolveStationLabel(event, oldValue, newValue, impact, options)}`;
+  const stationLabel = resolveStationLabel(event, oldValue, newValue, impact, options);
+  return stationLabel ? `中转站 ${stationLabel}` : "中转站";
 }
 
 function resolveStationLabel(
@@ -494,8 +496,9 @@ function resolveStationLabel(
     readStationName(oldValue) ??
     readStationName(impact) ??
     extractStationName(event.message) ??
-    shortenIdentifier(event.stationId ?? (event.objectType === "station" ? event.objectId : null)) ??
-    "未知"
+    (options.deferStationIdentifierFallback
+      ? null
+      : shortenIdentifier(event.stationId ?? (event.objectType === "station" ? event.objectId : null)) ?? "未知")
   );
 }
 
