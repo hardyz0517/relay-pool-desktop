@@ -6,7 +6,7 @@ use crate::services::{
         facts::{CollectedModelFact, CollectorFacts},
     },
     database::AppDatabase,
-    outbound::{agent_builder_for_proxy, resolve_proxy_config},
+    outbound::{credential_agent_builder_for_proxy, resolve_proxy_config},
     station_endpoints::build_api_url,
 };
 
@@ -91,7 +91,7 @@ pub fn collect_models(
         settings.collector_proxy_url,
     );
     let started = std::time::Instant::now();
-    let agent = match agent_builder_for_proxy(&proxy) {
+    let agent = match credential_agent_builder_for_proxy(&proxy) {
         Ok(builder) => builder.timeout(COLLECTOR_HTTP_TIMEOUT).build(),
         Err(error) => {
             return failed_output(

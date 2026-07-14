@@ -18,7 +18,7 @@ use crate::services::{
         facts::{CollectedBalanceFact, CollectorFacts},
     },
     database::AppDatabase,
-    outbound::{agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
+    outbound::{credential_agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
     station_endpoints::build_management_url,
 };
 
@@ -1157,7 +1157,7 @@ fn get_newapi_public_json(
     endpoint_results: &mut Vec<Value>,
 ) -> Result<Value, String> {
     let started = std::time::Instant::now();
-    let agent = match agent_builder_for_proxy(proxy) {
+    let agent = match credential_agent_builder_for_proxy(proxy) {
         Ok(builder) => builder.timeout(COLLECTOR_HTTP_TIMEOUT).build(),
         Err(error) => {
             let message = crate::services::secrets::mask::redact_text(&error);

@@ -273,7 +273,7 @@ fn run_monitor_for_key(
             return insert_failed_key_run(
                 database,
                 monitor,
-                &target.id,
+                target,
                 &started_at,
                 &model,
                 None,
@@ -287,7 +287,7 @@ fn run_monitor_for_key(
             return insert_failed_key_run(
                 database,
                 monitor,
-                &target.id,
+                target,
                 &started_at,
                 &model,
                 None,
@@ -323,20 +323,22 @@ fn insert_probe_run(
 ) -> Result<ChannelMonitorRun, String> {
     let finished_at = now_string();
     let duration_ms = duration_between(started_at, &finished_at);
-    if result.ok {
-        database.record_station_key_success(&target.id, result.latency_ms, &finished_at)?;
-    } else {
-        database.record_station_key_failure_with_threshold(
-            &target.id,
-            &short_error(
-                result
-                    .error_summary
-                    .as_deref()
-                    .unwrap_or("Channel monitor probe failed"),
-            ),
-            &finished_at,
-            monitor.consecutive_failure_threshold,
-        )?;
+    if target_endpoint_revision_matches(database, target) {
+        if result.ok {
+            database.record_station_key_success(&target.id, result.latency_ms, &finished_at)?;
+        } else {
+            database.record_station_key_failure_with_threshold(
+                &target.id,
+                &short_error(
+                    result
+                        .error_summary
+                        .as_deref()
+                        .unwrap_or("Channel monitor probe failed"),
+                ),
+                &finished_at,
+                monitor.consecutive_failure_threshold,
+            )?;
+        }
     }
     let error_message = result.error_summary.map(|error| short_error(&error));
     let first_token_ms = result.first_token_ms;
@@ -497,24 +499,26 @@ fn monitor_request_cost(
 fn insert_failed_key_run(
     database: &AppDatabase,
     monitor: &ChannelMonitor,
-    station_key_id: &str,
+    target: &KeyPoolItem,
     started_at: &str,
     model: &str,
     http_status: Option<i64>,
     error_message: String,
 ) -> Result<ChannelMonitorRun, String> {
     let finished_at = now_string();
-    database.record_station_key_failure_with_threshold(
-        station_key_id,
-        &error_message,
-        &finished_at,
-        monitor.consecutive_failure_threshold,
-    )?;
+    if target_endpoint_revision_matches(database, target) {
+        database.record_station_key_failure_with_threshold(
+            &target.id,
+            &error_message,
+            &finished_at,
+            monitor.consecutive_failure_threshold,
+        )?;
+    }
     database.insert_channel_monitor_run(CreateChannelMonitorRunInput {
         monitor_id: monitor.id.clone(),
         template_id: monitor.template_id.clone(),
         station_id: monitor.station_id.clone(),
-        station_key_id: Some(station_key_id.to_string()),
+        station_key_id: Some(target.id.clone()),
         status: "failed".to_string(),
         started_at: started_at.to_string(),
         finished_at: Some(finished_at.clone()),
@@ -525,6 +529,12 @@ fn insert_failed_key_run(
         fallback_model: None,
         error_message: Some(error_message),
     })
+}
+
+fn target_endpoint_revision_matches(database: &AppDatabase, target: &KeyPoolItem) -> bool {
+    database
+        .station_endpoint_revision_matches(&target.station_id, target.station_endpoint_revision)
+        .unwrap_or(false)
 }
 
 fn insert_skipped_run(
@@ -660,7 +670,7 @@ mod tests {
             },
             pricing::UpsertPricingRuleInput,
             station_keys::{CreateStationKeyInput, UpdateStationKeyInput},
-            stations::CreateStationInput,
+            stations::{CreateStationInput, UpdateStationInput},
         },
         services::database::AppDatabase,
     };
@@ -839,6 +849,112 @@ mod tests {
         assert!(raw_request.contains(r#""model":"gpt-test""#));
         assert!(raw_request.contains(r#""max_tokens":1"#));
         assert!(raw_request.contains(r#""stream":true"#));
+    }
+
+    #[test]
+    fn stale_monitor_probe_run_does_not_restore_cleared_key_health() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = database
+            .create_station(CreateStationInput {
+                name: "stale monitor station".to_string(),
+                station_type: "openai-compatible".to_string(),
+                website_url: "http://127.0.0.1:9".to_string(),
+                api_base_url: "http://127.0.0.1:9/v1".to_string(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                api_key: "sk-stale-monitor".to_string(),
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+        let target = database
+            .list_key_pool_items()
+            .expect("key pool")
+            .into_iter()
+            .find(|item| item.station_id == station.id)
+            .expect("target");
+        let template = database
+            .create_channel_monitor_template(CreateChannelMonitorTemplateInput {
+                name: "Stale monitor template".to_string(),
+                endpoint_kind: "chat_completions".to_string(),
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                request_body_json: r#"{"model":"{{model}}","messages":[]}"#.to_string(),
+                enabled: true,
+                note: None,
+            })
+            .expect("template");
+        let monitor = database
+            .create_channel_monitor(CreateChannelMonitorInput {
+                name: "Stale monitor".to_string(),
+                target_type: "station_key".to_string(),
+                station_id: station.id.clone(),
+                station_key_id: Some(target.id.clone()),
+                template_id: template.id,
+                enabled: true,
+                interval_seconds: 60,
+                jitter_seconds: 0,
+                timeout_seconds: 5,
+                max_concurrency: 1,
+                consecutive_failure_threshold: 3,
+                fallback_models: vec!["gpt-test".to_string()],
+                note: None,
+            })
+            .expect("monitor");
+        database
+            .update_station(UpdateStationInput {
+                id: station.id,
+                name: station.name,
+                station_type: station.station_type,
+                website_url: "https://replacement.example.test".to_string(),
+                api_base_url: "https://replacement.example.test/v1".to_string(),
+                api_key: None,
+                collector_proxy_mode: station.collector_proxy_mode,
+                collector_proxy_url: station.collector_proxy_url,
+                enabled: station.enabled,
+                credit_per_cny: station.credit_per_cny,
+                low_balance_threshold_cny: station.low_balance_threshold_cny,
+                collection_interval_minutes: station.collection_interval_minutes,
+                note: station.note,
+            })
+            .expect("bump endpoint revision");
+
+        let run = insert_probe_run(
+            &database,
+            &monitor,
+            &target,
+            "1000",
+            "gpt-test",
+            &RenderedMonitorRequest {
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                headers: std::collections::HashMap::new(),
+                body: br#"{"model":"gpt-test"}"#.to_vec(),
+                stream: false,
+                reasoning_effort: None,
+            },
+            MonitorProbeResult {
+                ok: true,
+                status_code: Some(200),
+                latency_ms: 42,
+                first_token_ms: None,
+                error_summary: None,
+                response_excerpt_redacted: None,
+                usage: None,
+            },
+        )
+        .expect("historical monitor run");
+        let health = database
+            .get_station_key_health(target.id)
+            .expect("key health");
+
+        assert_eq!(run.status, "success");
+        assert_eq!(health.success_count, 0);
+        assert_eq!(health.failure_count, 0);
+        assert_eq!(health.last_success_at, None);
     }
 
     #[test]

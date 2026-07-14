@@ -1232,7 +1232,7 @@ fn fetch_json_with_bearer(
     access_token: &str,
     proxy: &ProxyConfig,
 ) -> EndpointJsonResult {
-    let agent = match crate::services::outbound::agent_builder_for_proxy(proxy) {
+    let agent = match crate::services::outbound::credential_agent_builder_for_proxy(proxy) {
         Ok(builder) => builder.timeout(COLLECTOR_HTTP_TIMEOUT).build(),
         Err(error) => {
             return EndpointJsonResult {
@@ -1281,7 +1281,7 @@ fn fetch_recoverable_json_with_bearer(
     proxy: &ProxyConfig,
 ) -> RecoverableEndpointJsonResult {
     let started = std::time::Instant::now();
-    let agent = match crate::services::outbound::agent_builder_for_proxy(proxy) {
+    let agent = match crate::services::outbound::credential_agent_builder_for_proxy(proxy) {
         Ok(builder) => builder.timeout(timeout.min(COLLECTOR_HTTP_TIMEOUT)).build(),
         Err(error) => {
             return RecoverableEndpointJsonResult {
@@ -1402,7 +1402,7 @@ fn post_json_with_bearer(
     body: &Value,
     proxy: &ProxyConfig,
 ) -> EndpointJsonResult {
-    let agent = match crate::services::outbound::agent_builder_for_proxy(proxy) {
+    let agent = match crate::services::outbound::credential_agent_builder_for_proxy(proxy) {
         Ok(builder) => builder.timeout(COLLECTOR_HTTP_TIMEOUT).build(),
         Err(error) => {
             return EndpointJsonResult {

@@ -13,6 +13,7 @@ use crate::{
         database::AppDatabase,
     },
 };
+use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
@@ -24,6 +25,7 @@ pub struct AppliedAdapterOutput {
 pub fn apply_adapter_output(
     database: &AppDatabase,
     station_id: &str,
+    endpoint_revision: i64,
     parent_run_id: Option<String>,
     output: AdapterOutput,
 ) -> Result<AppliedAdapterOutput, String> {
@@ -37,55 +39,139 @@ pub fn apply_adapter_output(
     let error_message = output.error_message.clone();
     let endpoint_counts = endpoint_counts_from_summary(&summary_json, &status);
     let manual_action_required = status == "manual_required";
+    let source = format!("{adapter}-{}", task.as_str());
 
-    let run = database.create_collector_run(CreateCollectorRunInput {
-        station_id: station_id.to_string(),
-        parent_run_id,
-        adapter: adapter.clone(),
-        task_type: task.as_str().to_string(),
-    })?;
-    let snapshot = match database.insert_collector_snapshot(
+    let current_result =
+        database.with_station_endpoint_revision(station_id, endpoint_revision, |transaction| {
+            let run = crate::services::database::create_collector_run_in_connection_with_revision(
+                transaction,
+                CreateCollectorRunInput {
+                    station_id: station_id.to_string(),
+                    parent_run_id: parent_run_id.clone(),
+                    adapter: adapter.clone(),
+                    task_type: task.as_str().to_string(),
+                },
+                endpoint_revision,
+            )?;
+            let snapshot =
+                crate::services::database::insert_collector_snapshot_in_connection_with_revision(
+                    transaction,
+                    station_id,
+                    endpoint_revision,
+                    &source,
+                    &status,
+                    summary_json.clone(),
+                    normalized_json.clone(),
+                    raw_json_redacted.clone(),
+                    error_message.clone(),
+                    true,
+                )?;
+
+            let apply_result =
+                apply_collector_facts_in_connection(transaction, output.facts.clone());
+            let finish_status = if apply_result.is_ok() {
+                status.clone()
+            } else {
+                "failed".to_string()
+            };
+            let finish_error_message = apply_result.err().or(error_message.clone());
+            let finished_run = crate::services::database::finish_collector_run_in_connection(
+                transaction,
+                FinishCollectorRunInput {
+                    id: run.id,
+                    status: finish_status.clone(),
+                    endpoint_count: endpoint_counts.0,
+                    success_count: endpoint_counts.1,
+                    failure_count: endpoint_counts.2,
+                    manual_action_required,
+                    error_code: error_code.clone(),
+                    error_message: finish_error_message.clone(),
+                    snapshot_id: Some(snapshot.id.clone()),
+                },
+            )?;
+
+            Ok(AppliedAdapterOutput {
+                result: CollectorRunResult {
+                    snapshot,
+                    events: vec![CollectorEvent {
+                        event_type: task.as_str().to_string(),
+                        message: finish_error_message
+                            .unwrap_or_else(|| format!("{adapter} {}", task.as_str())),
+                        status: finish_status,
+                    }],
+                },
+                run: finished_run,
+            })
+        });
+
+    match current_result {
+        Ok(applied) => Ok(applied),
+        Err(error) if error == "station_endpoint_revision_changed" => {
+            apply_superseded_adapter_output(
+                database,
+                station_id,
+                endpoint_revision,
+                parent_run_id,
+                &adapter,
+                task.as_str(),
+                &source,
+                endpoint_counts,
+                manual_action_required,
+                summary_json,
+                normalized_json,
+                raw_json_redacted,
+                error_message,
+            )
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_superseded_adapter_output(
+    database: &AppDatabase,
+    station_id: &str,
+    endpoint_revision: i64,
+    parent_run_id: Option<String>,
+    adapter: &str,
+    task_type: &str,
+    source: &str,
+    endpoint_counts: (i64, i64, i64),
+    manual_action_required: bool,
+    summary_json: serde_json::Value,
+    normalized_json: serde_json::Value,
+    raw_json_redacted: Option<serde_json::Value>,
+    error_message: Option<String>,
+) -> Result<AppliedAdapterOutput, String> {
+    let run = database.create_collector_run_for_revision(
+        CreateCollectorRunInput {
+            station_id: station_id.to_string(),
+            parent_run_id,
+            adapter: adapter.to_string(),
+            task_type: task_type.to_string(),
+        },
+        endpoint_revision,
+    )?;
+    let snapshot = database.insert_collector_snapshot_for_revision(
         station_id,
-        &format!("{adapter}-{}", task.as_str()),
-        &status,
+        endpoint_revision,
+        source,
+        "superseded",
         summary_json,
         normalized_json,
         raw_json_redacted,
-        error_message.clone(),
-    ) {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            let _ = database.finish_collector_run(FinishCollectorRunInput {
-                id: run.id,
-                status: "failed".to_string(),
-                endpoint_count: endpoint_counts.0,
-                success_count: endpoint_counts.1,
-                failure_count: endpoint_counts.2,
-                manual_action_required,
-                error_code: Some("snapshot_write_failed".to_string()),
-                error_message: Some(error.clone()),
-                snapshot_id: None,
-            });
-            return Err(error);
-        }
-    };
-
-    let apply_result = apply_collector_facts(database, output.facts);
-    let finish_status = if apply_result.is_ok() {
-        status.clone()
-    } else {
-        "failed".to_string()
-    };
-    let finish_error_message = apply_result.err().or(error_message);
+        error_message,
+        false,
+    )?;
     let finished_run = database.finish_collector_run(FinishCollectorRunInput {
         id: run.id,
-        status: finish_status.clone(),
+        status: crate::models::collector_runs::COLLECTOR_RUN_SUPERSEDED.to_string(),
         endpoint_count: endpoint_counts.0,
         success_count: endpoint_counts.1,
         failure_count: endpoint_counts.2,
         manual_action_required,
-        error_code,
-        error_message: finish_error_message.clone(),
+        error_code: Some("station_endpoint_revision_changed".to_string()),
+        error_message: Some("collector output superseded by station endpoint revision".to_string()),
         snapshot_id: Some(snapshot.id.clone()),
     })?;
 
@@ -93,16 +179,16 @@ pub fn apply_adapter_output(
         result: CollectorRunResult {
             snapshot,
             events: vec![CollectorEvent {
-                event_type: task.as_str().to_string(),
-                message: finish_error_message
-                    .unwrap_or_else(|| format!("{adapter} {}", task.as_str())),
-                status: finish_status,
+                event_type: task_type.to_string(),
+                message: "collector output superseded by station endpoint revision".to_string(),
+                status: crate::models::collector_runs::COLLECTOR_RUN_SUPERSEDED.to_string(),
             }],
         },
         run: finished_run,
     })
 }
 
+#[cfg(test)]
 pub fn apply_collector_facts(
     database: &AppDatabase,
     mut facts: CollectorFacts,
@@ -214,6 +300,141 @@ pub fn apply_collector_facts(
 
     for (station_id, scope) in station_group_collection_scopes {
         database.mark_missing_station_group_bindings(
+            &station_id,
+            scope.sources.into_iter().collect(),
+            scope.group_key_hashes.into_iter().collect(),
+        )?;
+    }
+
+    apply_model_facts(facts.models);
+
+    Ok(())
+}
+
+fn apply_collector_facts_in_connection(
+    connection: &Connection,
+    mut facts: CollectorFacts,
+) -> Result<(), String> {
+    append_station_balance_aggregates(&mut facts.balances);
+    let station_group_collection_scopes = station_group_collection_scopes(&facts);
+
+    for balance in facts.balances {
+        crate::services::database::upsert_balance_snapshot_in_connection(
+            connection,
+            UpsertBalanceSnapshotInput {
+                id: None,
+                station_id: balance.station_id,
+                station_key_id: balance.station_key_id,
+                scope: balance.scope,
+                value: balance.value,
+                currency: balance.currency,
+                credit_unit: balance.credit_unit,
+                used_value: balance.used_value,
+                total_value: balance.total_value,
+                today_request_count: balance.today_request_count,
+                total_request_count: balance.total_request_count,
+                today_consumption: balance.today_consumption,
+                total_consumption: balance.total_consumption,
+                today_base_consumption: balance.today_base_consumption,
+                total_base_consumption: balance.total_base_consumption,
+                today_token_count: balance.today_token_count,
+                total_token_count: balance.total_token_count,
+                today_input_token_count: balance.today_input_token_count,
+                today_output_token_count: balance.today_output_token_count,
+                total_input_token_count: balance.total_input_token_count,
+                total_output_token_count: balance.total_output_token_count,
+                low_balance_threshold: None,
+                status: balance.status,
+                source: balance.source,
+                confidence: balance.confidence,
+                collected_at: balance.collected_at,
+            },
+        )?;
+    }
+
+    for group in facts.groups {
+        crate::services::database::upsert_station_group_binding_in_connection(
+            connection,
+            UpsertStationGroupBindingInput {
+                station_id: group.station_id,
+                station_key_id: None,
+                binding_kind: "station_group".to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: group.group_key_hash,
+                group_id_hash: group.group_id,
+                group_name: group.group_name,
+                binding_status: "available".to_string(),
+                default_rate_multiplier: None,
+                user_rate_multiplier: None,
+                effective_rate_multiplier: None,
+                inferred_group_category: group.inferred_group_category,
+                group_category_override: None,
+                rate_source: Some(group.source),
+                confidence: group.confidence,
+                last_seen_at: None,
+                raw_json_redacted: group.raw_json_redacted,
+            },
+        )?;
+    }
+
+    for rate in facts.rates {
+        let is_key_binding = rate.station_key_id.is_some();
+        let binding = crate::services::database::upsert_station_group_binding_in_connection(
+            connection,
+            UpsertStationGroupBindingInput {
+                station_id: rate.station_id.clone(),
+                station_key_id: rate.station_key_id.clone(),
+                binding_kind: if is_key_binding {
+                    "key_binding".to_string()
+                } else {
+                    "station_group".to_string()
+                },
+                parent_group_binding_id: None,
+                group_key_hash: rate.group_key_hash.clone(),
+                group_id_hash: rate.group_id.clone(),
+                group_name: rate.group_name.clone(),
+                default_rate_multiplier: rate.default_rate_multiplier,
+                user_rate_multiplier: rate.user_rate_multiplier,
+                effective_rate_multiplier: rate.effective_rate_multiplier,
+                inferred_group_category: rate.inferred_group_category.clone(),
+                group_category_override: None,
+                rate_source: Some(rate.source.clone()),
+                confidence: rate.confidence,
+                binding_status: if is_key_binding {
+                    "bound".to_string()
+                } else {
+                    "available".to_string()
+                },
+                last_seen_at: rate.checked_at.clone(),
+                raw_json_redacted: rate.raw_json_redacted.clone(),
+            },
+        )?;
+        crate::services::database::insert_group_rate_record_if_changed_in_connection(
+            connection,
+            InsertGroupRateRecordInput {
+                station_id: rate.station_id,
+                station_key_id: rate.station_key_id,
+                group_binding_id: Some(binding.id),
+                binding_kind: binding.binding_kind,
+                group_key_hash: rate.group_key_hash,
+                group_name: rate.group_name,
+                default_rate_multiplier: rate.default_rate_multiplier,
+                user_rate_multiplier: rate.user_rate_multiplier,
+                effective_rate_multiplier: rate.effective_rate_multiplier,
+                inferred_group_category: rate.inferred_group_category,
+                source: rate.source,
+                confidence: rate.confidence,
+                raw_json_redacted: rate.raw_json_redacted,
+                checked_at: rate.checked_at.unwrap_or_else(|| {
+                    crate::services::database::now_millis_for_services().to_string()
+                }),
+            },
+        )?;
+    }
+
+    for (station_id, scope) in station_group_collection_scopes {
+        crate::services::database::mark_missing_station_group_bindings_in_connection(
+            connection,
             &station_id,
             scope.sources.into_iter().collect(),
             scope.group_key_hashes.into_iter().collect(),
@@ -529,7 +750,7 @@ mod tests {
             UpsertStationGroupBindingInput, BINDING_KIND_STATION_GROUP, BINDING_STATUS_AVAILABLE,
         },
         station_keys::CreateStationKeyInput,
-        stations::CreateStationInput,
+        stations::{CreateStationInput, UpdateStationInput},
     };
 
     fn create_test_station(database: &AppDatabase) -> crate::models::stations::Station {
@@ -579,6 +800,29 @@ mod tests {
             .expect("station key")
     }
 
+    fn change_test_station_endpoint(
+        database: &AppDatabase,
+        station: &crate::models::stations::Station,
+    ) -> crate::models::stations::Station {
+        database
+            .update_station(UpdateStationInput {
+                id: station.id.clone(),
+                name: station.name.clone(),
+                station_type: station.station_type.clone(),
+                website_url: "https://replacement.example.test".to_string(),
+                api_base_url: "https://replacement.example.test/v1".to_string(),
+                api_key: None,
+                collector_proxy_mode: station.collector_proxy_mode.clone(),
+                collector_proxy_url: station.collector_proxy_url.clone(),
+                enabled: station.enabled,
+                credit_per_cny: station.credit_per_cny,
+                low_balance_threshold_cny: station.low_balance_threshold_cny,
+                collection_interval_minutes: station.collection_interval_minutes,
+                note: station.note.clone(),
+            })
+            .expect("change station endpoint")
+    }
+
     fn key_balance(
         station_id: &str,
         station_key_id: &str,
@@ -610,6 +854,92 @@ mod tests {
             confidence: 0.9,
             collected_at: Some("1000".to_string()),
         }
+    }
+
+    fn station_balance(
+        station_id: &str,
+        value: f64,
+    ) -> crate::services::collectors::facts::CollectedBalanceFact {
+        crate::services::collectors::facts::CollectedBalanceFact {
+            station_id: station_id.to_string(),
+            station_key_id: None,
+            scope: "station".to_string(),
+            value: Some(value),
+            used_value: None,
+            total_value: None,
+            today_request_count: None,
+            total_request_count: None,
+            today_consumption: None,
+            total_consumption: None,
+            today_base_consumption: None,
+            total_base_consumption: None,
+            today_token_count: None,
+            today_input_token_count: None,
+            today_output_token_count: None,
+            total_token_count: None,
+            total_input_token_count: None,
+            total_output_token_count: None,
+            currency: "CNY".to_string(),
+            credit_unit: None,
+            status: "normal".to_string(),
+            source: "sub2api_balance".to_string(),
+            confidence: 0.9,
+            collected_at: Some("1000".to_string()),
+        }
+    }
+
+    fn successful_balance_output(station_id: &str, value: f64) -> AdapterOutput {
+        let mut facts = crate::services::collectors::facts::CollectorFacts::default();
+        facts.balances.push(station_balance(station_id, value));
+        AdapterOutput {
+            adapter: "sub2api".to_string(),
+            task: crate::services::collectors::adapters::CollectorTask::Balance,
+            status: "success".to_string(),
+            facts,
+            summary_json: serde_json::json!({
+                "adapter": "sub2api",
+                "task": "balance",
+                "endpointResults": [{"ok": true}]
+            }),
+            normalized_json: serde_json::json!({
+                "balance": value
+            }),
+            raw_json_redacted: None,
+            error_code: None,
+            error_message: None,
+        }
+    }
+
+    #[test]
+    fn collector_output_from_old_revision_finishes_superseded_without_applying_facts() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = create_test_station(&database);
+        let output = successful_balance_output(&station.id, 99.0);
+        let updated = change_test_station_endpoint(&database, &station);
+        assert_eq!(updated.endpoint_revision, station.endpoint_revision + 1);
+
+        let applied = apply_adapter_output(
+            &database,
+            &station.id,
+            station.endpoint_revision,
+            None,
+            output,
+        )
+        .expect("record superseded output");
+
+        assert_eq!(
+            applied.run.status,
+            crate::models::collector_runs::COLLECTOR_RUN_SUPERSEDED
+        );
+        assert_eq!(applied.run.endpoint_revision, station.endpoint_revision);
+        assert_eq!(
+            applied.result.snapshot.endpoint_revision,
+            station.endpoint_revision
+        );
+        assert!(database
+            .list_current_station_balance_snapshots()
+            .expect("current balances")
+            .is_empty());
     }
 
     #[test]

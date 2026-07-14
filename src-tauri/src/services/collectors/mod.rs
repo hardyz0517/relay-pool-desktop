@@ -51,12 +51,20 @@ pub fn collect_station_task(
 ) -> Result<CollectorRunResult, String> {
     let station = database.station_for_collector(&station_id)?;
     let adapter = adapter_name_for_station_type(&station.station_type)?;
+    let endpoint_revision = station.endpoint_revision;
     if task == adapters::CollectorTask::Full {
-        return collect_full_station_task(database, data_key, station_id, adapter);
+        return collect_full_station_task(
+            database,
+            data_key,
+            station_id,
+            adapter,
+            endpoint_revision,
+        );
     }
 
     let output = dispatch_adapter_output(database, data_key, &station_id, adapter, task);
-    let applied = apply::apply_adapter_output(database, &station_id, None, output)?;
+    let applied =
+        apply::apply_adapter_output(database, &station_id, endpoint_revision, None, output)?;
     let mut result = applied.result;
     if task == adapters::CollectorTask::Groups {
         append_remote_key_refresh_event(database, data_key, &station_id, &mut result.events);
@@ -69,13 +77,17 @@ fn collect_full_station_task(
     data_key: &[u8; 32],
     station_id: String,
     adapter: &str,
+    endpoint_revision: i64,
 ) -> Result<CollectorRunResult, String> {
-    let parent_run = database.create_collector_run(CreateCollectorRunInput {
-        station_id: station_id.clone(),
-        parent_run_id: None,
-        adapter: adapter.to_string(),
-        task_type: adapters::CollectorTask::Full.as_str().to_string(),
-    })?;
+    let parent_run = database.create_collector_run_for_revision(
+        CreateCollectorRunInput {
+            station_id: station_id.clone(),
+            parent_run_id: None,
+            adapter: adapter.to_string(),
+            task_type: adapters::CollectorTask::Full.as_str().to_string(),
+        },
+        endpoint_revision,
+    )?;
 
     let mut child_results = Vec::new();
     let mut events = Vec::new();
@@ -84,6 +96,7 @@ fn collect_full_station_task(
         let applied = apply::apply_adapter_output(
             database,
             &station_id,
+            endpoint_revision,
             Some(parent_run.id.clone()),
             output,
         )?;

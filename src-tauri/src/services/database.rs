@@ -424,6 +424,15 @@ impl AppDatabase {
         Ok(output)
     }
 
+    pub(crate) fn station_endpoint_revision_matches(
+        &self,
+        station_id: &str,
+        expected_revision: i64,
+    ) -> Result<bool, String> {
+        let connection = self.connection()?;
+        Ok(station_endpoint_revision(&connection, station_id)? == expected_revision)
+    }
+
     pub fn delete_station(&self, id: String) -> Result<(), String> {
         let connection = self.connection()?;
         let deleted = connection
@@ -1285,6 +1294,34 @@ impl AppDatabase {
         )
     }
 
+    pub(crate) fn insert_collector_snapshot_for_revision(
+        &self,
+        station_id: &str,
+        endpoint_revision: i64,
+        source: &str,
+        status: &str,
+        summary_json: Value,
+        normalized_json: Value,
+        raw_json_redacted: Option<Value>,
+        error_message: Option<String>,
+        emit_change_events: bool,
+    ) -> Result<CollectorSnapshot, String> {
+        let connection = self.connection()?;
+        validate_station_exists(&connection, station_id)?;
+        insert_collector_snapshot_in_connection_with_revision(
+            &connection,
+            station_id,
+            endpoint_revision,
+            source,
+            status,
+            summary_json,
+            normalized_json,
+            raw_json_redacted,
+            error_message,
+            emit_change_events,
+        )
+    }
+
     pub fn list_collector_snapshots(
         &self,
         station_id: String,
@@ -1629,6 +1666,15 @@ impl AppDatabase {
     ) -> Result<CollectorRun, String> {
         let connection = self.connection()?;
         create_collector_run_in_connection(&connection, input)
+    }
+
+    pub(crate) fn create_collector_run_for_revision(
+        &self,
+        input: CreateCollectorRunInput,
+        endpoint_revision: i64,
+    ) -> Result<CollectorRun, String> {
+        let connection = self.connection()?;
+        create_collector_run_in_connection_with_revision(&connection, input, endpoint_revision)
     }
 
     pub fn finish_collector_run(
@@ -8870,7 +8916,7 @@ fn proxy_route_candidates_from_connection_with_data_key(
     let global_proxy_url = read_setting_or_default(connection, "collector_proxy_url", "")?;
     let mut statement = connection
         .prepare(
-            "SELECT k.id, k.station_id, s.api_base_url, k.api_key, k.api_key_secret_id,
+            "SELECT k.id, k.station_id, s.endpoint_revision, s.api_base_url, k.api_key, k.api_key_secret_id,
                     s.upstream_api_format, COALESCE(k.routing_order, k.priority),
                     s.collector_proxy_mode, s.collector_proxy_url,
                     k.max_concurrency, k.load_factor
@@ -8888,20 +8934,21 @@ fn proxy_route_candidates_from_connection_with_data_key(
     let rows = statement
         .query_map([], |row| {
             let station_key_id: String = row.get(0)?;
-            let api_key: String = row.get(3)?;
+            let api_key: String = row.get(4)?;
             Ok(RouteCandidate {
                 station_key_id,
                 station_id: row.get(1)?,
-                upstream_base_url: row.get(2)?,
+                station_endpoint_revision: row.get(2)?,
+                upstream_base_url: row.get(3)?,
                 api_key,
-                upstream_api_format: parse_upstream_api_format(row.get::<_, String>(5)?),
-                priority: row.get(6)?,
-                max_concurrency: row.get(9)?,
-                load_factor: row.get(10)?,
+                upstream_api_format: parse_upstream_api_format(row.get::<_, String>(6)?),
+                priority: row.get(7)?,
+                max_concurrency: row.get(10)?,
+                load_factor: row.get(11)?,
                 collector_proxy_mode: {
                     let proxy = resolve_proxy_config(
-                        &row.get::<_, String>(7)?,
-                        row.get::<_, Option<String>>(8)?,
+                        &row.get::<_, String>(8)?,
+                        row.get::<_, Option<String>>(9)?,
                         &global_proxy_mode,
                         Some(global_proxy_url.clone()),
                     );
@@ -8909,8 +8956,8 @@ fn proxy_route_candidates_from_connection_with_data_key(
                 },
                 collector_proxy_url: {
                     let proxy = resolve_proxy_config(
-                        &row.get::<_, String>(7)?,
-                        row.get::<_, Option<String>>(8)?,
+                        &row.get::<_, String>(8)?,
+                        row.get::<_, Option<String>>(9)?,
                         &global_proxy_mode,
                         Some(global_proxy_url.clone()),
                     );
@@ -8960,6 +9007,7 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
             "SELECT
                 k.id,
                 k.station_id,
+                s.endpoint_revision,
                 s.api_base_url,
                 k.api_key,
                 k.api_key_secret_id,
@@ -9013,11 +9061,11 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
     let rows = statement
         .query_map([], |row| {
             let station_key_id = row.get::<_, String>(0)?;
-            let api_key: String = row.get(3)?;
-            let health_station_key_id = row.get::<_, Option<String>>(22)?;
+            let api_key: String = row.get(4)?;
+            let health_station_key_id = row.get::<_, Option<String>>(23)?;
             let proxy = resolve_proxy_config(
-                &row.get::<_, String>(32)?,
-                row.get::<_, Option<String>>(33)?,
+                &row.get::<_, String>(33)?,
+                row.get::<_, Option<String>>(34)?,
                 &global_proxy_mode,
                 Some(global_proxy_url.clone()),
             );
@@ -9025,44 +9073,45 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                 candidate: RouteCandidate {
                     station_key_id: station_key_id.clone(),
                     station_id: row.get(1)?,
-                    upstream_base_url: row.get(2)?,
+                    station_endpoint_revision: row.get(2)?,
+                    upstream_base_url: row.get(3)?,
                     api_key,
-                    upstream_api_format: parse_upstream_api_format(row.get::<_, String>(5)?),
-                    priority: row.get(6)?,
-                    max_concurrency: row.get(34)?,
-                    load_factor: row.get(35)?,
+                    upstream_api_format: parse_upstream_api_format(row.get::<_, String>(6)?),
+                    priority: row.get(7)?,
+                    max_concurrency: row.get(35)?,
+                    load_factor: row.get(36)?,
                     collector_proxy_mode: proxy.mode,
                     collector_proxy_url: proxy.url,
                 },
-                station_name: row.get(7)?,
-                key_name: row.get(8)?,
+                station_name: row.get(8)?,
+                key_name: row.get(9)?,
                 capabilities: StationKeyCapabilities {
                     station_key_id,
-                    supports_chat_completions: i64_to_bool(row.get(9)?),
-                    supports_responses: i64_to_bool(row.get(10)?),
-                    supports_embeddings: i64_to_bool(row.get(11)?),
-                    supports_stream: i64_to_bool(row.get(12)?),
-                    supports_tools: i64_to_bool(row.get(13)?),
-                    supports_vision: i64_to_bool(row.get(14)?),
-                    supports_reasoning: i64_to_bool(row.get(15)?),
-                    model_allowlist: parse_json_string_list(row.get::<_, String>(16)?.as_str()),
-                    model_blocklist: parse_json_string_list(row.get::<_, String>(17)?.as_str()),
-                    preferred_models: parse_json_string_list(row.get::<_, String>(18)?.as_str()),
-                    only_use_as_backup: i64_to_bool(row.get(19)?),
-                    routing_tags: parse_json_string_list(row.get::<_, String>(20)?.as_str()),
-                    updated_at: row.get(21)?,
+                    supports_chat_completions: i64_to_bool(row.get(10)?),
+                    supports_responses: i64_to_bool(row.get(11)?),
+                    supports_embeddings: i64_to_bool(row.get(12)?),
+                    supports_stream: i64_to_bool(row.get(13)?),
+                    supports_tools: i64_to_bool(row.get(14)?),
+                    supports_vision: i64_to_bool(row.get(15)?),
+                    supports_reasoning: i64_to_bool(row.get(16)?),
+                    model_allowlist: parse_json_string_list(row.get::<_, String>(17)?.as_str()),
+                    model_blocklist: parse_json_string_list(row.get::<_, String>(18)?.as_str()),
+                    preferred_models: parse_json_string_list(row.get::<_, String>(19)?.as_str()),
+                    only_use_as_backup: i64_to_bool(row.get(20)?),
+                    routing_tags: parse_json_string_list(row.get::<_, String>(21)?.as_str()),
+                    updated_at: row.get(22)?,
                 },
                 health: health_station_key_id.map(|station_key_id| StationKeyHealth {
                     station_key_id,
-                    last_success_at: row.get(23).ok().flatten(),
-                    last_failure_at: row.get(24).ok().flatten(),
-                    consecutive_failures: row.get(25).unwrap_or(0),
-                    success_count: row.get(26).unwrap_or(0),
-                    failure_count: row.get(27).unwrap_or(0),
-                    avg_latency_ms: row.get(28).ok().flatten(),
-                    last_error_summary: row.get(29).ok().flatten(),
-                    cooldown_until: row.get(30).ok().flatten(),
-                    updated_at: row.get(31).unwrap_or_else(|_| "0".to_string()),
+                    last_success_at: row.get(24).ok().flatten(),
+                    last_failure_at: row.get(25).ok().flatten(),
+                    consecutive_failures: row.get(26).unwrap_or(0),
+                    success_count: row.get(27).unwrap_or(0),
+                    failure_count: row.get(28).unwrap_or(0),
+                    avg_latency_ms: row.get(29).ok().flatten(),
+                    last_error_summary: row.get(30).ok().flatten(),
+                    cooldown_until: row.get(31).ok().flatten(),
+                    updated_at: row.get(32).unwrap_or_else(|_| "0".to_string()),
                 }),
                 economics: None,
                 scheduler_group_binding_id: None,
@@ -10072,7 +10121,7 @@ fn list_balance_snapshots_for_station_from_connection(
     Ok(rows)
 }
 
-fn upsert_balance_snapshot_in_connection(
+pub(crate) fn upsert_balance_snapshot_in_connection(
     connection: &Connection,
     input: UpsertBalanceSnapshotInput,
 ) -> Result<BalanceSnapshot, String> {
@@ -12161,9 +12210,36 @@ fn insert_collector_snapshot_in_connection(
     raw_json_redacted: Option<Value>,
     error_message: Option<String>,
 ) -> Result<CollectorSnapshot, String> {
+    let endpoint_revision = station_endpoint_revision(connection, station_id)?;
+    insert_collector_snapshot_in_connection_with_revision(
+        connection,
+        station_id,
+        endpoint_revision,
+        source,
+        status,
+        summary_json,
+        normalized_json,
+        raw_json_redacted,
+        error_message,
+        true,
+    )
+}
+
+pub(crate) fn insert_collector_snapshot_in_connection_with_revision(
+    connection: &Connection,
+    station_id: &str,
+    endpoint_revision: i64,
+    source: &str,
+    status: &str,
+    summary_json: Value,
+    normalized_json: Value,
+    raw_json_redacted: Option<Value>,
+    error_message: Option<String>,
+    emit_change_events: bool,
+) -> Result<CollectorSnapshot, String> {
     let id = generate_id("snapshot");
     let now = now_string();
-    let endpoint_revision = station_endpoint_revision(connection, station_id)?;
+    validate_station_exists(connection, station_id)?;
     let summary_json = redact_sensitive_value(&summary_json);
     let normalized_json = redact_sensitive_value(&normalized_json);
     let raw_json_redacted = raw_json_redacted.map(|value| redact_sensitive_value(&value));
@@ -12199,7 +12275,7 @@ fn insert_collector_snapshot_in_connection(
         .map_err(|error| format!("保存采集快照失败: {error}"))?;
 
     let saved = collector_snapshot_by_id(connection, &id)?;
-    if saved.status == "failed" {
+    if emit_change_events && saved.status == "failed" {
         let task_type = collector_task_type_from_snapshot_source(&saved.source);
         let event = crate::services::change_events::collector_failed_event(
             &saved.station_id,
@@ -12208,83 +12284,85 @@ fn insert_collector_snapshot_in_connection(
         );
         let _ = upsert_change_event_in_connection(connection, event);
     }
-    if let Some(previous_snapshot) = previous_snapshot.as_ref() {
-        let previous_models = models_from_snapshot_value(&previous_snapshot.normalized_json);
-        let next_models = models_from_snapshot_value(&saved.normalized_json);
-        if should_emit_model_change_events(&saved.source) {
-            for model in next_models
-                .iter()
-                .filter(|model| !previous_models.contains(model))
-            {
-                let event = UpsertChangeEventInput {
-                    severity: crate::services::change_events::SEVERITY_INFO.to_string(),
-                    event_type: "model_added".to_string(),
-                    title: "模型新增".to_string(),
-                    message: format!("站点新增模型 {model}"),
-                    object_type: "station".to_string(),
-                    object_id: Some(saved.station_id.clone()),
-                    station_id: Some(saved.station_id.clone()),
-                    station_key_id: None,
-                    pricing_rule_id: None,
-                    request_log_id: None,
-                    old_value_json: None,
-                    new_value_json: Some(json!({ "model": model }).to_string()),
-                    impact_json: None,
-                    dedupe_key: crate::services::change_events::model_dedupe_key(
-                        &saved.station_id,
-                        "model_added",
-                        model,
-                    ),
-                    source: "collector".to_string(),
-                };
-                let _ = upsert_change_event_in_connection(connection, event);
-            }
-            for model in previous_models
-                .iter()
-                .filter(|model| !next_models.contains(model))
-            {
-                let event = UpsertChangeEventInput {
-                    severity: crate::services::change_events::SEVERITY_WARNING.to_string(),
-                    event_type: "model_removed".to_string(),
-                    title: "模型下架".to_string(),
-                    message: format!("站点下架模型 {model}"),
-                    object_type: "station".to_string(),
-                    object_id: Some(saved.station_id.clone()),
-                    station_id: Some(saved.station_id.clone()),
-                    station_key_id: None,
-                    pricing_rule_id: None,
-                    request_log_id: None,
-                    old_value_json: Some(json!({ "model": model }).to_string()),
-                    new_value_json: None,
-                    impact_json: Some(
-                        json!({ "routingRisk": "model_candidates_may_change" }).to_string(),
-                    ),
-                    dedupe_key: crate::services::change_events::model_dedupe_key(
-                        &saved.station_id,
-                        "model_removed",
-                        model,
-                    ),
-                    source: "collector".to_string(),
-                };
-                let _ = upsert_change_event_in_connection(connection, event);
-            }
-        }
-
-        let previous_rates =
-            rate_multipliers_from_snapshot_value(&previous_snapshot.normalized_json);
-        let next_rates = rate_multipliers_from_snapshot_value(&saved.normalized_json);
-        for (group_name, next_multiplier) in next_rates {
-            if let Some((_, old_multiplier)) = previous_rates
-                .iter()
-                .find(|(previous_group, _)| previous_group == &group_name)
-            {
-                if let Some(event) = crate::services::change_events::rate_changed_event(
-                    &saved.station_id,
-                    &group_name,
-                    *old_multiplier,
-                    next_multiplier,
-                ) {
+    if emit_change_events {
+        if let Some(previous_snapshot) = previous_snapshot.as_ref() {
+            let previous_models = models_from_snapshot_value(&previous_snapshot.normalized_json);
+            let next_models = models_from_snapshot_value(&saved.normalized_json);
+            if should_emit_model_change_events(&saved.source) {
+                for model in next_models
+                    .iter()
+                    .filter(|model| !previous_models.contains(model))
+                {
+                    let event = UpsertChangeEventInput {
+                        severity: crate::services::change_events::SEVERITY_INFO.to_string(),
+                        event_type: "model_added".to_string(),
+                        title: "模型新增".to_string(),
+                        message: format!("站点新增模型 {model}"),
+                        object_type: "station".to_string(),
+                        object_id: Some(saved.station_id.clone()),
+                        station_id: Some(saved.station_id.clone()),
+                        station_key_id: None,
+                        pricing_rule_id: None,
+                        request_log_id: None,
+                        old_value_json: None,
+                        new_value_json: Some(json!({ "model": model }).to_string()),
+                        impact_json: None,
+                        dedupe_key: crate::services::change_events::model_dedupe_key(
+                            &saved.station_id,
+                            "model_added",
+                            model,
+                        ),
+                        source: "collector".to_string(),
+                    };
                     let _ = upsert_change_event_in_connection(connection, event);
+                }
+                for model in previous_models
+                    .iter()
+                    .filter(|model| !next_models.contains(model))
+                {
+                    let event = UpsertChangeEventInput {
+                        severity: crate::services::change_events::SEVERITY_WARNING.to_string(),
+                        event_type: "model_removed".to_string(),
+                        title: "模型下架".to_string(),
+                        message: format!("站点下架模型 {model}"),
+                        object_type: "station".to_string(),
+                        object_id: Some(saved.station_id.clone()),
+                        station_id: Some(saved.station_id.clone()),
+                        station_key_id: None,
+                        pricing_rule_id: None,
+                        request_log_id: None,
+                        old_value_json: Some(json!({ "model": model }).to_string()),
+                        new_value_json: None,
+                        impact_json: Some(
+                            json!({ "routingRisk": "model_candidates_may_change" }).to_string(),
+                        ),
+                        dedupe_key: crate::services::change_events::model_dedupe_key(
+                            &saved.station_id,
+                            "model_removed",
+                            model,
+                        ),
+                        source: "collector".to_string(),
+                    };
+                    let _ = upsert_change_event_in_connection(connection, event);
+                }
+            }
+
+            let previous_rates =
+                rate_multipliers_from_snapshot_value(&previous_snapshot.normalized_json);
+            let next_rates = rate_multipliers_from_snapshot_value(&saved.normalized_json);
+            for (group_name, next_multiplier) in next_rates {
+                if let Some((_, old_multiplier)) = previous_rates
+                    .iter()
+                    .find(|(previous_group, _)| previous_group == &group_name)
+                {
+                    if let Some(event) = crate::services::change_events::rate_changed_event(
+                        &saved.station_id,
+                        &group_name,
+                        *old_multiplier,
+                        next_multiplier,
+                    ) {
+                        let _ = upsert_change_event_in_connection(connection, event);
+                    }
                 }
             }
         }
@@ -12489,7 +12567,7 @@ fn station_group_binding_by_id(
         .ok_or_else(|| "分组绑定不存在".to_string())
 }
 
-fn upsert_station_group_binding_in_connection(
+pub(crate) fn upsert_station_group_binding_in_connection(
     connection: &Connection,
     input: UpsertStationGroupBindingInput,
 ) -> Result<StationGroupBinding, String> {
@@ -12679,7 +12757,7 @@ fn disable_shadow_station_group_bindings(
     Ok(())
 }
 
-fn mark_missing_station_group_bindings_in_connection(
+pub(crate) fn mark_missing_station_group_bindings_in_connection(
     connection: &Connection,
     station_id: &str,
     rate_sources: Vec<String>,
@@ -12822,7 +12900,7 @@ fn list_group_rate_records_from_connection(
     Ok(rows)
 }
 
-fn insert_group_rate_record_if_changed_in_connection(
+pub(crate) fn insert_group_rate_record_if_changed_in_connection(
     connection: &Connection,
     input: InsertGroupRateRecordInput,
 ) -> Result<Option<GroupRateRecord>, String> {
@@ -13030,6 +13108,15 @@ fn create_collector_run_in_connection(
     connection: &Connection,
     input: CreateCollectorRunInput,
 ) -> Result<CollectorRun, String> {
+    let endpoint_revision = station_endpoint_revision(connection, &input.station_id)?;
+    create_collector_run_in_connection_with_revision(connection, input, endpoint_revision)
+}
+
+pub(crate) fn create_collector_run_in_connection_with_revision(
+    connection: &Connection,
+    input: CreateCollectorRunInput,
+    endpoint_revision: i64,
+) -> Result<CollectorRun, String> {
     validate_station_exists(connection, &input.station_id)?;
     if let Some(parent_run_id) = input.parent_run_id.as_deref() {
         collector_run_by_id(connection, parent_run_id)?;
@@ -13038,7 +13125,6 @@ fn create_collector_run_in_connection(
         return Err("采集 adapter 不能为空".to_string());
     }
     let task_type = validate_collector_task_type(&input.task_type)?;
-    let endpoint_revision = station_endpoint_revision(connection, &input.station_id)?;
     let now = now_string();
     let id = generate_id("collector_run");
     connection
@@ -13064,7 +13150,7 @@ fn create_collector_run_in_connection(
     collector_run_by_id(connection, &id)
 }
 
-fn finish_collector_run_in_connection(
+pub(crate) fn finish_collector_run_in_connection(
     connection: &Connection,
     input: FinishCollectorRunInput,
 ) -> Result<CollectorRun, String> {

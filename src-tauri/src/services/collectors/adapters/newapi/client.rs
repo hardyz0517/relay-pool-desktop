@@ -6,7 +6,7 @@ use crate::models::{credentials::StationSessionCredentialKind, stations::Station
 use crate::services::{
     collectors::adapters::newapi::{auth, parsers},
     database::AppDatabase,
-    outbound::{agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
+    outbound::{credential_agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
     secrets::mask::redact_text,
     station_endpoints::build_management_url,
 };
@@ -230,7 +230,7 @@ fn execute_json_with_proxy(
     body: Option<Value>,
     proxy: &ProxyConfig,
 ) -> Result<NewApiResponse, NewApiRequestError> {
-    let agent = agent_builder_for_proxy(proxy)
+    let agent = credential_agent_builder_for_proxy(proxy)
         .map_err(permanent_error)?
         .timeout(NEWAPI_REQUEST_TIMEOUT)
         .build();

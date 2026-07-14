@@ -15,7 +15,7 @@ use crate::{
     },
     services::{
         database::AppDatabase,
-        outbound::{agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
+        outbound::{credential_agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
     },
 };
 
@@ -131,7 +131,7 @@ pub fn collect_login_state(
 
     let config = ProbeMode::Collect.config();
     let proxy = effective_station_proxy(database, &station)?;
-    let agent = agent_builder_for_proxy(&proxy)?
+    let agent = credential_agent_builder_for_proxy(&proxy)?
         .timeout_connect(config.connect_timeout)
         .timeout_read(config.read_timeout)
         .timeout_write(config.connect_timeout)
@@ -401,7 +401,7 @@ fn run_endpoint_probes(
         let worker_base_url = base_url.to_string();
         let worker_proxy = proxy.clone();
         thread::spawn(move || {
-            let agent = match agent_builder_for_proxy(&worker_proxy) {
+            let agent = match credential_agent_builder_for_proxy(&worker_proxy) {
                 Ok(builder) => builder
                     .timeout_connect(config.connect_timeout)
                     .timeout_read(config.read_timeout)
@@ -604,7 +604,7 @@ pub(crate) fn test_login_credentials(
 ) -> Result<LoginProbeOutcome, String> {
     let config = ProbeMode::Collect.config();
     let proxy = ProxyConfig::direct();
-    let agent = agent_builder_for_proxy(&proxy)?
+    let agent = credential_agent_builder_for_proxy(&proxy)?
         .timeout_connect(config.connect_timeout)
         .timeout_read(config.read_timeout)
         .timeout_write(config.connect_timeout)
@@ -632,7 +632,7 @@ pub(crate) fn login_access_token_with_proxy(
     proxy: &ProxyConfig,
 ) -> Result<LoginTokenOutcome, String> {
     let config = ProbeMode::Collect.config();
-    let agent = agent_builder_for_proxy(proxy)?
+    let agent = credential_agent_builder_for_proxy(proxy)?
         .timeout_connect(config.connect_timeout)
         .timeout_read(config.read_timeout)
         .timeout_write(config.connect_timeout)
@@ -857,7 +857,7 @@ fn login_candidate_request(
     let timeout = remaining
         .min(config.read_timeout)
         .max(Duration::from_millis(1));
-    let agent = agent_builder_for_proxy(proxy)?
+    let agent = credential_agent_builder_for_proxy(proxy)?
         .timeout_connect(
             timeout
                 .min(config.connect_timeout)

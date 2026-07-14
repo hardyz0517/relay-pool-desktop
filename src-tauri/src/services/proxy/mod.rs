@@ -18,6 +18,7 @@ pub mod scheduler;
 pub struct RouteCandidate {
     pub station_key_id: String,
     pub station_id: String,
+    pub station_endpoint_revision: i64,
     pub upstream_base_url: String,
     pub api_key: String,
     pub collector_proxy_mode: String,
@@ -176,6 +177,7 @@ mod tests {
         RouteCandidate {
             station_key_id: id.to_string(),
             station_id: format!("station-{id}"),
+            station_endpoint_revision: 1,
             upstream_base_url: "https://example.test/v1".to_string(),
             api_key: format!("sk-{id}"),
             collector_proxy_mode: "direct".to_string(),
