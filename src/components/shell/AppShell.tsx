@@ -4,7 +4,11 @@ import { markNavigation, navigationMarks } from "@/app/navigationPerformance";
 import { appRoutes } from "@/app/routes";
 import { LocalProxyRadarIcon } from "@/components/shell/LocalProxyRadarIcon";
 import { shellLayout } from "@/components/ui/layout";
-import { CHANGE_EVENTS_UPDATED_EVENT } from "@/lib/api/changeEvents";
+import {
+  CHANGE_EVENTS_UPDATED_EVENT,
+  markChangeEventRead,
+  notifyChangeEventsUpdated,
+} from "@/lib/api/changeEvents";
 import { PROXY_STATUS_UPDATED_EVENT } from "@/lib/api/proxy";
 import { SETTINGS_UPDATED_EVENT } from "@/lib/api/settings";
 import type { ProxyStatus } from "@/lib/types/proxy";
@@ -16,7 +20,12 @@ import {
 } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { cn } from "@/lib/utils";
-import { unreadChangeCount } from "@/features/changes/changeEventViewModels";
+import {
+  markUnreadChangeEventsRead,
+  markUnreadChangeEventsReadLocally,
+  unreadChangeCount,
+} from "@/features/changes/changeEventViewModels";
+import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { AppRouteId } from "@/lib/types/navigation";
 
 type AppShellProps = {
@@ -80,6 +89,32 @@ export function AppShell({
       onRouteChange("settings");
     }
   }, [activeRouteId, onRouteChange, settings]);
+
+  useLayoutEffect(() => {
+    if (activeRouteId !== "changes") {
+      return;
+    }
+    const currentEvents = queryClient.getQueryData<ChangeEvent[]>(queryKeys.changeEvents) ?? changeEvents;
+    const optimisticReadResult = markUnreadChangeEventsReadLocally(currentEvents);
+    if (optimisticReadResult.changedCount === 0) {
+      return;
+    }
+
+    queryClient.setQueryData(queryKeys.changeEvents, optimisticReadResult.events);
+
+    void (async () => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.changeEvents });
+      queryClient.setQueryData(queryKeys.changeEvents, optimisticReadResult.events);
+
+      try {
+        const readOnEntryResult = await markUnreadChangeEventsRead(currentEvents, markChangeEventRead);
+        queryClient.setQueryData(queryKeys.changeEvents, readOnEntryResult.events);
+        notifyChangeEventsUpdated();
+      } catch {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.changeEvents });
+      }
+    })();
+  }, [activeRouteId, changeEvents, queryClient]);
 
   const changeUnreadCount = useMemo(() => unreadChangeCount(changeEvents), [changeEvents]);
   const proxyRunning = proxyStatus?.running ?? false;

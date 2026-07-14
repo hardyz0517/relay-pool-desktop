@@ -22,6 +22,7 @@ await esbuild.build({
 const {
   activeSeverityCount,
   buildChangeEventListItem,
+  markUnreadChangeEventsReadLocally,
   markUnreadChangeEventsRead,
   paginateChangeEvents,
   unreadChangeCount,
@@ -74,6 +75,14 @@ assert.deepEqual(
   result.events.map((event) => `${event.id}:${event.status}`),
   ["already-read:read", "unread-a:read", "resolved:resolved", "unread-b:read"],
   "updated events should be merged without changing order or unrelated statuses",
+);
+
+const optimisticReadResult = markUnreadChangeEventsReadLocally(currentEvents);
+assert.equal(optimisticReadResult.changedCount, 2, "local read projection should count unread events immediately");
+assert.deepEqual(
+  optimisticReadResult.events.map((event) => `${event.id}:${event.status}`),
+  ["already-read:read", "unread-a:read", "resolved:resolved", "unread-b:read"],
+  "local read projection should clear the sidebar badge before async persistence finishes",
 );
 
 const mixedUnreadEvents = [
@@ -249,17 +258,17 @@ assert.ok(
 );
 
 assert.ok(
-  /const currentEvents = queryClient\.getQueryData<ChangeEvent\[\]>\(queryKeys\.changeEvents\) \?\? events;[\s\S]*await queryClient\.cancelQueries\(\{ queryKey: queryKeys\.changeEvents \}\);[\s\S]*const readOnEntryResult = await markUnreadChangeEventsRead\(currentEvents, markChangeEventRead\);[\s\S]*queryClient\.setQueryData\(queryKeys\.changeEvents, readOnEntryResult\.events\);[\s\S]*if \(readOnEntryResult\.changedCount > 0\) \{[\s\S]*notifyChangeEventsUpdated\(\);[\s\S]*\}/.test(
+  /const currentEvents = queryClient\.getQueryData<ChangeEvent\[\]>\(queryKeys\.changeEvents\) \?\? events;[\s\S]*await queryClient\.cancelQueries\(\{ queryKey: queryKeys\.changeEvents \}\);[\s\S]*const optimisticReadResult = markUnreadChangeEventsReadLocally\(currentEvents\);[\s\S]*queryClient\.setQueryData\(queryKeys\.changeEvents, optimisticReadResult\.events\);[\s\S]*const readOnEntryResult = await markUnreadChangeEventsRead\(currentEvents, markChangeEventRead\);[\s\S]*queryClient\.setQueryData\(queryKeys\.changeEvents, readOnEntryResult\.events\);[\s\S]*if \(readOnEntryResult\.changedCount > 0\) \{[\s\S]*notifyChangeEventsUpdated\(\);[\s\S]*\}/.test(
     changeCenterSource,
   ),
-  "entering change center should mark unread events read through the query cache and notify the sidebar badge to clear",
+  "entering change center should optimistically clear the shared query cache before async read persistence notifies other surfaces",
 );
 
 assert.ok(
   changeCenterSource.includes("stationsQueryOptions") &&
     changeCenterSource.includes("(stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)") &&
     changeCenterSource.includes("stationNamesById") &&
-    changeCenterSource.includes("buildChangeEventListItem(event, { stationNamesById })"),
+    /buildChangeEventListItem\(event, \{[\s\S]*stationNamesById[\s\S]*\}\)/.test(changeCenterSource),
   "change center page should resolve station IDs to station names before rendering event copy",
 );
 
@@ -268,6 +277,18 @@ assert.ok(
     appShellSource.includes("window.addEventListener(CHANGE_EVENTS_UPDATED_EVENT") &&
     appShellSource.includes("window.removeEventListener(CHANGE_EVENTS_UPDATED_EVENT"),
   "app shell should refresh the sidebar change badge when change events are updated in-place",
+);
+
+assert.ok(
+  appShellSource.includes('activeRouteId !== "changes"') &&
+    appShellSource.includes("markUnreadChangeEventsReadLocally") &&
+    appShellSource.includes("markUnreadChangeEventsRead(currentEvents, markChangeEventRead)"),
+  "clicking the change center sidebar item should clear the badge from the shared cache before async persistence finishes",
+);
+
+assert.ok(
+  !appShellSource.includes("cancelled = true") && !appShellSource.includes("if (cancelled)"),
+  "leaving the change center must not cancel read persistence, or the next refetch can resurrect the unread badge",
 );
 
 assert.ok(
@@ -308,25 +329,25 @@ assert.ok(
 assert.ok(
   changeCenterSource.includes('data-testid="change-center-toolbar-surface"') &&
     changeCenterSource.includes('data-testid="change-center-list-surface"') &&
-    /data-testid="change-center-toolbar-surface"\s+className="overflow-hidden rounded-\[var\(--surface-radius\)\] border border-border bg-white shadow-\[var\(--surface-shadow\)\]"/.test(changeCenterSource) &&
-    /data-testid="change-center-list-surface"\s+className="mt-3 min-w-0 overflow-hidden rounded-\[var\(--surface-radius\)\] border border-border bg-white shadow-\[var\(--surface-shadow\)\]"/.test(changeCenterSource),
+    /data-testid="change-center-toolbar-surface"\s+className="overflow-hidden rounded-\[var\(--surface-radius\)\] border border-border bg-surface shadow-\[var\(--surface-shadow\)\]"/.test(changeCenterSource) &&
+    /data-testid="change-center-list-surface"\s+className="mt-3 min-w-0 overflow-hidden rounded-\[var\(--surface-radius\)\] border border-border bg-surface shadow-\[var\(--surface-shadow\)\]"/.test(changeCenterSource),
   "change center filters and event rows should be separate surfaces like the usage records page",
 );
 
 assert.ok(
   changeCenterSource.includes('data-testid="change-center-pagination-surface"') &&
     changeCenterSource.includes('aria-label="变更中心分页"') &&
-    changeCenterSource.includes('className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-white px-3 py-2 text-xs text-slate-500"') &&
+    changeCenterSource.includes('className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-surface px-3 py-2 text-xs text-muted-foreground"') &&
     /\)\}\s+<\/div>\s+\{filteredEvents\.length > 0 && \(/.test(changeCenterSource) &&
     requestLogTableSource.includes('data-testid="request-log-pagination-surface"') &&
-    requestLogTableSource.includes('className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-white px-3 py-2 text-xs text-slate-500"'),
+    requestLogTableSource.includes('className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-surface px-3 py-2 text-xs text-muted-foreground"'),
   "change center pagination should use the same separate standalone white footer surface as request logs",
 );
 
 assert.ok(
-  changeCenterSource.includes('rounded-l-[4px] border border-border bg-white text-slate-500') &&
-    changeCenterSource.includes('rounded-r-[4px] border border-border bg-white text-slate-500') &&
-    changeCenterSource.includes('inline-flex h-8 min-w-9 items-center justify-center border-y border-teal-400 bg-teal-50 px-2 font-medium text-teal-700') &&
+  changeCenterSource.includes('rounded-l-[4px] border border-border bg-surface text-muted-foreground') &&
+    changeCenterSource.includes('rounded-r-[4px] border border-border bg-surface text-muted-foreground') &&
+    changeCenterSource.includes('inline-flex h-8 min-w-9 items-center justify-center border-y border-primary bg-info-surface px-2 font-medium text-info-foreground') &&
     !changeCenterSource.includes('{pageInfo.page} / {pageInfo.totalPages}'),
   "change center pagination should use icon buttons and a compact current-page pill like request logs",
 );

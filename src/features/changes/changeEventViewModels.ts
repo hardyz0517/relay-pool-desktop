@@ -146,6 +146,22 @@ export function unreadChangeCount(events: ChangeEvent[]) {
   return events.filter((event) => event.status === "unread").length;
 }
 
+export function markUnreadChangeEventsReadLocally(events: ChangeEvent[]) {
+  const unreadIds = new Set(events.filter((event) => event.status === "unread").map((event) => event.id));
+
+  if (unreadIds.size === 0) {
+    return {
+      changedCount: 0,
+      events,
+    };
+  }
+
+  return {
+    changedCount: unreadIds.size,
+    events: events.map((event) => (unreadIds.has(event.id) ? { ...event, status: "read" as const } : event)),
+  };
+}
+
 export function activeSeverityCount(events: ChangeEvent[], severity: ChangeSeverity) {
   return events.filter((event) => event.severity === severity && event.status !== "dismissed" && event.status !== "resolved").length;
 }

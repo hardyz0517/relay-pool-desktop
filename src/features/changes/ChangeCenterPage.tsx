@@ -34,6 +34,7 @@ import {
   buildChangeEventListItem,
   filterChangeEvents,
   formatChangeTime,
+  markUnreadChangeEventsReadLocally,
   markUnreadChangeEventsRead,
   objectTypeLabels,
   paginateChangeEvents,
@@ -67,18 +68,19 @@ export function ChangeCenterPage() {
 
   async function refresh(showSuccess = false, _showLoading = true) {
     try {
-      await Promise.all([
-        queryClient.refetchQueries({ queryKey: queryKeys.changeEvents, type: "active" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.stations, type: "active" }),
-      ]);
       const currentEvents = queryClient.getQueryData<ChangeEvent[]>(queryKeys.changeEvents) ?? events;
       await queryClient.cancelQueries({ queryKey: queryKeys.changeEvents });
+      const optimisticReadResult = markUnreadChangeEventsReadLocally(currentEvents);
+      queryClient.setQueryData(queryKeys.changeEvents, optimisticReadResult.events);
+
+      await queryClient.refetchQueries({ queryKey: queryKeys.stations, type: "active" });
       const readOnEntryResult = await markUnreadChangeEventsRead(currentEvents, markChangeEventRead);
       queryClient.setQueryData(queryKeys.changeEvents, readOnEntryResult.events);
       if (readOnEntryResult.changedCount > 0) {
         notifyChangeEventsUpdated();
       }
       if (showSuccess) {
+        await queryClient.refetchQueries({ queryKey: queryKeys.changeEvents, type: "active" });
         toast.success("变更中心已刷新");
       }
     } catch (requestError) {
