@@ -1205,6 +1205,20 @@ impl AppDatabase {
         station_credentials_from_connection(&connection, &station_id)
     }
 
+    pub fn persist_station_session_if_revision(
+        &self,
+        input: PersistStationSessionInput,
+        expected_revision: i64,
+        data_key: &[u8; 32],
+    ) -> Result<StationCredentials, String> {
+        let station_id = input.station_id.clone();
+        self.with_station_endpoint_revision(&station_id, expected_revision, |transaction| {
+            persist_station_session_from_connection(transaction, input, data_key)
+        })?;
+        let connection = self.connection()?;
+        station_credentials_from_connection(&connection, &station_id)
+    }
+
     pub fn resolve_station_session_with_data_key(
         &self,
         station_id: String,
@@ -19364,6 +19378,46 @@ mod tests {
         assert_eq!(session.cookie.as_deref(), Some("session=encrypted-at-rest"));
         assert_eq!(session.newapi_user_id.as_deref(), Some("42"));
         assert_eq!(credentials.session_source, "password_login");
+    }
+
+    #[test]
+    fn stale_endpoint_revision_rejects_session_persistence() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "stale-session");
+        let data_key = [43_u8; 32];
+        let old_revision = station.endpoint_revision;
+        let updated = update_test_station_urls(
+            &database,
+            &station,
+            "https://new-console.example".to_string(),
+            station.api_base_url.clone(),
+            true,
+        );
+        assert!(updated.endpoint_revision > old_revision);
+
+        let error = database
+            .persist_station_session_if_revision(
+                PersistStationSessionInput {
+                    station_id: station.id.clone(),
+                    access_token: None,
+                    refresh_token: None,
+                    cookie: Some("session=stale".to_string()),
+                    newapi_user_id: Some("42".to_string()),
+                    token_expires_at: None,
+                    session_expires_at: None,
+                    session_source: "web_authorization".to_string(),
+                },
+                old_revision,
+                &data_key,
+            )
+            .expect_err("stale revision must be rejected");
+
+        assert_eq!(error, "station_endpoint_revision_changed");
+        let credentials = database
+            .get_station_credentials(station.id)
+            .expect("credentials");
+        assert!(!credentials.cookie_present);
+        assert!(!credentials.access_token_present);
     }
 
     #[test]

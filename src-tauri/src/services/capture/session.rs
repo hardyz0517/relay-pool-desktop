@@ -15,13 +15,16 @@ impl CaptureSessionStore {
         &self,
         station_id: String,
         window_label: String,
+        endpoint_revision: i64,
     ) -> Result<CaptureSessionStatus, String> {
         let mut sessions = self.sessions()?;
         let session = CaptureSession {
             station_id: station_id.clone(),
             window_label,
+            endpoint_revision,
             status: "capturing".to_string(),
             events: Vec::new(),
+            web_authorization_user_id: None,
             last_error: None,
         };
         let status = session.status();
@@ -33,6 +36,7 @@ impl CaptureSessionStore {
         &self,
         station_id: &str,
         event: CapturedHttpEvent,
+        web_authorization_user_id: Option<String>,
     ) -> Result<CaptureSessionStatus, String> {
         let mut sessions = self.sessions()?;
         let Some(session) = sessions.get_mut(station_id) else {
@@ -42,7 +46,24 @@ impl CaptureSessionStore {
             return Err("捕获事件来源窗口不匹配，已忽略。".to_string());
         }
         session.events.push(event);
+        if let Some(user_id) = web_authorization_user_id.filter(|value| !value.trim().is_empty()) {
+            session.web_authorization_user_id = Some(user_id);
+        }
         Ok(session.status())
+    }
+
+    pub fn web_authorization_user_id(&self, station_id: &str) -> Result<Option<String>, String> {
+        let sessions = self.sessions()?;
+        Ok(sessions
+            .get(station_id)
+            .and_then(|session| session.web_authorization_user_id.clone()))
+    }
+
+    pub fn endpoint_revision(&self, station_id: &str) -> Result<Option<i64>, String> {
+        let sessions = self.sessions()?;
+        Ok(sessions
+            .get(station_id)
+            .map(|session| session.endpoint_revision))
     }
 
     pub fn status(&self, station_id: &str) -> Result<CaptureSessionStatus, String> {
@@ -95,8 +116,10 @@ impl CaptureSessionStore {
 struct CaptureSession {
     station_id: String,
     window_label: String,
+    endpoint_revision: i64,
     status: String,
     events: Vec<CapturedHttpEvent>,
+    web_authorization_user_id: Option<String>,
     last_error: Option<String>,
 }
 
@@ -110,8 +133,69 @@ impl CaptureSession {
             capture_count: self.events.len(),
             recognized_field_count,
             pending_confirmation_count,
-            web_authorization_candidate: false,
+            web_authorization_candidate: self.web_authorization_user_id.is_some(),
             last_error: self.last_error.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn captured_event() -> CapturedHttpEvent {
+        CapturedHttpEvent {
+            id: "event-1".to_string(),
+            station_id: "station-1".to_string(),
+            source_window_id: "capture-station-1".to_string(),
+            page_url: "https://relay.example/dashboard".to_string(),
+            request_url: "https://relay.example/api/oauth/oidc".to_string(),
+            request_path: "/api/oauth/oidc".to_string(),
+            method: "GET".to_string(),
+            status: Some(200),
+            content_type: "application/json".to_string(),
+            started_at: None,
+            finished_at: None,
+            duration_ms: None,
+            response_kind: "json".to_string(),
+            response_size: 0,
+            response_json_redacted: None,
+            response_text_preview_redacted: None,
+            classification: "auth".to_string(),
+            confidence: 1.0,
+            error_message: None,
+        }
+    }
+
+    fn push_authorization_candidate(
+        store: &CaptureSessionStore,
+        event: CapturedHttpEvent,
+        user_id: &str,
+    ) -> CaptureSessionStatus {
+        store
+            .push_event("station-1", event, Some(user_id.to_string()))
+            .expect("push authorization candidate")
+    }
+
+    #[test]
+    fn authorization_candidate_is_retained_in_native_session_state() {
+        let store = CaptureSessionStore::default();
+        store
+            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
+            .expect("start capture");
+
+        let status = push_authorization_candidate(&store, captured_event(), "42");
+
+        assert!(status.web_authorization_candidate);
+    }
+
+    #[test]
+    fn capture_session_retains_its_start_revision() {
+        let store = CaptureSessionStore::default();
+        store
+            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
+            .expect("start capture");
+
+        assert_eq!(store.endpoint_revision("station-1").unwrap(), Some(4));
     }
 }

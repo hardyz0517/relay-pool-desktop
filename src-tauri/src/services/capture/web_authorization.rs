@@ -42,24 +42,43 @@ pub(crate) fn is_newapi_completion_candidate(
     status: Option<i64>,
     response_json: Option<&Value>,
 ) -> bool {
-    matches!(status, Some(200..=299))
-        && request_path
-            .split('?')
-            .next()
-            .unwrap_or(request_path)
-            .trim_end_matches('/')
-            .eq_ignore_ascii_case("/api/user/self")
-        && response_json.and_then(extract_verified_user_id).is_some()
+    if !matches!(status, Some(200..=299)) {
+        return false;
+    }
+
+    let path = request_path
+        .split('?')
+        .next()
+        .unwrap_or(request_path)
+        .trim_end_matches('/');
+    let normalized_path = path.to_ascii_lowercase();
+    let is_self_probe = normalized_path == "/api/user/self";
+    let oauth_provider = normalized_path.strip_prefix("/api/oauth/");
+    let is_oauth_callback = oauth_provider.is_some_and(|provider| {
+        !provider.is_empty() && !provider.contains('/') && !provider.eq_ignore_ascii_case("state")
+    });
+    let Some(payload) = response_json else {
+        return false;
+    };
+
+    (is_self_probe
+        || (is_oauth_callback && payload.get("success").and_then(Value::as_bool) == Some(true)))
+        && extract_verified_user_id(payload).is_some()
 }
 
 pub(crate) fn verify_newapi_cookie_session(
     management_base_url: &str,
     cookie_header: &str,
+    expected_user_id: &str,
     timeout: Duration,
 ) -> Result<VerifiedWebAuthorizationSession, String> {
     let cookie_header = cookie_header.trim();
     if cookie_header.is_empty() {
         return Err("Web authorization did not capture a usable Cookie header.".to_string());
+    }
+    let expected_user_id = expected_user_id.trim();
+    if expected_user_id.is_empty() {
+        return Err("Web authorization did not capture a usable user id.".to_string());
     }
 
     let url = build_management_url(management_base_url, "/api/user/self")?;
@@ -67,6 +86,7 @@ pub(crate) fn verify_newapi_cookie_session(
     let response = match ureq::get(&url)
         .timeout(timeout)
         .set("Cookie", cookie_header)
+        .set("New-Api-User", expected_user_id)
         .set("Accept", "application/json")
         .call()
     {
@@ -87,6 +107,9 @@ pub(crate) fn verify_newapi_cookie_session(
         .map_err(|error| format!("Web authorization self probe returned invalid JSON: {error}"))?;
     let user_id = extract_verified_user_id(&payload)
         .ok_or_else(|| "Web authorization self probe did not return a user id.".to_string())?;
+    if user_id != expected_user_id {
+        return Err("Web authorization self probe returned a different user id.".to_string());
+    }
 
     Ok(VerifiedWebAuthorizationSession::new(
         cookie_header.to_string(),
@@ -164,6 +187,27 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_successful_newapi_oauth_callback_candidate() {
+        let payload = json!({
+            "success": true,
+            "data": {
+                "id": 42
+            }
+        });
+
+        assert!(is_newapi_completion_candidate(
+            "/api/oauth/oidc",
+            Some(200),
+            Some(&payload),
+        ));
+        assert!(is_newapi_completion_candidate(
+            "/api/oauth/custom-provider",
+            Some(200),
+            Some(&payload),
+        ));
+    }
+
+    #[test]
     fn rejects_unauthenticated_or_unrelated_completion_candidates() {
         let payload = json!({
             "success": true,
@@ -187,6 +231,16 @@ mod tests {
             Some(200),
             Some(&json!({ "success": true })),
         ));
+        assert!(!is_newapi_completion_candidate(
+            "/api/oauth/state",
+            Some(200),
+            Some(&payload),
+        ));
+        assert!(!is_newapi_completion_candidate(
+            "/api/oauth/oidc",
+            Some(200),
+            Some(&json!({ "success": false, "data": { "id": 42 } })),
+        ));
     }
 }
 
@@ -196,6 +250,7 @@ mod verification_tests {
     use std::{
         io::{Read, Write},
         net::TcpListener,
+        sync::mpsc::{self, Receiver},
         thread,
     };
 
@@ -221,6 +276,53 @@ mod verification_tests {
         format!("http://{address}")
     }
 
+    fn serve_once_and_capture_request(response: String) -> (String, Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture");
+        let address = listener.local_addr().expect("fixture address");
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buffer = [0_u8; 4096];
+            let size = stream.read(&mut buffer).expect("read request");
+            sender
+                .send(String::from_utf8_lossy(&buffer[..size]).to_string())
+                .expect("capture request");
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+        (format!("http://{address}"), receiver)
+    }
+
+    fn verify_with_user_id_hint(
+        base_url: &str,
+        cookie_header: &str,
+        user_id: &str,
+        timeout: Duration,
+    ) -> Result<VerifiedWebAuthorizationSession, String> {
+        verify_newapi_cookie_session(base_url, cookie_header, user_id, timeout)
+    }
+
+    #[test]
+    fn cookie_session_probe_sends_candidate_user_id_header() {
+        let (base_url, request) = serve_once_and_capture_request(response(
+            r#"{"success":true,"data":{"id":42,"quota":1}}"#,
+        ));
+
+        verify_with_user_id_hint(
+            &base_url,
+            "session=abc",
+            "42",
+            std::time::Duration::from_secs(5),
+        )
+        .expect("verified session");
+
+        let request = request.recv().expect("captured request");
+        assert!(request
+            .lines()
+            .any(|line| line.eq_ignore_ascii_case("New-Api-User: 42")));
+    }
+
     #[test]
     fn verifies_cookie_session_with_newapi_self_endpoint() {
         let base_url = serve_once(response(r#"{"success":true,"data":{"id":42,"quota":1}}"#));
@@ -228,6 +330,7 @@ mod verification_tests {
         let verified = verify_newapi_cookie_session(
             &base_url,
             "session=abc",
+            "42",
             std::time::Duration::from_secs(5),
         )
         .expect("verified session");
@@ -244,6 +347,7 @@ mod verification_tests {
         let error = verify_newapi_cookie_session(
             &base_url,
             "session=abc",
+            "42",
             std::time::Duration::from_secs(5),
         )
         .expect_err("missing user id should fail");

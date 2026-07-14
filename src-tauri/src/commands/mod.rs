@@ -63,7 +63,7 @@ use crate::{
         proxy::{redact_error_message, runtime::ProxyRuntimeState, should_fallback},
         remote_keys,
         secrets::SecretManager,
-        station_endpoints::build_api_url,
+        station_endpoints::{build_api_url, url_belongs_to_base},
         updater::{self, PublishedUpdateInspection, UpdaterNetworkConfig},
     },
 };
@@ -1148,6 +1148,7 @@ pub async fn start_capture_session(
         None
     };
     let label = capture_window_label(&station_id);
+    let endpoint_revision = station.endpoint_revision;
     let script = capture_script(
         &station_id,
         &label,
@@ -1193,7 +1194,7 @@ pub async fn start_capture_session(
     })
     .await
     .map_err(|error| format!("打开网页登录窗口失败: {error}"))??;
-    sessions.start(station_id, label)
+    sessions.start(station_id, label, endpoint_revision)
 }
 
 #[tauri::command]
@@ -1219,15 +1220,18 @@ pub fn record_capture_event(
     ) {
         return Err("捕获事件不属于当前站点 Base URL，已拒绝。".to_string());
     }
-    let web_authorization_candidate = web_authorization_candidate_from_input(&input);
+    let web_authorization_user_id = web_authorization_candidate_user_id_from_input(&input);
     if let Some(session) = capture::extract_session_credentials(&input) {
-        database.persist_station_session_with_data_key(session, secrets.data_key())?;
+        let expected_revision = sessions
+            .endpoint_revision(&input.station_id)?
+            .ok_or_else(capture_endpoint_revision_missing_message)?;
+        database
+            .persist_station_session_if_revision(session, expected_revision, secrets.data_key())
+            .map_err(capture_endpoint_revision_error)?;
     }
     let station_id = input.station_id.clone();
     let event = capture::sanitize_event(input);
-    let mut status = sessions.push_event(&station_id, event)?;
-    status.web_authorization_candidate = web_authorization_candidate;
-    Ok(status)
+    sessions.push_event(&station_id, event, web_authorization_user_id)
 }
 
 #[tauri::command]
@@ -1309,27 +1313,39 @@ pub async fn finish_web_authorization_session(
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
     let station = database.station_for_collector(&station_id)?;
+    let expected_user_id = sessions
+        .web_authorization_user_id(&station_id)?
+        .ok_or_else(|| {
+            "网页登录授权尚未捕获到用户身份，请在授权窗口完成登录后重试。".to_string()
+        })?;
+    let expected_revision = sessions
+        .endpoint_revision(&station_id)?
+        .ok_or_else(capture_endpoint_revision_missing_message)?;
     let cookie_header =
         read_capture_window_cookie_header(app, &station_id, &station.website_url).await?;
     let verified = capture::web_authorization::verify_newapi_cookie_session(
         &station.website_url,
         &cookie_header,
+        &expected_user_id,
         Duration::from_secs(20),
     )?;
 
-    database.persist_station_session_with_data_key(
-        PersistStationSessionInput {
-            station_id: station_id.clone(),
-            access_token: None,
-            refresh_token: None,
-            cookie: Some(verified.cookie_header),
-            newapi_user_id: Some(verified.newapi_user_id),
-            token_expires_at: None,
-            session_expires_at: None,
-            session_source: verified.session_source,
-        },
-        secrets.data_key(),
-    )?;
+    database
+        .persist_station_session_if_revision(
+            PersistStationSessionInput {
+                station_id: station_id.clone(),
+                access_token: None,
+                refresh_token: None,
+                cookie: Some(verified.cookie_header),
+                newapi_user_id: Some(verified.newapi_user_id),
+                token_expires_at: None,
+                session_expires_at: None,
+                session_source: verified.session_source,
+            },
+            expected_revision,
+            secrets.data_key(),
+        )
+        .map_err(capture_endpoint_revision_error)?;
 
     finish_capture_session_from_events(
         &database,
@@ -1380,19 +1396,26 @@ fn capture_request_belongs_to_station(
     station_api_base_url: &str,
     request_url: &str,
 ) -> bool {
-    let belongs = [station_website_url, station_api_base_url]
+    [station_website_url, station_api_base_url]
         .into_iter()
-        .any(|base_url| url_has_base_prefix(request_url, base_url));
-    belongs
+        .any(|base_url| url_belongs_to_base(request_url, base_url))
 }
 
-fn url_has_base_prefix(request_url: &str, base_url: &str) -> bool {
-    let request = request_url.trim();
-    let base = base_url.trim().trim_end_matches('/');
-    !base.is_empty() && (request == base || request.starts_with(&format!("{base}/")))
+fn capture_endpoint_revision_missing_message() -> String {
+    "endpoint_revision_changed: 捕获会话已过期，请重新打开网页登录 / 捕获窗口。".to_string()
 }
 
-fn web_authorization_candidate_from_input(input: &CapturedHttpEventInput) -> bool {
+fn capture_endpoint_revision_error(error: String) -> String {
+    if error == "station_endpoint_revision_changed" {
+        capture_endpoint_revision_missing_message()
+    } else {
+        error
+    }
+}
+
+fn web_authorization_candidate_user_id_from_input(
+    input: &CapturedHttpEventInput,
+) -> Option<String> {
     let fallback_path;
     let request_path = if let Some(path) = input.request_path.as_deref() {
         path
@@ -1400,11 +1423,17 @@ fn web_authorization_candidate_from_input(input: &CapturedHttpEventInput) -> boo
         fallback_path = path_from_request_url(&input.request_url);
         &fallback_path
     };
-    capture::web_authorization::is_newapi_completion_candidate(
+    if !capture::web_authorization::is_newapi_completion_candidate(
         request_path,
         input.status,
         input.response_json.as_ref(),
-    )
+    ) {
+        return None;
+    }
+    input
+        .response_json
+        .as_ref()
+        .and_then(capture::web_authorization::extract_verified_user_id)
 }
 
 fn path_from_request_url(url: &str) -> String {
@@ -2261,6 +2290,25 @@ mod tests {
     }
 
     #[test]
+    fn capture_accepts_configured_origins_and_rejects_lookalikes() {
+        assert!(capture_request_belongs_to_station(
+            "https://console.example:443",
+            "https://api.example/v1",
+            "https://console.example/api/user/self",
+        ));
+        assert!(capture_request_belongs_to_station(
+            "https://console.example",
+            "https://api.example/v1",
+            "https://api.example/v1/models",
+        ));
+        assert!(!capture_request_belongs_to_station(
+            "https://console.example",
+            "https://api.example/v1",
+            "https://console.example.evil.test/api/user/self",
+        ));
+    }
+
+    #[test]
     fn captured_newapi_self_event_marks_web_authorization_candidate() {
         let input = CapturedHttpEventInput {
             station_id: "station-1".to_string(),
@@ -2281,7 +2329,10 @@ mod tests {
             error_message: None,
         };
 
-        assert!(web_authorization_candidate_from_input(&input));
+        assert_eq!(
+            web_authorization_candidate_user_id_from_input(&input).as_deref(),
+            Some("42")
+        );
     }
 
     #[test]
