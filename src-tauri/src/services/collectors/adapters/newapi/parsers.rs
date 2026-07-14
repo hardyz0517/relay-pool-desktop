@@ -204,6 +204,7 @@ pub(super) fn parse_balance_fact(
                 "completionTokens",
             ],
         ),
+        account_concurrency_limit: None,
         currency: "USD".to_string(),
         credit_unit: Some(format!("newapi_quota_{quota_per_unit}")),
         status: if remaining == Some(0.0) {

@@ -74,6 +74,7 @@ pub struct BalanceSnapshot {
     pub today_output_token_count: Option<i64>,
     pub total_input_token_count: Option<i64>,
     pub total_output_token_count: Option<i64>,
+    pub account_concurrency_limit: Option<i64>,
     pub low_balance_threshold: Option<f64>,
     pub status: String,
     pub source: String,
@@ -153,6 +154,7 @@ pub struct UpsertBalanceSnapshotInput {
     pub today_output_token_count: Option<i64>,
     pub total_input_token_count: Option<i64>,
     pub total_output_token_count: Option<i64>,
+    pub account_concurrency_limit: Option<i64>,
     pub low_balance_threshold: Option<f64>,
     pub status: String,
     pub source: String,
@@ -351,6 +353,44 @@ mod tests {
             "https://developers.openai.com/api/docs/pricing"
         );
         assert_eq!(json["builtIn"], true);
+    }
+
+    #[test]
+    fn balance_snapshot_serializes_account_concurrency_limit() {
+        let snapshot = BalanceSnapshot {
+            id: "balance-1".to_string(),
+            station_id: "station-1".to_string(),
+            station_key_id: None,
+            scope: "station".to_string(),
+            value: Some(66.78),
+            currency: "CNY".to_string(),
+            credit_unit: None,
+            used_value: None,
+            total_value: None,
+            today_request_count: None,
+            total_request_count: None,
+            today_consumption: None,
+            total_consumption: None,
+            today_base_consumption: None,
+            total_base_consumption: None,
+            today_token_count: None,
+            total_token_count: None,
+            today_input_token_count: None,
+            today_output_token_count: None,
+            total_input_token_count: None,
+            total_output_token_count: None,
+            account_concurrency_limit: Some(5),
+            low_balance_threshold: None,
+            status: "normal".to_string(),
+            source: "sub2api_profile".to_string(),
+            confidence: 0.9,
+            collected_at: Some("2026-07-14T08:00:00.000Z".to_string()),
+            created_at: "2026-07-14T08:00:00.000Z".to_string(),
+            updated_at: "2026-07-14T08:00:00.000Z".to_string(),
+        };
+
+        let json = serde_json::to_value(snapshot).expect("json");
+        assert_eq!(json["accountConcurrencyLimit"], 5);
     }
 
     #[test]

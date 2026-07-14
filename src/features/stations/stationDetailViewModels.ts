@@ -188,8 +188,9 @@ export function buildBalanceCards(station: Station, balances: BalanceSnapshot[])
   const currentValue = currentBalance.value;
   const threshold = currentBalance.lowBalanceThreshold;
   const balanceTone = balanceToneFor(currentValue, threshold, currentBalance.status);
+  const accountConcurrencyLimit = currentBalance.sourceSnapshot?.accountConcurrencyLimit;
 
-  return [
+  const cards: StationDetailBalanceCard[] = [
     {
       label: "当前余额",
       value: formatMoney(currentValue, currency),
@@ -211,6 +212,24 @@ export function buildBalanceCards(station: Station, balances: BalanceSnapshot[])
       tone: currentBalance.source !== "missing" ? "neutral" : "muted",
     },
   ];
+
+  if (
+    station.stationType === "sub2api" &&
+    typeof accountConcurrencyLimit === "number" &&
+    Number.isFinite(accountConcurrencyLimit) &&
+    accountConcurrencyLimit > 0
+  ) {
+    cards.push({
+      label: "并发限制",
+      value: `${accountConcurrencyLimit} 路`,
+      helper: currentBalance.collectedAt
+        ? `来自 Sub2API 账号资料页：${formatDetailDate(currentBalance.collectedAt)}`
+        : "来自 Sub2API 账号资料页",
+      tone: "neutral",
+    });
+  }
+
+  return cards;
 }
 
 export function buildUsageCards(station: Station, balances: BalanceSnapshot[]): StationDetailBalanceCard[] {

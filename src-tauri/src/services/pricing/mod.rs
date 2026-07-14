@@ -152,6 +152,7 @@ pub fn sanitize_balance_snapshot_input(
         today_output_token_count: input.today_output_token_count,
         total_input_token_count: input.total_input_token_count,
         total_output_token_count: input.total_output_token_count,
+        account_concurrency_limit: input.account_concurrency_limit,
         low_balance_threshold: input.low_balance_threshold,
         status: input.status.trim().to_string(),
         source: input.source.trim().to_string(),

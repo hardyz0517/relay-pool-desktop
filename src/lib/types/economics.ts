@@ -66,6 +66,7 @@ export type BalanceSnapshot = {
   todayOutputTokenCount: number | null;
   totalInputTokenCount: number | null;
   totalOutputTokenCount: number | null;
+  accountConcurrencyLimit: number | null;
   lowBalanceThreshold: number | null;
   status: "unknown" | "normal" | "low" | "depleted" | string;
   source: string;
