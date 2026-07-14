@@ -157,6 +157,21 @@ const groupAdded = buildChangeEventListItem(
 assert.equal(groupAdded.title, "中转站 蓝池 新增分组 claude-aws，倍率未知");
 assert.equal(groupAdded.diff, null);
 
+const groupAddedWithJoinedStation = buildChangeEventListItem(
+  changeEvent("group-added-joined-station", "unread", {
+    eventType: "group_added",
+    message: "站点新增可用分组 fast",
+    stationId: "station-with-joined-name",
+    stationName: "直连站名",
+    newValueJson: JSON.stringify({ groupName: "fast", effectiveRateMultiplier: 1.2 }),
+  }),
+);
+assert.equal(
+  groupAddedWithJoinedStation.title,
+  "中转站 直连站名 新增分组 fast，倍率1.2 倍",
+  "change center rows should use stationName returned with the change event without waiting for the station list query",
+);
+
 const groupMissing = buildChangeEventListItem(
   changeEvent("group-missing", "unread", {
     severity: "warning",

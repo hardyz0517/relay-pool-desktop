@@ -12,6 +12,7 @@ pub struct ChangeEvent {
     pub object_type: String,
     pub object_id: Option<String>,
     pub station_id: Option<String>,
+    pub station_name: Option<String>,
     pub station_key_id: Option<String>,
     pub pricing_rule_id: Option<String>,
     pub request_log_id: Option<String>,

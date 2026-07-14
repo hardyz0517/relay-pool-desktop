@@ -10370,21 +10370,20 @@ fn balance_snapshot_by_id(connection: &Connection, id: &str) -> Result<BalanceSn
 fn list_change_events_from_connection(connection: &Connection) -> Result<Vec<ChangeEvent>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, severity, event_type, status, title, message, object_type, object_id,
-                    station_id, station_key_id, pricing_rule_id, request_log_id,
-                    old_value_json, new_value_json, impact_json, dedupe_key, source,
-                    detected_at, resolved_at, created_at, updated_at
+            "SELECT change_events.id, change_events.severity, change_events.event_type, change_events.status,
+                    change_events.title, change_events.message, change_events.object_type, change_events.object_id,
+                    change_events.station_id, stations.name AS station_name,
+                    change_events.station_key_id, change_events.pricing_rule_id, change_events.request_log_id,
+                    change_events.old_value_json, change_events.new_value_json, change_events.impact_json,
+                    change_events.dedupe_key, change_events.source,
+                    change_events.detected_at, change_events.resolved_at, change_events.created_at, change_events.updated_at
                FROM change_events
+               LEFT JOIN stations ON stations.id = change_events.station_id
               WHERE NOT (
-                    event_type IN ('model_added', 'model_removed')
-                    AND EXISTS (
-                        SELECT 1
-                          FROM stations
-                         WHERE stations.id = change_events.station_id
-                           AND stations.station_type = 'newapi'
-                    )
-                )
-              ORDER BY updated_at DESC, detected_at DESC",
+                    change_events.event_type IN ('model_added', 'model_removed')
+                    AND COALESCE(stations.station_type, '') = 'newapi'
+                 )
+              ORDER BY change_events.updated_at DESC, change_events.detected_at DESC",
         )
         .map_err(|error| format!("读取变更事件失败: {error}"))?;
     let rows = statement
@@ -10401,22 +10400,21 @@ fn list_change_events_for_station_from_connection(
 ) -> Result<Vec<ChangeEvent>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, severity, event_type, status, title, message, object_type, object_id,
-                    station_id, station_key_id, pricing_rule_id, request_log_id,
-                    old_value_json, new_value_json, impact_json, dedupe_key, source,
-                    detected_at, resolved_at, created_at, updated_at
+            "SELECT change_events.id, change_events.severity, change_events.event_type, change_events.status,
+                    change_events.title, change_events.message, change_events.object_type, change_events.object_id,
+                    change_events.station_id, stations.name AS station_name,
+                    change_events.station_key_id, change_events.pricing_rule_id, change_events.request_log_id,
+                    change_events.old_value_json, change_events.new_value_json, change_events.impact_json,
+                    change_events.dedupe_key, change_events.source,
+                    change_events.detected_at, change_events.resolved_at, change_events.created_at, change_events.updated_at
                FROM change_events
-              WHERE station_id = ?1
+               LEFT JOIN stations ON stations.id = change_events.station_id
+              WHERE change_events.station_id = ?1
                 AND NOT (
-                    event_type IN ('model_added', 'model_removed')
-                    AND EXISTS (
-                        SELECT 1
-                          FROM stations
-                         WHERE stations.id = change_events.station_id
-                           AND stations.station_type = 'newapi'
-                    )
-                )
-              ORDER BY updated_at DESC, detected_at DESC",
+                    change_events.event_type IN ('model_added', 'model_removed')
+                    AND COALESCE(stations.station_type, '') = 'newapi'
+                 )
+              ORDER BY change_events.updated_at DESC, change_events.detected_at DESC",
         )
         .map_err(|error| format!("读取中转站变更事件失败: {error}"))?;
     let rows = statement
@@ -10528,12 +10526,16 @@ fn change_event_by_dedupe_key(
 ) -> Result<ChangeEvent, String> {
     connection
         .query_row(
-            "SELECT id, severity, event_type, status, title, message, object_type, object_id,
-                    station_id, station_key_id, pricing_rule_id, request_log_id,
-                    old_value_json, new_value_json, impact_json, dedupe_key, source,
-                    detected_at, resolved_at, created_at, updated_at
+            "SELECT change_events.id, change_events.severity, change_events.event_type, change_events.status,
+                    change_events.title, change_events.message, change_events.object_type, change_events.object_id,
+                    change_events.station_id, stations.name AS station_name,
+                    change_events.station_key_id, change_events.pricing_rule_id, change_events.request_log_id,
+                    change_events.old_value_json, change_events.new_value_json, change_events.impact_json,
+                    change_events.dedupe_key, change_events.source,
+                    change_events.detected_at, change_events.resolved_at, change_events.created_at, change_events.updated_at
                FROM change_events
-              WHERE dedupe_key = ?1",
+               LEFT JOIN stations ON stations.id = change_events.station_id
+              WHERE change_events.dedupe_key = ?1",
             params![dedupe_key],
             row_to_change_event,
         )
@@ -10543,12 +10545,16 @@ fn change_event_by_dedupe_key(
 fn change_event_by_id(connection: &Connection, id: &str) -> Result<ChangeEvent, String> {
     connection
         .query_row(
-            "SELECT id, severity, event_type, status, title, message, object_type, object_id,
-                    station_id, station_key_id, pricing_rule_id, request_log_id,
-                    old_value_json, new_value_json, impact_json, dedupe_key, source,
-                    detected_at, resolved_at, created_at, updated_at
+            "SELECT change_events.id, change_events.severity, change_events.event_type, change_events.status,
+                    change_events.title, change_events.message, change_events.object_type, change_events.object_id,
+                    change_events.station_id, stations.name AS station_name,
+                    change_events.station_key_id, change_events.pricing_rule_id, change_events.request_log_id,
+                    change_events.old_value_json, change_events.new_value_json, change_events.impact_json,
+                    change_events.dedupe_key, change_events.source,
+                    change_events.detected_at, change_events.resolved_at, change_events.created_at, change_events.updated_at
                FROM change_events
-              WHERE id = ?1",
+               LEFT JOIN stations ON stations.id = change_events.station_id
+              WHERE change_events.id = ?1",
             params![id],
             row_to_change_event,
         )
@@ -10619,18 +10625,19 @@ fn row_to_change_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChangeEvent>
         object_type: row.get(6)?,
         object_id: row.get(7)?,
         station_id: row.get(8)?,
-        station_key_id: row.get(9)?,
-        pricing_rule_id: row.get(10)?,
-        request_log_id: row.get(11)?,
-        old_value_json: row.get(12)?,
-        new_value_json: row.get(13)?,
-        impact_json: row.get(14)?,
-        dedupe_key: row.get(15)?,
-        source: row.get(16)?,
-        detected_at: row.get(17)?,
-        resolved_at: row.get(18)?,
-        created_at: row.get(19)?,
-        updated_at: row.get(20)?,
+        station_name: row.get(9)?,
+        station_key_id: row.get(10)?,
+        pricing_rule_id: row.get(11)?,
+        request_log_id: row.get(12)?,
+        old_value_json: row.get(13)?,
+        new_value_json: row.get(14)?,
+        impact_json: row.get(15)?,
+        dedupe_key: row.get(16)?,
+        source: row.get(17)?,
+        detected_at: row.get(18)?,
+        resolved_at: row.get(19)?,
+        created_at: row.get(20)?,
+        updated_at: row.get(21)?,
     })
 }
 
@@ -17232,6 +17239,32 @@ mod tests {
                 && event.station_key_id.as_deref() == Some(key.id.as_str())
                 && event.severity == "warning"
         }));
+    }
+
+    #[test]
+    fn change_events_include_station_name_for_rows() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "station-name-row");
+
+        database
+            .upsert_change_event(crate::services::change_events::group_added_event(
+                &station.id,
+                "fast-group",
+                "group-binding-station-name-row",
+                Some(1.0),
+                None,
+                Some(1.0),
+            ))
+            .expect("insert event");
+
+        let event = database
+            .list_change_events()
+            .expect("events")
+            .into_iter()
+            .find(|event| event.event_type == "group_added")
+            .expect("group event");
+
+        assert_eq!(event.station_name.as_deref(), Some("station-name-row"));
     }
 
     #[test]

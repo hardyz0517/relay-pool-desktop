@@ -20,6 +20,7 @@ export type ChangeEvent = {
   objectType: ChangeObjectType | string;
   objectId: string | null;
   stationId: string | null;
+  stationName?: string | null;
   stationKeyId: string | null;
   pricingRuleId: string | null;
   requestLogId: string | null;

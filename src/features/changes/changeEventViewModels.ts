@@ -506,7 +506,9 @@ function resolveStationLabel(
   impact: Record<string, unknown> | null,
   options: ChangeEventListOptions,
 ) {
+  const stationNameFromEvent = event.stationName?.trim() || null;
   return (
+    stationNameFromEvent ??
     readStationNameById(options.stationNamesById, event.stationId) ??
     readStationName(newValue) ??
     readStationName(oldValue) ??
