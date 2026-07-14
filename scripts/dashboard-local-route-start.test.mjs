@@ -10,8 +10,15 @@ assert.match(
 );
 
 assert.ok(
-  dashboardSource.includes('import { loadDashboardWorkspace } from "@/lib/queries/dashboardQueries";'),
-  "dashboard initial raw facts should load through the dashboard query service",
+  dashboardSource.includes('import { useActivityQuery } from "@/lib/query/useActivityQuery";') &&
+    dashboardSource.includes("proxyStatusQueryOptions") &&
+    dashboardSource.includes("requestLogsQueryOptions") &&
+    dashboardSource.includes("keyPoolQueryOptions") &&
+    dashboardSource.includes("stationsQueryOptions") &&
+    dashboardSource.includes("currentStationBalanceSnapshotsQueryOptions") &&
+    dashboardSource.includes("settingsQueryOptions") &&
+    dashboardSource.includes("changeEventsQueryOptions"),
+  "dashboard initial raw facts should load through shared resource query options",
 );
 
 assert.ok(
@@ -27,8 +34,9 @@ assert.ok(
 assert.ok(
   dashboardSource.includes("async function handleStartLocalProxy()") &&
     dashboardSource.includes("setStartingLocalProxy(true)") &&
+    dashboardSource.includes("await queryClient.cancelQueries({ queryKey: queryKeys.proxyStatus })") &&
     dashboardSource.includes("const nextStatus = await startLocalProxy()") &&
-    dashboardSource.includes("setProxyStatus(nextStatus)") &&
+    dashboardSource.includes("queryClient.setQueryData(queryKeys.proxyStatus, nextStatus)") &&
     dashboardSource.includes("setStartingLocalProxy(false)"),
   "dashboard start handler should start the local route and refresh the displayed proxy status",
 );
@@ -36,8 +44,9 @@ assert.ok(
 assert.ok(
   dashboardSource.includes("async function handleStopLocalProxy()") &&
     dashboardSource.includes("setStoppingLocalProxy(true)") &&
+    dashboardSource.includes("await queryClient.cancelQueries({ queryKey: queryKeys.proxyStatus })") &&
     dashboardSource.includes("const nextStatus = await stopLocalProxy()") &&
-    dashboardSource.includes("setProxyStatus(nextStatus)") &&
+    dashboardSource.includes("queryClient.setQueryData(queryKeys.proxyStatus, nextStatus)") &&
     dashboardSource.includes("setStoppingLocalProxy(false)"),
   "dashboard stop handler should stop the local route and refresh the displayed proxy status",
 );

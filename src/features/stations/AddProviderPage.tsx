@@ -824,7 +824,10 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     remoteCapabilityUnavailableReason ??
     (remoteListError ? `远端 Key 列表读取失败：${remoteListError}` : null);
   const createPageRemoteDraftReady =
-    Boolean(form.websiteUrl.trim()) && Boolean(form.loginUsername.trim()) && Boolean(form.loginPassword.trim());
+    Boolean(form.websiteUrl.trim()) &&
+    Boolean(form.apiBaseUrl.trim()) &&
+    Boolean(form.loginUsername.trim()) &&
+    Boolean(form.loginPassword.trim());
   const scanRemoteDisabled =
     remoteLoading ||
     Boolean(remoteCapabilityError) ||

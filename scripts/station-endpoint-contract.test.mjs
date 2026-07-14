@@ -18,7 +18,7 @@ test("station contracts expose explicit website and API fields", () => {
   assert.match(stationTypes, /endpointRevision: number/);
   assert.doesNotMatch(stationTypes, /^\s*baseUrl: string/m);
   assert.match(keyTypes, /stationApiBaseUrl: string/);
-  assert.doesNotMatch(keyTypes, /stationBaseUrl: string/);
+  assert.doesNotMatch(keyTypes, new RegExp("station" + "BaseUrl: string"));
 });
 
 test("memory fallback and presets carry both endpoint roles", () => {

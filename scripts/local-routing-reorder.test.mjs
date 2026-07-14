@@ -51,7 +51,10 @@ assert.match(editTabSource, /syncState === "saving"/);
 assert.match(editTabSource, /disabled=\{syncState === "saving"\}/);
 assert.match(editTabSource, /useSortable\(\{\s*id: candidate\.stationKeyId,\s*disabled,\s*\}\)/s);
 assert.match(candidateRowSource, /const isSortable = Boolean\(/);
-assert.match(candidateRowSource, /draggable=\{isSortable\}/);
+assert.match(candidateRowSource, /dragAttributes\?: DraggableAttributes/);
+assert.match(candidateRowSource, /dragListeners\?: DraggableSyntheticListeners/);
+assert.match(candidateRowSource, /\{\.\.\.dragAttributes\}/);
+assert.match(candidateRowSource, /\{\.\.\.dragListeners\}/);
 assert.match(
   statusTabSource,
   /workspace\.candidates\.map\(\(candidate, index\) =>/,

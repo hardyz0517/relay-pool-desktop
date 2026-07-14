@@ -58,7 +58,9 @@ assert.ok(
 );
 
 assert.ok(
-  pageSource.includes("<RequestLogTable") && dashboardSource.includes('title="最近使用"'),
+  pageSource.includes("<RequestLogTable") &&
+    dashboardSource.includes("最近使用") &&
+    dashboardSource.includes("requestLogs.slice(0, 5)"),
   "logs page should use the new table without changing dashboard recent usage",
 );
 

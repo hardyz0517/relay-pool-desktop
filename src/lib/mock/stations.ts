@@ -10,7 +10,7 @@ export type MockStation = {
   id: string;
   name: string;
   type: MockStationType;
-  baseUrlHost: string;
+  endpointHost: string;
   enabled: boolean;
   status: MockStationStatus;
   balanceCny: number;
@@ -41,7 +41,7 @@ export const mockStations: MockStation[] = [
     id: "st-orchid",
     name: "Orchid Relay",
     type: "sub2api",
-    baseUrlHost: "api.orchid-relay.example",
+    endpointHost: "api.orchid-relay.example",
     enabled: true,
     status: "healthy",
     balanceCny: 86.42,
@@ -55,7 +55,7 @@ export const mockStations: MockStation[] = [
     id: "st-lantern",
     name: "Lantern NewAPI",
     type: "newapi",
-    baseUrlHost: "newapi.lantern.example",
+    endpointHost: "newapi.lantern.example",
     enabled: true,
     status: "warning",
     balanceCny: 12.35,
@@ -70,7 +70,7 @@ export const mockStations: MockStation[] = [
     id: "st-harbor",
     name: "Harbor Compatible",
     type: "openai-compatible",
-    baseUrlHost: "relay.harbor.example",
+    endpointHost: "relay.harbor.example",
     enabled: true,
     status: "error",
     balanceCny: 34.91,
@@ -85,7 +85,7 @@ export const mockStations: MockStation[] = [
     id: "st-archive",
     name: "Archive Custom",
     type: "custom",
-    baseUrlHost: "custom.archive.example",
+    endpointHost: "custom.archive.example",
     enabled: false,
     status: "disabled",
     balanceCny: 0,

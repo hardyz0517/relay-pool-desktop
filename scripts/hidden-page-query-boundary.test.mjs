@@ -13,7 +13,10 @@ const pages = [
 
 for (const path of pages) {
   const source = await readFile(path, "utf8");
-  assert.ok(source.includes("usePageActivity"), `${path} should read page activity`);
+  assert.ok(
+    source.includes("usePageActivation") || source.includes("usePageRefreshEnabled"),
+    `${path} should read page activity`,
+  );
   assert.ok(
     source.includes("useActivityQuery") || !/\bload[A-Z]\w*/.test(source),
     `${path} should use activity-bound server reads`,

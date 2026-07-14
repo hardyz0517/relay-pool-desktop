@@ -11,8 +11,8 @@ assert.ok(
 );
 
 assert.ok(
-  /collectStationTask\(nextStation\.id,\s*"balance"\)[\s\S]*?refreshStations\(\)/.test(
+  /collectStationTask\(nextStation\.id,\s*"balance"\)[\s\S]*?await invalidateStationSharedQueries\(\)/.test(
     stationsPageSource,
   ),
-  "station list and balance snapshots should refresh after the creation-time balance collection",
+  "station list and balance snapshots should invalidate after the creation-time balance collection",
 );

@@ -249,13 +249,15 @@ assert.ok(
 );
 
 assert.ok(
-  /const readOnEntryResult = await markUnreadChangeEventsRead\(workspace\.changeEvents, markChangeEventRead\);[\s\S]*setEvents\(readOnEntryResult\.events\);[\s\S]*if \(readOnEntryResult\.changedCount > 0\) \{[\s\S]*notifyChangeEventsUpdated\(\);[\s\S]*\}/.test(changeCenterSource),
-  "entering change center should mark unread events read and notify the sidebar badge to clear",
+  /const currentEvents = queryClient\.getQueryData<ChangeEvent\[\]>\(queryKeys\.changeEvents\) \?\? events;[\s\S]*await queryClient\.cancelQueries\(\{ queryKey: queryKeys\.changeEvents \}\);[\s\S]*const readOnEntryResult = await markUnreadChangeEventsRead\(currentEvents, markChangeEventRead\);[\s\S]*queryClient\.setQueryData\(queryKeys\.changeEvents, readOnEntryResult\.events\);[\s\S]*if \(readOnEntryResult\.changedCount > 0\) \{[\s\S]*notifyChangeEventsUpdated\(\);[\s\S]*\}/.test(
+    changeCenterSource,
+  ),
+  "entering change center should mark unread events read through the query cache and notify the sidebar badge to clear",
 );
 
 assert.ok(
-  changeCenterSource.includes('import { loadChangeCenterWorkspace } from "@/lib/queries/changeQueries"') &&
-    changeCenterSource.includes("workspace.stations.map((station) => [station.id, station.name])") &&
+  changeCenterSource.includes("stationsQueryOptions") &&
+    changeCenterSource.includes("(stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)") &&
     changeCenterSource.includes("stationNamesById") &&
     changeCenterSource.includes("buildChangeEventListItem(event, { stationNamesById })"),
   "change center page should resolve station IDs to station names before rendering event copy",
@@ -269,10 +271,10 @@ assert.ok(
 );
 
 assert.ok(
-  appShellSource.includes("setInterval(refreshChangeEvents") &&
-    appShellSource.includes("clearInterval") &&
+  appShellSource.includes("useQuery(changeEventsQueryOptions(10_000))") &&
+    appShellSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.changeEvents })") &&
     !appShellSource.includes("}, [activeRouteId]);"),
-  "app shell should poll change events independently from route changes so backend-created unread events update the badge before opening change center",
+  "app shell should poll change events independently from route changes and invalidate the shared query when in-page updates happen",
 );
 
 assert.ok(
@@ -306,8 +308,8 @@ assert.ok(
 assert.ok(
   changeCenterSource.includes('data-testid="change-center-toolbar-surface"') &&
     changeCenterSource.includes('data-testid="change-center-list-surface"') &&
-    changeCenterSource.includes('data-testid="change-center-toolbar-surface"\n            className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]"') &&
-    changeCenterSource.includes('data-testid="change-center-list-surface"\n            className="mt-3 min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-white shadow-[var(--surface-shadow)]"'),
+    /data-testid="change-center-toolbar-surface"\s+className="overflow-hidden rounded-\[var\(--surface-radius\)\] border border-border bg-white shadow-\[var\(--surface-shadow\)\]"/.test(changeCenterSource) &&
+    /data-testid="change-center-list-surface"\s+className="mt-3 min-w-0 overflow-hidden rounded-\[var\(--surface-radius\)\] border border-border bg-white shadow-\[var\(--surface-shadow\)\]"/.test(changeCenterSource),
   "change center filters and event rows should be separate surfaces like the usage records page",
 );
 
@@ -315,7 +317,7 @@ assert.ok(
   changeCenterSource.includes('data-testid="change-center-pagination-surface"') &&
     changeCenterSource.includes('aria-label="变更中心分页"') &&
     changeCenterSource.includes('className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-white px-3 py-2 text-xs text-slate-500"') &&
-    changeCenterSource.includes(")}\n          </div>\n          {filteredEvents.length > 0 && (") &&
+    /\)\}\s+<\/div>\s+\{filteredEvents\.length > 0 && \(/.test(changeCenterSource) &&
     requestLogTableSource.includes('data-testid="request-log-pagination-surface"') &&
     requestLogTableSource.includes('className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-white px-3 py-2 text-xs text-slate-500"'),
   "change center pagination should use the same separate standalone white footer surface as request logs",

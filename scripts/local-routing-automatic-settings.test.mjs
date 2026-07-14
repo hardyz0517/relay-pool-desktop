@@ -76,7 +76,8 @@ assert.doesNotMatch(editSurface, /运行时会综合/);
 
 assert.match(candidateRow, /effectiveMultiplier/);
 assert.match(candidateRow, /effectiveMultiplierSource/);
-assert.match(candidateRow, /schedulerRejectReason/);
+assert.match(candidateRow, /previewRejectReasons/);
+assert.match(candidateRow, /formatPreviewRejectReason/);
 
 assert.doesNotMatch(settingsPage, /routingStrategyLabels/);
 assert.doesNotMatch(settingsPage, /handleDefaultRoutingStrategyChange/);
