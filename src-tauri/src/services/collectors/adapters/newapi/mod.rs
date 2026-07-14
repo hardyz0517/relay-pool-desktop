@@ -782,10 +782,10 @@ fn collect_usage_stats(
             .as_ref()
             .and_then(|stat| stat.token_count)
             .or(total_split_token_count),
-        today_input_token_count: today_logs.as_ref().and_then(|logs| logs.input_token_count),
-        today_output_token_count: today_logs.as_ref().and_then(|logs| logs.output_token_count),
-        total_input_token_count: total_logs.as_ref().and_then(|logs| logs.input_token_count),
-        total_output_token_count: total_logs.as_ref().and_then(|logs| logs.output_token_count),
+        today_input_token_count: None,
+        today_output_token_count: None,
+        total_input_token_count: None,
+        total_output_token_count: None,
     };
 
     (stats.has_any().then_some(stats), endpoint_results)
@@ -856,7 +856,7 @@ fn collect_log_stat_window(
     Ok((
         NewApiLogStatWindow {
             request_count: numeric_i64_field(&response.data, &["rpm", "request_count", "count"]),
-            token_count: numeric_i64_field(&response.data, &["tpm", "token_count", "token_used"]),
+            token_count: numeric_i64_field(&response.data, &["token_count", "token_used"]),
             consumption: Some(quota / quota_per_unit),
             base_consumption,
         },
@@ -1315,7 +1315,7 @@ mod tests {
     }
 
     #[test]
-    fn newapi_balance_collects_usage_logs_for_request_cost_and_tokens() {
+    fn newapi_balance_collects_usage_logs_for_request_count_cost_and_total_tokens() {
         let server = TestHttpServer::sequence(vec![
             Some(json_response(
                 200,
@@ -1339,7 +1339,7 @@ mod tests {
                 200,
                 json!({
                     "success": true,
-                    "data": { "quota": 375000, "rpm": 2, "tpm": 49567 }
+                    "data": { "quota": 375000, "rpm": 2, "tpm": 0 }
                 }),
             )),
             Some(json_response(
@@ -1361,7 +1361,7 @@ mod tests {
                 200,
                 json!({
                     "success": true,
-                    "data": { "quota": 9250000, "rpm": 3, "tpm": 422890 }
+                    "data": { "quota": 9250000, "rpm": 3, "tpm": 0 }
                 }),
             )),
             Some(json_response(
@@ -1396,12 +1396,12 @@ mod tests {
         assert_eq!(balance.total_request_count, Some(1200));
         assert_eq!(balance.today_consumption, Some(0.75));
         assert_eq!(balance.total_consumption, Some(18.5));
-        assert_eq!(balance.today_input_token_count, Some(40000));
-        assert_eq!(balance.today_output_token_count, Some(9567));
         assert_eq!(balance.today_token_count, Some(49567));
-        assert_eq!(balance.total_input_token_count, Some(290000));
-        assert_eq!(balance.total_output_token_count, Some(132890));
+        assert_eq!(balance.today_input_token_count, None);
+        assert_eq!(balance.today_output_token_count, None);
         assert_eq!(balance.total_token_count, Some(422890));
+        assert_eq!(balance.total_input_token_count, None);
+        assert_eq!(balance.total_output_token_count, None);
         assert!(requests
             .iter()
             .any(|request| request.starts_with("GET /api/log/self/stat?type=2&")));
@@ -1411,7 +1411,7 @@ mod tests {
     }
 
     #[test]
-    fn newapi_balance_collects_total_tokens_from_stat_when_logs_have_no_split() {
+    fn newapi_balance_leaves_tokens_unknown_when_logs_have_no_token_counts() {
         let server = TestHttpServer::sequence(vec![
             Some(json_response(
                 200,
@@ -1484,12 +1484,12 @@ mod tests {
         assert_eq!(balance.today_consumption, Some(0.0));
         assert_eq!(balance.today_input_token_count, None);
         assert_eq!(balance.today_output_token_count, None);
-        assert_eq!(balance.today_token_count, Some(54321));
+        assert_eq!(balance.today_token_count, None);
         assert_eq!(balance.total_request_count, Some(0));
         assert_eq!(balance.total_consumption, Some(0.0));
         assert_eq!(balance.total_input_token_count, None);
         assert_eq!(balance.total_output_token_count, None);
-        assert_eq!(balance.total_token_count, Some(987654));
+        assert_eq!(balance.total_token_count, None);
     }
 
     #[test]

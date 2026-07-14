@@ -229,7 +229,7 @@ fn parse_i64_field(payload: &Value, names: &[&str]) -> Option<i64> {
 }
 
 fn parse_account_concurrency_limit(payload: &Value) -> Option<i64> {
-    parse_i64_field(
+    parse_account_i64_field(
         payload,
         &[
             "concurrency_limit",
@@ -2074,30 +2074,17 @@ fn parse_account_balance(
     payload: &Value,
     credit_per_cny: f64,
 ) -> Option<CollectedBalanceFact> {
-    let value = payload
-        .pointer("/data/balance")
-        .and_then(Value::as_f64)
-        .or_else(|| payload.get("balance").and_then(Value::as_f64))
-        .or_else(|| {
-            payload
-                .pointer("/data/quota/remaining")
-                .and_then(Value::as_f64)
-        })
-        .or_else(|| payload.pointer("/quota/remaining").and_then(Value::as_f64))?;
-    let used = payload
-        .pointer("/data/used")
-        .and_then(Value::as_f64)
-        .or_else(|| payload.pointer("/data/quota/used").and_then(Value::as_f64))
-        .or_else(|| payload.get("used").and_then(Value::as_f64));
-    let total = payload
-        .pointer("/data/total")
-        .and_then(Value::as_f64)
-        .or_else(|| payload.pointer("/data/quota/total").and_then(Value::as_f64))
-        .or_else(|| payload.get("total").and_then(Value::as_f64));
-    let currency = payload
-        .pointer("/data/currency")
-        .and_then(Value::as_str)
-        .or_else(|| payload.get("currency").and_then(Value::as_str))
+    let value = parse_account_credit_value(payload, "balance", "remaining");
+    let account_concurrency_limit = parse_account_concurrency_limit(payload);
+    if value.is_none() && account_concurrency_limit.is_none() {
+        return None;
+    }
+    let used = parse_account_credit_value(payload, "used", "used");
+    let total = parse_account_credit_value(payload, "total", "total");
+    let currency = account_profile_candidates(payload)
+        .into_iter()
+        .flatten()
+        .find_map(|candidate| candidate.get("currency").and_then(Value::as_str))
         .unwrap_or("CNY")
         .to_string();
 
@@ -2105,10 +2092,10 @@ fn parse_account_balance(
         station_id: station_id.to_string(),
         station_key_id: None,
         scope: "station".to_string(),
-        value: normalize_credit_value(Some(value), credit_per_cny),
+        value: normalize_credit_value(value, credit_per_cny),
         used_value: normalize_credit_value(used, credit_per_cny),
         total_value: normalize_credit_value(total, credit_per_cny),
-        today_request_count: parse_i64_field(
+        today_request_count: parse_account_i64_field(
             payload,
             &[
                 "today_request_count",
@@ -2117,7 +2104,7 @@ fn parse_account_balance(
                 "todayRequests",
             ],
         ),
-        total_request_count: parse_i64_field(
+        total_request_count: parse_account_i64_field(
             payload,
             &[
                 "total_request_count",
@@ -2127,7 +2114,7 @@ fn parse_account_balance(
                 "requests",
             ],
         ),
-        today_consumption: parse_f64_field(
+        today_consumption: parse_account_f64_field(
             payload,
             &[
                 "today_consumption",
@@ -2138,7 +2125,7 @@ fn parse_account_balance(
                 "today_cost",
             ],
         ),
-        total_consumption: parse_f64_field(
+        total_consumption: parse_account_f64_field(
             payload,
             &[
                 "total_consumption",
@@ -2149,9 +2136,9 @@ fn parse_account_balance(
                 "cost",
             ],
         ),
-        today_base_consumption: parse_f64_field(payload, TODAY_BASE_CONSUMPTION_FIELDS),
-        total_base_consumption: parse_f64_field(payload, TOTAL_BASE_CONSUMPTION_FIELDS),
-        today_token_count: parse_i64_field(
+        today_base_consumption: parse_account_f64_field(payload, TODAY_BASE_CONSUMPTION_FIELDS),
+        total_base_consumption: parse_account_f64_field(payload, TOTAL_BASE_CONSUMPTION_FIELDS),
+        today_token_count: parse_account_i64_field(
             payload,
             &[
                 "today_token_count",
@@ -2160,7 +2147,7 @@ fn parse_account_balance(
                 "todayTokens",
             ],
         ),
-        total_token_count: parse_i64_field(
+        total_token_count: parse_account_i64_field(
             payload,
             &[
                 "total_token_count",
@@ -2171,7 +2158,7 @@ fn parse_account_balance(
                 "tokens",
             ],
         ),
-        today_input_token_count: parse_i64_field(
+        today_input_token_count: parse_account_i64_field(
             payload,
             &[
                 "today_input_token_count",
@@ -2182,7 +2169,7 @@ fn parse_account_balance(
                 "todayPromptTokens",
             ],
         ),
-        today_output_token_count: parse_i64_field(
+        today_output_token_count: parse_account_i64_field(
             payload,
             &[
                 "today_output_token_count",
@@ -2193,7 +2180,7 @@ fn parse_account_balance(
                 "todayCompletionTokens",
             ],
         ),
-        total_input_token_count: parse_i64_field(
+        total_input_token_count: parse_account_i64_field(
             payload,
             &[
                 "total_input_token_count",
@@ -2206,7 +2193,7 @@ fn parse_account_balance(
                 "promptTokens",
             ],
         ),
-        total_output_token_count: parse_i64_field(
+        total_output_token_count: parse_account_i64_field(
             payload,
             &[
                 "total_output_token_count",
@@ -2219,14 +2206,60 @@ fn parse_account_balance(
                 "completionTokens",
             ],
         ),
-        account_concurrency_limit: parse_account_concurrency_limit(payload),
+        account_concurrency_limit,
         currency,
         credit_unit: None,
-        status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
+        status: if value == Some(0.0) {
+            "depleted"
+        } else if value.is_some() {
+            "normal"
+        } else {
+            "unknown"
+        }
+        .to_string(),
         source: "sub2api_account_profile".to_string(),
         confidence: 0.85,
         collected_at: None,
     })
+}
+
+fn account_profile_candidates(payload: &Value) -> [Option<&Value>; 6] {
+    [
+        payload.pointer("/data"),
+        Some(payload),
+        payload.pointer("/data/user"),
+        payload.pointer("/data/profile"),
+        payload.get("user"),
+        payload.get("profile"),
+    ]
+}
+
+fn parse_account_f64_field(payload: &Value, names: &[&str]) -> Option<f64> {
+    account_profile_candidates(payload)
+        .into_iter()
+        .flatten()
+        .find_map(|candidate| parse_f64_field(candidate, names))
+}
+
+fn parse_account_i64_field(payload: &Value, names: &[&str]) -> Option<i64> {
+    account_profile_candidates(payload)
+        .into_iter()
+        .flatten()
+        .find_map(|candidate| parse_i64_field(candidate, names))
+}
+
+fn parse_account_credit_value(
+    payload: &Value,
+    direct_field: &str,
+    quota_field: &str,
+) -> Option<f64> {
+    account_profile_candidates(payload)
+        .into_iter()
+        .flatten()
+        .find_map(|candidate| {
+            parse_optional_f64(candidate.get(direct_field))
+                .or_else(|| parse_optional_f64(candidate.pointer(&format!("/quota/{quota_field}"))))
+        })
 }
 
 #[cfg(test)]
@@ -2322,6 +2355,47 @@ mod tests {
     }
 
     #[test]
+    fn parse_account_balance_reads_nested_profile_concurrency_limit() {
+        let fact = parse_account_balance(
+            "station-1",
+            &json!({
+                "data": {
+                    "user": {
+                        "balance": 66.78,
+                        "concurrency": 5
+                    }
+                }
+            }),
+            1.0,
+        )
+        .expect("profile fact");
+
+        assert_eq!(fact.value, Some(66.78));
+        assert_eq!(fact.account_concurrency_limit, Some(5));
+        assert_eq!(fact.scope, "station");
+    }
+
+    #[test]
+    fn parse_account_balance_keeps_profile_concurrency_without_balance() {
+        let fact = parse_account_balance(
+            "station-1",
+            &json!({
+                "data": {
+                    "user": {
+                        "concurrency": 5
+                    }
+                }
+            }),
+            1.0,
+        )
+        .expect("profile concurrency fact");
+
+        assert_eq!(fact.value, None);
+        assert_eq!(fact.account_concurrency_limit, Some(5));
+        assert_eq!(fact.scope, "station");
+    }
+
+    #[test]
     fn parse_account_balance_accepts_common_concurrency_aliases() {
         for (field, expected) in [
             ("concurrent_limit", 4),
@@ -2342,7 +2416,11 @@ mod tests {
                 1.0,
             )
             .expect("profile fact");
-            assert_eq!(fact.account_concurrency_limit, Some(expected), "field {field}");
+            assert_eq!(
+                fact.account_concurrency_limit,
+                Some(expected),
+                "field {field}"
+            );
         }
     }
 
