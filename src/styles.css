@@ -54,8 +54,8 @@
   --metric-violet-surface: 252 95% 95%; --metric-violet-foreground: 262 83% 50%;
   --metric-purple-surface: 270 100% 95%; --metric-purple-foreground: 271 81% 47%;
   --metric-rose-surface: 356 100% 95%; --metric-rose-foreground: 346 83% 41%;
-  --platform-anthropic-surface: 28 100% 96%; --platform-anthropic-foreground: 24 80% 36%; --platform-anthropic-border: 25 75% 84%;
-  --platform-openai-surface: 151 55% 95%; --platform-openai-foreground: 158 60% 28%; --platform-openai-border: 151 40% 82%;
+  --platform-anthropic-surface: 34 100% 92%; --platform-anthropic-foreground: 15 79% 34%; --platform-anthropic-border: 32 98% 83%;
+  --platform-openai-surface: 149 80% 90%; --platform-openai-foreground: 163 94% 24%; --platform-openai-border: 152 76% 80%;
   --platform-gemini-surface: 213 100% 96%; --platform-gemini-foreground: 217 75% 42%; --platform-gemini-border: 215 75% 85%;
   --platform-grok-surface: 220 10% 92%; --platform-grok-foreground: 220 12% 25%; --platform-grok-border: 220 10% 80%;
   --platform-image-surface: 270 100% 95%; --platform-image-foreground: 271 81% 47%; --platform-image-border: 270 86% 86%;

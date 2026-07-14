@@ -111,6 +111,18 @@ describe("theme token contrast", () => {
     );
   });
 
+  it("keeps light platform group chips aligned with the Sub2 provider palette", () => {
+    const variables = parseVariables(themeBlock("light"));
+    expect(readToken(variables, "platform-openai-surface")).toEqual([149, 80, 90]);
+    expect(readToken(variables, "platform-openai-foreground")).toEqual([163, 94, 24]);
+    expect(readToken(variables, "platform-openai-border")).toEqual([152, 76, 80]);
+    expect(readToken(variables, "platform-anthropic-surface")).toEqual([34, 100, 92]);
+    // Sub2 uses orange-700 on orange-100; Relay uses orange-800 for the foreground
+    // so the same orange family still satisfies the shared contrast contract.
+    expect(readToken(variables, "platform-anthropic-foreground")).toEqual([15, 79, 34]);
+    expect(readToken(variables, "platform-anthropic-border")).toEqual([32, 98, 83]);
+  });
+
   it.each(["light", "dark"] as const)("keeps %s text pairs readable", (theme) => {
     const variables = parseVariables(themeBlock(theme));
     for (const [foreground, background] of pairs) {
