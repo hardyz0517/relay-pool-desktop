@@ -16,6 +16,7 @@ pub(super) const NEWAPI_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum NewApiOperation {
     SelfInfo,
+    DashboardData,
     Groups,
     Models,
     LogStat,

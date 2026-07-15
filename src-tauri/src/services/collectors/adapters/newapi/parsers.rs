@@ -133,7 +133,8 @@ pub(super) fn parse_balance_fact(
                 "consumption",
                 "cost",
             ],
-        ),
+        )
+        .or(used),
         today_base_consumption: parse_f64_field(data, TODAY_BASE_CONSUMPTION_FIELDS),
         total_base_consumption: parse_f64_field(data, TOTAL_BASE_CONSUMPTION_FIELDS),
         today_token_count: parse_i64_field(

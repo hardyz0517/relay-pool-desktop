@@ -27,6 +27,9 @@ const NEWAPI_REMOTE_KEY_PAGE_SIZE: usize = 100;
 const NEWAPI_LOG_PAGE_SIZE: usize = 100;
 const NEWAPI_LOG_MAX_PAGES: usize = 100;
 const NEWAPI_LOG_TYPE_CONSUME: i64 = 2;
+const NEWAPI_DASHBOARD_MAX_WINDOW_SECONDS: i64 = 30 * 24 * 60 * 60;
+const NEWAPI_DASHBOARD_TOTAL_START_TIMESTAMP: i64 = 0;
+const NEWAPI_DASHBOARD_TOTAL_MAX_WINDOWS: usize = 240;
 
 pub(crate) fn login_with_password(
     database: &AppDatabase,
@@ -626,8 +629,13 @@ fn collect_authenticated_task(
             client::NewApiOperation::SelfInfo,
         )
         .map_err(newapi_request_error_message)?;
-        let (usage_stats, usage_endpoint_results) =
-            collect_usage_stats(database, data_key, &station, status.quota_per_unit);
+        let (usage_stats, usage_endpoint_results) = collect_usage_stats(
+            database,
+            data_key,
+            &station,
+            &response.data,
+            status.quota_per_unit,
+        );
         let mut balance_data = response.data;
         if let Some(usage_stats) = usage_stats {
             merge_usage_stats_into_balance_data(&mut balance_data, usage_stats);
@@ -696,8 +704,6 @@ struct NewApiUsageStats {
 
 #[derive(Debug, Clone, Default)]
 struct NewApiLogStatWindow {
-    request_count: Option<i64>,
-    token_count: Option<i64>,
     consumption: Option<f64>,
     base_consumption: Option<f64>,
 }
@@ -707,6 +713,25 @@ struct NewApiLogWindow {
     request_count: Option<i64>,
     input_token_count: Option<i64>,
     output_token_count: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct NewApiDashboardUsageWindow {
+    request_count: Option<i64>,
+    token_count: Option<i64>,
+    consumption: Option<f64>,
+}
+
+impl NewApiDashboardUsageWindow {
+    fn add(&mut self, other: NewApiDashboardUsageWindow) {
+        self.request_count = sum_optional_i64(self.request_count, other.request_count);
+        self.token_count = sum_optional_i64(self.token_count, other.token_count);
+        self.consumption = sum_optional_f64(self.consumption, other.consumption);
+    }
+
+    fn has_any(&self) -> bool {
+        self.request_count.is_some() || self.token_count.is_some() || self.consumption.is_some()
+    }
 }
 
 impl NewApiUsageStats {
@@ -730,12 +755,25 @@ fn collect_usage_stats(
     database: &AppDatabase,
     data_key: &[u8; 32],
     station: &Station,
+    self_data: &Value,
     quota_per_unit: f64,
 ) -> (Option<NewApiUsageStats>, Vec<Value>) {
     let now = unix_now_seconds();
     let today_start = local_today_start_timestamp(now);
     let mut endpoint_results = Vec::new();
 
+    let today_dashboard = collect_dashboard_usage_window(
+        database,
+        data_key,
+        station,
+        today_start,
+        now,
+        quota_per_unit,
+    )
+    .map_endpoint_result(&mut endpoint_results);
+    let total_dashboard =
+        collect_dashboard_usage_total(database, data_key, station, self_data, now, quota_per_unit)
+            .map_endpoint_results(&mut endpoint_results);
     let today_stat = collect_log_stat_window(
         database,
         data_key,
@@ -762,25 +800,31 @@ fn collect_usage_stats(
         .map(|(input, output)| input + output);
 
     let stats = NewApiUsageStats {
-        today_request_count: today_logs
+        today_request_count: today_dashboard
             .as_ref()
-            .and_then(|logs| logs.request_count)
-            .or_else(|| today_stat.as_ref().and_then(|stat| stat.request_count)),
-        total_request_count: total_logs
+            .and_then(|dashboard| dashboard.request_count)
+            .or_else(|| today_logs.as_ref().and_then(|logs| logs.request_count)),
+        total_request_count: total_dashboard
             .as_ref()
-            .and_then(|logs| logs.request_count)
-            .or_else(|| total_stat.as_ref().and_then(|stat| stat.request_count)),
-        today_consumption: today_stat.as_ref().and_then(|stat| stat.consumption),
-        total_consumption: total_stat.as_ref().and_then(|stat| stat.consumption),
+            .and_then(|dashboard| dashboard.request_count)
+            .or_else(|| total_logs.as_ref().and_then(|logs| logs.request_count)),
+        today_consumption: today_dashboard
+            .as_ref()
+            .and_then(|dashboard| dashboard.consumption)
+            .or_else(|| today_stat.as_ref().and_then(|stat| stat.consumption)),
+        total_consumption: total_dashboard
+            .as_ref()
+            .and_then(|dashboard| dashboard.consumption)
+            .or_else(|| total_stat.as_ref().and_then(|stat| stat.consumption)),
         today_base_consumption: today_stat.as_ref().and_then(|stat| stat.base_consumption),
         total_base_consumption: total_stat.as_ref().and_then(|stat| stat.base_consumption),
-        today_token_count: today_stat
+        today_token_count: today_dashboard
             .as_ref()
-            .and_then(|stat| stat.token_count)
+            .and_then(|dashboard| dashboard.token_count)
             .or(today_split_token_count),
-        total_token_count: total_stat
+        total_token_count: total_dashboard
             .as_ref()
-            .and_then(|stat| stat.token_count)
+            .and_then(|dashboard| dashboard.token_count)
             .or(total_split_token_count),
         today_input_token_count: None,
         today_output_token_count: None,
@@ -855,8 +899,6 @@ fn collect_log_stat_window(
     });
     Ok((
         NewApiLogStatWindow {
-            request_count: numeric_i64_field(&response.data, &["rpm", "request_count", "count"]),
-            token_count: numeric_i64_field(&response.data, &["token_count", "token_used"]),
             consumption: Some(quota / quota_per_unit),
             base_consumption,
         },
@@ -878,6 +920,7 @@ fn collect_log_window(
     let mut output_tokens = 0_i64;
     let mut saw_token_count = false;
     let mut endpoint_results = Vec::new();
+    let mut completed_window = false;
 
     loop {
         let path = newapi_log_page_path(page, start_timestamp, end_timestamp);
@@ -926,10 +969,17 @@ fn collect_log_window(
         }
 
         fetched += items.len();
-        if items.is_empty()
-            || total.is_some_and(|total| fetched >= total)
-            || page >= NEWAPI_LOG_MAX_PAGES
-        {
+        if total.is_some_and(|total| total >= NEWAPI_LOG_PAGE_SIZE * NEWAPI_LOG_MAX_PAGES) {
+            break;
+        }
+        if total.is_some_and(|total| fetched >= total) || (items.is_empty() && total.is_none()) {
+            completed_window = true;
+            break;
+        }
+        if items.is_empty() {
+            break;
+        }
+        if page >= NEWAPI_LOG_MAX_PAGES {
             break;
         }
         page += 1;
@@ -938,11 +988,263 @@ fn collect_log_window(
     Ok((
         NewApiLogWindow {
             request_count: total.and_then(|value| i64::try_from(value).ok()),
-            input_token_count: saw_token_count.then_some(input_tokens),
-            output_token_count: saw_token_count.then_some(output_tokens),
+            input_token_count: (saw_token_count && completed_window).then_some(input_tokens),
+            output_token_count: (saw_token_count && completed_window).then_some(output_tokens),
         },
         endpoint_results,
     ))
+}
+
+fn collect_dashboard_usage_window(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &Station,
+    start_timestamp: i64,
+    end_timestamp: i64,
+    quota_per_unit: f64,
+) -> Result<(NewApiDashboardUsageWindow, Vec<Value>), String> {
+    let path = newapi_dashboard_data_path(start_timestamp, end_timestamp);
+    let response = client::get_authenticated_json(
+        database,
+        data_key,
+        station,
+        &path,
+        client::NewApiOperation::DashboardData,
+    )
+    .map_err(newapi_request_error_message)?;
+
+    let mut request_count = 0_i64;
+    let mut token_count = 0_i64;
+    let mut consumption_quota = 0.0_f64;
+    let mut saw_request_count = false;
+    let mut saw_token_count = false;
+    let mut saw_consumption = false;
+
+    for item in dashboard_usage_items(&response.data) {
+        if let Some(value) = numeric_i64_field(
+            item,
+            &[
+                "count",
+                "request_count",
+                "requestCount",
+                "requests",
+                "total_count",
+                "totalCount",
+            ],
+        ) {
+            request_count += value;
+            saw_request_count = true;
+        }
+        if let Some(value) = numeric_i64_field(
+            item,
+            &[
+                "token_used",
+                "tokenUsed",
+                "token_count",
+                "tokenCount",
+                "total_tokens",
+                "totalTokens",
+                "tokens",
+            ],
+        ) {
+            token_count += value;
+            saw_token_count = true;
+        }
+        if let Some(value) = numeric_f64_field(
+            item,
+            &[
+                "quota",
+                "consumption",
+                "used_quota",
+                "usedQuota",
+                "quota_used",
+                "quotaUsed",
+            ],
+        ) {
+            consumption_quota += value;
+            saw_consumption = true;
+        }
+    }
+
+    Ok((
+        NewApiDashboardUsageWindow {
+            request_count: saw_request_count.then_some(request_count),
+            token_count: saw_token_count.then_some(token_count),
+            consumption: saw_consumption.then_some(consumption_quota / quota_per_unit),
+        },
+        vec![response.endpoint_result],
+    ))
+}
+
+fn collect_dashboard_usage_total(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &Station,
+    self_data: &Value,
+    now: i64,
+    quota_per_unit: f64,
+) -> Result<(NewApiDashboardUsageWindow, Vec<Value>), String> {
+    let target_consumption = dashboard_target_consumption(self_data, quota_per_unit);
+    let Some(start_timestamp) = newapi_dashboard_total_start_timestamp(self_data, now) else {
+        return collect_dashboard_usage_total_backwards(
+            database,
+            data_key,
+            station,
+            now,
+            quota_per_unit,
+            target_consumption,
+        );
+    };
+    collect_dashboard_usage_total_by_windows(
+        database,
+        data_key,
+        station,
+        start_timestamp,
+        now,
+        quota_per_unit,
+        target_consumption,
+    )
+}
+
+fn collect_dashboard_usage_total_backwards(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &Station,
+    now: i64,
+    quota_per_unit: f64,
+    target_consumption: Option<f64>,
+) -> Result<(NewApiDashboardUsageWindow, Vec<Value>), String> {
+    let Some(target_consumption) = target_consumption else {
+        return Err("NewAPI dashboard total requires either created_at or used_quota".to_string());
+    };
+
+    let mut end_timestamp = now;
+    let mut total = NewApiDashboardUsageWindow::default();
+    let mut endpoint_results = Vec::new();
+    let mut collected_any = false;
+
+    for _ in 0..NEWAPI_DASHBOARD_TOTAL_MAX_WINDOWS {
+        let start_timestamp = end_timestamp
+            .saturating_sub(NEWAPI_DASHBOARD_MAX_WINDOW_SECONDS - 1)
+            .max(NEWAPI_DASHBOARD_TOTAL_START_TIMESTAMP);
+        let (window, mut results) = collect_dashboard_usage_window(
+            database,
+            data_key,
+            station,
+            start_timestamp,
+            end_timestamp,
+            quota_per_unit,
+        )?;
+        let window_has_any = window.has_any();
+        if window_has_any {
+            collected_any = true;
+        }
+        total.add(window);
+        endpoint_results.append(&mut results);
+        if dashboard_consumption_matches_target(total.consumption, target_consumption) {
+            return Ok((total, endpoint_results));
+        }
+        if !window_has_any {
+            break;
+        }
+        if start_timestamp <= NEWAPI_DASHBOARD_TOTAL_START_TIMESTAMP {
+            break;
+        }
+        end_timestamp = start_timestamp.saturating_sub(1);
+    }
+
+    Err(if collected_any {
+        "NewAPI dashboard total response did not cover all-time usage".to_string()
+    } else {
+        "NewAPI dashboard data response did not contain usage facts".to_string()
+    })
+}
+
+fn collect_dashboard_usage_total_by_windows(
+    database: &AppDatabase,
+    data_key: &[u8; 32],
+    station: &Station,
+    start_timestamp: i64,
+    now: i64,
+    quota_per_unit: f64,
+    target_consumption: Option<f64>,
+) -> Result<(NewApiDashboardUsageWindow, Vec<Value>), String> {
+    if start_timestamp > now {
+        return Err("NewAPI dashboard total window starts after now".to_string());
+    }
+    let mut cursor = start_timestamp;
+    let mut total = NewApiDashboardUsageWindow::default();
+    let mut endpoint_results = Vec::new();
+    let mut collected_any = false;
+
+    while cursor <= now {
+        let end_timestamp = (cursor + NEWAPI_DASHBOARD_MAX_WINDOW_SECONDS - 1).min(now);
+        let (window, mut results) = collect_dashboard_usage_window(
+            database,
+            data_key,
+            station,
+            cursor,
+            end_timestamp,
+            quota_per_unit,
+        )?;
+        if window.has_any() {
+            collected_any = true;
+        }
+        total.add(window);
+        endpoint_results.append(&mut results);
+        if target_consumption
+            .is_some_and(|target| dashboard_consumption_matches_target(total.consumption, target))
+        {
+            break;
+        }
+        if end_timestamp >= now {
+            break;
+        }
+        cursor = end_timestamp.saturating_add(1);
+    }
+
+    if !collected_any {
+        return Err("NewAPI dashboard data response did not contain usage facts".to_string());
+    }
+    if let Some(target) = target_consumption {
+        if !dashboard_consumption_matches_target(total.consumption, target) {
+            return Err("NewAPI dashboard total response did not cover all-time usage".to_string());
+        }
+    }
+    if collected_any {
+        Ok((total, endpoint_results))
+    } else {
+        Err("NewAPI dashboard data response did not contain usage facts".to_string())
+    }
+}
+
+fn dashboard_consumption_matches_target(consumption: Option<f64>, target: f64) -> bool {
+    let tolerance = (target.abs() * 0.000001).max(0.000001);
+    consumption.is_some_and(|value| (value - target).abs() <= tolerance)
+}
+
+fn dashboard_target_consumption(self_data: &Value, quota_per_unit: f64) -> Option<f64> {
+    numeric_f64_field(self_data, &["used_quota", "usedQuota"])
+        .filter(|value| quota_per_unit > 0.0 && *value >= 0.0)
+        .map(|value| value / quota_per_unit)
+}
+
+fn dashboard_usage_items(payload: &Value) -> Vec<&Value> {
+    if let Some(items) = payload.as_array() {
+        return items.iter().collect();
+    }
+    for pointer in ["/items", "/list", "/data", "/data/items", "/data/list"] {
+        if let Some(value) = payload.pointer(pointer) {
+            if let Some(items) = value.as_array() {
+                return items.iter().collect();
+            }
+        }
+    }
+    if payload.is_object() {
+        vec![payload]
+    } else {
+        Vec::new()
+    }
 }
 
 fn merge_usage_stats_into_balance_data(data: &mut Value, stats: NewApiUsageStats) {
@@ -963,7 +1265,21 @@ fn merge_usage_stats_into_balance_data(data: &mut Value, stats: NewApiUsageStats
         stats.total_request_count,
     );
     insert_missing_f64(object, "today_consumption", stats.today_consumption);
-    insert_missing_f64(object, "total_consumption", stats.total_consumption);
+    insert_missing_f64_with_aliases(
+        object,
+        "total_consumption",
+        &[
+            "total_consumption",
+            "used_amount",
+            "totalUsedAmount",
+            "totalConsumption",
+            "consumption",
+            "cost",
+            "used_quota",
+            "usedQuota",
+        ],
+        stats.total_consumption,
+    );
     insert_missing_f64_with_aliases(
         object,
         "today_base_consumption",
@@ -1074,6 +1390,27 @@ fn newapi_log_page_path(page: usize, start_timestamp: i64, end_timestamp: i64) -
     )
 }
 
+fn newapi_dashboard_data_path(start_timestamp: i64, end_timestamp: i64) -> String {
+    format!(
+        "/api/data/self?start_timestamp={start_timestamp}&end_timestamp={end_timestamp}&default_time=hour"
+    )
+}
+
+fn newapi_dashboard_total_start_timestamp(self_data: &Value, now: i64) -> Option<i64> {
+    numeric_i64_field(
+        self_data,
+        &[
+            "created_at",
+            "createdAt",
+            "created_time",
+            "createdTime",
+            "register_time",
+            "registered_at",
+        ],
+    )
+    .filter(|value| *value > 0 && *value <= now)
+}
+
 fn unix_now_seconds() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1114,6 +1451,22 @@ fn numeric_i64_field(value: &Value, keys: &[&str]) -> Option<i64> {
 
 fn numeric_usize_field(value: &Value, keys: &[&str]) -> Option<usize> {
     numeric_i64_field(value, keys).and_then(|value| usize::try_from(value).ok())
+}
+
+fn sum_optional_i64(left: Option<i64>, right: Option<i64>) -> Option<i64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left + right),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
+fn sum_optional_f64(left: Option<f64>, right: Option<f64>) -> Option<f64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left + right),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
 }
 
 fn fetch_status(
@@ -1330,9 +1683,27 @@ mod tests {
                     "success": true,
                     "data": {
                         "quota": 1000000,
-                        "used_quota": 500000,
+                        "used_quota": 9250000,
                         "request_count": 1200
                     }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 2, "quota": 375000, "token_used": 49567 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 1200, "quota": 9250000, "token_used": 422890 }
+                    ]
                 }),
             )),
             Some(json_response(
@@ -1411,6 +1782,430 @@ mod tests {
     }
 
     #[test]
+    fn newapi_balance_prefers_dashboard_quota_data_for_total_tokens() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota_per_unit": 500000 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota": 1000000,
+                        "used_quota": 9250000,
+                        "request_count": 1200
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 2, "quota": 375000, "token_used": 175200000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 1200, "quota": 9250000, "token_used": 470000000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 375000, "rpm": 2, "tpm": 0 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 2,
+                        "items": [
+                            { "prompt_tokens": 100000000, "completion_tokens": 50000000 },
+                            { "prompt_tokens": 20000000, "completion_tokens": 5200000 }
+                        ]
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 9250000, "rpm": 3, "tpm": 0 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 10000,
+                        "items": [
+                            { "prompt_tokens": 100000000, "completion_tokens": 50000000 },
+                            { "prompt_tokens": 20000000, "completion_tokens": 5200000 }
+                        ]
+                    }
+                }),
+            )),
+        ]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let output = collect(&database, &data_key, &station.id, CollectorTask::Balance)
+            .expect("balance collect");
+        let requests = server.finish();
+        let balance = output.facts.balances.first().expect("balance fact");
+
+        assert_eq!(output.status, "success");
+        assert_eq!(balance.today_token_count, Some(175200000));
+        assert_eq!(balance.total_token_count, Some(470000000));
+        assert!(requests
+            .iter()
+            .any(|request| request.starts_with("GET /api/data/self?")));
+    }
+
+    #[test]
+    fn newapi_balance_does_not_treat_recent_dashboard_window_as_total() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota_per_unit": 500000 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota": 1000000,
+                        "used_quota": 1000000,
+                        "request_count": 1200
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 2, "quota": 300000, "token_used": 111000000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": false,
+                    "message": "时间跨度不能超过 1 个月"
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 3, "quota": 300000, "token_used": 111000000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 7, "quota": 700000, "token_used": 359000000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 300000, "rpm": 2, "tpm": 999999 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 0,
+                        "items": []
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 1000000, "rpm": 2, "tpm": 888888 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 10000,
+                        "items": [
+                            { "prompt_tokens": 111000000, "completion_tokens": 0 }
+                        ]
+                    }
+                }),
+            )),
+        ]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let output = collect(&database, &data_key, &station.id, CollectorTask::Balance)
+            .expect("balance collect");
+        let requests = server.finish();
+        let balance = output.facts.balances.first().expect("balance fact");
+
+        assert_eq!(output.status, "success");
+        assert_eq!(balance.today_token_count, Some(111000000));
+        assert_eq!(balance.total_token_count, None);
+        assert_eq!(balance.total_consumption, Some(2.0));
+        let dashboard_requests = requests
+            .iter()
+            .filter(|request| request.starts_with("GET /api/data/self?"))
+            .count();
+        assert!(dashboard_requests >= 2);
+    }
+
+    #[test]
+    fn newapi_balance_rejects_partial_dashboard_total_token_data() {
+        let created_at = unix_now_seconds().saturating_sub(3600);
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota_per_unit": 500000 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota": 1000000,
+                        "used_quota": 1000000,
+                        "created_at": created_at,
+                        "request_count": 1200
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 2, "quota": 300000, "token_used": 111000000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 2, "quota": 300000, "token_used": 111000000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 300000, "rpm": 2, "tpm": 999999 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 0,
+                        "items": []
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 300000, "rpm": 2, "tpm": 888888 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 10000,
+                        "items": [
+                            { "prompt_tokens": 111000000, "completion_tokens": 0 }
+                        ]
+                    }
+                }),
+            )),
+        ]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let output = collect(&database, &data_key, &station.id, CollectorTask::Balance)
+            .expect("balance collect");
+        let balance = output.facts.balances.first().expect("balance fact");
+
+        assert_eq!(output.status, "success");
+        assert_eq!(balance.today_token_count, Some(111000000));
+        assert_eq!(balance.total_request_count, Some(1200));
+        assert_eq!(balance.total_consumption, Some(2.0));
+        assert_eq!(balance.total_token_count, None);
+    }
+
+    #[test]
+    fn newapi_balance_rejects_dashboard_total_when_self_used_quota_is_zero() {
+        let created_at = unix_now_seconds().saturating_sub(3600);
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota_per_unit": 500000 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota": 1000000,
+                        "used_quota": 0,
+                        "created_at": created_at,
+                        "request_count": 0
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": []
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": []
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": []
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 4, "quota": 500000, "token_used": 123456789 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 0, "rpm": 0, "tpm": 0 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 0,
+                        "items": []
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 0, "rpm": 0, "tpm": 0 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 0,
+                        "items": []
+                    }
+                }),
+            )),
+        ]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let output = collect(&database, &data_key, &station.id, CollectorTask::Balance)
+            .expect("balance collect");
+        let balance = output.facts.balances.first().expect("balance fact");
+
+        assert_eq!(output.status, "success");
+        assert_eq!(balance.total_consumption, Some(0.0));
+        assert_eq!(balance.total_request_count, Some(0));
+        assert_eq!(balance.total_token_count, None);
+    }
+
+    #[test]
     fn newapi_balance_leaves_tokens_unknown_when_logs_have_no_token_counts() {
         let server = TestHttpServer::sequence(vec![
             Some(json_response(
@@ -1429,6 +2224,20 @@ mod tests {
                         "used_quota": 0,
                         "request_count": 0
                     }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": []
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": []
                 }),
             )),
             Some(json_response(
@@ -1586,6 +2395,20 @@ mod tests {
                             }
                         ]
                     }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": []
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": []
                 }),
             )),
         ]);
