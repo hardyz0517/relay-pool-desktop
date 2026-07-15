@@ -54,3 +54,10 @@ assert.ok(
     source.includes("buildMonitorTimelineOutcomes(windowSummary.timeline)"),
   "channel status time-window tabs should use backend summaries and reserve aggregate health fallback for recent mode",
 );
+
+assert.ok(
+  source.includes("hslForAvailabilityPercent(channel.availabilityPercent)") &&
+    source.includes("recentOutcomeBarHeightPercent(outcome)") &&
+    source.includes("items-end"),
+  "channel status cards should use Sub2API-style continuous availability color and variable-height outcome bars",
+);

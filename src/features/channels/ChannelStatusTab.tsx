@@ -41,8 +41,10 @@ import {
   buildRecentOutcomes,
   type ChannelWindow,
   enabledStationKeyMonitorsByKey,
+  hslForAvailabilityPercent,
   monitorRunToStationKeyStatus,
   orderChannelsBySavedOrder,
+  recentOutcomeBarHeightPercent,
   resolveChannelLatencyMetrics,
   selectChannelStatusWindowSummary,
   type RecentOutcome,
@@ -264,6 +266,9 @@ function ChannelHealthCard({
   const typeLabel = stationTypeLabels[channel.stationType as keyof typeof stationTypeLabels] ?? channel.stationType;
   const cooldownActive = isFutureTime(channel.cooldownUntil);
   const availability = formatAvailability(channel.availabilityPercent);
+  const availabilityToneValue = availabilityTone(channel);
+  const availabilityColor = availabilityToneValue === "muted" ? undefined : hslForAvailabilityPercent(channel.availabilityPercent);
+  const availabilityStyle = availabilityColor ? { color: availabilityColor } : undefined;
 
   return (
     <section
@@ -325,8 +330,9 @@ function ChannelHealthCard({
           <div
             className={cn(
               "shrink-0 text-3xl font-semibold leading-8 tracking-normal",
-              availabilityToneClassName[availabilityTone(channel)],
+              availabilityToneClassName[availabilityToneValue],
             )}
+            style={availabilityStyle}
           >
             {availability}
           </div>
@@ -338,11 +344,12 @@ function ChannelHealthCard({
           <span>较早</span>
           <span>最后检查 {formatCompactTime(channel.lastCheckedAt)}</span>
         </div>
-        <div className="grid grid-cols-[repeat(60,minmax(2px,1fr))] gap-[2px]">
+        <div className="grid h-5 grid-cols-[repeat(60,minmax(2px,1fr))] items-end gap-[2px]">
           {channel.recentOutcomes.map((outcome, index) => (
             <span
               key={`${channel.id}-${index}`}
-              className={cn("h-5 rounded-[2px]", outcomeClassName[outcome])}
+              className={cn("min-h-[3px] rounded-[2px]", outcomeClassName[outcome])}
+              style={{ height: `${recentOutcomeBarHeightPercent(outcome)}%` }}
               title={outcomeLabel(outcome)}
             />
           ))}

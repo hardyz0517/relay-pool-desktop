@@ -21,6 +21,18 @@ export type ChannelAvailabilityState = {
 
 export type AvailabilityTone = "muted" | "danger" | "warning" | "success";
 
+const HSL_HUE_PER_PERCENT = 1.2;
+const HSL_SATURATION = 72;
+const HSL_LIGHTNESS = 42;
+const HSL_COLOR_FUNCTION = "hsl";
+
+const RECENT_OUTCOME_BAR_HEIGHT_PERCENT: Record<RecentOutcome, number> = {
+  success: 100,
+  warning: 65,
+  failed: 35,
+  unknown: 15,
+};
+
 export type OrderedChannel = {
   id: string;
 };
@@ -137,6 +149,19 @@ export function availabilityTone(channel: ChannelAvailabilityState): Availabilit
     return "warning";
   }
   return "success";
+}
+
+export function hslForAvailabilityPercent(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return undefined;
+  }
+  const clamped = Math.max(0, Math.min(100, value));
+  const hue = clamped * HSL_HUE_PER_PERCENT;
+  return `${HSL_COLOR_FUNCTION}(${hue} ${HSL_SATURATION}% ${HSL_LIGHTNESS}%)`;
+}
+
+export function recentOutcomeBarHeightPercent(outcome: RecentOutcome) {
+  return RECENT_OUTCOME_BAR_HEIGHT_PERCENT[outcome];
 }
 
 export function buildRecentOutcomes(

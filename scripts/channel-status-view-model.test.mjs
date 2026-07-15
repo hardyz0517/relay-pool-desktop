@@ -20,7 +20,8 @@ await esbuild.build({
 });
 
 const {
-  availabilityToneClassName,
+  hslForAvailabilityPercent,
+  recentOutcomeBarHeightPercent,
   buildMonitorRecentOutcomes,
   buildMonitorTimelineOutcomes,
   buildRecentOutcomes,
@@ -32,24 +33,45 @@ const {
 } = await import(pathToFileURL(outFile).href);
 
 assert.equal(
-  availabilityToneClassName({ status: "healthy", availabilityPercent: 50 }),
-  "text-orange-600",
-  "50% availability should be orange, not red",
+  hslForAvailabilityPercent(0),
+  "hsl(0 72% 42%)",
+  "0% availability should use Sub2API's red end of the continuous HSL scale",
 );
 assert.equal(
-  availabilityToneClassName({ status: "healthy", availabilityPercent: 49.99 }),
-  "text-rose-600",
-  "availability below 50% should be red",
+  hslForAvailabilityPercent(50),
+  "hsl(60 72% 42%)",
+  "50% availability should use Sub2API's yellow midpoint instead of a warning text token",
 );
 assert.equal(
-  availabilityToneClassName({ status: "healthy", availabilityPercent: 75 }),
-  "text-emerald-600",
-  "75% availability should be green",
+  hslForAvailabilityPercent(100),
+  "hsl(120 72% 42%)",
+  "100% availability should use Sub2API's green end of the continuous HSL scale",
 );
 assert.equal(
-  availabilityToneClassName({ status: "healthy", availabilityPercent: 91.3 }),
-  "text-emerald-600",
-  "91.3% availability should be green",
+  hslForAvailabilityPercent(null),
+  undefined,
+  "missing availability should let the UI fall back to a neutral color",
+);
+
+assert.equal(
+  recentOutcomeBarHeightPercent("success"),
+  100,
+  "successful monitor timeline bars should be the tallest bars",
+);
+assert.equal(
+  recentOutcomeBarHeightPercent("warning"),
+  65,
+  "warning monitor timeline bars should be shorter than successes",
+);
+assert.equal(
+  recentOutcomeBarHeightPercent("failed"),
+  35,
+  "failed monitor timeline bars should be visibly shorter than healthy bars",
+);
+assert.equal(
+  recentOutcomeBarHeightPercent("unknown"),
+  15,
+  "unknown monitor timeline placeholders should be the shortest bars",
 );
 
 const outcomes = buildRecentOutcomes([], {
