@@ -3,16 +3,19 @@ import { ArrowLeft, Check, KeyRound } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, EmptyState, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
+import { getStationKeyCapabilities } from "@/lib/api/routing";
 import { listKeyPoolItems, saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
+import type { StationKeyCapabilities } from "@/lib/types/routing";
 import { StationGroupOptionLabel } from "@/features/stations/components/StationGroupChip";
 import {
   buildStationGroupOptionsFromCurrentFactsForSelect,
   findMatchingGroupOption,
 } from "@/features/stations/groupOptionViewModels";
+import { OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS } from "./stationKeyCapabilityDefaults";
 
 type EditKeyPageProps = {
   stationKeyId: string | null;
@@ -34,6 +37,13 @@ type EditKeyFormState = {
   tierLabel: string;
   status: StationKeyStatus;
   note: string;
+  supportsChatCompletions: boolean;
+  supportsResponses: boolean;
+  supportsEmbeddings: boolean;
+  supportsStream: boolean;
+  supportsTools: boolean;
+  supportsVision: boolean;
+  supportsReasoning: boolean;
   modelAllowlist: string;
   modelBlocklist: string;
   preferredModels: string;
@@ -55,6 +65,13 @@ const emptyForm: EditKeyFormState = {
   tierLabel: "",
   status: "unchecked",
   note: "",
+  supportsChatCompletions: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsChatCompletions,
+  supportsResponses: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsResponses,
+  supportsEmbeddings: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsEmbeddings,
+  supportsStream: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsStream,
+  supportsTools: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsTools,
+  supportsVision: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsVision,
+  supportsReasoning: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsReasoning,
   modelAllowlist: "",
   modelBlocklist: "",
   preferredModels: "",
@@ -116,13 +133,16 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
         if (!item) {
           throw new Error("未找到要编辑的密钥。");
         }
-        const nextGroupOptions = await loadCurrentStationGroupOptions(item.stationId);
+        const [nextGroupOptions, capabilities] = await Promise.all([
+          loadCurrentStationGroupOptions(item.stationId),
+          getStationKeyCapabilities(item.id),
+        ]);
         if (!alive) {
           return;
         }
         setSourceItem(item);
         setGroupOptions(nextGroupOptions);
-        const nextForm = formFromItem(item, nextGroupOptions);
+        const nextForm = mergeCapabilitiesIntoForm(formFromItem(item, nextGroupOptions), capabilities);
         setForm(nextForm);
         setInitialFormSnapshot(serializeEditKeyForm(nextForm));
       })
@@ -167,21 +187,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
         status: form.status,
         note: form.note.trim() ? form.note.trim() : null,
         groupSelection: groupSelectionFromEditForm(form, sourceItem, groupOptions),
-        capabilities: {
-          stationKeyId: form.id,
-          supportsChatCompletions: true,
-          supportsResponses: true,
-          supportsEmbeddings: true,
-          supportsStream: true,
-          supportsTools: true,
-          supportsVision: true,
-          supportsReasoning: true,
-          modelAllowlist: linesToList(form.modelAllowlist),
-          modelBlocklist: linesToList(form.modelBlocklist),
-          preferredModels: linesToList(form.preferredModels),
-          onlyUseAsBackup: form.onlyUseAsBackup,
-          routingTags: commaListToList(form.routingTags),
-        },
+        capabilities: capabilitiesFromEditForm(form),
       });
       toast.success("密钥已更新");
       onUpdated?.();
@@ -416,6 +422,13 @@ function formFromItem(item: KeyPoolItem, options: StationGroupOption[] = []): Ed
     tierLabel: item.tierLabel ?? "",
     status: item.status,
     note: item.note ?? "",
+    supportsChatCompletions: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsChatCompletions,
+    supportsResponses: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsResponses,
+    supportsEmbeddings: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsEmbeddings,
+    supportsStream: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsStream,
+    supportsTools: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsTools,
+    supportsVision: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsVision,
+    supportsReasoning: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsReasoning,
     modelAllowlist: "",
     modelBlocklist: "",
     preferredModels: "",
@@ -461,6 +474,45 @@ function groupSelectionFromEditForm(
     groupBindingId: groupOption?.groupBindingId ?? form.groupBindingId,
     groupIdHash: groupOption?.groupIdHash ?? null,
     groupName: groupOption?.groupName ?? null,
+  };
+}
+
+function capabilitiesFromEditForm(form: EditKeyFormState) {
+  return {
+    stationKeyId: form.id,
+    supportsChatCompletions: form.supportsChatCompletions,
+    supportsResponses: form.supportsResponses,
+    supportsEmbeddings: form.supportsEmbeddings,
+    supportsStream: form.supportsStream,
+    supportsTools: form.supportsTools,
+    supportsVision: form.supportsVision,
+    supportsReasoning: form.supportsReasoning,
+    modelAllowlist: linesToList(form.modelAllowlist),
+    modelBlocklist: linesToList(form.modelBlocklist),
+    preferredModels: linesToList(form.preferredModels),
+    onlyUseAsBackup: form.onlyUseAsBackup,
+    routingTags: commaListToList(form.routingTags),
+  };
+}
+
+function mergeCapabilitiesIntoForm(
+  form: EditKeyFormState,
+  capabilities: StationKeyCapabilities,
+): EditKeyFormState {
+  return {
+    ...form,
+    supportsChatCompletions: capabilities.supportsChatCompletions,
+    supportsResponses: capabilities.supportsResponses,
+    supportsEmbeddings: capabilities.supportsEmbeddings,
+    supportsStream: capabilities.supportsStream,
+    supportsTools: capabilities.supportsTools,
+    supportsVision: capabilities.supportsVision,
+    supportsReasoning: capabilities.supportsReasoning,
+    modelAllowlist: capabilities.modelAllowlist.join("\n"),
+    modelBlocklist: capabilities.modelBlocklist.join("\n"),
+    preferredModels: capabilities.preferredModels.join("\n"),
+    onlyUseAsBackup: capabilities.onlyUseAsBackup,
+    routingTags: capabilities.routingTags.join(", "),
   };
 }
 

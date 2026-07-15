@@ -105,12 +105,12 @@ impl ClassifiedRouteFailure {
         }
     }
 
-    fn request_only(kind: RouteFailureKind) -> Self {
+    fn request_only(kind: RouteFailureKind, retryable_before_output: bool) -> Self {
         Self {
             kind,
             action: RouteFailureAction::IgnoreForKeyHealth,
             scope: RouteFailureScope::RequestOnly,
-            retryable_before_output: false,
+            retryable_before_output,
             retry_after_ms: None,
         }
     }
@@ -133,7 +133,7 @@ impl ClassifiedRouteFailure {
 
 pub fn classify_route_failure(input: RouteFailureInput) -> ClassifiedRouteFailure {
     if input.output_started && input.transport_error {
-        return ClassifiedRouteFailure::request_only(RouteFailureKind::StreamInterrupted);
+        return ClassifiedRouteFailure::request_only(RouteFailureKind::StreamInterrupted, false);
     }
 
     match input.http_status {
@@ -155,14 +155,17 @@ pub fn classify_route_failure(input: RouteFailureInput) -> ClassifiedRouteFailur
             true,
             input.retry_after_ms,
         ),
-        Some(404) => ClassifiedRouteFailure::request_only(RouteFailureKind::ModelUnavailable),
+        Some(404) => ClassifiedRouteFailure::request_only(
+            RouteFailureKind::ModelUnavailable,
+            !input.output_started,
+        ),
         Some(405 | 501) => ClassifiedRouteFailure::key_health(
             RouteFailureKind::CapabilityMismatch,
             RouteFailureAction::Observe,
             true,
             None,
         ),
-        Some(400) => ClassifiedRouteFailure::request_only(RouteFailureKind::BadRequest),
+        Some(400) => ClassifiedRouteFailure::request_only(RouteFailureKind::BadRequest, false),
         Some(500..=599) => ClassifiedRouteFailure::key_health(
             RouteFailureKind::Upstream5xx,
             RouteFailureAction::Observe,
@@ -214,5 +217,14 @@ mod tests {
         assert_eq!(failure.kind, RouteFailureKind::ModelUnavailable);
         assert_eq!(failure.action, RouteFailureAction::IgnoreForKeyHealth);
         assert_eq!(failure.scope, RouteFailureScope::RequestOnly);
+    }
+
+    #[test]
+    fn model_not_found_is_request_scoped_but_retryable_before_output() {
+        let failure = classify_route_failure(RouteFailureInput::http_status(404, false));
+
+        assert_eq!(failure.kind, RouteFailureKind::ModelUnavailable);
+        assert_eq!(failure.scope, RouteFailureScope::RequestOnly);
+        assert!(failure.retryable_before_output);
     }
 }

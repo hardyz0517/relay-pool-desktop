@@ -215,7 +215,7 @@ fn rich_candidate_to_scheduler_candidate(
         group_type: candidate.scheduler_group_type.clone(),
         station_enabled: true,
         key_enabled: true,
-        schedulable: true,
+        schedulable: candidate.candidate.schedulable,
         supports_chat_completions: candidate.capabilities.supports_chat_completions,
         supports_responses: candidate.capabilities.supports_responses,
         supports_embeddings: candidate.capabilities.supports_embeddings,
@@ -324,6 +324,33 @@ mod tests {
     use super::*;
     use crate::models::proxy::UpstreamApiFormat;
     use crate::models::routing::{PricingGroupType, RoutingGroupFilter};
+
+    #[test]
+    fn every_policy_rejects_unschedulable_candidate() {
+        let mut candidate = rich_candidate("key-a", 0, capabilities(|_| {}));
+        candidate.candidate.schedulable = false;
+
+        for policy in [
+            RoutingPolicy::AutomaticBalanced,
+            RoutingPolicy::PriorityFallback,
+        ] {
+            let mut request = route_request(
+                RouteEndpointKind::Responses,
+                Some("gpt-5.6"),
+                false,
+                policy.clone(),
+            );
+            if matches!(policy, RoutingPolicy::AutomaticBalanced) {
+                request.max_rate_multiplier = Some(1.0);
+            }
+            let selected =
+                select_route_candidates(&request, vec![candidate.clone()], &[]).expect("selection");
+            assert!(
+                selected.accepted.is_empty(),
+                "unschedulable candidate must be rejected for {policy:?}"
+            );
+        }
+    }
 
     #[test]
     fn selector_rejects_protocol_mismatch() {
@@ -1037,6 +1064,7 @@ mod tests {
                 priority,
                 max_concurrency: 0,
                 load_factor: None,
+                schedulable: true,
                 collector_proxy_mode: "direct".to_string(),
                 collector_proxy_url: None,
             },

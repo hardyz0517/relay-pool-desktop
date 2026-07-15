@@ -13,8 +13,9 @@ use crate::{
             routing_health::{error_summary_indicates_offline, health_is_blocked},
             routing_types::{
                 DecisionFact, DecisionFactKind, DecisionFactSeverity, LocalRoutingCandidateRow,
-                LocalRoutingSettingsView, LocalRoutingSummary, LocalRoutingWorkspace,
-                RouteDecisionEvent, RouteDecisionStatus, RouteDecisionSummary, RouteHealthState,
+                LocalRoutingPreviewKind, LocalRoutingSettingsView, LocalRoutingSummary,
+                LocalRoutingWorkspace, RouteDecisionEvent, RouteDecisionStatus,
+                RouteDecisionSummary, RouteHealthState,
             },
             scheduler::{
                 eligibility::evaluate_candidate,
@@ -34,6 +35,7 @@ pub(crate) struct LocalRoutingReadCandidate {
     pub(crate) station_id: String,
     pub(crate) station_name: String,
     pub(crate) key_name: String,
+    pub(crate) schedulable: bool,
     pub(crate) capabilities: StationKeyCapabilities,
     pub(crate) health: Option<StationKeyHealth>,
     pub(crate) economics: Option<RouteCandidateEconomics>,
@@ -50,7 +52,7 @@ pub fn load_local_routing_workspace(
 ) -> Result<LocalRoutingWorkspace, String> {
     let settings = database.get_settings()?;
     let candidates = database.local_routing_read_candidates()?;
-    let request_logs = database.list_request_logs()?;
+    let request_logs = database.list_local_proxy_request_logs()?;
     let latest_log = request_logs.first();
     let now_ms = now_millis_for_services() as i64;
     let preview_request = settings
@@ -86,6 +88,7 @@ pub fn load_local_routing_workspace(
             max_rate_multiplier: settings.max_rate_multiplier,
             routing_group_filter: settings.default_routing_group_filter.clone(),
             fallback_enabled: settings.allow_depleted_fallback,
+            preview_kind: LocalRoutingPreviewKind::BaselineEligibility,
         },
         summary: build_local_routing_summary(&rows, latest_log.map(|log| log.started_at.clone())),
         candidates: rows,
@@ -106,6 +109,16 @@ fn candidate_row(
     let scheduler_candidate = scheduler_candidate_from_read_candidate(candidate, now_ms);
     let (preview_eligible, preview_reject_reasons) =
         preview_decision(preview_request, &scheduler_candidate);
+    let preview_reject_reasons = if candidate.schedulable {
+        preview_reject_reasons
+    } else {
+        let mut reasons = preview_reject_reasons;
+        if !reasons.iter().any(|reason| reason == "asset_unavailable") {
+            reasons.insert(0, "asset_unavailable".to_string());
+        }
+        reasons
+    };
+    let preview_eligible = candidate.schedulable && preview_eligible;
     let mut facts = Vec::new();
     facts.push(DecisionFact {
         kind: DecisionFactKind::Policy,
@@ -197,6 +210,7 @@ fn candidate_row(
         endpoint: RouteEndpointKind::ChatCompletions,
         priority: (index + 1) as i64,
         enabled: true,
+        schedulable: candidate.schedulable,
         health_state,
         last_success_at: candidate
             .health
@@ -301,7 +315,7 @@ fn scheduler_candidate_from_read_candidate(
         group_type: candidate.scheduler_group_type.clone(),
         station_enabled: true,
         key_enabled: true,
-        schedulable: true,
+        schedulable: candidate.schedulable,
         supports_chat_completions: candidate.capabilities.supports_chat_completions,
         supports_responses: candidate.capabilities.supports_responses,
         supports_embeddings: candidate.capabilities.supports_embeddings,
@@ -574,12 +588,25 @@ mod tests {
         }));
     }
 
+    #[test]
+    fn unschedulable_candidate_preview_is_paused_once() {
+        let rows = preview_rows_for_test(
+            vec![preview_candidate("paused", PreviewFixture::Unschedulable)],
+            Some(1.0),
+        );
+
+        assert!(!rows[0].schedulable);
+        assert!(!rows[0].preview_eligible);
+        assert_eq!(rows[0].preview_reject_reasons, vec!["asset_unavailable"]);
+    }
+
     #[derive(Debug, Clone, Copy)]
     enum PreviewFixture {
         Eligible,
         GroupMismatch,
         LowConfidence,
         Cooldown,
+        Unschedulable,
     }
 
     fn preview_rows_for_test(
@@ -615,6 +642,7 @@ mod tests {
             station_id: format!("station-{id}"),
             station_name: format!("Station {id}"),
             key_name: format!("Key {id}"),
+            schedulable: true,
             capabilities: station_key_capabilities(id),
             health: Some(station_key_health(id)),
             economics: Some(RouteCandidateEconomics {
@@ -650,6 +678,9 @@ mod tests {
                 if let Some(health) = &mut candidate.health {
                     health.cooldown_until = Some("61000".to_string());
                 }
+            }
+            PreviewFixture::Unschedulable => {
+                candidate.schedulable = false;
             }
         }
 

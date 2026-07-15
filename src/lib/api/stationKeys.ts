@@ -4,6 +4,7 @@ import {
   updateStationKeyCapabilities,
 } from "@/lib/api/routing";
 import { listStations } from "@/lib/api/stations";
+import { OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS } from "@/lib/stationKeyCapabilityDefaults";
 import type {
   CreateLocalStationKeyFromRemoteResult,
   CreateRemoteStationKeyInput,
@@ -605,6 +606,7 @@ function memoryCreateInputFromDefaults(input: SaveStationKeyWithDefaultsInput): 
     name: input.name,
     apiKey: input.apiKey ?? "",
     enabled: input.enabled,
+    schedulable: input.schedulable ?? true,
     priority: input.priority ?? null,
     groupBindingId: groupSelection?.groupBindingId ?? null,
     groupIdHash: groupSelection?.groupIdHash ?? null,
@@ -631,6 +633,7 @@ function memoryUpdateInputFromDefaults(input: SaveStationKeyWithDefaultsInput): 
     name: input.name,
     apiKey: input.apiKey ?? null,
     enabled: input.enabled,
+    schedulable: input.schedulable ?? existing?.schedulable ?? true,
     priority: input.priority ?? existing?.priority ?? 0,
     ...groupFields,
     tierLabel: input.tierLabel ?? null,
@@ -677,18 +680,18 @@ function memoryGroupFieldsFromSelection(
 function defaultStationKeyCapabilities(stationKeyId: string): StationKeyCapabilities {
   return {
     stationKeyId,
-    supportsChatCompletions: true,
-    supportsResponses: true,
-    supportsEmbeddings: true,
-    supportsStream: true,
-    supportsTools: true,
-    supportsVision: true,
-    supportsReasoning: true,
-    modelAllowlist: [],
-    modelBlocklist: [],
-    preferredModels: [],
-    onlyUseAsBackup: false,
-    routingTags: [],
+    supportsChatCompletions: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsChatCompletions,
+    supportsResponses: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsResponses,
+    supportsEmbeddings: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsEmbeddings,
+    supportsStream: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsStream,
+    supportsTools: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsTools,
+    supportsVision: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsVision,
+    supportsReasoning: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsReasoning,
+    modelAllowlist: [...OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.modelAllowlist],
+    modelBlocklist: [...OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.modelBlocklist],
+    preferredModels: [...OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.preferredModels],
+    onlyUseAsBackup: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.onlyUseAsBackup,
+    routingTags: [...OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.routingTags],
     updatedAt: new Date().toISOString(),
   };
 }

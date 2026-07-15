@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     collections::{HashMap, HashSet},
     io::{Read, Write},
     net::{Shutdown, TcpListener, TcpStream},
@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use crate::{
     models::{
         pricing::{BalanceSnapshot, RequestCostEstimate, RequestUsage},
-        proxy::{CreateRequestLogInput, ProxyLifecycle, ProxyStatus},
+        proxy::{CreateRequestLogInput, ProxyLifecycle, ProxyStatus, UpstreamApiFormat},
         routing::{
             RouteCandidateExplanation, RouteEndpointKind, RoutingGroupFilter, RoutingPolicy,
         },
@@ -25,12 +25,16 @@ use crate::{
         outbound::{credential_agent_builder_for_proxy, ProxyConfig},
         proxy::{
             adapters::responses::{
-                extract_responses_metadata, normalize_responses_request, render_responses_response,
-                should_try_chat_fallback, upstream_responses_path,
+                extract_responses_metadata, render_responses_response, should_try_chat_fallback,
+                upstream_responses_path,
             },
-            enabled_candidates, extract_chat_request_metadata,
+            http_request::{
+                forwarded_headers, parse_http_request, ParsedRequest as ParsedHttpRequest,
+            },
+            enabled_candidates, extract_chat_request_metadata, local_auth,
             observability::{ObservedUsage, RequestObservation, SseUsageObserver},
             openai_error, redact_error_message,
+            responses_chat_fallback::{normalize_for_chat, responses_fallback_error_message},
             router::{select_route_candidates_with_scheduler, RouteRequest},
             routing_affinity::RouteAffinityStore,
             routing_failure::{
@@ -86,13 +90,27 @@ struct ProxyServerContext {
 struct ParsedRequest {
     method: String,
     path: String,
+    target: String,
     headers: HashMap<String, String>,
     body: Vec<u8>,
+}
+
+impl From<ParsedHttpRequest> for ParsedRequest {
+    fn from(request: ParsedHttpRequest) -> Self {
+        Self {
+            method: request.method,
+            path: request.path,
+            target: request.target,
+            headers: request.headers,
+            body: request.body,
+        }
+    }
 }
 
 struct ProxyResponse {
     status_code: u16,
     content_type: String,
+    headers: Vec<(String, String)>,
     body: ProxyResponseBody,
     model: Option<String>,
     stream: bool,
@@ -149,13 +167,28 @@ impl Read for CapacityGuardedReader {
 struct ResponseWriteOutcome {
     first_token_ms: Option<i64>,
     usage: Option<ObservedUsage>,
+    response_id: Option<String>,
     error_message: Option<String>,
+    failure_source: Option<StreamFailureSource>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamFailureSource {
+    UpstreamRead,
+    DownstreamWrite,
 }
 
 #[derive(Debug, Clone)]
 struct RouteLogContext {
     policy: RoutingPolicy,
     explanations: Vec<RouteCandidateExplanation>,
+}
+
+#[derive(Clone)]
+struct AutomaticCapacityWaitCandidate {
+    candidate: RouteCandidate,
+    mapped_model: Option<String>,
+    route_context: RouteLogContext,
 }
 
 struct RouteLogMetadata {
@@ -519,31 +552,39 @@ fn handle_connection(mut stream: TcpStream, context: &ProxyServerContext) {
     context.request_count.fetch_add(1, Ordering::Relaxed);
     let started_at = now_string();
     let started = Instant::now();
-    let (method, path, request_observation, response) = match read_http_request(&mut stream) {
-        Ok(request) => {
-            let method = request.method.clone();
-            let path = request.path.clone();
-            let request_observation = serde_json::from_slice::<Value>(&request.body)
-                .ok()
-                .map(|body| RequestObservation::from_json(&body))
-                .unwrap_or_default();
-            (
-                method,
-                path,
-                request_observation,
-                handle_proxy_request(context, &request),
-            )
-        }
-        Err(error) => (
-            "HTTP".to_string(),
-            "/".to_string(),
-            RequestObservation::default(),
-            ProxyResponse::json_error(400, "bad_request", &error),
-        ),
-    };
+    let (method, path, request_observation, response, cors_origin) =
+        match read_http_request(&mut stream) {
+            Ok(request) => {
+                let method = request.method.clone();
+                let path = request.path.clone();
+                let cors_origin = request
+                    .headers
+                    .get("origin")
+                    .and_then(|origin| local_auth::allowed_origin(origin))
+                    .map(str::to_owned);
+                let request_observation = serde_json::from_slice::<Value>(&request.body)
+                    .ok()
+                    .map(|body| RequestObservation::from_json(&body))
+                    .unwrap_or_default();
+                (
+                    method,
+                    path,
+                    request_observation,
+                    handle_proxy_request(context, &request),
+                    cors_origin,
+                )
+            }
+            Err(error) => (
+                "HTTP".to_string(),
+                "/".to_string(),
+                RequestObservation::default(),
+                ProxyResponse::json_error(400, "bad_request", &error),
+                None,
+            ),
+        };
     let mut log_snapshot = RequestLogSnapshot::from_response(&response, request_observation);
     let pending_successes = response.pending_successes.clone();
-    let write_result = write_http_response(&mut stream, response, started);
+    let write_result = write_http_response(&mut stream, response, started, cors_origin.as_deref());
     if let Some(usage) = write_result.usage.as_ref() {
         log_snapshot.request_cost = request_cost_for_observed_usage(
             context,
@@ -561,7 +602,16 @@ fn handle_connection(mut stream: TcpStream, context: &ProxyServerContext) {
             Some(&completed_at),
             Some(started.elapsed().as_millis() as i64),
             write_result.first_token_ms,
+            write_result.response_id.as_deref(),
         );
+    } else if write_result.failure_source == Some(StreamFailureSource::UpstreamRead) {
+        for success in &pending_successes {
+            report_stream_failure(
+                &context.scheduler,
+                &success.station_key_id,
+                StreamFailureSource::UpstreamRead,
+            );
+        }
     }
     let _ = context.database.insert_request_log(build_request_log_input(
         method,
@@ -580,6 +630,7 @@ fn commit_pending_successes(
     completed_at: Option<&str>,
     completed_duration_ms: Option<i64>,
     first_token_ms: Option<i64>,
+    observed_response_id: Option<&str>,
 ) {
     let advanced = context
         .database
@@ -633,10 +684,10 @@ fn commit_pending_successes(
                 advanced.sticky_session_ttl_seconds as i64,
             );
         }
-        if let (Some(routing_group_scope), Some(response_id)) = (
-            success.routing_group_scope.as_deref(),
-            success.response_id.as_deref(),
-        ) {
+        let response_id = observed_response_id.or(success.response_id.as_deref());
+        if let (Some(routing_group_scope), Some(response_id)) =
+            (success.routing_group_scope.as_deref(), response_id)
+        {
             context.scheduler.bind_response(
                 routing_group_scope,
                 response_id,
@@ -645,6 +696,16 @@ fn commit_pending_successes(
                 advanced.sticky_response_ttl_seconds as i64,
             );
         }
+    }
+}
+
+fn report_stream_failure(
+    scheduler: &SchedulerRuntimeState,
+    station_key_id: &str,
+    source: StreamFailureSource,
+) {
+    if source == StreamFailureSource::UpstreamRead {
+        scheduler.report_result(station_key_id, false, None);
     }
 }
 
@@ -782,7 +843,20 @@ fn build_request_log_input(
 
 fn handle_proxy_request(context: &ProxyServerContext, request: &ParsedRequest) -> ProxyResponse {
     if request.method == "OPTIONS" {
-        return cors_preflight_response();
+        return match request.headers.get("origin") {
+            Some(origin) if local_auth::allowed_origin(origin).is_none() => {
+                ProxyResponse::json_error(403, "cors_origin_denied", "Origin is not allowed")
+            }
+            _ => cors_preflight_response(),
+        };
+    }
+
+    let local_key = match context.database.ensure_secure_local_access_key() {
+        Ok(key) => key,
+        Err(error) => return ProxyResponse::json_error(500, "local_auth_unavailable", &error),
+    };
+    if !local_auth::authorize_headers(&request.headers, &local_key) {
+        return ProxyResponse::json_error(401, "invalid_local_api_key", "Invalid local API key");
     }
 
     match (request.method.as_str(), request.path.as_str()) {
@@ -790,6 +864,7 @@ fn handle_proxy_request(context: &ProxyServerContext, request: &ParsedRequest) -
         ("GET", "/v1/models") => forward_models_request(context, request),
         ("POST", "/v1/chat/completions") => forward_chat_request(context, request),
         ("POST", "/v1/responses") => forward_responses_request(context, request),
+        ("POST", "/v1/embeddings") => forward_embeddings_request(context, request),
         _ => ProxyResponse::json_error(
             404,
             "not_found",
@@ -854,6 +929,7 @@ fn local_usage_response(context: &ProxyServerContext) -> ProxyResponse {
     ProxyResponse {
         status_code: 200,
         content_type: "application/json".to_string(),
+        headers: Vec::new(),
         body: ProxyResponseBody::Buffered(body),
         model: None,
         stream: false,
@@ -1008,6 +1084,7 @@ fn aggregate_models_request(
     ProxyResponse {
         status_code: 200,
         content_type: "application/json".to_string(),
+        headers: Vec::new(),
         body: ProxyResponseBody::Buffered(
             serde_json::to_vec(&serde_json::json!({
                 "object": "list",
@@ -1155,7 +1232,12 @@ fn revalidate_automatic_candidate_before_forward(
         max_rate_multiplier,
         session_hash: route_request.session_hash.clone(),
         previous_response_id: route_request.previous_response_id.clone(),
-        excluded_key_ids: route_request.excluded_key_ids.clone(),
+        excluded_key_ids: route_request
+            .excluded_key_ids
+            .iter()
+            .filter(|excluded_key_id| excluded_key_id.as_str() != station_key_id)
+            .cloned()
+            .collect(),
         now_ms,
     };
     evaluate_candidate(&schedule_request, &candidate).map_err(|rejection| {
@@ -1253,6 +1335,35 @@ fn route_request_for_responses(
         routing_group_filter,
         session_hash: request_session_hash(request, body),
         previous_response_id: previous_response_id(body),
+        excluded_key_ids: Vec::new(),
+        current_station_key_id,
+        allow_depleted_fallback,
+        now_ms: now_millis_for_services() as i64,
+    }
+}
+
+fn route_request_for_embeddings(
+    request: &ParsedRequest,
+    model: Option<String>,
+    body: &Value,
+    policy: RoutingPolicy,
+    max_rate_multiplier: Option<f64>,
+    routing_group_filter: RoutingGroupFilter,
+    allow_depleted_fallback: bool,
+    current_station_key_id: Option<String>,
+) -> RouteRequest {
+    RouteRequest {
+        endpoint: RouteEndpointKind::Embeddings,
+        model: model.clone(),
+        stream: false,
+        uses_tools: false,
+        uses_vision: uses_vision(body),
+        uses_reasoning: false,
+        policy,
+        max_rate_multiplier,
+        routing_group_filter,
+        session_hash: request_session_hash(request, body),
+        previous_response_id: None,
         excluded_key_ids: Vec::new(),
         current_station_key_id,
         allow_depleted_fallback,
@@ -1368,6 +1479,324 @@ fn route_log_metadata(
     }
 }
 
+fn wait_for_candidate_capacity(
+    context: &ProxyServerContext,
+    route_request: &RouteRequest,
+    candidate: &RouteCandidate,
+    route_context: &RouteLogContext,
+    fallback_count: i64,
+    model: Option<String>,
+    stream: bool,
+) -> Result<
+    (
+        crate::services::proxy::scheduler::capacity::CapacityGuard,
+        u128,
+    ),
+    ProxyResponse,
+> {
+    let advanced = context
+        .database
+        .get_settings()
+        .map_err(|error| ProxyResponse::json_error(500, "database_error", &error))?
+        .scheduler_advanced_settings;
+    let (max_waiting, timeout_seconds) =
+        if route_request.previous_response_id.is_some() || route_request.session_hash.is_some() {
+            (
+                advanced.sticky_max_waiting,
+                advanced.sticky_wait_timeout_seconds,
+            )
+        } else {
+            (
+                advanced.fallback_max_waiting,
+                advanced.fallback_wait_timeout_seconds,
+            )
+        };
+    let wait_started = Instant::now();
+    match context.scheduler.wait_acquire(
+        &candidate.station_key_id,
+        candidate.max_concurrency,
+        max_waiting,
+        Duration::from_secs(timeout_seconds),
+    ) {
+        crate::services::proxy::scheduler::capacity::CapacityWaitResult::Acquired(guard) => {
+            Ok((guard, wait_started.elapsed().as_millis()))
+        }
+        crate::services::proxy::scheduler::capacity::CapacityWaitResult::QueueFull => {
+            Err(append_capacity_wait_reason(
+                ProxyResponse::json_error(
+                    503,
+                    "routing_capacity_exhausted",
+                    "自动路由等待队列已满",
+                )
+                .with_fallback_count(fallback_count)
+                .with_request_meta(model, stream)
+                .with_route_metadata(route_log_metadata(
+                    route_context,
+                    Some(candidate.station_key_id.as_str()),
+                )),
+                wait_started.elapsed().as_millis(),
+            ))
+        }
+        crate::services::proxy::scheduler::capacity::CapacityWaitResult::TimedOut => {
+            Err(append_capacity_wait_reason(
+                ProxyResponse::json_error(503, "routing_wait_timeout", "自动路由等待并发槽位超时")
+                    .with_fallback_count(fallback_count)
+                    .with_request_meta(model, stream)
+                    .with_route_metadata(route_log_metadata(
+                        route_context,
+                        Some(candidate.station_key_id.as_str()),
+                    )),
+                wait_started.elapsed().as_millis(),
+            ))
+        }
+    }
+}
+
+fn append_capacity_wait_reason(mut response: ProxyResponse, wait_ms: u128) -> ProxyResponse {
+    if let Some(reason) = response.route_reason.as_mut() {
+        reason.push_str(&format!("; waited {wait_ms}ms for capacity"));
+    }
+    response
+}
+
+fn forward_waited_automatic_chat_candidate(
+    context: &ProxyServerContext,
+    request: &ParsedRequest,
+    body_value: &Value,
+    route_request: &RouteRequest,
+    route_context: &RouteLogContext,
+    candidate: RouteCandidate,
+    mapped_model: Option<String>,
+    capacity_guard: crate::services::proxy::scheduler::capacity::CapacityGuard,
+    fallback_count: i64,
+    model: Option<String>,
+    stream: bool,
+    wait_ms: u128,
+) -> ProxyResponse {
+    let rewritten_request = rewrite_request_model(
+        request,
+        body_value,
+        model.as_deref(),
+        mapped_model.as_deref(),
+    );
+    let checked_at = now_string();
+    let attempt_started = Instant::now();
+    match forward_to_candidate(&rewritten_request, &candidate, stream) {
+        Ok(response) if response.status_code < 400 || !should_fallback(response.status_code) => {
+            let routed_response = append_capacity_wait_reason(
+                response
+                    .with_candidate(&candidate)
+                    .with_fallback_count(fallback_count)
+                    .with_request_meta(model.clone(), stream)
+                    .with_route_metadata(route_log_metadata(
+                        route_context,
+                        Some(candidate.station_key_id.as_str()),
+                    )),
+                wait_ms,
+            );
+            let status_label = routed_response.status_label.clone();
+            if routed_response.status_code < 400 {
+                let request_cost =
+                    extract_request_cost(context, &candidate, &routed_response, stream);
+                return routed_response
+                    .with_request_cost(request_cost)
+                    .with_capacity_guard(capacity_guard)
+                    .with_pending_success(
+                        &candidate,
+                        RouteEndpointKind::ChatCompletions,
+                        model,
+                        attempt_started.elapsed().as_millis() as i64,
+                        checked_at,
+                        Some(route_request),
+                    );
+            }
+
+            record_candidate_failure(
+                context,
+                &candidate,
+                &status_label,
+                &checked_at,
+                &format!("上游返回 HTTP {}", routed_response.status_code),
+                RouteFailureInput::http_status_with_retry_after(
+                    routed_response.status_code,
+                    false,
+                    routed_response.retry_after_ms,
+                ),
+            );
+            let request_cost = extract_request_cost(context, &candidate, &routed_response, stream);
+            routed_response.with_request_cost(request_cost)
+        }
+        Ok(response) => {
+            let error = format!("上游返回 HTTP {}", response.status_code);
+            record_candidate_failure(
+                context,
+                &candidate,
+                "warning",
+                &checked_at,
+                &error,
+                RouteFailureInput::http_status_with_retry_after(
+                    response.status_code,
+                    false,
+                    response.retry_after_ms,
+                ),
+            );
+            append_capacity_wait_reason(
+                ProxyResponse::json_error(502, "routing_all_upstreams_failed", &error)
+                    .with_fallback_count(fallback_count + 1)
+                    .with_request_meta(model, stream)
+                    .with_route_metadata(route_log_metadata(
+                        route_context,
+                        Some(candidate.station_key_id.as_str()),
+                    )),
+                wait_ms,
+            )
+        }
+        Err(error) => {
+            record_candidate_failure(
+                context,
+                &candidate,
+                "error",
+                &checked_at,
+                &error,
+                RouteFailureInput::transport_error(false, &error),
+            );
+            append_capacity_wait_reason(
+                ProxyResponse::json_error(502, "routing_all_upstreams_failed", &error)
+                    .with_fallback_count(fallback_count + 1)
+                    .with_request_meta(model, stream)
+                    .with_route_metadata(route_log_metadata(
+                        route_context,
+                        Some(candidate.station_key_id.as_str()),
+                    )),
+                wait_ms,
+            )
+        }
+    }
+}
+
+fn forward_waited_automatic_responses_candidate(
+    context: &ProxyServerContext,
+    request: &ParsedRequest,
+    body_value: &Value,
+    route_request: &RouteRequest,
+    route_context: &RouteLogContext,
+    candidate: RouteCandidate,
+    mapped_model: Option<String>,
+    capacity_guard: crate::services::proxy::scheduler::capacity::CapacityGuard,
+    fallback_count: i64,
+    model: Option<String>,
+    stream: bool,
+    wait_ms: u128,
+) -> ProxyResponse {
+    let rewritten_request = rewrite_request_model(
+        request,
+        body_value,
+        model.as_deref(),
+        mapped_model.as_deref(),
+    );
+    let rewritten_body: Value =
+        serde_json::from_slice(&rewritten_request.body).unwrap_or_else(|_| body_value.clone());
+    let checked_at = now_string();
+    let attempt_started = Instant::now();
+    match forward_responses_to_candidate(
+        &rewritten_request,
+        &candidate,
+        &rewritten_body,
+        mapped_model.as_deref().or(model.as_deref()),
+        stream,
+    ) {
+        Ok(response) if response.status_code < 400 || !should_fallback(response.status_code) => {
+            let routed_response = append_capacity_wait_reason(
+                response
+                    .with_candidate(&candidate)
+                    .with_fallback_count(fallback_count)
+                    .with_request_meta(model.clone(), stream)
+                    .with_route_metadata(route_log_metadata(
+                        route_context,
+                        Some(candidate.station_key_id.as_str()),
+                    )),
+                wait_ms,
+            );
+            let status_label = routed_response.status_label.clone();
+            if routed_response.status_code < 400 {
+                let request_cost =
+                    extract_request_cost(context, &candidate, &routed_response, false);
+                return routed_response
+                    .with_request_cost(request_cost)
+                    .with_capacity_guard(capacity_guard)
+                    .with_pending_success(
+                        &candidate,
+                        RouteEndpointKind::Responses,
+                        model,
+                        attempt_started.elapsed().as_millis() as i64,
+                        checked_at,
+                        Some(route_request),
+                    );
+            }
+
+            record_candidate_failure(
+                context,
+                &candidate,
+                &status_label,
+                &checked_at,
+                &format!("上游返回 HTTP {}", routed_response.status_code),
+                RouteFailureInput::http_status_with_retry_after(
+                    routed_response.status_code,
+                    false,
+                    routed_response.retry_after_ms,
+                ),
+            );
+            let request_cost = extract_request_cost(context, &candidate, &routed_response, false);
+            routed_response.with_request_cost(request_cost)
+        }
+        Ok(response) => {
+            let error = format!("上游返回 HTTP {}", response.status_code);
+            record_candidate_failure(
+                context,
+                &candidate,
+                "warning",
+                &checked_at,
+                &error,
+                RouteFailureInput::http_status_with_retry_after(
+                    response.status_code,
+                    false,
+                    response.retry_after_ms,
+                ),
+            );
+            append_capacity_wait_reason(
+                ProxyResponse::json_error(502, "routing_all_upstreams_failed", &error)
+                    .with_fallback_count(fallback_count + 1)
+                    .with_request_meta(model, stream)
+                    .with_route_metadata(route_log_metadata(
+                        route_context,
+                        Some(candidate.station_key_id.as_str()),
+                    )),
+                wait_ms,
+            )
+        }
+        Err(error) => {
+            record_candidate_failure(
+                context,
+                &candidate,
+                "error",
+                &checked_at,
+                &error,
+                RouteFailureInput::transport_error(false, &error),
+            );
+            append_capacity_wait_reason(
+                ProxyResponse::json_error(502, "routing_all_upstreams_failed", &error)
+                    .with_fallback_count(fallback_count + 1)
+                    .with_request_meta(model, stream)
+                    .with_route_metadata(route_log_metadata(
+                        route_context,
+                        Some(candidate.station_key_id.as_str()),
+                    )),
+                wait_ms,
+            )
+        }
+    }
+}
+
 fn routing_policy_label(policy: &RoutingPolicy) -> &'static str {
     match policy {
         RoutingPolicy::AutomaticBalanced => "automatic_balanced",
@@ -1398,6 +1827,7 @@ fn rewrite_request_model(
     ParsedRequest {
         method: request.method.clone(),
         path: request.path.clone(),
+        target: request.target.clone(),
         headers: request.headers.clone(),
         body: serde_json::to_vec(&body).unwrap_or_else(|_| request.body.clone()),
     }
@@ -1852,6 +2282,76 @@ fn forward_chat_request(context: &ProxyServerContext, request: &ParsedRequest) -
     )
 }
 
+fn forward_embeddings_request(
+    context: &ProxyServerContext,
+    request: &ParsedRequest,
+) -> ProxyResponse {
+    let body_value: Value = match serde_json::from_slice(&request.body) {
+        Ok(value) => value,
+        Err(error) => {
+            return ProxyResponse::json_error(
+                400,
+                "bad_json",
+                &format!("request JSON could not be parsed: {error}"),
+            );
+        }
+    };
+    let model = body_value
+        .get("model")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let current_station_key_id =
+        lookup_route_affinity(context, RouteEndpointKind::Embeddings, model.as_deref());
+    let settings = context.database.get_settings().ok();
+    let policy = settings
+        .as_ref()
+        .map(|settings| parse_routing_policy(&settings.default_routing_strategy))
+        .unwrap_or(RoutingPolicy::PriorityFallback);
+    let route_request = route_request_for_embeddings(
+        request,
+        model.clone(),
+        &body_value,
+        policy,
+        settings
+            .as_ref()
+            .and_then(|settings| settings.max_rate_multiplier),
+        settings
+            .as_ref()
+            .map(|settings| settings.default_routing_group_filter.clone())
+            .unwrap_or_default(),
+        settings
+            .as_ref()
+            .map(|settings| settings.allow_depleted_fallback)
+            .unwrap_or(false),
+        current_station_key_id,
+    );
+    let route = match select_proxy_route(context, &route_request) {
+        Ok(route) => route,
+        Err(response) => return response.with_request_meta(model, false),
+    };
+    let route_context = route_log_context(&route_request.policy, &route.explanations);
+    let request = rewrite_request_model(
+        request,
+        &body_value,
+        model.as_deref(),
+        route.mapped_model.as_deref(),
+    );
+    let probe_model = route.mapped_model.clone().or_else(|| model.clone());
+    let candidates = route
+        .accepted
+        .into_iter()
+        .map(|item| item.candidate)
+        .collect::<Vec<_>>();
+    forward_embeddings_with_fallback(
+        context,
+        &request,
+        &candidates,
+        model,
+        probe_model,
+        &route_context,
+    )
+}
+
 fn forward_responses_request(
     context: &ProxyServerContext,
     request: &ParsedRequest,
@@ -1945,6 +2445,7 @@ fn forward_automatic_chat_request(
     let mut fallback_count = 0_i64;
     let mut last_error: Option<String>;
     let mut last_preflight_error: Option<ProxyResponse> = None;
+    let mut wait_candidate: Option<AutomaticCapacityWaitCandidate> = None;
 
     loop {
         route_request.excluded_key_ids = excluded_key_ids.iter().cloned().collect();
@@ -1952,6 +2453,45 @@ fn forward_automatic_chat_request(
         let route = match select_proxy_route(context, &route_request) {
             Ok(route) => route,
             Err(response) => {
+                if let Some(wait) = wait_candidate.take() {
+                    let (capacity_guard, wait_ms) = match wait_for_candidate_capacity(
+                        context,
+                        &route_request,
+                        &wait.candidate,
+                        &wait.route_context,
+                        fallback_count,
+                        model.clone(),
+                        stream,
+                    ) {
+                        Ok(result) => result,
+                        Err(response) => return response,
+                    };
+                    if let Err(response) = revalidate_automatic_candidate_before_forward(
+                        context,
+                        &route_request,
+                        &wait.candidate.station_key_id,
+                    ) {
+                        drop(capacity_guard);
+                        last_preflight_error = Some(response);
+                        excluded_key_ids.insert(wait.candidate.station_key_id);
+                        fallback_count += 1;
+                        continue;
+                    }
+                    return forward_waited_automatic_chat_candidate(
+                        context,
+                        request,
+                        body_value,
+                        &route_request,
+                        &wait.route_context,
+                        wait.candidate,
+                        wait.mapped_model,
+                        capacity_guard,
+                        fallback_count,
+                        model,
+                        stream,
+                        wait_ms,
+                    );
+                }
                 let response = last_preflight_error.take().unwrap_or(response);
                 return response
                     .with_fallback_count(fallback_count)
@@ -1960,6 +2500,45 @@ fn forward_automatic_chat_request(
         };
         let route_context = route_log_context(&route_request.policy, &route.explanations);
         let Some(selected) = route.accepted.first() else {
+            if let Some(wait) = wait_candidate.take() {
+                let (capacity_guard, wait_ms) = match wait_for_candidate_capacity(
+                    context,
+                    &route_request,
+                    &wait.candidate,
+                    &wait.route_context,
+                    fallback_count,
+                    model.clone(),
+                    stream,
+                ) {
+                    Ok(result) => result,
+                    Err(response) => return response,
+                };
+                if let Err(response) = revalidate_automatic_candidate_before_forward(
+                    context,
+                    &route_request,
+                    &wait.candidate.station_key_id,
+                ) {
+                    drop(capacity_guard);
+                    last_preflight_error = Some(response);
+                    excluded_key_ids.insert(wait.candidate.station_key_id);
+                    fallback_count += 1;
+                    continue;
+                }
+                return forward_waited_automatic_chat_candidate(
+                    context,
+                    request,
+                    body_value,
+                    &route_request,
+                    &wait.route_context,
+                    wait.candidate,
+                    wait.mapped_model,
+                    capacity_guard,
+                    fallback_count,
+                    model,
+                    stream,
+                    wait_ms,
+                );
+            }
             return ProxyResponse::json_error(
                 503,
                 "routing_no_eligible_candidate",
@@ -1999,18 +2578,14 @@ fn forward_automatic_chat_request(
             .scheduler
             .try_acquire(&candidate.station_key_id, candidate.max_concurrency);
         if !capacity_guard.acquired() {
-            excluded_key_ids.insert(candidate.station_key_id);
-            fallback_count += 1;
-            if fallback_count > 32 {
-                return ProxyResponse::json_error(
-                    503,
-                    "routing_capacity_exhausted",
-                    "自动路由候选并发已满，且已达到重试上限",
-                )
-                .with_fallback_count(fallback_count)
-                .with_request_meta(model, stream)
-                .with_route_metadata(route_log_metadata(&route_context, None));
+            if wait_candidate.is_none() {
+                wait_candidate = Some(AutomaticCapacityWaitCandidate {
+                    candidate: candidate.clone(),
+                    mapped_model: route.mapped_model.clone(),
+                    route_context: route_context.clone(),
+                });
             }
+            excluded_key_ids.insert(candidate.station_key_id);
             continue;
         }
         let rewritten_request = rewrite_request_model(
@@ -2126,6 +2701,7 @@ fn forward_automatic_responses_request(
     let mut fallback_count = 0_i64;
     let mut last_error: Option<String>;
     let mut last_preflight_error: Option<ProxyResponse> = None;
+    let mut wait_candidate: Option<AutomaticCapacityWaitCandidate> = None;
 
     loop {
         route_request.excluded_key_ids = excluded_key_ids.iter().cloned().collect();
@@ -2133,6 +2709,45 @@ fn forward_automatic_responses_request(
         let route = match select_proxy_route(context, &route_request) {
             Ok(route) => route,
             Err(response) => {
+                if let Some(wait) = wait_candidate.take() {
+                    let (capacity_guard, wait_ms) = match wait_for_candidate_capacity(
+                        context,
+                        &route_request,
+                        &wait.candidate,
+                        &wait.route_context,
+                        fallback_count,
+                        model.clone(),
+                        stream,
+                    ) {
+                        Ok(result) => result,
+                        Err(response) => return response,
+                    };
+                    if let Err(response) = revalidate_automatic_candidate_before_forward(
+                        context,
+                        &route_request,
+                        &wait.candidate.station_key_id,
+                    ) {
+                        drop(capacity_guard);
+                        last_preflight_error = Some(response);
+                        excluded_key_ids.insert(wait.candidate.station_key_id);
+                        fallback_count += 1;
+                        continue;
+                    }
+                    return forward_waited_automatic_responses_candidate(
+                        context,
+                        request,
+                        body_value,
+                        &route_request,
+                        &wait.route_context,
+                        wait.candidate,
+                        wait.mapped_model,
+                        capacity_guard,
+                        fallback_count,
+                        model,
+                        stream,
+                        wait_ms,
+                    );
+                }
                 let response = last_preflight_error.take().unwrap_or(response);
                 return response
                     .with_fallback_count(fallback_count)
@@ -2141,6 +2756,45 @@ fn forward_automatic_responses_request(
         };
         let route_context = route_log_context(&route_request.policy, &route.explanations);
         let Some(selected) = route.accepted.first() else {
+            if let Some(wait) = wait_candidate.take() {
+                let (capacity_guard, wait_ms) = match wait_for_candidate_capacity(
+                    context,
+                    &route_request,
+                    &wait.candidate,
+                    &wait.route_context,
+                    fallback_count,
+                    model.clone(),
+                    stream,
+                ) {
+                    Ok(result) => result,
+                    Err(response) => return response,
+                };
+                if let Err(response) = revalidate_automatic_candidate_before_forward(
+                    context,
+                    &route_request,
+                    &wait.candidate.station_key_id,
+                ) {
+                    drop(capacity_guard);
+                    last_preflight_error = Some(response);
+                    excluded_key_ids.insert(wait.candidate.station_key_id);
+                    fallback_count += 1;
+                    continue;
+                }
+                return forward_waited_automatic_responses_candidate(
+                    context,
+                    request,
+                    body_value,
+                    &route_request,
+                    &wait.route_context,
+                    wait.candidate,
+                    wait.mapped_model,
+                    capacity_guard,
+                    fallback_count,
+                    model,
+                    stream,
+                    wait_ms,
+                );
+            }
             return ProxyResponse::json_error(
                 503,
                 "routing_no_eligible_candidate",
@@ -2180,18 +2834,14 @@ fn forward_automatic_responses_request(
             .scheduler
             .try_acquire(&candidate.station_key_id, candidate.max_concurrency);
         if !capacity_guard.acquired() {
-            excluded_key_ids.insert(candidate.station_key_id);
-            fallback_count += 1;
-            if fallback_count > 32 {
-                return ProxyResponse::json_error(
-                    503,
-                    "routing_capacity_exhausted",
-                    "自动路由候选并发已满，且已达到重试上限",
-                )
-                .with_fallback_count(fallback_count)
-                .with_request_meta(model, stream)
-                .with_route_metadata(route_log_metadata(&route_context, None));
+            if wait_candidate.is_none() {
+                wait_candidate = Some(AutomaticCapacityWaitCandidate {
+                    candidate: candidate.clone(),
+                    mapped_model: route.mapped_model.clone(),
+                    route_context: route_context.clone(),
+                });
             }
+            excluded_key_ids.insert(candidate.station_key_id);
             continue;
         }
         let rewritten_request = rewrite_request_model(
@@ -2428,6 +3078,32 @@ fn forward_responses_to_candidate(
     fallback_model: Option<&str>,
     stream: bool,
 ) -> Result<ProxyResponse, String> {
+    let explicit_chat = matches!(
+        candidate.upstream_api_format,
+        UpstreamApiFormat::OpenAiChatCompletions
+    );
+    if explicit_chat {
+        let normalized = match normalize_for_chat(body_value) {
+            Ok(value) => value,
+            Err(error) => {
+                return Ok(responses_chat_fallback_error_response(
+                    &error,
+                    fallback_model,
+                ));
+            }
+        };
+        let chat_body = serde_json::to_vec(&normalized)
+            .map_err(|error| format!("serialize chat fallback request failed: {error}"))?;
+        let response = forward_to_candidate_with_body(
+            request,
+            candidate,
+            "/v1/chat/completions",
+            chat_body.as_slice(),
+            false,
+        )?;
+        return Ok(render_responses_proxy_response(response, fallback_model));
+    }
+
     let direct_response = forward_to_candidate_with_body(
         request,
         candidate,
@@ -2450,10 +3126,19 @@ fn forward_responses_to_candidate(
         && matches!(direct_response.status_code, 404 | 405 | 501)
         && should_try_chat_fallback(&candidate.upstream_api_format)
     {
-        let normalized = normalize_responses_request(body_value);
+        let normalized = match normalize_for_chat(body_value) {
+            Ok(value) => value,
+            Err(error) => {
+                return Ok(responses_chat_fallback_error_response(
+                    &error,
+                    fallback_model,
+                ));
+            }
+        };
         let chat_request = ParsedRequest {
             method: request.method.clone(),
             path: "/v1/chat/completions".to_string(),
+            target: "/v1/chat/completions".to_string(),
             headers: request.headers.clone(),
             body: serde_json::to_vec(&normalized).unwrap_or_default(),
         };
@@ -2470,6 +3155,18 @@ fn forward_responses_to_candidate(
     Ok(direct_response)
 }
 
+fn responses_chat_fallback_error_response(
+    error: &crate::services::proxy::responses_chat_fallback::ResponsesChatFallbackError,
+    fallback_model: Option<&str>,
+) -> ProxyResponse {
+    ProxyResponse::json_error(
+        400,
+        "responses_chat_fallback_incompatible",
+        &responses_fallback_error_message(error),
+    )
+    .with_request_meta(fallback_model.map(ToString::to_string), false)
+}
+
 fn render_responses_proxy_response(
     response: ProxyResponse,
     fallback_model: Option<&str>,
@@ -2482,6 +3179,7 @@ fn render_responses_proxy_response(
     ProxyResponse {
         status_code: response.status_code,
         content_type: "application/json".to_string(),
+        headers: response.headers,
         body: ProxyResponseBody::Buffered(serde_json::to_vec(&rendered).unwrap_or_default()),
         model: response.model,
         stream: false,
@@ -2502,6 +3200,122 @@ fn render_responses_proxy_response(
         request_cost: response.request_cost,
         pending_successes: response.pending_successes,
     }
+}
+
+fn forward_embeddings_with_fallback(
+    context: &ProxyServerContext,
+    request: &ParsedRequest,
+    candidates: &[RouteCandidate],
+    model: Option<String>,
+    probe_model: Option<String>,
+    route_context: &RouteLogContext,
+) -> ProxyResponse {
+    let mut last_error = None;
+    for (index, candidate) in candidates.iter().enumerate() {
+        if index > 0 {
+            if let Err(error) = confirm_switch_candidate(
+                context,
+                candidate,
+                RouteEndpointKind::Embeddings,
+                probe_model.as_deref(),
+                route_context,
+            ) {
+                last_error = Some(error);
+                continue;
+            }
+        }
+        let checked_at = now_string();
+        let attempt_started = Instant::now();
+        match forward_to_candidate_with_body(
+            request,
+            candidate,
+            "/v1/embeddings",
+            request.body.as_slice(),
+            false,
+        ) {
+            Ok(response)
+                if response.status_code < 400 || !should_fallback(response.status_code) =>
+            {
+                let routed_response = response
+                    .with_candidate(candidate)
+                    .with_fallback_count(index as i64)
+                    .with_request_meta(model.clone(), false)
+                    .with_route_metadata(route_log_metadata(
+                        route_context,
+                        Some(candidate.station_key_id.as_str()),
+                    ));
+                let status_label = routed_response.status_label.clone();
+                if routed_response.status_code < 400 {
+                    let request_cost =
+                        extract_request_cost(context, candidate, &routed_response, false);
+                    return routed_response
+                        .with_request_cost(request_cost)
+                        .with_pending_success(
+                            candidate,
+                            RouteEndpointKind::Embeddings,
+                            model.clone(),
+                            attempt_started.elapsed().as_millis() as i64,
+                            checked_at,
+                            None,
+                        );
+                } else {
+                    record_candidate_failure(
+                        context,
+                        candidate,
+                        &status_label,
+                        &checked_at,
+                        &format!("Upstream returned HTTP {}", routed_response.status_code),
+                        RouteFailureInput::http_status_with_retry_after(
+                            routed_response.status_code,
+                            false,
+                            routed_response.retry_after_ms,
+                        ),
+                    );
+                }
+                let request_cost =
+                    extract_request_cost(context, candidate, &routed_response, false);
+                return routed_response.with_request_cost(request_cost);
+            }
+            Ok(response) => {
+                let error = format!("Upstream returned HTTP {}", response.status_code);
+                last_error = Some(error.clone());
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "warning",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::http_status_with_retry_after(
+                        response.status_code,
+                        false,
+                        response.retry_after_ms,
+                    ),
+                );
+            }
+            Err(error) => {
+                last_error = Some(error.clone());
+                record_candidate_failure(
+                    context,
+                    candidate,
+                    "error",
+                    &checked_at,
+                    &error,
+                    RouteFailureInput::transport_error(false, &error),
+                );
+            }
+        }
+    }
+    ProxyResponse::json_error(
+        502,
+        "all_upstreams_failed",
+        &format!(
+            "All enabled Station Keys failed to forward: {}",
+            last_error.unwrap_or_else(|| "unknown error".to_string())
+        ),
+    )
+    .with_fallback_count(candidates.len().saturating_sub(1) as i64)
+    .with_request_meta(model, false)
+    .with_route_metadata(route_log_metadata(route_context, None))
 }
 
 fn forward_with_fallback(
@@ -2623,7 +3437,7 @@ fn forward_to_candidate(
     forward_to_candidate_with_body(
         request,
         candidate,
-        &request.path,
+        &request.target,
         request.body.as_slice(),
         stream,
     )
@@ -2645,15 +3459,17 @@ fn forward_to_candidate_with_body(
     let agent = credential_agent_builder_for_proxy(&proxy)?
         .timeout(std::time::Duration::from_secs(45))
         .build();
-    let mut upstream = agent
-        .request(&request.method, &url)
-        .set("authorization", &format!("Bearer {}", candidate.api_key))
-        .set("content-type", content_type(request));
-    if let Some(accept) = request.headers.get("accept") {
-        upstream = upstream.set("accept", accept);
-    } else if stream {
+    let mut upstream = agent.request(&request.method, &url);
+    for (name, value) in forwarded_headers(&request.headers) {
+        upstream = upstream.set(&name, &value);
+    }
+    upstream = upstream.set("authorization", &format!("Bearer {}", candidate.api_key));
+    if !request.headers.contains_key("content-type") {
+        upstream = upstream.set("content-type", content_type(request));
+    }
+    if !request.headers.contains_key("accept") && stream {
         upstream = upstream.set("accept", "text/event-stream");
-    } else if request.path == "/v1/responses" {
+    } else if !request.headers.contains_key("accept") && request.path == "/v1/responses" {
         upstream = upstream.set("accept", "application/json");
     }
 
@@ -2674,6 +3490,7 @@ fn cors_preflight_response() -> ProxyResponse {
     ProxyResponse {
         status_code: 204,
         content_type: "text/plain".to_string(),
+        headers: Vec::new(),
         body: ProxyResponseBody::Buffered(Vec::new()),
         model: None,
         stream: false,
@@ -2696,6 +3513,36 @@ fn cors_preflight_response() -> ProxyResponse {
     }
 }
 
+const FORWARDED_RESPONSE_HEADERS: &[&str] = &[
+    "retry-after",
+    "x-request-id",
+    "openai-processing-ms",
+    "x-ratelimit-limit-requests",
+    "x-ratelimit-remaining-requests",
+    "x-ratelimit-reset-requests",
+    "x-ratelimit-limit-tokens",
+    "x-ratelimit-remaining-tokens",
+    "x-ratelimit-reset-tokens",
+];
+
+fn forwarded_response_headers(response: &ureq::Response) -> Vec<(String, String)> {
+    FORWARDED_RESPONSE_HEADERS
+        .iter()
+        .filter_map(|name| {
+            response
+                .header(name)
+                .map(|value| ((*name).to_string(), value.to_string()))
+        })
+        .collect()
+}
+
+fn render_extra_headers(headers: &[(String, String)]) -> String {
+    headers
+        .iter()
+        .map(|(name, value)| format!("{}: {}\r\n", name, value))
+        .collect::<String>()
+}
+
 fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyResponse {
     let status_code = response.status();
     let content_type = response
@@ -2703,10 +3550,12 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
         .unwrap_or("application/json")
         .to_string();
     let retry_after_ms = parse_retry_after_ms(response.header("retry-after"));
+    let headers = forwarded_response_headers(&response);
     if stream && status_code < 400 {
         return ProxyResponse {
             status_code,
             content_type,
+            headers,
             body: ProxyResponseBody::Streamed(Box::new(response.into_reader())),
             model: None,
             stream: true,
@@ -2737,6 +3586,7 @@ fn response_from_upstream(response: ureq::Response, stream: bool) -> ProxyRespon
     ProxyResponse {
         status_code,
         content_type,
+        headers,
         body: ProxyResponseBody::Buffered(body),
         model: None,
         stream: false,
@@ -2869,6 +3719,7 @@ impl ProxyResponse {
         Self {
             status_code,
             content_type: "application/json".to_string(),
+            headers: Vec::new(),
             body: ProxyResponseBody::Buffered(body),
             model: None,
             stream: false,
@@ -2991,89 +3842,40 @@ fn buffered_response_id(body: &ProxyResponseBody) -> Option<String> {
 }
 
 fn read_http_request(stream: &mut TcpStream) -> Result<ParsedRequest, String> {
-    let mut buffer = Vec::new();
-    let mut temp = [0_u8; 4096];
-    let mut header_end = None;
-    while header_end.is_none() && buffer.len() < 64 * 1024 {
-        let read = match stream.read(&mut temp) {
-            Ok(read) => read,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-                continue;
-            }
-            Err(error) => return Err(format!("读取请求失败: {error}")),
-        };
-        if read == 0 {
-            break;
-        }
-        buffer.extend_from_slice(&temp[..read]);
-        header_end = find_header_end(&buffer);
-    }
-
-    let header_end = header_end.ok_or_else(|| "HTTP 请求头不完整".to_string())?;
-    let header_text = String::from_utf8_lossy(&buffer[..header_end]);
-    let mut lines = header_text.lines();
-    let request_line = lines.next().ok_or_else(|| "HTTP 请求行为空".to_string())?;
-    let mut request_parts = request_line.split_whitespace();
-    let method = request_parts
-        .next()
-        .ok_or_else(|| "缺少 HTTP method".to_string())?
-        .to_uppercase();
-    let path = request_parts
-        .next()
-        .ok_or_else(|| "缺少 HTTP path".to_string())?
-        .split('?')
-        .next()
-        .unwrap_or("/")
-        .to_string();
-
-    let headers = lines
-        .filter_map(|line| {
-            let (key, value) = line.split_once(':')?;
-            Some((key.trim().to_lowercase(), value.trim().to_string()))
-        })
-        .collect::<HashMap<_, _>>();
-    let content_length = headers
-        .get("content-length")
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(0);
-    let body_start = header_end + 4;
-    let mut body = buffer.get(body_start..).unwrap_or_default().to_vec();
-    if body.len() < content_length {
-        let remaining = content_length - body.len();
-        let mut tail = vec![0_u8; remaining];
-        stream
-            .read_exact(&mut tail)
-            .map_err(|error| format!("读取请求 body 失败: {error}"))?;
-        body.extend_from_slice(&tail);
-    }
-    body.truncate(content_length);
-
-    Ok(ParsedRequest {
-        method,
-        path,
-        headers,
-        body,
-    })
+    parse_http_request(stream, 2 * 1024 * 1024).map(Into::into)
 }
 
 fn write_http_response(
     stream: &mut TcpStream,
     response: ProxyResponse,
     started: Instant,
+    cors_origin: Option<&str>,
 ) -> ResponseWriteOutcome {
     let reason = reason_phrase(response.status_code);
+    let extra_headers = render_extra_headers(&response.headers);
+    let cors_headers = cors_origin
+        .map(|origin| {
+            format!(
+                "access-control-allow-origin: {origin}\r\n\
+                 access-control-allow-methods: GET, POST, OPTIONS\r\n\
+                 access-control-allow-headers: authorization, content-type, accept\r\n\
+                 vary: Origin\r\n"
+            )
+        })
+        .unwrap_or_default();
     match response.body {
         ProxyResponseBody::Buffered(body) => {
             let usage = serde_json::from_slice::<Value>(&body)
                 .ok()
                 .and_then(|value| ObservedUsage::from_json(&value));
             let header = format!(
-                "HTTP/1.1 {} {}\r\ncontent-type: {}\r\ncontent-length: {}\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET, POST, OPTIONS\r\naccess-control-allow-headers: authorization, content-type, accept\r\nconnection: close\r\n\r\n",
+                "HTTP/1.1 {} {}\r\ncontent-type: {}\r\ncontent-length: {}\r\n{}{}connection: close\r\n\r\n",
                 response.status_code,
                 reason,
                 response.content_type,
-                body.len()
+                body.len(),
+                cors_headers,
+                extra_headers
             );
             let error_message = stream
                 .write_all(header.as_bytes())
@@ -3083,28 +3885,37 @@ fn write_http_response(
             ResponseWriteOutcome {
                 first_token_ms: None,
                 usage,
+                response_id: None,
                 error_message,
+                failure_source: None,
             }
         }
         ProxyResponseBody::Streamed(mut body) => {
             let header = format!(
-                "HTTP/1.1 {} {}\r\ncontent-type: {}\r\ncache-control: no-cache\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET, POST, OPTIONS\r\naccess-control-allow-headers: authorization, content-type, accept\r\nconnection: close\r\n\r\n",
+                "HTTP/1.1 {} {}\r\ncontent-type: {}\r\ncache-control: no-cache\r\n{}{}connection: close\r\n\r\n",
                 response.status_code,
                 reason,
                 response.content_type,
+                cors_headers,
+                extra_headers,
             );
             let mut observer = SseUsageObserver::default();
             let mut first_token_ms = None;
+            let mut failure_source = None;
             let mut error_message = stream
                 .write_all(header.as_bytes())
                 .err()
                 .map(|error| format!("写入流式响应失败: {error}"));
+            if error_message.is_some() {
+                failure_source = Some(StreamFailureSource::DownstreamWrite);
+            }
             let mut buffer = [0_u8; 8192];
             while error_message.is_none() {
                 let count = match body.read(&mut buffer) {
                     Ok(count) => count,
                     Err(error) => {
                         error_message = Some(format!("读取流式响应失败: {error}"));
+                        failure_source = Some(StreamFailureSource::UpstreamRead);
                         break;
                     }
                 };
@@ -3114,6 +3925,7 @@ fn write_http_response(
                 observer.push(&buffer[..count]);
                 if let Err(error) = stream.write_all(&buffer[..count]) {
                     error_message = Some(format!("写入流式响应失败: {error}"));
+                    failure_source = Some(StreamFailureSource::DownstreamWrite);
                     break;
                 }
                 if first_token_ms.is_none() {
@@ -3125,18 +3937,19 @@ fn write_http_response(
                     .flush()
                     .err()
                     .map(|error| format!("写入流式响应失败: {error}"));
+                if error_message.is_some() {
+                    failure_source = Some(StreamFailureSource::DownstreamWrite);
+                }
             }
             ResponseWriteOutcome {
                 first_token_ms,
                 usage: observer.usage().cloned(),
+                response_id: observer.response_id().map(ToString::to_string),
                 error_message,
+                failure_source,
             }
         }
     }
-}
-
-fn find_header_end(buffer: &[u8]) -> Option<usize> {
-    buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
 fn content_type(request: &ParsedRequest) -> &str {
@@ -3457,8 +4270,9 @@ mod tests {
             let response = ProxyResponse {
                 status_code: 200,
                 content_type: "text/event-stream".to_string(),
+                headers: Vec::new(),
                 body: ProxyResponseBody::Streamed(Box::new(std::io::Cursor::new(
-                    b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4,\"prompt_tokens_details\":{\"cached_tokens\":3}}}\n\ndata: [DONE]\n\n".to_vec(),
+                    b"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_stream\",\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4,\"prompt_tokens_details\":{\"cached_tokens\":3}}}}\n\ndata: [DONE]\n\n".to_vec(),
                 ))),
                 model: Some("gpt-5.4".to_string()),
                 stream: true,
@@ -3479,13 +4293,14 @@ mod tests {
                 request_cost: crate::services::pricing::request_cost_unknown(),
                 pending_successes: Vec::new(),
             };
-            let outcome = write_http_response(&mut server_stream, response, Instant::now());
+            let outcome = write_http_response(&mut server_stream, response, Instant::now(), None);
             assert!(outcome.error_message.is_none());
             assert!(outcome.first_token_ms.is_some());
             let usage = outcome.usage.expect("stream usage");
             assert_eq!(usage.input_tokens, Some(9));
             assert_eq!(usage.output_tokens, Some(4));
             assert_eq!(usage.cache_read_tokens, Some(3));
+            assert_eq!(outcome.response_id.as_deref(), Some("resp_stream"));
         });
 
         let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
@@ -3529,7 +4344,9 @@ mod tests {
                     cache_creation_tokens: None,
                     cache_read_tokens: Some(3),
                 }),
+                response_id: None,
                 error_message: None,
+                failure_source: None,
             },
         );
 
@@ -3548,6 +4365,7 @@ mod tests {
         let response = ProxyResponse {
             status_code: 200,
             content_type: "text/event-stream".to_string(),
+            headers: Vec::new(),
             body: ProxyResponseBody::Streamed(Box::new(std::io::Cursor::new(
                 b"data: {\"id\":\"evt-1\"}\n\n".to_vec(),
             ))),
@@ -3579,7 +4397,9 @@ mod tests {
                 cache_creation_tokens: None,
                 cache_read_tokens: Some(3),
             }),
+            response_id: None,
             error_message: Some("写入流式响应失败: connection reset".to_string()),
+            failure_source: Some(StreamFailureSource::DownstreamWrite),
         };
 
         let input = build_request_log_input(
@@ -3599,6 +4419,17 @@ mod tests {
             .error_message
             .as_deref()
             .is_some_and(|message| message.contains("connection reset")));
+    }
+
+    #[test]
+    fn upstream_stream_read_failure_penalizes_runtime_metrics_but_client_disconnect_does_not() {
+        let scheduler = SchedulerRuntimeState::default();
+        report_stream_failure(&scheduler, "key-a", StreamFailureSource::UpstreamRead);
+        assert!(scheduler.metrics_snapshot("key-a").error_rate_ewma > 0.0);
+
+        let clean = SchedulerRuntimeState::default();
+        report_stream_failure(&clean, "key-a", StreamFailureSource::DownstreamWrite);
+        assert_eq!(clean.metrics_snapshot("key-a").error_rate_ewma, 0.0);
     }
 
     #[test]
@@ -3630,6 +4461,178 @@ mod tests {
         }
 
         handle.join().expect("join");
+    }
+
+    #[test]
+    fn forward_to_candidate_preserves_query_and_safe_openai_headers() {
+        let upstream = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        let upstream_port = upstream.local_addr().expect("upstream addr").port();
+        let (sender, receiver) = mpsc::channel();
+
+        let handle = thread::spawn(move || {
+            let (mut server_stream, _) = upstream.accept().expect("accept upstream");
+            let upstream_request =
+                read_http_request(&mut server_stream).expect("read upstream request");
+            sender.send(upstream_request).expect("send request");
+            let body = br#"{"id":"resp-task4","output_text":"ok"}"#;
+            let header = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nx-request-id: req_task4\r\nopenai-processing-ms: 17\r\nx-ratelimit-remaining-requests: 41\r\nset-cookie: leaked=1\r\naccess-control-allow-origin: https://evil.example\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            server_stream.write_all(header.as_bytes()).expect("header");
+            server_stream.write_all(body).expect("body");
+        });
+
+        let candidate = RouteCandidate {
+            station_key_id: "key-safe-headers".to_string(),
+            station_id: "station-safe-headers".to_string(),
+            station_endpoint_revision: 1,
+            upstream_base_url: format!("http://127.0.0.1:{upstream_port}"),
+            api_key: "sk-station-secret".to_string(),
+            collector_proxy_mode: "direct".to_string(),
+            collector_proxy_url: None,
+            upstream_api_format: UpstreamApiFormat::OpenAiResponses,
+            priority: 0,
+            max_concurrency: 0,
+            load_factor: None,
+            schedulable: true,
+        };
+        let request = ParsedRequest {
+            method: "POST".to_string(),
+            path: "/v1/responses".to_string(),
+            target: "/v1/responses?trace=1".to_string(),
+            headers: HashMap::from([
+                (
+                    "authorization".to_string(),
+                    "Bearer client-secret".to_string(),
+                ),
+                ("content-type".to_string(), "application/json".to_string()),
+                ("accept".to_string(), "application/json".to_string()),
+                ("openai-organization".to_string(), "org_task4".to_string()),
+                ("openai-project".to_string(), "proj_task4".to_string()),
+                ("idempotency-key".to_string(), "idem_task4".to_string()),
+                ("cookie".to_string(), "session=client".to_string()),
+                ("x-forwarded-for".to_string(), "203.0.113.10".to_string()),
+                (
+                    "proxy-authorization".to_string(),
+                    "Basic secret".to_string(),
+                ),
+            ]),
+            body: br#"{"model":"gpt-5.4","input":"ping"}"#.to_vec(),
+        };
+
+        let response = forward_to_candidate(&request, &candidate, false).expect("response");
+        let upstream_request = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("upstream request");
+
+        assert_eq!(upstream_request.target, "/responses?trace=1");
+        assert_eq!(upstream_request.path, "/responses");
+        assert_eq!(
+            upstream_request
+                .headers
+                .get("authorization")
+                .map(String::as_str),
+            Some("Bearer sk-station-secret")
+        );
+        assert_eq!(
+            upstream_request
+                .headers
+                .get("openai-organization")
+                .map(String::as_str),
+            Some("org_task4")
+        );
+        assert_eq!(
+            upstream_request
+                .headers
+                .get("openai-project")
+                .map(String::as_str),
+            Some("proj_task4")
+        );
+        assert_eq!(
+            upstream_request
+                .headers
+                .get("idempotency-key")
+                .map(String::as_str),
+            Some("idem_task4")
+        );
+        assert!(!upstream_request.headers.contains_key("cookie"));
+        assert!(!upstream_request.headers.contains_key("x-forwarded-for"));
+        assert!(!upstream_request.headers.contains_key("proxy-authorization"));
+        assert!(response
+            .headers
+            .iter()
+            .any(|(name, value)| name == "x-request-id" && value == "req_task4"));
+        assert!(response
+            .headers
+            .iter()
+            .any(|(name, value)| name == "openai-processing-ms" && value == "17"));
+        assert!(response
+            .headers
+            .iter()
+            .any(|(name, value)| name == "x-ratelimit-remaining-requests" && value == "41"));
+        assert!(!response
+            .headers
+            .iter()
+            .any(|(name, _)| name == "set-cookie" || name == "access-control-allow-origin"));
+
+        handle.join().expect("join upstream");
+    }
+
+    #[test]
+    fn write_http_response_preserves_safe_upstream_response_headers() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let handle = thread::spawn(move || {
+            let (mut server_stream, _) = listener.accept().expect("accept");
+            let response = ProxyResponse {
+                status_code: 200,
+                content_type: "application/json".to_string(),
+                headers: vec![
+                    ("x-request-id".to_string(), "req_task4_write".to_string()),
+                    (
+                        "x-ratelimit-remaining-tokens".to_string(),
+                        "1234".to_string(),
+                    ),
+                ],
+                body: ProxyResponseBody::Buffered(br#"{"ok":true}"#.to_vec()),
+                model: None,
+                stream: false,
+                station_key_id: None,
+                station_id: None,
+                upstream_base_url: None,
+                fallback_count: 0,
+                retry_after_ms: None,
+                status_label: "success".to_string(),
+                error_message: None,
+                route_policy: None,
+                route_reason: None,
+                rejected_candidates_json: None,
+                group_binding_id: None,
+                normalization_status: None,
+                balance_scope: None,
+                economic_context_json: None,
+                request_cost: crate::services::pricing::request_cost_unknown(),
+                pending_successes: Vec::new(),
+            };
+            let outcome = write_http_response(&mut server_stream, response, Instant::now(), None);
+            assert!(outcome.error_message.is_none());
+        });
+
+        let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("timeout");
+        let mut buf = Vec::new();
+        client.read_to_end(&mut buf).expect("read all");
+        handle.join().expect("join");
+
+        let text = String::from_utf8(buf).expect("utf8");
+        assert!(text.contains("x-request-id: req_task4_write"));
+        assert!(text.contains("x-ratelimit-remaining-tokens: 1234"));
+        assert!(text.contains("content-length: 11"));
+        assert!(text.contains("connection: close"));
     }
 
     #[test]
@@ -3702,6 +4705,7 @@ mod tests {
         let request = ParsedRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
+            target: "/v1/chat/completions".to_string(),
             headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
             body: serde_json::to_vec(&serde_json::json!({
                 "model": "gpt-5.4",
@@ -3713,7 +4717,14 @@ mod tests {
 
         let response = forward_chat_request(&context, &request);
 
-        assert_eq!(response.status_code, 200);
+        assert_eq!(
+            response.status_code,
+            200,
+            "expected waited request to succeed; error={:?} route_reason={:?} body={}",
+            response.error_message,
+            response.route_reason,
+            String::from_utf8_lossy(response.body_bytes().unwrap_or(&[]))
+        );
         assert!(
             response.stream,
             "request log metadata should record stream=true"
@@ -3792,6 +4803,7 @@ mod tests {
         let request = ParsedRequest {
             method: "POST".to_string(),
             path: "/v1/responses".to_string(),
+            target: "/v1/responses".to_string(),
             headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
             body: serde_json::to_vec(&serde_json::json!({
                 "model": "gpt-5.4",
@@ -3895,6 +4907,85 @@ mod tests {
         );
         allowed.join();
         skipped.join();
+    }
+
+    #[test]
+    fn responses_request_to_explicit_chat_station_preserves_fallback_cache_fields() {
+        let upstream = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        let upstream_port = upstream.local_addr().expect("upstream addr").port();
+        let (sender, receiver) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let (mut server_stream, _) = upstream.accept().expect("accept upstream");
+            let upstream_request =
+                read_http_request(&mut server_stream).expect("read complete upstream request");
+            let body: Value =
+                serde_json::from_slice(&upstream_request.body).expect("converted chat body");
+            sender.send(body).expect("send body");
+            let body = br#"{"id":"chatcmpl-cache","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"pong"}}]}"#;
+            let header = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            server_stream.write_all(header.as_bytes()).expect("header");
+            server_stream.write_all(body).expect("body");
+        });
+
+        let candidate = RouteCandidate {
+            station_key_id: "key-explicit-chat".to_string(),
+            station_endpoint_revision: 1,
+            station_id: "station-explicit-chat".to_string(),
+            upstream_base_url: format!("http://127.0.0.1:{upstream_port}"),
+            api_key: "sk-explicit-chat".to_string(),
+            collector_proxy_mode: "direct".to_string(),
+            collector_proxy_url: None,
+            upstream_api_format: UpstreamApiFormat::OpenAiChatCompletions,
+            priority: 0,
+            max_concurrency: 0,
+            load_factor: None,
+            schedulable: true,
+        };
+        let body_value = json!({
+            "model": "gpt-5.6",
+            "instructions": "Use the repository rules.",
+            "input": "Inspect the current change.",
+            "prompt_cache_key": "workspace-a",
+            "prompt_cache_options": {"mode": "implicit"},
+            "max_output_tokens": 512,
+            "reasoning": {"effort": "high"},
+            "tools": [{
+                "type": "function",
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {"type": "object", "properties": {}}
+            }],
+        });
+        let request = ParsedRequest {
+            method: "POST".to_string(),
+            path: "/v1/responses".to_string(),
+            target: "/v1/responses".to_string(),
+            headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
+            body: serde_json::to_vec(&body_value).expect("body"),
+        };
+
+        let response = forward_responses_to_candidate(
+            &request,
+            &candidate,
+            &body_value,
+            Some("gpt-5.6"),
+            false,
+        )
+        .expect("response");
+        let upstream_body = receiver.recv().expect("upstream body");
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(upstream_body["prompt_cache_key"], "workspace-a");
+        assert_eq!(upstream_body["prompt_cache_options"]["mode"], "implicit");
+        assert_eq!(upstream_body["max_completion_tokens"], 512);
+        assert_eq!(upstream_body["reasoning_effort"], "high");
+        assert_eq!(upstream_body["messages"][0]["role"], "developer");
+        assert_eq!(upstream_body["tools"][0]["function"]["name"], "read_file");
+
+        handle.join().expect("join upstream");
     }
 
     #[test]
@@ -4030,7 +5121,14 @@ mod tests {
 
         let context = proxy_context(database);
         let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
-        commit_pending_successes(&context, &response.pending_successes, None, None, None);
+        commit_pending_successes(
+            &context,
+            &response.pending_successes,
+            None,
+            None,
+            None,
+            None,
+        );
         let health = context
             .database
             .get_station_key_health(key.id.clone())
@@ -4141,6 +5239,34 @@ mod tests {
             .is_some_and(|summary| summary.contains("auth_error")));
 
         rejected.join();
+        accepted.join();
+    }
+
+    #[test]
+    fn runtime_falls_back_after_first_key_returns_model_404() {
+        let missing = test_upstream_status(404, "Not Found", &[]);
+        let accepted = test_upstream_json_success_times("model-fallback", false, None, 2);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key_a = create_test_station_key(&database, "model-missing", &missing.base_url);
+        let key_b = create_test_station_key(&database, "model-fallback", &accepted.base_url);
+        database
+            .reorder_key_pool(vec![key_a.id.clone(), key_b.id.clone()])
+            .expect("reorder");
+        let context = proxy_context(database);
+
+        let response = forward_chat_request(&context, &chat_request("model-only-on-second", false));
+        let first_health = context
+            .database
+            .get_station_key_health(key_a.id.clone())
+            .expect("first health");
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.station_key_id.as_deref(), Some(key_b.id.as_str()));
+        assert_eq!(response.fallback_count, 1);
+        assert_eq!(first_health.failure_count, 0);
+        assert_eq!(first_health.consecutive_failures, 0);
+
+        missing.join();
         accepted.join();
     }
 
@@ -4293,6 +5419,7 @@ mod tests {
             Some("1001"),
             Some(20_000),
             Some(20_000),
+            None,
         );
 
         let snapshot = context.scheduler.metrics_snapshot(&key.id);
@@ -4402,6 +5529,73 @@ mod tests {
     }
 
     #[test]
+    fn automatic_runtime_waits_after_all_topk_slots_are_full() {
+        let upstream = test_upstream_json_success_times("automatic-wait", false, None, 1);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        enable_automatic_routing(&database, 1.0);
+        let key = create_test_station_key(&database, "automatic-wait", &upstream.base_url);
+        database
+            .update_station_key(UpdateStationKeyInput {
+                id: key.id.clone(),
+                station_id: key.station_id.clone(),
+                name: key.name.clone(),
+                api_key: None,
+                enabled: key.enabled,
+                priority: 0,
+                max_concurrency: 1,
+                load_factor: None,
+                schedulable: key.schedulable,
+                group_name: key.group_name.clone(),
+                tier_label: key.tier_label.clone(),
+                group_binding_id: key.group_binding_id.clone(),
+                group_id_hash: key.group_id_hash.clone(),
+                rate_multiplier: key.rate_multiplier,
+                manual_rate_multiplier: Some(Some(1.0)),
+                rate_source: key.rate_source.clone(),
+                balance_scope: key.balance_scope.clone(),
+                status: key.status.clone(),
+                note: key.note.clone(),
+            })
+            .expect("configure key capacity");
+        let context = proxy_context(database);
+        let held = context.scheduler.try_acquire(&key.id, 1);
+        assert!(held.acquired());
+        let scheduler = Arc::clone(&context.scheduler);
+        let key_id = key.id.clone();
+        let releaser = thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_millis(300);
+            while scheduler.waiting(&key_id) != 1 && std::time::Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            drop(held);
+        });
+
+        let response = forward_chat_request(&context, &chat_request("gpt-5.4", false));
+        releaser.join().expect("release held capacity");
+        let was_called = upstream.was_called();
+        let call_count = upstream.call_count();
+        upstream.join();
+
+        let response_body = response
+            .body_bytes()
+            .map(|body| String::from_utf8_lossy(body).into_owned())
+            .unwrap_or_else(|| "<streamed>".to_string());
+        assert_eq!(
+            response.status_code,
+            200,
+            "body={response_body} route_reason={:?} fallback_count={} waiting={}",
+            response.route_reason,
+            response.fallback_count,
+            context.scheduler.waiting(&key.id)
+        );
+        assert_eq!(response.station_key_id.as_deref(), Some(key.id.as_str()));
+        assert_eq!(response.fallback_count, 0);
+        assert_eq!(context.scheduler.waiting(&key.id), 0);
+        assert!(was_called);
+        assert_eq!(call_count, 1);
+    }
+
+    #[test]
     fn stable_session_hash_uses_explicit_deterministic_hash() {
         assert_eq!(stable_session_hash("relay-session"), "508467564de2b2cf");
         assert_eq!(stable_session_hash(" relay-session "), "ca80f260a6db4d47");
@@ -4467,6 +5661,7 @@ mod tests {
         let request = ParsedRequest {
             method: "GET".to_string(),
             path: "/v1/models".to_string(),
+            target: "/v1/models".to_string(),
             headers: HashMap::new(),
             body: Vec::new(),
         };
@@ -4842,6 +6037,7 @@ mod tests {
         ParsedRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
+            target: "/v1/chat/completions".to_string(),
             headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
             body: serde_json::to_vec(&serde_json::json!({
                 "model": model,
@@ -4856,6 +6052,7 @@ mod tests {
         ParsedRequest {
             method: "POST".to_string(),
             path: "/v1/responses".to_string(),
+            target: "/v1/responses".to_string(),
             headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
             body: serde_json::to_vec(&serde_json::json!({
                 "model": model,
@@ -4864,6 +6061,80 @@ mod tests {
             }))
             .expect("body"),
         }
+    }
+
+    fn embeddings_request(model: &str) -> ParsedRequest {
+        ParsedRequest {
+            method: "POST".to_string(),
+            path: "/v1/embeddings".to_string(),
+            target: "/v1/embeddings".to_string(),
+            headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
+            body: serde_json::to_vec(&serde_json::json!({
+                "model": model,
+                "input": "relay pool"
+            }))
+            .expect("body"),
+        }
+    }
+
+    #[test]
+    fn embeddings_request_routes_only_to_embeddings_capable_key() {
+        let skipped = test_upstream_json_success("non-embeddings", false);
+        let accepted = test_upstream_json_success_times("embeddings", false, None, 2);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key_a = create_test_station_key(&database, "non-embeddings", &skipped.base_url);
+        let key_b = create_test_station_key(&database, "embeddings", &accepted.base_url);
+        let mut capabilities = default_capabilities_input(key_b.id.clone());
+        capabilities.supports_embeddings = true;
+        database
+            .update_station_key_capabilities(capabilities)
+            .expect("embeddings capability");
+        database
+            .reorder_key_pool(vec![key_a.id.clone(), key_b.id.clone()])
+            .expect("reorder");
+
+        let response = forward_embeddings_request(
+            &proxy_context(database),
+            &embeddings_request("text-embedding-3-small"),
+        );
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.station_key_id.as_deref(), Some(key_b.id.as_str()));
+        assert!(!skipped.was_called());
+
+        skipped.join();
+        accepted.join();
+    }
+
+    #[test]
+    fn embeddings_request_falls_back_before_output() {
+        let failed = test_upstream_status(500, "Server Error", &[]);
+        let accepted = test_upstream_json_success_times("embeddings-fallback", false, None, 2);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key_a = create_test_station_key(&database, "embeddings-failed", &failed.base_url);
+        let key_b = create_test_station_key(&database, "embeddings-fallback", &accepted.base_url);
+        for key in [&key_a, &key_b] {
+            let mut capabilities = default_capabilities_input(key.id.clone());
+            capabilities.supports_embeddings = true;
+            database
+                .update_station_key_capabilities(capabilities)
+                .expect("embeddings capability");
+        }
+        database
+            .reorder_key_pool(vec![key_a.id.clone(), key_b.id.clone()])
+            .expect("reorder");
+
+        let response = forward_embeddings_request(
+            &proxy_context(database),
+            &embeddings_request("text-embedding-3-small"),
+        );
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.station_key_id.as_deref(), Some(key_b.id.as_str()));
+        assert_eq!(response.fallback_count, 1);
+
+        failed.join();
+        accepted.join();
     }
 
     #[test]
@@ -4995,11 +6266,18 @@ mod tests {
                 collected_at: Some("2500".to_string()),
             })
             .expect("key balance");
+        database
+            .update_local_access_key("relay-local-secret".to_string())
+            .expect("local key");
         let context = proxy_context(database);
         let request = ParsedRequest {
             method: "GET".to_string(),
             path: "/v1/usage".to_string(),
-            headers: HashMap::new(),
+            target: "/v1/usage".to_string(),
+            headers: HashMap::from([(
+                "authorization".to_string(),
+                "Bearer relay-local-secret".to_string(),
+            )]),
             body: Vec::new(),
         };
 
@@ -5031,6 +6309,7 @@ mod tests {
         let request = ParsedRequest {
             method: "OPTIONS".to_string(),
             path: "/v1/chat/completions".to_string(),
+            target: "/v1/chat/completions".to_string(),
             headers: HashMap::new(),
             body: Vec::new(),
         };
@@ -5043,7 +6322,68 @@ mod tests {
     }
 
     #[test]
-    fn write_http_response_includes_cors_compatibility_headers() {
+    fn local_proxy_rejects_missing_or_wrong_local_key() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        database
+            .update_local_access_key("relay-local-secret".to_string())
+            .expect("local key");
+        let context = ProxyServerContext {
+            database,
+            data_key: crate::services::secrets::crypto::generate_data_key(),
+            active_requests: Arc::new(AtomicU32::new(0)),
+            request_count: Arc::new(AtomicU64::new(0)),
+            scheduler: Arc::new(SchedulerRuntimeState::default()),
+            route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
+            probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
+        };
+        let mut request = ParsedRequest {
+            method: "GET".to_string(),
+            path: "/v1/usage".to_string(),
+            target: "/v1/usage".to_string(),
+            headers: HashMap::new(),
+            body: Vec::new(),
+        };
+
+        assert_eq!(handle_proxy_request(&context, &request).status_code, 401);
+        request.headers.insert(
+            "authorization".to_string(),
+            "Bearer wrong-secret".to_string(),
+        );
+        assert_eq!(handle_proxy_request(&context, &request).status_code, 401);
+        request.headers.insert(
+            "authorization".to_string(),
+            "Bearer relay-local-secret".to_string(),
+        );
+        assert_eq!(handle_proxy_request(&context, &request).status_code, 200);
+    }
+
+    #[test]
+    fn proxy_cors_rejects_non_loopback_origin() {
+        let context = ProxyServerContext {
+            database: AppDatabase::new_in_memory_for_tests().expect("database"),
+            data_key: crate::services::secrets::crypto::generate_data_key(),
+            active_requests: Arc::new(AtomicU32::new(0)),
+            request_count: Arc::new(AtomicU64::new(0)),
+            scheduler: Arc::new(SchedulerRuntimeState::default()),
+            route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
+            probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
+        };
+        let request = ParsedRequest {
+            method: "OPTIONS".to_string(),
+            path: "/v1/responses".to_string(),
+            target: "/v1/responses".to_string(),
+            headers: HashMap::from([(
+                "origin".to_string(),
+                "https://attacker.example".to_string(),
+            )]),
+            body: Vec::new(),
+        };
+
+        assert_eq!(handle_proxy_request(&context, &request).status_code, 403);
+    }
+
+    #[test]
+    fn write_http_response_reflects_only_allowed_cors_origin() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
         let port = listener.local_addr().expect("local addr").port();
 
@@ -5052,6 +6392,7 @@ mod tests {
             let response = ProxyResponse {
                 status_code: 204,
                 content_type: "text/plain".to_string(),
+                headers: Vec::new(),
                 body: ProxyResponseBody::Buffered(Vec::new()),
                 model: None,
                 stream: false,
@@ -5072,7 +6413,12 @@ mod tests {
                 request_cost: crate::services::pricing::request_cost_unknown(),
                 pending_successes: Vec::new(),
             };
-            let outcome = write_http_response(&mut server_stream, response, Instant::now());
+            let outcome = write_http_response(
+                &mut server_stream,
+                response,
+                Instant::now(),
+                Some("http://127.0.0.1:3000"),
+            );
             assert!(outcome.error_message.is_none());
         });
 
@@ -5085,9 +6431,38 @@ mod tests {
         handle.join().expect("join");
 
         let text = String::from_utf8(buf).expect("utf8");
-        assert!(text.contains("access-control-allow-origin: *"));
+        assert!(text.contains("access-control-allow-origin: http://127.0.0.1:3000"));
         assert!(text.contains("access-control-allow-methods: GET, POST, OPTIONS"));
         assert!(text.contains("access-control-allow-headers: authorization, content-type, accept"));
+        assert!(text.contains("vary: Origin"));
         assert!(!text.to_lowercase().contains("x-tauri"));
+    }
+
+    #[test]
+    fn write_http_response_omits_cors_without_allowed_origin() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let handle = thread::spawn(move || {
+            let (mut server_stream, _) = listener.accept().expect("accept");
+            let response =
+                ProxyResponse::json_error(401, "invalid_local_api_key", "Invalid local API key");
+            let outcome = write_http_response(&mut server_stream, response, Instant::now(), None);
+            assert!(outcome.error_message.is_none());
+        });
+
+        let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("timeout");
+        let mut buf = Vec::new();
+        client.read_to_end(&mut buf).expect("read all");
+        handle.join().expect("join");
+
+        let text = String::from_utf8(buf).expect("utf8");
+        assert!(!text
+            .to_ascii_lowercase()
+            .contains("access-control-allow-origin"));
+        assert!(!text.contains("vary: Origin"));
     }
 }

@@ -63,7 +63,7 @@ assert.ok(
   dashboardSource.includes("disabled={startingLocalProxy || stoppingLocalProxy}") &&
     dashboardSource.includes('aria-label={proxyRunning ? "关闭本地路由" : "启动本地路由"}') &&
     dashboardSource.includes("Power") &&
-    dashboardSource.includes("bg-[#0060DF]") &&
-    dashboardSource.includes("bg-[#EFF0F3]"),
+    dashboardSource.includes("bg-primary-solid") &&
+    dashboardSource.includes("bg-surface"),
   "dashboard should render a compact start/stop local route action with the requested blue and gray states",
 );

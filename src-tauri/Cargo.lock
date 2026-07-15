@@ -3050,6 +3050,7 @@ dependencies = [
  "aes-gcm",
  "base64 0.22.1",
  "chrono",
+ "httparse",
  "keyring",
  "rand 0.8.6",
  "rfd",

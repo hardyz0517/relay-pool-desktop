@@ -47,8 +47,14 @@ impl ObservedUsage {
         });
         let cache_creation_tokens = integer(
             usage,
-            &["cache_creation_tokens", "cache_creation_input_tokens"],
+            &[
+                "cache_write_tokens",
+                "cache_creation_tokens",
+                "cache_creation_input_tokens",
+            ],
         )
+        .or_else(|| integer_at(usage, "/input_tokens_details/cache_write_tokens"))
+        .or_else(|| integer_at(usage, "/prompt_tokens_details/cache_write_tokens"))
         .or_else(|| integer_at(usage, "/input_tokens_details/cache_creation_tokens"))
         .or_else(|| integer_at(usage, "/prompt_tokens_details/cache_creation_tokens"));
         let cache_read_tokens = integer(usage, &["cache_read_tokens", "cache_read_input_tokens"])
@@ -78,6 +84,7 @@ impl ObservedUsage {
 pub struct SseUsageObserver {
     pending: Vec<u8>,
     usage: Option<ObservedUsage>,
+    response_id: Option<String>,
 }
 
 impl SseUsageObserver {
@@ -97,6 +104,10 @@ impl SseUsageObserver {
         self.usage.as_ref()
     }
 
+    pub fn response_id(&self) -> Option<&str> {
+        self.response_id.as_deref()
+    }
+
     fn observe_event(&mut self, event: &[u8]) {
         let event = String::from_utf8_lossy(event);
         let data = event
@@ -109,11 +120,23 @@ impl SseUsageObserver {
             return;
         }
         if let Ok(value) = serde_json::from_str::<Value>(&data) {
+            if let Some(response_id) = value
+                .pointer("/response/id")
+                .and_then(Value::as_str)
+                .and_then(non_empty)
+            {
+                self.response_id = Some(response_id.to_string());
+            }
             if let Some(usage) = ObservedUsage::from_json(&value) {
                 self.usage = Some(usage);
             }
         }
     }
+}
+
+fn non_empty(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
 }
 
 fn normalize_reasoning_effort(value: &str) -> Option<String> {
@@ -212,6 +235,24 @@ mod tests {
     }
 
     #[test]
+    fn observed_usage_reads_current_cache_write_tokens() {
+        let usage = ObservedUsage::from_json(&json!({
+            "usage": {
+                "input_tokens": 2006,
+                "output_tokens": 300,
+                "input_tokens_details": {
+                    "cached_tokens": 1920,
+                    "cache_write_tokens": 64
+                }
+            }
+        }))
+        .expect("usage");
+
+        assert_eq!(usage.cache_read_tokens, Some(1920));
+        assert_eq!(usage.cache_creation_tokens, Some(64));
+    }
+
+    #[test]
     fn sse_observer_handles_json_split_across_chunks() {
         let mut observer = SseUsageObserver::default();
         observer.push(b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":7,");
@@ -223,5 +264,24 @@ mod tests {
         assert_eq!(usage.output_tokens, Some(3));
         assert_eq!(usage.total_tokens, Some(10));
         assert_eq!(usage.cache_read_tokens, Some(2));
+    }
+
+    #[test]
+    fn sse_observer_captures_response_id_and_usage() {
+        let mut observer = SseUsageObserver::default();
+        observer.push(
+            br#"data: {"type":"response.created","response":{"id":"resp_123"}}
+
+"#,
+        );
+        observer.push(br#"data: {"type":"response.completed","response":{"id":"resp_123","usage":{"input_tokens":10,"output_tokens":2}}}
+
+"#);
+
+        assert_eq!(observer.response_id(), Some("resp_123"));
+        assert_eq!(
+            observer.usage().and_then(|usage| usage.input_tokens),
+            Some(10)
+        );
     }
 }

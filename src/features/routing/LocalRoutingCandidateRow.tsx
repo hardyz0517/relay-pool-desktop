@@ -75,7 +75,19 @@ export function LocalRoutingCandidateRow({
   const cooldownUntilMs =
     candidate.cooldownUntil == null ? null : toTimestampMillis(candidate.cooldownUntil);
   const cooldown = buildCooldownDisplay(candidate.healthState, cooldownUntilMs, Date.now());
-  const primaryRejectReason = candidate.previewRejectReasons[0] ?? null;
+  const primaryRejectReason = !candidate.schedulable
+    ? "asset_unavailable"
+    : (candidate.previewRejectReasons[0] ?? null);
+  const participationTone = !candidate.schedulable
+    ? "disabled"
+    : candidate.previewEligible
+      ? "healthy"
+      : "warning";
+  const participationLabel = !candidate.schedulable
+    ? "已暂停路由"
+    : candidate.previewEligible
+      ? "可参与"
+      : "不参与";
   const multiplierLabel =
     candidate.effectiveMultiplier == null
       ? "未确认"
@@ -128,9 +140,7 @@ export function LocalRoutingCandidateRow({
       </div>
       <MetricCell label="参与状态">
         <div className="flex flex-wrap items-center gap-1.5">
-          <StatusBadge tone={candidate.previewEligible ? "healthy" : "warning"}>
-            {candidate.previewEligible ? "可参与" : "不参与"}
-          </StatusBadge>
+          <StatusBadge tone={participationTone}>{participationLabel}</StatusBadge>
           {!candidate.enabled ? <StatusBadge tone="disabled">停用</StatusBadge> : null}
           <StatusBadge tone={healthTones[candidate.healthState]}>
             {healthLabels[candidate.healthState]}

@@ -3,6 +3,8 @@ import type {
   UpdateStationKeyCapabilitiesInput,
 } from "@/lib/types/routing";
 
+export type { StationKeyCapabilities } from "@/lib/types/routing";
+
 export type StationKeyStatus = "unchecked" | "healthy" | "warning" | "error" | "disabled";
 
 export type StationKey = {
@@ -146,6 +148,7 @@ export type SaveStationKeyWithDefaultsInput = {
   name: string;
   apiKey?: string | null;
   enabled: boolean;
+  schedulable?: boolean | null;
   priority?: number | null;
   tierLabel?: string | null;
   balanceScope?: string | null;

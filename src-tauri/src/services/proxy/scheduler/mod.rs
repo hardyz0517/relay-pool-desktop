@@ -8,7 +8,7 @@ pub mod scoring;
 pub mod selection;
 pub mod types;
 
-use std::sync::Mutex;
+use std::{sync::Mutex, time::Duration};
 
 use crate::{
     models::routing::{RoutingGroupFilter, SchedulerAdvancedSettings},
@@ -43,6 +43,21 @@ impl SchedulerRuntimeState {
         max_concurrency: i64,
     ) -> capacity::CapacityGuard {
         self.capacity.try_acquire(station_key_id, max_concurrency)
+    }
+
+    pub fn waiting(&self, station_key_id: &str) -> u64 {
+        self.capacity.waiting(station_key_id)
+    }
+
+    pub fn wait_acquire(
+        &self,
+        station_key_id: impl Into<String>,
+        max_concurrency: i64,
+        max_waiting: u64,
+        timeout: Duration,
+    ) -> capacity::CapacityWaitResult {
+        self.capacity
+            .wait_acquire(station_key_id, max_concurrency, max_waiting, timeout)
     }
 
     pub fn schedule(

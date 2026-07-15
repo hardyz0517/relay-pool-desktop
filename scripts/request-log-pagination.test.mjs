@@ -111,7 +111,7 @@ assert.ok(
 
 assert.ok(
   dataTableSource.includes('headerVariant === "plain"') &&
-    dataTableSource.includes("border-b border-border bg-white") &&
-    dataTableSource.includes("text-xs font-medium text-slate-500"),
+    dataTableSource.includes("border-b border-border bg-surface") &&
+    dataTableSource.includes("text-xs font-medium text-muted-foreground"),
   "plain table headers should use a white surface, normal spacing, and a bottom divider",
 );

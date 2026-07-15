@@ -307,7 +307,7 @@ fn create_station_key(
             priority: input.priority,
             max_concurrency: None,
             load_factor: None,
-            schedulable: None,
+            schedulable: input.schedulable,
             group_name: None,
             tier_label: input.tier_label.clone(),
             group_binding_id: None,
@@ -376,7 +376,7 @@ fn update_station_key(
             priority: input.priority.unwrap_or(existing.priority),
             max_concurrency: existing.max_concurrency,
             load_factor: existing.load_factor,
-            schedulable: existing.schedulable,
+            schedulable: input.schedulable.unwrap_or(existing.schedulable),
             group_name: existing.group_name.clone(),
             tier_label: input.tier_label.clone(),
             group_binding_id: existing.group_binding_id.clone(),
@@ -445,6 +445,7 @@ mod tests {
     use crate::models::group_facts::{
         GroupRateRecord, StationGroupBinding, BINDING_KIND_STATION_GROUP, BINDING_STATUS_AVAILABLE,
     };
+    use crate::models::stations::CreateStationInput;
 
     #[test]
     fn default_capability_flags_are_all_enabled() {
@@ -494,6 +495,78 @@ mod tests {
         assert!(options.is_empty());
     }
 
+    #[test]
+    fn save_station_key_with_defaults_preserves_schedulable_input() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = database
+            .create_station(CreateStationInput {
+                name: "Schedulable Station".to_string(),
+                station_type: "openai-compatible".to_string(),
+                website_url: "https://example.test".to_string(),
+                api_base_url: "https://example.test/v1".to_string(),
+                api_key: "sk-station".to_string(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .expect("station");
+        let data_key = crate::services::secrets::crypto::generate_data_key();
+
+        let created = database
+            .save_station_key_with_defaults(
+                &data_key,
+                SaveStationKeyWithDefaultsInput {
+                    mode: SaveStationKeyMode::Create,
+                    id: None,
+                    station_id: station.id.clone(),
+                    name: "paused key".to_string(),
+                    api_key: Some("sk-paused".to_string()),
+                    enabled: true,
+                    schedulable: Some(false),
+                    priority: Some(0),
+                    tier_label: None,
+                    balance_scope: None,
+                    status: None,
+                    note: None,
+                    group_selection: clear_group_selection(),
+                    capabilities: None,
+                },
+            )
+            .expect("create key")
+            .station_key;
+
+        assert!(!created.schedulable);
+
+        let updated = database
+            .save_station_key_with_defaults(
+                &data_key,
+                SaveStationKeyWithDefaultsInput {
+                    mode: SaveStationKeyMode::Update,
+                    id: Some(created.id),
+                    station_id: station.id,
+                    name: "resumed key".to_string(),
+                    api_key: None,
+                    enabled: true,
+                    schedulable: Some(true),
+                    priority: Some(0),
+                    tier_label: None,
+                    balance_scope: None,
+                    status: None,
+                    note: None,
+                    group_selection: keep_group_selection(),
+                    capabilities: None,
+                },
+            )
+            .expect("update key")
+            .station_key;
+
+        assert!(updated.schedulable);
+    }
+
     fn binding(id: &str, group_key_hash: &str, group_id_hash: Option<&str>) -> StationGroupBinding {
         StationGroupBinding {
             id: id.to_string(),
@@ -539,6 +612,24 @@ mod tests {
             raw_json_redacted: None,
             checked_at: "1000".to_string(),
             created_at: "1000".to_string(),
+        }
+    }
+
+    fn keep_group_selection() -> crate::models::shared_capabilities::StationKeyGroupSelection {
+        crate::models::shared_capabilities::StationKeyGroupSelection {
+            kind: StationKeyGroupSelectionKind::Keep,
+            group_binding_id: None,
+            group_id_hash: None,
+            group_name: None,
+        }
+    }
+
+    fn clear_group_selection() -> crate::models::shared_capabilities::StationKeyGroupSelection {
+        crate::models::shared_capabilities::StationKeyGroupSelection {
+            kind: StationKeyGroupSelectionKind::Clear,
+            group_binding_id: None,
+            group_id_hash: None,
+            group_name: None,
         }
     }
 }

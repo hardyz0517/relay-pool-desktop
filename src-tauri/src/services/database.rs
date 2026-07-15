@@ -10,6 +10,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use rand::{rngs::OsRng, RngCore};
 use rusqlite::{params, params_from_iter, types::Type, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -54,6 +56,7 @@ use crate::models::{
 };
 
 const CHANNEL_STATUS_TIMELINE_LIMIT: usize = 60;
+const INSECURE_LOCAL_KEY_PLACEHOLDER: &str = "sk-local-pool-change-me";
 
 #[derive(Debug, Clone)]
 pub struct ChannelStatusWindowFacts {
@@ -691,6 +694,20 @@ impl AppDatabase {
     pub fn get_local_access_key(&self) -> Result<String, String> {
         let connection = self.connection()?;
         read_setting(&connection, "local_key")
+    }
+
+    pub fn ensure_secure_local_access_key(&self) -> Result<String, String> {
+        let connection = self.connection()?;
+        let current = read_setting(&connection, "local_key")?;
+        if !current.trim().is_empty() && current != INSECURE_LOCAL_KEY_PLACEHOLDER {
+            return Ok(current);
+        }
+
+        let mut random = [0_u8; 32];
+        OsRng.fill_bytes(&mut random);
+        let generated = format!("sk-local-{}", URL_SAFE_NO_PAD.encode(random));
+        upsert_setting(&connection, "local_key", &generated)?;
+        Ok(generated)
     }
 
     pub fn update_local_access_key(&self, value: String) -> Result<AppSettings, String> {
@@ -1558,6 +1575,11 @@ impl AppDatabase {
     pub fn list_request_logs(&self) -> Result<Vec<RequestLog>, String> {
         let connection = self.connection()?;
         list_request_logs_from_connection(&connection)
+    }
+
+    pub fn list_local_proxy_request_logs(&self) -> Result<Vec<RequestLog>, String> {
+        let connection = self.connection()?;
+        list_local_proxy_request_logs_from_connection(&connection)
     }
 
     pub fn clear_request_logs(&self) -> Result<(), String> {
@@ -9115,7 +9137,7 @@ fn proxy_route_candidates_from_connection_with_data_key(
             "SELECT k.id, k.station_id, s.endpoint_revision, s.api_base_url, k.api_key, k.api_key_secret_id,
                     s.upstream_api_format, COALESCE(k.routing_order, k.priority),
                     s.collector_proxy_mode, s.collector_proxy_url,
-                    k.max_concurrency, k.load_factor
+                    k.max_concurrency, k.load_factor, k.schedulable
                FROM station_keys k
                JOIN stations s ON s.id = k.station_id
               WHERE k.enabled = 1
@@ -9141,6 +9163,7 @@ fn proxy_route_candidates_from_connection_with_data_key(
                 priority: row.get(7)?,
                 max_concurrency: row.get(10)?,
                 load_factor: row.get(11)?,
+                schedulable: i64_to_bool(row.get(12)?),
                 collector_proxy_mode: {
                     let proxy = resolve_proxy_config(
                         &row.get::<_, String>(8)?,
@@ -9224,6 +9247,7 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                 COALESCE(c.only_use_as_backup, 0),
                 COALESCE(c.routing_tags_json, '[]'),
                 COALESCE(c.updated_at, '0'),
+                k.schedulable,
                 h.station_key_id,
                 h.last_success_at,
                 h.last_failure_at,
@@ -9258,10 +9282,10 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
         .query_map([], |row| {
             let station_key_id = row.get::<_, String>(0)?;
             let api_key: String = row.get(4)?;
-            let health_station_key_id = row.get::<_, Option<String>>(23)?;
+            let health_station_key_id = row.get::<_, Option<String>>(24)?;
             let proxy = resolve_proxy_config(
-                &row.get::<_, String>(33)?,
-                row.get::<_, Option<String>>(34)?,
+                &row.get::<_, String>(34)?,
+                row.get::<_, Option<String>>(35)?,
                 &global_proxy_mode,
                 Some(global_proxy_url.clone()),
             );
@@ -9274,8 +9298,9 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                     api_key,
                     upstream_api_format: parse_upstream_api_format(row.get::<_, String>(6)?),
                     priority: row.get(7)?,
-                    max_concurrency: row.get(35)?,
-                    load_factor: row.get(36)?,
+                    max_concurrency: row.get(36)?,
+                    load_factor: row.get(37)?,
+                    schedulable: i64_to_bool(row.get(23)?),
                     collector_proxy_mode: proxy.mode,
                     collector_proxy_url: proxy.url,
                 },
@@ -9299,15 +9324,15 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                 },
                 health: health_station_key_id.map(|station_key_id| StationKeyHealth {
                     station_key_id,
-                    last_success_at: row.get(24).ok().flatten(),
-                    last_failure_at: row.get(25).ok().flatten(),
-                    consecutive_failures: row.get(26).unwrap_or(0),
-                    success_count: row.get(27).unwrap_or(0),
-                    failure_count: row.get(28).unwrap_or(0),
-                    avg_latency_ms: row.get(29).ok().flatten(),
-                    last_error_summary: row.get(30).ok().flatten(),
-                    cooldown_until: row.get(31).ok().flatten(),
-                    updated_at: row.get(32).unwrap_or_else(|_| "0".to_string()),
+                    last_success_at: row.get(25).ok().flatten(),
+                    last_failure_at: row.get(26).ok().flatten(),
+                    consecutive_failures: row.get(27).unwrap_or(0),
+                    success_count: row.get(28).unwrap_or(0),
+                    failure_count: row.get(29).unwrap_or(0),
+                    avg_latency_ms: row.get(30).ok().flatten(),
+                    last_error_summary: row.get(31).ok().flatten(),
+                    cooldown_until: row.get(32).ok().flatten(),
+                    updated_at: row.get(33).unwrap_or_else(|_| "0".to_string()),
                 }),
                 economics: None,
                 scheduler_group_binding_id: None,
@@ -9401,6 +9426,7 @@ fn local_routing_read_candidates_from_connection(
                 COALESCE(c.only_use_as_backup, 0),
                 COALESCE(c.routing_tags_json, '[]'),
                 COALESCE(c.updated_at, '0'),
+                COALESCE(k.schedulable, 1),
                 h.station_key_id,
                 h.last_success_at,
                 h.last_failure_at,
@@ -9429,12 +9455,13 @@ fn local_routing_read_candidates_from_connection(
         .query_map([], |row| {
             let station_key_id = row.get::<_, String>(0)?;
             let station_id = row.get::<_, String>(1)?;
-            let health_station_key_id = row.get::<_, Option<String>>(17)?;
+            let health_station_key_id = row.get::<_, Option<String>>(18)?;
             Ok(LocalRoutingReadCandidate {
                 station_key_id: station_key_id.clone(),
                 station_id,
                 station_name: row.get(2)?,
                 key_name: row.get(3)?,
+                schedulable: i64_to_bool(row.get(17)?),
                 capabilities: StationKeyCapabilities {
                     station_key_id,
                     supports_chat_completions: i64_to_bool(row.get(4)?),
@@ -9453,15 +9480,15 @@ fn local_routing_read_candidates_from_connection(
                 },
                 health: health_station_key_id.map(|station_key_id| StationKeyHealth {
                     station_key_id,
-                    last_success_at: row.get(18).ok().flatten(),
-                    last_failure_at: row.get(19).ok().flatten(),
-                    consecutive_failures: row.get(20).unwrap_or(0),
-                    success_count: row.get(21).unwrap_or(0),
-                    failure_count: row.get(22).unwrap_or(0),
-                    avg_latency_ms: row.get(23).ok().flatten(),
-                    last_error_summary: row.get(24).ok().flatten(),
-                    cooldown_until: row.get(25).ok().flatten(),
-                    updated_at: row.get(26).unwrap_or_else(|_| "0".to_string()),
+                    last_success_at: row.get(19).ok().flatten(),
+                    last_failure_at: row.get(20).ok().flatten(),
+                    consecutive_failures: row.get(21).unwrap_or(0),
+                    success_count: row.get(22).unwrap_or(0),
+                    failure_count: row.get(23).unwrap_or(0),
+                    avg_latency_ms: row.get(24).ok().flatten(),
+                    last_error_summary: row.get(25).ok().flatten(),
+                    cooldown_until: row.get(26).ok().flatten(),
+                    updated_at: row.get(27).unwrap_or_else(|_| "0".to_string()),
                 }),
                 economics: None,
                 scheduler_group_binding_id: None,
@@ -11326,6 +11353,30 @@ fn list_request_logs_from_connection(connection: &Connection) -> Result<Vec<Requ
         .map_err(|error| format!("查询请求日志失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析请求日志失败: {error}"))?;
+    Ok(rows
+        .into_iter()
+        .map(|log| request_log_with_estimated_cost(connection, log))
+        .collect())
+}
+
+fn list_local_proxy_request_logs_from_connection(
+    connection: &Connection,
+) -> Result<Vec<RequestLog>, String> {
+    let mut statement = connection
+        .prepare(&format!(
+            "SELECT {REQUEST_LOG_SELECT_COLUMNS}
+             FROM request_logs
+             WHERE COALESCE(route_policy, '') != 'channel_monitor'
+             ORDER BY created_at DESC
+             LIMIT 500"
+        ))
+        .map_err(|error| format!("读取本地路由日志列表失败: {error}"))?;
+
+    let rows = statement
+        .query_map([], row_to_request_log)
+        .map_err(|error| format!("查询本地路由日志失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("解析本地路由日志失败: {error}"))?;
     Ok(rows
         .into_iter()
         .map(|log| request_log_with_estimated_cost(connection, log))
@@ -14667,6 +14718,59 @@ mod tests {
                 params![station_id, station_type],
             )
             .expect("set station type");
+    }
+
+    #[test]
+    fn known_placeholder_local_key_is_rotated_once() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let first = database
+            .ensure_secure_local_access_key()
+            .expect("secure local key");
+        let second = database
+            .ensure_secure_local_access_key()
+            .expect("stable local key");
+
+        assert_ne!(first, "sk-local-pool-change-me");
+        assert!(first.starts_with("sk-local-"));
+        assert!(first.len() >= 50);
+        assert_eq!(second, first);
+    }
+
+    #[test]
+    fn rich_route_candidates_preserve_unschedulable_state() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "unschedulable-rich-candidate");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "paused key".to_string(),
+                api_key: "sk-paused".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: Some(false),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                manual_rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .expect("key");
+
+        let candidates = database
+            .proxy_rich_route_candidates()
+            .expect("rich candidates");
+        let candidate = candidates
+            .iter()
+            .find(|item| item.candidate.station_key_id == key.id)
+            .expect("candidate remains explainable");
+
+        assert!(!candidate.candidate.schedulable);
     }
 
     fn finish_test_collector_run(
@@ -19109,6 +19213,36 @@ mod tests {
         assert_eq!(listed_log.cost_currency, None);
         assert_eq!(listed_log.pricing_source, None);
         assert_eq!(listed_log.cost_status.as_deref(), Some("usage_only"));
+    }
+
+    #[test]
+    fn list_local_proxy_request_logs_excludes_channel_monitor_rows() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        {
+            let connection = database.connection().expect("connection");
+            connection
+                .execute(
+                    "INSERT INTO request_logs
+                     (id, started_at, method, path, stream, status, route_policy, created_at)
+                     VALUES (?1, ?2, 'POST', '/v1/responses', 0, 'success', ?3, ?2)",
+                    params!["monitor-row", "1000", "channel_monitor"],
+                )
+                .expect("monitor row");
+            connection
+                .execute(
+                    "INSERT INTO request_logs
+                     (id, started_at, method, path, stream, status, route_policy, created_at)
+                     VALUES (?1, ?2, 'POST', '/v1/responses', 0, 'success', ?3, ?2)",
+                    params!["proxy-row", "2000", "cost_stable_first"],
+                )
+                .expect("proxy row");
+        }
+
+        let logs = database
+            .list_local_proxy_request_logs()
+            .expect("local proxy logs");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].id, "proxy-row");
     }
 
     #[test]

@@ -41,6 +41,7 @@ pub struct SaveStationKeyWithDefaultsInput {
     pub name: String,
     pub api_key: Option<String>,
     pub enabled: bool,
+    pub schedulable: Option<bool>,
     pub priority: Option<i64>,
     pub tier_label: Option<String>,
     pub balance_scope: Option<String>,

@@ -228,6 +228,11 @@ fn collect_rejections(
     reasons: &mut Vec<String>,
     rejection_reasons: &mut Vec<String>,
 ) {
+    if !candidate.candidate.schedulable {
+        rejection_reasons.push("asset unavailable".to_string());
+        return;
+    }
+
     match request.endpoint {
         RouteEndpointKind::Models => {
             reasons.push("models endpoint does not require model capability".to_string())

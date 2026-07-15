@@ -18,6 +18,8 @@ export type DecisionFact = {
   severity: "info" | "warning" | "error";
 };
 
+export type LocalRoutingPreviewKind = "baseline_eligibility";
+
 export type LocalRoutingSettings = {
   enabled: boolean;
   bindAddr: string;
@@ -27,6 +29,7 @@ export type LocalRoutingSettings = {
   maxRateMultiplier: number | null;
   routingGroupFilter: RoutingGroupFilter;
   fallbackEnabled: boolean;
+  previewKind: LocalRoutingPreviewKind;
 };
 
 export type LocalRoutingSummary = {
@@ -45,6 +48,7 @@ export type LocalRoutingCandidateRow = {
   endpoint: RouteEndpointKind;
   priority: number;
   enabled: boolean;
+  schedulable: boolean;
   healthState: RouteHealthState;
   lastSuccessAt: string | null;
   lastFailureAt: string | null;

@@ -10,12 +10,13 @@ async function readOptional(path) {
   }
 }
 
-const [pageSource, tableSource, viewModelSource, typeSource, dashboardSource] = await Promise.all([
+const [pageSource, tableSource, viewModelSource, typeSource, dashboardSource, observabilitySource] = await Promise.all([
   readFile("src/features/logs/LogsPage.tsx", "utf8"),
   readOptional("src/features/logs/RequestLogTable.tsx"),
   readOptional("src/features/logs/requestLogViewModels.ts"),
   readFile("src/lib/types/proxy.ts", "utf8"),
   readFile("src/features/dashboard/DashboardPage.tsx", "utf8"),
+  readFile("src-tauri/src/services/proxy/observability.rs", "utf8"),
 ]);
 
 for (const label of [
@@ -93,7 +94,7 @@ assert.ok(
 );
 
 assert.ok(
-  tableSource.includes("bg-emerald-400") &&
+  tableSource.includes("bg-success-foreground") &&
     /h-9[^\"]*w-1|w-1[^\"]*h-9/.test(tableSource),
   "request log latency cell should include a stable teal vertical timing bar",
 );
@@ -108,8 +109,8 @@ assert.ok(
   tableSource.includes("function LogMetaTag") &&
     tableSource.includes("h-5 max-w-full") &&
     tableSource.includes("rounded-[4px]") &&
-    tableSource.includes("bg-blue-50") &&
-    tableSource.includes("text-blue-700") &&
+    tableSource.includes("bg-info-surface") &&
+    tableSource.includes("text-info-foreground") &&
     tableSource.includes('className="truncate"') &&
     tableSource.includes("title={value}"),
   "request log metadata tags should match the compact light-blue reference style",

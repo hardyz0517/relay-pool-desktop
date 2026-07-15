@@ -42,6 +42,7 @@ function previewWorkspace(settings: AppSettings): LocalRoutingWorkspace {
       maxRateMultiplier: settings.maxRateMultiplier,
       routingGroupFilter: settings.defaultRoutingGroupFilter,
       fallbackEnabled: true,
+      previewKind: "baseline_eligibility",
     },
     summary: {
       candidateCount: 0,

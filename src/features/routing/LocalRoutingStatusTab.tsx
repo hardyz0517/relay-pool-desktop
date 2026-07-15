@@ -62,6 +62,8 @@ export function LocalRoutingStatusTab({
   const routingGroupFilterLabel = formatRoutingGroupFilter(workspace.settings.routingGroupFilter);
   const candidateStatusLabel = `${workspace.summary.previewEligibleCandidateCount} / ${workspace.summary.previewExcludedCandidateCount}`;
   const latestDecisionTimeLabel = formatRoutingDecisionTime(latestDecision.decidedAt);
+  const candidateHeading =
+    workspace.settings.previewKind === "baseline_eligibility" ? "候选基础资格" : "候选资格";
 
   return (
     <div className="grid gap-4">
@@ -159,7 +161,7 @@ export function LocalRoutingStatusTab({
             id="local-routing-candidates-title"
             className="text-sm font-semibold text-foreground"
           >
-            候选顺序预览
+            {candidateHeading}
           </h2>
           <span className="text-xs text-muted-foreground">
             {workspace.summary.candidateCount} 个密钥

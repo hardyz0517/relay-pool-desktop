@@ -13,18 +13,6 @@ pub fn extract_responses_metadata(body: &Value) -> (Option<String>, bool) {
     (model, stream)
 }
 
-pub fn normalize_responses_request(body: &Value) -> Value {
-    let model = body.get("model").cloned().unwrap_or(Value::Null);
-    let stream = body.get("stream").cloned().unwrap_or(Value::Bool(false));
-    let messages = responses_input_to_messages(body);
-
-    json!({
-        "model": model,
-        "stream": stream,
-        "messages": messages,
-    })
-}
-
 pub fn upstream_responses_path(format: &UpstreamApiFormat) -> &'static str {
     match format {
         UpstreamApiFormat::OpenAiChatCompletions => "/v1/chat/completions",
@@ -109,49 +97,4 @@ mod tests {
             &UpstreamApiFormat::OpenAiChatCompletions
         ));
     }
-}
-
-fn responses_input_to_messages(body: &Value) -> Value {
-    if let Some(messages) = body.get("messages") {
-        return messages.clone();
-    }
-
-    let input = body.get("input");
-    let mut collected = Vec::new();
-    if let Some(text) = input.and_then(Value::as_str) {
-        collected.push(json!({
-            "role": "user",
-            "content": text,
-        }));
-        return Value::Array(collected);
-    }
-
-    if let Some(array) = input.and_then(Value::as_array) {
-        for item in array {
-            match item {
-                Value::String(text) => collected.push(json!({
-                    "role": "user",
-                    "content": text,
-                })),
-                Value::Object(map) => {
-                    let role = map.get("role").and_then(Value::as_str).unwrap_or("user");
-                    let content = map.get("content").cloned().unwrap_or(Value::Null);
-                    collected.push(json!({
-                        "role": role,
-                        "content": content,
-                    }));
-                }
-                _ => {}
-            }
-        }
-    }
-
-    if collected.is_empty() {
-        collected.push(json!({
-            "role": "user",
-            "content": "",
-        }));
-    }
-
-    Value::Array(collected)
 }

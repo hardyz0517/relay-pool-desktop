@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CapacitySnapshot {
@@ -9,32 +10,86 @@ pub struct CapacitySnapshot {
 
 #[derive(Debug, Default)]
 pub struct CapacityRegistry {
-    state: Arc<Mutex<HashMap<String, CapacityState>>>,
+    shared: Arc<CapacityShared>,
 }
 
 impl CapacityRegistry {
     pub fn try_acquire(&self, key: impl Into<String>, max_concurrency: i64) -> CapacityGuard {
         let key = key.into();
-        let mut state = self.state.lock().expect("capacity registry poisoned");
-        let capacity = state.entry(key.clone()).or_default();
+        let mut states = self
+            .shared
+            .states
+            .lock()
+            .expect("capacity registry poisoned");
+        let capacity = states.entry(key.clone()).or_default();
         if max_concurrency > 0 && capacity.in_flight >= max_concurrency as u64 {
             return CapacityGuard::rejected(key);
         }
 
         capacity.in_flight += 1;
-        CapacityGuard::new_acquired(Arc::clone(&self.state), key)
+        CapacityGuard::new_acquired(Arc::clone(&self.shared), key)
     }
 
     pub fn try_enter_wait(&self, key: impl Into<String>, max_waiting: u64) -> WaitingPermit {
         let key = key.into();
-        let mut state = self.state.lock().expect("capacity registry poisoned");
-        let capacity = state.entry(key.clone()).or_default();
+        let mut states = self
+            .shared
+            .states
+            .lock()
+            .expect("capacity registry poisoned");
+        let capacity = states.entry(key.clone()).or_default();
         if capacity.waiting >= max_waiting {
             return WaitingPermit::rejected(key);
         }
 
         capacity.waiting += 1;
-        WaitingPermit::new_admitted(Arc::clone(&self.state), key)
+        WaitingPermit::new_admitted(Arc::clone(&self.shared), key)
+    }
+
+    pub fn wait_acquire(
+        &self,
+        key: impl Into<String>,
+        max_concurrency: i64,
+        max_waiting: u64,
+        timeout: Duration,
+    ) -> CapacityWaitResult {
+        let key = key.into();
+        let deadline = Instant::now() + timeout;
+        let mut states = self
+            .shared
+            .states
+            .lock()
+            .expect("capacity registry poisoned");
+        let capacity = states.entry(key.clone()).or_default();
+        if max_waiting == 0 || capacity.waiting >= max_waiting {
+            return CapacityWaitResult::QueueFull;
+        }
+        capacity.waiting += 1;
+
+        loop {
+            let capacity = states.entry(key.clone()).or_default();
+            if max_concurrency <= 0 || capacity.in_flight < max_concurrency as u64 {
+                capacity.waiting = capacity.waiting.saturating_sub(1);
+                capacity.in_flight += 1;
+                drop(states);
+                return CapacityWaitResult::Acquired(CapacityGuard::new_acquired(
+                    Arc::clone(&self.shared),
+                    key,
+                ));
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                capacity.waiting = capacity.waiting.saturating_sub(1);
+                return CapacityWaitResult::TimedOut;
+            }
+            let (next_states, _) = self
+                .shared
+                .changed
+                .wait_timeout(states, remaining)
+                .expect("capacity registry poisoned");
+            states = next_states;
+        }
     }
 
     pub fn in_flight(&self, key: &str) -> u64 {
@@ -46,8 +101,12 @@ impl CapacityRegistry {
     }
 
     pub fn snapshot(&self, key: &str) -> CapacitySnapshot {
-        let state = self.state.lock().expect("capacity registry poisoned");
-        state
+        let states = self
+            .shared
+            .states
+            .lock()
+            .expect("capacity registry poisoned");
+        states
             .get(key)
             .map(|capacity| CapacitySnapshot {
                 in_flight: capacity.in_flight,
@@ -67,6 +126,19 @@ pub fn effective_load_capacity(max_concurrency: i64, load_factor: i64) -> u64 {
     }
 }
 
+#[derive(Debug)]
+pub enum CapacityWaitResult {
+    Acquired(CapacityGuard),
+    QueueFull,
+    TimedOut,
+}
+
+#[derive(Debug, Default)]
+struct CapacityShared {
+    states: Mutex<HashMap<String, CapacityState>>,
+    changed: Condvar,
+}
+
 #[derive(Debug, Default)]
 struct CapacityState {
     in_flight: u64,
@@ -75,16 +147,16 @@ struct CapacityState {
 
 #[derive(Debug)]
 pub struct CapacityGuard {
-    state: Option<Arc<Mutex<HashMap<String, CapacityState>>>>,
+    shared: Option<Arc<CapacityShared>>,
     key: String,
     acquired: bool,
     released: bool,
 }
 
 impl CapacityGuard {
-    fn new_acquired(state: Arc<Mutex<HashMap<String, CapacityState>>>, key: String) -> Self {
+    fn new_acquired(shared: Arc<CapacityShared>, key: String) -> Self {
         Self {
-            state: Some(state),
+            shared: Some(shared),
             key,
             acquired: true,
             released: false,
@@ -93,7 +165,7 @@ impl CapacityGuard {
 
     fn rejected(key: String) -> Self {
         Self {
-            state: None,
+            shared: None,
             key,
             acquired: false,
             released: true,
@@ -109,11 +181,13 @@ impl CapacityGuard {
             return;
         }
         self.released = true;
-        if let Some(state) = &self.state {
-            let mut state = state.lock().expect("capacity registry poisoned");
-            if let Some(capacity) = state.get_mut(&self.key) {
+        if let Some(shared) = &self.shared {
+            let mut states = shared.states.lock().expect("capacity registry poisoned");
+            if let Some(capacity) = states.get_mut(&self.key) {
                 capacity.in_flight = capacity.in_flight.saturating_sub(1);
             }
+            drop(states);
+            shared.changed.notify_all();
         }
     }
 }
@@ -126,16 +200,16 @@ impl Drop for CapacityGuard {
 
 #[derive(Debug)]
 pub struct WaitingPermit {
-    state: Option<Arc<Mutex<HashMap<String, CapacityState>>>>,
+    shared: Option<Arc<CapacityShared>>,
     key: String,
     admitted: bool,
     released: bool,
 }
 
 impl WaitingPermit {
-    fn new_admitted(state: Arc<Mutex<HashMap<String, CapacityState>>>, key: String) -> Self {
+    fn new_admitted(shared: Arc<CapacityShared>, key: String) -> Self {
         Self {
-            state: Some(state),
+            shared: Some(shared),
             key,
             admitted: true,
             released: false,
@@ -144,7 +218,7 @@ impl WaitingPermit {
 
     fn rejected(key: String) -> Self {
         Self {
-            state: None,
+            shared: None,
             key,
             admitted: false,
             released: true,
@@ -160,11 +234,13 @@ impl WaitingPermit {
             return;
         }
         self.released = true;
-        if let Some(state) = &self.state {
-            let mut state = state.lock().expect("capacity registry poisoned");
-            if let Some(capacity) = state.get_mut(&self.key) {
+        if let Some(shared) = &self.shared {
+            let mut states = shared.states.lock().expect("capacity registry poisoned");
+            if let Some(capacity) = states.get_mut(&self.key) {
                 capacity.waiting = capacity.waiting.saturating_sub(1);
             }
+            drop(states);
+            shared.changed.notify_all();
         }
     }
 }
@@ -178,6 +254,7 @@ impl Drop for WaitingPermit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn zero_max_concurrency_is_unlimited_and_capacity_defaults_to_one() {
@@ -240,5 +317,43 @@ mod tests {
         assert_eq!(effective_load_capacity(3, 9), 9);
         assert_eq!(effective_load_capacity(3, 0), 3);
         assert_eq!(effective_load_capacity(0, -1), 1);
+    }
+
+    #[test]
+    fn bounded_wait_acquires_after_release_and_cleans_waiter() {
+        let registry = Arc::new(CapacityRegistry::default());
+        let first = registry.try_acquire("key-a", 1);
+        let waiter_registry = Arc::clone(&registry);
+        let waiter = std::thread::spawn(move || {
+            waiter_registry.wait_acquire("key-a", 1, 1, Duration::from_secs(1))
+        });
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while registry.waiting("key-a") != 1 && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(registry.waiting("key-a"), 1);
+        drop(first);
+        assert!(matches!(
+            waiter.join().unwrap(),
+            CapacityWaitResult::Acquired(_)
+        ));
+        assert_eq!(registry.waiting("key-a"), 0);
+    }
+
+    #[test]
+    fn bounded_wait_reports_queue_full_and_timeout() {
+        let registry = Arc::new(CapacityRegistry::default());
+        let _active = registry.try_acquire("key-a", 1);
+        let admitted = registry.try_enter_wait("key-a", 1);
+        assert!(matches!(
+            registry.wait_acquire("key-a", 1, 1, Duration::from_millis(5)),
+            CapacityWaitResult::QueueFull
+        ));
+        drop(admitted);
+        assert!(matches!(
+            registry.wait_acquire("key-a", 1, 1, Duration::from_millis(5)),
+            CapacityWaitResult::TimedOut
+        ));
+        assert_eq!(registry.waiting("key-a"), 0);
     }
 }

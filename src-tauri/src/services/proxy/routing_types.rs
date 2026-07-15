@@ -41,6 +41,12 @@ pub struct DecisionFact {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalRoutingPreviewKind {
+    BaselineEligibility,
+}
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalRoutingSettingsView {
     pub enabled: bool,
@@ -51,6 +57,7 @@ pub struct LocalRoutingSettingsView {
     pub max_rate_multiplier: Option<f64>,
     pub routing_group_filter: RoutingGroupFilter,
     pub fallback_enabled: bool,
+    pub preview_kind: LocalRoutingPreviewKind,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -73,6 +80,7 @@ pub struct LocalRoutingCandidateRow {
     pub endpoint: RouteEndpointKind,
     pub priority: i64,
     pub enabled: bool,
+    pub schedulable: bool,
     pub health_state: RouteHealthState,
     pub last_success_at: Option<String>,
     pub last_failure_at: Option<String>,

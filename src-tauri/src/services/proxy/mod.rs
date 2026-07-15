@@ -2,7 +2,10 @@ use crate::models::proxy::UpstreamApiFormat;
 use serde_json::Value;
 
 pub mod adapters;
+pub mod http_request;
+mod local_auth;
 pub mod observability;
+pub mod responses_chat_fallback;
 pub mod router;
 pub mod routing_affinity;
 pub mod routing_failure;
@@ -27,9 +30,11 @@ pub struct RouteCandidate {
     pub priority: i64,
     pub max_concurrency: i64,
     pub load_factor: Option<i64>,
+    pub schedulable: bool,
 }
 
 pub fn enabled_candidates(mut candidates: Vec<RouteCandidate>) -> Vec<RouteCandidate> {
+    candidates.retain(|candidate| candidate.schedulable);
     candidates.sort_by_key(|candidate| candidate.priority);
     candidates
 }
@@ -169,7 +174,7 @@ mod tests {
         assert!(should_fallback(500));
         assert!(should_fallback(503));
         assert!(!should_fallback(400));
-        assert!(!should_fallback(404));
+        assert!(should_fallback(404));
         assert!(!should_fallback(200));
     }
 
@@ -186,6 +191,7 @@ mod tests {
             priority,
             max_concurrency: 0,
             load_factor: None,
+            schedulable: true,
         }
     }
 }

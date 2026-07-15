@@ -46,6 +46,7 @@ import {
   preferredStationKeyMonitorTemplate,
   updateStationKeyMonitorEnabledInput,
 } from "@/features/channels/channelMonitorViewModel";
+import { OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS } from "./stationKeyCapabilityDefaults";
 
 type FilterMode = "all" | "enabled" | "disabled";
 
@@ -262,6 +263,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         name: item.name,
         apiKey: null,
         enabled: !item.enabled,
+        schedulable: item.schedulable,
         priority: item.priority,
         groupName: item.groupName,
         tierLabel: item.tierLabel,
@@ -523,6 +525,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         name: editForm.name.trim(),
         apiKey: editForm.apiKey.trim(),
         enabled: editForm.enabled,
+        schedulable: editForm.schedulable,
         priority: Number(editForm.priority),
         tierLabel: editForm.tierLabel.trim() ? editForm.tierLabel.trim() : null,
         note: editForm.note.trim() ? editForm.note.trim() : null,
@@ -555,6 +558,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         name: editForm.name.trim(),
         apiKey: editForm.apiKey.trim() ? editForm.apiKey.trim() : null,
         enabled: editForm.enabled,
+        schedulable: editForm.schedulable,
         priority: Number(editForm.priority),
         tierLabel: editForm.tierLabel.trim() ? editForm.tierLabel.trim() : null,
         balanceScope: editingItem.balanceScope,
@@ -1241,6 +1245,7 @@ type KeyPoolEditForm = {
   name: string;
   apiKey: string;
   enabled: boolean;
+  schedulable: boolean;
   priority: string;
   groupBindingId: string;
   groupName: string;
@@ -1268,19 +1273,20 @@ const emptyEditForm: KeyPoolEditForm = {
   name: "",
   apiKey: "",
   enabled: true,
+  schedulable: true,
   priority: "0",
   groupBindingId: "",
   groupName: "",
   tierLabel: "",
   status: "unchecked",
   note: "",
-  supportsChatCompletions: true,
-  supportsResponses: true,
-  supportsEmbeddings: false,
-  supportsStream: true,
-  supportsTools: false,
-  supportsVision: false,
-  supportsReasoning: false,
+  supportsChatCompletions: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsChatCompletions,
+  supportsResponses: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsResponses,
+  supportsEmbeddings: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsEmbeddings,
+  supportsStream: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsStream,
+  supportsTools: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsTools,
+  supportsVision: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsVision,
+  supportsReasoning: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsReasoning,
   modelAllowlist: "",
   modelBlocklist: "",
   preferredModels: "",
@@ -1627,19 +1633,20 @@ function formFromItem(item: KeyPoolItem, options: StationGroupOption[] = []): Ke
     name: item.name,
     apiKey: "",
     enabled: item.enabled,
+    schedulable: item.schedulable,
     priority: String(item.priority),
     groupBindingId: groupBindingValueFromItem(item, options),
     groupName: item.groupName ?? "",
     tierLabel: item.tierLabel ?? "",
     status: item.status,
     note: item.note ?? "",
-    supportsChatCompletions: true,
-    supportsResponses: true,
-    supportsEmbeddings: false,
-    supportsStream: true,
-    supportsTools: false,
-    supportsVision: false,
-    supportsReasoning: false,
+    supportsChatCompletions: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsChatCompletions,
+    supportsResponses: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsResponses,
+    supportsEmbeddings: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsEmbeddings,
+    supportsStream: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsStream,
+    supportsTools: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsTools,
+    supportsVision: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsVision,
+    supportsReasoning: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsReasoning,
     modelAllowlist: "",
     modelBlocklist: "",
     preferredModels: "",

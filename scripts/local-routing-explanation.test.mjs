@@ -32,6 +32,7 @@ assertExcludes(appPage, "<RoutingPage onOpenPage=", "App");
 assertIncludes(statusTab, 'SectionCard title="本地路由状态"', "routing status band");
 assertIncludes(statusTab, 'aria-labelledby="local-routing-candidates-title"', "candidate preview section");
 assertIncludes(statusTab, "最近一次路由", "latest decision row");
-assertIncludes(statusTab, "候选顺序预览", "candidate preview title");
+assertIncludes(statusTab, "baseline_eligibility", "candidate baseline eligibility title");
+assertIncludes(statusTab, "candidateHeading", "candidate heading derives from preview kind");
 
 console.log("local routing status simplification contract ok");
