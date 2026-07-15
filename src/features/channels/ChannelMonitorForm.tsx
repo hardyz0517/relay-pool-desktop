@@ -45,7 +45,7 @@ const protocolOptions: Array<{
   {
     value: "responses",
     title: "Responses API",
-    description: "使用 /v1/responses，默认带 instructions + input；适合本站自检/Codex。",
+    description: "使用 /v1/responses，发送 input + stream；适合本站自检/Codex。",
   },
 ];
 

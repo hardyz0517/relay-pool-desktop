@@ -5516,8 +5516,7 @@ fn seed_builtin_channel_monitor_templates_in_connection(
                 "messages": [
                     { "role": "user", "content": "{{challenge}}" }
                 ],
-                "stream": "{{stream}}",
-                "temperature": 0
+                "stream": "{{stream}}"
             }),
         ),
         (
@@ -5531,8 +5530,7 @@ fn seed_builtin_channel_monitor_templates_in_connection(
                     { "role": "user", "content": "{{challenge}}" }
                 ],
                 "max_tokens": 1,
-                "stream": "{{stream}}",
-                "temperature": 0
+                "stream": "{{stream}}"
             }),
         ),
         (
@@ -5542,12 +5540,9 @@ fn seed_builtin_channel_monitor_templates_in_connection(
             "/v1/responses",
             json!({
                 "model": "{{model}}",
-                "instructions": "Reply with OK only.",
                 "input": "{{challenge}}",
                 "store": false,
-                "stream": "{{stream}}",
-                "reasoning": { "effort": "minimal" },
-                "temperature": 0
+                "stream": "{{stream}}"
             }),
         ),
         (
@@ -5557,13 +5552,10 @@ fn seed_builtin_channel_monitor_templates_in_connection(
             "/v1/responses",
             json!({
                 "model": "{{model}}",
-                "instructions": "Reply with OK only.",
                 "input": "{{challenge}}",
-                "max_output_tokens": 1,
+                "max_output_tokens": 32,
                 "store": false,
-                "stream": "{{stream}}",
-                "reasoning": { "effort": "minimal" },
-                "temperature": 0
+                "stream": "{{stream}}"
             }),
         ),
     ];
@@ -16197,14 +16189,11 @@ mod tests {
             let body: Value =
                 serde_json::from_str(&template.request_body_json).expect("built-in request body");
             assert_eq!(body["stream"], "{{stream}}", "{} stream", template.id);
-            if template.endpoint_kind == "responses" {
-                assert_eq!(
-                    body.pointer("/reasoning/effort").and_then(Value::as_str),
-                    Some("minimal"),
-                    "{} reasoning effort",
-                    template.id
-                );
-            }
+            assert!(
+                body.get("temperature").is_none(),
+                "{} should keep monitor probes model-compatible by omitting temperature",
+                template.id
+            );
         }
         let responses_low_token = templates
             .iter()
@@ -16212,11 +16201,13 @@ mod tests {
             .expect("responses low token template");
         let responses_body: Value =
             serde_json::from_str(&responses_low_token.request_body_json).expect("responses body");
-        assert_eq!(responses_body["instructions"], "Reply with OK only.");
         assert_eq!(responses_body["input"], "{{challenge}}");
-        assert_eq!(responses_body["max_output_tokens"], 1);
+        assert_eq!(responses_body["max_output_tokens"], 32);
         assert_eq!(responses_body["store"], false);
         assert_eq!(responses_body["stream"], "{{stream}}");
+        assert!(responses_body.get("instructions").is_none());
+        assert!(responses_body.get("reasoning").is_none());
+        assert!(responses_body.get("temperature").is_none());
     }
 
     #[test]

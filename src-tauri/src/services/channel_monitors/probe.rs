@@ -99,6 +99,11 @@ pub fn run_monitor_probe(
         .timeout_read(timeout)
         .timeout_write(timeout)
         .build();
+    let accept_header = if request.stream {
+        "text/event-stream"
+    } else {
+        "application/json"
+    };
     let mut upstream = agent
         .request(&method, &url)
         .timeout(timeout)
@@ -109,6 +114,7 @@ pub fn run_monitor_probe(
             upstream = upstream.set(name, value);
         }
     }
+    upstream = upstream.set("Accept", accept_header);
 
     let response = if request.body.is_empty() {
         upstream.call()
@@ -402,11 +408,12 @@ mod tests {
         let base_url = format!("{origin}/v1");
 
         let result = run_monitor_probe(&base_url, "sk-probe-key", &request, 2);
-        received
+        let raw_request = received
             .recv_timeout(Duration::from_secs(2))
             .expect("upstream request");
 
         assert!(result.ok);
+        assert!(raw_request.contains("Accept: text/event-stream"));
         assert!(result.first_token_ms.is_some());
         let usage = result.usage.expect("stream usage");
         assert_eq!(usage.prompt_tokens, Some(9));

@@ -257,8 +257,8 @@ function ensureMemoryTemplates() {
         {
           model: "{{model}}",
           messages: [{ role: "user", content: "{{challenge}}" }],
-          max_tokens: 1,
-          stream: false,
+          max_tokens: "{{max_tokens}}",
+          stream: "{{stream}}",
         },
         null,
         2,
@@ -278,11 +278,10 @@ function ensureMemoryTemplates() {
       requestBodyJson: JSON.stringify(
         {
           model: "{{model}}",
-          instructions: "Reply with OK only.",
           input: "{{challenge}}",
-          max_output_tokens: 1,
+          max_output_tokens: 32,
           store: false,
-          stream: false,
+          stream: "{{stream}}",
         },
         null,
         2,

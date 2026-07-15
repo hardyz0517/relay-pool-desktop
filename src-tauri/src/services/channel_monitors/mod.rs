@@ -1445,11 +1445,12 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].status, "success");
         assert!(raw_request.contains(r#""input":"ping""#));
-        assert!(raw_request.contains(r#""instructions":"Reply with OK only.""#));
-        assert!(raw_request.contains(r#""max_output_tokens":1"#));
+        assert!(raw_request.contains(r#""max_output_tokens":32"#));
         assert!(raw_request.contains(r#""store":false"#));
         assert!(raw_request.contains(r#""stream":true"#));
-        assert!(raw_request.contains(r#""reasoning":{"effort":"minimal"}"#));
+        assert!(!raw_request.contains("instructions"));
+        assert!(!raw_request.contains("reasoning"));
+        assert!(!raw_request.contains("temperature"));
     }
 
     #[test]

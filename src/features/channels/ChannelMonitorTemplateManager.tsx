@@ -46,8 +46,8 @@ const defaultRequestBodyJson = JSON.stringify(
   {
     model: "{{model}}",
     messages: [{ role: "user", content: "{{challenge}}" }],
-    max_tokens: 1,
-    stream: false,
+    max_tokens: "{{max_tokens}}",
+    stream: "{{stream}}",
   },
   null,
   2,
