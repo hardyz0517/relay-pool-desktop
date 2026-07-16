@@ -3066,6 +3066,7 @@ dependencies = [
  "tauri-plugin-updater",
  "ureq",
  "url",
+ "windows-sys 0.61.2",
  "winreg",
 ]
 
