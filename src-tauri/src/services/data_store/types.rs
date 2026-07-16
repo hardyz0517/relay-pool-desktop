@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use serde::Serialize;
 
@@ -67,4 +70,45 @@ pub struct DataStoreStartupView {
 #[serde(rename_all = "camelCase")]
 pub struct ActivationResult {
     pub restart_required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DataStoreRelocationIntent {
+    pub source_data_dir: PathBuf,
+    pub target_data_dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct DataStoreStartupState {
+    pub decision: StartupDecision,
+    pub candidates: Vec<DataStoreCandidate>,
+    default_data_dir: PathBuf,
+    pub(crate) relocation_intent: Option<DataStoreRelocationIntent>,
+}
+
+impl DataStoreStartupState {
+    pub(crate) fn new(
+        decision: StartupDecision,
+        candidates: Vec<DataStoreCandidate>,
+        default_data_dir: PathBuf,
+        relocation_intent: Option<DataStoreRelocationIntent>,
+    ) -> Self {
+        Self {
+            decision,
+            candidates,
+            default_data_dir,
+            relocation_intent,
+        }
+    }
+
+    pub fn view(&self) -> DataStoreStartupView {
+        DataStoreStartupView {
+            decision: self.decision.clone(),
+            candidates: self.candidates.clone(),
+        }
+    }
+
+    pub(crate) fn default_data_dir(&self) -> &Path {
+        &self.default_data_dir
+    }
 }
