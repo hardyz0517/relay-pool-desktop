@@ -1,6 +1,7 @@
 pub mod backup;
 pub mod config;
 pub mod decision;
+pub mod diagnostic;
 pub mod inspect;
 pub mod relocation;
 pub mod types;
@@ -13,13 +14,20 @@ use std::{
 use config::{installation_marker_exists, read_config, DataDirConfigV2};
 use decision::{decide_startup, CandidateFacts, DecisionInput};
 use inspect::{inspect_candidate, InspectedDataStoreCandidate};
-use types::{CandidateHealth, CandidateRole, DataStoreRelocationIntent, DataStoreStartupState};
+use types::{
+    CandidateHealth, CandidateRole, DataStoreRelocationIntent, DataStoreStartupState,
+    RecoveryReason, StartupDecision,
+};
 
 const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
 const DATABASE_FILE: &str = "relay-pool-desktop.sqlite3";
 
 pub fn inspect_startup(default_data_dir: &Path) -> Result<DataStoreStartupState, String> {
-    let config = read_config(&default_data_dir.join(DATA_DIR_CONFIG_FILE))?;
+    let config_path = default_data_dir.join(DATA_DIR_CONFIG_FILE);
+    let config = match read_config(&config_path) {
+        Ok(config) => config,
+        Err(_) => return inspect_with_unreadable_config(default_data_dir),
+    };
     let initialized = config.is_some() || installation_marker_exists(default_data_dir);
     let relocation_intent = config.as_ref().and_then(trusted_relocation_intent);
     let pending_relocation = config
@@ -78,6 +86,24 @@ pub fn inspect_startup(default_data_dir: &Path) -> Result<DataStoreStartupState,
         candidates,
         default_data_dir.to_path_buf(),
         relocation_intent,
+    ))
+}
+
+fn inspect_with_unreadable_config(
+    default_data_dir: &Path,
+) -> Result<DataStoreStartupState, String> {
+    let candidate = inspect_data_dir(default_data_dir, CandidateRole::Default)?;
+    let candidates = include_candidate(&candidate)
+        .then(|| candidate.candidate)
+        .into_iter()
+        .collect();
+    Ok(DataStoreStartupState::new(
+        StartupDecision::NeedsRecovery {
+            reason: RecoveryReason::Unreadable,
+        },
+        candidates,
+        default_data_dir.to_path_buf(),
+        None,
     ))
 }
 
@@ -188,12 +214,39 @@ mod tests {
         let state = inspect_startup(&legacy).expect("legacy");
         assert!(matches!(state.decision, StartupDecision::Ready { .. }) && !config_path(&legacy).exists());
 
+        let dir = temp_root("healthy-custom-active");
+        let active = dir.join("custom-active");
+        create_db(&active);
+        save_v2(&dir, Some(active.clone()), None, None);
+        let state = inspect_startup(&dir).expect("custom active");
+        assert!(matches!(state.decision, StartupDecision::Ready { .. }));
+        assert!(state.candidates.iter().any(|candidate| candidate.role == CandidateRole::Active && candidate.path == active.join(DATABASE_FILE).display().to_string()));
+
         let conflict = temp_root("conflict");
         let source = conflict.join("source");
         create_db(&conflict);
         create_db(&source);
         save_v2(&conflict, None, None, Some(source));
         assert!(matches!(inspect_startup(&conflict).expect("conflict").decision, StartupDecision::Conflict { .. }));
+
+        let conflict = temp_root("default-source-pending-conflict");
+        let source = conflict.join("source");
+        let pending = conflict.join("pending");
+        create_db(&conflict);
+        create_db(&source);
+        create_db(&pending);
+        save_v2(&conflict, None, Some(pending), Some(source));
+        assert!(matches!(inspect_startup(&conflict).expect("three-way conflict").decision, StartupDecision::Conflict { .. }));
+
+        let dir = temp_root("empty-pending-populated-source");
+        let source = dir.join("source");
+        let pending = dir.join("pending");
+        create_db(&source);
+        fs::create_dir_all(&pending).expect("pending dir");
+        save_v2(&dir, Some(source.clone()), Some(pending.clone()), Some(source.clone()));
+        let state = inspect_startup(&dir).expect("empty pending");
+        assert!(matches!(state.decision, StartupDecision::Ready { .. }));
+        assert_eq!(state.relocation_intent, Some(DataStoreRelocationIntent { source_data_dir: source, target_data_dir: pending }));
 
         let dir = temp_root("legacy-pending");
         let source = dir.join("source");
@@ -220,6 +273,19 @@ mod tests {
         let state = inspect_startup(&dir).expect("startup");
         let count = state.candidates.iter().filter(|c| c.role == CandidateRole::Backup).count();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn startup_orchestration_recovers_from_truncated_config_without_opening_database() {
+        let dir = temp_root("truncated-config");
+        create_db(&dir);
+        fs::write(config_path(&dir), r#"{"version":2,"activeDataDir":"#).expect("config");
+
+        let state = inspect_startup(&dir).expect("startup recovery state");
+
+        assert!(matches!(state.decision, StartupDecision::NeedsRecovery { reason: RecoveryReason::Unreadable }));
+        assert_eq!(state.candidates.len(), 1);
+        assert_eq!(state.candidates[0].role, CandidateRole::Default);
     }
 
     fn create_db(data_dir: &Path) {

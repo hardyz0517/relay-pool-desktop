@@ -66,10 +66,13 @@ use crate::{
         data_store::{
             backup::backup_selected_database,
             config::{create_installation_marker, write_config, DataDirConfigV2},
+            diagnostic::build_diagnostic_report,
             inspect::inspect_candidate,
+            inspect_startup,
+            relocation::write_active_data_dir_selection,
             types::{
-                ActivationResult, CandidateHealth, CandidateRole, DataStoreStartupState,
-                DataStoreStartupView,
+                ActivationResult, CandidateHealth, CandidateRole, DataStoreCandidate,
+                DataStoreStartupState, DataStoreStartupView,
             },
         },
         database::{now_millis_for_services, AppDatabase},
@@ -101,6 +104,29 @@ pub fn get_data_store_startup_state(
     state: State<'_, DataStoreStartupState>,
 ) -> DataStoreStartupView {
     state.view()
+}
+
+#[tauri::command]
+pub fn refresh_data_store_candidates(
+    state: State<'_, DataStoreStartupState>,
+) -> Result<DataStoreStartupView, String> {
+    inspect_startup(state.default_data_dir()).map(|state| state.view())
+}
+
+#[tauri::command]
+pub fn locate_data_store_candidate() -> Result<Option<DataStoreCandidate>, String> {
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter("Relay Pool SQLite", &["sqlite3"])
+        .pick_file()
+    else {
+        return Ok(None);
+    };
+    if path.file_name().and_then(|name| name.to_str()) != Some(DATABASE_FILE) {
+        return Err(format!("selected database must be named {DATABASE_FILE}"));
+    }
+    inspect_candidate(&path, CandidateRole::Located)
+        .map(|inspected| inspected.candidate)
+        .map(Some)
 }
 
 #[tauri::command]
@@ -145,6 +171,72 @@ pub fn activate_data_store_candidate(
     Ok(ActivationResult {
         restart_required: true,
     })
+}
+
+#[tauri::command]
+pub fn create_new_data_store(
+    state: State<'_, DataStoreStartupState>,
+    confirmed: bool,
+) -> Result<ActivationResult, String> {
+    if !confirmed {
+        return Err("creating a new data store requires confirmation".to_string());
+    }
+    let Some(data_dir) = rfd::FileDialog::new().pick_folder() else {
+        return Err("no data directory selected".to_string());
+    };
+    let db_path = data_dir.join(DATABASE_FILE);
+    if db_path.exists() {
+        return Err(format!(
+            "target database already exists: {}",
+            db_path.display()
+        ));
+    }
+    let database =
+        AppDatabase::initialize_new_at(state.default_data_dir().to_path_buf(), data_dir.clone())?;
+    drop(database);
+    write_active_data_dir_selection(state.default_data_dir(), &data_dir)?;
+    create_installation_marker(state.default_data_dir())?;
+    Ok(ActivationResult {
+        restart_required: true,
+    })
+}
+
+#[tauri::command]
+pub fn open_data_store_backup_dir(state: State<'_, DataStoreStartupState>) -> Result<(), String> {
+    let backups = state.default_data_dir().join("backups");
+    std::fs::create_dir_all(&backups).map_err(|error| {
+        format!(
+            "failed to create backup directory {}: {error}",
+            backups.display()
+        )
+    })?;
+    open_path_with_system(&backups)
+}
+
+#[tauri::command]
+pub fn export_data_store_diagnostic(
+    state: State<'_, DataStoreStartupState>,
+) -> Result<Option<String>, String> {
+    let Some(path) = rfd::FileDialog::new()
+        .set_file_name("relay-pool-data-store-diagnostic.json")
+        .save_file()
+    else {
+        return Ok(None);
+    };
+    let report = build_diagnostic_report(state.default_data_dir(), &state)?;
+    let bytes = serde_json::to_vec_pretty(&report)
+        .map_err(|error| format!("failed to serialize data-store diagnostic: {error}"))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create diagnostic directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+    std::fs::write(&path, bytes)
+        .map_err(|error| format!("failed to write diagnostic {}: {error}", path.display()))?;
+    Ok(Some(path.display().to_string()))
 }
 
 fn data_store_updated_at() -> String {
@@ -1899,6 +1991,19 @@ fn open_url_with_system(url: &str) -> Result<(), String> {
     result
         .map(|_| ())
         .map_err(|error| format!("无法打开外部链接: {error}"))
+}
+
+fn open_path_with_system(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let result = Command::new("explorer.exe").arg(path).spawn();
+    #[cfg(target_os = "macos")]
+    let result = Command::new("open").arg(path).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = Command::new("xdg-open").arg(path).spawn();
+
+    result
+        .map(|_| ())
+        .map_err(|error| format!("failed to open {}: {error}", path.display()))
 }
 
 fn validate_external_http_url(url: &str) -> Result<&str, String> {

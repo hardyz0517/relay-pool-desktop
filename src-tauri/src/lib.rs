@@ -280,7 +280,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::app_status,
             commands::get_data_store_startup_state,
+            commands::refresh_data_store_candidates,
+            commands::locate_data_store_candidate,
             commands::activate_data_store_candidate,
+            commands::create_new_data_store,
+            commands::open_data_store_backup_dir,
+            commands::export_data_store_diagnostic,
             commands::list_stations,
             commands::create_station,
             commands::update_station,

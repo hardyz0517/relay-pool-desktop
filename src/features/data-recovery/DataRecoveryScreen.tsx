@@ -1,9 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { relaunch } from "@tauri-apps/plugin-process";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/Card";
-import { activateDataStoreCandidate } from "@/lib/api/dataRecovery";
+import {
+  activateDataStoreCandidate,
+  createNewDataStore,
+  exportDataStoreDiagnostic,
+  locateDataStoreCandidate,
+  openDataStoreBackupDir,
+} from "@/lib/api/dataRecovery";
 import { tauriErrorMessage } from "@/lib/tauriErrors";
 import type { DataStoreStartupView } from "@/lib/types/dataRecovery";
 import { buildRecoveryViewModel } from "./recoveryViewModel";
@@ -14,11 +20,20 @@ type DataRecoveryScreenProps = {
 };
 
 export function DataRecoveryScreen({ state, onActivated }: DataRecoveryScreenProps) {
-  const viewModel = useMemo(() => buildRecoveryViewModel(state), [state]);
+  const [locatedCandidates, setLocatedCandidates] = useState(state.candidates);
+  const currentState = useMemo(
+    () => ({ ...state, candidates: locatedCandidates }),
+    [locatedCandidates, state],
+  );
+  const viewModel = useMemo(() => buildRecoveryViewModel(currentState), [currentState]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocatedCandidates(state.candidates);
+  }, [state]);
 
   const selected = viewModel.candidates.find((candidate) => candidate.id === selectedId) ?? null;
   const canActivate = Boolean(selected?.selectable && confirmed && !submitting);
@@ -42,6 +57,58 @@ export function DataRecoveryScreen({ state, onActivated }: DataRecoveryScreenPro
       setMessage(tauriErrorMessage(error));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function locateCandidate() {
+    setMessage(null);
+    try {
+      const candidate = await locateDataStoreCandidate();
+      if (!candidate) return;
+      setLocatedCandidates((candidates) => [
+        ...candidates.filter((item) => item.path !== candidate.path),
+        candidate,
+      ]);
+      setSelectedId(candidate.id);
+    } catch (error) {
+      setMessage(tauriErrorMessage(error));
+    }
+  }
+
+  async function createFreshDataStore() {
+    setMessage(null);
+    try {
+      const result = await createNewDataStore(confirmed);
+      if (result.restartRequired) {
+        try {
+          await relaunch();
+        } catch {
+          setMessage("配置已保存，请手动重启 Relay Pool。");
+        }
+        return;
+      }
+      onActivated();
+    } catch (error) {
+      setMessage(tauriErrorMessage(error));
+    }
+  }
+
+  async function exportDiagnostic() {
+    setMessage(null);
+    try {
+      const path = await exportDataStoreDiagnostic();
+      if (path) setMessage(`诊断文件已导出：${path}`);
+    } catch (error) {
+      setMessage(tauriErrorMessage(error));
+    }
+  }
+
+  async function openBackupDir() {
+    setMessage(null);
+    try {
+      await openDataStoreBackupDir();
+    } catch (error) {
+      setMessage(tauriErrorMessage(error));
     }
   }
 
@@ -109,7 +176,10 @@ export function DataRecoveryScreen({ state, onActivated }: DataRecoveryScreenPro
             <Button disabled={!canActivate} onClick={activateSelected}>
               {submitting ? "正在保存" : "使用选中的数据库并重启"}
             </Button>
-            <span className="text-xs text-muted-foreground">手动定位、新建数据库、导出诊断和打开备份目录会在下一阶段接入。</span>
+            <Button variant="secondary" onClick={locateCandidate}>手动定位数据库</Button>
+            <Button variant="secondary" disabled={!confirmed} onClick={createFreshDataStore}>新建空数据库</Button>
+            <Button variant="outline" onClick={exportDiagnostic}>导出诊断</Button>
+            <Button variant="outline" onClick={openBackupDir}>打开备份目录</Button>
           </div>
           {message ? <p className="text-sm text-warning-foreground">{message}</p> : null}
         </Card>

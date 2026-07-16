@@ -14,6 +14,8 @@ const contracts = [
   ["node", ["--test", "scripts/updater-state-flow.test.ts"]],
   ["node", ["scripts/updater-ui-contract.test.mjs"]],
   ["node", ["scripts/release-verification-entrypoint.test.mjs"]],
+  ["node", ["scripts/data-store-diagnostic-redaction.test.mjs"]],
+  ["node", ["scripts/data-store-upgrade-matrix.test.mjs"]],
 ];
 
 for (const [command, args] of contracts) {

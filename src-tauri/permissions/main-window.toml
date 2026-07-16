@@ -4,7 +4,12 @@ description = "Allow the main Relay Pool Desktop window to invoke normal app com
 commands.allow = [
   "app_status",
   "get_data_store_startup_state",
+  "refresh_data_store_candidates",
+  "locate_data_store_candidate",
   "activate_data_store_candidate",
+  "create_new_data_store",
+  "open_data_store_backup_dir",
+  "export_data_store_diagnostic",
   "list_stations",
   "create_station",
   "update_station",
