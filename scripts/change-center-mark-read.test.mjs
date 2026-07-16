@@ -22,6 +22,8 @@ await esbuild.build({
 const {
   activeSeverityCount,
   buildChangeEventListItem,
+  markCapturedChangeEventsReadLocally,
+  mergeChangeEventUpdates,
   markUnreadChangeEventsReadLocally,
   markUnreadChangeEventsRead,
   paginateChangeEvents,
@@ -64,12 +66,16 @@ const currentEvents = [
   changeEvent("unread-b", "unread"),
 ];
 
-const result = await markUnreadChangeEventsRead(currentEvents, async (id) => {
-  calls.push(id);
-  return { ...currentEvents.find((event) => event.id === id), status: "read" };
+const result = await markUnreadChangeEventsRead(currentEvents, async (ids) => {
+  calls.push(ids);
+  return ids.map((id) => ({ ...currentEvents.find((event) => event.id === id), status: "read" }));
 });
 
-assert.deepEqual(calls, ["unread-a", "unread-b"], "only unread events should be marked read");
+assert.deepEqual(
+  calls,
+  [["unread-a", "unread-b"]],
+  "all captured unread IDs should be persisted through one batch call",
+);
 assert.equal(result.changedCount, 2);
 assert.deepEqual(
   result.events.map((event) => `${event.id}:${event.status}`),
@@ -83,6 +89,47 @@ assert.deepEqual(
   optimisticReadResult.events.map((event) => `${event.id}:${event.status}`),
   ["already-read:read", "unread-a:read", "resolved:resolved", "unread-b:read"],
   "local read projection should clear the sidebar badge before async persistence finishes",
+);
+
+const afterCancelledRefetch = markCapturedChangeEventsReadLocally(
+  [
+    changeEvent("unread-a", "resolved"),
+    changeEvent("unread-b", "unread"),
+    changeEvent("new-arrival", "unread"),
+  ],
+  ["unread-a", "unread-b"],
+);
+assert.deepEqual(
+  afterCancelledRefetch.events.map((event) => `${event.id}:${event.status}`),
+  ["unread-a:resolved", "unread-b:read", "new-arrival:unread"],
+  "reapplying the optimistic read after query cancellation should preserve concurrent states and new arrivals",
+);
+
+const concurrentReadResult = await markUnreadChangeEventsRead(currentEvents, async (ids) =>
+  ids.map((id) => ({
+    ...currentEvents.find((event) => event.id === id),
+    status: id === "unread-b" ? "resolved" : "read",
+  })),
+);
+assert.equal(
+  concurrentReadResult.changedCount,
+  1,
+  "captured events resolved before the transaction should not be counted as newly read",
+);
+
+const concurrentMerge = mergeChangeEventUpdates(
+  [...currentEvents, changeEvent("new-arrival", "unread")],
+  [changeEvent("unread-a", "resolved")],
+);
+assert.equal(
+  concurrentMerge.find((event) => event.id === "unread-a")?.status,
+  "resolved",
+  "backend current status should win for captured events",
+);
+assert.equal(
+  concurrentMerge.find((event) => event.id === "new-arrival")?.status,
+  "unread",
+  "events arriving while persistence is in flight should remain in the cache",
 );
 
 const mixedUnreadEvents = [
@@ -273,10 +320,9 @@ assert.ok(
 );
 
 assert.ok(
-  /const currentEvents = queryClient\.getQueryData<ChangeEvent\[\]>\(queryKeys\.changeEvents\) \?\? events;[\s\S]*await queryClient\.cancelQueries\(\{ queryKey: queryKeys\.changeEvents \}\);[\s\S]*const optimisticReadResult = markUnreadChangeEventsReadLocally\(currentEvents\);[\s\S]*queryClient\.setQueryData\(queryKeys\.changeEvents, optimisticReadResult\.events\);[\s\S]*const readOnEntryResult = await markUnreadChangeEventsRead\(currentEvents, markChangeEventRead\);[\s\S]*queryClient\.setQueryData\(queryKeys\.changeEvents, readOnEntryResult\.events\);[\s\S]*if \(readOnEntryResult\.changedCount > 0\) \{[\s\S]*notifyChangeEventsUpdated\(\);[\s\S]*\}/.test(
-    changeCenterSource,
-  ),
-  "entering change center should optimistically clear the shared query cache before async read persistence notifies other surfaces",
+  !changeCenterSource.includes("usePageActivation") &&
+    !changeCenterSource.includes("markUnreadChangeEventsReadLocally"),
+  "change center page should not run a second entry-owned read persistence path",
 );
 
 assert.ok(
@@ -297,8 +343,16 @@ assert.ok(
 assert.ok(
   appShellSource.includes('activeRouteId !== "changes"') &&
     appShellSource.includes("markUnreadChangeEventsReadLocally") &&
-    appShellSource.includes("markUnreadChangeEventsRead(currentEvents, markChangeEventRead)"),
+    appShellSource.includes("markUnreadChangeEventsRead(currentEvents, markChangeEventsRead)"),
   "clicking the change center sidebar item should clear the badge from the shared cache before async persistence finishes",
+);
+
+assert.ok(
+  changeEventsApiSource.includes("markChangeEventsRead") &&
+    /invoke<ChangeEvent\[\]>\("mark_change_events_read", \{ ids: (?:ids|uniqueIds) \}\)/.test(
+      changeEventsApiSource,
+    ),
+  "change events API should expose one batch read command with the captured IDs",
 );
 
 assert.ok(
@@ -392,4 +446,12 @@ assert.ok(
     databaseSource.includes("pub fn clear_change_events") &&
     databaseSource.includes("DELETE FROM change_events"),
   "Tauri should register a clear_change_events command that deletes persisted change-event history",
+);
+
+assert.ok(
+  tauriCommandsSource.includes("pub fn mark_change_events_read") &&
+    tauriLibSource.includes("commands::mark_change_events_read") &&
+    databaseSource.includes("pub fn mark_change_events_read") &&
+    databaseSource.includes("status = ?2, updated_at = ?3 WHERE id = ?1 AND status = ?4"),
+  "batch read persistence should be registered and only transition rows that are still unread",
 );

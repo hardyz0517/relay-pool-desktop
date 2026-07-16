@@ -209,8 +209,8 @@ pub fn channel_monitor_summaries_from_database(
         .collect()
 }
 
-pub fn channel_status_summaries_from_database(
-    database: &AppDatabase,
+pub fn channel_status_summaries_from_connection(
+    connection: &Connection,
     monitors: Vec<ChannelMonitor>,
 ) -> Result<Vec<ChannelStatusSummary>, String> {
     let now = crate::services::database::now_millis_for_services() as i64;
@@ -220,11 +220,24 @@ pub fn channel_status_summaries_from_database(
     monitors
         .into_iter()
         .map(|monitor| {
-            let recent = database.channel_status_window_facts(&monitor.id, None, 60)?;
-            let last24h =
-                database.channel_status_window_facts(&monitor.id, Some(last24h_since), 60)?;
-            let last7d =
-                database.channel_status_window_facts(&monitor.id, Some(last7d_since), 60)?;
+            let recent = database::channel_status_window_facts_from_connection(
+                connection,
+                &monitor.id,
+                None,
+                60,
+            )?;
+            let last24h = database::channel_status_window_facts_from_connection(
+                connection,
+                &monitor.id,
+                Some(last24h_since),
+                60,
+            )?;
+            let last7d = database::channel_status_window_facts_from_connection(
+                connection,
+                &monitor.id,
+                Some(last7d_since),
+                60,
+            )?;
 
             Ok(ChannelStatusSummary {
                 monitor,

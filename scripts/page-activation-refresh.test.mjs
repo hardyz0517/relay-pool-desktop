@@ -76,13 +76,13 @@ const refreshOnlyPages = [
   "src/features/stations/StationsPage.tsx",
   "src/features/key-pool/KeyPoolPage.tsx",
   "src/features/routing/RoutingPage.tsx",
+  "src/features/pricing/PricingPage.tsx",
   "src/features/channels/ChannelStatusTab.tsx",
   "src/features/channels/ChannelMonitoringTab.tsx",
   "src/features/changes/ChangeCenterPage.tsx",
   "src/features/logs/LogsPage.tsx",
 ];
 const activationOnlyPages = [
-  "src/features/pricing/PricingPage.tsx",
   "src/features/collectors/CollectorsPage.tsx",
   "src/features/settings/SettingsPage.tsx",
 ];
@@ -119,6 +119,8 @@ assert.ok(
 
 const changeCenterSource = await readFile("src/features/changes/ChangeCenterPage.tsx", "utf8");
 assert.ok(
-  /usePageActivation\(\(\{ isInitial \}\) => \{[\s\S]*refresh\(false, isInitial\)/.test(changeCenterSource),
-  "change center should rerun entry refresh and mark unread events read whenever revisited",
+  changeCenterSource.includes("useActivityQuery") &&
+    !changeCenterSource.includes("usePageActivation") &&
+    !changeCenterSource.includes("markUnreadChangeEventsReadLocally"),
+  "change center should subscribe to cached data without owning a duplicate entry read path",
 );

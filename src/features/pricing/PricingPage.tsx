@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Coins, Image, RefreshCw, ShieldCheck, TrendingDown } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation } from "@/components/shell/PageActivity";
+import { usePageRefreshEnabled } from "@/components/shell/PageActivity";
 import {
   Button,
   EmptyState,
@@ -15,20 +15,14 @@ import {
 import { readError } from "@/lib/errors";
 import { formatTrimmedDecimal } from "@/lib/formatters";
 import { parseTimestampLikeDate } from "@/lib/time";
-import { listPricingRules } from "@/lib/api/economics";
-import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
-import { getSettings } from "@/lib/api/settings";
-import { listStationKeys } from "@/lib/api/stationKeys";
-import { listStations, openStationWebsite } from "@/lib/api/stations";
+import { openStationWebsite } from "@/lib/api/stations";
 import { Sub2ApiPlatformIcon } from "@/features/stations/components/Sub2ApiPlatformIcon";
 import { groupVisualMetaFor } from "@/features/stations/groupVisualMeta";
 import { groupVisualClassNames } from "@/features/stations/groupVisualStyles";
 import { groupCategoryDefinitions } from "@/lib/groupCategories";
+import { pricingComparisonQueryOptions } from "@/lib/query/resourceQueries";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import { cn } from "@/lib/utils";
-import type { PricingRule } from "@/lib/types/economics";
-import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
-import type { StationKey } from "@/lib/types/stationKeys";
-import type { Station } from "@/lib/types/stations";
 import {
   buildPricingComparisonViewModel,
   type PricingComparisonRow,
@@ -65,57 +59,33 @@ type PricingPageProps = {
 
 export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
   const toast = useToast();
-  const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
-  const [stations, setStations] = useState<Station[]>([]);
-  const [stationKeys, setStationKeys] = useState<StationKey[]>([]);
-  const [groupBindings, setGroupBindings] = useState<StationGroupBinding[]>([]);
-  const [groupRates, setGroupRates] = useState<GroupRateRecord[]>([]);
-  const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const refreshEnabled = usePageRefreshEnabled();
+  const pricingQuery = useActivityQuery(
+    refreshEnabled,
+    pricingComparisonQueryOptions(),
+  );
+  const workspace = pricingQuery.data;
+  const pricingRules = workspace?.pricingRules ?? [];
+  const stations = workspace?.stations ?? [];
+  const stationKeys = workspace?.stationKeys ?? [];
+  const groupBindings = workspace?.groupBindings ?? [];
+  const groupRates = workspace?.groupRates ?? [];
+  const developerModeEnabled = workspace?.developerModeEnabled ?? false;
+  const loading = pricingQuery.isPending && workspace === undefined;
+  const error = pricingQuery.error ? readError(pricingQuery.error) : null;
   const [groupTypeFilter, setGroupTypeFilter] = useState<GroupTypeFilter>("all");
   const [query, setQuery] = useState("");
   const [selectedStationId, setSelectedStationId] = useState<string>("all");
 
-  usePageActivation(({ isInitial }) => {
-    void refresh(false, isInitial);
-  });
-
-  async function refresh(showSuccess = false, showLoading = true) {
-    if (showLoading) {
-      setLoading(true);
-    }
-    setError(null);
+  async function refresh(showSuccess = false) {
     try {
-      const [nextPricingRules, nextStations, nextSettings] = await Promise.all([
-        listPricingRules(),
-        listStations(),
-        getSettings(),
-      ]);
-      const [bindingLists, rateRecordLists, stationKeyLists] = await Promise.all([
-        Promise.all(nextStations.map((station) => listStationGroupBindings(station.id))),
-        Promise.all(nextStations.map((station) => listGroupRateRecords(station.id))),
-        Promise.all(nextStations.map((station) => listStationKeys(station.id))),
-      ]);
-
-      setPricingRules(nextPricingRules);
-      setStations(nextStations);
-      setStationKeys(stationKeyLists.flat());
-      setGroupBindings(bindingLists.flat());
-      setGroupRates(rateRecordLists.flat());
-      setDeveloperModeEnabled(nextSettings.developerModeEnabled);
-
+      await pricingQuery.refetch({ throwOnError: true });
       if (showSuccess) {
         toast.success("价格倍率已刷新");
       }
     } catch (requestError) {
       const message = readError(requestError);
-      setError(message);
       toast.error("刷新价格倍率失败", message);
-    } finally {
-      if (showLoading) {
-        setLoading(false);
-      }
     }
   }
 
@@ -174,7 +144,7 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
             <Coins className="h-4 w-4" />
             模型基准价格
           </Button>
-          <Button variant="secondary" onClick={() => void refresh(true)}>
+          <Button variant="secondary" disabled={pricingQuery.isFetching} onClick={() => void refresh(true)}>
             <RefreshCw className="h-4 w-4" />
             刷新
           </Button>

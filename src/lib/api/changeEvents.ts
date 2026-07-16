@@ -5,6 +5,7 @@ import {
   updateMockChangeEventStatus,
   upsertMockChangeEvent,
 } from "@/lib/mock/changeEvents";
+import { isTauriCommandNotFound } from "@/lib/tauriErrors";
 import type { ChangeEvent, UpsertChangeEventInput } from "@/lib/types/changeEvents";
 
 export const CHANGE_EVENTS_UPDATED_EVENT = "relay-pool:change-events-updated";
@@ -18,10 +19,6 @@ export function notifyChangeEventsUpdated() {
 
 function isInvokeUnavailable(error: unknown) {
   return /invoke/i.test(getErrorMessage(error));
-}
-
-function isCommandNotFound(error: unknown) {
-  return /command .* not found/i.test(getErrorMessage(error));
 }
 
 function getErrorMessage(error: unknown) {
@@ -48,7 +45,7 @@ export function clearChangeEvents() {
 
 export function listChangeEventsForStation(stationId: string) {
   return invoke<ChangeEvent[]>("list_change_events_for_station", { stationId }).catch((error) => {
-    if (isCommandNotFound(error)) {
+    if (isTauriCommandNotFound(error)) {
       return listChangeEvents().then((events) => events.filter((event) => event.stationId === stationId));
     }
     if (isInvokeUnavailable(error)) {
@@ -71,6 +68,23 @@ export function markChangeEventRead(id: string) {
   return invoke<ChangeEvent>("mark_change_event_read", { id }).catch((error) => {
     if (isInvokeUnavailable(error)) {
       return updateMockChangeEventStatus(id, "read");
+    }
+    throw error;
+  });
+}
+
+export function markChangeEventsRead(ids: string[]) {
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    return Promise.resolve([]);
+  }
+
+  return invoke<ChangeEvent[]>("mark_change_events_read", { ids: uniqueIds }).catch((error) => {
+    if (isTauriCommandNotFound(error)) {
+      return Promise.all(uniqueIds.map((id) => markChangeEventRead(id)));
+    }
+    if (isInvokeUnavailable(error)) {
+      return Promise.all(uniqueIds.map((id) => updateMockChangeEventStatus(id, "read")));
     }
     throw error;
   });

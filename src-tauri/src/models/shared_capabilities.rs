@@ -2,8 +2,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::{
     channel_monitors::{ChannelMonitor, ChannelMonitorRun},
-    routing::{StationKeyCapabilities, UpdateStationKeyCapabilitiesInput},
-    station_keys::StationKey,
+    group_facts::{GroupRateRecord, StationGroupBinding},
+    pricing::PricingRule,
+    proxy::RequestLog,
+    routing::{StationKeyCapabilities, StationKeyHealth, UpdateStationKeyCapabilitiesInput},
+    station_keys::{KeyPoolItem, StationKey},
+    stations::Station,
 };
 
 pub type StationKeyStatus = String;
@@ -123,4 +127,24 @@ pub struct ChannelStatusSummary {
     pub recent: ChannelStatusWindowSummary,
     pub last24h: ChannelStatusWindowSummary,
     pub last7d: ChannelStatusWindowSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelStatusWorkspace {
+    pub key_pool_items: Vec<KeyPoolItem>,
+    pub request_logs: Vec<RequestLog>,
+    pub station_key_health: Vec<StationKeyHealth>,
+    pub channel_status_summaries: Vec<ChannelStatusSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PricingComparisonWorkspace {
+    pub stations: Vec<Station>,
+    pub station_keys: Vec<StationKey>,
+    pub group_bindings: Vec<StationGroupBinding>,
+    pub group_rates: Vec<GroupRateRecord>,
+    pub pricing_rules: Vec<PricingRule>,
+    pub developer_mode_enabled: bool,
 }

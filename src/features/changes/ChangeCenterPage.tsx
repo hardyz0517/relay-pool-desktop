@@ -3,7 +3,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { CheckCheck, ChevronLeft, ChevronRight, RefreshCw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
-  usePageActivation,
   usePageRefreshEnabled,
 } from "@/components/shell/PageActivity";
 import {
@@ -19,7 +18,7 @@ import {
 import { readError } from "@/lib/errors";
 import {
   clearChangeEvents,
-  markChangeEventRead,
+  markChangeEventsRead,
   notifyChangeEventsUpdated,
 } from "@/lib/api/changeEvents";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
@@ -34,7 +33,7 @@ import {
   buildChangeEventListItem,
   filterChangeEvents,
   formatChangeTime,
-  markUnreadChangeEventsReadLocally,
+  mergeChangeEventUpdates,
   markUnreadChangeEventsRead,
   objectTypeLabels,
   paginateChangeEvents,
@@ -62,25 +61,13 @@ export function ChangeCenterPage() {
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  usePageActivation(({ isInitial }) => {
-    void refresh(false, isInitial);
-  });
-
-  async function refresh(showSuccess = false, _showLoading = true) {
+  async function refresh(showSuccess = false) {
     try {
-      const currentEvents = queryClient.getQueryData<ChangeEvent[]>(queryKeys.changeEvents) ?? events;
-      await queryClient.cancelQueries({ queryKey: queryKeys.changeEvents });
-      const optimisticReadResult = markUnreadChangeEventsReadLocally(currentEvents);
-      queryClient.setQueryData(queryKeys.changeEvents, optimisticReadResult.events);
-
-      await queryClient.refetchQueries({ queryKey: queryKeys.stations, type: "active" });
-      const readOnEntryResult = await markUnreadChangeEventsRead(currentEvents, markChangeEventRead);
-      queryClient.setQueryData(queryKeys.changeEvents, readOnEntryResult.events);
-      if (readOnEntryResult.changedCount > 0) {
-        notifyChangeEventsUpdated();
-      }
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: queryKeys.stations, type: "active" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.changeEvents, type: "active" }),
+      ]);
       if (showSuccess) {
-        await queryClient.refetchQueries({ queryKey: queryKeys.changeEvents, type: "active" });
         toast.success("变更中心已刷新");
       }
     } catch (requestError) {
@@ -93,8 +80,10 @@ export function ChangeCenterPage() {
     setSaving(true);
     try {
       await queryClient.cancelQueries({ queryKey: queryKeys.changeEvents });
-      const result = await markUnreadChangeEventsRead(events, markChangeEventRead);
-      queryClient.setQueryData(queryKeys.changeEvents, result.events);
+      const result = await markUnreadChangeEventsRead(events, markChangeEventsRead);
+      queryClient.setQueryData(queryKeys.changeEvents, (latestEvents: typeof events | undefined) =>
+        mergeChangeEventUpdates(latestEvents ?? events, result.updatedEvents),
+      );
       if (result.changedCount > 0) {
         notifyChangeEventsUpdated();
       }

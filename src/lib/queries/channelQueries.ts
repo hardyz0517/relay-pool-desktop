@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import {
   listChannelMonitorSummaries,
   listChannelMonitorTemplates,
@@ -7,6 +8,7 @@ import { listRequestLogs } from "@/lib/api/proxy";
 import { listStationKeyHealth } from "@/lib/api/routing";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
+import { isTauriCommandNotFound, isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
   ChannelMonitorRequestTemplate,
   ChannelMonitorSummary,
@@ -48,17 +50,24 @@ export async function loadChannelMonitoringWorkspace(): Promise<ChannelMonitorin
 }
 
 export async function loadChannelStatusWorkspace(): Promise<ChannelStatusWorkspace> {
-  const [keyPoolItems, requestLogs, stationKeyHealth, channelStatusSummaries] = await Promise.all([
-    listKeyPoolItems(),
-    listRequestLogs(),
-    listStationKeyHealth(),
-    listChannelStatusSummaries(),
-  ]);
+  try {
+    return await invoke<ChannelStatusWorkspace>("load_channel_status_workspace");
+  } catch (error) {
+    if (!isTauriInvokeUnavailable(error) && !isTauriCommandNotFound(error)) {
+      throw error;
+    }
+    const [keyPoolItems, requestLogs, stationKeyHealth, channelStatusSummaries] = await Promise.all([
+      listKeyPoolItems(),
+      listRequestLogs(),
+      listStationKeyHealth(),
+      listChannelStatusSummaries(),
+    ]);
 
-  return {
-    keyPoolItems,
-    requestLogs,
-    stationKeyHealth,
-    channelStatusSummaries,
-  };
+    return {
+      keyPoolItems,
+      requestLogs,
+      stationKeyHealth,
+      channelStatusSummaries,
+    };
+  }
 }

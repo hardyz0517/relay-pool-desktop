@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::DefaultHasher, HashSet},
+    collections::{hash_map::DefaultHasher, HashMap, HashSet},
     fs,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -49,7 +49,8 @@ use crate::models::{
     settings::{AppSettings, UpdateSettingsInput},
     shared_capabilities::{
         ChannelMonitorSummary, ChannelStatusSummary, ChannelStatusTimelinePoint,
-        SaveStationKeyWithDefaultsInput, SaveStationKeyWithDefaultsResult, StationGroupOption,
+        ChannelStatusWorkspace, PricingComparisonWorkspace, SaveStationKeyWithDefaultsInput,
+        SaveStationKeyWithDefaultsResult, StationGroupOption,
     },
     station_keys::{CreateStationKeyInput, KeyPoolItem, StationKey, UpdateStationKeyInput},
     stations::{CreateStationInput, Station, StationEndpointHealth, UpdateStationInput},
@@ -1784,8 +1785,58 @@ impl AppDatabase {
     }
 
     pub fn list_channel_status_summaries(&self) -> Result<Vec<ChannelStatusSummary>, String> {
-        let monitors = self.list_channel_monitors()?;
-        crate::services::shared_capabilities::channel_status_summaries_from_database(self, monitors)
+        let connection = self.connection()?;
+        let monitors = list_channel_monitors_from_connection(&connection)?;
+        crate::services::shared_capabilities::channel_status_summaries_from_connection(
+            &connection,
+            monitors,
+        )
+    }
+
+    pub fn load_channel_status_workspace(&self) -> Result<ChannelStatusWorkspace, String> {
+        let connection = self.connection()?;
+        let monitors = list_channel_monitors_from_connection(&connection)?;
+        let channel_status_summaries =
+            crate::services::shared_capabilities::channel_status_summaries_from_connection(
+                &connection,
+                monitors,
+            )?;
+
+        Ok(ChannelStatusWorkspace {
+            key_pool_items: list_key_pool_items_from_connection(&connection)?,
+            request_logs: list_request_logs_from_connection(&connection)?,
+            station_key_health: list_station_key_health_from_connection(&connection)?,
+            channel_status_summaries,
+        })
+    }
+
+    pub fn load_pricing_comparison_workspace(&self) -> Result<PricingComparisonWorkspace, String> {
+        let connection = self.connection()?;
+        let stations = list_stations_from_connection(&connection)?;
+        let mut station_keys = Vec::new();
+        let mut group_bindings = Vec::new();
+        let mut group_rates = Vec::new();
+
+        for station in &stations {
+            station_keys.extend(list_station_keys_from_connection(&connection, &station.id)?);
+            group_bindings.extend(list_station_group_bindings_from_connection(
+                &connection,
+                &station.id,
+            )?);
+            group_rates.extend(list_group_rate_records_from_connection(
+                &connection,
+                &station.id,
+            )?);
+        }
+
+        Ok(PricingComparisonWorkspace {
+            stations,
+            station_keys,
+            group_bindings,
+            group_rates,
+            pricing_rules: list_pricing_rules_from_connection(&connection)?,
+            developer_mode_enabled: developer_mode_enabled_from_connection(&connection)?,
+        })
     }
 
     pub fn get_channel_monitor(&self, id: &str) -> Result<ChannelMonitor, String> {
@@ -1949,6 +2000,39 @@ impl AppDatabase {
     pub fn mark_change_event_read(&self, id: String) -> Result<ChangeEvent, String> {
         let connection = self.connection()?;
         update_change_event_status_in_connection(&connection, &id, STATUS_READ)
+    }
+
+    pub fn mark_change_events_read(&self, ids: Vec<String>) -> Result<Vec<ChangeEvent>, String> {
+        let mut seen = HashSet::new();
+        let ids = ids
+            .into_iter()
+            .filter(|id| !id.is_empty() && seen.insert(id.clone()))
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始批量标记变更事件事务失败: {error}"))?;
+        let now = now_string();
+        for id in &ids {
+            transaction
+                .execute(
+                    "UPDATE change_events SET status = ?2, updated_at = ?3 WHERE id = ?1 AND status = ?4",
+                    params![id, STATUS_READ, now, STATUS_UNREAD],
+                )
+                .map_err(|error| format!("批量标记变更事件已读失败: {error}"))?;
+        }
+        let events = ids
+            .iter()
+            .map(|id| change_event_by_id(&transaction, id))
+            .collect::<Result<Vec<_>, _>>()?;
+        transaction
+            .commit()
+            .map_err(|error| format!("提交批量标记变更事件事务失败: {error}"))?;
+        Ok(events)
     }
 
     pub fn dismiss_change_event(&self, id: String) -> Result<ChangeEvent, String> {
@@ -6274,7 +6358,7 @@ fn list_channel_monitor_runs_for_summary_from_connection(
     Ok(runs)
 }
 
-fn channel_status_window_facts_from_connection(
+pub(crate) fn channel_status_window_facts_from_connection(
     connection: &Connection,
     monitor_id: &str,
     since_ms: Option<i64>,
@@ -11345,10 +11429,14 @@ fn list_request_logs_from_connection(connection: &Connection) -> Result<Vec<Requ
         .map_err(|error| format!("查询请求日志失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析请求日志失败: {error}"))?;
-    Ok(rows
-        .into_iter()
-        .map(|log| request_log_with_estimated_cost(connection, log))
-        .collect())
+    Ok(request_logs_with_estimated_cost_using(
+        rows,
+        |station_key_id, model| {
+            route_candidate_economics_by_station_key(connection, station_key_id, Some(model))
+                .ok()
+                .flatten()
+        },
+    ))
 }
 
 fn list_local_proxy_request_logs_from_connection(
@@ -11369,13 +11457,17 @@ fn list_local_proxy_request_logs_from_connection(
         .map_err(|error| format!("查询本地路由日志失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("解析本地路由日志失败: {error}"))?;
-    Ok(rows
-        .into_iter()
-        .map(|log| request_log_with_estimated_cost(connection, log))
-        .collect())
+    Ok(request_logs_with_estimated_cost_using(
+        rows,
+        |station_key_id, model| {
+            route_candidate_economics_by_station_key(connection, station_key_id, Some(model))
+                .ok()
+                .flatten()
+        },
+    ))
 }
 
-fn request_log_with_estimated_cost(connection: &Connection, mut log: RequestLog) -> RequestLog {
+fn request_log_economics_lookup_key(log: &RequestLog) -> Option<(String, String)> {
     let has_cost_snapshot = log.cost_status.is_some()
         || log.estimated_input_cost.is_some()
         || log.estimated_output_cost.is_some()
@@ -11383,32 +11475,61 @@ fn request_log_with_estimated_cost(connection: &Connection, mut log: RequestLog)
     if log.cost_status.as_deref() == Some("usage_only")
         || (has_cost_snapshot && log.base_total_cost.is_some())
     {
-        return log;
+        return None;
     }
-    let Some(model) = log
+    let model = log
         .model
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
+        .filter(|value| !value.is_empty())?;
+    let station_key_id = log.station_key_id.as_deref()?;
+
+    Some((station_key_id.to_string(), model.to_string()))
+}
+
+fn request_logs_with_estimated_cost_using<F>(
+    logs: Vec<RequestLog>,
+    mut resolve_economics: F,
+) -> Vec<RequestLog>
+where
+    F: FnMut(&str, &str) -> Option<RouteCandidateEconomics>,
+{
+    let mut economics_by_key_and_model =
+        HashMap::<(String, String), Option<RouteCandidateEconomics>>::new();
+
+    logs.into_iter()
+        .map(|log| {
+            let Some((station_key_id, model)) = request_log_economics_lookup_key(&log) else {
+                return log;
+            };
+            let economics = economics_by_key_and_model
+                .entry((station_key_id.clone(), model.clone()))
+                .or_insert_with(|| resolve_economics(&station_key_id, &model));
+            request_log_with_estimated_cost(log, economics.as_ref())
+        })
+        .collect()
+}
+
+fn request_log_with_estimated_cost(
+    mut log: RequestLog,
+    economics: Option<&RouteCandidateEconomics>,
+) -> RequestLog {
+    let has_cost_snapshot = log.cost_status.is_some()
+        || log.estimated_input_cost.is_some()
+        || log.estimated_output_cost.is_some()
+        || log.estimated_total_cost.is_some();
+    let Some((station_key_id, model)) = request_log_economics_lookup_key(&log) else {
         return log;
     };
-    let Some(station_key_id) = log.station_key_id.as_deref() else {
-        return log;
-    };
-    let Some(economics) =
-        route_candidate_economics_by_station_key(connection, station_key_id, Some(model))
-            .ok()
-            .flatten()
-    else {
+    let Some(economics) = economics else {
         return log;
     };
 
     let estimate = crate::services::pricing::request_cost_from_pricing_parts(
         Some(crate::services::pricing::RequestPricingParts {
-            station_key_id,
+            station_key_id: &station_key_id,
             station_id: log.station_id.as_deref(),
-            model: Some(model),
+            model: Some(&model),
             pricing_rule_id: economics.pricing_rule_id.as_deref(),
             pricing_model: economics.pricing_model.as_deref(),
             group_binding_id: economics.group_binding_id.as_deref(),
@@ -11439,13 +11560,13 @@ fn request_log_with_estimated_cost(connection: &Connection, mut log: RequestLog)
         log.base_fixed_cost = estimate.base_fixed_cost;
         log.base_total_cost = estimate.base_total_cost;
         if log.group_binding_id.is_none() {
-            log.group_binding_id = economics.group_binding_id;
+            log.group_binding_id = economics.group_binding_id.clone();
         }
         if log.normalization_status.is_none() {
-            log.normalization_status = economics.normalization_status;
+            log.normalization_status = economics.normalization_status.clone();
         }
         if log.balance_scope.is_none() {
-            log.balance_scope = economics.balance_scope;
+            log.balance_scope = economics.balance_scope.clone();
         }
         return log;
     }
@@ -11462,13 +11583,13 @@ fn request_log_with_estimated_cost(connection: &Connection, mut log: RequestLog)
     log.pricing_source = estimate.pricing_source;
     log.cost_status = Some("legacy_estimate".to_string());
     if log.group_binding_id.is_none() {
-        log.group_binding_id = economics.group_binding_id;
+        log.group_binding_id = economics.group_binding_id.clone();
     }
     if log.normalization_status.is_none() {
-        log.normalization_status = economics.normalization_status;
+        log.normalization_status = economics.normalization_status.clone();
     }
     if log.balance_scope.is_none() {
-        log.balance_scope = economics.balance_scope;
+        log.balance_scope = economics.balance_scope.clone();
     }
     log
 }
@@ -13903,17 +14024,17 @@ fn settings_from_connection(
             "allow_depleted_fallback",
             "false",
         )?,
-        developer_mode_enabled: read_setting_or_default(
-            connection,
-            "developer_mode_enabled",
-            "false",
-        )?
-        .parse()
-        .map_err(|_| "设置项 developer_mode_enabled 格式无效".to_string())?,
+        developer_mode_enabled: developer_mode_enabled_from_connection(connection)?,
         data_dir: data_dir.to_string(),
         pending_data_dir,
         data_dir_change_requires_restart,
     })
+}
+
+fn developer_mode_enabled_from_connection(connection: &Connection) -> Result<bool, String> {
+    read_setting_or_default(connection, "developer_mode_enabled", "false")?
+        .parse()
+        .map_err(|_| "设置项 developer_mode_enabled 格式无效".to_string())
 }
 
 fn read_setting(connection: &Connection, key: &str) -> Result<String, String> {
@@ -17963,6 +18084,71 @@ mod tests {
     }
 
     #[test]
+    fn mark_change_events_read_only_updates_captured_still_unread_events() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let create_event = |dedupe_key: &str| {
+            database
+                .upsert_change_event(UpsertChangeEventInput {
+                    severity: "info".to_string(),
+                    event_type: "test_event".to_string(),
+                    title: dedupe_key.to_string(),
+                    message: dedupe_key.to_string(),
+                    object_type: "station".to_string(),
+                    object_id: None,
+                    station_id: None,
+                    station_key_id: None,
+                    pricing_rule_id: None,
+                    request_log_id: None,
+                    old_value_json: None,
+                    new_value_json: None,
+                    impact_json: None,
+                    dedupe_key: dedupe_key.to_string(),
+                    source: "test".to_string(),
+                })
+                .expect("change event")
+        };
+        let unread = create_event("batch-read:unread");
+        let resolved = create_event("batch-read:resolved");
+        let not_captured = create_event("batch-read:not-captured");
+        database
+            .resolve_change_event(resolved.id.clone())
+            .expect("resolve captured event before batch");
+
+        let updated = database
+            .mark_change_events_read(vec![
+                unread.id.clone(),
+                resolved.id.clone(),
+                unread.id.clone(),
+            ])
+            .expect("batch mark read");
+
+        assert_eq!(updated.len(), 2, "duplicate IDs should be returned once");
+        assert_eq!(
+            updated
+                .iter()
+                .find(|event| event.id == unread.id)
+                .map(|event| event.status.as_str()),
+            Some(STATUS_READ),
+        );
+        assert_eq!(
+            updated
+                .iter()
+                .find(|event| event.id == resolved.id)
+                .map(|event| event.status.as_str()),
+            Some(STATUS_RESOLVED),
+        );
+        assert_eq!(
+            database
+                .list_change_events()
+                .expect("events")
+                .into_iter()
+                .find(|event| event.id == not_captured.id)
+                .map(|event| event.status),
+            Some(STATUS_UNREAD.to_string()),
+        );
+    }
+
+    #[test]
     fn depleted_balance_event_stays_read_when_zero_balance_repeats() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let station = test_station(&database, "zero-balance-relay");
@@ -19305,6 +19491,182 @@ mod tests {
             Some("model_base_price")
         );
         assert_eq!(listed_log.cost_status.as_deref(), Some("legacy_estimate"));
+    }
+
+    #[test]
+    fn request_log_enrichment_reuses_economics_for_matching_key_and_model() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "request-log-economics-cache");
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("keys")
+            .remove(0);
+        let first = database
+            .insert_request_log(CreateRequestLogInput {
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                model: Some("gpt-5.4-mini".to_string()),
+                stream: false,
+                status: "success".to_string(),
+                lifecycle_status: Some("completed".to_string()),
+                station_key_id: Some(key.id),
+                station_id: Some(station.id),
+                upstream_base_url: Some("https://example.test".to_string()),
+                fallback_count: 0,
+                error_message: None,
+                route_policy: Some("priority_fallback".to_string()),
+                route_reason: None,
+                rejected_candidates_json: None,
+                prompt_tokens: Some(10),
+                completion_tokens: Some(11),
+                total_tokens: Some(21),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                reasoning_effort: None,
+                first_token_ms: None,
+                billing_mode: None,
+                estimated_input_cost: None,
+                estimated_output_cost: None,
+                estimated_total_cost: None,
+                base_input_cost: None,
+                base_output_cost: None,
+                base_fixed_cost: None,
+                base_total_cost: None,
+                cost_currency: None,
+                pricing_rule_id: None,
+                pricing_source: None,
+                cost_status: None,
+                group_binding_id: None,
+                normalization_status: None,
+                balance_scope: None,
+                economic_context_json: None,
+                started_at: "1000".to_string(),
+                finished_at: Some("1100".to_string()),
+                duration_ms: Some(100),
+            })
+            .expect("insert log");
+        let mut second = first.clone();
+        second.id = "matching-request-log".to_string();
+        second.prompt_tokens = Some(20);
+        second.completion_tokens = Some(5);
+        second.total_tokens = Some(25);
+
+        let connection = database.connection().expect("connection");
+        let mut lookup_count = 0;
+        let enriched =
+            request_logs_with_estimated_cost_using(vec![first, second], |station_key_id, model| {
+                lookup_count += 1;
+                route_candidate_economics_by_station_key(&connection, station_key_id, Some(model))
+                    .ok()
+                    .flatten()
+            });
+
+        assert_eq!(lookup_count, 1);
+        assert_eq!(enriched.len(), 2);
+        assert!(enriched
+            .iter()
+            .all(|log| log.cost_status.as_deref() == Some("legacy_estimate")));
+        assert!(enriched
+            .iter()
+            .all(|log| log.estimated_total_cost.is_some()));
+    }
+
+    #[test]
+    fn channel_status_workspace_matches_existing_reads() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        test_station(&database, "channel-workspace");
+
+        let workspace = database
+            .load_channel_status_workspace()
+            .expect("channel workspace");
+
+        assert_eq!(
+            workspace
+                .key_pool_items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            database
+                .list_key_pool_items()
+                .expect("key pool")
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            workspace.request_logs.len(),
+            database.list_request_logs().expect("request logs").len(),
+        );
+        assert_eq!(
+            workspace.station_key_health.len(),
+            database
+                .list_station_key_health()
+                .expect("station key health")
+                .len(),
+        );
+        assert_eq!(
+            workspace.channel_status_summaries.len(),
+            database
+                .list_channel_status_summaries()
+                .expect("channel status summaries")
+                .len(),
+        );
+    }
+
+    #[test]
+    fn pricing_comparison_workspace_matches_existing_reads() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "pricing-workspace");
+
+        let workspace = database
+            .load_pricing_comparison_workspace()
+            .expect("pricing workspace");
+
+        assert_eq!(
+            workspace
+                .stations
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            database
+                .list_stations()
+                .expect("stations")
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            workspace.station_keys.len(),
+            database
+                .list_station_keys(station.id.clone())
+                .expect("station keys")
+                .len(),
+        );
+        assert_eq!(
+            workspace.group_bindings.len(),
+            database
+                .list_station_group_bindings(station.id.clone())
+                .expect("group bindings")
+                .len(),
+        );
+        assert_eq!(
+            workspace.group_rates.len(),
+            database
+                .list_group_rate_records(station.id)
+                .expect("group rates")
+                .len(),
+        );
+        assert_eq!(
+            workspace.pricing_rules.len(),
+            database.list_pricing_rules().expect("pricing rules").len(),
+        );
+        assert_eq!(
+            workspace.developer_mode_enabled,
+            database
+                .get_settings()
+                .expect("settings")
+                .developer_mode_enabled,
+        );
     }
 
     #[test]

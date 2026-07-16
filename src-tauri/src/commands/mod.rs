@@ -45,7 +45,8 @@ use crate::{
         secrets::{SecretMigrationReport, SecretScanFinding},
         settings::{AppSettings, UpdateSettingsInput},
         shared_capabilities::{
-            ChannelMonitorSummary, ChannelStatusSummary, SaveStationKeyWithDefaultsInput,
+            ChannelMonitorSummary, ChannelStatusSummary, ChannelStatusWorkspace,
+            PricingComparisonWorkspace, SaveStationKeyWithDefaultsInput,
             SaveStationKeyWithDefaultsResult, StationGroupOption,
         },
         station_keys::KeyPoolItem,
@@ -566,6 +567,20 @@ pub fn list_channel_status_summaries(
 }
 
 #[tauri::command]
+pub fn load_channel_status_workspace(
+    database: State<'_, AppDatabase>,
+) -> Result<ChannelStatusWorkspace, String> {
+    database.load_channel_status_workspace()
+}
+
+#[tauri::command]
+pub fn load_pricing_comparison_workspace(
+    database: State<'_, AppDatabase>,
+) -> Result<PricingComparisonWorkspace, String> {
+    database.load_pricing_comparison_workspace()
+}
+
+#[tauri::command]
 pub fn create_channel_monitor(
     database: State<'_, AppDatabase>,
     input: CreateChannelMonitorInput,
@@ -1019,6 +1034,14 @@ pub fn mark_change_event_read(
     id: String,
 ) -> Result<ChangeEvent, String> {
     database.mark_change_event_read(id)
+}
+
+#[tauri::command]
+pub fn mark_change_events_read(
+    database: State<'_, AppDatabase>,
+    ids: Vec<String>,
+) -> Result<Vec<ChangeEvent>, String> {
+    database.mark_change_events_read(ids)
 }
 
 #[tauri::command]

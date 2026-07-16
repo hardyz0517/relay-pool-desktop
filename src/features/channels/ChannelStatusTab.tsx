@@ -18,13 +18,9 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { LucideIcon } from "lucide-react";
 import { Radio, RefreshCw, Server, Timer } from "lucide-react";
-import {
-  usePageActivation,
-  usePageRefreshEnabled,
-} from "@/components/shell/PageActivity";
+import { usePageRefreshEnabled } from "@/components/shell/PageActivity";
 import { Button, EmptyState, SegmentedControl, StatusBadge, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
-import { loadChannelStatusWorkspace } from "@/lib/queries/channelQueries";
 import { channelStatusQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import { parseTimestampLikeDate, toTimestampMillis } from "@/lib/time";
@@ -104,26 +100,27 @@ const outcomeClassName: Record<RecentOutcome, string> = {
 export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
   const toast = useToast();
   const refreshEnabled = usePageRefreshEnabled();
-  useActivityQuery(refreshEnabled, channelStatusQueryOptions());
-  const [keys, setKeys] = useState<KeyPoolItem[]>([]);
-  const [logs, setLogs] = useState<RequestLog[]>([]);
-  const [health, setHealth] = useState<StationKeyHealth[]>([]);
-  const [monitors, setMonitors] = useState<ChannelMonitor[]>([]);
-  const [statusSummaries, setStatusSummaries] = useState<ChannelStatusSummary[]>([]);
+  const statusQuery = useActivityQuery(refreshEnabled, channelStatusQueryOptions(5_000));
+  const workspace = statusQuery.data;
+  const keys = workspace?.keyPoolItems ?? [];
+  const logs = workspace?.requestLogs ?? [];
+  const health = workspace?.stationKeyHealth ?? [];
+  const statusSummaries = workspace?.channelStatusSummaries ?? [];
+  const monitors = useMemo(
+    () => statusSummaries.map((summary) => summary.monitor),
+    [statusSummaries],
+  );
   const [channelOrder, setChannelOrder] = useState<string[]>([]);
   const [timeWindow, setTimeWindow] = useState<ChannelWindow>("recent");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  usePageActivation(({ isInitial }) => {
-    void refresh(false, isInitial);
-  });
+  const loading = statusQuery.isPending && workspace === undefined;
+  const error = statusQuery.error ? readError(statusQuery.error) : null;
+  const refetchStatus = statusQuery.refetch;
 
   useEffect(() => {
     if (refreshToken > 0) {
-      void refresh();
+      void refetchStatus();
     }
-  }, [refreshToken]);
+  }, [refreshToken, refetchStatus]);
 
   const visibleLogs = useMemo(() => filterLogsByWindow(logs, timeWindow), [logs, timeWindow]);
   const channels = useMemo(
@@ -158,30 +155,15 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
     setChannelOrder(nextOrder);
   }
 
-  async function refresh(showSuccess = false, showLoading = true) {
-    if (showLoading) {
-      setLoading(true);
-    }
-    setError(null);
+  async function refresh(showSuccess = false) {
     try {
-      const workspace = await loadChannelStatusWorkspace();
-      const nextMonitors = workspace.channelStatusSummaries.map((summary) => summary.monitor);
-      setKeys(workspace.keyPoolItems);
-      setLogs(workspace.requestLogs);
-      setHealth(workspace.stationKeyHealth);
-      setMonitors(nextMonitors);
-      setStatusSummaries(workspace.channelStatusSummaries);
+      await refetchStatus({ throwOnError: true });
       if (showSuccess) {
         toast.success("渠道状态已刷新");
       }
     } catch (requestError) {
       const message = readError(requestError);
-      setError(message);
       toast.error("刷新渠道状态失败", message);
-    } finally {
-      if (showLoading) {
-        setLoading(false);
-      }
     }
   }
 
@@ -199,7 +181,7 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
           onChange={setTimeWindow}
         />
         <div className="flex items-center gap-2">
-          <Button variant="secondary" disabled={loading} onClick={() => void refresh(true)}>
+          <Button variant="secondary" disabled={statusQuery.isFetching} onClick={() => void refresh(true)}>
             <RefreshCw className="h-4 w-4" />
             刷新
           </Button>

@@ -6,7 +6,7 @@ import { LocalProxyRadarIcon } from "@/components/shell/LocalProxyRadarIcon";
 import { shellLayout } from "@/components/ui/layout";
 import {
   CHANGE_EVENTS_UPDATED_EVENT,
-  markChangeEventRead,
+  markChangeEventsRead,
   notifyChangeEventsUpdated,
 } from "@/lib/api/changeEvents";
 import { PROXY_STATUS_UPDATED_EVENT } from "@/lib/api/proxy";
@@ -21,6 +21,8 @@ import {
 import { queryKeys } from "@/lib/query/queryKeys";
 import { cn } from "@/lib/utils";
 import {
+  markCapturedChangeEventsReadLocally,
+  mergeChangeEventUpdates,
   markUnreadChangeEventsRead,
   markUnreadChangeEventsReadLocally,
   unreadChangeCount,
@@ -101,14 +103,24 @@ export function AppShell({
     }
 
     queryClient.setQueryData(queryKeys.changeEvents, optimisticReadResult.events);
+    const capturedUnreadIds = currentEvents
+      .filter((event) => event.status === "unread")
+      .map((event) => event.id);
 
     void (async () => {
       await queryClient.cancelQueries({ queryKey: queryKeys.changeEvents });
-      queryClient.setQueryData(queryKeys.changeEvents, optimisticReadResult.events);
+      queryClient.setQueryData<ChangeEvent[]>(queryKeys.changeEvents, (latestEvents) =>
+        markCapturedChangeEventsReadLocally(
+          latestEvents ?? currentEvents,
+          capturedUnreadIds,
+        ).events,
+      );
 
       try {
-        const readOnEntryResult = await markUnreadChangeEventsRead(currentEvents, markChangeEventRead);
-        queryClient.setQueryData(queryKeys.changeEvents, readOnEntryResult.events);
+        const readOnEntryResult = await markUnreadChangeEventsRead(currentEvents, markChangeEventsRead);
+        queryClient.setQueryData<ChangeEvent[]>(queryKeys.changeEvents, (latestEvents) =>
+          mergeChangeEventUpdates(latestEvents ?? currentEvents, readOnEntryResult.updatedEvents),
+        );
         notifyChangeEventsUpdated();
       } catch {
         void queryClient.invalidateQueries({ queryKey: queryKeys.changeEvents });

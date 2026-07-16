@@ -162,22 +162,49 @@ export function markUnreadChangeEventsReadLocally(events: ChangeEvent[]) {
   };
 }
 
+export function markCapturedChangeEventsReadLocally(events: ChangeEvent[], capturedIds: string[]) {
+  const captured = new Set(capturedIds);
+  let changedCount = 0;
+  const updatedEvents = events.map((event) => {
+    if (!captured.has(event.id) || event.status !== "unread") {
+      return event;
+    }
+    changedCount += 1;
+    return { ...event, status: "read" as const };
+  });
+
+  return { changedCount, events: changedCount === 0 ? events : updatedEvents };
+}
+
 export function activeSeverityCount(events: ChangeEvent[], severity: ChangeSeverity) {
   return events.filter((event) => event.severity === severity && event.status !== "dismissed" && event.status !== "resolved").length;
 }
 
 export async function markUnreadChangeEventsRead(
   events: ChangeEvent[],
-  markRead: (id: string) => Promise<ChangeEvent>,
+  markRead: (ids: string[]) => Promise<ChangeEvent[]>,
 ) {
-  const unreadEvents = events.filter((event) => event.status === "unread");
-  const updatedEvents = await Promise.all(unreadEvents.map((event) => markRead(event.id)));
+  const unreadIds = events.filter((event) => event.status === "unread").map((event) => event.id);
+  if (unreadIds.length === 0) {
+    return { changedCount: 0, events, updatedEvents: [] };
+  }
+
+  const updatedEvents = await markRead(unreadIds);
   const updatedById = new Map(updatedEvents.map((event) => [event.id, event]));
 
   return {
-    changedCount: updatedEvents.length,
+    changedCount: updatedEvents.filter((event) => event.status === "read").length,
     events: events.map((event) => updatedById.get(event.id) ?? event),
+    updatedEvents,
   };
+}
+
+export function mergeChangeEventUpdates(events: ChangeEvent[], updates: ChangeEvent[]) {
+  if (updates.length === 0) {
+    return events;
+  }
+  const updatesById = new Map(updates.map((event) => [event.id, event]));
+  return events.map((event) => updatesById.get(event.id) ?? event);
 }
 
 export function buildChangeEventListItem(
