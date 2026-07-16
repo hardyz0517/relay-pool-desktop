@@ -2,6 +2,7 @@ pub mod capture;
 pub mod change_events;
 pub mod channel_monitors;
 pub mod collectors;
+pub mod data_store;
 pub mod database;
 pub mod endpoint_ping;
 pub mod group_categories;
