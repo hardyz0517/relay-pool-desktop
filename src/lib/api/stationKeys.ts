@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import {
   getStationKeyCapabilities,
   updateStationKeyCapabilities,
@@ -53,7 +54,7 @@ function withKeyPoolItemsInvalidation<T>(request: Promise<T>): Promise<T> {
 
 export function listStationKeys(stationId: string) {
   return invoke<StationKey[]>("list_station_keys", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryKeys.get(stationId) ?? [];
     }
     throw error;
@@ -62,7 +63,7 @@ export function listStationKeys(stationId: string) {
 
 export function getRemoteKeyCapability(stationId: string): Promise<RemoteKeyCapability> {
   return invoke<RemoteKeyCapability>("get_remote_key_capability", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryRemoteKeyCapability(stationId);
     }
     throw error;
@@ -71,7 +72,7 @@ export function getRemoteKeyCapability(stationId: string): Promise<RemoteKeyCapa
 
 export function listRemoteStationKeys(stationId: string): Promise<RemoteStationKey[]> {
   return invoke<RemoteStationKey[]>("list_remote_station_keys", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryRemoteKeys.get(stationId) ?? [];
     }
     throw error;
@@ -80,7 +81,7 @@ export function listRemoteStationKeys(stationId: string): Promise<RemoteStationK
 
 export function scanRemoteStationKeys(stationId: string): Promise<RemoteKeyScanResult> {
   return invoke<RemoteKeyScanResult>("scan_remote_station_keys", { stationId }).catch(async (error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const keys = memoryRemoteKeys.get(stationId) ?? [];
       return {
         stationId,
@@ -96,7 +97,7 @@ export function scanRemoteStationKeys(stationId: string): Promise<RemoteKeyScanR
 
 export function createRemoteStationKey(input: CreateRemoteStationKeyInput): Promise<CreateRemoteStationKeyResult> {
   return withKeyPoolItemsInvalidation(invoke<CreateRemoteStationKeyResult>("create_remote_station_key", { input }).catch(async (error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const fullKeyOnce = `sk-browser-preview-${nextMemoryId("secret")}`;
       const stationKey = await createStationKey({
         stationId: input.stationId,
@@ -136,7 +137,7 @@ export function createLocalStationKeyFromRemote(
     remoteKeyId,
     stationId,
   }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       throw new Error("浏览器预览模式无法读取远端完整 Key，请在桌面端同步或手动补全。");
     }
     throw error;
@@ -147,7 +148,7 @@ export function bindRemoteStationKey(remoteKeyId: string, stationKeyId: string):
   return invoke<RemoteStationKey[]>("bind_remote_station_key", {
     input: { remoteKeyId, stationKeyId },
   }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const targetKey = Array.from(memoryKeys.values())
         .flat()
@@ -184,7 +185,7 @@ export function bindRemoteStationKey(remoteKeyId: string, stationKeyId: string):
 
 export function unbindRemoteStationKey(remoteKeyId: string, stationId: string): Promise<RemoteStationKey[]> {
   return invoke<RemoteStationKey[]>("unbind_remote_station_key", { remoteKeyId, stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const keys = memoryRemoteKeys.get(stationId) ?? [];
       const nextKeys = keys.map((key) =>
@@ -207,7 +208,7 @@ export function unbindRemoteStationKey(remoteKeyId: string, stationId: string): 
 
 export function createStationKey(input: CreateStationKeyInput) {
   return withKeyPoolItemsInvalidation(invoke<StationKey>("create_station_key", { input }).catch(async (error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const key = memoryKeyFromInput(input);
       memoryKeys.set(input.stationId, [...(memoryKeys.get(input.stationId) ?? []), key]);
       const station = (await listStations()).find((item) => item.id === input.stationId) ?? null;
@@ -224,7 +225,7 @@ export function createStationKey(input: CreateStationKeyInput) {
 export function updateStationKey(input: UpdateStationKeyInput) {
   const normalizedInput = normalizeUpdateStationKeyInput(input);
   return withKeyPoolItemsInvalidation(invoke<StationKey>("update_station_key", { input: normalizedInput }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const keys = memoryKeys.get(normalizedInput.stationId) ?? [];
       const nextKeys = keys.map((key) => key.id === normalizedInput.id ? { ...key, ...normalizedInput, apiKeyPresent: normalizedInput.apiKey ? true : key.apiKeyPresent } : key);
       memoryKeys.set(normalizedInput.stationId, nextKeys);
@@ -253,7 +254,7 @@ export function saveStationKeyWithDefaults(
   input: SaveStationKeyWithDefaultsInput,
 ): Promise<SaveStationKeyWithDefaultsResult> {
   return withKeyPoolItemsInvalidation(invoke<SaveStationKeyWithDefaultsResult>("save_station_key_with_defaults", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return saveStationKeyWithDefaultsInMemory(input);
     }
     throw error;
@@ -264,7 +265,7 @@ export function updateStationKeyGroupBinding(stationKeyId: string, groupBindingI
   return withKeyPoolItemsInvalidation(invoke<StationKey>("update_station_key_group_binding", {
     input: { stationKeyId, groupBindingId },
   }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       for (const [stationId, keys] of memoryKeys) {
         const nextKeys = keys.map((key) =>
           key.id === stationKeyId
@@ -295,7 +296,7 @@ export function updateStationKeyGroupBinding(stationKeyId: string, groupBindingI
 
 export function deleteStationKey(id: string) {
   return withKeyPoolItemsInvalidation(invoke<void>("delete_station_key", { id }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       for (const [stationId, keys] of memoryKeys) {
         memoryKeys.set(stationId, keys.filter((key) => key.id !== id));
       }
@@ -307,7 +308,7 @@ export function deleteStationKey(id: string) {
 
 export function reorderStationKeys(stationId: string, keyIds: string[]) {
   return withKeyPoolItemsInvalidation(invoke<StationKey[]>("reorder_station_keys", { stationId, keyIds }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const byId = new Map((memoryKeys.get(stationId) ?? []).map((key) => [key.id, key] as const));
       const nextKeys = keyIds.flatMap((id, index) => {
         const key = byId.get(id);
@@ -322,7 +323,7 @@ export function reorderStationKeys(stationId: string, keyIds: string[]) {
 
 export function listKeyPoolItems() {
   return invoke<KeyPoolItem[]>("list_key_pool_items").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryKeyPool;
     }
     throw error;
@@ -331,7 +332,7 @@ export function listKeyPoolItems() {
 
 export function reorderKeyPool(keyIds: string[]) {
   return withKeyPoolItemsInvalidation(invoke<KeyPoolItem[]>("reorder_key_pool", { keyIds }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const byId = new Map(memoryKeyPool.map((item) => [item.id, item] as const));
       memoryKeyPool = keyIds.flatMap((id, index) => {
         const item = byId.get(id);
@@ -351,7 +352,7 @@ export function testStationKeyConnectivity(
   const progress = new Channel<StationKeyConnectivityTestEvent>();
   progress.onmessage = (event) => options.onEvent?.(event);
   return invoke<StationKeyConnectivityTestResult>("test_station_key_connectivity", { stationKeyId, model, progress }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return {
         stationKeyId,
         ok: true,
@@ -369,7 +370,7 @@ export function testStationKeyConnectivity(
 
 export function getStationCredentials(stationId: string) {
   return invoke<StationCredentials>("get_station_credentials", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryCredentials.get(stationId) ?? emptyCredentials(stationId);
     }
     throw error;
@@ -383,7 +384,7 @@ export function updateStationCredentials(input: {
   rememberPassword: boolean;
 }) {
   return invoke<StationCredentials>("update_station_credentials", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const existing = memoryCredentials.get(input.stationId) ?? emptyCredentials(input.stationId);
       const hasNewPassword = Boolean(input.loginPassword?.trim());
       const next = {
@@ -403,7 +404,7 @@ export function updateStationCredentials(input: {
 
 export function clearStationCredentials(stationId: string) {
   return invoke<StationCredentials>("clear_station_credentials", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const next = emptyCredentials(stationId);
       memoryCredentials.set(stationId, next);
       return next;
@@ -414,7 +415,7 @@ export function clearStationCredentials(stationId: string) {
 
 export function updateStationSession(input: UpdateStationSessionInput) {
   return invoke<StationCredentials>("update_station_session", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const existing = memoryCredentials.get(input.stationId) ?? emptyCredentials(input.stationId);
       const next = {
         ...existing,
@@ -750,8 +751,4 @@ function memoryPoolItemFromKey(key: StationKey, station: Station | null): KeyPoo
     bindingStatus: null,
     priceState: null,
   };
-}
-
-function isInvokeUnavailable(error: unknown) {
-  return error instanceof Error && /invoke|__TAURI__/i.test(error.message);
 }

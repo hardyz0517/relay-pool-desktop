@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
   CaptureSessionStatus,
   CollectorRunResult,
@@ -20,7 +21,7 @@ export function collectSub2apiStation(stationId: string) {
 
 export function detectStationInfo(stationId: string) {
   return invoke<CollectorRunResult>("detect_station_info", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return createMemoryRun(stationId, "station-info-detect", "checked");
     }
     throw error;
@@ -29,7 +30,7 @@ export function detectStationInfo(stationId: string) {
 
 export function collectStationInfo(stationId: string) {
   return invoke<CollectorRunResult>("collect_station_info", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return createMemoryRun(stationId, "station-info-collect", "checked");
     }
     throw error;
@@ -38,7 +39,7 @@ export function collectStationInfo(stationId: string) {
 
 export function collectStationTask(stationId: string, taskType: CollectorTaskType) {
   return invoke<CollectorRunResult>("collect_station_task", { stationId, taskType }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return createMemoryRun(stationId, `station-${taskType}`, "checked");
     }
     throw error;
@@ -47,7 +48,7 @@ export function collectStationTask(stationId: string, taskType: CollectorTaskTyp
 
 export function testStationLogin(stationId: string) {
   return invoke<CollectorRunResult>("test_station_login", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return createMemoryRun(stationId, "login-state-test", "manual_required");
     }
     throw error;
@@ -56,7 +57,7 @@ export function testStationLogin(stationId: string) {
 
 export function testStationLoginInput(input: StationLoginTestInput) {
   return invoke<StationLoginTestResult>("test_station_login_input", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return {
         status: "manual_required",
         message: "普通浏览器环境无法执行真实连通性测试。",
@@ -70,7 +71,7 @@ export function testStationLoginInput(input: StationLoginTestInput) {
 
 export function listCollectorSnapshots(stationId: string) {
   return invoke<CollectorSnapshot[]>("list_collector_snapshots", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memorySnapshots.get(stationId) ? [memorySnapshots.get(stationId)!] : [];
     }
     throw error;
@@ -79,7 +80,7 @@ export function listCollectorSnapshots(stationId: string) {
 
 export function getLatestCollectorSnapshot(stationId: string) {
   return invoke<CollectorSnapshot | null>("get_latest_collector_snapshot", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memorySnapshots.get(stationId) ?? null;
     }
     throw error;
@@ -88,7 +89,7 @@ export function getLatestCollectorSnapshot(stationId: string) {
 
 export function startCaptureSession(stationId: string) {
   return invoke<CaptureSessionStatus>("start_capture_session", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return {
         stationId,
         status: "capturing",
@@ -109,7 +110,7 @@ export function startManualAuthorization(stationId: string) {
 
 export function getCaptureSessionStatus(stationId: string) {
   return invoke<CaptureSessionStatus>("get_capture_session_status", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return {
         stationId,
         status: "idle",
@@ -126,7 +127,7 @@ export function getCaptureSessionStatus(stationId: string) {
 
 export function finishCaptureSession(stationId: string) {
   return invoke<CollectorRunResult>("finish_capture_session", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return createMemoryRun(stationId, "webview-capture", "manual_required");
     }
     throw error;
@@ -135,7 +136,7 @@ export function finishCaptureSession(stationId: string) {
 
 export function finishWebAuthorizationSession(stationId: string) {
   return invoke<CollectorRunResult>("finish_web_authorization_session", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return createMemoryRun(stationId, "webview-capture", "manual_required");
     }
     throw error;
@@ -144,7 +145,7 @@ export function finishWebAuthorizationSession(stationId: string) {
 
 export function clearCaptureSession(stationId: string) {
   return invoke<CaptureSessionStatus>("clear_capture_session", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return {
         stationId,
         status: "idle",
@@ -161,7 +162,7 @@ export function clearCaptureSession(stationId: string) {
 
 export function closeCaptureSession(stationId: string) {
   return invoke<CaptureSessionStatus>("close_capture_session", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return {
         stationId,
         status: "idle",
@@ -229,8 +230,4 @@ function createMemoryRun(stationId: string, source: string, status: string): Col
       },
     ],
   };
-}
-
-function isInvokeUnavailable(error: unknown) {
-  return error instanceof Error && /invoke|__TAURI__/i.test(error.message);
 }

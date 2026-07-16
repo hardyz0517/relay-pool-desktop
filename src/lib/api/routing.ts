@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
   ModelAlias,
   RouteSimulationInput,
@@ -15,7 +16,7 @@ const memoryHealth = new Map<string, StationKeyHealth>();
 
 export function getStationKeyCapabilities(stationKeyId: string) {
   return invoke<StationKeyCapabilities>("get_station_key_capabilities", { stationKeyId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryCapabilities.get(stationKeyId) ?? defaultCapabilities(stationKeyId);
     }
     throw error;
@@ -24,7 +25,7 @@ export function getStationKeyCapabilities(stationKeyId: string) {
 
 export function updateStationKeyCapabilities(input: UpdateStationKeyCapabilitiesInput) {
   return invoke<StationKeyCapabilities>("update_station_key_capabilities", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const next = { ...input, updatedAt: new Date().toISOString() };
       memoryCapabilities.set(input.stationKeyId, next);
       return next;
@@ -35,7 +36,7 @@ export function updateStationKeyCapabilities(input: UpdateStationKeyCapabilities
 
 export function listModelAliases() {
   return invoke<ModelAlias[]>("list_model_aliases").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryAliases;
     }
     throw error;
@@ -44,7 +45,7 @@ export function listModelAliases() {
 
 export function upsertModelAlias(input: UpsertModelAliasInput) {
   return invoke<ModelAlias>("upsert_model_alias", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const next: ModelAlias = {
         id: input.id ?? `alias-${Date.now()}`,
@@ -64,7 +65,7 @@ export function upsertModelAlias(input: UpsertModelAliasInput) {
 
 export function deleteModelAlias(id: string) {
   return invoke<void>("delete_model_alias", { id }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       memoryAliases = memoryAliases.filter((alias) => alias.id !== id);
       return;
     }
@@ -74,7 +75,7 @@ export function deleteModelAlias(id: string) {
 
 export function listStationKeyHealth() {
   return invoke<StationKeyHealth[]>("list_station_key_health").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return Array.from(memoryHealth.values());
     }
     throw error;
@@ -83,7 +84,7 @@ export function listStationKeyHealth() {
 
 export function getStationKeyHealth(stationKeyId: string) {
   return invoke<StationKeyHealth>("get_station_key_health", { stationKeyId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryHealth.get(stationKeyId) ?? defaultHealth(stationKeyId);
     }
     throw error;
@@ -92,7 +93,7 @@ export function getStationKeyHealth(stationKeyId: string) {
 
 export function simulateRoute(input: RouteSimulationInput) {
   return invoke<RouteSimulationResult>("simulate_route", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return {
         selectedStationKeyId: null,
         selectedStationId: null,
@@ -138,8 +139,4 @@ function defaultHealth(stationKeyId: string): StationKeyHealth {
     cooldownUntil: null,
     updatedAt: new Date().toISOString(),
   };
-}
-
-function isInvokeUnavailable(error: unknown) {
-  return error instanceof Error && /invoke|__TAURI__/i.test(error.message);
 }

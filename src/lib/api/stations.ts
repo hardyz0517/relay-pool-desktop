@@ -1,13 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import { mockStations } from "@/lib/mock";
 import type { EndpointPingResult, Station, StationEndpointHealth, StationInput, StationUpdateInput } from "@/lib/types/stations";
 
 let memoryStations: Station[] | null = null;
 const memoryEndpointHealth = new Map<string, StationEndpointHealth>();
-
-function isInvokeUnavailable(error: unknown) {
-  return error instanceof Error && /invoke/i.test(error.message);
-}
 
 function ensureMemoryStations() {
   if (memoryStations) {
@@ -52,7 +49,7 @@ function updateMemoryStations(mutator: (stations: Station[]) => Station[]) {
 
 export function listStations() {
   return invoke<Station[]>("list_stations").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return ensureMemoryStations();
     }
     throw error;
@@ -61,7 +58,7 @@ export function listStations() {
 
 export function createStation(input: StationInput) {
   return invoke<Station>("create_station", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const nextStation: Station = {
         id: `mock-${Date.now()}`,
@@ -100,7 +97,7 @@ export function createStation(input: StationInput) {
 
 export function updateStation(input: StationUpdateInput) {
   return invoke<Station>("update_station", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const nextStations = updateMemoryStations((stations) =>
         stations.map((station) =>
@@ -144,7 +141,7 @@ export function updateStation(input: StationUpdateInput) {
 
 export function deleteStation(id: string) {
   return invoke<void>("delete_station", { id }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       updateMemoryStations((stations) => stations.filter((station) => station.id !== id));
       return;
     }
@@ -154,7 +151,7 @@ export function deleteStation(id: string) {
 
 export function openStationWebsite(url: string) {
   return invoke<void>("open_external_url", { url }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       window.open(url, "_blank", "noopener,noreferrer");
       return;
     }
@@ -168,7 +165,7 @@ function endpointRevisionKey(value: string) {
 
 export function reorderStations(stationIds: string[]) {
   return invoke<Station[]>("reorder_stations", { stationIds }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const byId = new Map(ensureMemoryStations().map((station) => [station.id, station] as const));
       const nextStations = stationIds
         .map((id, index) => {
@@ -185,7 +182,7 @@ export function reorderStations(stationIds: string[]) {
 
 export function listStationEndpointHealth() {
   return invoke<StationEndpointHealth[]>("list_station_endpoint_health").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return Array.from(memoryEndpointHealth.values());
     }
     throw error;
@@ -194,7 +191,7 @@ export function listStationEndpointHealth() {
 
 export function pingStationEndpoint(stationId: string) {
   return invoke<EndpointPingResult>("ping_station_endpoint", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const result: EndpointPingResult = {
         stationId,

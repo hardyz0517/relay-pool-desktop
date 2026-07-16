@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
   GroupRateRecord,
   StationGroupBinding,
@@ -12,7 +13,7 @@ const memoryRates = new Map<string, GroupRateRecord[]>();
 
 export function listStationGroupBindings(stationId: string) {
   return invoke<StationGroupBinding[]>("list_station_group_bindings", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryBindings.get(stationId) ?? [];
     }
     throw error;
@@ -21,7 +22,7 @@ export function listStationGroupBindings(stationId: string) {
 
 export function listStationGroupOptions(stationId: string) {
   return invoke<StationGroupOption[]>("list_station_group_options", { stationId }).catch(async (error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const bindings = await listStationGroupBindings(stationId);
       return bindings.filter(isCollectedStationGroupBinding).map(stationGroupOptionFromBinding);
     }
@@ -31,7 +32,7 @@ export function listStationGroupOptions(stationId: string) {
 
 export function listGroupRateRecords(stationId: string) {
   return invoke<GroupRateRecord[]>("list_group_rate_records", { stationId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryRates.get(stationId) ?? [];
     }
     throw error;
@@ -40,7 +41,7 @@ export function listGroupRateRecords(stationId: string) {
 
 export function upsertStationGroupBinding(input: UpsertStationGroupBindingInput) {
   return invoke<StationGroupBinding>("upsert_station_group_binding", { input }).catch((error) => {
-    if (!isInvokeUnavailable(error)) {
+    if (!isTauriInvokeUnavailable(error)) {
       throw error;
     }
     const now = new Date().toISOString();
@@ -99,8 +100,4 @@ function stationGroupOptionFromBinding(binding: StationGroupBinding): StationGro
     rateSource: binding.rateSource,
     selectableForRemoteKey: Boolean(binding.groupIdHash),
   };
-}
-
-function isInvokeUnavailable(error: unknown) {
-  return error instanceof Error && /invoke|__TAURI__/i.test(error.message);
 }

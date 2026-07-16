@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 
 export const PROXY_STATUS_UPDATED_EVENT = "relay-pool:proxy-status-updated";
@@ -17,7 +18,7 @@ let memoryRequestLogs: RequestLog[] = [];
 
 export function getProxyStatus() {
   return invoke<ProxyStatus>("get_proxy_status").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryProxyStatus;
     }
     throw error;
@@ -27,7 +28,7 @@ export function getProxyStatus() {
 export function startLocalProxy() {
   return invoke<ProxyStatus>("start_local_proxy")
     .catch((error) => {
-      if (isInvokeUnavailable(error)) {
+      if (isTauriInvokeUnavailable(error)) {
         memoryProxyStatus = {
           ...memoryProxyStatus,
           running: true,
@@ -45,7 +46,7 @@ export function startLocalProxy() {
 export function stopLocalProxy() {
   return invoke<ProxyStatus>("stop_local_proxy")
     .catch((error) => {
-      if (isInvokeUnavailable(error)) {
+      if (isTauriInvokeUnavailable(error)) {
         memoryProxyStatus = {
           ...memoryProxyStatus,
           running: false,
@@ -62,7 +63,7 @@ export function stopLocalProxy() {
 export function prepareLocalProxyForUpdate() {
   return invoke<ProxyStatus>("prepare_local_proxy_for_update")
     .catch((error) => {
-      if (isInvokeUnavailable(error)) {
+      if (isTauriInvokeUnavailable(error)) {
         memoryProxyStatus = {
           ...memoryProxyStatus,
           running: false,
@@ -79,7 +80,7 @@ export function prepareLocalProxyForUpdate() {
 export function restartLocalProxy() {
   return invoke<ProxyStatus>("restart_local_proxy")
     .catch((error) => {
-      if (isInvokeUnavailable(error)) {
+      if (isTauriInvokeUnavailable(error)) {
         memoryProxyStatus = {
           ...memoryProxyStatus,
           running: true,
@@ -96,7 +97,7 @@ export function restartLocalProxy() {
 
 export function listRequestLogs() {
   return invoke<RequestLog[]>("list_request_logs").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryRequestLogs;
     }
     throw error;
@@ -105,16 +106,12 @@ export function listRequestLogs() {
 
 export function clearRequestLogs() {
   return invoke<void>("clear_request_logs").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       memoryRequestLogs = [];
       return;
     }
     throw error;
   });
-}
-
-function isInvokeUnavailable(error: unknown) {
-  return error instanceof Error && /invoke|__TAURI__/i.test(error.message);
 }
 
 function publishProxyStatus(status: ProxyStatus) {

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
   ChannelMonitor,
   ChannelMonitorRequestTemplate,
@@ -23,7 +24,7 @@ export type ChannelMonitorSummaryOptions = {
 
 export function listChannelMonitors() {
   return invoke<ChannelMonitor[]>("list_channel_monitors").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryMonitors.map(copyMonitor);
     }
     throw error;
@@ -35,7 +36,7 @@ export function listChannelMonitorSummaries(options: ChannelMonitorSummaryOption
     runLimit: options.runLimit ?? null,
     runSince: options.runSince ?? null,
   }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const runSince = options.runSince ? toTime(options.runSince) : null;
       return memoryMonitors.map((monitor) => {
         const recentRuns = (memoryRuns.get(monitor.id) ?? [])
@@ -57,7 +58,7 @@ export function listChannelMonitorSummaries(options: ChannelMonitorSummaryOption
 
 export function listChannelStatusSummaries() {
   return invoke<ChannelStatusSummary[]>("list_channel_status_summaries").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return memoryMonitors.map((monitor) => ({
         monitor: copyMonitor(monitor),
         recent: buildMemoryStatusWindow(monitor.id, "recent"),
@@ -71,7 +72,7 @@ export function listChannelStatusSummaries() {
 
 export function createChannelMonitor(input: CreateChannelMonitorInput) {
   return invoke<ChannelMonitor>("create_channel_monitor", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const monitor: ChannelMonitor = {
         id: createMemoryId("channel-monitor"),
@@ -88,7 +89,7 @@ export function createChannelMonitor(input: CreateChannelMonitorInput) {
 
 export function updateChannelMonitor(input: UpdateChannelMonitorInput) {
   return invoke<ChannelMonitor>("update_channel_monitor", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const existing = memoryMonitors.find((monitor) => monitor.id === input.id);
       if (!existing) {
@@ -108,7 +109,7 @@ export function updateChannelMonitor(input: UpdateChannelMonitorInput) {
 
 export function deleteChannelMonitor(id: string) {
   return invoke<void>("delete_channel_monitor", { id }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       memoryMonitors = memoryMonitors.filter((monitor) => monitor.id !== id);
       memoryRuns.delete(id);
       return;
@@ -119,7 +120,7 @@ export function deleteChannelMonitor(id: string) {
 
 export function runChannelMonitorNow(monitorId: string) {
   return invoke<ChannelMonitorRun[]>("run_channel_monitor_now", { monitorId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const monitor = memoryMonitors.find((item) => item.id === monitorId);
       if (!monitor) {
         throw new Error(`Channel monitor ${monitorId} does not exist in browser preview memory.`);
@@ -151,7 +152,7 @@ export function runChannelMonitorNow(monitorId: string) {
 
 export function listChannelMonitorRuns(monitorId: string) {
   return invoke<ChannelMonitorRun[]>("list_channel_monitor_runs", { monitorId }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return (memoryRuns.get(monitorId) ?? []).map(copyRun);
     }
     throw error;
@@ -160,7 +161,7 @@ export function listChannelMonitorRuns(monitorId: string) {
 
 export function listChannelMonitorTemplates() {
   return invoke<ChannelMonitorRequestTemplate[]>("list_channel_monitor_templates").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return ensureMemoryTemplates().map(copyTemplate);
     }
     throw error;
@@ -169,7 +170,7 @@ export function listChannelMonitorTemplates() {
 
 export function createChannelMonitorTemplate(input: CreateChannelMonitorTemplateInput) {
   return invoke<ChannelMonitorRequestTemplate>("create_channel_monitor_template", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const template: ChannelMonitorRequestTemplate = {
         id: createMemoryId("channel-monitor-template"),
@@ -187,7 +188,7 @@ export function createChannelMonitorTemplate(input: CreateChannelMonitorTemplate
 
 export function updateChannelMonitorTemplate(input: UpdateChannelMonitorTemplateInput) {
   return invoke<ChannelMonitorRequestTemplate>("update_channel_monitor_template", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const existing = ensureMemoryTemplates().find((template) => template.id === input.id);
       if (!existing) {
@@ -210,7 +211,7 @@ export function updateChannelMonitorTemplate(input: UpdateChannelMonitorTemplate
 
 export function duplicateChannelMonitorTemplate(id: string) {
   return invoke<ChannelMonitorRequestTemplate>("duplicate_channel_monitor_template", { id }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const source = ensureMemoryTemplates().find((template) => template.id === id);
       if (!source) {
         throw new Error(`Channel monitor template ${id} does not exist in browser preview memory.`);
@@ -233,7 +234,7 @@ export function duplicateChannelMonitorTemplate(id: string) {
 
 export function deleteChannelMonitorTemplate(id: string) {
   return invoke<void>("delete_channel_monitor_template", { id }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       memoryTemplates = ensureMemoryTemplates().filter((template) => template.id !== id || template.builtIn);
       return;
     }
@@ -364,8 +365,4 @@ function averageNullable(values: Array<number | null | undefined>) {
 function toTime(value: string) {
   const time = Date.parse(value);
   return Number.isNaN(time) ? 0 : time;
-}
-
-function isInvokeUnavailable(error: unknown) {
-  return error instanceof Error && /invoke|__TAURI__/i.test(error.message);
 }

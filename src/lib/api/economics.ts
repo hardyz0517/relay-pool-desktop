@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauriCommandNotFound, isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import { mockPricingRows } from "@/lib/mock/pricing";
 import { latestStationBalanceSnapshots } from "@/lib/projections/balanceFacts";
 import type {
@@ -15,7 +16,7 @@ let memoryModelBasePrices: ModelBasePrice[] | null = null;
 
 export function listPricingRules() {
   return invoke<PricingRule[]>("list_pricing_rules").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return ensureMemoryPricingRules();
     }
     throw error;
@@ -24,7 +25,7 @@ export function listPricingRules() {
 
 export function upsertPricingRule(input: unknown) {
   return invoke<PricingRule>("upsert_pricing_rule", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const nextRule = coercePricingRule(input);
       memoryPricingRules = [
         nextRule,
@@ -38,7 +39,7 @@ export function upsertPricingRule(input: unknown) {
 
 export function deletePricingRule(id: string) {
   return invoke<void>("delete_pricing_rule", { id }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       memoryPricingRules = ensureMemoryPricingRules().filter((rule) => rule.id !== id);
       return;
     }
@@ -60,7 +61,7 @@ export function resolveStationKeyPricingContext(
 
 export function listModelBasePrices() {
   return invoke<ModelBasePrice[]>("list_model_base_prices").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return ensureMemoryModelBasePrices();
     }
     throw error;
@@ -69,7 +70,7 @@ export function listModelBasePrices() {
 
 export function upsertModelBasePrice(input: unknown) {
   return invoke<ModelBasePrice>("upsert_model_base_price", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const nextPrice = coerceModelBasePrice(input);
       memoryModelBasePrices = [
         nextPrice,
@@ -83,7 +84,7 @@ export function upsertModelBasePrice(input: unknown) {
 
 export function resetModelBasePricesToBuiltins() {
   return invoke<ModelBasePrice[]>("reset_model_base_prices_to_builtins").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       memoryModelBasePrices = builtinModelBasePrices();
       return memoryModelBasePrices;
     }
@@ -93,7 +94,7 @@ export function resetModelBasePricesToBuiltins() {
 
 export function listBalanceSnapshots() {
   return invoke<BalanceSnapshot[]>("list_balance_snapshots").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return ensureMemoryBalanceSnapshots();
     }
     throw error;
@@ -102,10 +103,10 @@ export function listBalanceSnapshots() {
 
 export function listCurrentStationBalanceSnapshots() {
   return invoke<BalanceSnapshot[]>("list_current_station_balance_snapshots").catch((error) => {
-    if (isCommandNotFound(error)) {
+    if (isTauriCommandNotFound(error)) {
       return listBalanceSnapshots().then(latestStationBalanceSnapshots);
     }
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return latestStationBalanceSnapshots(ensureMemoryBalanceSnapshots());
     }
     throw error;
@@ -114,12 +115,12 @@ export function listCurrentStationBalanceSnapshots() {
 
 export function listBalanceSnapshotsForStation(stationId: string) {
   return invoke<BalanceSnapshot[]>("list_balance_snapshots_for_station", { stationId }).catch((error) => {
-    if (isCommandNotFound(error)) {
+    if (isTauriCommandNotFound(error)) {
       return listBalanceSnapshots().then((snapshots) =>
         snapshots.filter((snapshot) => snapshot.stationId === stationId),
       );
     }
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return ensureMemoryBalanceSnapshots().filter((snapshot) => snapshot.stationId === stationId);
     }
     throw error;
@@ -128,7 +129,7 @@ export function listBalanceSnapshotsForStation(stationId: string) {
 
 export function upsertBalanceSnapshot(input: unknown) {
   return invoke<BalanceSnapshot>("upsert_balance_snapshot", { input }).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const nextSnapshot = coerceBalanceSnapshot(input);
       memoryBalanceSnapshots = [
         nextSnapshot,
@@ -583,16 +584,4 @@ function stationIdFromName(name: string) {
     return "st-archive";
   }
   return "st-orchid";
-}
-
-function isInvokeUnavailable(error: unknown) {
-  return /invoke|__TAURI__/i.test(getErrorMessage(error));
-}
-
-function isCommandNotFound(error: unknown) {
-  return /command .* not found/i.test(getErrorMessage(error));
-}
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import { getSettings } from "@/lib/api/settings";
 import type { LocalRoutingWorkspace, ReorderLocalRoutingKeysInput } from "@/lib/types/localRouting";
 import type { AppSettings } from "@/lib/types/settings";
 
 export function loadLocalRoutingWorkspaceApi() {
   return invoke<LocalRoutingWorkspace>("load_local_routing_workspace").catch(async (error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return previewWorkspace(await getSettings());
     }
     throw error;
@@ -14,7 +15,7 @@ export function loadLocalRoutingWorkspaceApi() {
 
 export function reorderLocalRoutingKeys(input: ReorderLocalRoutingKeysInput) {
   return invoke<LocalRoutingWorkspace>("reorder_local_routing_keys", { input }).catch(async (error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return previewWorkspace(await getSettings());
     }
     throw error;
@@ -55,8 +56,4 @@ function previewWorkspace(settings: AppSettings): LocalRoutingWorkspace {
     latestDecision: null,
     recentEvents: [],
   };
-}
-
-function isInvokeUnavailable(error: unknown) {
-  return error instanceof Error && /invoke|__TAURI__/i.test(error.message);
 }

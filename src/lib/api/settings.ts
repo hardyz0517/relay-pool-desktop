@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import {
   DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   SCHEDULER_ADVANCED_FIELD_KINDS,
@@ -36,7 +37,7 @@ let memorySettings: AppSettings = {
 
 export function getSettings() {
   return invoke<AppSettings>("get_settings").then(normalizeSettings).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       return normalizeSettings(memorySettings);
     }
     throw error;
@@ -45,7 +46,7 @@ export function getSettings() {
 
 export function getLocalAccessKey() {
   return invoke<string>("get_local_access_key").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       throw new Error("只有桌面端可以复制真实本地访问密钥");
     }
     throw error;
@@ -54,7 +55,7 @@ export function getLocalAccessKey() {
 
 export function updateLocalAccessKey(value: string) {
   return invoke<AppSettings>("update_local_access_key", { value }).then(normalizeSettings).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       const localKeyMasked = maskSecret(value);
       memorySettings = { ...memorySettings, localKeyMasked };
       return normalizeSettings(memorySettings);
@@ -65,7 +66,7 @@ export function updateLocalAccessKey(value: string) {
 
 export function importRelayPoolToCCSwitch() {
   return invoke<CcswitchImportResult>("import_relay_pool_to_ccswitch").catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       throw new Error("只有桌面端可以导入 CCSwitch");
     }
     throw error;
@@ -74,7 +75,7 @@ export function importRelayPoolToCCSwitch() {
 
 export function updateSettings(input: UpdateSettingsInput) {
   return invoke<AppSettings>("update_settings", { input }).then(normalizeSettings).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       memorySettings = { ...memorySettings, ...input };
       return normalizeSettings(memorySettings);
     }
@@ -84,7 +85,7 @@ export function updateSettings(input: UpdateSettingsInput) {
 
 export function chooseDataDir() {
   return invoke<AppSettings>("choose_data_dir").then(normalizeSettings).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       throw new Error("只有桌面端可以选择数据保存位置");
     }
     throw error;
@@ -93,7 +94,7 @@ export function chooseDataDir() {
 
 export function resetDataDir() {
   return invoke<AppSettings>("reset_data_dir").then(normalizeSettings).catch((error) => {
-    if (isInvokeUnavailable(error)) {
+    if (isTauriInvokeUnavailable(error)) {
       throw new Error("只有桌面端可以恢复默认数据保存位置");
     }
     throw error;
@@ -225,10 +226,6 @@ function normalizeRoutingStrategy(value: AppSettings["defaultRoutingStrategy"] |
     return "cost_stable_first";
   }
   return "automatic_balanced";
-}
-
-function isInvokeUnavailable(error: unknown) {
-  return error instanceof Error && /invoke|__TAURI__/i.test(error.message);
 }
 
 function normalizeBoolean(value: unknown) {
