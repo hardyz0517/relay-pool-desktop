@@ -1,4 +1,4 @@
-﻿use std::{
+use std::{
     collections::{HashMap, HashSet},
     io::{Read, Write},
     net::{Shutdown, TcpListener, TcpStream},
@@ -28,10 +28,11 @@ use crate::{
                 extract_responses_metadata, render_responses_response, should_try_chat_fallback,
                 upstream_responses_path,
             },
+            enabled_candidates, extract_chat_request_metadata,
             http_request::{
                 forwarded_headers, parse_http_request, ParsedRequest as ParsedHttpRequest,
             },
-            enabled_candidates, extract_chat_request_metadata, local_auth,
+            local_auth,
             observability::{ObservedUsage, RequestObservation, SseUsageObserver},
             openai_error, redact_error_message,
             responses_chat_fallback::{normalize_for_chat, responses_fallback_error_message},

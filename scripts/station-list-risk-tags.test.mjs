@@ -24,7 +24,18 @@ async function importStationAssetViewModels() {
   await writeFile(outputPath, output, "utf8");
   await writeFile(
     balancePath,
-    "export function buildCurrentStationBalanceFacts() { return new Map(); }",
+    [
+      "export function buildCurrentStationBalanceFacts({ stations }) {",
+      "  return new Map(stations.map((station) => [station.id, {",
+      "    value: 20,",
+      "    lowBalanceThreshold: 10,",
+      "    status: 'normal',",
+      "    source: 'station_cache',",
+      "    currency: 'CNY',",
+      "    sourceSnapshot: null,",
+      "  }]));",
+      "}",
+    ].join("\n"),
     "utf8",
   );
   await writeFile(
@@ -39,7 +50,12 @@ async function importStationAssetViewModels() {
   return import(`file://${outputPath.replaceAll("\\", "/")}`);
 }
 
-const { stationIssueTags, filterStationAssetRowsByIssue, STATION_ISSUE_FILTER_OPTIONS } = await importStationAssetViewModels();
+const {
+  buildStationAssetRows,
+  stationIssueTags,
+  filterStationAssetRowsByIssue,
+  STATION_ISSUE_FILTER_OPTIONS,
+} = await importStationAssetViewModels();
 
 assert.deepEqual(
   tagLabels(row({ riskEvents: [change({ severity: "critical" }), change({ severity: "warning" })] })),
@@ -152,6 +168,124 @@ assert.deepEqual(
   );
 }
 
+assert.equal(
+  groupIssueTagFor({
+    bindings: [
+      groupBinding({ id: "missing-plus", groupName: "Plus", bindingStatus: "missing" }),
+      groupBinding({ id: "available-plus", groupName: " plus ", bindingStatus: "available" }),
+    ],
+    keys: [stationKey({ groupBindingId: "missing-plus", groupName: "Plus" })],
+  }),
+  undefined,
+  "a current same-name group should suppress a historical missing identity",
+);
+
+assert.equal(
+  groupIssueTagFor({
+    bindings: [groupBinding({ groupName: "Legacy", bindingStatus: "missing" })],
+    keys: [],
+  }),
+  undefined,
+  "an unreferenced historical group should not be a current station anomaly",
+);
+
+assert.equal(
+  groupIssueTagFor({
+    bindings: [groupBinding({ id: "missing-disabled-key", groupName: "Disabled key group", bindingStatus: "missing" })],
+    keys: [stationKey({ enabled: false, groupBindingId: "missing-disabled-key" })],
+  }),
+  undefined,
+  "references from disabled keys should not keep a group anomaly active",
+);
+
+assert.equal(
+  groupIssueTagFor({
+    bindings: [groupBinding({ id: "missing-pro", groupName: "Pro", bindingStatus: "missing" })],
+    keys: [stationKey({ name: "生产 Key", groupBindingId: "missing-pro", groupName: "Pro" })],
+  })?.title,
+  "分组「Pro」已下架，但仍被启用 Key「生产 Key」使用。",
+  "an enabled key should expose a concrete missing-group reason through binding id",
+);
+
+assert.equal(
+  groupIssueTagFor({
+    bindings: [
+      groupBinding({
+        id: "disabled-hash",
+        groupName: "Hash group",
+        groupIdHash: "hash-group",
+        bindingStatus: "disabled",
+      }),
+    ],
+    keys: [stationKey({ name: "Hash Key", groupBindingId: null, groupIdHash: "hash-group", groupName: null })],
+  })?.title,
+  "分组「Hash group」已禁用，但仍被启用 Key「Hash Key」使用。",
+  "an enabled key should match a disabled group by non-empty group id hash",
+);
+
+assert.equal(
+  groupIssueTagFor({
+    bindings: [groupBinding({ id: "missing-name", groupName: " Name Group ", bindingStatus: "missing" })],
+    keys: [
+      stationKey({ name: "名称 Key A", groupBindingId: null, groupIdHash: null, groupName: "name group" }),
+      stationKey({ name: "名称 Key B", groupBindingId: null, groupIdHash: null, groupName: " NAME GROUP " }),
+    ],
+  })?.title,
+  "分组「Name Group」已下架，但仍被 2 个启用 Key 使用：名称 Key A、名称 Key B。",
+  "normalized group names should match and list multiple affected enabled keys",
+);
+
+assert.equal(
+  groupIssueTagFor({
+    bindings: [groupBinding({ id: "missing-name-fallback", groupName: "Shared Name", bindingStatus: "missing" })],
+    keys: [
+      stationKey({
+        name: "明确绑定 Key",
+        groupBindingId: "another-current-binding",
+        groupIdHash: null,
+        groupName: "Shared Name",
+      }),
+    ],
+  }),
+  undefined,
+  "an explicit binding id should take precedence over a coincidental normalized-name match",
+);
+
+assert.equal(
+  groupIssueTagFor({
+    bindings: [
+      groupBinding({
+        id: "missing-hash-fallback",
+        groupName: "Hash First",
+        groupIdHash: "missing-hash",
+        bindingStatus: "missing",
+      }),
+    ],
+    keys: [
+      stationKey({
+        name: "明确哈希 Key",
+        groupBindingId: null,
+        groupIdHash: "another-hash",
+        groupName: "Hash First",
+      }),
+    ],
+  }),
+  undefined,
+  "an explicit group id hash should take precedence over a coincidental normalized-name match",
+);
+
+{
+  const duplicateTag = groupIssueTagFor({
+    bindings: [
+      groupBinding({ id: "missing-name-v1", groupName: "Legacy Pro", bindingStatus: "missing" }),
+      groupBinding({ id: "missing-name-v2", groupName: " legacy pro ", bindingStatus: "missing" }),
+    ],
+    keys: [stationKey({ name: "生产 Key", groupBindingId: null, groupIdHash: null, groupName: "Legacy Pro" })],
+  });
+  assert.equal(duplicateTag?.title, "分组「Legacy Pro」已下架，但仍被启用 Key「生产 Key」使用。");
+  assert.equal(duplicateTag?.title?.split("\n").length, 1, "duplicate historical identities should produce one reason");
+}
+
 const pageSource = await readFile("src/features/stations/StationsPage.tsx", "utf8");
 const viewModelSource = await readFile("src/features/stations/stationAssetViewModels.ts", "utf8");
 
@@ -189,6 +323,17 @@ assert.ok(
 );
 
 assert.ok(
+  pageSource.includes("function StationIssueTagBadge") &&
+    pageSource.includes("tabIndex={tag.title ? 0 : undefined}") &&
+    pageSource.includes("aria-describedby={tag.title ? tooltipId : undefined}") &&
+    pageSource.includes('role="tooltip"') &&
+    pageSource.includes("group-hover/tag:visible") &&
+    pageSource.includes("group-focus/tag:visible") &&
+    pageSource.includes("title={tag.title ?? tag.label}"),
+  "detailed station issue tags should expose the same reason on hover, keyboard focus, ARIA, and native-title fallback",
+);
+
+assert.ok(
   !viewModelSource.includes('label: "变更风险"') &&
     !viewModelSource.includes('label: "变更提醒"') &&
     !viewModelSource.includes('label: "采集需关注"') &&
@@ -198,6 +343,19 @@ assert.ok(
 
 function tagLabels(input) {
   return stationIssueTags(input).map((tag) => tag.label);
+}
+
+function groupIssueTagFor({ bindings, keys }) {
+  const projected = buildStationAssetRows({
+    stations: [station()],
+    keysByStation: new Map([["station-a", keys]]),
+    balances: [],
+    snapshotsByStation: new Map([["station-a", null]]),
+    groupBindingsByStation: new Map([["station-a", bindings]]),
+    groupRatesByStation: new Map([["station-a", []]]),
+    changes: [],
+  })[0];
+  return stationIssueTags(projected).find((tag) => tag.kind === "group_issue");
 }
 
 function row(overrides = {}) {
@@ -249,6 +407,66 @@ function station(overrides = {}) {
     note: null,
     createdAt: "2026-07-09T00:00:00.000Z",
     updatedAt: "2026-07-09T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function groupBinding(overrides = {}) {
+  return {
+    id: "group-a",
+    stationId: "station-a",
+    stationKeyId: null,
+    bindingKind: "station_group",
+    parentGroupBindingId: null,
+    groupKeyHash: "group-key-a",
+    groupIdHash: null,
+    groupName: "Group A",
+    bindingStatus: "available",
+    defaultRateMultiplier: 1,
+    userRateMultiplier: 1,
+    effectiveRateMultiplier: 1,
+    inferredGroupCategory: "unknown",
+    groupCategoryOverride: null,
+    rateSource: "sub2api_groups_rates",
+    confidence: 0.9,
+    lastSeenAt: null,
+    lastCheckedAt: "2026-07-16T00:00:00.000Z",
+    lastRateChangedAt: null,
+    rawJsonRedacted: null,
+    createdAt: "2026-07-16T00:00:00.000Z",
+    updatedAt: "2026-07-16T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function stationKey(overrides = {}) {
+  return {
+    id: "key-a",
+    stationId: "station-a",
+    name: "Key A",
+    apiKeyMasked: "sk-...",
+    apiKeyPresent: true,
+    enabled: true,
+    priority: 0,
+    maxConcurrency: 1,
+    loadFactor: null,
+    schedulable: true,
+    groupBindingId: null,
+    groupIdHash: null,
+    groupName: null,
+    tierLabel: null,
+    rateMultiplier: null,
+    manualRateMultiplier: null,
+    manualRateUpdatedAt: null,
+    rateSource: null,
+    rateCollectedAt: null,
+    balanceScope: null,
+    status: "healthy",
+    lastCheckedAt: null,
+    lastUsedAt: null,
+    note: null,
+    createdAt: "2026-07-16T00:00:00.000Z",
+    updatedAt: "2026-07-16T00:00:00.000Z",
     ...overrides,
   };
 }

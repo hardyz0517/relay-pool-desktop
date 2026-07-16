@@ -1,5 +1,6 @@
 import type { ChangeEvent, ChangeEventStatus, ChangeSeverity } from "@/lib/types/changeEvents";
 import type { StatusTone } from "@/components/ui";
+import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import { parseTimestampLikeDate } from "@/lib/time";
 
 export type ChangeFilter = {
@@ -89,6 +90,7 @@ export type ChangeEventListItem = {
 
 export type ChangeEventListOptions = {
   stationNamesById?: Map<string, string> | Record<string, string>;
+  stationCreditPerCnyById?: Map<string, number> | Record<string, number>;
   deferStationIdentifierFallback?: boolean;
 };
 
@@ -229,8 +231,8 @@ export function buildChangeEventListItem(
 
   if (event.eventType === "rate_changed") {
     const groupName = readString(newValue, "groupName") ?? readString(oldValue, "groupName") ?? extractGroupName(event.message);
-    const before = readMultiplier(oldValue);
-    const after = readMultiplier(newValue);
+    const before = effectiveChangeMultiplier(event, readMultiplier(oldValue), options);
+    const after = effectiveChangeMultiplier(event, readMultiplier(newValue), options);
     return {
       ...baseItem,
       title:
@@ -252,7 +254,7 @@ export function buildChangeEventListItem(
 
   if (event.eventType === "group_added") {
     const groupName = readString(newValue, "groupName") ?? extractGroupName(event.message);
-    const multiplier = readMultiplier(newValue);
+    const multiplier = effectiveChangeMultiplier(event, readMultiplier(newValue), options);
     return {
       ...baseItem,
       title: `${stationSubject} 新增分组 ${groupName ?? "未知分组"}，倍率${formatMultiplierLabel(multiplier)}`,
@@ -263,7 +265,11 @@ export function buildChangeEventListItem(
 
   if (event.eventType === "group_missing") {
     const groupName = readString(newValue, "groupName") ?? readString(oldValue, "groupName") ?? extractGroupName(event.message);
-    const multiplier = readMultiplier(newValue) ?? readMultiplier(oldValue);
+    const multiplier = effectiveChangeMultiplier(
+      event,
+      readMultiplier(newValue) ?? readMultiplier(oldValue),
+      options,
+    );
     return {
       ...baseItem,
       title: `${stationSubject} 的分组 ${groupName ?? "未知分组"} 不可见，倍率${formatMultiplierLabel(multiplier)}`,
@@ -545,6 +551,20 @@ function resolveStationLabel(
       ? null
       : shortenIdentifier(event.stationId ?? (event.objectType === "station" ? event.objectId : null)) ?? "未知")
   );
+}
+
+function effectiveChangeMultiplier(
+  event: ChangeEvent,
+  rawMultiplier: number | null,
+  options: ChangeEventListOptions,
+) {
+  const stationId = event.stationId;
+  if (!stationId) {
+    return effectiveRateMultiplierForCredit(rawMultiplier, null);
+  }
+  const ratios = options.stationCreditPerCnyById;
+  const creditPerCny = ratios instanceof Map ? ratios.get(stationId) : ratios?.[stationId];
+  return effectiveRateMultiplierForCredit(rawMultiplier, creditPerCny);
 }
 
 function readStationNameById(

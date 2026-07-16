@@ -50,7 +50,7 @@ pub(crate) fn test_login_credentials(
 }
 
 fn parse_newapi_balance(station_id: &str, payload: &Value) -> CollectedBalanceFact {
-    parsers::parse_balance_fact(station_id, payload, 500000.0, true)
+    parsers::parse_balance_fact(station_id, payload, Some(500000.0))
 }
 
 fn parse_newapi_group_facts(station_id: &str, payload: &Value) -> CollectorFacts {
@@ -154,6 +154,7 @@ fn fetch_newapi_token_items(
 ) -> Result<Vec<Value>, String> {
     let mut page = 1_usize;
     let mut items = Vec::new();
+    let mut expected_total = None;
     loop {
         let response = client::get_authenticated_json(
             database,
@@ -163,22 +164,36 @@ fn fetch_newapi_token_items(
             client::NewApiOperation::ListTokens,
         )
         .map_err(newapi_request_error_message)?;
+        let response_page = numeric_usize_field(&response.data, &["page"])
+            .filter(|value| *value == page)
+            .ok_or_else(|| "NewAPI token pagination is missing a valid page number".to_string())?;
+        let page_size = page_size_from_payload(&response.data)
+            .ok_or_else(|| "NewAPI token pagination is missing page_size".to_string())?;
+        let total = total_from_payload(&response.data)
+            .ok_or_else(|| "NewAPI token pagination is missing total".to_string())?;
+        if expected_total.is_some_and(|expected| expected != total) {
+            return Err("NewAPI token pagination total changed between pages".to_string());
+        }
+        expected_total = Some(total);
         let page_items = remote_key_items(&response.data)
             .into_iter()
             .cloned()
             .collect::<Vec<_>>();
-        let page_size =
-            page_size_from_payload(&response.data).unwrap_or(NEWAPI_REMOTE_KEY_PAGE_SIZE);
-        let total = total_from_payload(&response.data);
         let page_item_count = page_items.len();
+        if page_item_count > page_size {
+            return Err("NewAPI token pagination returned more items than page_size".to_string());
+        }
         items.extend(page_items);
-        if total.is_some_and(|total| items.len() >= total) {
+        if items.len() > total {
+            return Err("NewAPI token pagination returned more items than total".to_string());
+        }
+        if items.len() == total {
             break;
         }
         if page_item_count == 0 || page_item_count < page_size {
-            break;
+            return Err("NewAPI token pagination ended before reaching total".to_string());
         }
-        page += 1;
+        page = response_page.saturating_add(1);
         if page > 1000 {
             return Err("NewAPI 远端 Key 分页超过安全上限，已停止扫描。".to_string());
         }
@@ -196,7 +211,7 @@ fn parse_remote_key_items(station_id: &str, items: &[Value]) -> Vec<RemoteStatio
 
 fn created_token_matches(value: &Value, expected_name: &str) -> bool {
     let expected_name = expected_name.trim();
-    string_field(value, &["name", "key_name", "keyName", "label", "remark"])
+    string_field(value, "name")
         .as_deref()
         .map(str::trim)
         .is_some_and(|name| !expected_name.is_empty() && name == expected_name)
@@ -211,7 +226,9 @@ fn reveal_full_key_for_token_value(
 ) -> Result<(RemoteStationKey, String), String> {
     let mut remote_key = remote_key_from_value(&station.id, value, index)
         .ok_or_else(|| "NewAPI 远端 Key 响应缺少可识别身份。".to_string())?;
-    let token_id = string_field(value, &["id", "token_id", "tokenId"])
+    let token_id = numeric_i64_field(value, &["id"])
+        .filter(|value| *value > 0)
+        .map(|value| value.to_string())
         .ok_or_else(|| "NewAPI 远端 Key 缺少 token id，无法读取完整 Key。".to_string())?;
     let response = client::post_authenticated_json(
         database,
@@ -232,30 +249,11 @@ fn reveal_full_key_for_token_value(
 }
 
 fn remote_key_items(payload: &Value) -> Vec<&Value> {
-    if let Some(items) = payload.as_array() {
-        return items.iter().collect();
-    }
-    for pointer in [
-        "/items",
-        "/list",
-        "/tokens",
-        "/keys",
-        "/data/items",
-        "/data/list",
-        "/data/tokens",
-        "/data/keys",
-    ] {
-        if let Some(value) = payload.pointer(pointer) {
-            if let Some(items) = value.as_array() {
-                return items.iter().collect();
-            }
-        }
-    }
-    if payload.is_object() {
-        vec![payload]
-    } else {
-        Vec::new()
-    }
+    payload
+        .get("items")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().collect())
+        .unwrap_or_default()
 }
 
 fn remote_key_from_value(
@@ -263,36 +261,30 @@ fn remote_key_from_value(
     value: &Value,
     index: usize,
 ) -> Option<RemoteStationKey> {
-    let remote_key_id = string_field(value, &["id", "token_id", "tokenId"]);
-    let name = string_field(value, &["name", "key_name", "keyName", "label", "remark"]);
-    let key_value = string_field(value, &["key", "api_key", "apiKey", "token"]);
+    let remote_key_id = numeric_i64_field(value, &["id"])
+        .filter(|value| *value > 0)
+        .map(|value| value.to_string());
+    let name = string_field(value, "name");
+    let key_value = string_field(value, "key");
     let full_key = key_value
         .as_deref()
         .filter(|value| looks_like_full_api_key(value))
         .map(ToString::to_string);
-    let masked = string_field(
-        value,
-        &[
-            "api_key_masked",
-            "apiKeyMasked",
-            "masked_key",
-            "maskedKey",
-            "key_masked",
-        ],
-    )
-    .or_else(|| {
-        full_key
-            .as_deref()
-            .map(crate::services::secrets::mask::mask_secret)
-    })
-    .or_else(|| key_value.filter(|value| !looks_like_full_api_key(value)));
+    let masked = full_key
+        .as_deref()
+        .map(crate::services::secrets::mask::mask_secret)
+        .or_else(|| {
+            key_value
+                .clone()
+                .filter(|value| !looks_like_full_api_key(value))
+        });
     let (identity_kind, identity, include_index) = remote_key_identity(
         remote_key_id.as_deref(),
         full_key.as_deref(),
         masked.as_deref(),
         name.as_deref(),
     )?;
-    let group_name = string_field(value, &["group", "group_name", "groupName", "group_label"]);
+    let group_name = string_field(value, "group");
     let group_id_hash = group_name
         .as_deref()
         .map(|group| stable_group_key_hash(station_id, "newapi", Some(group), group));
@@ -321,14 +313,8 @@ fn remote_key_from_value(
         tier_label: None,
         rate_multiplier: None,
         rate_source: Some("newapi_tokens".to_string()),
-        created_at: string_field(
-            value,
-            &["created_at", "createdAt", "created", "created_time"],
-        ),
-        last_used_at: string_field(
-            value,
-            &["last_used_at", "lastUsedAt", "last_used", "accessed_time"],
-        ),
+        created_at: numeric_i64_field(value, &["created_time"]).map(|value| value.to_string()),
+        last_used_at: numeric_i64_field(value, &["accessed_time"]).map(|value| value.to_string()),
         raw_source: "newapi_tokens".to_string(),
         match_status: RemoteKeyMatchStatus::Unbound,
         matched_station_key_id: None,
@@ -351,22 +337,12 @@ fn remote_key_identity<'a>(
 }
 
 fn full_key_from_reveal_payload(payload: &Value) -> Option<String> {
-    string_field(payload, &["key", "api_key", "apiKey", "token"])
-        .filter(|value| looks_like_full_api_key(value))
-        .or_else(|| {
-            payload
-                .pointer("/data/key")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| looks_like_full_api_key(value))
-                .map(ToString::to_string)
-        })
+    string_field(payload, "key").filter(|value| looks_like_full_api_key(value))
 }
 
 fn page_size_from_payload(payload: &Value) -> Option<usize> {
     payload
         .get("page_size")
-        .or_else(|| payload.get("pageSize"))
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
         .filter(|value| *value > 0)
@@ -375,24 +351,15 @@ fn page_size_from_payload(payload: &Value) -> Option<usize> {
 fn total_from_payload(payload: &Value) -> Option<usize> {
     payload
         .get("total")
-        .or_else(|| payload.get("count"))
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
 }
 
-fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .filter_map(|key| value.get(*key))
-        .find_map(scalar_text)
-}
-
-fn scalar_text(value: &Value) -> Option<String> {
+fn string_field(value: &Value, key: &str) -> Option<String> {
     value
+        .get(key)?
         .as_str()
         .map(ToString::to_string)
-        .or_else(|| value.as_i64().map(|item| item.to_string()))
-        .or_else(|| value.as_u64().map(|item| item.to_string()))
-        .or_else(|| value.as_f64().map(|item| item.to_string()))
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
@@ -492,7 +459,6 @@ fn build_balance_output(
         station_id,
         data,
         status.quota_per_unit,
-        status.used_fallback,
     ));
     let balance_count = facts.balances.len();
     AdapterOutput {
@@ -508,7 +474,7 @@ fn build_balance_output(
             "adapter": "newapi",
             "task": "balance",
             "quotaPerUnit": status.quota_per_unit,
-            "quotaPerUnitFallback": status.used_fallback,
+            "quotaPerUnitAvailable": status.quota_per_unit.is_some(),
             "endpointResults": endpoint_results,
         }),
         normalized_json: json!({
@@ -637,9 +603,7 @@ fn collect_authenticated_task(
             status.quota_per_unit,
         );
         let mut balance_data = response.data;
-        if let Some(usage_stats) = usage_stats {
-            merge_usage_stats_into_balance_data(&mut balance_data, usage_stats);
-        }
+        merge_optional_usage_stats_into_balance_data(&mut balance_data, usage_stats);
         let mut endpoint_results = vec![status_endpoint_result, response.endpoint_result];
         endpoint_results.extend(usage_endpoint_results);
         return Ok(build_balance_output(
@@ -719,18 +683,36 @@ struct NewApiLogWindow {
 struct NewApiDashboardUsageWindow {
     request_count: Option<i64>,
     token_count: Option<i64>,
+    quota: Option<i64>,
     consumption: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NewApiDashboardTotalTarget {
+    request_count: i64,
+    quota: i64,
 }
 
 impl NewApiDashboardUsageWindow {
     fn add(&mut self, other: NewApiDashboardUsageWindow) {
-        self.request_count = sum_optional_i64(self.request_count, other.request_count);
-        self.token_count = sum_optional_i64(self.token_count, other.token_count);
-        self.consumption = sum_optional_f64(self.consumption, other.consumption);
+        if !self.has_any() {
+            self.request_count = other.request_count;
+            self.token_count = other.token_count;
+            self.quota = other.quota;
+            self.consumption = other.consumption;
+            return;
+        }
+        self.request_count = checked_sum_i64(self.request_count, other.request_count);
+        self.token_count = checked_sum_i64(self.token_count, other.token_count);
+        self.quota = checked_sum_i64(self.quota, other.quota);
+        self.consumption = checked_sum_f64(self.consumption, other.consumption);
     }
 
     fn has_any(&self) -> bool {
-        self.request_count.is_some() || self.token_count.is_some() || self.consumption.is_some()
+        self.request_count.is_some()
+            || self.token_count.is_some()
+            || self.quota.is_some()
+            || self.consumption.is_some()
     }
 }
 
@@ -756,7 +738,7 @@ fn collect_usage_stats(
     data_key: &[u8; 32],
     station: &Station,
     self_data: &Value,
-    quota_per_unit: f64,
+    quota_per_unit: Option<f64>,
 ) -> (Option<NewApiUsageStats>, Vec<Value>) {
     let now = unix_now_seconds();
     let today_start = local_today_start_timestamp(now);
@@ -794,8 +776,10 @@ fn collect_usage_stats(
         .as_ref()
         .and_then(|logs| logs.input_token_count.zip(logs.output_token_count))
         .map(|(input, output)| input + output);
+    let self_request_count = numeric_i64_field(self_data, &["request_count"]);
     let total_split_token_count = total_logs
         .as_ref()
+        .filter(|logs| logs.request_count.is_some() && logs.request_count == self_request_count)
         .and_then(|logs| logs.input_token_count.zip(logs.output_token_count))
         .map(|(input, output)| input + output);
 
@@ -804,10 +788,7 @@ fn collect_usage_stats(
             .as_ref()
             .and_then(|dashboard| dashboard.request_count)
             .or_else(|| today_logs.as_ref().and_then(|logs| logs.request_count)),
-        total_request_count: total_dashboard
-            .as_ref()
-            .and_then(|dashboard| dashboard.request_count)
-            .or_else(|| total_logs.as_ref().and_then(|logs| logs.request_count)),
+        total_request_count: None,
         today_consumption: today_dashboard
             .as_ref()
             .and_then(|dashboard| dashboard.consumption)
@@ -862,7 +843,7 @@ fn collect_log_stat_window(
     station: &Station,
     start_timestamp: i64,
     end_timestamp: i64,
-    quota_per_unit: f64,
+    quota_per_unit: Option<f64>,
 ) -> Result<(NewApiLogStatWindow, Vec<Value>), String> {
     let path = newapi_log_stat_path(start_timestamp, end_timestamp);
     let response = client::get_authenticated_json(
@@ -873,34 +854,13 @@ fn collect_log_stat_window(
         client::NewApiOperation::LogStat,
     )
     .map_err(newapi_request_error_message)?;
-    let quota = numeric_f64_field(&response.data, &["quota"]).unwrap_or(0.0);
-    let base_consumption = numeric_f64_field(
-        &response.data,
-        &[
-            "base_consumption",
-            "base_used_amount",
-            "base_cost",
-            "baseConsumption",
-            "baseUsedAmount",
-            "baseCost",
-        ],
-    )
-    .or_else(|| {
-        numeric_f64_field(
-            &response.data,
-            &[
-                "base_quota",
-                "base_used_quota",
-                "baseQuota",
-                "baseUsedQuota",
-            ],
-        )
-        .map(|value| value / quota_per_unit)
-    });
+    let consumption = quota_per_unit
+        .zip(numeric_f64_field(&response.data, &["quota"]))
+        .map(|(quota_per_unit, quota)| quota / quota_per_unit);
     Ok((
         NewApiLogStatWindow {
-            consumption: Some(quota / quota_per_unit),
-            base_consumption,
+            consumption,
+            base_consumption: None,
         },
         vec![response.endpoint_result],
     ))
@@ -919,6 +879,7 @@ fn collect_log_window(
     let mut input_tokens = 0_i64;
     let mut output_tokens = 0_i64;
     let mut saw_token_count = false;
+    let mut saw_incomplete_token_fields = false;
     let mut endpoint_results = Vec::new();
     let mut completed_window = false;
 
@@ -933,63 +894,85 @@ fn collect_log_window(
         )
         .map_err(newapi_request_error_message)?;
         endpoint_results.push(response.endpoint_result);
-        total = total.or_else(|| numeric_usize_field(&response.data, &["total"]));
+        let response_page = numeric_usize_field(&response.data, &["page"])
+            .filter(|value| *value == page)
+            .ok_or_else(|| "NewAPI log pagination is missing a valid page number".to_string())?;
+        let page_size = numeric_usize_field(&response.data, &["page_size"])
+            .filter(|value| *value > 0)
+            .ok_or_else(|| "NewAPI log pagination is missing page_size".to_string())?;
+        let response_total = numeric_usize_field(&response.data, &["total"])
+            .ok_or_else(|| "NewAPI log pagination is missing total".to_string())?;
+        if total.is_some_and(|expected| expected != response_total) {
+            return Err("NewAPI log pagination total changed between pages".to_string());
+        }
+        total = Some(response_total);
         let items = response
             .data
             .get("items")
             .and_then(Value::as_array)
             .cloned()
-            .unwrap_or_default();
+            .ok_or_else(|| "NewAPI log pagination is missing items".to_string())?;
+        if items.len() > page_size {
+            return Err("NewAPI log pagination returned more items than page_size".to_string());
+        }
         for item in &items {
-            let prompt_tokens = numeric_i64_field(
-                item,
-                &[
-                    "prompt_tokens",
-                    "input_tokens",
-                    "promptTokens",
-                    "inputTokens",
-                ],
-            )
-            .unwrap_or(0);
-            let completion_tokens = numeric_i64_field(
-                item,
-                &[
-                    "completion_tokens",
-                    "output_tokens",
-                    "completionTokens",
-                    "outputTokens",
-                ],
-            )
-            .unwrap_or(0);
-            if prompt_tokens != 0 || completion_tokens != 0 {
-                saw_token_count = true;
+            let prompt_tokens = numeric_i64_field(item, &["prompt_tokens"]);
+            let completion_tokens = numeric_i64_field(item, &["completion_tokens"]);
+            match (
+                prompt_tokens.filter(|value| *value >= 0),
+                completion_tokens.filter(|value| *value >= 0),
+            ) {
+                (Some(prompt_tokens), Some(completion_tokens)) => {
+                    if let (Some(next_input), Some(next_output)) = (
+                        input_tokens.checked_add(prompt_tokens),
+                        output_tokens.checked_add(completion_tokens),
+                    ) {
+                        saw_token_count = true;
+                        input_tokens = next_input;
+                        output_tokens = next_output;
+                    } else {
+                        saw_incomplete_token_fields = true;
+                    }
+                }
+                _ => saw_incomplete_token_fields = true,
             }
-            input_tokens += prompt_tokens;
-            output_tokens += completion_tokens;
         }
 
-        fetched += items.len();
-        if total.is_some_and(|total| total >= NEWAPI_LOG_PAGE_SIZE * NEWAPI_LOG_MAX_PAGES) {
+        fetched = fetched
+            .checked_add(items.len())
+            .ok_or_else(|| "NewAPI log pagination count overflowed".to_string())?;
+        if response_total >= NEWAPI_LOG_PAGE_SIZE * NEWAPI_LOG_MAX_PAGES {
             break;
         }
-        if total.is_some_and(|total| fetched >= total) || (items.is_empty() && total.is_none()) {
+        if fetched > response_total {
+            return Err("NewAPI log pagination returned more items than total".to_string());
+        }
+        if fetched == response_total {
             completed_window = true;
             break;
         }
-        if items.is_empty() {
-            break;
+        if items.len() < page_size {
+            return Err("NewAPI log pagination ended before reaching total".to_string());
         }
         if page >= NEWAPI_LOG_MAX_PAGES {
             break;
         }
-        page += 1;
+        page = response_page.saturating_add(1);
     }
 
     Ok((
         NewApiLogWindow {
-            request_count: total.and_then(|value| i64::try_from(value).ok()),
-            input_token_count: (saw_token_count && completed_window).then_some(input_tokens),
-            output_token_count: (saw_token_count && completed_window).then_some(output_tokens),
+            request_count: completed_window
+                .then(|| total.and_then(|value| i64::try_from(value).ok()))
+                .flatten(),
+            input_token_count: (saw_token_count
+                && !saw_incomplete_token_fields
+                && completed_window)
+                .then_some(input_tokens),
+            output_token_count: (saw_token_count
+                && !saw_incomplete_token_fields
+                && completed_window)
+                .then_some(output_tokens),
         },
         endpoint_results,
     ))
@@ -1001,7 +984,7 @@ fn collect_dashboard_usage_window(
     station: &Station,
     start_timestamp: i64,
     end_timestamp: i64,
-    quota_per_unit: f64,
+    quota_per_unit: Option<f64>,
 ) -> Result<(NewApiDashboardUsageWindow, Vec<Value>), String> {
     let path = newapi_dashboard_data_path(start_timestamp, end_timestamp);
     let response = client::get_authenticated_json(
@@ -1015,62 +998,58 @@ fn collect_dashboard_usage_window(
 
     let mut request_count = 0_i64;
     let mut token_count = 0_i64;
-    let mut consumption_quota = 0.0_f64;
+    let mut quota = 0_i64;
     let mut saw_request_count = false;
     let mut saw_token_count = false;
-    let mut saw_consumption = false;
+    let mut saw_quota = false;
+    let mut request_count_complete = true;
+    let mut token_count_complete = true;
+    let mut quota_complete = true;
 
     for item in dashboard_usage_items(&response.data) {
-        if let Some(value) = numeric_i64_field(
-            item,
-            &[
-                "count",
-                "request_count",
-                "requestCount",
-                "requests",
-                "total_count",
-                "totalCount",
-            ],
-        ) {
-            request_count += value;
-            saw_request_count = true;
+        match numeric_i64_field(item, &["count"]).filter(|value| *value >= 0) {
+            Some(value) => match request_count.checked_add(value) {
+                Some(next) => {
+                    request_count = next;
+                    saw_request_count = true;
+                }
+                None => request_count_complete = false,
+            },
+            None => request_count_complete = false,
         }
-        if let Some(value) = numeric_i64_field(
-            item,
-            &[
-                "token_used",
-                "tokenUsed",
-                "token_count",
-                "tokenCount",
-                "total_tokens",
-                "totalTokens",
-                "tokens",
-            ],
-        ) {
-            token_count += value;
-            saw_token_count = true;
+        match numeric_i64_field(item, &["token_used"]).filter(|value| *value >= 0) {
+            Some(value) => match token_count.checked_add(value) {
+                Some(next) => {
+                    token_count = next;
+                    saw_token_count = true;
+                }
+                None => token_count_complete = false,
+            },
+            None => token_count_complete = false,
         }
-        if let Some(value) = numeric_f64_field(
-            item,
-            &[
-                "quota",
-                "consumption",
-                "used_quota",
-                "usedQuota",
-                "quota_used",
-                "quotaUsed",
-            ],
-        ) {
-            consumption_quota += value;
-            saw_consumption = true;
+        match numeric_i64_field(item, &["quota"]) {
+            Some(value) => match quota.checked_add(value) {
+                Some(next) => {
+                    quota = next;
+                    saw_quota = true;
+                }
+                None => quota_complete = false,
+            },
+            None => quota_complete = false,
         }
     }
+    let request_count = (saw_request_count && request_count_complete).then_some(request_count);
+    let token_count = (saw_token_count && token_count_complete).then_some(token_count);
+    let quota = (saw_quota && quota_complete).then_some(quota);
 
     Ok((
         NewApiDashboardUsageWindow {
-            request_count: saw_request_count.then_some(request_count),
-            token_count: saw_token_count.then_some(token_count),
-            consumption: saw_consumption.then_some(consumption_quota / quota_per_unit),
+            request_count,
+            token_count,
+            quota,
+            consumption: quota_per_unit
+                .zip(quota)
+                .map(|(quota_per_unit, quota)| quota as f64 / quota_per_unit),
         },
         vec![response.endpoint_result],
     ))
@@ -1082,27 +1061,16 @@ fn collect_dashboard_usage_total(
     station: &Station,
     self_data: &Value,
     now: i64,
-    quota_per_unit: f64,
+    quota_per_unit: Option<f64>,
 ) -> Result<(NewApiDashboardUsageWindow, Vec<Value>), String> {
-    let target_consumption = dashboard_target_consumption(self_data, quota_per_unit);
-    let Some(start_timestamp) = newapi_dashboard_total_start_timestamp(self_data, now) else {
-        return collect_dashboard_usage_total_backwards(
-            database,
-            data_key,
-            station,
-            now,
-            quota_per_unit,
-            target_consumption,
-        );
-    };
-    collect_dashboard_usage_total_by_windows(
+    let target = dashboard_total_target(self_data);
+    collect_dashboard_usage_total_backwards(
         database,
         data_key,
         station,
-        start_timestamp,
         now,
         quota_per_unit,
-        target_consumption,
+        target,
     )
 }
 
@@ -1111,11 +1079,11 @@ fn collect_dashboard_usage_total_backwards(
     data_key: &[u8; 32],
     station: &Station,
     now: i64,
-    quota_per_unit: f64,
-    target_consumption: Option<f64>,
+    quota_per_unit: Option<f64>,
+    target: Option<NewApiDashboardTotalTarget>,
 ) -> Result<(NewApiDashboardUsageWindow, Vec<Value>), String> {
-    let Some(target_consumption) = target_consumption else {
-        return Err("NewAPI dashboard total requires either created_at or used_quota".to_string());
+    let Some(target) = target else {
+        return Err("NewAPI dashboard total requires used_quota and request_count".to_string());
     };
 
     let mut end_timestamp = now;
@@ -1138,14 +1106,13 @@ fn collect_dashboard_usage_total_backwards(
         let window_has_any = window.has_any();
         if window_has_any {
             collected_any = true;
+            total.add(window);
+        } else if target.request_count == 0 && target.quota == 0 {
+            return Err("NewAPI dashboard data response did not contain usage facts".to_string());
         }
-        total.add(window);
         endpoint_results.append(&mut results);
-        if dashboard_consumption_matches_target(total.consumption, target_consumption) {
+        if dashboard_total_matches_target(&total, target) {
             return Ok((total, endpoint_results));
-        }
-        if !window_has_any {
-            break;
         }
         if start_timestamp <= NEWAPI_DASHBOARD_TOTAL_START_TIMESTAMP {
             break;
@@ -1160,222 +1127,96 @@ fn collect_dashboard_usage_total_backwards(
     })
 }
 
-fn collect_dashboard_usage_total_by_windows(
-    database: &AppDatabase,
-    data_key: &[u8; 32],
-    station: &Station,
-    start_timestamp: i64,
-    now: i64,
-    quota_per_unit: f64,
-    target_consumption: Option<f64>,
-) -> Result<(NewApiDashboardUsageWindow, Vec<Value>), String> {
-    if start_timestamp > now {
-        return Err("NewAPI dashboard total window starts after now".to_string());
-    }
-    let mut cursor = start_timestamp;
-    let mut total = NewApiDashboardUsageWindow::default();
-    let mut endpoint_results = Vec::new();
-    let mut collected_any = false;
-
-    while cursor <= now {
-        let end_timestamp = (cursor + NEWAPI_DASHBOARD_MAX_WINDOW_SECONDS - 1).min(now);
-        let (window, mut results) = collect_dashboard_usage_window(
-            database,
-            data_key,
-            station,
-            cursor,
-            end_timestamp,
-            quota_per_unit,
-        )?;
-        if window.has_any() {
-            collected_any = true;
-        }
-        total.add(window);
-        endpoint_results.append(&mut results);
-        if target_consumption
-            .is_some_and(|target| dashboard_consumption_matches_target(total.consumption, target))
-        {
-            break;
-        }
-        if end_timestamp >= now {
-            break;
-        }
-        cursor = end_timestamp.saturating_add(1);
-    }
-
-    if !collected_any {
-        return Err("NewAPI dashboard data response did not contain usage facts".to_string());
-    }
-    if let Some(target) = target_consumption {
-        if !dashboard_consumption_matches_target(total.consumption, target) {
-            return Err("NewAPI dashboard total response did not cover all-time usage".to_string());
-        }
-    }
-    if collected_any {
-        Ok((total, endpoint_results))
-    } else {
-        Err("NewAPI dashboard data response did not contain usage facts".to_string())
-    }
+fn dashboard_total_matches_target(
+    total: &NewApiDashboardUsageWindow,
+    target: NewApiDashboardTotalTarget,
+) -> bool {
+    total.quota == Some(target.quota) && total.request_count == Some(target.request_count)
 }
 
-fn dashboard_consumption_matches_target(consumption: Option<f64>, target: f64) -> bool {
-    let tolerance = (target.abs() * 0.000001).max(0.000001);
-    consumption.is_some_and(|value| (value - target).abs() <= tolerance)
-}
-
-fn dashboard_target_consumption(self_data: &Value, quota_per_unit: f64) -> Option<f64> {
-    numeric_f64_field(self_data, &["used_quota", "usedQuota"])
-        .filter(|value| quota_per_unit > 0.0 && *value >= 0.0)
-        .map(|value| value / quota_per_unit)
+fn dashboard_total_target(self_data: &Value) -> Option<NewApiDashboardTotalTarget> {
+    Some(NewApiDashboardTotalTarget {
+        request_count: numeric_i64_field(self_data, &["request_count"])
+            .filter(|value| *value >= 0)?,
+        quota: numeric_i64_field(self_data, &["used_quota"]).filter(|value| *value >= 0)?,
+    })
 }
 
 fn dashboard_usage_items(payload: &Value) -> Vec<&Value> {
-    if let Some(items) = payload.as_array() {
-        return items.iter().collect();
-    }
-    for pointer in ["/items", "/list", "/data", "/data/items", "/data/list"] {
-        if let Some(value) = payload.pointer(pointer) {
-            if let Some(items) = value.as_array() {
-                return items.iter().collect();
-            }
-        }
-    }
-    if payload.is_object() {
-        vec![payload]
-    } else {
-        Vec::new()
-    }
+    payload
+        .as_array()
+        .map(|items| items.iter().collect())
+        .unwrap_or_default()
 }
 
 fn merge_usage_stats_into_balance_data(data: &mut Value, stats: NewApiUsageStats) {
     let Some(object) = data.as_object_mut() else {
         return;
     };
-    insert_missing_i64(object, "today_request_count", stats.today_request_count);
-    insert_missing_i64_with_aliases(
-        object,
-        "total_request_count",
-        &[
-            "total_request_count",
-            "request_count",
-            "totalRequests",
-            "requestCount",
-            "requests",
-        ],
-        stats.total_request_count,
-    );
-    insert_missing_f64(object, "today_consumption", stats.today_consumption);
-    insert_missing_f64_with_aliases(
-        object,
-        "total_consumption",
-        &[
-            "total_consumption",
-            "used_amount",
-            "totalUsedAmount",
-            "totalConsumption",
-            "consumption",
-            "cost",
-            "used_quota",
-            "usedQuota",
-        ],
-        stats.total_consumption,
-    );
-    insert_missing_f64_with_aliases(
+    for key in [
+        "today_request_count",
+        "today_consumption",
+        "today_base_consumption",
+        "total_base_consumption",
+        "today_token_count",
+        "total_token_count",
+        "today_input_token_count",
+        "today_output_token_count",
+        "total_input_token_count",
+        "total_output_token_count",
+    ] {
+        object.remove(key);
+    }
+    insert_i64(object, "today_request_count", stats.today_request_count);
+    insert_f64(object, "today_consumption", stats.today_consumption);
+    insert_f64(
         object,
         "today_base_consumption",
-        &[
-            "today_base_consumption",
-            "today_base_used_amount",
-            "today_base_cost",
-            "todayBaseConsumption",
-            "todayBaseUsedAmount",
-            "todayBaseCost",
-            "today_quota_consumption",
-        ],
         stats.today_base_consumption,
     );
-    insert_missing_f64_with_aliases(
+    insert_f64(
         object,
         "total_base_consumption",
-        &[
-            "total_base_consumption",
-            "base_consumption",
-            "base_used_amount",
-            "total_base_used_amount",
-            "base_cost",
-            "total_base_cost",
-            "totalBaseConsumption",
-            "baseConsumption",
-            "baseUsedAmount",
-            "totalBaseUsedAmount",
-            "baseCost",
-            "totalBaseCost",
-            "quota_consumption",
-        ],
         stats.total_base_consumption,
     );
-    insert_missing_i64(object, "today_token_count", stats.today_token_count);
-    insert_missing_i64(object, "total_token_count", stats.total_token_count);
-    insert_missing_i64(
+    insert_i64(object, "today_token_count", stats.today_token_count);
+    insert_i64(object, "total_token_count", stats.total_token_count);
+    insert_i64(
         object,
         "today_input_token_count",
         stats.today_input_token_count,
     );
-    insert_missing_i64(
+    insert_i64(
         object,
         "today_output_token_count",
         stats.today_output_token_count,
     );
-    insert_missing_i64(
+    insert_i64(
         object,
         "total_input_token_count",
         stats.total_input_token_count,
     );
-    insert_missing_i64(
+    insert_i64(
         object,
         "total_output_token_count",
         stats.total_output_token_count,
     );
 }
 
-fn insert_missing_i64(object: &mut serde_json::Map<String, Value>, key: &str, value: Option<i64>) {
-    if !object.contains_key(key) {
-        if let Some(value) = value {
-            object.insert(key.to_string(), json!(value));
-        }
+fn merge_optional_usage_stats_into_balance_data(data: &mut Value, stats: Option<NewApiUsageStats>) {
+    merge_usage_stats_into_balance_data(data, stats.unwrap_or_default());
+}
+
+fn insert_i64(object: &mut serde_json::Map<String, Value>, key: &str, value: Option<i64>) {
+    if let Some(value) = value {
+        object.insert(key.to_string(), json!(value));
     }
 }
 
-fn insert_missing_i64_with_aliases(
-    object: &mut serde_json::Map<String, Value>,
-    key: &str,
-    aliases: &[&str],
-    value: Option<i64>,
-) {
-    if aliases.iter().any(|alias| object.contains_key(*alias)) {
-        return;
+fn insert_f64(object: &mut serde_json::Map<String, Value>, key: &str, value: Option<f64>) {
+    if let Some(value) = value {
+        object.insert(key.to_string(), json!(value));
     }
-    insert_missing_i64(object, key, value);
-}
-
-fn insert_missing_f64(object: &mut serde_json::Map<String, Value>, key: &str, value: Option<f64>) {
-    if !object.contains_key(key) {
-        if let Some(value) = value {
-            object.insert(key.to_string(), json!(value));
-        }
-    }
-}
-
-fn insert_missing_f64_with_aliases(
-    object: &mut serde_json::Map<String, Value>,
-    key: &str,
-    aliases: &[&str],
-    value: Option<f64>,
-) {
-    if aliases.iter().any(|alias| object.contains_key(*alias)) {
-        return;
-    }
-    insert_missing_f64(object, key, value);
 }
 
 fn newapi_log_stat_path(start_timestamp: i64, end_timestamp: i64) -> String {
@@ -1394,21 +1235,6 @@ fn newapi_dashboard_data_path(start_timestamp: i64, end_timestamp: i64) -> Strin
     format!(
         "/api/data/self?start_timestamp={start_timestamp}&end_timestamp={end_timestamp}&default_time=hour"
     )
-}
-
-fn newapi_dashboard_total_start_timestamp(self_data: &Value, now: i64) -> Option<i64> {
-    numeric_i64_field(
-        self_data,
-        &[
-            "created_at",
-            "createdAt",
-            "created_time",
-            "createdTime",
-            "register_time",
-            "registered_at",
-        ],
-    )
-    .filter(|value| *value > 0 && *value <= now)
 }
 
 fn unix_now_seconds() -> i64 {
@@ -1435,6 +1261,7 @@ fn numeric_f64_field(value: &Value, keys: &[&str]) -> Option<f64> {
         value
             .get(*key)
             .and_then(|item| item.as_f64().or_else(|| item.as_str()?.trim().parse().ok()))
+            .filter(|value| value.is_finite())
     })
 }
 
@@ -1443,7 +1270,15 @@ fn numeric_i64_field(value: &Value, keys: &[&str]) -> Option<i64> {
         value.get(*key).and_then(|item| {
             item.as_i64()
                 .or_else(|| item.as_u64().and_then(|value| i64::try_from(value).ok()))
-                .or_else(|| item.as_f64().map(|value| value.round() as i64))
+                .or_else(|| {
+                    item.as_f64().and_then(|value| {
+                        (value.is_finite()
+                            && value.fract() == 0.0
+                            && value >= i64::MIN as f64
+                            && value <= i64::MAX as f64)
+                            .then_some(value as i64)
+                    })
+                })
                 .or_else(|| item.as_str()?.trim().parse().ok())
         })
     })
@@ -1453,20 +1288,15 @@ fn numeric_usize_field(value: &Value, keys: &[&str]) -> Option<usize> {
     numeric_i64_field(value, keys).and_then(|value| usize::try_from(value).ok())
 }
 
-fn sum_optional_i64(left: Option<i64>, right: Option<i64>) -> Option<i64> {
-    match (left, right) {
-        (Some(left), Some(right)) => Some(left + right),
-        (Some(value), None) | (None, Some(value)) => Some(value),
-        (None, None) => None,
-    }
+fn checked_sum_i64(left: Option<i64>, right: Option<i64>) -> Option<i64> {
+    left.zip(right)
+        .and_then(|(left, right)| left.checked_add(right))
 }
 
-fn sum_optional_f64(left: Option<f64>, right: Option<f64>) -> Option<f64> {
-    match (left, right) {
-        (Some(left), Some(right)) => Some(left + right),
-        (Some(value), None) | (None, Some(value)) => Some(value),
-        (None, None) => None,
-    }
+fn checked_sum_f64(left: Option<f64>, right: Option<f64>) -> Option<f64> {
+    left.zip(right)
+        .map(|(left, right)| left + right)
+        .filter(|value| value.is_finite())
 }
 
 fn fetch_status(
@@ -1483,7 +1313,7 @@ fn fetch_status(
     let url = build_management_url(&station.website_url, "/api/status")?;
     let mut endpoint_results = Vec::new();
     let payload = get_newapi_public_json(&url, &proxy, &mut endpoint_results)?;
-    let data = parsers::envelope_data(&payload).unwrap_or(&payload);
+    let status = parse_status_payload(&payload)?;
     let endpoint_result = endpoint_results.into_iter().next().unwrap_or_else(|| {
         json!({
             "url": url,
@@ -1491,7 +1321,13 @@ fn fetch_status(
             "ok": false,
         })
     });
-    Ok((parsers::parse_status(data), endpoint_result))
+    Ok((status, endpoint_result))
+}
+
+fn parse_status_payload(payload: &Value) -> Result<parsers::NewApiStatus, String> {
+    parsers::envelope_data(payload)
+        .map(parsers::parse_status)
+        .map_err(|error| error.message)
 }
 
 fn newapi_request_error_message(error: client::NewApiRequestError) -> String {
@@ -1782,13 +1618,16 @@ mod tests {
     }
 
     #[test]
-    fn newapi_balance_prefers_dashboard_quota_data_for_total_tokens() {
+    fn newapi_balance_does_not_treat_used_quota_as_tokens_in_token_display_mode() {
         let server = TestHttpServer::sequence(vec![
             Some(json_response(
                 200,
                 json!({
                     "success": true,
-                    "data": { "quota_per_unit": 500000 }
+                    "data": {
+                        "quota_per_unit": 500000,
+                        "quota_display_type": "TOKENS"
+                    }
                 }),
             )),
             Some(json_response(
@@ -1878,9 +1717,368 @@ mod tests {
         assert_eq!(output.status, "success");
         assert_eq!(balance.today_token_count, Some(175200000));
         assert_eq!(balance.total_token_count, Some(470000000));
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("GET /api/data/self?"))
+                .count(),
+            2
+        );
         assert!(requests
             .iter()
             .any(|request| request.starts_with("GET /api/data/self?")));
+    }
+
+    #[test]
+    fn truncated_log_window_does_not_report_exact_request_count() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": {
+                    "page": 1,
+                    "page_size": 100,
+                    "total": 10000,
+                    "items": [
+                        { "prompt_tokens": 10, "completion_tokens": 5 }
+                    ]
+                }
+            }),
+        ))]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let (window, _) =
+            collect_log_window(&database, &data_key, &station, 0, 1).expect("log window");
+        server.finish();
+
+        assert_eq!(window.request_count, None);
+        assert_eq!(window.input_token_count, None);
+        assert_eq!(window.output_token_count, None);
+    }
+
+    #[test]
+    fn log_window_with_missing_token_field_keeps_token_totals_unknown() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": {
+                    "page": 1,
+                    "page_size": 100,
+                    "total": 1,
+                    "items": [
+                        { "prompt_tokens": 10 }
+                    ]
+                }
+            }),
+        ))]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let (window, _) =
+            collect_log_window(&database, &data_key, &station, 0, 1).expect("log window");
+        server.finish();
+
+        assert_eq!(window.request_count, Some(1));
+        assert_eq!(window.input_token_count, None);
+        assert_eq!(window.output_token_count, None);
+    }
+
+    #[test]
+    fn log_window_rejects_missing_standard_total() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": {
+                    "page": 1,
+                    "page_size": 100,
+                    "items": [
+                        { "prompt_tokens": 10, "completion_tokens": 5 }
+                    ]
+                }
+            }),
+        ))]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let error = collect_log_window(&database, &data_key, &station, 0, 1).unwrap_err();
+        server.finish();
+
+        assert!(error.contains("pagination"));
+    }
+
+    #[test]
+    fn log_stat_without_quota_keeps_consumption_unknown() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": { "rpm": 1, "tpm": 25 }
+            }),
+        ))]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let (window, _) =
+            collect_log_stat_window(&database, &data_key, &station, 0, 1, Some(500000.0))
+                .expect("log stat window");
+        server.finish();
+
+        assert_eq!(window.consumption, None);
+    }
+
+    #[test]
+    fn log_stat_does_not_guess_nonstandard_base_consumption() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": { "quota": 500000, "base_cost": 9.5 }
+            }),
+        ))]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let (window, _) =
+            collect_log_stat_window(&database, &data_key, &station, 0, 1, Some(500000.0))
+                .expect("log stat window");
+        server.finish();
+
+        assert_eq!(window.consumption, Some(1.0));
+        assert_eq!(window.base_consumption, None);
+    }
+
+    #[test]
+    fn dashboard_usage_items_require_standard_array_shape() {
+        assert_eq!(dashboard_usage_items(&json!([{ "count": 1 }])).len(), 1);
+        assert!(dashboard_usage_items(&json!({
+            "items": [{ "count": 1 }]
+        }))
+        .is_empty());
+        assert!(dashboard_usage_items(&json!({ "count": 1 })).is_empty());
+    }
+
+    #[test]
+    fn dashboard_window_does_not_sum_partial_rows() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": [
+                    { "count": 2, "quota": 300000, "token_used": 100 },
+                    { "count": 3, "quota": 400000 }
+                ]
+            }),
+        ))]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let (window, _) =
+            collect_dashboard_usage_window(&database, &data_key, &station, 0, 1, Some(500000.0))
+                .expect("dashboard window");
+        server.finish();
+
+        assert_eq!(window.request_count, Some(5));
+        assert_eq!(window.quota, Some(700000));
+        assert_eq!(window.consumption, Some(1.4));
+        assert_eq!(window.token_count, None);
+    }
+
+    #[test]
+    fn log_window_rejects_negative_token_values() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": {
+                    "page": 1,
+                    "page_size": 100,
+                    "total": 1,
+                    "items": [
+                        { "prompt_tokens": -1, "completion_tokens": 5 }
+                    ]
+                }
+            }),
+        ))]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let (window, _) =
+            collect_log_window(&database, &data_key, &station, 0, 1).expect("log window");
+        server.finish();
+
+        assert_eq!(window.input_token_count, None);
+        assert_eq!(window.output_token_count, None);
+    }
+
+    #[test]
+    fn dashboard_total_requires_exact_raw_quota_match() {
+        let target = NewApiDashboardTotalTarget {
+            request_count: 1200,
+            quota: 9_250_000,
+        };
+        assert!(dashboard_total_matches_target(
+            &NewApiDashboardUsageWindow {
+                request_count: Some(1200),
+                quota: Some(9_250_000),
+                ..Default::default()
+            },
+            target,
+        ));
+        assert!(!dashboard_total_matches_target(
+            &NewApiDashboardUsageWindow {
+                request_count: Some(1199),
+                quota: Some(9_250_000),
+                ..Default::default()
+            },
+            target,
+        ));
+        assert!(!dashboard_total_matches_target(
+            &NewApiDashboardUsageWindow {
+                request_count: Some(1200),
+                quota: Some(9_249_999),
+                ..Default::default()
+            },
+            target,
+        ));
+    }
+
+    #[test]
+    fn dashboard_total_searches_past_empty_recent_windows() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(200, json!({ "success": true, "data": [] }))),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 12, "quota": 900000, "token_used": 456789 }
+                    ]
+                }),
+            )),
+        ]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let (total, _) = collect_dashboard_usage_total_backwards(
+            &database,
+            &data_key,
+            &station,
+            unix_now_seconds(),
+            Some(500000.0),
+            Some(NewApiDashboardTotalTarget {
+                request_count: 12,
+                quota: 900000,
+            }),
+        )
+        .expect("dashboard total");
+        server.finish();
+
+        assert_eq!(total.request_count, Some(12));
+        assert_eq!(total.quota, Some(900000));
+        assert_eq!(total.token_count, Some(456789));
+    }
+
+    #[test]
+    fn dashboard_total_merge_propagates_missing_window_metrics() {
+        let mut total = NewApiDashboardUsageWindow::default();
+        total.add(NewApiDashboardUsageWindow {
+            request_count: Some(2),
+            token_count: Some(100),
+            quota: Some(300000),
+            consumption: Some(0.6),
+        });
+        total.add(NewApiDashboardUsageWindow {
+            request_count: Some(3),
+            token_count: None,
+            quota: Some(400000),
+            consumption: Some(0.8),
+        });
+
+        assert_eq!(total.request_count, Some(5));
+        assert_eq!(total.quota, Some(700000));
+        assert_eq!(total.consumption, Some(1.4));
+        assert_eq!(total.token_count, None);
+    }
+
+    #[test]
+    fn usage_merge_removes_unverified_self_usage_fields() {
+        let mut data = json!({
+            "request_count": 12,
+            "today_request_count": 999,
+            "today_consumption": 999.0,
+            "today_token_count": 999,
+            "total_token_count": 999,
+            "today_base_consumption": 999.0,
+            "total_base_consumption": 999.0
+        });
+
+        merge_usage_stats_into_balance_data(
+            &mut data,
+            NewApiUsageStats {
+                today_request_count: Some(2),
+                today_consumption: Some(0.75),
+                today_token_count: Some(123),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(data["request_count"], 12);
+        assert_eq!(data["today_request_count"], 2);
+        assert_eq!(data["today_consumption"], 0.75);
+        assert_eq!(data["today_token_count"], 123);
+        assert!(data.get("total_token_count").is_none());
+        assert!(data.get("today_base_consumption").is_none());
+        assert!(data.get("total_base_consumption").is_none());
+    }
+
+    #[test]
+    fn empty_usage_merge_still_removes_unverified_self_usage_fields() {
+        let mut data = json!({
+            "request_count": 12,
+            "today_token_count": 999,
+            "total_token_count": 999
+        });
+
+        merge_optional_usage_stats_into_balance_data(&mut data, None);
+
+        assert_eq!(data["request_count"], 12);
+        assert!(data.get("today_token_count").is_none());
+        assert!(data.get("total_token_count").is_none());
+    }
+
+    #[test]
+    fn integer_metrics_reject_fractional_values() {
+        assert_eq!(
+            numeric_i64_field(&json!({ "count": 1.4 }), &["count"]),
+            None
+        );
+        assert_eq!(
+            numeric_i64_field(&json!({ "count": 2.0 }), &["count"]),
+            Some(2)
+        );
+        assert_eq!(
+            numeric_i64_field(&json!({ "count": "3" }), &["count"]),
+            Some(3)
+        );
     }
 
     #[test]
@@ -2432,6 +2630,68 @@ mod tests {
         assert!(requests[0].starts_with("GET /api/token/?p=1&page_size=100 "));
         assert!(requests[1].starts_with("GET /api/token/?p=2&page_size=100 "));
         assert!(requests[0].contains("New-Api-User: 42"));
+    }
+
+    #[test]
+    fn token_parsers_reject_nonstandard_wrappers_and_aliases() {
+        assert!(remote_key_items(&json!({
+            "tokens": [{ "id": 1, "name": "wrong-wrapper" }]
+        }))
+        .is_empty());
+        assert!(remote_key_from_value(
+            "station-1",
+            &json!({
+                "tokenId": 1,
+                "keyName": "wrong-alias",
+                "apiKey": "sk-abc**********7890"
+            }),
+            0,
+        )
+        .is_none());
+        assert_eq!(
+            full_key_from_reveal_payload(&json!({
+                "data": { "key": "sk-nested-secret-value" }
+            })),
+            None,
+        );
+    }
+
+    #[test]
+    fn status_payload_rejects_failed_envelope() {
+        let error = parse_status_payload(&json!({
+            "success": false,
+            "message": "status unavailable",
+            "quota_per_unit": 500000
+        }))
+        .unwrap_err();
+
+        assert_eq!(error, "status unavailable");
+    }
+
+    #[test]
+    fn token_scan_rejects_missing_pagination_metadata() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": {
+                    "page": 1,
+                    "page_size": 100,
+                    "items": [
+                        { "id": 101, "name": "primary", "key": "sk-abc**********7890" }
+                    ]
+                }
+            }),
+        ))]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let station = test_station(&database, &server.base_url);
+        persist_access_token_session(&database, &data_key, &station.id);
+
+        let error = scan_remote_keys(&database, &data_key, &station.id).unwrap_err();
+        server.finish();
+
+        assert!(error.contains("pagination"));
     }
 
     #[test]

@@ -183,13 +183,62 @@ const rateChange = buildChangeEventListItem(
     title: "倍率上涨",
     message: "分组 plus 倍率发生变化",
     stationId: "station-rate",
-    oldValueJson: JSON.stringify({ groupName: "plus", multiplier: 0.7 }),
-    newValueJson: JSON.stringify({ groupName: "plus", multiplier: 1 }),
+    oldValueJson: JSON.stringify({ groupName: "plus", multiplier: 1.4 }),
+    newValueJson: JSON.stringify({ groupName: "plus", multiplier: 1.8 }),
   }),
-  { stationNamesById: new Map([["station-rate", "倍率站"]]) },
+  {
+    stationNamesById: new Map([["station-rate", "倍率站"]]),
+    stationCreditPerCnyById: new Map([["station-rate", 2]]),
+  },
 );
-assert.equal(rateChange.title, "中转站 倍率站 的分组 plus 倍率从 0.7 倍变为 1 倍");
-assert.deepEqual(rateChange.diff, { label: "倍率", before: "0.7 倍", after: "1 倍" });
+assert.equal(rateChange.title, "中转站 倍率站 的分组 plus 倍率从 0.7 倍变为 0.9 倍");
+assert.deepEqual(rateChange.diff, { label: "倍率", before: "0.7 倍", after: "0.9 倍" });
+const repeatedRateChange = buildChangeEventListItem(
+  changeEvent("rate-change-repeat", "unread", {
+    eventType: "rate_changed",
+    message: "分组 plus 倍率发生变化",
+    stationId: "station-rate",
+    oldValueJson: JSON.stringify({ groupName: "plus", multiplier: 1.4 }),
+    newValueJson: JSON.stringify({ groupName: "plus", multiplier: 1.8 }),
+  }),
+  { stationCreditPerCnyById: new Map([["station-rate", 2]]) },
+);
+assert.equal(repeatedRateChange.diff?.after, "0.9 倍", "rebuilding a row must not convert the stored raw multiplier twice");
+assert.notEqual(repeatedRateChange.diff?.after, "0.45 倍", "the exchange ratio must be applied exactly once");
+
+const invalidExchangeRatioRateChange = buildChangeEventListItem(
+  changeEvent("rate-change-invalid-ratio", "unread", {
+    eventType: "rate_changed",
+    stationId: "station-invalid-ratio",
+    oldValueJson: JSON.stringify({ groupName: "plus", multiplier: 1.4 }),
+    newValueJson: JSON.stringify({ groupName: "plus", multiplier: 1.8 }),
+  }),
+  { stationCreditPerCnyById: new Map([["station-invalid-ratio", 0]]) },
+);
+assert.deepEqual(
+  invalidExchangeRatioRateChange.diff,
+  { label: "倍率", before: "1.4 倍", after: "1.8 倍" },
+  "invalid exchange ratios should preserve raw multipliers through the shared safe fallback",
+);
+const unitExchangeRatioRateChange = buildChangeEventListItem(
+  changeEvent("rate-change-unit-ratio", "unread", {
+    eventType: "rate_changed",
+    stationId: "station-unit-ratio",
+    oldValueJson: JSON.stringify({ groupName: "plus", multiplier: 1.4 }),
+    newValueJson: JSON.stringify({ groupName: "plus", multiplier: 1.8 }),
+  }),
+  { stationCreditPerCnyById: new Map([["station-unit-ratio", 1]]) },
+);
+assert.deepEqual(unitExchangeRatioRateChange.diff, { label: "倍率", before: "1.4 倍", after: "1.8 倍" });
+const missingExchangeRatioRateChange = buildChangeEventListItem(
+  changeEvent("rate-change-missing-ratio", "unread", {
+    eventType: "rate_changed",
+    stationId: "station-missing-ratio",
+    oldValueJson: JSON.stringify({ groupName: "plus", multiplier: 1.4 }),
+    newValueJson: JSON.stringify({ groupName: "plus", multiplier: 1.8 }),
+  }),
+);
+assert.deepEqual(missingExchangeRatioRateChange.diff, { label: "倍率", before: "1.4 倍", after: "1.8 倍" });
 
 const groupAdded = buildChangeEventListItem(
   changeEvent("group-added", "unread", {
@@ -210,12 +259,13 @@ const groupAddedWithJoinedStation = buildChangeEventListItem(
     message: "站点新增可用分组 fast",
     stationId: "station-with-joined-name",
     stationName: "直连站名",
-    newValueJson: JSON.stringify({ groupName: "fast", effectiveRateMultiplier: 1.2 }),
+    newValueJson: JSON.stringify({ groupName: "fast", effectiveRateMultiplier: 1.8 }),
   }),
+  { stationCreditPerCnyById: new Map([["station-with-joined-name", 2]]) },
 );
 assert.equal(
   groupAddedWithJoinedStation.title,
-  "中转站 直连站名 新增分组 fast，倍率1.2 倍",
+  "中转站 直连站名 新增分组 fast，倍率0.9 倍",
   "change center rows should use stationName returned with the change event without waiting for the station list query",
 );
 
@@ -226,12 +276,15 @@ const groupMissing = buildChangeEventListItem(
     title: "分组不可见",
     message: "分组 cmax-限制客户端-暂停供应 在最新采集中不可见",
     stationId: "station-cmax",
-    oldValueJson: JSON.stringify({ bindingStatus: "available" }),
-    newValueJson: JSON.stringify({ bindingStatus: "missing" }),
+    oldValueJson: JSON.stringify({ bindingStatus: "available", effectiveRateMultiplier: 1.8 }),
+    newValueJson: JSON.stringify({ bindingStatus: "missing", effectiveRateMultiplier: 1.8 }),
   }),
-  { stationNamesById: new Map([["station-cmax", "CMax"]]) },
+  {
+    stationNamesById: new Map([["station-cmax", "CMax"]]),
+    stationCreditPerCnyById: new Map([["station-cmax", 2]]),
+  },
 );
-assert.equal(groupMissing.title, "中转站 CMax 的分组 cmax-限制客户端-暂停供应 不可见，倍率未知");
+assert.equal(groupMissing.title, "中转站 CMax 的分组 cmax-限制客户端-暂停供应 不可见，倍率0.9 倍");
 assert.deepEqual(groupMissing.diff, { label: "状态", before: "可用", after: "不可见" });
 
 const balanceLow = buildChangeEventListItem(

@@ -53,6 +53,10 @@ export function ChangeCenterPage() {
     () => new Map((stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)),
     [stationsQuery.data],
   );
+  const stationCreditPerCnyById = useMemo(
+    () => new Map((stationsQuery.data ?? []).map((station) => [station.id, station.creditPerCny] as const)),
+    [stationsQuery.data],
+  );
   const loading = eventsQuery.isPending && eventsQuery.data === undefined;
   const error = eventsQuery.error ? readError(eventsQuery.error) : null;
   const [filter, setFilter] = useState<ChangeFilter>({ severity: "all", status: "active", objectType: "all", query: "" });
@@ -113,8 +117,8 @@ export function ChangeCenterPage() {
   }
 
   const filteredEvents = useMemo(
-    () => filterChangeEvents(events, filter, { stationNamesById }),
-    [events, filter, stationNamesById],
+    () => filterChangeEvents(events, filter, { stationNamesById, stationCreditPerCnyById }),
+    [events, filter, stationCreditPerCnyById, stationNamesById],
   );
   const pageInfo = useMemo(() => paginateChangeEvents(filteredEvents, page, pageSize), [filteredEvents, page, pageSize]);
   const unreadCount = events.filter((event) => event.status === "unread").length;
@@ -233,6 +237,7 @@ export function ChangeCenterPage() {
                       key={event.id}
                       event={event}
                       stationNamesById={stationNamesById}
+                      stationCreditPerCnyById={stationCreditPerCnyById}
                       deferStationIdentifierFallback={stationsQuery.isPending && stationsQuery.data === undefined}
                     />
                   ))}
@@ -312,14 +317,17 @@ export function ChangeCenterPage() {
 function ChangeEventRow({
   event,
   stationNamesById,
+  stationCreditPerCnyById,
   deferStationIdentifierFallback,
 }: {
   event: ChangeEvent;
   stationNamesById: Map<string, string>;
+  stationCreditPerCnyById: Map<string, number>;
   deferStationIdentifierFallback: boolean;
 }) {
   const item = buildChangeEventListItem(event, {
     stationNamesById,
+    stationCreditPerCnyById,
     deferStationIdentifierFallback,
   });
   return (

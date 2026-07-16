@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   closestCenter,
   type DraggableAttributes,
@@ -73,6 +73,7 @@ import {
   STATION_ISSUE_FILTER_OPTIONS,
   type StationAssetRow,
   type StationIssueFilterValue,
+  type StationIssueTag,
 } from "./stationAssetViewModels";
 
 type StationFormState = {
@@ -1062,16 +1063,7 @@ function StationAssetListRow({
             {stationTypeLabels[station.stationType]}
           </span>
           {issueTags.map((tag) => (
-            <span
-              key={tag.label}
-              className={cn(
-                "hidden rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 sm:inline-flex",
-                stationIssueTagClassName(tag.tone),
-              )}
-              title={tag.title ?? tag.label}
-            >
-              {tag.label}
-            </span>
+            <StationIssueTagBadge key={tag.kind} tag={tag} />
           ))}
         </div>
         <button
@@ -1784,6 +1776,43 @@ function stationIssueTagClassName(tone: "info" | "warning" | "error" | "disabled
   if (tone === "warning") return "border-warning-border bg-warning-surface text-warning-foreground";
   if (tone === "disabled") return "border-border bg-muted text-muted-foreground";
   return "border-info-border bg-info-surface text-info-foreground";
+}
+
+function StationIssueTagBadge({ tag }: { tag: StationIssueTag }) {
+  const tooltipId = useId();
+
+  return (
+    <span
+      className="group/tag relative hidden sm:inline-flex"
+      tabIndex={tag.title ? 0 : undefined}
+      aria-describedby={tag.title ? tooltipId : undefined}
+      title={tag.title ?? tag.label}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <span
+        className={cn(
+          "inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4",
+          "transition-colors group-focus/tag:outline-none group-focus/tag:ring-2 group-focus/tag:ring-ring/30",
+          stationIssueTagClassName(tag.tone),
+        )}
+      >
+        {tag.label}
+      </span>
+      {tag.title ? (
+        <span
+          id={tooltipId}
+          role="tooltip"
+          className={cn(
+            "pointer-events-none invisible absolute left-0 top-full z-30 mt-2 w-max max-w-[min(28rem,calc(100vw-3rem))]",
+            "whitespace-pre-line rounded-[10px] border border-border bg-surface px-3 py-2 text-xs font-normal leading-5 text-foreground opacity-0 shadow-surface",
+            "transition-opacity duration-150 group-hover/tag:visible group-hover/tag:opacity-100 group-focus/tag:visible group-focus/tag:opacity-100",
+          )}
+        >
+          {tag.title}
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 const stationAssetSelectClassName =

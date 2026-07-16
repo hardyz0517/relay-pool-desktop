@@ -987,7 +987,10 @@ mod tests {
         let summary = &result.snapshot.summary_json;
         let normalized = &result.snapshot.normalized_json;
 
-        assert_eq!(result.snapshot.status, "success");
+        assert_eq!(
+            result.snapshot.status, "success",
+            "full snapshot summary: {summary:#?}"
+        );
         assert_eq!(
             summary
                 .pointer("/recognized/balanceLabel")
@@ -1172,7 +1175,7 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
             let base_url = format!("http://{}", listener.local_addr().expect("addr"));
             thread::spawn(move || {
-                for stream in listener.incoming().take(5).flatten() {
+                for stream in listener.incoming().take(12).flatten() {
                     handle_full_request(stream);
                 }
             });

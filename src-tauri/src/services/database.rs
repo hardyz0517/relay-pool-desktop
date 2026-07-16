@@ -7936,7 +7936,9 @@ fn load_multiplier_source_facts_from_connection(
                     COALESCE(cb.group_name, b.group_name, k.group_name),
                     COALESCE(cb.inferred_group_category, b.inferred_group_category),
                     COALESCE(cb.group_category_override, b.group_category_override),
-                    k.rate_multiplier, k.rate_source, k.rate_collected_at,
+                    COALESCE(cb.effective_rate_multiplier, b.effective_rate_multiplier, k.rate_multiplier),
+                    COALESCE(cb.rate_source, b.rate_source, k.rate_source),
+                    COALESCE(cb.last_checked_at, b.last_checked_at, k.rate_collected_at),
                     COALESCE(cb.confidence, b.confidence, 0.8)
                FROM station_keys k
                LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
@@ -12654,6 +12656,15 @@ pub(crate) fn insert_collector_snapshot_in_connection_with_revision(
         );
         let _ = upsert_change_event_in_connection(connection, event);
     }
+    if emit_change_events && matches!(saved.status.as_str(), "success" | "partial") {
+        let task_type = collector_task_type_from_snapshot_source(&saved.source);
+        let failed_dedupe_key = crate::services::change_events::collector_dedupe_key(
+            &saved.station_id,
+            "collector_failed",
+            &task_type,
+        );
+        resolve_change_event_by_dedupe_key_in_connection(connection, &failed_dedupe_key)?;
+    }
     if emit_change_events {
         if let Some(previous_snapshot) = previous_snapshot.as_ref() {
             let previous_models = models_from_snapshot_value(&previous_snapshot.normalized_json);
@@ -15086,6 +15097,83 @@ mod tests {
             20 * 60 * 1000,
         )
         .expect("binding confidence should satisfy default multiplier threshold");
+    }
+
+    #[test]
+    fn load_multiplier_source_facts_prefers_current_binding_rate_evidence_over_stale_key_cache() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "multiplier-binding-freshness");
+        let binding = database
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: station.id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: "station:fresh".to_string(),
+                group_id_hash: Some("hash-fresh".to_string()),
+                group_name: "fresh".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: Some(0.75),
+                user_rate_multiplier: Some(0.75),
+                effective_rate_multiplier: Some(0.75),
+                rate_source: Some("group_rates".to_string()),
+                confidence: 0.9,
+                inferred_group_category: None,
+                group_category_override: None,
+                last_seen_at: Some("1800000".to_string()),
+                raw_json_redacted: None,
+            })
+            .expect("binding");
+        let key = database
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "cached key".to_string(),
+                api_key: "sk-cached".to_string(),
+                enabled: true,
+                priority: Some(0),
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
+                group_name: Some("fresh".to_string()),
+                tier_label: None,
+                group_binding_id: Some(binding.id.clone()),
+                group_id_hash: Some("hash-fresh".to_string()),
+                rate_multiplier: Some(0.5),
+                manual_rate_multiplier: None,
+                rate_source: Some("legacy_key_cache".to_string()),
+                balance_scope: None,
+                note: None,
+            })
+            .expect("key");
+        {
+            let connection = database.connection().expect("connection");
+            connection
+                .execute(
+                    "UPDATE station_group_bindings SET last_checked_at = ?1 WHERE id = ?2",
+                    params!["1800000", binding.id],
+                )
+                .expect("fresh binding timestamp");
+            connection
+                .execute(
+                    "UPDATE station_keys SET rate_collected_at = ?1 WHERE id = ?2",
+                    params!["0", key.id],
+                )
+                .expect("stale key cache timestamp");
+        }
+
+        let facts = database
+            .load_multiplier_source_facts(&key.id)
+            .expect("multiplier source facts");
+        let resolved = crate::services::proxy::scheduler::multiplier::resolve_effective_multiplier(
+            facts,
+            1_800_000,
+            0.8,
+            20 * 60 * 1000,
+        )
+        .expect("fresh binding evidence should not be rejected as expired key cache");
+
+        assert_eq!(resolved.value, 0.75);
+        assert_eq!(resolved.collected_at_ms, Some(1_800_000));
     }
 
     #[test]
@@ -20566,6 +20654,49 @@ mod tests {
         assert_eq!(reactivated.status, "unread");
         assert!(reactivated.resolved_at.is_none());
         assert_ne!(reactivated.detected_at, first.detected_at);
+    }
+
+    #[test]
+    fn successful_collector_snapshot_resolves_matching_failed_event() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "collector-snapshot-recovery");
+
+        database
+            .insert_collector_snapshot(
+                &station.id,
+                "sub2api-groups",
+                "failed",
+                json!({}),
+                json!({}),
+                None,
+                Some("groups failed".to_string()),
+            )
+            .expect("failed groups snapshot");
+        database
+            .insert_collector_snapshot(
+                &station.id,
+                "sub2api-groups",
+                "success",
+                json!({ "ok": true }),
+                json!({ "groups": [] }),
+                None,
+                None,
+            )
+            .expect("recovered groups snapshot");
+
+        let events = database.list_change_events().expect("events");
+        let failed_key = crate::services::change_events::collector_dedupe_key(
+            &station.id,
+            "collector_failed",
+            "groups",
+        );
+        let failure = events
+            .iter()
+            .find(|event| event.dedupe_key == failed_key)
+            .expect("collector failure event");
+
+        assert_eq!(failure.status, "resolved");
+        assert!(failure.resolved_at.is_some());
     }
 
     #[test]

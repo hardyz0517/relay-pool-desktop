@@ -852,7 +852,7 @@ function KeyConnectivityTestDialog({
           />
         </Field>
 
-        <div className="rounded-[10px] bg-surface-inset p-4 font-mono text-[12px] leading-5 text-muted-foreground/60 shadow-inner">
+        <div className="rounded-[10px] border border-border bg-surface-inset p-4 font-mono text-[12px] leading-5 text-muted-foreground shadow-inner">
           {buildConnectivityConsoleLines({
             item,
             model,
@@ -922,9 +922,9 @@ function buildConnectivityConsoleLines({
   const lines = [
     { text: testing ? "连接 API 中..." : `开始测试密钥：${item?.name ?? "密钥"}`, className: "text-info-foreground" },
     { text: `使用模型：${selectedModelLabel}`, className: "font-semibold text-info-foreground" },
-    { text: '发送测试消息："hi"', className: "text-muted-foreground/60" },
-    { text: "响应：", className: "font-semibold text-warning-foreground" },
+    { text: '发送测试消息："hi"', className: "text-muted-foreground" },
   ];
+  const responseLabelLine = { text: "响应：", className: "font-semibold text-warning-foreground" };
 
   if (testing) {
     const progressLines = progressLabel
@@ -939,7 +939,7 @@ function buildConnectivityConsoleLines({
     const responseLines = displayedResponseText
       ? [{ text: displayedResponseText, className: "font-semibold text-success-foreground" }]
       : [{ text: "等待流式片段...", className: "text-muted-foreground" }];
-    return [...lines, ...progressLines, ...fallbackLines, ...responseLines];
+    return [...lines, responseLabelLine, ...progressLines, ...fallbackLines, ...responseLines];
   }
   if (result) {
     return [
@@ -951,6 +951,7 @@ function buildConnectivityConsoleLines({
       ...(result.streamFallbackReason
         ? [{ text: `回退原因：${result.streamFallbackReason}`, className: "text-warning-foreground/80" }]
         : []),
+      responseLabelLine,
       {
         text: displayedResponseText,
         className: result.ok ? "font-semibold text-success-foreground" : "font-semibold text-danger-foreground",
@@ -960,8 +961,8 @@ function buildConnectivityConsoleLines({
             {
               text: result.ok ? "测试完成！" : "测试未通过。",
               className: result.ok
-                ? "mt-2 border-t border-border-strong pt-2 text-success-foreground"
-                : "mt-2 border-t border-border-strong pt-2 text-danger-foreground",
+                ? "mt-2 border-t border-border pt-2 text-success-foreground"
+                : "mt-2 border-t border-border pt-2 text-danger-foreground",
             },
           ]
         : []),
@@ -970,13 +971,14 @@ function buildConnectivityConsoleLines({
   if (error) {
     return [
       ...lines,
+      responseLabelLine,
       { text: displayedResponseText, className: "font-semibold text-danger-foreground" },
       ...(responseTypingComplete
-        ? [{ text: "测试失败。", className: "mt-2 border-t border-border-strong pt-2 text-danger-foreground" }]
+        ? [{ text: "测试失败。", className: "mt-2 border-t border-border pt-2 text-danger-foreground" }]
         : []),
     ];
   }
-  return [...lines, { text: `待测试模型 ${model}`, className: "text-muted-foreground/70" }];
+  return [...lines, { text: `待测试模型 ${model}`, className: "text-muted-foreground" }];
 }
 
 function formatConnectivityDuration(durationMs: number) {

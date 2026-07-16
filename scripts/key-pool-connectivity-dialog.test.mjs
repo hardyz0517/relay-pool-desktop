@@ -42,6 +42,34 @@ assert.ok(
 );
 
 assert.ok(
+  pageSource.includes("border-border bg-surface-inset p-4 font-mono") &&
+    !pageSource.includes("bg-slate-900") &&
+    !pageSource.includes("border-slate-700"),
+  "connectivity dialog transcript should use the semantic inset console surface",
+);
+
+const consoleBuilder = pageSource.match(/function buildConnectivityConsoleLines\([\s\S]*?function formatConnectivityDuration/)?.[0] ?? "";
+assert.ok(
+  consoleBuilder.includes("text-info-foreground") &&
+    consoleBuilder.includes("text-success-foreground") &&
+    consoleBuilder.includes("text-warning-foreground") &&
+    consoleBuilder.includes("text-danger-foreground") &&
+    !/text-(sky|cyan|emerald|amber|rose|slate)-/.test(consoleBuilder),
+  "connectivity dialog transcript lines should use semantic status colors",
+);
+
+const resultBranch = pageSource.match(/if \(result\) \{[\s\S]*?if \(error\) \{/)?.[0] ?? "";
+const responseModeIndex = resultBranch.indexOf("响应模式：");
+const responseLabelIndex = resultBranch.indexOf("responseLabelLine");
+assert.ok(
+  pageSource.includes('const responseLabelLine = { text: "响应："') &&
+    responseModeIndex >= 0 &&
+    responseLabelIndex >= 0 &&
+    responseModeIndex < responseLabelIndex,
+  "completed connectivity results should show response mode before the response label",
+);
+
+assert.ok(
   pageSource.includes("buildKeyConnectivityModelOptions") &&
     pageSource.includes("connectivityCapabilities") &&
     pageSource.includes("getStationKeyCapabilities(item.id)") &&

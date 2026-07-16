@@ -2032,9 +2032,7 @@ impl StationKeyConnectivitySseDecoder {
             return Ok(Vec::new());
         }
         let data = data_lines.join("\n");
-        if matches!(self.kind, StationKeyConnectivityProbeKind::ChatCompletions)
-            && data.trim() == "[DONE]"
-        {
+        if data.trim() == "[DONE]" {
             self.terminal_seen = true;
             return Ok(Vec::new());
         }
@@ -2902,6 +2900,21 @@ mod tests {
             vec!["Hello".to_string(), "!".to_string()]
         );
         assert_eq!(decoder.finish().unwrap(), "Hello!");
+    }
+
+    #[test]
+    fn station_key_connectivity_responses_sse_accepts_done_sentinel() {
+        let mut decoder =
+            StationKeyConnectivitySseDecoder::new(StationKeyConnectivityProbeKind::Responses);
+
+        let deltas = decoder
+            .push(
+                b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\ndata: [DONE]\n\n",
+            )
+            .unwrap();
+
+        assert_eq!(deltas, vec!["Hi".to_string()]);
+        assert_eq!(decoder.finish().unwrap(), "Hi");
     }
 
     #[test]

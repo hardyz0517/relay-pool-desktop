@@ -41,6 +41,15 @@ export type StationIssueTag = {
   title?: string;
 };
 
+export type StationGroupIssueReason = {
+  bindingId: string;
+  groupName: string;
+  bindingStatus: "missing" | "disabled";
+  affectedKeyCount: number;
+  affectedKeyNames: string[];
+  message: string;
+};
+
 export type StationIssueFilterValue = "all" | StationIssueTagKind;
 
 type StationIssueTagDefinition = Omit<StationIssueTag, "kind" | "title">;
@@ -81,6 +90,7 @@ export type StationAssetRow = {
   enabledKeyCount: number;
   warningKeyCount: number;
   groupIssueCount: number;
+  groupIssueReasons: StationGroupIssueReason[];
   missingRateCount: number;
   balanceFactsReady: boolean;
   latestBalance: BalanceSnapshot | null;
@@ -124,11 +134,13 @@ export function buildStationAssetRows({
         (event.severity === "critical" || event.severity === "warning"),
     );
     const enabledKeyCount = keys.length > 0 ? keys.filter((key) => key.enabled).length : station.keyCount;
+    const groupIssueReasons = buildStationGroupIssueReasons(groupBindings, keys);
     return {
       station,
       enabledKeyCount,
       warningKeyCount: keys.filter((key) => key.status === "warning" || key.status === "error").length,
-      groupIssueCount: countGroupIssues(groupBindings),
+      groupIssueCount: groupIssueReasons.length,
+      groupIssueReasons,
       missingRateCount: countMissingRates(groupBindings, groupRates),
       balanceFactsReady,
       latestBalance: currentBalance?.sourceSnapshot ?? null,
@@ -227,7 +239,8 @@ export function stationIssueTags(row: StationAssetRow): StationIssueTag[] {
   }
 
   if (row.groupIssueCount > 0) {
-    tags.push(createStationIssueTag("group_issue"));
+    const title = row.groupIssueReasons?.map((reason) => reason.message).join("\n");
+    tags.push(createStationIssueTag("group_issue", title));
   }
 
   if (row.missingRateCount > 0) {
@@ -278,12 +291,108 @@ function createStationIssueTag(kind: StationIssueTagKind, title?: string): Stati
   };
 }
 
-function countGroupIssues(bindings: StationGroupBinding[]) {
-  return bindings.filter(
-    (binding) =>
-      binding.bindingKind === "station_group" &&
-      (binding.bindingStatus === "missing" || binding.bindingStatus === "disabled"),
-  ).length;
+function buildStationGroupIssueReasons(
+  bindings: StationGroupBinding[],
+  keys: StationKey[],
+): StationGroupIssueReason[] {
+  const currentGroupNames = new Set(
+    bindings
+      .filter(
+        (binding) =>
+          binding.bindingKind === "station_group" && binding.bindingStatus === "available",
+      )
+      .map((binding) => normalizeGroupName(binding.groupName))
+      .filter(Boolean),
+  );
+  const historicalGroups = new Map<
+    string,
+    {
+      bindingId: string;
+      groupName: string;
+      bindingStatus: "missing" | "disabled";
+      bindingIds: Set<string>;
+      groupIdHashes: Set<string>;
+    }
+  >();
+
+  for (const binding of bindings) {
+    if (
+      binding.bindingKind !== "station_group" ||
+      (binding.bindingStatus !== "missing" && binding.bindingStatus !== "disabled")
+    ) {
+      continue;
+    }
+    const normalizedName = normalizeGroupName(binding.groupName);
+    if (!normalizedName || currentGroupNames.has(normalizedName)) {
+      continue;
+    }
+    const identity = `${binding.bindingStatus}:${normalizedName}`;
+    const group = historicalGroups.get(identity) ?? {
+      bindingId: binding.id,
+      groupName: binding.groupName.trim(),
+      bindingStatus: binding.bindingStatus,
+      bindingIds: new Set<string>(),
+      groupIdHashes: new Set<string>(),
+    };
+    group.bindingIds.add(binding.id);
+    if (binding.groupIdHash?.trim()) {
+      group.groupIdHashes.add(binding.groupIdHash.trim());
+    }
+    historicalGroups.set(identity, group);
+  }
+
+  const enabledKeys = keys.filter((key) => key.enabled);
+  return [...historicalGroups.entries()].flatMap(([identity, group]) => {
+    const normalizedName = identity.slice(identity.indexOf(":") + 1);
+    const affectedKeys = enabledKeys.filter((key) => {
+      if (key.groupBindingId?.trim()) {
+        return group.bindingIds.has(key.groupBindingId.trim());
+      }
+      if (key.groupIdHash?.trim()) {
+        return group.groupIdHashes.has(key.groupIdHash.trim());
+      }
+      return Boolean(key.groupName?.trim() && normalizeGroupName(key.groupName) === normalizedName);
+    });
+    if (affectedKeys.length === 0) {
+      return [];
+    }
+
+    const affectedKeyNames = [...new Set(affectedKeys.map((key) => key.name.trim()).filter(Boolean))];
+    return [{
+      bindingId: group.bindingId,
+      groupName: group.groupName,
+      bindingStatus: group.bindingStatus,
+      affectedKeyCount: affectedKeys.length,
+      affectedKeyNames,
+      message: stationGroupIssueMessage(
+        group.groupName,
+        group.bindingStatus,
+        affectedKeys.length,
+        affectedKeyNames,
+      ),
+    }];
+  });
+}
+
+function normalizeGroupName(value: string) {
+  return value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+}
+
+function stationGroupIssueMessage(
+  groupName: string,
+  bindingStatus: "missing" | "disabled",
+  affectedKeyCount: number,
+  affectedKeyNames: string[],
+) {
+  const statusText = bindingStatus === "missing" ? "已下架" : "已禁用";
+  const visibleNames = affectedKeyNames.slice(0, 3);
+  if (affectedKeyCount === 1 && visibleNames.length === 1) {
+    return `分组「${groupName}」${statusText}，但仍被启用 Key「${visibleNames[0]}」使用。`;
+  }
+  const nameSuffix = visibleNames.length > 0
+    ? `：${visibleNames.join("、")}${affectedKeyNames.length > visibleNames.length ? "等" : ""}`
+    : "";
+  return `分组「${groupName}」${statusText}，但仍被 ${affectedKeyCount} 个启用 Key 使用${nameSuffix}。`;
 }
 
 function countMissingRates(bindings: StationGroupBinding[], rates: GroupRateRecord[]) {
