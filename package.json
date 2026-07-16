@@ -7,6 +7,8 @@
     "dev": "vite --host 127.0.0.1",
     "build": "pnpm theme:audit && tsc --noEmit && vite build",
     "test": "vitest run",
+    "test:contracts": "node scripts/run-contract-tests.mjs",
+    "verify:release": "pnpm test:contracts && pnpm test && pnpm build && cargo test --manifest-path src-tauri/Cargo.toml services::updater -- --nocapture && cargo test --manifest-path src-tauri/Cargo.toml prepare_for_update -- --nocapture && cargo check --manifest-path src-tauri/Cargo.toml",
     "theme:audit": "node scripts/theme-audit.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",

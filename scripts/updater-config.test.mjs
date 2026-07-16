@@ -9,6 +9,7 @@ const cargoToml = await read("src-tauri/Cargo.toml");
 const tauriLib = await read("src-tauri/src/lib.rs");
 const capabilitySource = await read("src-tauri/capabilities/default.json");
 const workflow = await read(".github/workflows/release.yml");
+const contractRunner = await read("scripts/run-contract-tests.mjs");
 const capability = capabilitySource ? JSON.parse(capabilitySource) : { permissions: [] };
 
 assert.ok(packageJson.dependencies?.["@tauri-apps/plugin-updater"], "updater JS plugin is required");
@@ -40,25 +41,26 @@ assert.match(workflow, /windows-latest/, "release workflow must build on Windows
 assert.match(workflow, /releaseDraft:\s*true/, "release must start as a Draft");
 assert.match(workflow, /TAURI_SIGNING_PRIVATE_KEY/, "release workflow must use updater signing key");
 assert.match(workflow, /--target x86_64-pc-windows-msvc/, "release must target Windows x86_64");
+assert.match(workflow, /run: pnpm verify:release/, "release workflow must use the shared release verification gate");
 assert.match(
-  workflow,
-  /node scripts\/updater-current-version-fallback\.test\.mjs/,
-  "release workflow must guard updater manifest fallback behavior",
+  contractRunner,
+  /"scripts\/updater-current-version-fallback\.test\.mjs"/,
+  "shared release verification must guard updater manifest fallback behavior",
 );
 assert.match(
-  workflow,
-  /node --test scripts\/updater-check-coordinator\.test\.ts/,
-  "release workflow must run behavioral updater coordinator tests",
+  contractRunner,
+  /"--test", "scripts\/updater-check-coordinator\.test\.ts"/,
+  "shared release verification must run behavioral updater coordinator tests",
 );
 assert.match(
-  workflow,
-  /cargo test[^\r\n]*services::updater/,
-  "release workflow must run focused Rust updater service tests",
+  packageJson.scripts?.["verify:release"] ?? "",
+  /cargo test[^&]*services::updater/,
+  "shared release verification must run focused Rust updater service tests",
 );
 assert.match(
-  workflow,
-  /node scripts\/dashboard-update-action\.test\.mjs/,
-  "release workflow must guard the dashboard update prompt action",
+  contractRunner,
+  /"scripts\/dashboard-update-action\.test\.mjs"/,
+  "shared release verification must guard the dashboard update prompt action",
 );
 
 console.log("updater configuration contract checks passed");

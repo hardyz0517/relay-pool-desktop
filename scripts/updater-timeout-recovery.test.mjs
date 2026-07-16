@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 
 const updaterApiSource = await readFile("src/lib/api/updater.ts", "utf8");
 const workflowSource = await readFile(".github/workflows/release.yml", "utf8");
+const contractRunnerSource = await readFile("scripts/run-contract-tests.mjs", "utf8");
 
 assert.match(
   updaterApiSource,
@@ -18,8 +19,14 @@ assert.match(
 
 assert.match(
   workflowSource,
-  /node scripts\/updater-timeout-recovery\.test\.mjs/,
-  "release builds must run the timeout recovery regression check",
+  /run: pnpm verify:release/,
+  "release builds must run the shared release verification gate",
+);
+
+assert.match(
+  contractRunnerSource,
+  /node["'], \["scripts\/updater-timeout-recovery\.test\.mjs"\]/,
+  "shared release verification must run the timeout recovery regression check",
 );
 
 console.log("updater timeout recovery contract checks passed");
