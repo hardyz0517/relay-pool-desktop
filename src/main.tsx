@@ -1,7 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { App } from "@/app/App";
 import { ToastProvider } from "@/components/ui";
 import { installDesktopWebViewGuards } from "@/lib/desktopGuards";
 import { UpdaterProvider } from "@/features/updater/UpdaterProvider";
@@ -9,6 +8,7 @@ import { QueryErrorNotifier } from "@/lib/query/QueryErrorNotifier";
 import { queryClient } from "@/lib/query/queryClient";
 import { ThemeProvider } from "@/theme/ThemeProvider";
 import { initializeTheme } from "@/theme/themeBootstrap";
+import { DataStoreBootstrap } from "@/features/data-recovery/DataStoreBootstrap";
 import "@/styles.css";
 
 const initialTheme = initializeTheme();
@@ -22,7 +22,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         <ToastProvider>
           <QueryErrorNotifier />
           <UpdaterProvider>
-            <App />
+            <DataStoreBootstrap />
           </UpdaterProvider>
         </ToastProvider>
       </QueryClientProvider>
