@@ -7,6 +7,7 @@ const settingsTypesSource = await readFile("src/lib/types/settings.ts", "utf8");
 const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
 const tauriLibSource = await readFile("src-tauri/src/lib.rs", "utf8");
 const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
+const relocationSource = await readFile("src-tauri/src/services/data_store/relocation.rs", "utf8");
 const cargoTomlSource = await readFile("src-tauri/Cargo.toml", "utf8");
 
 assert.ok(
@@ -70,11 +71,18 @@ assert.ok(
 
 assert.ok(
   databaseSource.includes("relay-pool-data-dir.json") &&
-    databaseSource.includes("configured_data_dir") &&
     databaseSource.includes("set_pending_data_dir") &&
     databaseSource.includes("reset_data_dir_to_default") &&
     databaseSource.includes("data_dir_change_requires_restart"),
-  "database service should load, set, and clear external data-dir config before opening SQLite and report pending restart state",
+  "database service should expose pending data-dir settings and report pending restart state",
+);
+
+assert.ok(
+  relocationSource.includes("write_relocation_intent") &&
+    relocationSource.includes("apply_trusted_relocation") &&
+    relocationSource.includes("Backup::new") &&
+    !databaseSource.includes("fs::copy(&source_db_path, &db_path)"),
+  "data-directory changes should use v2 relocation intent plus SQLite backup and must not use raw fs::copy activation",
 );
 
 assert.ok(

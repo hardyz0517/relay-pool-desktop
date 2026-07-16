@@ -11,6 +11,7 @@ use services::data_store::{
         DataDirConfigV2,
     },
     inspect_startup,
+    relocation::apply_trusted_relocation,
     types::{DataStoreStartupState, RecoveryReason, StartupDecision},
 };
 use tauri::menu::{Menu, MenuItem};
@@ -87,6 +88,22 @@ enum PreparedDataStore {
 
 fn prepare_data_store(default_data_dir: PathBuf) -> Result<PreparedDataStore, String> {
     let mut startup_state = inspect_startup(&default_data_dir)?;
+    if let Some(intent) = startup_state.relocation_intent.clone() {
+        match apply_trusted_relocation(&default_data_dir, &intent) {
+            Ok(_) => {
+                startup_state = inspect_startup(&default_data_dir)?;
+            }
+            Err(error) => {
+                eprintln!(
+                    "Relay Pool Desktop data directory relocation requires recovery: {error}"
+                );
+                startup_state.decision = StartupDecision::NeedsRecovery {
+                    reason: RecoveryReason::PendingRelocation,
+                };
+                return Ok(PreparedDataStore::Recovery(startup_state));
+            }
+        }
+    }
     let startup_default_data_dir = startup_state.default_data_dir().to_path_buf();
     let database = match startup_state.decision.clone() {
         StartupDecision::Ready { candidate_id } => {

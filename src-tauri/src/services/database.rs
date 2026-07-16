@@ -2,7 +2,7 @@ use std::{
     collections::{hash_map::DefaultHasher, HashMap, HashSet},
     fs,
     hash::{Hash, Hasher},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex, MutexGuard,
@@ -13,8 +13,16 @@ use std::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::{rngs::OsRng, RngCore};
 use rusqlite::{params, params_from_iter, types::Type, Connection, OptionalExtension, Transaction};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+#[cfg(test)]
+use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::path::Path;
+
+use crate::services::data_store::relocation::{
+    write_active_data_dir_selection, write_relocation_intent,
+};
 
 use crate::models::{
     change_events::{ChangeEvent, UpsertChangeEventInput},
@@ -103,6 +111,7 @@ use crate::services::station_endpoints::{
 };
 
 static NEXT_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
 const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
 const DATABASE_FILE: &str = "relay-pool-desktop.sqlite3";
 const DEFAULT_SETTINGS: [(&str, &str); 18] = [
@@ -126,6 +135,16 @@ const DEFAULT_SETTINGS: [(&str, &str); 18] = [
     ("developer_mode_enabled", "false"),
 ];
 
+#[derive(Clone)]
+pub struct AppDatabase {
+    connection: Arc<Mutex<Connection>>,
+    data_dir: PathBuf,
+    db_path: PathBuf,
+    default_data_dir: PathBuf,
+    pending_data_dir: Arc<Mutex<Option<PathBuf>>>,
+}
+
+#[cfg(test)]
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DataDirConfig {
@@ -133,21 +152,14 @@ struct DataDirConfig {
     source_data_dir: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Default)]
 struct DataDirConfigPaths {
     pending_data_dir: Option<PathBuf>,
     source_data_dir: Option<PathBuf>,
 }
-#[derive(Clone)]
-pub struct AppDatabase {
-    connection: Arc<Mutex<Connection>>,
-    data_dir: PathBuf,
-    db_path: PathBuf,
-    default_data_dir: PathBuf,
-    data_dir_config_path: PathBuf,
-    pending_data_dir: Arc<Mutex<Option<PathBuf>>>,
-}
 
+#[cfg(test)]
 fn read_data_dir_config(config_path: &PathBuf) -> Result<DataDirConfigPaths, String> {
     if !config_path.exists() {
         return Ok(DataDirConfigPaths::default());
@@ -168,6 +180,7 @@ fn read_data_dir_config(config_path: &PathBuf) -> Result<DataDirConfigPaths, Str
     })
 }
 
+#[cfg(test)]
 fn write_data_dir_config(
     config_path: &PathBuf,
     data_dir: &PathBuf,
@@ -187,10 +200,7 @@ fn write_data_dir_config(
         .map_err(|error| format!("写入数据目录配置 {} 失败: {error}", config_path.display()))
 }
 
-fn mark_data_dir_initialized(config_path: &PathBuf, data_dir: &Path) -> Result<(), String> {
-    write_data_dir_config(config_path, &data_dir.to_path_buf(), Some(data_dir))
-}
-
+#[cfg(test)]
 fn resolve_configured_data_dir(
     default_data_dir: &Path,
 ) -> Result<(PathBuf, Option<PathBuf>, Option<PathBuf>), String> {
@@ -207,6 +217,7 @@ fn resolve_configured_data_dir(
     ))
 }
 
+#[cfg(test)]
 fn prepare_configured_database(
     default_data_dir: &Path,
     configured_data_dir: &Path,
@@ -225,7 +236,7 @@ fn prepare_configured_database(
         && should_copy_source_database(source_data_dir, &db_path)?
     {
         let source_db_path = source_data_dir.join(DATABASE_FILE);
-        fs::copy(&source_db_path, &db_path).map_err(|error| {
+        copy_source_database_for_legacy_activation(&source_db_path, &db_path).map_err(|error| {
             format!(
                 "无法将现有数据库 {} 复制到新数据目录 {}: {error}",
                 source_db_path.display(),
@@ -237,6 +248,7 @@ fn prepare_configured_database(
     Ok(db_path)
 }
 
+#[cfg(test)]
 fn should_copy_source_database(
     source_data_dir: &Path,
     target_db_path: &Path,
@@ -255,17 +267,40 @@ fn should_copy_source_database(
     Ok(!target_has_user_state)
 }
 
+#[cfg(test)]
+fn copy_source_database_for_legacy_activation(
+    source_db_path: &Path,
+    target_db_path: &Path,
+) -> Result<(), String> {
+    let source =
+        Connection::open_with_flags(source_db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|error| {
+                format!("failed to open source database for legacy activation: {error}")
+            })?;
+    let mut target = Connection::open(target_db_path).map_err(|error| {
+        format!("failed to open target database for legacy activation: {error}")
+    })?;
+    let backup = rusqlite::backup::Backup::new(&source, &mut target)
+        .map_err(|error| format!("failed to start legacy activation backup: {error}"))?;
+    backup
+        .run_to_completion(5, std::time::Duration::from_millis(250), None)
+        .map_err(|error| format!("failed to copy legacy activation database: {error}"))
+}
+
+#[cfg(test)]
 struct SqliteUserState {
     station_count: i64,
     has_custom_settings: bool,
 }
 
+#[cfg(test)]
 impl SqliteUserState {
     fn has_user_state(&self) -> bool {
         self.station_count > 0 || self.has_custom_settings
     }
 }
 
+#[cfg(test)]
 fn inspect_sqlite_user_state(db_path: &Path) -> Result<Option<SqliteUserState>, String> {
     if !db_path.exists() {
         return Ok(None);
@@ -314,6 +349,7 @@ fn inspect_sqlite_user_state(db_path: &Path) -> Result<Option<SqliteUserState>, 
     }))
 }
 
+#[cfg(test)]
 fn sqlite_has_custom_settings(connection: &Connection, db_path: &Path) -> Result<bool, String> {
     let mut statement = connection
         .prepare("SELECT key, value FROM settings")
@@ -342,6 +378,7 @@ fn sqlite_has_custom_settings(connection: &Connection, db_path: &Path) -> Result
     Ok(false)
 }
 
+#[cfg(test)]
 fn default_setting_value(key: &str) -> Option<&'static str> {
     DEFAULT_SETTINGS
         .iter()
@@ -435,7 +472,6 @@ impl AppDatabase {
             connection: Arc::new(Mutex::new(connection)),
             data_dir: active_data_dir,
             db_path,
-            data_dir_config_path: default_data_dir.join(DATA_DIR_CONFIG_FILE),
             default_data_dir,
             pending_data_dir: Arc::new(Mutex::new(pending_data_dir)),
         })
@@ -452,7 +488,6 @@ impl AppDatabase {
             data_dir: PathBuf::from(":memory:"),
             db_path: PathBuf::from(":memory:"),
             default_data_dir: PathBuf::from(":memory:"),
-            data_dir_config_path: PathBuf::from(":memory:"),
             pending_data_dir: Arc::new(Mutex::new(None)),
         })
     }
@@ -833,7 +868,7 @@ impl AppDatabase {
     pub fn set_pending_data_dir(&self, data_dir: PathBuf) -> Result<AppSettings, String> {
         fs::create_dir_all(&data_dir)
             .map_err(|error| format!("无法创建数据目录 {}: {error}", data_dir.display()))?;
-        write_data_dir_config(&self.data_dir_config_path, &data_dir, Some(&self.data_dir))?;
+        write_relocation_intent(&self.default_data_dir, &self.data_dir, &data_dir)?;
         {
             let mut pending = self
                 .pending_data_dir
@@ -851,11 +886,15 @@ impl AppDatabase {
                 self.default_data_dir.display()
             )
         })?;
-        write_data_dir_config(
-            &self.data_dir_config_path,
-            &self.default_data_dir,
-            Some(&self.data_dir),
-        )?;
+        if self.data_dir == self.default_data_dir {
+            write_active_data_dir_selection(&self.default_data_dir, &self.default_data_dir)?;
+        } else {
+            write_relocation_intent(
+                &self.default_data_dir,
+                &self.data_dir,
+                &self.default_data_dir,
+            )?;
+        }
         {
             let mut pending = self
                 .pending_data_dir
