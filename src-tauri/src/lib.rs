@@ -2,10 +2,23 @@ mod commands;
 mod models;
 mod services;
 
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use services::data_store::{
+    config::{
+        create_installation_marker, installation_marker_exists, read_config, write_config,
+        DataDirConfigV2,
+    },
+    inspect_startup,
+    types::{DataStoreStartupState, RecoveryReason, StartupDecision},
+};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 use tauri::WindowEvent;
+
+const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
 
 #[derive(Debug, Clone, Copy)]
 struct WindowLifecyclePolicy;
@@ -67,6 +80,116 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+enum PreparedDataStore {
+    Ready(services::database::AppDatabase, DataStoreStartupState),
+    Recovery(DataStoreStartupState),
+}
+
+fn prepare_data_store(default_data_dir: PathBuf) -> Result<PreparedDataStore, String> {
+    let mut startup_state = inspect_startup(&default_data_dir)?;
+    let startup_default_data_dir = startup_state.default_data_dir().to_path_buf();
+    let database = match startup_state.decision.clone() {
+        StartupDecision::Ready { candidate_id } => {
+            let Some(candidate) = startup_state
+                .candidates
+                .iter()
+                .find(|candidate| candidate.id == candidate_id)
+            else {
+                startup_state.decision = StartupDecision::NeedsRecovery {
+                    reason: RecoveryReason::Missing,
+                };
+                return Ok(PreparedDataStore::Recovery(startup_state));
+            };
+            let db_path = PathBuf::from(&candidate.path);
+            let Some(active_data_dir) = db_path.parent().map(Path::to_path_buf) else {
+                startup_state.decision = StartupDecision::NeedsRecovery {
+                    reason: RecoveryReason::Missing,
+                };
+                return Ok(PreparedDataStore::Recovery(startup_state));
+            };
+            services::database::AppDatabase::initialize_existing_at(
+                default_data_dir.clone(),
+                active_data_dir.clone(),
+                None,
+            )
+            .and_then(|database| {
+                commit_active_selection_after_success(&default_data_dir, &active_data_dir)?;
+                Ok(database)
+            })
+        }
+        StartupDecision::FirstRun { default_data_dir } => {
+            services::database::AppDatabase::initialize_new_at(
+                default_data_dir.clone(),
+                default_data_dir.clone(),
+            )
+            .and_then(|database| {
+                commit_active_selection_after_success(&default_data_dir, &default_data_dir)?;
+                Ok(database)
+            })
+        }
+        StartupDecision::NeedsRecovery { .. } | StartupDecision::Conflict { .. } => {
+            return Ok(PreparedDataStore::Recovery(startup_state));
+        }
+    };
+
+    match database {
+        Ok(database) => {
+            let mut ready_state = inspect_startup(&startup_default_data_dir).map_err(|error| {
+                format!("failed to verify data store startup after database open: {error}")
+            })?;
+            if matches!(ready_state.decision, StartupDecision::Ready { .. }) {
+                Ok(PreparedDataStore::Ready(database, ready_state))
+            } else {
+                ready_state.decision = StartupDecision::NeedsRecovery {
+                    reason: RecoveryReason::OpenOrMigrationFailed,
+                };
+                Ok(PreparedDataStore::Recovery(ready_state))
+            }
+        }
+        Err(error) => {
+            eprintln!("Relay Pool Desktop database startup requires recovery: {error}");
+            startup_state.decision = StartupDecision::NeedsRecovery {
+                reason: RecoveryReason::OpenOrMigrationFailed,
+            };
+            Ok(PreparedDataStore::Recovery(startup_state))
+        }
+    }
+}
+
+fn commit_active_selection_after_success(
+    default_data_dir: &Path,
+    active_data_dir: &Path,
+) -> Result<(), String> {
+    let config_path = default_data_dir.join(DATA_DIR_CONFIG_FILE);
+    let config = read_config(&config_path)?;
+    if config
+        .as_ref()
+        .and_then(|config| config.active_data_dir.as_deref())
+        == Some(active_data_dir)
+        && installation_marker_exists(default_data_dir)
+    {
+        return Ok(());
+    }
+    write_config(
+        &config_path,
+        &DataDirConfigV2 {
+            version: 2,
+            active_data_dir: Some(active_data_dir.to_path_buf()),
+            pending_data_dir: None,
+            source_data_dir: None,
+            updated_at: data_store_updated_at(),
+        },
+    )?;
+    create_installation_marker(default_data_dir)
+}
+
+fn data_store_updated_at() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "0".to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -77,26 +200,39 @@ pub fn run() {
         .setup(|app| {
             setup_tray(app)?;
             let secret_manager = services::secrets::SecretManager::initialize()?;
-            let database = services::database::AppDatabase::initialize(app.handle())?;
-            let data_key = *secret_manager.data_key();
-            let channel_monitor_runner =
-                services::channel_monitors::ChannelMonitorRunnerState::start(
-                    database.clone(),
-                    data_key,
-                );
-            let station_collector_runner =
-                services::station_collectors::StationCollectorRunnerState::start(
-                    database.clone(),
-                    data_key,
-                );
-            println!(
-                "Relay Pool Desktop database initialized at {}",
-                database.db_path().display()
-            );
+            let default_data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|error| format!("无法解析应用数据目录: {error}"))?;
+            let prepared_data_store = prepare_data_store(default_data_dir)?;
             app.manage(secret_manager);
-            app.manage(database);
-            app.manage(channel_monitor_runner);
-            app.manage(station_collector_runner);
+            match prepared_data_store {
+                PreparedDataStore::Ready(database, startup_state) => {
+                    let data_key = *app.state::<services::secrets::SecretManager>().data_key();
+                    let channel_monitor_runner =
+                        services::channel_monitors::ChannelMonitorRunnerState::start(
+                            database.clone(),
+                            data_key,
+                        );
+                    let station_collector_runner =
+                        services::station_collectors::StationCollectorRunnerState::start(
+                            database.clone(),
+                            data_key,
+                        );
+                    println!(
+                        "Relay Pool Desktop database initialized at {}",
+                        database.db_path().display()
+                    );
+                    app.manage(startup_state);
+                    app.manage(database);
+                    app.manage(channel_monitor_runner);
+                    app.manage(station_collector_runner);
+                }
+                PreparedDataStore::Recovery(startup_state) => {
+                    println!("Relay Pool Desktop started in data recovery mode");
+                    app.manage(startup_state);
+                }
+            }
             app.manage(services::capture::session::CaptureSessionStore::default());
             app.manage(services::proxy::runtime::ProxyRuntimeState::default());
             Ok(())
@@ -126,6 +262,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_status,
+            commands::get_data_store_startup_state,
+            commands::activate_data_store_candidate,
             commands::list_stations,
             commands::create_station,
             commands::update_station,

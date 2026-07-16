@@ -15,7 +15,6 @@ use rand::{rngs::OsRng, RngCore};
 use rusqlite::{params, params_from_iter, types::Type, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager};
 
 use crate::models::{
     change_events::{ChangeEvent, UpsertChangeEventInput},
@@ -438,47 +437,6 @@ impl AppDatabase {
             db_path,
             data_dir_config_path: default_data_dir.join(DATA_DIR_CONFIG_FILE),
             default_data_dir,
-            pending_data_dir: Arc::new(Mutex::new(pending_data_dir)),
-        })
-    }
-
-    pub fn initialize(app: &AppHandle) -> Result<Self, String> {
-        let default_data_dir = app
-            .path()
-            .app_data_dir()
-            .map_err(|error| format!("无法解析应用数据目录: {error}"))?;
-        let data_dir_config_path = default_data_dir.join(DATA_DIR_CONFIG_FILE);
-        let (configured_data_dir, pending_data_dir, source_data_dir) =
-            resolve_configured_data_dir(&default_data_dir)?;
-
-        fs::create_dir_all(&configured_data_dir).map_err(|error| {
-            format!(
-                "无法创建应用数据目录 {}: {error}",
-                configured_data_dir.display()
-            )
-        })?;
-
-        let db_path = prepare_configured_database(
-            &default_data_dir,
-            &configured_data_dir,
-            source_data_dir.as_deref(),
-        )?;
-        if pending_data_dir.is_some()
-            && source_data_dir.as_deref() != Some(configured_data_dir.as_path())
-        {
-            mark_data_dir_initialized(&data_dir_config_path, &configured_data_dir)?;
-        }
-        let connection = Connection::open(&db_path)
-            .map_err(|error| format!("无法打开 SQLite 数据库 {}: {error}", db_path.display()))?;
-
-        initialize_schema_and_migrations(&connection)?;
-
-        Ok(Self {
-            connection: Arc::new(Mutex::new(connection)),
-            data_dir: configured_data_dir,
-            db_path,
-            default_data_dir,
-            data_dir_config_path,
             pending_data_dir: Arc::new(Mutex::new(pending_data_dir)),
         })
     }

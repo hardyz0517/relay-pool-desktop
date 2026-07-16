@@ -1,9 +1,13 @@
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::io::Read;
 use std::process::Command;
 use std::time::{Duration, Instant};
+use std::{
+    io::Read,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tauri::{ipc::Channel, Manager, State};
 
 use crate::{
@@ -59,16 +63,28 @@ use crate::{
     },
     services::{
         capture, collectors,
+        data_store::{
+            backup::backup_selected_database,
+            config::{create_installation_marker, write_config, DataDirConfigV2},
+            inspect::inspect_candidate,
+            types::{
+                ActivationResult, CandidateHealth, CandidateRole, DataStoreStartupState,
+                DataStoreStartupView,
+            },
+        },
         database::{now_millis_for_services, AppDatabase},
         endpoint_ping::ping_station_endpoint as probe_station_endpoint,
         pricing::{pricing_context_from_pricing_parts, RequestPricingParts},
         proxy::{redact_error_message, runtime::ProxyRuntimeState, should_fallback},
         remote_keys,
-        secrets::SecretManager,
+        secrets::{validation::validate_database_secrets, SecretManager},
         station_endpoints::{build_api_url, url_belongs_to_base},
         updater::{self, PublishedUpdateInspection, UpdaterNetworkConfig},
     },
 };
+
+const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
+const DATABASE_FILE: &str = "relay-pool-desktop.sqlite3";
 
 const STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
@@ -78,6 +94,64 @@ const DEFAULT_STATION_KEY_CONNECTIVITY_MODEL: &str = "gpt-4.1-mini";
 #[tauri::command]
 pub fn app_status() -> AppStatus {
     AppStatus::default()
+}
+
+#[tauri::command]
+pub fn get_data_store_startup_state(
+    state: State<'_, DataStoreStartupState>,
+) -> DataStoreStartupView {
+    state.view()
+}
+
+#[tauri::command]
+pub fn activate_data_store_candidate(
+    state: State<'_, DataStoreStartupState>,
+    secrets: State<'_, SecretManager>,
+    candidate_path: String,
+) -> Result<ActivationResult, String> {
+    let candidate_path = PathBuf::from(candidate_path);
+    let canonical_path = candidate_path
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve selected database path: {error}"))?;
+    if canonical_path.file_name().and_then(|name| name.to_str()) != Some(DATABASE_FILE) {
+        return Err(format!("selected database must be named {DATABASE_FILE}"));
+    }
+
+    let inspected = inspect_candidate(&canonical_path, CandidateRole::Located)?;
+    if inspected.candidate.health != CandidateHealth::Healthy
+        || !inspected.contains_relay_pool_schema
+        || !inspected.candidate.schema_compatible
+    {
+        return Err("selected database is not a healthy Relay Pool database".to_string());
+    }
+    validate_database_secrets(&canonical_path, secrets.data_key())?;
+    backup_selected_database(&canonical_path, state.default_data_dir())?;
+
+    let active_data_dir = canonical_path
+        .parent()
+        .ok_or_else(|| "selected database path has no parent directory".to_string())?;
+    write_config(
+        &state.default_data_dir().join(DATA_DIR_CONFIG_FILE),
+        &DataDirConfigV2 {
+            version: 2,
+            active_data_dir: Some(active_data_dir.to_path_buf()),
+            pending_data_dir: None,
+            source_data_dir: None,
+            updated_at: data_store_updated_at(),
+        },
+    )?;
+    create_installation_marker(state.default_data_dir())?;
+
+    Ok(ActivationResult {
+        restart_required: true,
+    })
+}
+
+fn data_store_updated_at() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "0".to_string())
 }
 
 #[tauri::command]

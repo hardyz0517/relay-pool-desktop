@@ -3,6 +3,8 @@ identifier = "main-window"
 description = "Allow the main Relay Pool Desktop window to invoke normal app commands."
 commands.allow = [
   "app_status",
+  "get_data_store_startup_state",
+  "activate_data_store_candidate",
   "list_stations",
   "create_station",
   "update_station",
