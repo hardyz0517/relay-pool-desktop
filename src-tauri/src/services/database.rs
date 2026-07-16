@@ -349,7 +349,99 @@ fn default_setting_value(key: &str) -> Option<&'static str> {
         .find_map(|(setting_key, value)| (*setting_key == key).then_some(*value))
 }
 
+fn initialize_schema_and_migrations(connection: &Connection) -> Result<(), String> {
+    initialize_schema(connection)
+        .map_err(|error| format!("initialize SQLite schema failed: {error}"))?;
+    migrate_station_endpoint_urls(connection)
+        .map_err(|error| format!("migrate station endpoint URLs failed: {error}"))?;
+    migrate_secret_schema(connection)
+        .map_err(|error| format!("migrate secret schema failed: {error}"))?;
+    seed_default_settings(connection)
+        .map_err(|error| format!("seed default settings failed: {error}"))?;
+    migrate_default_routing_strategy(connection)
+        .map_err(|error| format!("migrate default routing strategy failed: {error}"))?;
+    migrate_automatic_scheduler_schema(connection)
+        .map_err(|error| format!("migrate automatic scheduler schema failed: {error}"))?;
+    migrate_default_station_keys(connection)
+        .map_err(|error| format!("migrate default station keys failed: {error}"))?;
+    migrate_legacy_group_facts(connection)
+        .map_err(|error| format!("migrate legacy group facts failed: {error}"))?;
+    migrate_station_proxy_columns(connection)
+        .map_err(|error| format!("migrate station proxy columns failed: {error}"))?;
+    migrate_pricing_tables(connection)
+        .map_err(|error| format!("migrate pricing tables failed: {error}"))?;
+    seed_builtin_model_base_prices(connection)
+        .map_err(|error| format!("seed builtin model base prices failed: {error}"))?;
+    migrate_request_log_route_columns(connection)
+        .map_err(|error| format!("migrate request log route columns failed: {error}"))?;
+    migrate_request_log_cost_columns(connection)
+        .map_err(|error| format!("migrate request log cost columns failed: {error}"))?;
+    migrate_request_log_economic_columns(connection)
+        .map_err(|error| format!("migrate request log economic columns failed: {error}"))?;
+    migrate_request_log_lifecycle_columns(connection)
+        .map_err(|error| format!("migrate request log lifecycle columns failed: {error}"))?;
+    migrate_request_log_observability_columns(connection)
+        .map_err(|error| format!("migrate request log observability columns failed: {error}"))?;
+    migrate_remote_key_tables(connection)
+        .map_err(|error| format!("migrate remote key tables failed: {error}"))?;
+
+    Ok(())
+}
+
 impl AppDatabase {
+    pub fn initialize_existing_at(
+        default_data_dir: PathBuf,
+        active_data_dir: PathBuf,
+        pending_data_dir: Option<PathBuf>,
+    ) -> Result<Self, String> {
+        let db_path = active_data_dir.join(DATABASE_FILE);
+        if !db_path.is_file() {
+            return Err(format!(
+                "existing database does not exist: {}",
+                db_path.display()
+            ));
+        }
+        Self::initialize_connection(default_data_dir, active_data_dir, db_path, pending_data_dir)
+    }
+
+    pub fn initialize_new_at(
+        default_data_dir: PathBuf,
+        active_data_dir: PathBuf,
+    ) -> Result<Self, String> {
+        let db_path = active_data_dir.join(DATABASE_FILE);
+        if db_path.exists() {
+            return Err(format!("database already exists: {}", db_path.display()));
+        }
+        fs::create_dir_all(&active_data_dir).map_err(|error| {
+            format!(
+                "无法创建应用数据目录 {}: {error}",
+                active_data_dir.display()
+            )
+        })?;
+        Self::initialize_connection(default_data_dir, active_data_dir, db_path, None)
+    }
+
+    fn initialize_connection(
+        default_data_dir: PathBuf,
+        active_data_dir: PathBuf,
+        db_path: PathBuf,
+        pending_data_dir: Option<PathBuf>,
+    ) -> Result<Self, String> {
+        let connection = Connection::open(&db_path)
+            .map_err(|error| format!("无法打开 SQLite 数据库 {}: {error}", db_path.display()))?;
+
+        initialize_schema_and_migrations(&connection)?;
+
+        Ok(Self {
+            connection: Arc::new(Mutex::new(connection)),
+            data_dir: active_data_dir,
+            db_path,
+            data_dir_config_path: default_data_dir.join(DATA_DIR_CONFIG_FILE),
+            default_data_dir,
+            pending_data_dir: Arc::new(Mutex::new(pending_data_dir)),
+        })
+    }
+
     pub fn initialize(app: &AppHandle) -> Result<Self, String> {
         let default_data_dir = app
             .path()
@@ -379,40 +471,7 @@ impl AppDatabase {
         let connection = Connection::open(&db_path)
             .map_err(|error| format!("无法打开 SQLite 数据库 {}: {error}", db_path.display()))?;
 
-        initialize_schema(&connection)
-            .map_err(|error| format!("初始化 SQLite schema 失败: {error}"))?;
-        migrate_station_endpoint_urls(&connection)
-            .map_err(|error| format!("migrate station endpoint URLs failed: {error}"))?;
-        migrate_secret_schema(&connection)
-            .map_err(|error| format!("迁移凭据安全字段失败: {error}"))?;
-        seed_default_settings(&connection)
-            .map_err(|error| format!("初始化默认设置失败: {error}"))?;
-        migrate_default_routing_strategy(&connection)
-            .map_err(|error| format!("migrate default routing strategy failed: {error}"))?;
-        migrate_automatic_scheduler_schema(&connection)
-            .map_err(|error| format!("migrate automatic scheduler schema failed: {error}"))?;
-        migrate_default_station_keys(&connection)
-            .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
-        migrate_legacy_group_facts(&connection)
-            .map_err(|error| format!("迁移旧分组事实失败: {error}"))?;
-        migrate_station_proxy_columns(&connection)
-            .map_err(|error| format!("迁移站点代理字段失败: {error}"))?;
-        migrate_pricing_tables(&connection)
-            .map_err(|error| format!("迁移价格和余额表失败: {error}"))?;
-        seed_builtin_model_base_prices(&connection)
-            .map_err(|error| format!("初始化模型基准价格失败: {error}"))?;
-        migrate_request_log_route_columns(&connection)
-            .map_err(|error| format!("迁移请求日志路由字段失败: {error}"))?;
-        migrate_request_log_cost_columns(&connection)
-            .map_err(|error| format!("迁移请求日志成本字段失败: {error}"))?;
-        migrate_request_log_economic_columns(&connection)
-            .map_err(|error| format!("迁移请求日志经济上下文字段失败: {error}"))?;
-        migrate_request_log_lifecycle_columns(&connection)
-            .map_err(|error| format!("迁移请求日志生命周期字段失败: {error}"))?;
-        migrate_request_log_observability_columns(&connection)
-            .map_err(|error| format!("迁移请求日志观测字段失败: {error}"))?;
-        migrate_remote_key_tables(&connection)
-            .map_err(|error| format!("迁移远端 Key 表失败: {error}"))?;
+        initialize_schema_and_migrations(&connection)?;
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -428,40 +487,7 @@ impl AppDatabase {
     pub fn new_in_memory_for_tests() -> Result<Self, String> {
         let connection = Connection::open_in_memory()
             .map_err(|error| format!("无法打开内存 SQLite 数据库: {error}"))?;
-        initialize_schema(&connection)
-            .map_err(|error| format!("初始化 SQLite schema 失败: {error}"))?;
-        migrate_station_endpoint_urls(&connection)
-            .map_err(|error| format!("migrate station endpoint URLs failed: {error}"))?;
-        migrate_secret_schema(&connection)
-            .map_err(|error| format!("迁移凭据安全字段失败: {error}"))?;
-        seed_default_settings(&connection)
-            .map_err(|error| format!("初始化默认设置失败: {error}"))?;
-        migrate_default_routing_strategy(&connection)
-            .map_err(|error| format!("migrate default routing strategy failed: {error}"))?;
-        migrate_automatic_scheduler_schema(&connection)
-            .map_err(|error| format!("migrate automatic scheduler schema failed: {error}"))?;
-        migrate_default_station_keys(&connection)
-            .map_err(|error| format!("迁移默认站点 Key 失败: {error}"))?;
-        migrate_legacy_group_facts(&connection)
-            .map_err(|error| format!("迁移旧分组事实失败: {error}"))?;
-        migrate_station_proxy_columns(&connection)
-            .map_err(|error| format!("迁移站点代理字段失败: {error}"))?;
-        migrate_pricing_tables(&connection)
-            .map_err(|error| format!("迁移价格和余额表失败: {error}"))?;
-        seed_builtin_model_base_prices(&connection)
-            .map_err(|error| format!("初始化模型基准价格失败: {error}"))?;
-        migrate_request_log_route_columns(&connection)
-            .map_err(|error| format!("迁移请求日志路由字段失败: {error}"))?;
-        migrate_request_log_cost_columns(&connection)
-            .map_err(|error| format!("迁移请求日志成本字段失败: {error}"))?;
-        migrate_request_log_economic_columns(&connection)
-            .map_err(|error| format!("迁移请求日志经济上下文字段失败: {error}"))?;
-        migrate_request_log_lifecycle_columns(&connection)
-            .map_err(|error| format!("迁移请求日志生命周期字段失败: {error}"))?;
-        migrate_request_log_observability_columns(&connection)
-            .map_err(|error| format!("迁移请求日志观测字段失败: {error}"))?;
-        migrate_remote_key_tables(&connection)
-            .map_err(|error| format!("迁移远端 Key 表失败: {error}"))?;
+        initialize_schema_and_migrations(&connection)?;
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -15803,6 +15829,55 @@ mod tests {
             settings.collector_proxy_url.as_deref(),
             Some("http://127.0.0.1:7890")
         );
+    }
+
+    #[test]
+    fn initialize_at_existing_requires_fixed_database_without_mutating_config() {
+        let root = std::env::temp_dir().join(generate_id("initialize-at-existing"));
+        let default_data_dir = root.join("default");
+        let active_data_dir = root.join("active");
+        fs::create_dir_all(&default_data_dir).expect("default dir");
+        fs::write(default_data_dir.join(DATA_DIR_CONFIG_FILE), "sentinel").expect("config");
+
+        let result = AppDatabase::initialize_existing_at(
+            default_data_dir.clone(),
+            active_data_dir.clone(),
+            Some(root.join("pending")),
+        );
+        let error = result.err().expect("missing existing database");
+
+        assert!(error.contains("does not exist"));
+        assert!(!active_data_dir.join(DATABASE_FILE).exists());
+        assert_eq!(
+            fs::read_to_string(default_data_dir.join(DATA_DIR_CONFIG_FILE)).expect("config"),
+            "sentinel"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn initialize_at_new_rejects_existing_database_and_initializes_missing_path() {
+        let root = std::env::temp_dir().join(generate_id("initialize-at-new"));
+        let default_data_dir = root.join("default");
+        let existing_data_dir = root.join("existing");
+        let fresh_data_dir = root.join("fresh");
+        fs::create_dir_all(&existing_data_dir).expect("existing dir");
+        Connection::open(existing_data_dir.join(DATABASE_FILE)).expect("existing db");
+
+        let result = AppDatabase::initialize_new_at(default_data_dir.clone(), existing_data_dir);
+        let error = result.err().expect("existing database rejected");
+        assert!(error.contains("already exists"));
+
+        let database = AppDatabase::initialize_new_at(default_data_dir, fresh_data_dir.clone())
+            .expect("new database");
+
+        assert_eq!(database.db_path(), &fresh_data_dir.join(DATABASE_FILE));
+        let connection = Connection::open(database.db_path()).expect("created db");
+        assert!(schema_table_exists(&connection, "settings").expect("settings table"));
+        assert!(!fresh_data_dir.join(DATA_DIR_CONFIG_FILE).exists());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
