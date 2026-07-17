@@ -25,16 +25,37 @@ fn legacy_contract_preserves_query_and_safe_headers() {
 
     let observed = case.post_chat(
         "?beta=true",
-        &[("accept", "text/event-stream"), ("openai-project", "project-1")],
+        &[
+            ("accept", "text/event-stream"),
+            ("openai-project", "project-1"),
+        ],
         br#"{"model":"alias-model","stream":true}"#,
     );
 
-    assert_eq!(observed.upstream.path_and_query, "/v1/chat/completions?beta=true");
-    assert_eq!(observed.upstream.body, br#"{"model":"mapped-model","stream":true}"#);
-    assert_eq!(observed.upstream.header("accept"), Some("text/event-stream"));
-    assert_eq!(observed.upstream.header("openai-project"), Some("project-1"));
-    assert_eq!(observed.upstream.header("authorization"), Some("Bearer upstream-key"));
-    assert_ne!(observed.upstream.header("authorization"), Some(case.local_key()));
+    assert_eq!(
+        observed.upstream.path_and_query,
+        "/v1/chat/completions?beta=true"
+    );
+    assert_eq!(
+        observed.upstream.body,
+        br#"{"model":"mapped-model","stream":true}"#
+    );
+    assert_eq!(
+        observed.upstream.header("accept"),
+        Some("text/event-stream")
+    );
+    assert_eq!(
+        observed.upstream.header("openai-project"),
+        Some("project-1")
+    );
+    assert_eq!(
+        observed.upstream.header("authorization"),
+        Some("Bearer upstream-key")
+    );
+    assert_ne!(
+        observed.upstream.header("authorization"),
+        Some(case.local_key())
+    );
 }
 
 #[test]
@@ -55,11 +76,11 @@ fn legacy_contract_fails_over_retryable_statuses_before_output() {
 }
 
 #[test]
-fn legacy_contract_current_raw_404_behavior_is_explicit() {
+fn legacy_contract_raw_404_stops_without_candidate_failover() {
     let observed = LegacyGatewayCase::with_statuses([404, 200]).post_buffered_chat();
 
-    assert_eq!(observed.downstream_status, 200);
-    assert_eq!(observed.attempted_key_ids, ["key-a", "key-b"]);
+    assert_eq!(observed.downstream_status, 404);
+    assert_eq!(observed.attempted_key_ids, ["key-a"]);
     assert_eq!(observed.request_logs_len, 1);
 }
 

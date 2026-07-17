@@ -4,6 +4,7 @@ use serde_json::Value;
 pub mod adapters;
 pub mod endpoint_adapter;
 pub mod error;
+pub mod execution;
 pub mod http_request;
 pub mod ingress;
 pub mod legacy_runtime;
@@ -188,7 +189,7 @@ mod tests {
         assert!(should_fallback(500));
         assert!(should_fallback(503));
         assert!(!should_fallback(400));
-        assert!(should_fallback(404));
+        assert!(!should_fallback(404));
         assert!(!should_fallback(200));
     }
 

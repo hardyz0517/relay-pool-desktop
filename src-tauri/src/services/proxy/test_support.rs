@@ -323,7 +323,6 @@ impl LegacyGatewayCase {
             br#"{"model":"alias-model","messages":[{"role":"user","content":"ping"}],"stream":false}"#,
             &[],
         );
-        self.upstream.wait_for_requests(3);
         let captured = self.upstream.captured_requests();
         let attempted_key_ids = captured
             .iter()
