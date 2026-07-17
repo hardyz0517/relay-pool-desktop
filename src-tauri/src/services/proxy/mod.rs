@@ -2,9 +2,12 @@ use crate::models::proxy::UpstreamApiFormat;
 use serde_json::Value;
 
 pub mod adapters;
+pub mod error;
 pub mod http_request;
+pub mod limits;
 mod local_auth;
 pub mod observability;
+pub mod request;
 pub mod responses_chat_fallback;
 pub mod router;
 pub mod routing_affinity;

@@ -14,9 +14,18 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 aes-gcm = "0.10"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 base64 = "0.22"
+bytes = "1"
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
+futures-util = "0.3"
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 rand = "0.8"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json", "socks"] }
 rfd = "0.15"
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 serde = { version = "1", features = ["derive"] }
@@ -25,10 +34,15 @@ semver = "1"
 httparse = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 sha2 = "0.10"
+subtle = "2"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "limit", "request-id"] }
 ureq = { version = "2", features = ["json", "socks-proxy"] }
 url = "2"
 
