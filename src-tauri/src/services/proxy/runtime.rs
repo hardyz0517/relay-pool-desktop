@@ -35,7 +35,32 @@ pub enum ProxyRuntimeMode {
 
 impl Default for ProxyRuntimeMode {
     fn default() -> Self {
-        Self::Legacy
+        Self::production_default()
+    }
+}
+
+impl ProxyRuntimeMode {
+    pub fn production_default() -> Self {
+        Self::V2
+    }
+
+    fn parse_dev_override(value: Option<&str>) -> Option<Self> {
+        match value?.trim().to_ascii_lowercase().as_str() {
+            "legacy" => Some(Self::Legacy),
+            "v2" => Some(Self::V2),
+            _ => None,
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn dev_override() -> Option<Self> {
+        let value = std::env::var("RELAY_POOL_PROXY_RUNTIME").ok();
+        Self::parse_dev_override(value.as_deref())
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn dev_override() -> Option<Self> {
+        None
     }
 }
 
@@ -89,11 +114,7 @@ impl ProxyRuntimeState {
     }
 
     pub fn from_environment_for_dev() -> Self {
-        let mode = std::env::var("RELAY_POOL_PROXY_RUNTIME")
-            .ok()
-            .as_deref()
-            .and_then(parse_runtime_mode)
-            .unwrap_or_default();
+        let mode = ProxyRuntimeMode::dev_override().unwrap_or_default();
         Self::new(mode)
     }
 
@@ -490,14 +511,6 @@ impl IngressExecutor for V2ProxyExecutor {
     }
 }
 
-fn parse_runtime_mode(value: &str) -> Option<ProxyRuntimeMode> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "legacy" => Some(ProxyRuntimeMode::Legacy),
-        "v2" => Some(ProxyRuntimeMode::V2),
-        _ => None,
-    }
-}
-
 fn default_status(port: u16) -> ProxyStatus {
     ProxyStatus {
         running: false,
@@ -545,6 +558,30 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn production_runtime_defaults_to_v2_without_environment_override() {
+        assert_eq!(ProxyRuntimeMode::production_default(), ProxyRuntimeMode::V2);
+    }
+
+    #[test]
+    fn runtime_mode_parser_accepts_debug_override_values() {
+        assert_eq!(
+            ProxyRuntimeMode::parse_dev_override(Some("legacy")),
+            Some(ProxyRuntimeMode::Legacy)
+        );
+        assert_eq!(
+            ProxyRuntimeMode::parse_dev_override(Some(" V2 ")),
+            Some(ProxyRuntimeMode::V2)
+        );
+        assert_eq!(
+            ProxyRuntimeMode::parse_dev_override(Some("LeGaCy")),
+            Some(ProxyRuntimeMode::Legacy)
+        );
+        assert_eq!(ProxyRuntimeMode::parse_dev_override(Some("")), None);
+        assert_eq!(ProxyRuntimeMode::parse_dev_override(Some("auto")), None);
+        assert_eq!(ProxyRuntimeMode::parse_dev_override(None), None);
+    }
 
     #[tokio::test]
     async fn v2_runtime_transitions_start_run_drain_stop() {
