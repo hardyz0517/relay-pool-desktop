@@ -15,7 +15,9 @@ use crate::{
             ingress::{self, IngressExecutor, IngressState},
             limits::ProxyServerLimits,
             request::{ProxyHttpResponse, ProxyResponsePayload},
-            response_body::{buffered_finalizing_stream, FinalizationDispatcher},
+            response_body::{
+                buffered_finalizing_stream, finalizing_stream, FinalizationDispatcher,
+            },
             routing_repository::{RoutingRepository, SqliteRoutingRepository},
             server::{self, RunningServer},
             upstream::UpstreamClientPool,
@@ -464,7 +466,11 @@ impl IngressExecutor for V2ProxyExecutor {
                     ))
                 }
                 super::execution::ProxyExecutionBody::Stream(chunks) => {
-                    ProxyResponsePayload::Stream(chunks)
+                    ProxyResponsePayload::Stream(finalizing_stream(
+                        chunks,
+                        outcome,
+                        finalization_lease,
+                    ))
                 }
             };
             Ok(ProxyHttpResponse {
