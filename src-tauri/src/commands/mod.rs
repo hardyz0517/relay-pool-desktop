@@ -289,7 +289,7 @@ pub fn get_settings(database: State<'_, AppDatabase>) -> Result<AppSettings, Str
 
 #[tauri::command]
 pub fn get_local_access_key(database: State<'_, AppDatabase>) -> Result<String, String> {
-    database.get_local_access_key()
+    database.ensure_secure_local_access_key()
 }
 
 #[tauri::command]
@@ -315,19 +315,26 @@ pub fn import_relay_pool_to_ccswitch(
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<CcswitchImportResult, String> {
     let settings = database.get_settings()?;
-    let local_access_key = database.get_local_access_key()?;
-    if local_access_key.trim().is_empty() {
-        return Err("本地访问密钥为空，无法导入 CCSwitch。".to_string());
-    }
-
     database.migrate_plaintext_secrets(secrets.data_key())?;
     let proxy_status = proxy.start(
         database.inner().clone(),
         *secrets.data_key(),
         settings.local_proxy_port,
     )?;
-    let endpoint = format!("http://{}:{}/v1", proxy_status.bind_addr, proxy_status.port);
-    let homepage = format!("http://{}:{}", proxy_status.bind_addr, proxy_status.port);
+    let (result, deeplink) = prepare_ccswitch_import(&database, &proxy_status)?;
+
+    open_url_with_system(&deeplink)?;
+
+    Ok(result)
+}
+
+fn prepare_ccswitch_import(
+    database: &AppDatabase,
+    status: &ProxyStatus,
+) -> Result<(CcswitchImportResult, String), String> {
+    let local_access_key = database.ensure_secure_local_access_key()?;
+    let endpoint = format!("http://{}:{}/v1", status.bind_addr, status.port);
+    let homepage = format!("http://{}:{}", status.bind_addr, status.port);
     let provider_name = "Relay Pool Desktop".to_string();
     let deeplink = build_ccswitch_provider_deeplink(
         "codex",
@@ -336,14 +343,14 @@ pub fn import_relay_pool_to_ccswitch(
         &endpoint,
         &local_access_key,
     );
-
-    open_url_with_system(&deeplink)?;
-
-    Ok(CcswitchImportResult {
-        app: "codex".to_string(),
-        provider_name,
-        endpoint,
-    })
+    Ok((
+        CcswitchImportResult {
+            app: "codex".to_string(),
+            provider_name,
+            endpoint,
+        },
+        deeplink,
+    ))
 }
 
 #[tauri::command]
@@ -3005,6 +3012,27 @@ mod tests {
         assert!(deeplink.contains("usageEnabled=true"));
         assert!(deeplink.contains("usageAutoInterval=30"));
         assert!(deeplink.contains("usageScript="));
+    }
+
+    #[test]
+    fn ccswitch_import_ensures_placeholder_key_before_building_deeplink() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let status = ProxyStatus {
+            running: true,
+            lifecycle: crate::models::proxy::ProxyLifecycle::Running,
+            bind_addr: "127.0.0.1".to_string(),
+            port: 8787,
+            started_at: None,
+            last_error: None,
+            active_requests: 0,
+            request_count: 0,
+        };
+
+        let (_, deeplink) = prepare_ccswitch_import(&database, &status).expect("import plan");
+        let persisted = database.get_local_access_key().expect("persisted key");
+
+        assert_ne!(persisted, "sk-local-pool-change-me");
+        assert!(deeplink.contains(&format!("apiKey={}", encode_query_param(&persisted))));
     }
 
     #[test]

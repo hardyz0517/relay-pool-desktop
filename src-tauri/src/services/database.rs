@@ -711,7 +711,7 @@ impl AppDatabase {
         self.settings_from_open_connection(&connection)
     }
 
-    pub fn get_local_access_key(&self) -> Result<String, String> {
+    pub(crate) fn get_local_access_key(&self) -> Result<String, String> {
         let connection = self.connection()?;
         read_setting(&connection, "local_key")
     }
