@@ -129,7 +129,9 @@ impl UpstreamClientPool {
         let status = response.status();
         let headers = response.headers().clone();
         match prepared.response_mode {
-            ResponseMode::StreamPassthrough if status.is_success() => {
+            ResponseMode::StreamPassthrough | ResponseMode::StreamChatToResponses
+                if status.is_success() =>
+            {
                 let chunks = response
                     .bytes_stream()
                     .map_err(upstream_stream_failure)
@@ -142,7 +144,8 @@ impl UpstreamClientPool {
             }
             ResponseMode::BufferedJson
             | ResponseMode::BufferedChatToResponses
-            | ResponseMode::StreamPassthrough => {
+            | ResponseMode::StreamPassthrough
+            | ResponseMode::StreamChatToResponses => {
                 let body = response.bytes().await.map_err(upstream_connect_failure)?;
                 Ok(UpstreamAttempt::Buffered {
                     status,

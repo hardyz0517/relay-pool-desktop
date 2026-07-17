@@ -16,6 +16,7 @@ use super::{
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
     observability::AttemptTrace,
     request::{ByteStream, CanonicalProxyRequest},
+    responses_chat_stream::chat_sse_to_responses_stream,
     router::{self, RichRouteCandidate, RouteRequest},
     routing_repository::{
         CandidateFeedback, CandidateFeedbackKind, FinalRequestOutcome, RoutingRepository,
@@ -574,6 +575,7 @@ impl AttemptExecutor for UpstreamAttemptExecutor {
                     if !status.is_success() {
                         return Err(upstream_http_failure(status));
                     }
+                    let chunks = transform_stream_body(chunks, response_mode, mapped_model);
                     Ok(PreparedAttempt::Stream {
                         status,
                         headers: response_headers_for_downstream(&headers),
@@ -582,6 +584,18 @@ impl AttemptExecutor for UpstreamAttemptExecutor {
                 }
             }
         })
+    }
+}
+
+fn transform_stream_body(
+    chunks: ByteStream,
+    response_mode: ResponseMode,
+    mapped_model: Option<&str>,
+) -> ByteStream {
+    if response_mode == ResponseMode::StreamChatToResponses {
+        chat_sse_to_responses_stream(chunks, mapped_model)
+    } else {
+        chunks
     }
 }
 
@@ -907,7 +921,10 @@ mod tests {
         },
     };
 
-    use super::{AttemptExecutor, ExecutionEngine, PreparedAttempt, RetryDecision, RetryPolicy};
+    use super::{
+        transform_stream_body, AttemptExecutor, ExecutionEngine, PreparedAttempt, ResponseMode,
+        RetryDecision, RetryPolicy,
+    };
 
     #[test]
     fn retry_policy_matches_the_approved_precommit_matrix() {
@@ -1102,6 +1119,32 @@ mod tests {
         );
         assert!(chunks.next().await.unwrap().is_err());
         assert_eq!(attempts.seen_ids(), ["a"]);
+    }
+
+    #[tokio::test]
+    async fn execution_stream_transform_bridges_chat_sse_to_responses_sse() {
+        let upstream = Box::pin(stream::iter(vec![
+            Ok(Bytes::from_static(
+                b"data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n",
+            )),
+            Ok(Bytes::from_static(b"data: [DONE]\n\n")),
+        ]));
+        let mut bridged = transform_stream_body(
+            upstream,
+            ResponseMode::StreamChatToResponses,
+            Some("gpt-test"),
+        );
+        let mut output = String::new();
+
+        while let Some(chunk) = bridged.next().await {
+            let chunk = chunk.expect("bridged chunk");
+            output.push_str(&String::from_utf8(chunk.to_vec()).expect("utf8"));
+        }
+
+        assert!(output.contains("response.created"));
+        assert!(output.contains("response.output_text.delta"));
+        assert!(output.contains("response.completed"));
+        assert!(output.contains("Hi"));
     }
 
     struct FakeRepository {

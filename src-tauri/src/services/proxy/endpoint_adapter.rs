@@ -8,7 +8,9 @@ use super::{
     adapters::responses::upstream_responses_path,
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
     request::CanonicalProxyRequest,
-    responses_chat_fallback::{normalize_for_chat, responses_fallback_error_message},
+    responses_chat_fallback::{
+        normalize_for_chat, normalize_for_chat_streaming, responses_fallback_error_message,
+    },
     RouteCandidate,
 };
 
@@ -88,6 +90,7 @@ pub(crate) enum ResponseMode {
     BufferedJson,
     BufferedChatToResponses,
     StreamPassthrough,
+    StreamChatToResponses,
 }
 
 pub(crate) fn response_headers_for_downstream(headers: &HeaderMap) -> HeaderMap {
@@ -114,21 +117,32 @@ fn prepare_responses(
         candidate.upstream_api_format,
         UpstreamApiFormat::OpenAiChatCompletions
     ) {
-        if request.stream {
-            return Err(responses_chat_fallback_failure(
-                "Responses-to-Chat fallback does not support streaming",
-            ));
-        }
         let body = parse_json_body(&request.body)?;
-        let normalized = normalize_for_chat(&body).map_err(|error| {
+        let normalized = if request.stream {
+            normalize_for_chat_streaming(&body)
+        } else {
+            normalize_for_chat(&body)
+        }
+        .map_err(|error| {
             responses_chat_fallback_failure(&responses_fallback_error_message(&error))
         })?;
         return Ok(PreparedUpstreamRequest {
             method: Method::POST,
             path: "/v1/chat/completions".to_string(),
-            headers: upstream_headers(&request.forwarded_headers, Some("application/json")),
+            headers: upstream_headers(
+                &request.forwarded_headers,
+                Some(if request.stream {
+                    "text/event-stream"
+                } else {
+                    "application/json"
+                }),
+            ),
             body: rewrite_json_value_model(normalized, mapped_model)?,
-            response_mode: ResponseMode::BufferedChatToResponses,
+            response_mode: if request.stream {
+                ResponseMode::StreamChatToResponses
+            } else {
+                ResponseMode::BufferedChatToResponses
+            },
         });
     }
 
@@ -235,7 +249,6 @@ mod tests {
     use crate::{
         models::{proxy::UpstreamApiFormat, routing::RouteEndpointKind},
         services::proxy::{
-            error::ProxyFailureCode,
             limits::{BodyBudget, RequestLease},
             request::{CanonicalProxyRequest, RequestRequirements},
             RouteCandidate,
@@ -278,7 +291,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn endpoint_adapters_reject_unsupported_streaming_chat_bridge() {
+    async fn endpoint_adapters_prepare_streaming_responses_chat_bridge() {
         let request = canonical_request(
             RouteEndpointKind::Responses,
             br#"{"model":"gpt-test","input":"hi","stream":true}"#,
@@ -288,14 +301,25 @@ mod tests {
         .await;
         let candidate = candidate(UpstreamApiFormat::OpenAiChatCompletions, "gpt-test");
 
-        let failure = EndpointAdapter::Responses
+        let prepared = EndpointAdapter::Responses
             .prepare(&request, &candidate, Some("gpt-test"))
-            .unwrap_err();
+            .expect("streaming bridge prepared");
 
+        assert_eq!(prepared.path, "/v1/chat/completions");
         assert_eq!(
-            failure.code,
-            ProxyFailureCode::ResponsesChatFallbackIncompatible
+            prepared.headers.get(header::ACCEPT).unwrap(),
+            "text/event-stream"
         );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&prepared.body).unwrap()["stream"],
+            true
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&prepared.body).unwrap()["stream_options"]
+                ["include_usage"],
+            true
+        );
+        assert_eq!(prepared.response_mode, ResponseMode::StreamChatToResponses);
     }
 
     #[tokio::test]

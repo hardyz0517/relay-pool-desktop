@@ -14,6 +14,7 @@ pub mod observability;
 pub mod request;
 pub mod response_body;
 pub mod responses_chat_fallback;
+pub mod responses_chat_stream;
 pub mod router;
 pub mod routing_affinity;
 pub mod routing_failure;
