@@ -55,6 +55,9 @@ pub(crate) enum ScriptedResponse {
         status: u16,
         reason: &'static str,
     },
+    Redirect {
+        location: String,
+    },
     ChunkedSse(Vec<u8>),
     DisconnectAfterChunk(Vec<u8>),
     PausedSse {
@@ -710,6 +713,12 @@ fn write_scripted_response(stream: &mut TcpStream, response: ScriptedResponse) {
         }
         ScriptedResponse::Status { status, reason } => {
             write_response(stream, status, reason, "application/json", b"{}")
+        }
+        ScriptedResponse::Redirect { location } => {
+            let header = format!(
+                "HTTP/1.1 302 Found\r\nlocation: {location}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+            );
+            let _ = stream.write_all(header.as_bytes());
         }
         ScriptedResponse::ChunkedSse(body) => {
             write_response(stream, 200, "OK", "text/event-stream", &body)

@@ -24,6 +24,7 @@ pub mod routing_types;
 pub mod runtime;
 pub mod scheduler;
 pub mod server;
+pub mod upstream;
 
 #[cfg(test)]
 mod contract_tests;
