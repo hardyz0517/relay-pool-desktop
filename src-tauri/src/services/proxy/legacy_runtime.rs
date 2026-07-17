@@ -5404,7 +5404,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_falls_back_after_first_key_returns_model_404() {
+    fn runtime_stops_after_raw_model_404_without_penalizing_key() {
         let missing = test_upstream_status(404, "Not Found", &[]);
         let accepted = test_upstream_json_success_times("model-fallback", false, None, 2);
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
@@ -5421,11 +5421,12 @@ mod tests {
             .get_station_key_health(key_a.id.clone())
             .expect("first health");
 
-        assert_eq!(response.status_code, 200);
-        assert_eq!(response.station_key_id.as_deref(), Some(key_b.id.as_str()));
-        assert_eq!(response.fallback_count, 1);
+        assert_eq!(response.status_code, 404);
+        assert_eq!(response.station_key_id.as_deref(), Some(key_a.id.as_str()));
+        assert_eq!(response.fallback_count, 0);
         assert_eq!(first_health.failure_count, 0);
         assert_eq!(first_health.consecutive_failures, 0);
+        assert!(!accepted.was_called());
 
         missing.join();
         accepted.join();

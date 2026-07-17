@@ -17,6 +17,7 @@ const contracts = [
   ["node", ["scripts/data-store-diagnostic-redaction.test.mjs"]],
   ["node", ["scripts/data-store-upgrade-matrix.test.mjs"]],
   ["node", ["scripts/local-proxy-auth-contract.test.mjs"]],
+  ["node", ["scripts/local-proxy-v2-boundary.test.mjs"]],
 ];
 
 for (const [command, args] of contracts) {

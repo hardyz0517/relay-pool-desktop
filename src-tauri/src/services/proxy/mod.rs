@@ -32,6 +32,8 @@ pub mod upstream;
 #[cfg(test)]
 mod contract_tests;
 #[cfg(test)]
+mod soak_tests;
+#[cfg(test)]
 mod test_support;
 
 #[derive(Debug, Clone)]

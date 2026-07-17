@@ -23,7 +23,7 @@ function functionBlock(source, signature) {
 }
 
 const getLocalAccessKeyCommand = functionBlock(commands, "pub fn get_local_access_key");
-const importCcswitchCommand = functionBlock(commands, "pub fn import_relay_pool_to_ccswitch");
+const importCcswitchCommand = functionBlock(commands, "pub async fn import_relay_pool_to_ccswitch");
 const prepareCcswitchImport = functionBlock(commands, "fn prepare_ccswitch_import");
 
 assert.match(proxyModule, /mod local_auth;/);
@@ -34,7 +34,8 @@ assert.match(legacyRuntime, /local_auth::authorize_headers\(&request\.headers, &
 assert.match(legacyRuntime, /invalid_local_api_key/);
 assert.match(legacyRuntime, /local_auth::allowed_origin/);
 assert.doesNotMatch(legacyRuntime, /access-control-allow-origin:\s*\*/i);
-assert.match(runtime, /pub use super::legacy_runtime::ProxyRuntimeState;/);
+assert.match(runtime, /ProxyRuntimeMode/);
+assert.match(runtime, /super::legacy_runtime::ProxyRuntimeState/);
 assert.doesNotMatch(runtime, /fn forward_(chat|responses|embeddings)_request/);
 assert.match(legacyRuntime, /fn forward_responses_request/);
 assert.match(database, /ensure_secure_local_access_key/);
