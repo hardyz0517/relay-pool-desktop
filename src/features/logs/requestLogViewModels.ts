@@ -95,6 +95,18 @@ export function latencyBreakdown(log: RequestLog) {
   ];
 }
 
+export function requestTraceRows(log: RequestLog) {
+  return [
+    { label: "请求 ID", value: log.requestId ?? "未记录" },
+    { label: "完成来源", value: completionSourceLabel(log.completionSource) },
+    { label: "尝试次数", value: log.attemptCount == null ? "未记录" : String(log.attemptCount) },
+    { label: "请求体大小", value: formatBytes(log.bodyBytes) },
+    { label: "路由等待", value: formatDuration(log.routeWaitMs) },
+    { label: "上游响应头", value: formatDuration(log.upstreamHeadersMs) },
+    { label: "失败来源", value: failureSourceLabel(log.failureSource) },
+  ];
+}
+
 export function formatCompactTokenCount(value: number | null) {
   if (value == null) return "-";
   if (Math.abs(value) < 10_000) return value.toLocaleString("en-US");
@@ -182,4 +194,27 @@ function formatCount(value: number | null) {
 function formatDuration(value: number | null) {
   if (value == null) return "-";
   return value >= 1000 ? `${(value / 1000).toFixed(2)}s` : `${value}ms`;
+}
+
+function formatBytes(value: number | null) {
+  if (value == null) return "-";
+  if (Math.abs(value) < 1024) return `${value.toLocaleString("zh-CN")} B`;
+  if (Math.abs(value) < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function completionSourceLabel(value: string | null) {
+  if (value === "upstream") return "上游完成";
+  if (value === "local") return "本地完成";
+  if (value === "downstream_dropped") return "下游断开";
+  if (value === "stream_complete") return "流式完成";
+  return value ?? "未记录";
+}
+
+function failureSourceLabel(value: string | null) {
+  if (value === "local") return "本地";
+  if (value === "route") return "路由";
+  if (value === "upstream") return "上游";
+  if (value === "downstream") return "下游";
+  return value ?? "无";
 }

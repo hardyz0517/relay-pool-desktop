@@ -79,6 +79,32 @@ pub struct ChannelStatusWindowFacts {
     pub latest_error_message: Option<String>,
     pub timeline: Vec<ChannelStatusTimelinePoint>,
 }
+
+pub(crate) struct FinalizeRequestLogInput {
+    pub request_id: String,
+    pub log: CreateRequestLogInput,
+    pub body_bytes: Option<i64>,
+    pub attempt_count: Option<i64>,
+    pub route_wait_ms: Option<i64>,
+    pub upstream_headers_ms: Option<i64>,
+    pub failure_source: Option<String>,
+    pub attempts_json: Option<String>,
+    pub completion_source: Option<String>,
+    pub feedback: Option<RequestLogFeedbackInput>,
+}
+
+pub(crate) struct RequestLogFeedbackInput {
+    pub station_key_id: String,
+    pub station_id: String,
+    pub station_endpoint_revision: i64,
+    pub kind: RequestLogFeedbackKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RequestLogFeedbackKind {
+    Success,
+    Failure,
+}
 use crate::services::change_events::{
     STATUS_DISMISSED, STATUS_READ, STATUS_RESOLVED, STATUS_UNREAD,
 };
@@ -1603,6 +1629,63 @@ impl AppDatabase {
         insert_request_log_in_connection(&connection, input)
     }
 
+    pub(crate) fn finalize_request_log(
+        &self,
+        input: FinalizeRequestLogInput,
+    ) -> Result<Option<RequestLog>, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("begin request finalization transaction failed: {error}"))?;
+        let saved = insert_finalized_request_log_in_connection(&transaction, &input)?;
+        let Some(saved) = saved else {
+            transaction.commit().map_err(|error| {
+                format!("commit duplicate request finalization failed: {error}")
+            })?;
+            return Ok(None);
+        };
+
+        if let Some(feedback) = input.feedback {
+            ensure_station_endpoint_revision(
+                &transaction,
+                &feedback.station_id,
+                feedback.station_endpoint_revision,
+            )?;
+            match feedback.kind {
+                RequestLogFeedbackKind::Success => record_station_key_success_in_connection(
+                    &transaction,
+                    &feedback.station_key_id,
+                    input.log.duration_ms.unwrap_or_default().max(0),
+                    input
+                        .log
+                        .finished_at
+                        .as_deref()
+                        .unwrap_or(saved.created_at.as_str()),
+                )?,
+                RequestLogFeedbackKind::Failure => record_station_key_failure_in_connection(
+                    &transaction,
+                    &feedback.station_key_id,
+                    input
+                        .log
+                        .error_message
+                        .as_deref()
+                        .unwrap_or("upstream request failed"),
+                    input
+                        .log
+                        .finished_at
+                        .as_deref()
+                        .unwrap_or(saved.created_at.as_str()),
+                    3,
+                )?,
+            }
+        }
+
+        transaction
+            .commit()
+            .map_err(|error| format!("commit request finalization transaction failed: {error}"))?;
+        Ok(Some(saved))
+    }
+
     pub fn list_request_logs(&self) -> Result<Vec<RequestLog>, String> {
         let connection = self.connection()?;
         list_request_logs_from_connection(&connection)
@@ -2552,6 +2635,7 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
 
         CREATE TABLE IF NOT EXISTS request_logs (
             id TEXT PRIMARY KEY,
+            request_id TEXT,
             started_at TEXT NOT NULL,
             finished_at TEXT,
             duration_ms INTEGER,
@@ -2569,6 +2653,13 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             route_policy TEXT,
             route_reason TEXT,
             rejected_candidates_json TEXT,
+            body_bytes INTEGER,
+            attempt_count INTEGER,
+            route_wait_ms INTEGER,
+            upstream_headers_ms INTEGER,
+            failure_source TEXT,
+            attempts_json TEXT,
+            completion_source TEXT,
             prompt_tokens INTEGER,
             completion_tokens INTEGER,
             total_tokens INTEGER,
@@ -3374,6 +3465,7 @@ fn run_secret_safety_scan_in_connection(
         ("request_logs", "error_message"),
         ("request_logs", "route_reason"),
         ("request_logs", "rejected_candidates_json"),
+        ("request_logs", "attempts_json"),
     ];
     let mut findings = Vec::new();
 
@@ -7631,14 +7723,28 @@ fn migrate_request_log_lifecycle_columns(connection: &Connection) -> rusqlite::R
 
 fn migrate_request_log_observability_columns(connection: &Connection) -> rusqlite::Result<()> {
     for (column, column_type) in [
+        ("request_id", "TEXT"),
         ("cache_creation_tokens", "INTEGER"),
         ("cache_read_tokens", "INTEGER"),
         ("reasoning_effort", "TEXT"),
         ("first_token_ms", "INTEGER"),
         ("billing_mode", "TEXT"),
+        ("body_bytes", "INTEGER"),
+        ("attempt_count", "INTEGER"),
+        ("route_wait_ms", "INTEGER"),
+        ("upstream_headers_ms", "INTEGER"),
+        ("failure_source", "TEXT"),
+        ("attempts_json", "TEXT"),
+        ("completion_source", "TEXT"),
     ] {
         add_column_if_missing(connection, "request_logs", column, column_type)?;
     }
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_request_logs_request_id_unique
+            ON request_logs(request_id)
+            WHERE request_id IS NOT NULL",
+        [],
+    )?;
     Ok(())
 }
 
@@ -11418,6 +11524,92 @@ fn insert_request_log_in_connection(
     Ok(saved)
 }
 
+fn insert_finalized_request_log_in_connection(
+    connection: &Connection,
+    input: &FinalizeRequestLogInput,
+) -> Result<Option<RequestLog>, String> {
+    let id = generate_id("request");
+    let created_at = now_string();
+    let error_message = redact_optional_text(input.log.error_message.clone());
+    let route_reason = redact_optional_text(input.log.route_reason.clone());
+    let rejected_candidates_json = redact_optional_text(input.log.rejected_candidates_json.clone());
+    let attempts_json = redact_optional_text(input.attempts_json.clone());
+    let economic_context_json = redact_optional_text(input.log.economic_context_json.clone());
+    let inserted = connection
+        .execute(
+            "INSERT OR IGNORE INTO request_logs (
+                id, request_id, started_at, finished_at, duration_ms, method, path, model, stream,
+                status, lifecycle_status, station_key_id, station_id, upstream_base_url,
+                fallback_count, error_message, route_policy, route_reason, rejected_candidates_json,
+                body_bytes, attempt_count, route_wait_ms, upstream_headers_ms, failure_source,
+                attempts_json, completion_source, prompt_tokens, completion_tokens, total_tokens,
+                cache_creation_tokens, cache_read_tokens, reasoning_effort, first_token_ms,
+                billing_mode, estimated_input_cost, estimated_output_cost, estimated_total_cost,
+                base_input_cost, base_output_cost, base_fixed_cost, base_total_cost, cost_currency,
+                pricing_rule_id, pricing_source, cost_status, group_binding_id, normalization_status,
+                balance_scope, economic_context_json, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50)",
+            params![
+                id,
+                normalize_optional_string(Some(input.request_id.clone())),
+                input.log.started_at,
+                input.log.finished_at,
+                input.log.duration_ms,
+                input.log.method,
+                input.log.path,
+                normalize_optional_string(input.log.model.clone()),
+                bool_to_i64(input.log.stream),
+                input.log.status,
+                normalize_optional_string(input.log.lifecycle_status.clone()),
+                normalize_optional_string(input.log.station_key_id.clone()),
+                normalize_optional_string(input.log.station_id.clone()),
+                normalize_optional_string(input.log.upstream_base_url.clone()),
+                input.log.fallback_count,
+                error_message,
+                normalize_optional_string(input.log.route_policy.clone()),
+                route_reason,
+                rejected_candidates_json,
+                input.body_bytes,
+                input.attempt_count,
+                input.route_wait_ms,
+                input.upstream_headers_ms,
+                normalize_optional_string(input.failure_source.clone()),
+                attempts_json,
+                normalize_optional_string(input.completion_source.clone()),
+                input.log.prompt_tokens,
+                input.log.completion_tokens,
+                input.log.total_tokens,
+                input.log.cache_creation_tokens,
+                input.log.cache_read_tokens,
+                normalize_optional_string(input.log.reasoning_effort.clone()),
+                input.log.first_token_ms,
+                normalize_optional_string(input.log.billing_mode.clone()),
+                input.log.estimated_input_cost,
+                input.log.estimated_output_cost,
+                input.log.estimated_total_cost,
+                input.log.base_input_cost,
+                input.log.base_output_cost,
+                input.log.base_fixed_cost,
+                input.log.base_total_cost,
+                normalize_optional_string(input.log.cost_currency.clone()),
+                normalize_optional_string(input.log.pricing_rule_id.clone()),
+                normalize_optional_string(input.log.pricing_source.clone()),
+                normalize_optional_string(input.log.cost_status.clone()),
+                normalize_optional_string(input.log.group_binding_id.clone()),
+                normalize_optional_string(input.log.normalization_status.clone()),
+                normalize_optional_string(input.log.balance_scope.clone()),
+                economic_context_json,
+                created_at,
+            ],
+        )
+        .map_err(|error| format!("save finalized request log failed: {error}"))?;
+
+    if inserted == 0 {
+        return Ok(None);
+    }
+    request_log_by_id(connection, &id).map(Some)
+}
+
 fn timestamp_is_past(value: &str) -> bool {
     let Ok(timestamp) = value.trim().parse::<i64>() else {
         return false;
@@ -11428,60 +11620,69 @@ fn timestamp_is_past(value: &str) -> bool {
 fn row_to_request_log(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLog> {
     Ok(RequestLog {
         id: row.get(0)?,
-        started_at: row.get(1)?,
-        finished_at: row.get(2)?,
-        duration_ms: row.get(3)?,
-        method: row.get(4)?,
-        path: row.get(5)?,
-        model: row.get(6)?,
-        stream: i64_to_bool(row.get(7)?),
-        status: row.get(8)?,
-        lifecycle_status: row.get(9)?,
-        station_key_id: row.get(10)?,
-        station_id: row.get(11)?,
-        upstream_base_url: row.get(12)?,
-        fallback_count: row.get(13)?,
-        error_message: row.get(14)?,
-        route_policy: row.get(15)?,
-        route_reason: row.get(16)?,
-        rejected_candidates_json: row.get(17)?,
-        prompt_tokens: row.get(18)?,
-        completion_tokens: row.get(19)?,
-        total_tokens: row.get(20)?,
-        cache_creation_tokens: row.get(21)?,
-        cache_read_tokens: row.get(22)?,
-        reasoning_effort: row.get(23)?,
-        first_token_ms: row.get(24)?,
-        billing_mode: row.get(25)?,
-        estimated_input_cost: row.get(26)?,
-        estimated_output_cost: row.get(27)?,
-        estimated_total_cost: row.get(28)?,
-        base_input_cost: row.get(29)?,
-        base_output_cost: row.get(30)?,
-        base_fixed_cost: row.get(31)?,
-        base_total_cost: row.get(32)?,
-        cost_currency: row.get(33)?,
-        pricing_rule_id: row.get(34)?,
-        pricing_source: row.get(35)?,
-        cost_status: row.get(36)?,
-        group_binding_id: row.get(37)?,
-        normalization_status: row.get(38)?,
-        balance_scope: row.get(39)?,
-        economic_context_json: row.get(40)?,
-        created_at: row.get(41)?,
+        request_id: row.get(1)?,
+        started_at: row.get(2)?,
+        finished_at: row.get(3)?,
+        duration_ms: row.get(4)?,
+        method: row.get(5)?,
+        path: row.get(6)?,
+        model: row.get(7)?,
+        stream: i64_to_bool(row.get(8)?),
+        status: row.get(9)?,
+        lifecycle_status: row.get(10)?,
+        station_key_id: row.get(11)?,
+        station_id: row.get(12)?,
+        upstream_base_url: row.get(13)?,
+        fallback_count: row.get(14)?,
+        error_message: row.get(15)?,
+        route_policy: row.get(16)?,
+        route_reason: row.get(17)?,
+        rejected_candidates_json: row.get(18)?,
+        body_bytes: row.get(19)?,
+        attempt_count: row.get(20)?,
+        route_wait_ms: row.get(21)?,
+        upstream_headers_ms: row.get(22)?,
+        failure_source: row.get(23)?,
+        attempts_json: row.get(24)?,
+        completion_source: row.get(25)?,
+        prompt_tokens: row.get(26)?,
+        completion_tokens: row.get(27)?,
+        total_tokens: row.get(28)?,
+        cache_creation_tokens: row.get(29)?,
+        cache_read_tokens: row.get(30)?,
+        reasoning_effort: row.get(31)?,
+        first_token_ms: row.get(32)?,
+        billing_mode: row.get(33)?,
+        estimated_input_cost: row.get(34)?,
+        estimated_output_cost: row.get(35)?,
+        estimated_total_cost: row.get(36)?,
+        base_input_cost: row.get(37)?,
+        base_output_cost: row.get(38)?,
+        base_fixed_cost: row.get(39)?,
+        base_total_cost: row.get(40)?,
+        cost_currency: row.get(41)?,
+        pricing_rule_id: row.get(42)?,
+        pricing_source: row.get(43)?,
+        cost_status: row.get(44)?,
+        group_binding_id: row.get(45)?,
+        normalization_status: row.get(46)?,
+        balance_scope: row.get(47)?,
+        economic_context_json: row.get(48)?,
+        created_at: row.get(49)?,
     })
 }
 
 const REQUEST_LOG_SELECT_COLUMNS: &str = "
-    id, started_at, finished_at, duration_ms, method, path, model, stream,
+    id, request_id, started_at, finished_at, duration_ms, method, path, model, stream,
     status, lifecycle_status, station_key_id, station_id, upstream_base_url,
     fallback_count, error_message, route_policy, route_reason, rejected_candidates_json,
-    prompt_tokens, completion_tokens, total_tokens, cache_creation_tokens,
-    cache_read_tokens, reasoning_effort, first_token_ms, billing_mode, estimated_input_cost,
-    estimated_output_cost, estimated_total_cost, base_input_cost, base_output_cost,
-    base_fixed_cost, base_total_cost, cost_currency, pricing_rule_id, pricing_source,
-    cost_status, group_binding_id, normalization_status, balance_scope,
-    economic_context_json, created_at";
+    body_bytes, attempt_count, route_wait_ms, upstream_headers_ms, failure_source,
+    attempts_json, completion_source, prompt_tokens, completion_tokens, total_tokens,
+    cache_creation_tokens, cache_read_tokens, reasoning_effort, first_token_ms,
+    billing_mode, estimated_input_cost, estimated_output_cost, estimated_total_cost,
+    base_input_cost, base_output_cost, base_fixed_cost, base_total_cost, cost_currency,
+    pricing_rule_id, pricing_source, cost_status, group_binding_id, normalization_status,
+    balance_scope, economic_context_json, created_at";
 
 fn request_log_by_id(connection: &Connection, id: &str) -> Result<RequestLog, String> {
     connection
@@ -17528,6 +17729,65 @@ mod tests {
                 .expect("column count");
             assert_eq!(count, 1, "{table}.{column} should exist");
         }
+    }
+
+    #[test]
+    fn request_log_migration_adds_v2_trace_columns_without_losing_rows() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE request_logs (
+                    id TEXT PRIMARY KEY,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    duration_ms INTEGER,
+                    method TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    model TEXT,
+                    stream INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL,
+                    station_key_id TEXT,
+                    station_id TEXT,
+                    upstream_base_url TEXT,
+                    fallback_count INTEGER NOT NULL DEFAULT 0,
+                    error_message TEXT,
+                    created_at TEXT NOT NULL
+                );
+                INSERT INTO request_logs (
+                    id, started_at, finished_at, duration_ms, method, path, model, stream,
+                    status, station_key_id, station_id, upstream_base_url, fallback_count,
+                    error_message, created_at
+                ) VALUES (
+                    'legacy-log-1', '1000', '1042', 42, 'POST', '/v1/chat/completions',
+                    'gpt-test', 0, 'success', 'key-1', 'station-1', 'https://example.test/v1',
+                    0, NULL, '1042'
+                );
+                "#,
+            )
+            .expect("legacy request log schema");
+
+        initialize_schema_and_migrations(&connection).expect("migrate");
+
+        let columns = table_columns(&connection, "request_logs");
+        for name in [
+            "request_id",
+            "body_bytes",
+            "attempt_count",
+            "route_wait_ms",
+            "upstream_headers_ms",
+            "failure_source",
+            "attempts_json",
+            "completion_source",
+        ] {
+            assert!(
+                columns.iter().any(|column| column == name),
+                "missing {name}"
+            );
+        }
+        let logs = list_request_logs_from_connection(&connection).expect("request logs");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].id, "legacy-log-1");
     }
 
     #[test]

@@ -6,7 +6,10 @@ use crate::{
         proxy::{CreateRequestLogInput, RequestLog},
     },
     services::{
-        database::{now_millis_for_services, AppDatabase},
+        database::{
+            now_millis_for_services, AppDatabase, FinalizeRequestLogInput, RequestLogFeedbackInput,
+            RequestLogFeedbackKind,
+        },
         proxy::router::RichRouteCandidate,
     },
 };
@@ -74,41 +77,50 @@ impl RoutingRepository for SqliteRoutingRepository {
         let finalized = Arc::clone(&self.finalized_request_ids);
         Box::pin(async move {
             tauri::async_runtime::spawn_blocking(move || {
+                let request_id = outcome.request_id.clone();
                 let mut finalized = finalized
                     .lock()
                     .map_err(|_| "final outcome guard lock poisoned".to_string())?;
-                if finalized.contains(&outcome.request_id) {
+                if finalized.contains(&request_id) {
                     return Ok(None);
                 }
 
-                if let Some(feedback) = outcome.feedback.as_ref() {
-                    match feedback.kind {
-                        CandidateFeedbackKind::Success => database
-                            .record_station_key_success_for_endpoint_revision(
-                                &feedback.station_key_id,
-                                &feedback.station_id,
-                                feedback.station_endpoint_revision,
-                                outcome.duration_ms.unwrap_or_default().max(0),
-                                outcome.finished_at.as_str(),
-                            ),
-                        CandidateFeedbackKind::Failure => database
-                            .record_station_key_failure_for_endpoint_revision(
-                                &feedback.station_key_id,
-                                &feedback.station_id,
-                                feedback.station_endpoint_revision,
-                                outcome
-                                    .error_message
-                                    .as_deref()
-                                    .unwrap_or("upstream request failed"),
-                                outcome.finished_at.as_str(),
-                            ),
-                    }?;
+                let feedback = outcome
+                    .feedback
+                    .as_ref()
+                    .map(|feedback| RequestLogFeedbackInput {
+                        station_key_id: feedback.station_key_id.clone(),
+                        station_id: feedback.station_id.clone(),
+                        station_endpoint_revision: feedback.station_endpoint_revision,
+                        kind: match feedback.kind {
+                            CandidateFeedbackKind::Success => RequestLogFeedbackKind::Success,
+                            CandidateFeedbackKind::Failure => RequestLogFeedbackKind::Failure,
+                        },
+                    });
+                let body_bytes = outcome.body_bytes;
+                let attempt_count = outcome.attempt_count;
+                let route_wait_ms = outcome.route_wait_ms;
+                let upstream_headers_ms = outcome.upstream_headers_ms;
+                let failure_source = outcome.failure_source.clone();
+                let attempts_json = outcome.attempts_json.clone();
+                let completion_source = outcome.completion_source.clone();
+                let log = outcome.into_request_log_input();
+                let result = database.finalize_request_log(FinalizeRequestLogInput {
+                    request_id: request_id.clone(),
+                    log,
+                    body_bytes,
+                    attempt_count,
+                    route_wait_ms,
+                    upstream_headers_ms,
+                    failure_source,
+                    attempts_json,
+                    completion_source,
+                    feedback,
+                })?;
+                if result.is_some() {
+                    finalized.insert(request_id);
                 }
-
-                let request_id = outcome.request_id.clone();
-                let log = database.insert_request_log(outcome.into_request_log_input())?;
-                finalized.insert(request_id);
-                Ok(Some(log))
+                Ok(result)
             })
             .await
             .map_err(|error| format!("routing repository final outcome task failed: {error}"))?
@@ -155,6 +167,13 @@ pub(crate) struct FinalRequestOutcome {
     pub route_policy: Option<String>,
     pub route_reason: Option<String>,
     pub rejected_candidates_json: Option<String>,
+    pub body_bytes: Option<i64>,
+    pub attempt_count: Option<i64>,
+    pub route_wait_ms: Option<i64>,
+    pub upstream_headers_ms: Option<i64>,
+    pub failure_source: Option<String>,
+    pub attempts_json: Option<String>,
+    pub completion_source: Option<String>,
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
@@ -183,6 +202,13 @@ impl FinalRequestOutcome {
             route_policy: None,
             route_reason: None,
             rejected_candidates_json: None,
+            body_bytes: None,
+            attempt_count: None,
+            route_wait_ms: None,
+            upstream_headers_ms: None,
+            failure_source: None,
+            attempts_json: None,
+            completion_source: None,
             prompt_tokens: None,
             completion_tokens: None,
             total_tokens: None,
@@ -324,6 +350,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn final_outcome_writes_log_and_candidate_feedback_once() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let data_key = generate_data_key();
+        let seeded = seed_candidate(&database, &data_key, "final-idempotent");
+        let first_repository = SqliteRoutingRepository::new(database.clone(), data_key);
+        let second_repository = SqliteRoutingRepository::new(database.clone(), data_key);
+        let outcome = success_outcome(
+            "req-final-idempotent",
+            &seeded.station_id,
+            &seeded.station_key_id,
+            seeded.station_endpoint_revision,
+        );
+
+        first_repository
+            .record_final_outcome(outcome.clone())
+            .await
+            .expect("first outcome");
+        second_repository
+            .record_final_outcome(outcome)
+            .await
+            .expect("duplicate outcome");
+
+        let logs = database.list_local_proxy_request_logs().expect("logs");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].request_id.as_deref(), Some("req-final-idempotent"));
+        let health = database
+            .get_station_key_health(seeded.station_key_id)
+            .expect("health");
+        assert_eq!(health.success_count, 1);
+    }
+
+    #[tokio::test]
     async fn repository_rejects_stale_final_outcome_endpoint_revision() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let data_key = generate_data_key();
@@ -428,6 +486,13 @@ mod tests {
             route_policy: Some("priority_fallback".to_string()),
             route_reason: Some("selected first healthy key".to_string()),
             rejected_candidates_json: Some("[]".to_string()),
+            body_bytes: Some(128),
+            attempt_count: Some(1),
+            route_wait_ms: Some(0),
+            upstream_headers_ms: Some(5),
+            failure_source: None,
+            attempts_json: Some("[]".to_string()),
+            completion_source: Some("upstream".to_string()),
             prompt_tokens: Some(1),
             completion_tokens: Some(2),
             total_tokens: Some(3),

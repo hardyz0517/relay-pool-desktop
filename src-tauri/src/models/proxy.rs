@@ -29,6 +29,7 @@ pub struct ProxyStatus {
 #[serde(rename_all = "camelCase")]
 pub struct RequestLog {
     pub id: String,
+    pub request_id: Option<String>,
     pub started_at: String,
     pub finished_at: Option<String>,
     pub duration_ms: Option<i64>,
@@ -46,6 +47,13 @@ pub struct RequestLog {
     pub route_policy: Option<String>,
     pub route_reason: Option<String>,
     pub rejected_candidates_json: Option<String>,
+    pub body_bytes: Option<i64>,
+    pub attempt_count: Option<i64>,
+    pub route_wait_ms: Option<i64>,
+    pub upstream_headers_ms: Option<i64>,
+    pub failure_source: Option<String>,
+    pub attempts_json: Option<String>,
+    pub completion_source: Option<String>,
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
     pub total_tokens: Option<i64>,

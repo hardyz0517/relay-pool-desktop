@@ -36,6 +36,7 @@ import {
   normalizationLabel,
   paginateRequestLogs,
   pricingStatusLabel,
+  requestTraceRows,
   statusFallback,
 } from "./requestLogViewModels";
 
@@ -213,6 +214,9 @@ export function LogsPage() {
                   <PropertyRow label="兜底次数" value={String(selected.fallbackCount)} />
                   <PropertyRow label="耗时" value={selected.durationMs == null ? "暂无" : `${selected.durationMs}ms`} />
                   <PropertyRow label="首字延迟" value={selected.firstTokenMs == null ? "暂无" : `${selected.firstTokenMs}ms`} />
+                  {requestTraceRows(selected).map((row) => (
+                    <PropertyRow key={row.label} label={row.label} value={row.value} />
+                  ))}
                   <PropertyRow label="路由策略" value={selected.routePolicy ?? "未记录"} />
                   <PropertyRow label="选择原因" value={selected.routeReason ?? "未记录"} />
                   <PropertyRow label="用量" value={formatTokenTotal(selected)} />

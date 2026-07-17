@@ -14,6 +14,7 @@ use super::{
     adapters::responses::render_responses_response,
     endpoint_adapter::{response_headers_for_downstream, EndpointAdapter, ResponseMode},
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
+    observability::AttemptTrace,
     request::{ByteStream, CanonicalProxyRequest},
     router::{self, RichRouteCandidate, RouteRequest},
     routing_repository::{
@@ -151,6 +152,7 @@ impl ExecutionEngine {
 
         let idempotent = request.idempotency_key.is_some();
         let mut last_failure = None;
+        let mut traces = Vec::new();
         for (attempt_index, candidate) in candidates
             .iter()
             .take(self.retry_policy.max_attempts(candidates.len()))
@@ -162,14 +164,25 @@ impl ExecutionEngine {
                 .await
             {
                 Ok(prepared) => {
+                    traces.push(AttemptTrace {
+                        station_key_id: candidate.candidate.station_key_id.clone(),
+                        failure_code: None,
+                        duration_ms: 0,
+                    });
                     return Ok(ProxyExecutionResponse::from_prepared(
                         prepared,
                         candidate,
                         attempt_index as i64,
                         &request,
+                        traces,
                     ));
                 }
                 Err(failure) => {
+                    traces.push(AttemptTrace {
+                        station_key_id: candidate.candidate.station_key_id.clone(),
+                        failure_code: Some(failure.code.as_str().to_string()),
+                        duration_ms: 0,
+                    });
                     let decision = self.retry_policy.decide(&failure, idempotent, false);
                     last_failure = Some(failure);
                     if decision == RetryDecision::Stop {
@@ -314,9 +327,15 @@ impl ProxyExecutionResponse {
         candidate: &RichRouteCandidate,
         fallback_count: i64,
         request: &CanonicalProxyRequest,
+        traces: Vec<AttemptTrace>,
     ) -> Self {
         let (status, headers, body) = prepared.into_parts();
         let now = now_millis_for_services().to_string();
+        let body_bytes = match &body {
+            ProxyExecutionBody::Buffered(body) => Some(body.len() as i64),
+            ProxyExecutionBody::Stream(_) => None,
+        };
+        let attempts_json = serialize_attempt_traces(&traces);
         Self {
             status,
             headers,
@@ -351,6 +370,13 @@ impl ProxyExecutionResponse {
                     endpoint_path(&request.endpoint)
                 )),
                 rejected_candidates_json: Some("[]".to_string()),
+                body_bytes,
+                attempt_count: Some((fallback_count + 1).max(1)),
+                route_wait_ms: Some(0),
+                upstream_headers_ms: Some(0),
+                failure_source: None,
+                attempts_json,
+                completion_source: Some("upstream".to_string()),
                 prompt_tokens: None,
                 completion_tokens: None,
                 total_tokens: None,
@@ -398,6 +424,7 @@ impl ProxyExecutionResponse {
         fallback_count: i64,
     ) -> Self {
         let now = now_millis_for_services().to_string();
+        let body_bytes = body.len() as i64;
         Self {
             status,
             headers,
@@ -421,6 +448,13 @@ impl ProxyExecutionResponse {
                 route_policy: None,
                 route_reason: None,
                 rejected_candidates_json: Some("[]".to_string()),
+                body_bytes: Some(body_bytes),
+                attempt_count: Some(0),
+                route_wait_ms: Some(0),
+                upstream_headers_ms: None,
+                failure_source: None,
+                attempts_json: Some("[]".to_string()),
+                completion_source: Some("local".to_string()),
                 prompt_tokens: None,
                 completion_tokens: None,
                 total_tokens: None,
@@ -620,6 +654,10 @@ fn transform_buffered_body(
     serde_json::to_vec(&render_responses_response(value, mapped_model))
         .map(Bytes::from)
         .map_err(|error| internal_failure(format!("serialize responses fallback failed: {error}")))
+}
+
+fn serialize_attempt_traces(traces: &[AttemptTrace]) -> Option<String> {
+    serde_json::to_string(traces).ok()
 }
 
 fn json_headers() -> HeaderMap {
