@@ -1,21 +1,31 @@
 use std::{
+    future::Future,
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
     task::{Context, Poll},
+    time::Duration,
 };
 
 use bytes::Bytes;
 use futures_util::Stream;
-use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
+use tokio::{
+    sync::{mpsc, OwnedSemaphorePermit, Semaphore},
+    time::Sleep,
+};
 
 use super::{
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
+    observability::SseUsageObserver,
     request::ByteStream,
     routing_repository::{FinalRequestOutcome, RoutingRepository},
 };
+
+use crate::services::database::now_millis_for_services;
+
+const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[derive(Clone)]
 pub(crate) struct FinalizationDispatcher {
@@ -101,11 +111,26 @@ pub(crate) fn finalizing_stream(
     outcome: FinalRequestOutcome,
     lease: FinalizationLease,
 ) -> ByteStream {
+    finalizing_stream_with_idle_timeout(stream, outcome, lease, DEFAULT_STREAM_IDLE_TIMEOUT)
+}
+
+pub(crate) fn finalizing_stream_with_idle_timeout(
+    stream: ByteStream,
+    outcome: FinalRequestOutcome,
+    lease: FinalizationLease,
+    idle_timeout: Duration,
+) -> ByteStream {
     Box::pin(FinalizingStream {
         stream,
         outcome: Some(outcome),
         lease: Some(lease),
+        observer: SseUsageObserver::default(),
+        idle_timeout,
+        sleep: None,
         completed: false,
+        body_bytes: 0,
+        first_token_ms: None,
+        started_at_ms: now_millis_for_services() as i64,
     })
 }
 
@@ -113,17 +138,31 @@ struct FinalizingStream {
     stream: ByteStream,
     outcome: Option<FinalRequestOutcome>,
     lease: Option<FinalizationLease>,
+    observer: SseUsageObserver,
+    idle_timeout: Duration,
+    sleep: Option<Pin<Box<Sleep>>>,
     completed: bool,
+    body_bytes: i64,
+    first_token_ms: Option<i64>,
+    started_at_ms: i64,
 }
 
 impl Stream for FinalizingStream {
     type Item = Result<Bytes, ProxyFailure>;
 
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.stream.as_mut().poll_next(_cx) {
-            Poll::Ready(Some(Ok(bytes))) => Poll::Ready(Some(Ok(bytes))),
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.sleep.is_none() {
+            self.reset_idle_sleep();
+        }
+
+        match self.stream.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(bytes))) => {
+                self.observe_chunk(&bytes);
+                self.reset_idle_sleep();
+                Poll::Ready(Some(Ok(bytes)))
+            }
             Poll::Ready(Some(Err(failure))) => {
-                self.finalize_failure(&failure);
+                self.finalize_failure(&failure, "body_error");
                 Poll::Ready(Some(Err(failure)))
             }
             Poll::Ready(None) => {
@@ -131,29 +170,79 @@ impl Stream for FinalizingStream {
                 self.finalize_once();
                 Poll::Ready(None)
             }
-            Poll::Pending => Poll::Pending,
+            Poll::Pending => {
+                let expired = self
+                    .sleep
+                    .as_mut()
+                    .is_some_and(|sleep| sleep.as_mut().poll(cx).is_ready());
+                if expired {
+                    let failure = stream_idle_timeout_failure(self.idle_timeout);
+                    self.finalize_failure(&failure, "body_idle_timeout");
+                    Poll::Ready(Some(Err(failure)))
+                } else {
+                    Poll::Pending
+                }
+            }
         }
     }
 }
 
 impl FinalizingStream {
     fn finalize_once(&mut self) {
+        self.apply_observations();
         if let (Some(outcome), Some(lease)) = (self.outcome.take(), self.lease.take()) {
             lease.finalize(outcome);
         }
     }
 
-    fn finalize_failure(&mut self, failure: &ProxyFailure) {
+    fn finalize_failure(&mut self, failure: &ProxyFailure, completion_source: &str) {
         if let Some(outcome) = self.outcome.as_mut() {
             outcome.status = "failed".to_string();
             outcome.lifecycle_status = Some(failure.code.as_str().to_string());
             outcome.error_message = Some(failure.public_message.clone());
             outcome.failure_source = Some(failure_source_label(failure.source).to_string());
-            outcome.completion_source = Some("body_error".to_string());
+            outcome.completion_source = Some(completion_source.to_string());
             outcome.feedback = None;
         }
         self.completed = true;
         self.finalize_once();
+    }
+
+    fn observe_chunk(&mut self, bytes: &Bytes) {
+        self.body_bytes += bytes.len() as i64;
+        if self.first_token_ms.is_none() && !bytes.is_empty() {
+            self.first_token_ms =
+                Some((now_millis_for_services() as i64 - self.started_at_ms).max(0));
+        }
+        self.observer.push(bytes);
+    }
+
+    fn apply_observations(&mut self) {
+        if let Some(outcome) = self.outcome.as_mut() {
+            if self.body_bytes > 0 {
+                outcome.body_bytes = Some(self.body_bytes);
+            }
+            if outcome.first_token_ms.is_none() {
+                outcome.first_token_ms = self.first_token_ms;
+            }
+            if let Some(usage) = self.observer.usage() {
+                outcome.prompt_tokens = usage.input_tokens.or(outcome.prompt_tokens);
+                outcome.completion_tokens = usage.output_tokens.or(outcome.completion_tokens);
+                outcome.total_tokens = usage.total_tokens.or(outcome.total_tokens);
+                outcome.cache_creation_tokens = usage
+                    .cache_creation_tokens
+                    .or(outcome.cache_creation_tokens);
+                outcome.cache_read_tokens = usage.cache_read_tokens.or(outcome.cache_read_tokens);
+            }
+            let now = now_millis_for_services().to_string();
+            outcome.finished_at = now;
+            outcome.duration_ms =
+                Some((now_millis_for_services() as i64 - self.started_at_ms).max(0));
+        }
+    }
+
+    fn reset_idle_sleep(&mut self) {
+        self.sleep = Some(Box::pin(tokio::time::sleep(self.idle_timeout)));
     }
 
     fn finalize_downstream_drop(&mut self) {
@@ -168,6 +257,16 @@ impl FinalizingStream {
         }
         self.finalize_once();
     }
+}
+
+fn stream_idle_timeout_failure(timeout: Duration) -> ProxyFailure {
+    ProxyFailure::new(
+        ProxyFailureCode::UpstreamStreamFailed,
+        FailureSource::Upstream,
+        RetryClass::AfterCommitStop,
+        http::StatusCode::BAD_GATEWAY,
+        format!("upstream stream idle for {} ms", timeout.as_millis()),
+    )
 }
 
 impl Drop for FinalizingStream {
@@ -214,7 +313,10 @@ mod tests {
         },
     };
 
-    use super::{buffered_finalizing_stream, finalizing_stream, FinalizationDispatcher};
+    use super::{
+        buffered_finalizing_stream, finalizing_stream, finalizing_stream_with_idle_timeout,
+        FinalizationDispatcher,
+    };
 
     #[tokio::test]
     async fn response_body_finalizes_success_only_after_eof() {
@@ -345,6 +447,64 @@ mod tests {
         assert_eq!(outcome.failure_source.as_deref(), Some("upstream"));
         assert_eq!(outcome.completion_source.as_deref(), Some("body_error"));
         assert!(outcome.feedback.is_none());
+    }
+
+    #[tokio::test]
+    async fn response_body_stream_idle_timeout_finalizes_upstream_failure_once() {
+        let repository = Arc::new(RecordingRepository::default());
+        let dispatcher = FinalizationDispatcher::new(1, repository.clone());
+        let lease = dispatcher.try_reserve().expect("lease");
+        let mut body = finalizing_stream_with_idle_timeout(
+            Box::pin(stream::pending()),
+            success_outcome("response-body-idle-timeout"),
+            lease,
+            std::time::Duration::from_millis(1),
+        );
+
+        let failure = body.next().await.unwrap().expect_err("idle timeout");
+        assert_eq!(failure.code, ProxyFailureCode::UpstreamStreamFailed);
+        drop(body);
+        repository.wait_for_calls(1).await;
+
+        assert_eq!(repository.calls(), 1);
+        let outcome = repository.last().expect("outcome");
+        assert_eq!(outcome.status, "failed");
+        assert_eq!(
+            outcome.lifecycle_status.as_deref(),
+            Some("upstream_stream_failed")
+        );
+        assert_eq!(outcome.failure_source.as_deref(), Some("upstream"));
+        assert_eq!(
+            outcome.completion_source.as_deref(),
+            Some("body_idle_timeout")
+        );
+        assert!(outcome.feedback.is_none());
+    }
+
+    #[tokio::test]
+    async fn response_body_stream_eof_records_sse_usage() {
+        let repository = Arc::new(RecordingRepository::default());
+        let dispatcher = FinalizationDispatcher::new(1, repository.clone());
+        let lease = dispatcher.try_reserve().expect("lease");
+        let mut body = finalizing_stream(
+            Box::pin(stream::iter(vec![Ok(Bytes::from_static(
+                br#"data: {"type":"response.completed","response":{"id":"resp_v2","usage":{"input_tokens":9,"output_tokens":4,"total_tokens":13}}}
+
+"#,
+            ))])),
+            success_outcome("response-body-sse-usage"),
+            lease,
+        );
+
+        assert!(body.next().await.unwrap().is_ok());
+        assert!(body.next().await.is_none());
+        repository.wait_for_calls(1).await;
+
+        let outcome = repository.last().expect("outcome");
+        assert_eq!(outcome.status, "success");
+        assert_eq!(outcome.prompt_tokens, Some(9));
+        assert_eq!(outcome.completion_tokens, Some(4));
+        assert_eq!(outcome.total_tokens, Some(13));
     }
 
     #[derive(Default)]

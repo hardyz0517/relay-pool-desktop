@@ -16,7 +16,8 @@ use crate::{
             limits::ProxyServerLimits,
             request::{ProxyHttpResponse, ProxyResponsePayload},
             response_body::{
-                buffered_finalizing_stream, finalizing_stream, FinalizationDispatcher,
+                buffered_finalizing_stream, finalizing_stream_with_idle_timeout,
+                FinalizationDispatcher,
             },
             routing_repository::{RoutingRepository, SqliteRoutingRepository},
             server::{self, RunningServer},
@@ -267,6 +268,7 @@ impl ProxyRuntimeState {
         let executor = Arc::new(V2ProxyExecutor::new(
             repository,
             upstream_pool,
+            config.limits.stream_idle_timeout,
             finalization_dispatcher,
         ));
         let ingress_state = Arc::new(IngressState::with_active_requests(
@@ -418,6 +420,7 @@ struct V2RuntimeInner {
 
 struct V2ProxyExecutor {
     engine: ExecutionEngine,
+    stream_idle_timeout: std::time::Duration,
     finalization: FinalizationDispatcher,
 }
 
@@ -425,11 +428,13 @@ impl V2ProxyExecutor {
     fn new(
         repository: Arc<dyn RoutingRepository>,
         upstream_pool: UpstreamClientPool,
+        stream_idle_timeout: std::time::Duration,
         finalization: FinalizationDispatcher,
     ) -> Self {
         let attempts = Arc::new(UpstreamAttemptExecutor::new(upstream_pool));
         Self {
             engine: ExecutionEngine::new(repository, attempts),
+            stream_idle_timeout,
             finalization,
         }
     }
@@ -452,6 +457,7 @@ impl IngressExecutor for V2ProxyExecutor {
             });
         };
         let engine = self.engine.clone();
+        let stream_idle_timeout = self.stream_idle_timeout;
         Box::pin(async move {
             let response = engine.execute(request).await?;
             let status = response.status;
@@ -466,10 +472,11 @@ impl IngressExecutor for V2ProxyExecutor {
                     ))
                 }
                 super::execution::ProxyExecutionBody::Stream(chunks) => {
-                    ProxyResponsePayload::Stream(finalizing_stream(
+                    ProxyResponsePayload::Stream(finalizing_stream_with_idle_timeout(
                         chunks,
                         outcome,
                         finalization_lease,
+                        stream_idle_timeout,
                     ))
                 }
             };

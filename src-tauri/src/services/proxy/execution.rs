@@ -2,11 +2,11 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use bytes::Bytes;
-use futures_util::future::BoxFuture;
+use futures_util::{future::BoxFuture, stream, StreamExt};
 use http::{HeaderMap, StatusCode};
 use serde_json::Value;
 
@@ -85,6 +85,7 @@ pub(crate) enum RetryDecision {
 pub(crate) struct RetryPolicy {
     max_candidate_attempts: usize,
     precommit_budget: Duration,
+    first_byte_timeout: Duration,
     buffered_budget: Duration,
 }
 
@@ -93,6 +94,7 @@ impl Default for RetryPolicy {
         Self {
             max_candidate_attempts: 3,
             precommit_budget: Duration::from_secs(180),
+            first_byte_timeout: Duration::from_secs(120),
             buffered_budget: Duration::from_secs(300),
         }
     }
@@ -110,10 +112,17 @@ impl ExecutionEngine {
         }
     }
 
+    #[cfg(test)]
+    fn with_retry_policy(mut self, retry_policy: RetryPolicy) -> Self {
+        self.retry_policy = retry_policy;
+        self
+    }
+
     pub(crate) async fn execute(
         &self,
         request: CanonicalProxyRequest,
     ) -> Result<ProxyExecutionResponse, ProxyFailure> {
+        let precommit_started = Instant::now();
         if request.local_path == "/usage" || request.local_path == "/v1/usage" {
             return self.execute_usage(request).await;
         }
@@ -158,11 +167,25 @@ impl ExecutionEngine {
             .take(self.retry_policy.max_attempts(candidates.len()))
             .enumerate()
         {
-            match self
-                .attempts
-                .attempt(&request, candidate, selection.mapped_model.as_deref())
-                .await
-            {
+            let Some(remaining) = self
+                .retry_policy
+                .remaining_precommit_budget(precommit_started)
+            else {
+                return Err(precommit_timeout_failure());
+            };
+            let attempt_result = tokio::time::timeout(remaining, async {
+                match self
+                    .attempts
+                    .attempt(&request, candidate, selection.mapped_model.as_deref())
+                    .await
+                {
+                    Ok(prepared) => self.bootstrap_stream(prepared).await,
+                    Err(failure) => Err(failure),
+                }
+            })
+            .await
+            .unwrap_or_else(|_| Err(precommit_timeout_failure()));
+            match attempt_result {
                 Ok(prepared) => {
                     traces.push(AttemptTrace {
                         station_key_id: candidate.candidate.station_key_id.clone(),
@@ -201,6 +224,38 @@ impl ExecutionEngine {
                 "all route candidates failed",
             )
         }))
+    }
+
+    async fn bootstrap_stream(
+        &self,
+        prepared: PreparedAttempt,
+    ) -> Result<PreparedAttempt, ProxyFailure> {
+        let PreparedAttempt::Stream {
+            status,
+            headers,
+            mut chunks,
+        } = prepared
+        else {
+            return Ok(prepared);
+        };
+
+        loop {
+            match tokio::time::timeout(self.retry_policy.first_byte_timeout(), chunks.next()).await
+            {
+                Ok(Some(Ok(bytes))) if bytes.is_empty() => continue,
+                Ok(Some(Ok(bytes))) => {
+                    let prefixed = stream::once(async move { Ok(bytes) }).chain(chunks).boxed();
+                    return Ok(PreparedAttempt::Stream {
+                        status,
+                        headers,
+                        chunks: prefixed,
+                    });
+                }
+                Ok(Some(Err(failure))) => return Err(precommit_stream_failure(failure)),
+                Ok(None) => return Err(precommit_stream_ended_failure()),
+                Err(_) => return Err(upstream_first_byte_timeout_failure()),
+            }
+        }
     }
 
     async fn execute_usage(
@@ -380,6 +435,9 @@ impl ProxyExecutionResponse {
                 prompt_tokens: None,
                 completion_tokens: None,
                 total_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                first_token_ms: None,
                 started_at: now.clone(),
                 finished_at: now,
                 duration_ms: Some(0),
@@ -458,6 +516,9 @@ impl ProxyExecutionResponse {
                 prompt_tokens: None,
                 completion_tokens: None,
                 total_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                first_token_ms: None,
                 started_at: now.clone(),
                 finished_at: now,
                 duration_ms: Some(0),
@@ -525,6 +586,21 @@ impl AttemptExecutor for UpstreamAttemptExecutor {
 }
 
 impl RetryPolicy {
+    #[cfg(test)]
+    fn for_tests(
+        max_candidate_attempts: usize,
+        precommit_budget: Duration,
+        first_byte_timeout: Duration,
+        buffered_budget: Duration,
+    ) -> Self {
+        Self {
+            max_candidate_attempts,
+            precommit_budget,
+            first_byte_timeout,
+            buffered_budget,
+        }
+    }
+
     pub(crate) fn decide(
         &self,
         failure: &ProxyFailure,
@@ -535,6 +611,9 @@ impl RetryPolicy {
             return RetryDecision::Stop;
         }
         if matches!(failure.code, ProxyFailureCode::UpstreamStreamFailed) {
+            return RetryDecision::Stop;
+        }
+        if matches!(failure.code, ProxyFailureCode::RouteWaitTimeout) {
             return RetryDecision::Stop;
         }
         if matches!(failure.code, ProxyFailureCode::UpstreamConnectFailed) {
@@ -566,6 +645,14 @@ impl RetryPolicy {
 
     pub(crate) fn buffered_budget(&self) -> Duration {
         self.buffered_budget
+    }
+
+    pub(crate) fn first_byte_timeout(&self) -> Duration {
+        self.first_byte_timeout
+    }
+
+    fn remaining_precommit_budget(&self, started: Instant) -> Option<Duration> {
+        self.precommit_budget.checked_sub(started.elapsed())
     }
 }
 
@@ -602,6 +689,16 @@ fn internal_failure(message: impl Into<String>) -> ProxyFailure {
         RetryClass::Never,
         StatusCode::INTERNAL_SERVER_ERROR,
         message,
+    )
+}
+
+fn precommit_timeout_failure() -> ProxyFailure {
+    ProxyFailure::new(
+        ProxyFailureCode::RouteWaitTimeout,
+        FailureSource::Routing,
+        RetryClass::BeforeOutput,
+        StatusCode::GATEWAY_TIMEOUT,
+        "route precommit budget exhausted",
     )
 }
 
@@ -759,6 +856,31 @@ fn upstream_http_failure(status: StatusCode) -> ProxyFailure {
     )
 }
 
+fn precommit_stream_failure(failure: ProxyFailure) -> ProxyFailure {
+    upstream_first_byte_failure(format!(
+        "upstream stream failed before first byte: {}",
+        failure.public_message
+    ))
+}
+
+fn precommit_stream_ended_failure() -> ProxyFailure {
+    upstream_first_byte_failure("upstream stream ended before first byte")
+}
+
+fn upstream_first_byte_timeout_failure() -> ProxyFailure {
+    upstream_first_byte_failure("upstream first byte timed out")
+}
+
+fn upstream_first_byte_failure(message: impl Into<String>) -> ProxyFailure {
+    ProxyFailure::new(
+        ProxyFailureCode::UpstreamFirstByteTimeout,
+        FailureSource::Upstream,
+        RetryClass::BeforeOutput,
+        StatusCode::BAD_GATEWAY,
+        message,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -767,7 +889,7 @@ mod tests {
     };
 
     use bytes::Bytes;
-    use futures_util::future::BoxFuture;
+    use futures_util::{future::BoxFuture, stream, StreamExt};
     use http::{HeaderMap, StatusCode};
 
     use crate::{
@@ -892,6 +1014,96 @@ mod tests {
         assert_eq!(failure.code, ProxyFailureCode::UpstreamHttpError);
     }
 
+    #[tokio::test]
+    async fn execution_engine_enforces_one_precommit_budget_across_candidates() {
+        let repository = Arc::new(FakeRepository::with_candidates(vec![
+            rich_candidate("a"),
+            rich_candidate("b"),
+        ]));
+        let attempts = Arc::new(FakeAttemptExecutor::delayed_responses(
+            vec![
+                Err(failure(500)),
+                Ok(buffered_success(b"{\"too_late\":true}")),
+            ],
+            Duration::from_millis(20),
+        ));
+        let engine = ExecutionEngine::new(repository, attempts.clone()).with_retry_policy(
+            RetryPolicy::for_tests(
+                3,
+                Duration::from_millis(5),
+                Duration::from_secs(120),
+                Duration::from_secs(300),
+            ),
+        );
+
+        let failure = engine
+            .execute(canonical_chat_request().await)
+            .await
+            .expect_err("precommit budget exhausted");
+
+        assert_eq!(failure.code, ProxyFailureCode::RouteWaitTimeout);
+        assert_eq!(attempts.seen_ids(), ["a"]);
+    }
+
+    #[tokio::test]
+    async fn stream_bootstrap_fails_over_before_first_chunk() {
+        let repository = Arc::new(FakeRepository::with_candidates(vec![
+            rich_candidate("a"),
+            rich_candidate("b"),
+        ]));
+        let attempts = Arc::new(FakeAttemptExecutor::responses(vec![
+            Ok(stream_error_before_data()),
+            Ok(stream_success(b"data: ok\n\n")),
+        ]));
+        let engine = ExecutionEngine::new(repository, attempts.clone());
+
+        let mut response = engine
+            .execute(streaming_chat_request().await)
+            .await
+            .expect("fallback stream response");
+
+        assert_eq!(attempts.seen_ids(), ["a", "b"]);
+        assert_eq!(response.selected_station_key_id(), Some("b"));
+        assert_eq!(response.fallback_count(), 1);
+        let super::ProxyExecutionBody::Stream(chunks) = &mut response.body else {
+            panic!("expected stream body");
+        };
+        assert_eq!(
+            chunks.next().await.unwrap().unwrap(),
+            Bytes::from_static(b"data: ok\n\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn committed_stream_error_never_selects_another_candidate() {
+        let repository = Arc::new(FakeRepository::with_candidates(vec![
+            rich_candidate("a"),
+            rich_candidate("b"),
+        ]));
+        let attempts = Arc::new(FakeAttemptExecutor::responses(vec![
+            Ok(stream_then_error(b"data: first\n\n")),
+            Ok(stream_success(b"data: forbidden\n\n")),
+        ]));
+        let engine = ExecutionEngine::new(repository, attempts.clone());
+
+        let mut response = engine
+            .execute(streaming_chat_request().await)
+            .await
+            .expect("committed stream response");
+
+        assert_eq!(response.selected_station_key_id(), Some("a"));
+        assert_eq!(attempts.seen_ids(), ["a"]);
+        let super::ProxyExecutionBody::Stream(chunks) = &mut response.body else {
+            panic!("expected stream body");
+        };
+        assert_eq!(
+            chunks.next().await.unwrap().unwrap(),
+            Bytes::from_static(b"data: first\n\n")
+        );
+        assert!(chunks.next().await.unwrap().is_err());
+        assert_eq!(attempts.seen_ids(), ["a"]);
+    }
+
     struct FakeRepository {
         candidates: Vec<RichRouteCandidate>,
         finalized: Mutex<Vec<FinalRequestOutcome>>,
@@ -930,6 +1142,7 @@ mod tests {
     struct FakeAttemptExecutor {
         responses: Mutex<Vec<Result<PreparedAttempt, ProxyFailure>>>,
         seen_ids: Mutex<Vec<String>>,
+        delay: Option<Duration>,
     }
 
     impl FakeAttemptExecutor {
@@ -937,6 +1150,18 @@ mod tests {
             Self {
                 responses: Mutex::new(responses),
                 seen_ids: Mutex::new(Vec::new()),
+                delay: None,
+            }
+        }
+
+        fn delayed_responses(
+            responses: Vec<Result<PreparedAttempt, ProxyFailure>>,
+            delay: Duration,
+        ) -> Self {
+            Self {
+                responses: Mutex::new(responses),
+                seen_ids: Mutex::new(Vec::new()),
+                delay: Some(delay),
             }
         }
 
@@ -956,7 +1181,12 @@ mod tests {
                 .lock()
                 .expect("seen lock")
                 .push(candidate.candidate.station_key_id.clone());
-            Box::pin(async move { self.responses.lock().expect("responses lock").remove(0) })
+            Box::pin(async move {
+                if let Some(delay) = self.delay {
+                    tokio::time::sleep(delay).await;
+                }
+                self.responses.lock().expect("responses lock").remove(0)
+            })
         }
     }
 
@@ -1004,6 +1234,33 @@ mod tests {
         }
     }
 
+    fn stream_success(first: &'static [u8]) -> PreparedAttempt {
+        PreparedAttempt::Stream {
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            chunks: Box::pin(stream::iter(vec![Ok(Bytes::from_static(first))])),
+        }
+    }
+
+    fn stream_error_before_data() -> PreparedAttempt {
+        PreparedAttempt::Stream {
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            chunks: Box::pin(stream::iter(vec![Err(stream_failure())])),
+        }
+    }
+
+    fn stream_then_error(first: &'static [u8]) -> PreparedAttempt {
+        PreparedAttempt::Stream {
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            chunks: Box::pin(stream::iter(vec![
+                Ok(Bytes::from_static(first)),
+                Err(stream_failure()),
+            ])),
+        }
+    }
+
     async fn canonical_chat_request() -> CanonicalProxyRequest {
         let body = Bytes::from_static(
             br#"{"model":"gpt-test","messages":[{"role":"user","content":"hi"}]}"#,
@@ -1019,6 +1276,32 @@ mod tests {
             RouteEndpointKind::ChatCompletions,
             Some("gpt-test".to_string()),
             false,
+            RequestRequirements::default(),
+            body,
+            HeaderMap::new(),
+            None,
+            None,
+            None,
+            body_budget,
+            RequestLease::new(permit, Arc::new(std::sync::atomic::AtomicU32::new(0))),
+        )
+    }
+
+    async fn streaming_chat_request() -> CanonicalProxyRequest {
+        let body = Bytes::from_static(
+            br#"{"model":"gpt-test","messages":[{"role":"user","content":"hi"}],"stream":true}"#,
+        );
+        let budget = BodyBudget::new(1024 * 1024);
+        let body_budget = budget.acquire(body.len()).await.expect("budget");
+        let permit = Arc::new(tokio::sync::Semaphore::new(1))
+            .try_acquire_owned()
+            .expect("permit");
+        CanonicalProxyRequest::new(
+            "req-stream".to_string(),
+            "/v1/chat/completions".to_string(),
+            RouteEndpointKind::ChatCompletions,
+            Some("gpt-test".to_string()),
+            true,
             RequestRequirements::default(),
             body,
             HeaderMap::new(),
