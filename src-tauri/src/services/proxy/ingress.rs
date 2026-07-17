@@ -1,4 +1,7 @@
-use std::sync::{atomic::AtomicU32, Arc};
+use std::sync::{
+    atomic::{AtomicU32, AtomicU64, Ordering},
+    Arc,
+};
 
 use axum::{
     body::{to_bytes, Body},
@@ -48,6 +51,7 @@ pub(crate) struct IngressState {
     body_budget: BodyBudget,
     request_semaphore: Arc<Semaphore>,
     active_requests: Arc<AtomicU32>,
+    request_count: Arc<AtomicU64>,
     executor: Arc<dyn IngressExecutor>,
 }
 
@@ -57,11 +61,28 @@ impl IngressState {
         limits: ProxyServerLimits,
         executor: Arc<dyn IngressExecutor>,
     ) -> Self {
+        Self::with_active_requests(
+            local_access_key,
+            limits,
+            executor,
+            Arc::new(AtomicU32::new(0)),
+            Arc::new(AtomicU64::new(0)),
+        )
+    }
+
+    pub(crate) fn with_active_requests(
+        local_access_key: impl Into<String>,
+        limits: ProxyServerLimits,
+        executor: Arc<dyn IngressExecutor>,
+        active_requests: Arc<AtomicU32>,
+        request_count: Arc<AtomicU64>,
+    ) -> Self {
         Self {
             local_access_key: local_access_key.into(),
             body_budget: BodyBudget::new(limits.max_buffered_body_bytes),
             request_semaphore: Arc::new(Semaphore::new(limits.max_in_flight_requests)),
-            active_requests: Arc::new(AtomicU32::new(0)),
+            active_requests,
+            request_count,
             limits,
             executor,
         }
@@ -94,6 +115,7 @@ async fn handle(
             "local proxy is busy",
         ));
     };
+    state.request_count.fetch_add(1, Ordering::Relaxed);
     let request_id = next_request_id();
     let cors_origin = match cors_origin(&headers) {
         Ok(origin) => origin,

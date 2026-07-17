@@ -18,7 +18,7 @@ use crate::{
     },
     services::{
         database::AppDatabase,
-        proxy::runtime::{read_http_request_for_tests, ProxyRuntimeState},
+        proxy::legacy_runtime::{read_http_request_for_tests, ProxyRuntimeState},
         secrets::crypto::generate_data_key,
     },
 };
@@ -51,14 +51,20 @@ impl CapturedRequest {
 #[derive(Debug, Clone)]
 pub(crate) enum ScriptedResponse {
     Json(Vec<u8>),
-    Status { status: u16, reason: &'static str },
+    Status {
+        status: u16,
+        reason: &'static str,
+    },
     ChunkedSse(Vec<u8>),
     DisconnectAfterChunk(Vec<u8>),
     PausedSse {
         first_chunk: Vec<u8>,
         release: Arc<AtomicBool>,
     },
-    DelayedHeaders { delay: Duration, body: Vec<u8> },
+    DelayedHeaders {
+        delay: Duration,
+        body: Vec<u8>,
+    },
 }
 
 pub(crate) struct LoopbackUpstream {
@@ -128,7 +134,10 @@ impl LoopbackUpstream {
     pub(crate) fn wait_for_requests(&self, expected: usize) {
         let deadline = Instant::now() + Duration::from_secs(2);
         while self.captured_count() < expected {
-            assert!(Instant::now() < deadline, "timed out waiting for upstream requests");
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for upstream requests"
+            );
             thread::sleep(Duration::from_millis(10));
         }
     }
@@ -157,7 +166,12 @@ pub(crate) struct LegacyGatewayCase {
 
 impl LegacyGatewayCase {
     pub(crate) fn new() -> Self {
-        Self::with_responses(vec![ok_models(), ok_chat(), ok_responses(), ok_embeddings()])
+        Self::with_responses(vec![
+            ok_models(),
+            ok_chat(),
+            ok_responses(),
+            ok_embeddings(),
+        ])
     }
 
     pub(crate) fn with_statuses(statuses: [u16; 2]) -> Self {
@@ -188,7 +202,8 @@ impl LegacyGatewayCase {
         let release = Arc::new(AtomicBool::new(false));
         let mut case = Self::with_station_count(
             vec![ScriptedResponse::PausedSse {
-                first_chunk: b"data: {\"choices\":[{\"delta\":{\"content\":\"hold\"}}]}\n\n".to_vec(),
+                first_chunk: b"data: {\"choices\":[{\"delta\":{\"content\":\"hold\"}}]}\n\n"
+                    .to_vec(),
                 release: Arc::clone(&release),
             }],
             1,
@@ -217,8 +232,12 @@ impl LegacyGatewayCase {
                 note: None,
             })
             .expect("model alias");
-        let station_keys =
-            create_station_keys(&database, &data_key, upstream.base_url.as_str(), station_count);
+        let station_keys = create_station_keys(
+            &database,
+            &data_key,
+            upstream.base_url.as_str(),
+            station_count,
+        );
         let upstream_key_labels = station_keys
             .iter()
             .enumerate()
@@ -238,7 +257,7 @@ impl LegacyGatewayCase {
             .collect();
         let proxy = ProxyRuntimeState::default();
         let status = proxy
-            .start_ephemeral_for_tests(database.clone(), data_key, )
+            .start_ephemeral_for_tests(database.clone(), data_key)
             .expect("start proxy");
 
         Self {
@@ -258,7 +277,13 @@ impl LegacyGatewayCase {
     }
 
     pub(crate) fn request(&self, endpoint: EndpointProbe, token: Option<&str>) -> HttpResponse {
-        self.send_raw(endpoint.method(), endpoint.target(), token, endpoint.body(), &[])
+        self.send_raw(
+            endpoint.method(),
+            endpoint.target(),
+            token,
+            endpoint.body(),
+            &[],
+        )
     }
 
     pub(crate) fn upstream_requests(&self) -> usize {
@@ -273,13 +298,7 @@ impl LegacyGatewayCase {
     ) -> ObservedChatRequest {
         let before = self.upstream.captured_count();
         let target = format!("/v1/chat/completions{query}");
-        let downstream = self.send_raw(
-            "POST",
-            &target,
-            Some(&self.local_key),
-            body,
-            headers,
-        );
+        let downstream = self.send_raw("POST", &target, Some(&self.local_key), body, headers);
         self.upstream.wait_for_requests(before + 1);
         let upstream = self
             .upstream
@@ -287,7 +306,10 @@ impl LegacyGatewayCase {
             .into_iter()
             .nth(before)
             .expect("captured upstream request");
-        ObservedChatRequest { downstream, upstream }
+        ObservedChatRequest {
+            downstream,
+            upstream,
+        }
     }
 
     pub(crate) fn post_buffered_chat(&self) -> ObservedBufferedChat {
@@ -314,7 +336,10 @@ impl LegacyGatewayCase {
             .last()
             .cloned()
             .unwrap_or_else(|| "<none>".to_string());
-        let logs = self.database.list_local_proxy_request_logs().expect("request logs");
+        let logs = self
+            .database
+            .list_local_proxy_request_logs()
+            .expect("request logs");
         let health = self.database.list_station_key_health().expect("health");
         let health_updates = self
             .station_keys
@@ -330,7 +355,12 @@ impl LegacyGatewayCase {
                         health
                             .iter()
                             .find(|item| item.station_key_id == key.id)
-                            .map(|item| (format!("key-{}", (b'a' + index as u8) as char), item.success_count > 0))
+                            .map(|item| {
+                                (
+                                    format!("key-{}", (b'a' + index as u8) as char),
+                                    item.success_count > 0,
+                                )
+                            })
                     })
             })
             .collect::<Vec<_>>();
@@ -365,7 +395,10 @@ impl LegacyGatewayCase {
                 }
                 keys
             });
-        let logs = self.database.list_local_proxy_request_logs().expect("request logs");
+        let logs = self
+            .database
+            .list_local_proxy_request_logs()
+            .expect("request logs");
 
         ObservedStreamChat {
             downstream_body: response.body,
@@ -373,7 +406,11 @@ impl LegacyGatewayCase {
             second_upstream_requests: captured
                 .iter()
                 .filter_map(|request| request.header("authorization"))
-                .filter(|authorization| self.upstream_key_labels.get(*authorization).is_some_and(|label| label == "key-b"))
+                .filter(|authorization| {
+                    self.upstream_key_labels
+                        .get(*authorization)
+                        .is_some_and(|label| label == "key-b")
+                })
                 .count(),
             request_logs_len: logs.len(),
         }
@@ -471,7 +508,9 @@ impl LegacyGatewayCase {
             stream.write_all(body).expect("write body");
         }
         let mut response = Vec::new();
-        stream.read_to_end(&mut response).expect("read proxy response");
+        stream
+            .read_to_end(&mut response)
+            .expect("read proxy response");
         HttpResponse::parse(&response)
     }
 }
@@ -614,7 +653,11 @@ fn create_station_keys(
                 Some(data_key),
             )
             .expect("station");
-        keys.extend(database.list_station_keys(station.id).expect("station keys"));
+        keys.extend(
+            database
+                .list_station_keys(station.id)
+                .expect("station keys"),
+        );
         thread::sleep(Duration::from_millis(2));
     }
     for key in &keys {
@@ -662,18 +705,27 @@ fn read_captured_request(stream: &mut TcpStream) -> Result<CapturedRequest, Stri
 
 fn write_scripted_response(stream: &mut TcpStream, response: ScriptedResponse) {
     match response {
-        ScriptedResponse::Json(body) => write_response(stream, 200, "OK", "application/json", &body),
+        ScriptedResponse::Json(body) => {
+            write_response(stream, 200, "OK", "application/json", &body)
+        }
         ScriptedResponse::Status { status, reason } => {
             write_response(stream, status, reason, "application/json", b"{}")
         }
-        ScriptedResponse::ChunkedSse(body) => write_response(stream, 200, "OK", "text/event-stream", &body),
+        ScriptedResponse::ChunkedSse(body) => {
+            write_response(stream, 200, "OK", "text/event-stream", &body)
+        }
         ScriptedResponse::DisconnectAfterChunk(body) => {
-            let header = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
+            let header =
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
             let _ = stream.write_all(header.as_bytes());
             let _ = stream.write_all(&body);
         }
-        ScriptedResponse::PausedSse { first_chunk, release } => {
-            let header = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
+        ScriptedResponse::PausedSse {
+            first_chunk,
+            release,
+        } => {
+            let header =
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
             let _ = stream.write_all(header.as_bytes());
             let _ = stream.write_all(&first_chunk);
             let _ = stream.flush();
@@ -688,7 +740,13 @@ fn write_scripted_response(stream: &mut TcpStream, response: ScriptedResponse) {
     }
 }
 
-fn write_response(stream: &mut TcpStream, status: u16, reason: &str, content_type: &str, body: &[u8]) {
+fn write_response(
+    stream: &mut TcpStream,
+    status: u16,
+    reason: &str,
+    content_type: &str,
+    body: &[u8],
+) {
     let header = format!(
         "HTTP/1.1 {status} {reason}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
         body.len()
@@ -698,7 +756,9 @@ fn write_response(stream: &mut TcpStream, status: u16, reason: &str, content_typ
 }
 
 fn ok_models() -> ScriptedResponse {
-    ScriptedResponse::Json(br#"{"object":"list","data":[{"id":"mapped-model","object":"model"}]}"#.to_vec())
+    ScriptedResponse::Json(
+        br#"{"object":"list","data":[{"id":"mapped-model","object":"model"}]}"#.to_vec(),
+    )
 }
 
 fn ok_chat() -> ScriptedResponse {

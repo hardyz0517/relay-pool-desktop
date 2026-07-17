@@ -23,7 +23,7 @@ http = "1"
 http-body = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["http1", "server"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
+hyper-util = { version = "0.1", features = ["service", "tokio"] }
 rand = "0.8"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json", "socks"] }
 rfd = "0.15"

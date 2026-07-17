@@ -5,8 +5,11 @@ use serde::{Deserialize, Serialize};
 pub enum ProxyLifecycle {
     #[default]
     Stopped,
+    Starting,
     Running,
     Draining,
+    Stopping,
+    Failed,
 }
 
 #[derive(Debug, Clone, Serialize)]

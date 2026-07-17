@@ -78,7 +78,11 @@ use crate::{
         database::{now_millis_for_services, AppDatabase},
         endpoint_ping::ping_station_endpoint as probe_station_endpoint,
         pricing::{pricing_context_from_pricing_parts, RequestPricingParts},
-        proxy::{redact_error_message, runtime::ProxyRuntimeState, should_fallback},
+        proxy::{
+            redact_error_message,
+            runtime::{ProxyRuntimeState, ProxyStartConfig},
+            should_fallback,
+        },
         remote_keys,
         secrets::{validation::validate_database_secrets, SecretManager},
         station_endpoints::{build_api_url, url_belongs_to_base},
@@ -309,18 +313,20 @@ pub struct CcswitchImportResult {
 }
 
 #[tauri::command]
-pub fn import_relay_pool_to_ccswitch(
+pub async fn import_relay_pool_to_ccswitch(
     database: State<'_, AppDatabase>,
     secrets: State<'_, SecretManager>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<CcswitchImportResult, String> {
     let settings = database.get_settings()?;
     database.migrate_plaintext_secrets(secrets.data_key())?;
-    let proxy_status = proxy.start(
-        database.inner().clone(),
-        *secrets.data_key(),
-        settings.local_proxy_port,
-    )?;
+    let proxy_status = proxy
+        .start(ProxyStartConfig::new(
+            database.inner().clone(),
+            *secrets.data_key(),
+            settings.local_proxy_port,
+        ))
+        .await?;
     let (result, deeplink) = prepare_ccswitch_import(&database, &proxy_status)?;
 
     open_url_with_system(&deeplink)?;
@@ -434,60 +440,64 @@ pub fn reorder_local_routing_keys(
 }
 
 #[tauri::command]
-pub fn start_local_proxy(
+pub async fn start_local_proxy(
     database: State<'_, AppDatabase>,
     secrets: State<'_, SecretManager>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
     let settings = database.get_settings()?;
     database.migrate_plaintext_secrets(secrets.data_key())?;
-    proxy.start(
-        database.inner().clone(),
-        *secrets.data_key(),
-        settings.local_proxy_port,
-    )
+    proxy
+        .start(ProxyStartConfig::new(
+            database.inner().clone(),
+            *secrets.data_key(),
+            settings.local_proxy_port,
+        ))
+        .await
 }
 
 #[tauri::command]
-pub fn stop_local_proxy(
+pub async fn stop_local_proxy(
     database: State<'_, AppDatabase>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
     let settings = database.get_settings()?;
-    proxy.stop(settings.local_proxy_port)
+    proxy.stop(settings.local_proxy_port).await
 }
 
 #[tauri::command]
-pub fn cleanup_before_update(
+pub async fn cleanup_before_update(
     database: State<'_, AppDatabase>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
     let settings = database.get_settings()?;
-    proxy.cleanup_before_update(settings.local_proxy_port)
+    proxy.cleanup_before_update(settings.local_proxy_port).await
 }
 
 #[tauri::command]
-pub fn prepare_local_proxy_for_update(
+pub async fn prepare_local_proxy_for_update(
     database: State<'_, AppDatabase>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
-    let settings = database.get_settings()?;
-    proxy.prepare_for_update(settings.local_proxy_port, Duration::from_secs(30))
+    let _settings = database.get_settings()?;
+    proxy.prepare_for_update(Duration::from_secs(30)).await
 }
 
 #[tauri::command]
-pub fn restart_local_proxy(
+pub async fn restart_local_proxy(
     database: State<'_, AppDatabase>,
     secrets: State<'_, SecretManager>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
     let settings = database.get_settings()?;
     database.migrate_plaintext_secrets(secrets.data_key())?;
-    proxy.restart(
-        database.inner().clone(),
-        *secrets.data_key(),
-        settings.local_proxy_port,
-    )
+    proxy
+        .restart(ProxyStartConfig::new(
+            database.inner().clone(),
+            *secrets.data_key(),
+            settings.local_proxy_port,
+        ))
+        .await
 }
 
 #[tauri::command]

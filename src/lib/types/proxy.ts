@@ -1,4 +1,10 @@
-export type ProxyLifecycle = "stopped" | "running" | "draining";
+export type ProxyLifecycle =
+  | "stopped"
+  | "starting"
+  | "running"
+  | "draining"
+  | "stopping"
+  | "failed";
 
 export type ProxyStatus = {
   running: boolean;
