@@ -307,6 +307,74 @@ impl ProxyRuntimeState {
         Ok(self.status_from_inner(&inner, port))
     }
 
+    #[cfg(test)]
+    pub(crate) fn start_ephemeral_for_tests(
+        &self,
+        database: AppDatabase,
+        data_key: [u8; 32],
+    ) -> Result<ProxyStatus, String> {
+        let _operation = self
+            .lifecycle_operation
+            .lock()
+            .map_err(|_| "proxy lifecycle operation lock is poisoned".to_string())?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| "proxy state lock is poisoned".to_string())?;
+        if inner.running {
+            return Ok(self.status_from_inner(&inner, inner.port));
+        }
+
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .map_err(|error| format!("bind ephemeral proxy listener failed: {error}"))?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| format!("configure ephemeral proxy listener failed: {error}"))?;
+        let port = listener
+            .local_addr()
+            .map_err(|error| format!("read ephemeral proxy port failed: {error}"))?
+            .port();
+
+        let stop_signal = Arc::new(AtomicBool::new(false));
+        let accepting_requests = Arc::new(AtomicBool::new(true));
+        let admission_gate = Arc::new(Mutex::new(()));
+        let active_requests = Arc::new(AtomicU32::new(0));
+        let request_count = Arc::new(AtomicU64::new(0));
+        let thread_stop = Arc::clone(&stop_signal);
+        let context = Arc::new(ProxyServerContext {
+            database,
+            data_key,
+            active_requests: Arc::clone(&active_requests),
+            request_count: Arc::clone(&request_count),
+            scheduler: Arc::new(SchedulerRuntimeState::default()),
+            route_affinity: Arc::new(Mutex::new(RouteAffinityStore::default())),
+            probe_cache: Arc::new(Mutex::new(ProbeConfirmationCache::default())),
+        });
+        let thread_accepting = Arc::clone(&accepting_requests);
+        let thread_admission_gate = Arc::clone(&admission_gate);
+        let handle = thread::spawn(move || {
+            run_server(
+                listener,
+                thread_stop,
+                thread_accepting,
+                thread_admission_gate,
+                context,
+            )
+        });
+
+        inner.running = true;
+        inner.lifecycle = ProxyLifecycle::Running;
+        inner.port = port;
+        inner.started_at = Some(now_string());
+        inner.last_error = None;
+        inner.request_count = Some(Arc::clone(&request_count));
+        inner.stop_signal = Some(stop_signal);
+        inner.active_requests = Some(active_requests);
+        inner.accepting_requests = Some(accepting_requests);
+        inner.admission_gate = Some(admission_gate);
+        inner.handle = Some(handle);
+        Ok(self.status_from_inner(&inner, port))
+    }
     pub fn stop(&self, default_port: u16) -> Result<ProxyStatus, String> {
         let _operation = self
             .lifecycle_operation
@@ -3846,6 +3914,19 @@ fn read_http_request(stream: &mut TcpStream) -> Result<ParsedRequest, String> {
     parse_http_request(stream, 2 * 1024 * 1024).map(Into::into)
 }
 
+#[cfg(test)]
+pub(crate) fn read_http_request_for_tests(
+    stream: &mut TcpStream,
+) -> Result<(String, String, String, HashMap<String, String>, Vec<u8>), String> {
+    let request = read_http_request(stream)?;
+    Ok((
+        request.method,
+        request.path,
+        request.target,
+        request.headers,
+        request.body,
+    ))
+}
 fn write_http_response(
     stream: &mut TcpStream,
     response: ProxyResponse,

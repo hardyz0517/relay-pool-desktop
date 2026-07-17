@@ -17,6 +17,11 @@ pub mod routing_types;
 pub mod runtime;
 pub mod scheduler;
 
+#[cfg(test)]
+mod contract_tests;
+#[cfg(test)]
+mod test_support;
+
 #[derive(Debug, Clone)]
 pub struct RouteCandidate {
     pub station_key_id: String,
