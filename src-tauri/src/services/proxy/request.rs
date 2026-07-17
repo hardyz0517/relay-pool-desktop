@@ -4,7 +4,10 @@ use http::{HeaderMap, StatusCode};
 
 use crate::models::routing::{RouteEndpointKind, RoutingGroupFilter};
 
-use super::limits::{BodyBudgetLease, RequestLease};
+use super::{
+    limits::{BodyBudgetLease, RequestLease},
+    routing_repository::FinalRequestOutcome,
+};
 
 pub type ByteStream =
     BoxStream<'static, Result<Bytes, crate::services::proxy::error::ProxyFailure>>;
@@ -87,19 +90,4 @@ pub struct ProxyHttpResponse {
     pub headers: HeaderMap,
     pub payload: ProxyResponsePayload,
     pub outcome: FinalRequestOutcome,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FinalRequestOutcome {
-    pub status: String,
-    pub lifecycle_status: Option<String>,
-}
-
-impl FinalRequestOutcome {
-    pub fn success(status: impl Into<String>) -> Self {
-        Self {
-            status: status.into(),
-            lifecycle_status: None,
-        }
-    }
 }

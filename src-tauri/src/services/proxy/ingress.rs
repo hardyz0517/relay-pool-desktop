@@ -22,9 +22,9 @@ use super::{
     limits::{BodyBudget, BodyBudgetError, ProxyServerLimits, RequestLease},
     local_auth::{self, AuthDecision},
     request::{
-        CanonicalProxyRequest, FinalRequestOutcome, ProxyHttpResponse, ProxyResponsePayload,
-        RequestRequirements,
+        CanonicalProxyRequest, ProxyHttpResponse, ProxyResponsePayload, RequestRequirements,
     },
+    routing_repository::FinalRequestOutcome,
 };
 
 const REQUEST_ID_HEADER: &str = "x-relay-request-id";

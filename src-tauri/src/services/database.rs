@@ -498,6 +498,13 @@ impl AppDatabase {
             .map_err(|_| "SQLite 连接锁已损坏".to_string())
     }
 
+    #[cfg(test)]
+    pub(crate) fn connection_for_repository_tests(
+        &self,
+    ) -> Result<MutexGuard<'_, Connection>, String> {
+        self.connection()
+    }
+
     pub fn db_path(&self) -> &PathBuf {
         &self.db_path
     }
@@ -2174,6 +2181,26 @@ impl AppDatabase {
         record_station_key_success_in_connection(&connection, station_key_id, duration_ms, now)
     }
 
+    pub(crate) fn record_station_key_success_for_endpoint_revision(
+        &self,
+        station_key_id: &str,
+        station_id: &str,
+        expected_revision: i64,
+        duration_ms: i64,
+        now: &str,
+    ) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(|error| {
+            format!("begin station endpoint revision transaction failed: {error}")
+        })?;
+        ensure_station_endpoint_revision(&transaction, station_id, expected_revision)?;
+        record_station_key_success_in_connection(&transaction, station_key_id, duration_ms, now)?;
+        transaction.commit().map_err(|error| {
+            format!("commit station endpoint revision transaction failed: {error}")
+        })?;
+        Ok(())
+    }
+
     pub fn record_station_key_failure(
         &self,
         station_key_id: &str,
@@ -2182,6 +2209,32 @@ impl AppDatabase {
     ) -> Result<(), String> {
         let connection = self.connection()?;
         record_station_key_failure_in_connection(&connection, station_key_id, error_summary, now, 3)
+    }
+
+    pub(crate) fn record_station_key_failure_for_endpoint_revision(
+        &self,
+        station_key_id: &str,
+        station_id: &str,
+        expected_revision: i64,
+        error_summary: &str,
+        now: &str,
+    ) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(|error| {
+            format!("begin station endpoint revision transaction failed: {error}")
+        })?;
+        ensure_station_endpoint_revision(&transaction, station_id, expected_revision)?;
+        record_station_key_failure_in_connection(
+            &transaction,
+            station_key_id,
+            error_summary,
+            now,
+            3,
+        )?;
+        transaction.commit().map_err(|error| {
+            format!("commit station endpoint revision transaction failed: {error}")
+        })?;
+        Ok(())
     }
 
     pub fn record_station_key_failure_with_threshold(
