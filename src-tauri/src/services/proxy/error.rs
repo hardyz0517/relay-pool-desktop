@@ -35,6 +35,7 @@ pub enum ProxyFailureCode {
     UpstreamHttpError,
     UpstreamStreamFailed,
     DownstreamDisconnected,
+    ResponsesChatFallbackIncompatible,
     ApplicationUpdateInProgress,
     InternalProxyError,
 }
@@ -58,6 +59,7 @@ impl ProxyFailureCode {
             Self::UpstreamHttpError => "upstream_http_error",
             Self::UpstreamStreamFailed => "upstream_stream_failed",
             Self::DownstreamDisconnected => "downstream_disconnected",
+            Self::ResponsesChatFallbackIncompatible => "responses_chat_fallback_incompatible",
             Self::ApplicationUpdateInProgress => "application_update_in_progress",
             Self::InternalProxyError => "internal_proxy_error",
         }
