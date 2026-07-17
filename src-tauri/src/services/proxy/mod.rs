@@ -4,6 +4,7 @@ use serde_json::Value;
 pub mod adapters;
 pub mod error;
 pub mod http_request;
+pub mod legacy_runtime;
 pub mod limits;
 mod local_auth;
 pub mod observability;
