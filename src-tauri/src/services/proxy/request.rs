@@ -6,7 +6,8 @@ use crate::models::routing::{RouteEndpointKind, RoutingGroupFilter};
 
 use super::limits::{BodyBudgetLease, RequestLease};
 
-pub type ByteStream = BoxStream<'static, Result<Bytes, crate::services::proxy::error::ProxyFailure>>;
+pub type ByteStream =
+    BoxStream<'static, Result<Bytes, crate::services::proxy::error::ProxyFailure>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestRequirements {
