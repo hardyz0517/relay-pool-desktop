@@ -287,7 +287,7 @@ adapter 不负责：候选排序、cooldown、attempt 次数、DB 写入、secre
 - Hyper-util 0.1
 - Tower 0.5
 - Tower-http 0.6
-- Reqwest 0.12，`rustls-tls`、`stream`、`json`、`socks`
+- Reqwest 0.13，关闭 default features，启用 `rustls`、`stream`、`json`、`socks`；复用当前 lockfile 已存在的主版本，避免并存 0.12/0.13
 - Bytes 1、HTTP-body-util 0.1、Futures-util 0.3
 - Tokio-util 0.7，用于 cancellation token
 - Subtle 2，用于固定时间 credential 比较
@@ -483,7 +483,7 @@ pub struct ProxyFailure {
 
 ### 10.3 Finalize once
 
-request outcome 使用一次性 finalizer。buffered response 在 write completion 后 finalize；stream body wrapper 在 EOF、error 或 drop 时 finalize。health、scheduler feedback、request log 和 active-request decrement 必须由同一个终态触发，不能由 handler 和 stream task 分别重复写入。
+request outcome 使用一次性 finalizer。buffered response 在 response body 被 Hyper 完整消费后 finalize；stream body wrapper 在 EOF、error 或 drop 时 finalize。body 在完整消费前被 drop 视为 downstream disconnect。该合同不声称获得客户端 TCP ACK；Hyper 已完整消费 body 后才发生的 socket flush failure 是已知可观测性边界。health、scheduler feedback、request log 和 active-request decrement 必须由同一个终态触发，不能由 handler 和 stream task 分别重复写入。
 
 ## 11. 数据与配置边界
 
@@ -622,7 +622,7 @@ capability 缺失语义必须在迁移前冻结成单一函数，不允许 SQL `
 - Station Key max concurrency permit 始终释放；
 - endpoint revision 仍阻止 stale feedback；
 - candidate 401/403/429/5xx 只更新实际 candidate；
-- success 只有在 buffered downstream write 或 stream EOF 后记录；
+- success 只有在 buffered body 被 Hyper 完整消费或 stream EOF 后记录；
 - committed stream failure 不选择第二 candidate；
 - request log、health feedback 和 active count 不重复 finalize。
 
