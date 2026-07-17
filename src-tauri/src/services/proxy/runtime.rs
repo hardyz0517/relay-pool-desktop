@@ -375,6 +375,7 @@ impl ProxyRuntimeState {
         inner.handle = Some(handle);
         Ok(self.status_from_inner(&inner, port))
     }
+
     pub fn stop(&self, default_port: u16) -> Result<ProxyStatus, String> {
         let _operation = self
             .lifecycle_operation
@@ -3911,6 +3912,9 @@ fn buffered_response_id(body: &ProxyResponseBody) -> Option<String> {
 }
 
 fn read_http_request(stream: &mut TcpStream) -> Result<ParsedRequest, String> {
+    stream
+        .set_nonblocking(false)
+        .map_err(|error| format!("配置本地路由连接读取模式失败: {error}"))?;
     parse_http_request(stream, 2 * 1024 * 1024).map(Into::into)
 }
 
@@ -3927,6 +3931,7 @@ pub(crate) fn read_http_request_for_tests(
         request.body,
     ))
 }
+
 fn write_http_response(
     stream: &mut TcpStream,
     response: ProxyResponse,
@@ -4989,6 +4994,80 @@ mod tests {
         );
         allowed.join();
         skipped.join();
+    }
+
+    #[test]
+    fn responses_request_with_tools_routes_legacy_key_without_capability_row() {
+        let upstream = test_upstream_json_success("legacy-capabilities", false);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key = create_test_station_key(&database, "legacy-capabilities", &upstream.base_url);
+        let request = ParsedRequest {
+            method: "POST".to_string(),
+            path: "/v1/responses".to_string(),
+            target: "/v1/responses".to_string(),
+            headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
+            body: serde_json::to_vec(&serde_json::json!({
+                "model": "gpt-5.5",
+                "input": "ping",
+                "stream": true,
+                "tools": [{
+                    "type": "function",
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "parameters": {"type": "object", "properties": {}}
+                }],
+                "reasoning": {"effort": "low"}
+            }))
+            .expect("body"),
+        };
+
+        let context = proxy_context(database);
+        let response = forward_responses_request(&context, &request);
+
+        assert_eq!(response.station_key_id.as_deref(), Some(key.id.as_str()));
+        assert_eq!(response.status_code, 200, "{:?}", response.route_reason);
+        assert!(upstream.was_called());
+        upstream.join();
+    }
+
+    #[test]
+    fn automatic_responses_request_with_tools_routes_legacy_key_without_capability_row() {
+        let upstream = test_upstream_json_success("automatic-legacy-capabilities", false);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let key = create_test_station_key(
+            &database,
+            "automatic-legacy-capabilities",
+            &upstream.base_url,
+        );
+        enable_automatic_routing(&database, 1.0);
+        set_manual_multiplier_with_priority(&database, &key, 0.05, 0);
+        let request = ParsedRequest {
+            method: "POST".to_string(),
+            path: "/v1/responses".to_string(),
+            target: "/v1/responses".to_string(),
+            headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
+            body: serde_json::to_vec(&serde_json::json!({
+                "model": "gpt-5.5",
+                "input": "ping",
+                "stream": true,
+                "tools": [{
+                    "type": "function",
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "parameters": {"type": "object", "properties": {}}
+                }],
+                "reasoning": {"effort": "low"}
+            }))
+            .expect("body"),
+        };
+
+        let context = proxy_context(database);
+        let response = forward_responses_request(&context, &request);
+
+        assert_eq!(response.station_key_id.as_deref(), Some(key.id.as_str()));
+        assert_eq!(response.status_code, 200, "{:?}", response.route_reason);
+        assert!(upstream.was_called());
+        upstream.join();
     }
 
     #[test]
@@ -6166,6 +6245,9 @@ mod tests {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let key_a = create_test_station_key(&database, "non-embeddings", &skipped.base_url);
         let key_b = create_test_station_key(&database, "embeddings", &accepted.base_url);
+        database
+            .update_station_key_capabilities(default_capabilities_input(key_a.id.clone()))
+            .expect("non-embeddings capability");
         let mut capabilities = default_capabilities_input(key_b.id.clone());
         capabilities.supports_embeddings = true;
         database
@@ -6401,6 +6483,96 @@ mod tests {
         assert_eq!(response.status_code, 204);
         assert_eq!(response.status_label, "success");
         assert_eq!(response.body_bytes(), Some(&[][..]));
+    }
+
+    #[test]
+    fn read_http_request_waits_for_body_after_nonblocking_accept() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let handle = thread::spawn(move || {
+            let mut attempts = 0;
+            let (mut server_stream, _) = loop {
+                match listener.accept() {
+                    Ok(accepted) => break accepted,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        attempts += 1;
+                        assert!(attempts < 200, "accept timed out");
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept failed: {error}"),
+                }
+            };
+            server_stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("read timeout");
+
+            read_http_request(&mut server_stream).expect("request should wait for delayed body")
+        });
+
+        let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        client
+            .write_all(
+                b"POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\n",
+            )
+            .expect("write headers");
+        thread::sleep(Duration::from_millis(50));
+        client.write_all(b"test").expect("write body");
+        client.shutdown(Shutdown::Write).expect("shutdown write");
+
+        let request = handle.join().expect("join");
+        assert_eq!(request.path, "/v1/chat/completions");
+        assert_eq!(request.body, b"test");
+    }
+
+    #[test]
+    fn proxy_server_waits_for_body_after_nonblocking_accept() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind proxy listener");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let port = listener.local_addr().expect("listener address").port();
+        let stop_signal = Arc::new(AtomicBool::new(false));
+        let accepting_requests = Arc::new(AtomicBool::new(true));
+        let admission_gate = Arc::new(Mutex::new(()));
+        let context = Arc::new(proxy_context(
+            AppDatabase::new_in_memory_for_tests().expect("database"),
+        ));
+        let thread_stop = Arc::clone(&stop_signal);
+        let handle = thread::spawn(move || {
+            run_server(
+                listener,
+                thread_stop,
+                accepting_requests,
+                admission_gate,
+                context,
+            )
+        });
+
+        let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout");
+        client
+            .write_all(
+                b"POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\n",
+            )
+            .expect("write headers");
+        thread::sleep(Duration::from_millis(50));
+        client.write_all(b"test").expect("write body");
+        client.shutdown(Shutdown::Write).expect("shutdown write");
+
+        let mut response = String::new();
+        client.read_to_string(&mut response).expect("read response");
+        stop_signal.store(true, Ordering::Relaxed);
+        let _ = TcpStream::connect(("127.0.0.1", port));
+        handle.join().expect("server joins");
+
+        assert!(response.starts_with("HTTP/1.1 401"), "{response}");
+        assert!(!response.contains("读取请求 body 失败"), "{response}");
     }
 
     #[test]

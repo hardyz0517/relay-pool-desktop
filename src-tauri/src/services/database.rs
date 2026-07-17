@@ -8075,11 +8075,11 @@ fn load_scheduler_candidates_from_connection(
             k.schedulable,
             COALESCE(c.supports_chat_completions, 1),
             COALESCE(c.supports_responses, 1),
-            COALESCE(c.supports_embeddings, 0),
+            COALESCE(c.supports_embeddings, 1),
             COALESCE(c.supports_stream, 1),
-            COALESCE(c.supports_tools, 0),
-            COALESCE(c.supports_vision, 0),
-            COALESCE(c.supports_reasoning, 0),
+            COALESCE(c.supports_tools, 1),
+            COALESCE(c.supports_vision, 1),
+            COALESCE(c.supports_reasoning, 1),
             COALESCE(c.model_allowlist_json, '[]'),
             COALESCE(c.model_blocklist_json, '[]'),
             h.cooldown_until,
@@ -8484,11 +8484,11 @@ fn list_key_pool_items_from_connection(
                 k.updated_at,
                 COALESCE(c.supports_chat_completions, 1),
                 COALESCE(c.supports_responses, 1),
-                COALESCE(c.supports_embeddings, 0),
+                COALESCE(c.supports_embeddings, 1),
                 COALESCE(c.supports_stream, 1),
-                COALESCE(c.supports_tools, 0),
-                COALESCE(c.supports_vision, 0),
-                COALESCE(c.supports_reasoning, 0),
+                COALESCE(c.supports_tools, 1),
+                COALESCE(c.supports_vision, 1),
+                COALESCE(c.supports_reasoning, 1),
                 COALESCE(c.model_allowlist_json, '[]'),
                 COALESCE(c.model_blocklist_json, '[]'),
                 COALESCE(c.preferred_models_json, '[]'),
@@ -8702,11 +8702,11 @@ fn default_station_key_capabilities(station_key_id: &str) -> StationKeyCapabilit
         station_key_id: station_key_id.to_string(),
         supports_chat_completions: true,
         supports_responses: true,
-        supports_embeddings: false,
+        supports_embeddings: true,
         supports_stream: true,
-        supports_tools: false,
-        supports_vision: false,
-        supports_reasoning: false,
+        supports_tools: true,
+        supports_vision: true,
+        supports_reasoning: true,
         model_allowlist: Vec::new(),
         model_blocklist: Vec::new(),
         preferred_models: Vec::new(),
@@ -9337,11 +9337,11 @@ fn proxy_rich_route_candidates_from_connection_with_data_key(
                 k.name,
                 COALESCE(c.supports_chat_completions, 1),
                 COALESCE(c.supports_responses, 1),
-                COALESCE(c.supports_embeddings, 0),
+                COALESCE(c.supports_embeddings, 1),
                 COALESCE(c.supports_stream, 1),
-                COALESCE(c.supports_tools, 0),
-                COALESCE(c.supports_vision, 0),
-                COALESCE(c.supports_reasoning, 0),
+                COALESCE(c.supports_tools, 1),
+                COALESCE(c.supports_vision, 1),
+                COALESCE(c.supports_reasoning, 1),
                 COALESCE(c.model_allowlist_json, '[]'),
                 COALESCE(c.model_blocklist_json, '[]'),
                 COALESCE(c.preferred_models_json, '[]'),
@@ -9516,11 +9516,11 @@ fn local_routing_read_candidates_from_connection(
                 k.name,
                 COALESCE(c.supports_chat_completions, 1),
                 COALESCE(c.supports_responses, 1),
-                COALESCE(c.supports_embeddings, 0),
+                COALESCE(c.supports_embeddings, 1),
                 COALESCE(c.supports_stream, 1),
-                COALESCE(c.supports_tools, 0),
-                COALESCE(c.supports_vision, 0),
-                COALESCE(c.supports_reasoning, 0),
+                COALESCE(c.supports_tools, 1),
+                COALESCE(c.supports_vision, 1),
+                COALESCE(c.supports_reasoning, 1),
                 COALESCE(c.model_allowlist_json, '[]'),
                 COALESCE(c.model_blocklist_json, '[]'),
                 COALESCE(c.preferred_models_json, '[]'),
@@ -18717,6 +18717,28 @@ mod tests {
         assert_eq!(loaded.model_allowlist, vec!["gpt-4o-mini"]);
         assert_eq!(loaded.model_blocklist, vec!["gpt-4o"]);
         assert!(loaded.supports_tools);
+        assert!(loaded.supports_reasoning);
+    }
+
+    #[test]
+    fn missing_station_key_capabilities_default_to_all_supported() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let station = test_station(&database, "legacy-routing-capabilities");
+        let key = database
+            .list_station_keys(station.id)
+            .expect("keys")
+            .remove(0);
+
+        let loaded = database
+            .get_station_key_capabilities(key.id)
+            .expect("default capabilities");
+
+        assert!(loaded.supports_chat_completions);
+        assert!(loaded.supports_responses);
+        assert!(loaded.supports_embeddings);
+        assert!(loaded.supports_stream);
+        assert!(loaded.supports_tools);
+        assert!(loaded.supports_vision);
         assert!(loaded.supports_reasoning);
     }
 
