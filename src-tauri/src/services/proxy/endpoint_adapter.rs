@@ -401,6 +401,7 @@ mod tests {
             .expect("request permit");
         CanonicalProxyRequest::new(
             "req-test".to_string(),
+            endpoint_path(&endpoint).to_string(),
             endpoint,
             Some("client-model".to_string()),
             stream,
@@ -413,6 +414,15 @@ mod tests {
             body_budget,
             RequestLease::new(permit, Arc::new(AtomicU32::new(0))),
         )
+    }
+
+    fn endpoint_path(endpoint: &RouteEndpointKind) -> &'static str {
+        match endpoint {
+            RouteEndpointKind::Models => "/v1/models",
+            RouteEndpointKind::ChatCompletions => "/v1/chat/completions",
+            RouteEndpointKind::Responses => "/v1/responses",
+            RouteEndpointKind::Embeddings => "/v1/embeddings",
+        }
     }
 
     fn forwarded_headers(

@@ -240,6 +240,7 @@ async fn handle(
     };
     let canonical = CanonicalProxyRequest::new(
         request_id.clone(),
+        uri.path().to_string(),
         endpoint,
         model,
         stream,

@@ -1,7 +1,10 @@
 use std::{collections::HashSet, sync::Arc};
 
 use crate::{
-    models::proxy::{CreateRequestLogInput, RequestLog},
+    models::{
+        pricing::BalanceSnapshot,
+        proxy::{CreateRequestLogInput, RequestLog},
+    },
     services::{
         database::{now_millis_for_services, AppDatabase},
         proxy::router::RichRouteCandidate,
@@ -29,6 +32,18 @@ pub(crate) trait RoutingRepository: Send + Sync {
     fn load_runtime_candidates(
         &self,
     ) -> futures_util::future::BoxFuture<'static, Result<Vec<RichRouteCandidate>, String>>;
+
+    fn load_model_alias_pairs(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, Result<Vec<(String, String)>, String>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn load_balance_snapshots(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, Result<Vec<BalanceSnapshot>, String>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
 
     fn record_final_outcome(
         &self,
@@ -97,6 +112,28 @@ impl RoutingRepository for SqliteRoutingRepository {
             })
             .await
             .map_err(|error| format!("routing repository final outcome task failed: {error}"))?
+        })
+    }
+
+    fn load_model_alias_pairs(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, Result<Vec<(String, String)>, String>> {
+        let database = self.database.clone();
+        Box::pin(async move {
+            tauri::async_runtime::spawn_blocking(move || database.enabled_model_alias_pairs())
+                .await
+                .map_err(|error| format!("routing repository alias task failed: {error}"))?
+        })
+    }
+
+    fn load_balance_snapshots(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, Result<Vec<BalanceSnapshot>, String>> {
+        let database = self.database.clone();
+        Box::pin(async move {
+            tauri::async_runtime::spawn_blocking(move || database.list_balance_snapshots())
+                .await
+                .map_err(|error| format!("routing repository balance task failed: {error}"))?
         })
     }
 }

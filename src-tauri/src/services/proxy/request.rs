@@ -34,6 +34,7 @@ impl Default for RequestRequirements {
 #[derive(Debug)]
 pub struct CanonicalProxyRequest {
     pub request_id: String,
+    pub local_path: String,
     pub endpoint: RouteEndpointKind,
     pub model: Option<String>,
     pub stream: bool,
@@ -51,6 +52,7 @@ impl CanonicalProxyRequest {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         request_id: String,
+        local_path: String,
         endpoint: RouteEndpointKind,
         model: Option<String>,
         stream: bool,
@@ -65,6 +67,7 @@ impl CanonicalProxyRequest {
     ) -> Self {
         Self {
             request_id,
+            local_path,
             endpoint,
             model,
             stream,

@@ -12,6 +12,7 @@ pub mod limits;
 mod local_auth;
 pub mod observability;
 pub mod request;
+pub mod response_body;
 pub mod responses_chat_fallback;
 pub mod router;
 pub mod routing_affinity;

@@ -1,16 +1,36 @@
-use std::{fmt, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    sync::Arc,
+    time::Duration,
+};
 
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use http::{HeaderMap, StatusCode};
+use serde_json::Value;
 
 use super::{
+    adapters::responses::render_responses_response,
+    endpoint_adapter::{response_headers_for_downstream, EndpointAdapter, ResponseMode},
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
     request::{ByteStream, CanonicalProxyRequest},
-    router::RichRouteCandidate,
-    routing_repository::RoutingRepository,
+    router::{self, RichRouteCandidate, RouteRequest},
+    routing_repository::{
+        CandidateFeedback, CandidateFeedbackKind, FinalRequestOutcome, RoutingRepository,
+    },
+    upstream::{UpstreamAttempt, UpstreamClientPool},
 };
 
+use crate::{
+    models::{
+        pricing::BalanceSnapshot,
+        routing::{RouteEndpointKind, RoutingPolicy},
+    },
+    services::database::now_millis_for_services,
+};
+
+#[derive(Clone)]
 pub(crate) struct ExecutionEngine {
     repository: Arc<dyn RoutingRepository>,
     attempts: Arc<dyn AttemptExecutor>,
@@ -22,6 +42,7 @@ pub(crate) trait AttemptExecutor: Send + Sync {
         &'a self,
         request: &'a CanonicalProxyRequest,
         candidate: &'a RichRouteCandidate,
+        mapped_model: Option<&'a str>,
     ) -> BoxFuture<'a, Result<PreparedAttempt, ProxyFailure>>;
 }
 
@@ -45,6 +66,7 @@ pub(crate) struct ProxyExecutionResponse {
     selected_station_key_id: Option<String>,
     selected_station_id: Option<String>,
     fallback_count: i64,
+    pub final_outcome: FinalRequestOutcome,
 }
 
 pub(crate) enum ProxyExecutionBody {
@@ -91,11 +113,26 @@ impl ExecutionEngine {
         &self,
         request: CanonicalProxyRequest,
     ) -> Result<ProxyExecutionResponse, ProxyFailure> {
+        if request.local_path == "/usage" || request.local_path == "/v1/usage" {
+            return self.execute_usage(request).await;
+        }
+
         let candidates = self
             .repository
             .load_runtime_candidates()
             .await
             .map_err(|error| internal_failure(format!("load route candidates failed: {error}")))?;
+        let aliases = self
+            .repository
+            .load_model_alias_pairs()
+            .await
+            .map_err(|error| internal_failure(format!("load model aliases failed: {error}")))?;
+        let selection =
+            router::select_route_candidates(&route_request(&request), candidates, &aliases)
+                .map_err(|error| {
+                    internal_failure(format!("select route candidates failed: {error}"))
+                })?;
+        let candidates = selection.accepted;
         if candidates.is_empty() {
             return Err(ProxyFailure::new(
                 ProxyFailureCode::RouteNoCandidate,
@@ -106,6 +143,12 @@ impl ExecutionEngine {
             ));
         }
 
+        if matches!(request.endpoint, RouteEndpointKind::Models) {
+            return self
+                .execute_models(request, candidates, selection.mapped_model)
+                .await;
+        }
+
         let idempotent = request.idempotency_key.is_some();
         let mut last_failure = None;
         for (attempt_index, candidate) in candidates
@@ -113,12 +156,17 @@ impl ExecutionEngine {
             .take(self.retry_policy.max_attempts(candidates.len()))
             .enumerate()
         {
-            match self.attempts.attempt(&request, candidate).await {
+            match self
+                .attempts
+                .attempt(&request, candidate, selection.mapped_model.as_deref())
+                .await
+            {
                 Ok(prepared) => {
                     return Ok(ProxyExecutionResponse::from_prepared(
                         prepared,
                         candidate,
                         attempt_index as i64,
+                        &request,
                     ));
                 }
                 Err(failure) => {
@@ -140,6 +188,106 @@ impl ExecutionEngine {
                 "all route candidates failed",
             )
         }))
+    }
+
+    async fn execute_usage(
+        &self,
+        request: CanonicalProxyRequest,
+    ) -> Result<ProxyExecutionResponse, ProxyFailure> {
+        let snapshots = self
+            .repository
+            .load_balance_snapshots()
+            .await
+            .map_err(|error| internal_failure(format!("load balance snapshots failed: {error}")))?;
+        Ok(ProxyExecutionResponse::local_buffered(
+            StatusCode::OK,
+            json_headers(),
+            local_usage_body(snapshots)?,
+            &request,
+            "local_usage_success",
+        ))
+    }
+
+    async fn execute_models(
+        &self,
+        request: CanonicalProxyRequest,
+        candidates: Vec<RichRouteCandidate>,
+        mapped_model: Option<String>,
+    ) -> Result<ProxyExecutionResponse, ProxyFailure> {
+        let mut seen_ids = HashSet::new();
+        let mut models = Vec::new();
+        let mut failed_count = 0_i64;
+        let mut last_failure = None;
+        let mut headers = HeaderMap::new();
+
+        for candidate in candidates
+            .iter()
+            .take(self.retry_policy.max_attempts(candidates.len()))
+        {
+            match self
+                .attempts
+                .attempt(&request, candidate, mapped_model.as_deref())
+                .await
+            {
+                Ok(prepared) => {
+                    let (_, attempt_headers, body) = prepared.into_parts();
+                    headers = attempt_headers;
+                    match body {
+                        ProxyExecutionBody::Buffered(body) => match extract_models(&body) {
+                            Ok(items) => {
+                                for item in items {
+                                    let Some(id) = item.get("id").and_then(Value::as_str) else {
+                                        continue;
+                                    };
+                                    if seen_ids.insert(id.to_string()) {
+                                        models.push(item);
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                failed_count += 1;
+                                last_failure = Some(internal_failure(error));
+                            }
+                        },
+                        ProxyExecutionBody::Stream(_) => {
+                            failed_count += 1;
+                            last_failure = Some(internal_failure(
+                                "model list upstream returned a stream response",
+                            ));
+                        }
+                    }
+                }
+                Err(failure) => {
+                    failed_count += 1;
+                    last_failure = Some(failure);
+                }
+            }
+        }
+
+        if models.is_empty() {
+            return Err(
+                last_failure.unwrap_or_else(|| internal_failure("all model upstreams failed"))
+            );
+        }
+
+        let body = serde_json::to_vec(&serde_json::json!({
+            "object": "list",
+            "data": models,
+        }))
+        .map(Bytes::from)
+        .map_err(|error| internal_failure(format!("serialize models response failed: {error}")))?;
+        if headers.is_empty() {
+            headers = json_headers();
+        }
+
+        Ok(ProxyExecutionResponse::local_buffered_with_fallback(
+            StatusCode::OK,
+            headers,
+            body,
+            &request,
+            "models_aggregated_success",
+            failed_count,
+        ))
     }
 }
 
@@ -165,8 +313,10 @@ impl ProxyExecutionResponse {
         prepared: PreparedAttempt,
         candidate: &RichRouteCandidate,
         fallback_count: i64,
+        request: &CanonicalProxyRequest,
     ) -> Self {
         let (status, headers, body) = prepared.into_parts();
+        let now = now_millis_for_services().to_string();
         Self {
             status,
             headers,
@@ -174,6 +324,46 @@ impl ProxyExecutionResponse {
             selected_station_key_id: Some(candidate.candidate.station_key_id.clone()),
             selected_station_id: Some(candidate.candidate.station_id.clone()),
             fallback_count,
+            final_outcome: FinalRequestOutcome {
+                request_id: request.request_id.clone(),
+                method: if matches!(
+                    request.endpoint,
+                    crate::models::routing::RouteEndpointKind::Models
+                ) {
+                    "GET".to_string()
+                } else {
+                    "POST".to_string()
+                },
+                path: endpoint_path(&request.endpoint).to_string(),
+                model: request.model.clone(),
+                stream: request.stream,
+                status: "success".to_string(),
+                lifecycle_status: Some("buffered_success".to_string()),
+                selected_station_key_id: Some(candidate.candidate.station_key_id.clone()),
+                selected_station_id: Some(candidate.candidate.station_id.clone()),
+                upstream_base_url: Some(candidate.candidate.upstream_base_url.clone()),
+                fallback_count,
+                error_message: None,
+                route_policy: Some("priority_fallback".to_string()),
+                route_reason: Some(format!(
+                    "selected {} for {}",
+                    candidate.candidate.station_key_id,
+                    endpoint_path(&request.endpoint)
+                )),
+                rejected_candidates_json: Some("[]".to_string()),
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+                started_at: now.clone(),
+                finished_at: now,
+                duration_ms: Some(0),
+                feedback: Some(CandidateFeedback {
+                    station_key_id: candidate.candidate.station_key_id.clone(),
+                    station_id: candidate.candidate.station_id.clone(),
+                    station_endpoint_revision: candidate.candidate.station_endpoint_revision,
+                    kind: CandidateFeedbackKind::Success,
+                }),
+            },
         }
     }
 
@@ -187,6 +377,116 @@ impl ProxyExecutionResponse {
 
     pub(crate) fn fallback_count(&self) -> i64 {
         self.fallback_count
+    }
+
+    fn local_buffered(
+        status: StatusCode,
+        headers: HeaderMap,
+        body: Bytes,
+        request: &CanonicalProxyRequest,
+        lifecycle_status: &str,
+    ) -> Self {
+        Self::local_buffered_with_fallback(status, headers, body, request, lifecycle_status, 0)
+    }
+
+    fn local_buffered_with_fallback(
+        status: StatusCode,
+        headers: HeaderMap,
+        body: Bytes,
+        request: &CanonicalProxyRequest,
+        lifecycle_status: &str,
+        fallback_count: i64,
+    ) -> Self {
+        let now = now_millis_for_services().to_string();
+        Self {
+            status,
+            headers,
+            body: ProxyExecutionBody::Buffered(body),
+            selected_station_key_id: None,
+            selected_station_id: None,
+            fallback_count,
+            final_outcome: FinalRequestOutcome {
+                request_id: request.request_id.clone(),
+                method: "GET".to_string(),
+                path: request.local_path.clone(),
+                model: request.model.clone(),
+                stream: request.stream,
+                status: "success".to_string(),
+                lifecycle_status: Some(lifecycle_status.to_string()),
+                selected_station_key_id: None,
+                selected_station_id: None,
+                upstream_base_url: None,
+                fallback_count,
+                error_message: None,
+                route_policy: None,
+                route_reason: None,
+                rejected_candidates_json: Some("[]".to_string()),
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+                started_at: now.clone(),
+                finished_at: now,
+                duration_ms: Some(0),
+                feedback: None,
+            },
+        }
+    }
+}
+
+pub(crate) struct UpstreamAttemptExecutor {
+    pool: UpstreamClientPool,
+}
+
+impl UpstreamAttemptExecutor {
+    pub(crate) fn new(pool: UpstreamClientPool) -> Self {
+        Self { pool }
+    }
+}
+
+impl AttemptExecutor for UpstreamAttemptExecutor {
+    fn attempt<'a>(
+        &'a self,
+        request: &'a CanonicalProxyRequest,
+        candidate: &'a RichRouteCandidate,
+        mapped_model: Option<&'a str>,
+    ) -> BoxFuture<'a, Result<PreparedAttempt, ProxyFailure>> {
+        Box::pin(async move {
+            let adapter = EndpointAdapter::for_endpoint(&request.endpoint);
+            let prepared = adapter.prepare(request, &candidate.candidate, mapped_model)?;
+            let response_mode = prepared.response_mode;
+            let attempt = self.pool.send(prepared, &candidate.candidate).await?;
+            match attempt {
+                UpstreamAttempt::Buffered {
+                    status,
+                    headers,
+                    body,
+                } => {
+                    if !status.is_success() {
+                        return Err(upstream_http_failure(status));
+                    }
+                    let body = transform_buffered_body(body, response_mode, mapped_model)?;
+                    Ok(PreparedAttempt::Buffered {
+                        status,
+                        headers: response_headers_for_downstream(&headers),
+                        body,
+                    })
+                }
+                UpstreamAttempt::Stream {
+                    status,
+                    headers,
+                    chunks,
+                } => {
+                    if !status.is_success() {
+                        return Err(upstream_http_failure(status));
+                    }
+                    Ok(PreparedAttempt::Stream {
+                        status,
+                        headers: response_headers_for_downstream(&headers),
+                        chunks,
+                    })
+                }
+            }
+        })
     }
 }
 
@@ -268,6 +568,156 @@ fn internal_failure(message: impl Into<String>) -> ProxyFailure {
         RetryClass::Never,
         StatusCode::INTERNAL_SERVER_ERROR,
         message,
+    )
+}
+
+fn route_request(request: &CanonicalProxyRequest) -> RouteRequest {
+    RouteRequest {
+        endpoint: request.endpoint.clone(),
+        model: request.model.clone(),
+        stream: request.stream,
+        uses_tools: request.requirements.uses_tools,
+        uses_vision: request.requirements.uses_vision,
+        uses_reasoning: request.requirements.uses_reasoning,
+        policy: RoutingPolicy::PriorityFallback,
+        max_rate_multiplier: None,
+        routing_group_filter: request.requirements.routing_group_filter.clone(),
+        session_hash: request.session_hash.clone(),
+        previous_response_id: request.previous_response_id.clone(),
+        excluded_key_ids: Vec::new(),
+        current_station_key_id: None,
+        allow_depleted_fallback: false,
+        now_ms: now_millis_for_services() as i64,
+    }
+}
+
+fn endpoint_path(endpoint: &crate::models::routing::RouteEndpointKind) -> &'static str {
+    match endpoint {
+        crate::models::routing::RouteEndpointKind::Models => "/v1/models",
+        crate::models::routing::RouteEndpointKind::ChatCompletions => "/v1/chat/completions",
+        crate::models::routing::RouteEndpointKind::Responses => "/v1/responses",
+        crate::models::routing::RouteEndpointKind::Embeddings => "/v1/embeddings",
+    }
+}
+
+fn transform_buffered_body(
+    body: Bytes,
+    response_mode: ResponseMode,
+    mapped_model: Option<&str>,
+) -> Result<Bytes, ProxyFailure> {
+    if response_mode != ResponseMode::BufferedChatToResponses {
+        return Ok(body);
+    }
+    let value = serde_json::from_slice::<Value>(&body).map_err(|error| {
+        ProxyFailure::new(
+            ProxyFailureCode::UpstreamHttpError,
+            FailureSource::Upstream,
+            RetryClass::Never,
+            StatusCode::BAD_GATEWAY,
+            format!("upstream chat fallback response was not JSON: {error}"),
+        )
+    })?;
+    serde_json::to_vec(&render_responses_response(value, mapped_model))
+        .map(Bytes::from)
+        .map_err(|error| internal_failure(format!("serialize responses fallback failed: {error}")))
+}
+
+fn json_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        http::HeaderValue::from_static("application/json"),
+    );
+    headers
+}
+
+fn extract_models(body: &Bytes) -> Result<Vec<Value>, String> {
+    let value: Value = serde_json::from_slice(body)
+        .map_err(|error| format!("model list JSON could not be parsed: {error}"))?;
+    if let Some(data) = value.get("data").and_then(Value::as_array) {
+        return Ok(data.clone());
+    }
+    if let Some(data) = value.as_array() {
+        return Ok(data.clone());
+    }
+    Err("model list response did not contain data array".to_string())
+}
+
+fn local_usage_body(snapshots: Vec<BalanceSnapshot>) -> Result<Bytes, ProxyFailure> {
+    let mut latest_by_station: HashMap<String, BalanceSnapshot> = HashMap::new();
+    for snapshot in snapshots {
+        let should_replace = latest_by_station
+            .get(&snapshot.station_id)
+            .map(|current| balance_snapshot_rank(&snapshot) > balance_snapshot_rank(current))
+            .unwrap_or(true);
+        if snapshot.scope == "station" && should_replace {
+            latest_by_station.insert(snapshot.station_id.clone(), snapshot);
+        }
+    }
+
+    let latest_station_balances = latest_by_station.values().collect::<Vec<_>>();
+    let total_balance = latest_station_balances
+        .iter()
+        .filter_map(|snapshot| snapshot.value)
+        .sum::<f64>();
+    let currency = latest_station_balances
+        .iter()
+        .find_map(|snapshot| {
+            let currency = snapshot.currency.trim();
+            (!currency.is_empty()).then(|| currency.to_string())
+        })
+        .unwrap_or_else(|| "CNY".to_string());
+    let low_balance_stations = latest_station_balances
+        .iter()
+        .filter(|snapshot| snapshot.status == "low" || snapshot.status == "depleted")
+        .count();
+    let updated_at = latest_station_balances
+        .iter()
+        .map(|snapshot| snapshot.updated_at.as_str())
+        .max()
+        .map(str::to_string);
+
+    serde_json::to_vec(&serde_json::json!({
+        "is_active": true,
+        "remaining": total_balance,
+        "balance": total_balance,
+        "unit": currency,
+        "quota": {
+            "remaining": total_balance,
+            "unit": currency,
+        },
+        "source": "relay_pool_desktop_balance_snapshots",
+        "stations": latest_station_balances.len(),
+        "low_balance_stations": low_balance_stations,
+        "updated_at": updated_at,
+    }))
+    .map(Bytes::from)
+    .map_err(|error| internal_failure(format!("serialize local usage response failed: {error}")))
+}
+
+fn balance_snapshot_rank(snapshot: &BalanceSnapshot) -> (i128, i128, i128) {
+    (
+        parse_balance_time(&snapshot.updated_at),
+        parse_balance_time(&snapshot.created_at),
+        snapshot
+            .collected_at
+            .as_deref()
+            .map(parse_balance_time)
+            .unwrap_or(0),
+    )
+}
+
+fn parse_balance_time(value: &str) -> i128 {
+    value.trim().parse::<i128>().unwrap_or(0)
+}
+
+fn upstream_http_failure(status: StatusCode) -> ProxyFailure {
+    ProxyFailure::new(
+        ProxyFailureCode::UpstreamHttpError,
+        FailureSource::Upstream,
+        RetryClass::BeforeOutput,
+        status,
+        format!("upstream HTTP {}", status.as_u16()),
     )
 }
 
@@ -462,6 +912,7 @@ mod tests {
             &'a self,
             _request: &'a CanonicalProxyRequest,
             candidate: &'a RichRouteCandidate,
+            _mapped_model: Option<&'a str>,
         ) -> BoxFuture<'a, Result<PreparedAttempt, ProxyFailure>> {
             self.seen_ids
                 .lock()
@@ -526,6 +977,7 @@ mod tests {
             .expect("permit");
         CanonicalProxyRequest::new(
             "req-exec".to_string(),
+            "/v1/chat/completions".to_string(),
             RouteEndpointKind::ChatCompletions,
             Some("gpt-test".to_string()),
             false,

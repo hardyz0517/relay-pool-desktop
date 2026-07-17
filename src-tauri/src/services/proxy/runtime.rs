@@ -11,12 +11,18 @@ use crate::{
     services::{
         database::{now_millis_for_services, AppDatabase},
         proxy::{
-            ingress::{self, IngressState, NotWiredExecutor},
+            execution::{ExecutionEngine, UpstreamAttemptExecutor},
+            ingress::{self, IngressExecutor, IngressState},
             limits::ProxyServerLimits,
+            request::{ProxyHttpResponse, ProxyResponsePayload},
+            response_body::{buffered_finalizing_stream, FinalizationDispatcher},
+            routing_repository::{RoutingRepository, SqliteRoutingRepository},
             server::{self, RunningServer},
+            upstream::UpstreamClientPool,
         },
     },
 };
+use futures_util::future::BoxFuture;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProxyRuntimeMode {
@@ -242,7 +248,25 @@ impl ProxyRuntimeState {
 
         let active_requests = Arc::new(AtomicU32::new(0));
         let request_count = Arc::new(AtomicU64::new(0));
-        let executor = Arc::new(NotWiredExecutor);
+        let repository: Arc<dyn RoutingRepository> = Arc::new(SqliteRoutingRepository::new(
+            config.database.clone(),
+            config.data_key,
+        ));
+        let upstream_pool = UpstreamClientPool::new(config.limits.clone()).map_err(|failure| {
+            let message = failure.public_message.clone();
+            let failed = failed_status(config.port, message.clone());
+            self.publish_status(failed);
+            message
+        })?;
+        let finalization_dispatcher = FinalizationDispatcher::new(
+            config.limits.max_in_flight_requests,
+            Arc::clone(&repository),
+        );
+        let executor = Arc::new(V2ProxyExecutor::new(
+            repository,
+            upstream_pool,
+            finalization_dispatcher,
+        ));
         let ingress_state = Arc::new(IngressState::with_active_requests(
             local_access_key,
             config.limits.clone(),
@@ -390,6 +414,69 @@ struct V2RuntimeInner {
     server: Option<RunningServer>,
 }
 
+struct V2ProxyExecutor {
+    engine: ExecutionEngine,
+    finalization: FinalizationDispatcher,
+}
+
+impl V2ProxyExecutor {
+    fn new(
+        repository: Arc<dyn RoutingRepository>,
+        upstream_pool: UpstreamClientPool,
+        finalization: FinalizationDispatcher,
+    ) -> Self {
+        let attempts = Arc::new(UpstreamAttemptExecutor::new(upstream_pool));
+        Self {
+            engine: ExecutionEngine::new(repository, attempts),
+            finalization,
+        }
+    }
+}
+
+impl IngressExecutor for V2ProxyExecutor {
+    fn execute(
+        &self,
+        request: super::request::CanonicalProxyRequest,
+    ) -> BoxFuture<'static, Result<ProxyHttpResponse, super::error::ProxyFailure>> {
+        let Some(finalization_lease) = self.finalization.try_reserve() else {
+            return Box::pin(async {
+                Err(super::error::ProxyFailure::new(
+                    super::error::ProxyFailureCode::LocalProxyBusy,
+                    super::error::FailureSource::Local,
+                    super::error::RetryClass::Never,
+                    http::StatusCode::SERVICE_UNAVAILABLE,
+                    "local proxy finalization queue is busy",
+                ))
+            });
+        };
+        let engine = self.engine.clone();
+        Box::pin(async move {
+            let response = engine.execute(request).await?;
+            let status = response.status;
+            let headers = response.headers;
+            let outcome = response.final_outcome;
+            let payload = match response.body {
+                super::execution::ProxyExecutionBody::Buffered(body) => {
+                    ProxyResponsePayload::Stream(buffered_finalizing_stream(
+                        body,
+                        outcome,
+                        finalization_lease,
+                    ))
+                }
+                super::execution::ProxyExecutionBody::Stream(chunks) => {
+                    ProxyResponsePayload::Stream(chunks)
+                }
+            };
+            Ok(ProxyHttpResponse {
+                status,
+                headers,
+                payload,
+                outcome: super::routing_repository::FinalRequestOutcome::success("queued"),
+            })
+        })
+    }
+}
+
 fn parse_runtime_mode(value: &str) -> Option<ProxyRuntimeMode> {
     match value.trim().to_ascii_lowercase().as_str() {
         "legacy" => Some(ProxyRuntimeMode::Legacy),
@@ -434,6 +521,15 @@ mod tests {
 
     use http::StatusCode;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use crate::{
+        models::{
+            pricing::UpsertBalanceSnapshotInput,
+            routing::{UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
+            stations::CreateStationInput,
+        },
+        services::proxy::test_support::{LoopbackUpstream, ScriptedResponse},
+    };
 
     use super::*;
 
@@ -521,6 +617,307 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn v2_buffered_chat_routes_through_real_listener_and_logs_once() {
+        let upstream = LoopbackUpstream::script(vec![ScriptedResponse::Json(
+            br#"{"id":"chatcmpl-v2","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#.to_vec(),
+        )]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        database
+            .update_local_access_key("relay-local-secret".to_string())
+            .expect("local key");
+        let data_key = crate::services::secrets::crypto::generate_data_key();
+        seed_v2_candidate(&database, &data_key, upstream.base_url.as_str());
+        let runtime = ProxyRuntimeState::for_tests(ProxyRuntimeMode::V2);
+        let started = runtime
+            .start(ProxyStartConfig::new(database.clone(), data_key, 0))
+            .await
+            .expect("start v2");
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(format!(
+                "http://127.0.0.1:{}/v1/chat/completions",
+                started.port
+            ))
+            .bearer_auth("relay-local-secret")
+            .json(&serde_json::json!({
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "ping"}],
+                "stream": false,
+            }))
+            .send()
+            .await
+            .expect("send v2 chat");
+        let status = response.status();
+        let body: serde_json::Value = response.json().await.expect("chat json");
+        runtime.stop(started.port).await.unwrap();
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["id"], "chatcmpl-v2");
+        upstream.wait_for_requests(1);
+        let logs = database.list_local_proxy_request_logs().expect("logs");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].status, "success");
+        assert_eq!(logs[0].path, "/v1/chat/completions");
+    }
+
+    #[tokio::test]
+    async fn v2_buffered_usage_returns_local_balance_summary_without_upstream() {
+        let upstream = LoopbackUpstream::script(Vec::new());
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        database
+            .update_local_access_key("relay-local-secret".to_string())
+            .expect("local key");
+        let data_key = crate::services::secrets::crypto::generate_data_key();
+        let seeded = seed_v2_candidate(&database, &data_key, upstream.base_url.as_str());
+        seed_v2_balance(
+            &database,
+            &seeded.station_id,
+            "usage-old",
+            4.0,
+            "low",
+            "1000",
+        );
+        seed_v2_balance(
+            &database,
+            &seeded.station_id,
+            "usage-new",
+            12.5,
+            "normal",
+            "2000",
+        );
+        let runtime = ProxyRuntimeState::for_tests(ProxyRuntimeMode::V2);
+        let started = runtime
+            .start(ProxyStartConfig::new(database.clone(), data_key, 0))
+            .await
+            .expect("start v2");
+
+        let response = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{}/v1/usage", started.port))
+            .bearer_auth("relay-local-secret")
+            .send()
+            .await
+            .expect("send usage");
+        let status = response.status();
+        let body: serde_json::Value = response.json().await.expect("usage json");
+        runtime.stop(started.port).await.unwrap();
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["remaining"], 12.5);
+        assert_eq!(body["stations"], 1);
+        assert_eq!(upstream.captured_count(), 0);
+        let logs = database.list_local_proxy_request_logs().expect("logs");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].path, "/v1/usage");
+    }
+
+    #[tokio::test]
+    async fn v2_buffered_models_aggregates_and_deduplicates_upstreams() {
+        let upstream = LoopbackUpstream::script(vec![
+            ScriptedResponse::Json(
+                br#"{"object":"list","data":[{"id":"gpt-a","object":"model"},{"id":"shared","object":"model"}]}"#.to_vec(),
+            ),
+            ScriptedResponse::Json(
+                br#"{"object":"list","data":[{"id":"shared","object":"model"},{"id":"gpt-b","object":"model"}]}"#.to_vec(),
+            ),
+        ]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        database
+            .update_local_access_key("relay-local-secret".to_string())
+            .expect("local key");
+        let data_key = crate::services::secrets::crypto::generate_data_key();
+        seed_v2_candidate_named(
+            &database,
+            &data_key,
+            upstream.base_url.as_str(),
+            "models-a",
+            0,
+            "auto",
+        );
+        seed_v2_candidate_named(
+            &database,
+            &data_key,
+            upstream.base_url.as_str(),
+            "models-b",
+            1,
+            "auto",
+        );
+        let runtime = ProxyRuntimeState::for_tests(ProxyRuntimeMode::V2);
+        let started = runtime
+            .start(ProxyStartConfig::new(database.clone(), data_key, 0))
+            .await
+            .expect("start v2");
+
+        let response = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{}/v1/models", started.port))
+            .bearer_auth("relay-local-secret")
+            .send()
+            .await
+            .expect("send models");
+        let status = response.status();
+        let body: serde_json::Value = response.json().await.expect("models json");
+        runtime.stop(started.port).await.unwrap();
+
+        assert_eq!(status, StatusCode::OK);
+        let ids = body["data"]
+            .as_array()
+            .expect("model data")
+            .iter()
+            .filter_map(|item| item["id"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["gpt-a", "shared", "gpt-b"]);
+        upstream.wait_for_requests(2);
+        let logs = database.list_local_proxy_request_logs().expect("logs");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].path, "/v1/models");
+    }
+
+    #[tokio::test]
+    async fn v2_buffered_alias_rewrites_model_and_falls_back_before_output() {
+        let upstream = LoopbackUpstream::script(vec![
+            ScriptedResponse::Status {
+                status: 429,
+                reason: "Too Many Requests",
+            },
+            ScriptedResponse::Json(
+                br#"{"id":"chatcmpl-v2-fallback","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","index":0}]}"#.to_vec(),
+            ),
+        ]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        database
+            .update_local_access_key("relay-local-secret".to_string())
+            .expect("local key");
+        database
+            .upsert_model_alias(UpsertModelAliasInput {
+                id: None,
+                client_model: "alias-model".to_string(),
+                upstream_model: "mapped-model".to_string(),
+                enabled: true,
+                note: None,
+            })
+            .expect("model alias");
+        let data_key = crate::services::secrets::crypto::generate_data_key();
+        seed_v2_candidate_named(
+            &database,
+            &data_key,
+            upstream.base_url.as_str(),
+            "first",
+            0,
+            "auto",
+        );
+        seed_v2_candidate_named(
+            &database,
+            &data_key,
+            upstream.base_url.as_str(),
+            "second",
+            1,
+            "auto",
+        );
+        let runtime = ProxyRuntimeState::for_tests(ProxyRuntimeMode::V2);
+        let started = runtime
+            .start(ProxyStartConfig::new(database.clone(), data_key, 0))
+            .await
+            .expect("start v2");
+
+        let response = reqwest::Client::new()
+            .post(format!(
+                "http://127.0.0.1:{}/v1/chat/completions",
+                started.port
+            ))
+            .bearer_auth("relay-local-secret")
+            .json(&serde_json::json!({
+                "model": "alias-model",
+                "messages": [{"role": "user", "content": "ping"}],
+            }))
+            .send()
+            .await
+            .expect("send chat");
+        let status = response.status();
+        let body: serde_json::Value = response.json().await.expect("chat json");
+        runtime.stop(started.port).await.unwrap();
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["id"], "chatcmpl-v2-fallback");
+        upstream.wait_for_requests(2);
+        let captured = upstream.captured_requests();
+        assert_eq!(captured[0].path_and_query, "/v1/chat/completions");
+        assert_eq!(captured[1].path_and_query, "/v1/chat/completions");
+        assert_eq!(
+            captured[1].header("authorization"),
+            Some("Bearer sk-v2-second")
+        );
+        let upstream_body: serde_json::Value =
+            serde_json::from_slice(&captured[1].body).expect("upstream body");
+        assert_eq!(upstream_body["model"], "mapped-model");
+        let logs = database.list_local_proxy_request_logs().expect("logs");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].fallback_count, 1);
+    }
+
+    #[tokio::test]
+    async fn v2_buffered_responses_bridge_and_embeddings_use_real_upstream() {
+        let upstream = LoopbackUpstream::script(vec![
+            ScriptedResponse::Json(
+                br#"{"id":"chatcmpl-bridge","choices":[{"message":{"role":"assistant","content":"bridged"},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}"#.to_vec(),
+            ),
+            ScriptedResponse::Json(
+                br#"{"object":"list","data":[{"embedding":[0.1],"index":0}],"usage":{"prompt_tokens":1,"total_tokens":1}}"#.to_vec(),
+            ),
+        ]);
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        database
+            .update_local_access_key("relay-local-secret".to_string())
+            .expect("local key");
+        let data_key = crate::services::secrets::crypto::generate_data_key();
+        seed_v2_candidate_named(
+            &database,
+            &data_key,
+            upstream.base_url.as_str(),
+            "bridge",
+            0,
+            "openai_chat_completions",
+        );
+        let runtime = ProxyRuntimeState::for_tests(ProxyRuntimeMode::V2);
+        let started = runtime
+            .start(ProxyStartConfig::new(database.clone(), data_key, 0))
+            .await
+            .expect("start v2");
+        let client = reqwest::Client::new();
+
+        let responses = client
+            .post(format!("http://127.0.0.1:{}/v1/responses", started.port))
+            .bearer_auth("relay-local-secret")
+            .json(&serde_json::json!({"model":"gpt-test","input":"ping"}))
+            .send()
+            .await
+            .expect("send responses");
+        let responses_status = responses.status();
+        let responses_body: serde_json::Value = responses.json().await.expect("responses json");
+        let embeddings = client
+            .post(format!("http://127.0.0.1:{}/v1/embeddings", started.port))
+            .bearer_auth("relay-local-secret")
+            .json(&serde_json::json!({"model":"gpt-test","input":"ping"}))
+            .send()
+            .await
+            .expect("send embeddings");
+        let embeddings_status = embeddings.status();
+        let embeddings_body: serde_json::Value = embeddings.json().await.expect("embeddings json");
+        runtime.stop(started.port).await.unwrap();
+
+        assert_eq!(responses_status, StatusCode::OK);
+        assert_eq!(responses_body["object"], "response");
+        assert_eq!(responses_body["output_text"], "bridged");
+        assert_eq!(embeddings_status, StatusCode::OK);
+        assert_eq!(embeddings_body["object"], "list");
+        upstream.wait_for_requests(2);
+        let captured = upstream.captured_requests();
+        assert_eq!(captured[0].path_and_query, "/v1/chat/completions");
+        assert_eq!(captured[1].path_and_query, "/v1/embeddings");
+        let logs = database.list_local_proxy_request_logs().expect("logs");
+        assert_eq!(logs.len(), 2);
+    }
+
+    #[tokio::test]
     async fn v2_runtime_65th_raw_connection_closes_without_http_response() {
         let runtime = ProxyRuntimeState::for_tests(ProxyRuntimeMode::V2);
         let mut config = test_start_config(0);
@@ -553,6 +950,136 @@ mod tests {
             crate::services::secrets::crypto::generate_data_key(),
             port,
         )
+    }
+
+    struct SeededV2Candidate {
+        station_id: String,
+    }
+
+    fn seed_v2_candidate(
+        database: &AppDatabase,
+        data_key: &[u8; 32],
+        upstream_base_url: &str,
+    ) -> SeededV2Candidate {
+        seed_v2_candidate_named(database, data_key, upstream_base_url, "upstream", 0, "auto")
+    }
+
+    fn seed_v2_candidate_named(
+        database: &AppDatabase,
+        data_key: &[u8; 32],
+        upstream_base_url: &str,
+        suffix: &str,
+        priority: i64,
+        upstream_api_format: &str,
+    ) -> SeededV2Candidate {
+        let station = database
+            .create_station_with_data_key(
+                CreateStationInput {
+                    name: format!("V2 buffered station {suffix}"),
+                    station_type: "openai-compatible".to_string(),
+                    website_url: upstream_base_url.to_string(),
+                    api_base_url: format!("{}/v1", upstream_base_url.trim_end_matches('/')),
+                    api_key: format!("sk-v2-{suffix}"),
+                    collector_proxy_mode: "direct".to_string(),
+                    collector_proxy_url: None,
+                    enabled: true,
+                    credit_per_cny: 1.0,
+                    low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
+                    note: None,
+                },
+                Some(data_key),
+            )
+            .expect("station");
+        {
+            let connection = database
+                .connection_for_repository_tests()
+                .expect("test connection");
+            connection
+                .execute(
+                    "UPDATE stations SET upstream_api_format = ?1 WHERE id = ?2",
+                    rusqlite::params![upstream_api_format, &station.id],
+                )
+                .expect("upstream api format");
+        }
+        let key = database
+            .list_station_keys(station.id.clone())
+            .expect("station keys")
+            .into_iter()
+            .next()
+            .expect("station key");
+        {
+            let connection = database
+                .connection_for_repository_tests()
+                .expect("test connection");
+            connection
+                .execute(
+                    "UPDATE station_keys SET priority = ?1, routing_order = ?1 WHERE id = ?2",
+                    rusqlite::params![priority, &key.id],
+                )
+                .expect("station key priority");
+        }
+        database
+            .update_station_key_capabilities(UpdateStationKeyCapabilitiesInput {
+                station_key_id: key.id.clone(),
+                supports_chat_completions: true,
+                supports_responses: true,
+                supports_embeddings: true,
+                supports_stream: true,
+                supports_tools: true,
+                supports_vision: true,
+                supports_reasoning: true,
+                model_allowlist: Vec::new(),
+                model_blocklist: Vec::new(),
+                preferred_models: Vec::new(),
+                only_use_as_backup: false,
+                routing_tags: Vec::new(),
+            })
+            .expect("capabilities");
+        SeededV2Candidate {
+            station_id: station.id,
+        }
+    }
+
+    fn seed_v2_balance(
+        database: &AppDatabase,
+        station_id: &str,
+        id: &str,
+        value: f64,
+        status: &str,
+        collected_at: &str,
+    ) {
+        database
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: Some(id.to_string()),
+                station_id: station_id.to_string(),
+                station_key_id: None,
+                scope: "station".to_string(),
+                value: Some(value),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_base_consumption: None,
+                total_base_consumption: None,
+                today_token_count: None,
+                total_token_count: None,
+                today_input_token_count: None,
+                today_output_token_count: None,
+                total_input_token_count: None,
+                total_output_token_count: None,
+                account_concurrency_limit: None,
+                low_balance_threshold: None,
+                status: status.to_string(),
+                source: "test".to_string(),
+                confidence: 1.0,
+                collected_at: Some(collected_at.to_string()),
+            })
+            .expect("balance snapshot");
     }
 
     async fn next_free_port() -> u16 {
