@@ -1516,6 +1516,64 @@ mod tests {
     }
 
     #[test]
+    fn counted_connection_waits_for_request_on_nonblocking_stream() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        let address = listener.local_addr().expect("local addr");
+        let (client_ready_sender, client_ready_receiver) = mpsc::channel();
+        let (release_client_sender, release_client_receiver) = mpsc::channel();
+        let client = thread::spawn(move || {
+            let mut stream = std::net::TcpStream::connect(address).expect("connect upstream");
+            client_ready_sender.send(()).expect("signal client ready");
+            release_client_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("wait for server release");
+            thread::sleep(Duration::from_millis(50));
+            stream
+                .write_all(b"GET /counted HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .expect("write request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("read timeout");
+            let mut response = String::new();
+            stream.read_to_string(&mut response).expect("read response");
+            response
+        });
+        let (stream, _) = listener.accept().expect("accept upstream");
+        client_ready_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("client ready");
+        stream
+            .set_nonblocking(true)
+            .expect("set nonblocking stream");
+        let mut pending = [0_u8; 1];
+        let no_data_error = stream
+            .peek(&mut pending)
+            .expect_err("request bytes must not arrive before client release");
+        assert_eq!(no_data_error.kind(), std::io::ErrorKind::WouldBlock);
+        release_client_sender.send(()).expect("release client");
+        let (sender, receiver) = mpsc::channel();
+
+        handle_counted_connection(
+            stream,
+            Duration::ZERO,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+            sender,
+        );
+
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("request"),
+            "GET /counted HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        );
+        assert!(client
+            .join()
+            .expect("client thread")
+            .starts_with("HTTP/1.1 200 OK"));
+    }
+
+    #[test]
     fn station_monitor_applies_max_concurrency_to_key_probes() {
         let database = AppDatabase::new_in_memory_for_tests().expect("database");
         let data_key = [6_u8; 32];
@@ -1986,6 +2044,7 @@ mod tests {
         max_active: Arc<AtomicUsize>,
         sender: mpsc::Sender<String>,
     ) {
+        stream.set_nonblocking(false).expect("set blocking stream");
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .expect("read timeout");
