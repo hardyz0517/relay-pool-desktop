@@ -15,6 +15,7 @@ export { MetricPanel } from "./MetricPanel";
 export type { ObjectRowDragHandleProps, ObjectRowMetric } from "./ObjectRow";
 export { ObjectRow } from "./ObjectRow";
 export { PageForm } from "./PageForm";
+export { Pagination, buildPaginationItems, type PaginationItem } from "./Pagination";
 export { PropertyList, PropertyRow } from "./PropertyList";
 export { SegmentedControl } from "./SegmentedControl";
 export { SelectControl, type SelectOption } from "./SelectControl";

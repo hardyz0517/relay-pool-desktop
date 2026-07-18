@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Database } from "lucide-react";
-import { DataTableLite, type DataTableColumn } from "@/components/ui";
+import { ArrowDown, ArrowUp, Database } from "lucide-react";
+import { DataTableLite, Pagination, type DataTableColumn } from "@/components/ui";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import {
@@ -100,31 +100,12 @@ export function RequestLogPagination({
         </label>
       </div>
 
-      <div className="flex items-center" aria-label="使用记录分页">
-        <button
-          type="button"
-          aria-label="上一页"
-          title="上一页"
-          disabled={pageInfo.page <= 1}
-          onClick={() => onPageChange(pageInfo.page - 1)}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-l-[4px] border border-border bg-surface text-muted-foreground transition-colors hover:bg-surface-subtle hover:text-foreground focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:text-muted-foreground/45"
-        >
-          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-        </button>
-        <span className="inline-flex h-8 min-w-9 items-center justify-center border-y border-primary bg-info-surface px-2 font-medium text-info-foreground">
-          {pageInfo.page}
-        </span>
-        <button
-          type="button"
-          aria-label="下一页"
-          title="下一页"
-          disabled={pageInfo.page >= pageInfo.totalPages}
-          onClick={() => onPageChange(pageInfo.page + 1)}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-r-[4px] border border-border bg-surface text-muted-foreground transition-colors hover:bg-surface-subtle hover:text-foreground focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:text-muted-foreground/45"
-        >
-          <ChevronRight className="h-4 w-4" aria-hidden="true" />
-        </button>
-      </div>
+      <Pagination
+        ariaLabel="使用记录分页"
+        page={pageInfo.page}
+        totalPages={pageInfo.totalPages}
+        onPageChange={onPageChange}
+      />
     </div>
   );
 }

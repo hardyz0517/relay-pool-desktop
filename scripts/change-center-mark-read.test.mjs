@@ -356,6 +356,7 @@ assert.equal(keyInvalidWithoutName.metaLabel, "密钥 / station-key-abc...");
 const changeEventsApiSource = await readFile("src/lib/api/changeEvents.ts", "utf8");
 const changeCenterSource = await readFile("src/features/changes/ChangeCenterPage.tsx", "utf8");
 const requestLogTableSource = await readFile("src/features/logs/RequestLogTable.tsx", "utf8");
+const paginationSource = await readFile("src/components/ui/Pagination.tsx", "utf8");
 const appShellSource = await readFile("src/components/shell/AppShell.tsx", "utf8");
 const mockChangeEventsSource = await readFile("src/lib/mock/changeEvents.ts", "utf8");
 const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
@@ -443,8 +444,8 @@ assert.ok(
     changeCenterSource.includes("pageInfo.events.map") &&
     changeCenterSource.includes("grid-cols-[56px_minmax(0,1fr)_88px]") &&
     !changeCenterSource.includes("function ChangeDiff") &&
-    changeCenterSource.includes("上一页") &&
-    changeCenterSource.includes("下一页"),
+    changeCenterSource.includes("<Pagination") &&
+    changeCenterSource.includes('ariaLabel="变更中心分页"'),
   "change center page should render one-line event rows, a clear-history action, and paginate the filtered event list",
 );
 
@@ -458,7 +459,7 @@ assert.ok(
 
 assert.ok(
   changeCenterSource.includes('data-testid="change-center-pagination-surface"') &&
-    changeCenterSource.includes('aria-label="变更中心分页"') &&
+    changeCenterSource.includes('ariaLabel="变更中心分页"') &&
     changeCenterSource.includes('className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-surface px-3 py-2 text-xs text-muted-foreground"') &&
     /\)\}\s+<\/div>\s+\{filteredEvents\.length > 0 && \(/.test(changeCenterSource) &&
     requestLogTableSource.includes('data-testid="request-log-pagination-surface"') &&
@@ -467,11 +468,13 @@ assert.ok(
 );
 
 assert.ok(
-  changeCenterSource.includes('rounded-l-[4px] border border-border bg-surface text-muted-foreground') &&
-    changeCenterSource.includes('rounded-r-[4px] border border-border bg-surface text-muted-foreground') &&
-    changeCenterSource.includes('inline-flex h-8 min-w-9 items-center justify-center border-y border-primary bg-info-surface px-2 font-medium text-info-foreground') &&
+  paginationSource.includes("buildPaginationItems") &&
+    paginationSource.includes('rounded-l-[4px] border border-border bg-surface text-muted-foreground') &&
+    paginationSource.includes('rounded-r-[4px] border border-border bg-surface text-muted-foreground') &&
+    paginationSource.includes('aria-current={item === safePage ? "page" : undefined}') &&
+    paginationSource.includes('item === "ellipsis"') &&
     !changeCenterSource.includes('{pageInfo.page} / {pageInfo.totalPages}'),
-  "change center pagination should use icon buttons and a compact current-page pill like request logs",
+  "change center pagination should use the shared classic numbered navigation used by request logs",
 );
 
 assert.ok(
