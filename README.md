@@ -8,7 +8,7 @@
 
 <p align='center'>
   <a href='https://github.com/hardyz0517/relay-pool-desktop/releases/latest'><img alt='Release' src='https://img.shields.io/github/v/release/hardyz0517/relay-pool-desktop?label=release&color=2563eb' /></a>
-  <img alt='Version' src='https://img.shields.io/badge/version-v0.3.0-0f766e' />
+  <img alt='Version' src='https://img.shields.io/badge/version-v0.3.1-0f766e' />
   <img alt='Preview' src='https://img.shields.io/badge/status-technical%20preview-f59e0b' />
   <img alt='Platform' src='https://img.shields.io/badge/platform-Windows%20x64-111827' />
   <img alt='Tauri' src='https://img.shields.io/badge/Tauri-2.x-24c8db' />
@@ -28,7 +28,7 @@
 
 ---
 
-**当前版本：v0.3.0（技术预览）**。核心管理、本地代理、路由、采集、请求日志、Windows 预览安装包和应用内更新检查已经进入可运行状态；接口、数据结构、兼容范围和安装方式仍可能变化。请在真实凭据环境中谨慎升级，并先保留必要备份。
+**当前版本：v0.3.1（技术预览）**。核心管理、本地代理、路由、采集、请求日志、Windows 预览安装包和应用内更新检查已经进入可运行状态；接口、数据结构、兼容范围和安装方式仍可能变化。请在真实凭据环境中谨慎升级，并先保留必要备份。
 
 Relay Pool Desktop 是一款面向个人开发者和本地 AI 工具用户的桌面控制台。它把多个 Sub2API / NewAPI / OpenAI-compatible 中转站账号、站内 Key、余额、分组倍率、模型能力、健康状态和请求记录收束到本机，并向 Codex、Claude Code、Gemini CLI、CCSwitch 等客户端提供固定的 OpenAI-compatible 入口。
 
