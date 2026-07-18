@@ -1,4 +1,10 @@
-export type ProxyLifecycle = "stopped" | "running" | "draining";
+export type ProxyLifecycle =
+  | "stopped"
+  | "starting"
+  | "running"
+  | "draining"
+  | "stopping"
+  | "failed";
 
 export type ProxyStatus = {
   running: boolean;
@@ -13,6 +19,7 @@ export type ProxyStatus = {
 
 export type RequestLog = {
   id: string;
+  requestId: string | null;
   startedAt: string;
   finishedAt: string | null;
   durationMs: number | null;
@@ -29,6 +36,13 @@ export type RequestLog = {
   routePolicy: string | null;
   routeReason: string | null;
   rejectedCandidatesJson: string | null;
+  bodyBytes: number | null;
+  attemptCount: number | null;
+  routeWaitMs: number | null;
+  upstreamHeadersMs: number | null;
+  failureSource: string | null;
+  attemptsJson: string | null;
+  completionSource: string | null;
   promptTokens: number | null;
   completionTokens: number | null;
   totalTokens: number | null;

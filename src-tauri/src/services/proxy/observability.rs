@@ -1,11 +1,20 @@
 use serde_json::Value;
 
+use serde::Serialize;
+
 const MAX_PENDING_SSE_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RequestObservation {
     pub reasoning_effort: Option<String>,
     pub uses_reasoning: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AttemptTrace {
+    pub station_key_id: String,
+    pub failure_code: Option<String>,
+    pub duration_ms: i64,
 }
 
 impl RequestObservation {

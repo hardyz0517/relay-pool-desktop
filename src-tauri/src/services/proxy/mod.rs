@@ -2,20 +2,39 @@ use crate::models::proxy::UpstreamApiFormat;
 use serde_json::Value;
 
 pub mod adapters;
+pub mod endpoint_adapter;
+pub mod error;
+pub mod execution;
 pub mod http_request;
+pub mod ingress;
+pub mod legacy_runtime;
+pub mod limits;
 mod local_auth;
 pub mod observability;
+pub mod request;
+pub mod response_body;
 pub mod responses_chat_fallback;
+pub mod responses_chat_stream;
 pub mod router;
 pub mod routing_affinity;
 pub mod routing_failure;
 pub mod routing_health;
 pub mod routing_policy;
 pub mod routing_probe;
+pub mod routing_repository;
 pub mod routing_snapshot;
 pub mod routing_types;
 pub mod runtime;
 pub mod scheduler;
+pub mod server;
+pub mod upstream;
+
+#[cfg(test)]
+mod contract_tests;
+#[cfg(test)]
+mod soak_tests;
+#[cfg(test)]
+mod test_support;
 
 #[derive(Debug, Clone)]
 pub struct RouteCandidate {
@@ -174,7 +193,7 @@ mod tests {
         assert!(should_fallback(500));
         assert!(should_fallback(503));
         assert!(!should_fallback(400));
-        assert!(should_fallback(404));
+        assert!(!should_fallback(404));
         assert!(!should_fallback(200));
     }
 

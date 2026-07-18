@@ -13,6 +13,17 @@ pub fn normalize_for_chat(body: &Value) -> Result<Value, ResponsesChatFallbackEr
     if body.get("stream").and_then(Value::as_bool).unwrap_or(false) {
         return Err(ResponsesChatFallbackError::StreamingUnsupported);
     }
+    normalize_for_chat_with_stream(body, false)
+}
+
+pub fn normalize_for_chat_streaming(body: &Value) -> Result<Value, ResponsesChatFallbackError> {
+    normalize_for_chat_with_stream(body, true)
+}
+
+fn normalize_for_chat_with_stream(
+    body: &Value,
+    stream: bool,
+) -> Result<Value, ResponsesChatFallbackError> {
     if body.get("previous_response_id").is_some() {
         return Err(ResponsesChatFallbackError::PreviousResponseUnsupported);
     }
@@ -55,6 +66,16 @@ pub fn normalize_for_chat(body: &Value) -> Result<Value, ResponsesChatFallbackEr
         output.insert("reasoning_effort".to_string(), effort);
     }
     output.insert("messages".to_string(), build_messages(body)?);
+    if stream {
+        output.insert("stream".to_string(), Value::Bool(true));
+        output
+            .entry("stream_options".to_string())
+            .or_insert_with(|| {
+                json!({
+                    "include_usage": true,
+                })
+            });
+    }
     if let Some(tools) = body.get("tools") {
         output.insert("tools".to_string(), convert_function_tools(tools)?);
     }

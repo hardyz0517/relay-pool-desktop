@@ -8,7 +8,7 @@ const updaterApi = await readFile("src/lib/api/updater.ts", "utf8").catch(() => 
 const proxyApi = await readFile("src/lib/api/proxy.ts", "utf8").catch(() => "");
 const provider = await readFile("src/features/updater/UpdaterProvider.tsx", "utf8").catch(() => "");
 
-assert.ok(commands.includes("pub fn prepare_local_proxy_for_update"));
+assert.ok(commands.includes("pub async fn prepare_local_proxy_for_update"));
 assert.ok(commands.includes("proxy.prepare_for_update"));
 assert.ok(tauriLib.includes("commands::prepare_local_proxy_for_update"));
 assert.ok(proxyApi.includes('invoke<ProxyStatus>("prepare_local_proxy_for_update")'));

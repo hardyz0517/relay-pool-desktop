@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
-const runtimeSource = await readFile("src-tauri/src/services/proxy/runtime.rs", "utf8");
+const legacyRuntimeSource = await readFile("src-tauri/src/services/proxy/legacy_runtime.rs", "utf8");
 const monitorSource = await readFile("src-tauri/src/services/channel_monitors/mod.rs", "utf8");
 
 assert.match(
@@ -24,13 +24,13 @@ assert.match(
 );
 
 assert.match(
-  runtimeSource,
+  legacyRuntimeSource,
   /request_cost_for_observed_usage\(\s*context,\s*Some\(&candidate\.station_key_id\),\s*Some\(&candidate\.station_id\),\s*response\.model\.as_deref\(\),\s*&usage,?\s*\)/,
   "proxy request cost extraction should use the actual routed model when choosing pricing",
 );
 
 assert.match(
-  runtimeSource,
+  legacyRuntimeSource,
   /route_candidate_economics_for_model\(\s*station_key_id\.to_string\(\),\s*model\.map\(ToString::to_string\),?\s*\)/,
   "observed usage pricing should forward the routed model to the model-aware economics lookup",
 );
