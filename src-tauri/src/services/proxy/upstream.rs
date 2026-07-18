@@ -5,7 +5,7 @@ use futures_util::{StreamExt, TryStreamExt};
 use http::{header, HeaderMap, HeaderValue, StatusCode};
 use tokio::sync::RwLock;
 
-use crate::services::station_endpoints::build_api_url;
+use crate::services::{outbound::current_system_proxy_url, station_endpoints::build_api_url};
 
 use super::{
     endpoint_adapter::{PreparedUpstreamRequest, ResponseMode},
@@ -26,6 +26,7 @@ pub(crate) struct UpstreamClientPool {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum ProxyRoute {
     Direct,
+    System,
     Http(String),
     Socks(String),
 }
@@ -164,6 +165,11 @@ impl ProxyRoute {
     ) -> Result<Self, ProxyFailure> {
         match mode.trim().to_ascii_lowercase().as_str() {
             "" | "direct" | "inherit" => Ok(Self::Direct),
+            "system" => match current_system_proxy_url() {
+                Some(url) => proxy_route_from_url(&url),
+                None => Ok(Self::System),
+            },
+            "manual" => proxy_route_from_url(required_proxy_url(url)?),
             "http" | "http_proxy" | "https" | "https_proxy" => {
                 let url = required_proxy_url(url)?;
                 if !(url.starts_with("http://") || url.starts_with("https://")) {
@@ -198,7 +204,10 @@ fn build_client(
         .connect_timeout(limits.upstream_connect_timeout)
         .pool_idle_timeout(Some(limits.stream_idle_timeout));
     match route {
-        ProxyRoute::Direct => {}
+        ProxyRoute::Direct => {
+            builder = builder.no_proxy();
+        }
+        ProxyRoute::System => {}
         ProxyRoute::Http(url) | ProxyRoute::Socks(url) => {
             let proxy = reqwest::Proxy::all(url).map_err(|error| {
                 invalid_proxy_failure(format!("invalid upstream proxy URL: {error}"))
@@ -209,6 +218,19 @@ fn build_client(
     builder
         .build()
         .map_err(|error| internal_proxy_failure(format!("build upstream client failed: {error}")))
+}
+
+fn proxy_route_from_url(url: &str) -> Result<ProxyRoute, ProxyFailure> {
+    let url = url.trim();
+    if url.starts_with("http://") || url.starts_with("https://") {
+        return Ok(ProxyRoute::Http(url.to_string()));
+    }
+    if url.starts_with("socks5://") || url.starts_with("socks5h://") {
+        return Ok(ProxyRoute::Socks(url.to_string()));
+    }
+    Err(invalid_proxy_failure(
+        "proxy URL must start with http(s):// or socks5(h)://",
+    ))
 }
 
 fn required_proxy_url(url: Option<&str>) -> Result<&str, ProxyFailure> {
@@ -339,14 +361,28 @@ mod tests {
             ProxyRoute::from_candidate_parts("direct", None).expect("direct"),
             ProxyRoute::Direct
         );
+        assert!(
+            ProxyRoute::from_candidate_parts("system", None).is_ok(),
+            "system proxy mode is a valid station/global setting and must not be rejected"
+        );
         assert_eq!(
             ProxyRoute::from_candidate_parts("http", Some("http://127.0.0.1:8888"))
                 .expect("http proxy"),
             ProxyRoute::Http("http://127.0.0.1:8888".to_string())
         );
         assert_eq!(
+            ProxyRoute::from_candidate_parts("manual", Some("http://127.0.0.1:8888"))
+                .expect("manual http proxy"),
+            ProxyRoute::Http("http://127.0.0.1:8888".to_string())
+        );
+        assert_eq!(
             ProxyRoute::from_candidate_parts("socks", Some("socks5://127.0.0.1:1080"))
                 .expect("socks proxy"),
+            ProxyRoute::Socks("socks5://127.0.0.1:1080".to_string())
+        );
+        assert_eq!(
+            ProxyRoute::from_candidate_parts("manual", Some("socks5://127.0.0.1:1080"))
+                .expect("manual socks proxy"),
             ProxyRoute::Socks("socks5://127.0.0.1:1080".to_string())
         );
         assert!(ProxyRoute::from_candidate_parts("http", Some("socks5://127.0.0.1:1080")).is_err());
