@@ -1,5 +1,7 @@
+mod application;
 mod commands;
 mod models;
+mod persistence;
 mod services;
 
 use std::path::{Path, PathBuf};
