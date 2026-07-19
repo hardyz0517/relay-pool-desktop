@@ -13,6 +13,20 @@ mod models {
         ));
     }
 
+    pub(crate) mod remote_keys {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/models/remote_keys.rs"
+        ));
+    }
+
+    pub(crate) mod station_keys {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/models/station_keys.rs"
+        ));
+    }
+
     pub(crate) mod stations {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -124,6 +138,13 @@ mod persistence {
                 "/src/persistence/stores/settings_store.rs"
             ));
         }
+
+        pub(crate) mod credential_store {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/persistence/stores/credential_store.rs"
+            ));
+        }
     }
 }
 
@@ -156,6 +177,13 @@ mod application {
         ));
     }
 
+    pub(crate) mod credentials {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/application/credentials.rs"
+        ));
+    }
+
     pub(crate) mod settings {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -174,11 +202,19 @@ use std::{
 };
 
 use application::{
-    clock::Clock, ids::IdGenerator, settings::SettingsService, stations::StationService,
+    clock::Clock,
+    credentials::{
+        CredentialError, CredentialService, CredentialVault, EncryptedSecret, SecretBytes,
+    },
+    ids::IdGenerator,
+    settings::SettingsService,
+    stations::StationService,
 };
 use chrono::{TimeZone, Utc};
 use models::{
+    remote_keys::RemoteKeyMatchStatus,
     settings::UpdateSettingsInput,
+    station_keys::{CreateStationKeyInput, UpdateStationKeyInput},
     stations::{CreateStationInput, UpdateStationInput},
 };
 use persistence::{runtime::PersistenceRuntime, schema_compatibility::BinaryCompatibility};
@@ -336,6 +372,247 @@ async fn settings_update_preserves_typed_defaults_and_validates_bounds() {
     assert_eq!(error.to_string(), "not found");
 }
 
+#[tokio::test]
+async fn credential_secret_replacement_commits_ciphertext_and_reference_atomically() {
+    let fixture = V2Fixture::create().await;
+    let station = fixture
+        .station_service(vec!["station-1"])
+        .await
+        .create(station_input("CredentialStation"))
+        .await
+        .expect("station");
+    let vault = Arc::new(DeterministicCredentialVault::new([7; 32]));
+    let service = fixture
+        .credential_service(
+            vault.clone(),
+            vec!["key-1", "secret-create", "secret-replace"],
+        )
+        .await;
+    let key = service
+        .create_station_key(station_key_input(
+            &station.id,
+            "Primary",
+            "sk-create-canary",
+        ))
+        .await
+        .expect("create key");
+
+    let saved = service
+        .replace_station_key_secret(
+            &station.id,
+            &key.id,
+            SecretBytes::from(b"sk-test-canary".to_vec()),
+        )
+        .await
+        .expect("replace secret");
+
+    assert_eq!(saved.secret_ref.owner_id, "key-1");
+    assert_eq!(saved.secret_ref.kind, "api_key");
+    assert_eq!(vault.last_aad(), "station_key:key-1:api_key");
+    assert_eq!(fixture.secret_rows().await, 1);
+    assert!(!fixture.any_text_contains("sk-test-canary").await);
+    assert!(!fixture.any_blob_contains(b"sk-test-canary").await);
+    let listed = service
+        .list_station_keys(station.id.clone())
+        .await
+        .expect("list keys");
+    assert_eq!(listed[0].api_key_masked, "sk-***nary");
+    assert!(listed[0].api_key_present);
+}
+
+#[tokio::test]
+async fn credential_blank_secret_update_preserves_ciphertext_reference() {
+    let fixture = V2Fixture::create().await;
+    let station = fixture
+        .station_service(vec!["station-1"])
+        .await
+        .create(station_input("BlankSecretStation"))
+        .await
+        .expect("station");
+    let vault = Arc::new(DeterministicCredentialVault::new([3; 32]));
+    let service = fixture
+        .credential_service(vault, vec!["key-1", "secret-1"])
+        .await;
+    let key = service
+        .create_station_key(station_key_input(
+            &station.id,
+            "Primary",
+            "sk-original-canary",
+        ))
+        .await
+        .expect("create key");
+    let before = fixture.station_key_secret_id(&key.id).await;
+
+    let updated = service
+        .update_station_key(UpdateStationKeyInput {
+            id: key.id.clone(),
+            station_id: station.id.clone(),
+            name: "Renamed".to_string(),
+            api_key: Some(String::new()),
+            enabled: true,
+            priority: 0,
+            max_concurrency: 4,
+            load_factor: Some(2),
+            schedulable: true,
+            group_name: Some("Group A".to_string()),
+            tier_label: None,
+            group_binding_id: Some("binding-a".to_string()),
+            group_id_hash: Some("hash-a".to_string()),
+            rate_multiplier: Some(1.25),
+            manual_rate_multiplier: None,
+            rate_source: Some("manual".to_string()),
+            balance_scope: Some("key".to_string()),
+            status: "healthy".to_string(),
+            note: Some("kept".to_string()),
+        })
+        .await
+        .expect("blank secret update");
+    let after = fixture.station_key_secret_id(&key.id).await;
+
+    assert_eq!(before, after);
+    assert_eq!(updated.name, "Renamed");
+    assert_eq!(updated.max_concurrency, 4);
+    assert_eq!(fixture.secret_rows().await, 1);
+    assert!(!fixture.any_text_contains("sk-original-canary").await);
+}
+
+#[tokio::test]
+async fn credential_blank_secret_replacement_is_station_scoped_and_returns_existing_secret_ref() {
+    let fixture = V2Fixture::create().await;
+    let first_station = fixture
+        .station_service(vec!["station-1", "station-2"])
+        .await
+        .create(station_input("FirstCredentialStation"))
+        .await
+        .expect("first station");
+    let second_station = fixture
+        .station_service(vec!["unused"])
+        .await
+        .create(station_input("SecondCredentialStation"))
+        .await
+        .expect("second station");
+    let service = fixture
+        .credential_service(
+            Arc::new(DeterministicCredentialVault::new([4; 32])),
+            vec!["key-1", "secret-1"],
+        )
+        .await;
+    let key = service
+        .create_station_key(station_key_input(
+            &first_station.id,
+            "Primary",
+            "sk-original-canary",
+        ))
+        .await
+        .expect("create key");
+    let existing_secret_id = fixture
+        .station_key_secret_id(&key.id)
+        .await
+        .expect("secret id");
+
+    let saved = service
+        .replace_station_key_secret(&first_station.id, &key.id, SecretBytes::from(Vec::new()))
+        .await
+        .expect("blank replacement preserves existing secret");
+    assert_eq!(saved.secret_ref.id, existing_secret_id);
+    assert_eq!(saved.secret_ref.owner_id, key.id);
+
+    let cross_station = service
+        .replace_station_key_secret(&second_station.id, &key.id, SecretBytes::from(Vec::new()))
+        .await
+        .expect_err("cross-station key should be rejected");
+    assert_eq!(cross_station.to_string(), "not found");
+}
+
+#[tokio::test]
+async fn station_key_ordering_is_station_scoped_and_deterministic() {
+    let fixture = V2Fixture::create().await;
+    let station = fixture
+        .station_service(vec!["station-1"])
+        .await
+        .create(station_input("OrderStation"))
+        .await
+        .expect("station");
+    let service = fixture
+        .credential_service(
+            Arc::new(DeterministicCredentialVault::new([5; 32])),
+            vec!["key-a", "secret-a", "key-b", "secret-b"],
+        )
+        .await;
+    let first = service
+        .create_station_key(station_key_input(&station.id, "First", "sk-first"))
+        .await
+        .expect("first key");
+    let second = service
+        .create_station_key(station_key_input(&station.id, "Second", "sk-second"))
+        .await
+        .expect("second key");
+
+    let reordered = service
+        .reorder_station_keys(
+            station.id.clone(),
+            vec![second.id.clone(), first.id.clone()],
+        )
+        .await
+        .expect("reorder keys");
+
+    assert_eq!(reordered[0].id, second.id);
+    assert_eq!(reordered[0].priority, 0);
+    assert_eq!(reordered[1].id, first.id);
+    assert_eq!(reordered[1].priority, 1);
+}
+
+#[tokio::test]
+async fn remote_key_binding_rejects_cross_station_keys() {
+    let fixture = V2Fixture::create().await;
+    let station_service = fixture
+        .station_service(vec!["station-a", "station-b"])
+        .await;
+    let first_station = station_service
+        .create(station_input("RemoteA"))
+        .await
+        .expect("first station");
+    let second_station = station_service
+        .create(station_input("RemoteB"))
+        .await
+        .expect("second station");
+    let service = fixture
+        .credential_service(
+            Arc::new(DeterministicCredentialVault::new([9; 32])),
+            vec!["key-a", "secret-a", "key-b", "secret-b"],
+        )
+        .await;
+    let first_key = service
+        .create_station_key(station_key_input(&first_station.id, "First", "sk-a"))
+        .await
+        .expect("first key");
+    let second_key = service
+        .create_station_key(station_key_input(&second_station.id, "Second", "sk-b"))
+        .await
+        .expect("second key");
+    let remote = service
+        .upsert_remote_station_key(remote_key_row(&first_station.id, "remote-a"))
+        .await
+        .expect("remote key");
+
+    let error = service
+        .bind_remote_station_key(remote.id.clone(), second_key.id)
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "not found");
+
+    let bound = service
+        .bind_remote_station_key(remote.id, first_key.id.clone())
+        .await
+        .expect("same station binding");
+    assert_eq!(bound.len(), 1);
+    assert_eq!(
+        bound[0].matched_station_key_id.as_deref(),
+        Some(first_key.id.as_str())
+    );
+    assert_eq!(bound[0].match_status, RemoteKeyMatchStatus::Matched);
+}
+
 fn station_input(name: &str) -> CreateStationInput {
     CreateStationInput {
         name: name.to_string(),
@@ -350,6 +627,52 @@ fn station_input(name: &str) -> CreateStationInput {
         low_balance_threshold_cny: None,
         collection_interval_minutes: 5,
         note: None,
+    }
+}
+
+fn station_key_input(station_id: &str, name: &str, api_key: &str) -> CreateStationKeyInput {
+    CreateStationKeyInput {
+        station_id: station_id.to_string(),
+        name: name.to_string(),
+        api_key: api_key.to_string(),
+        enabled: true,
+        priority: None,
+        max_concurrency: Some(3),
+        load_factor: None,
+        schedulable: Some(true),
+        group_name: None,
+        tier_label: None,
+        group_binding_id: None,
+        group_id_hash: None,
+        rate_multiplier: None,
+        manual_rate_multiplier: None,
+        rate_source: None,
+        balance_scope: None,
+        note: None,
+    }
+}
+
+fn remote_key_row(
+    station_id: &str,
+    id: &str,
+) -> persistence::stores::credential_store::NewRemoteStationKeyRow {
+    persistence::stores::credential_store::NewRemoteStationKeyRow {
+        id: id.to_string(),
+        station_id: station_id.to_string(),
+        remote_key_id_hash: Some(format!("{id}-hash")),
+        remote_key_name: Some(id.to_string()),
+        api_key_masked: Some("sk-***mote".to_string()),
+        api_key_fingerprint: Some("fingerprint".to_string()),
+        group_id_hash: None,
+        group_name: None,
+        tier_label: None,
+        rate_multiplier: None,
+        rate_source: None,
+        created_at: Some("1".to_string()),
+        last_used_at: None,
+        raw_source: "collector".to_string(),
+        collected_at: "2".to_string(),
+        now: "2".to_string(),
     }
 }
 
@@ -408,6 +731,71 @@ impl IdGenerator for SequenceIds {
     }
 }
 
+struct DeterministicCredentialVault {
+    key: [u8; 32],
+    last_aad: Mutex<Option<String>>,
+}
+
+impl DeterministicCredentialVault {
+    fn new(key: [u8; 32]) -> Self {
+        Self {
+            key,
+            last_aad: Mutex::new(None),
+        }
+    }
+
+    fn last_aad(&self) -> String {
+        self.last_aad
+            .lock()
+            .expect("last aad")
+            .clone()
+            .expect("aad recorded")
+    }
+}
+
+impl CredentialVault for DeterministicCredentialVault {
+    fn encrypt(
+        &self,
+        aad: &str,
+        plaintext: SecretBytes,
+    ) -> Result<EncryptedSecret, CredentialError> {
+        *self.last_aad.lock().expect("last aad") = Some(aad.to_string());
+        let mut ciphertext = Vec::with_capacity(plaintext.as_bytes().len());
+        for (index, byte) in plaintext.as_bytes().iter().enumerate() {
+            ciphertext.push(byte ^ self.key[index % self.key.len()]);
+        }
+        ciphertext.reverse();
+        Ok(EncryptedSecret {
+            ciphertext,
+            nonce: self.key[..12].to_vec(),
+            masked_value: mask_secret_bytes(plaintext.as_bytes()),
+        })
+    }
+
+    fn decrypt(
+        &self,
+        aad: &str,
+        encrypted: &EncryptedSecret,
+    ) -> Result<SecretBytes, CredentialError> {
+        *self.last_aad.lock().expect("last aad") = Some(aad.to_string());
+        let mut plaintext = encrypted.ciphertext.clone();
+        plaintext.reverse();
+        for (index, byte) in plaintext.iter_mut().enumerate() {
+            *byte ^= self.key[index % self.key.len()];
+        }
+        Ok(SecretBytes::from(plaintext))
+    }
+}
+
+fn mask_secret_bytes(secret: &[u8]) -> String {
+    if secret.len() <= 7 {
+        return "***".to_string();
+    }
+    let prefix = String::from_utf8_lossy(&secret[..3]);
+    let suffix = String::from_utf8_lossy(&secret[secret.len() - 4..]);
+    format!("{prefix}***{suffix}")
+}
+
 struct V2Fixture {
     path: PathBuf,
 }
@@ -443,6 +831,19 @@ impl V2Fixture {
             Arc::new(FixedClock),
             "fixture-data-dir".to_string(),
             None,
+        )
+    }
+
+    async fn credential_service(
+        &self,
+        vault: Arc<dyn CredentialVault>,
+        ids: Vec<&str>,
+    ) -> CredentialService {
+        CredentialService::new(
+            self.runtime().await.handle(),
+            vault,
+            Arc::new(FixedClock),
+            Arc::new(SequenceIds::new(ids)),
         )
     }
 
@@ -520,6 +921,52 @@ impl V2Fixture {
         row.get::<i64, _>("count") > 0
     }
 
+    async fn any_text_contains(&self, needle: &str) -> bool {
+        let mut connection = self.connect().await;
+        for query in [
+            "SELECT COUNT(*) AS count FROM secrets WHERE id LIKE ?1 OR scope LIKE ?1 OR owner_id LIKE ?1 OR kind LIKE ?1 OR masked_value LIKE ?1",
+            "SELECT COUNT(*) AS count FROM station_keys WHERE id LIKE ?1 OR station_id LIKE ?1 OR name LIKE ?1 OR api_key LIKE ?1 OR COALESCE(api_key_secret_id, '') LIKE ?1 OR COALESCE(note, '') LIKE ?1",
+            "SELECT COUNT(*) AS count FROM remote_station_keys WHERE id LIKE ?1 OR station_id LIKE ?1 OR COALESCE(api_key_masked, '') LIKE ?1 OR COALESCE(remote_key_name, '') LIKE ?1",
+        ] {
+            let row = sqlx::query(query)
+                .bind(format!("%{needle}%"))
+                .fetch_one(&mut connection)
+                .await
+                .expect("text canary scan");
+            if row.get::<i64, _>("count") > 0 {
+                connection.close().await.expect("close fixture");
+                return true;
+            }
+        }
+        connection.close().await.expect("close fixture");
+        false
+    }
+
+    async fn any_blob_contains(&self, needle: &[u8]) -> bool {
+        let mut connection = self.connect().await;
+        let rows = sqlx::query("SELECT ciphertext, nonce FROM secrets")
+            .fetch_all(&mut connection)
+            .await
+            .expect("blob canary scan");
+        connection.close().await.expect("close fixture");
+        rows.into_iter().any(|row| {
+            let ciphertext: Vec<u8> = row.get("ciphertext");
+            let nonce: Vec<u8> = row.get("nonce");
+            contains_bytes(&ciphertext, needle) || contains_bytes(&nonce, needle)
+        })
+    }
+
+    async fn station_key_secret_id(&self, station_key_id: &str) -> Option<String> {
+        let mut connection = self.connect().await;
+        let row = sqlx::query("SELECT api_key_secret_id FROM station_keys WHERE id = ?1")
+            .bind(station_key_id)
+            .fetch_one(&mut connection)
+            .await
+            .expect("station key secret id");
+        connection.close().await.expect("close fixture");
+        row.get("api_key_secret_id")
+    }
+
     async fn credential_session_source(&self, station_id: &str) -> String {
         let mut connection = self.connect().await;
         let row =
@@ -556,9 +1003,16 @@ fn binary_031() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 1),
         database_generation: 2,
-        readable_schema: 1..=2,
-        writable_schema: BTreeSet::from([2]),
+        readable_schema: 1..=3,
+        writable_schema: BTreeSet::from([3]),
     }
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
 }
 
 fn temp_db_path(name: &str) -> PathBuf {

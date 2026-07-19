@@ -10,6 +10,7 @@ use std::{
 };
 use tauri::{ipc::Channel, Manager, State};
 
+pub(crate) mod credentials;
 pub(crate) mod settings;
 pub(crate) mod stations;
 
