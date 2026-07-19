@@ -1,6 +1,8 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
+use crate::models::pricing::BalanceSnapshot;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RoutingPolicy {
@@ -359,6 +361,49 @@ pub struct StationKeyHealth {
     pub last_error_summary: Option<String>,
     pub cooldown_until: Option<String>,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeRoutingSecret {
+    pub id: String,
+    pub scope: String,
+    pub owner_id: String,
+    pub kind: String,
+    pub masked_value: String,
+    pub ciphertext: Vec<u8>,
+    pub nonce: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeRoutingCandidate {
+    pub station_key_id: String,
+    pub station_id: String,
+    pub station_endpoint_revision: i64,
+    pub upstream_base_url: String,
+    pub upstream_api_format: crate::models::proxy::UpstreamApiFormat,
+    pub routing_order: Option<i64>,
+    pub priority: i64,
+    pub max_concurrency: i64,
+    pub load_factor: Option<i64>,
+    pub schedulable: bool,
+    pub collector_proxy_mode: String,
+    pub collector_proxy_url: Option<String>,
+    pub station_name: String,
+    pub key_name: String,
+    pub capabilities: StationKeyCapabilities,
+    pub health: Option<StationKeyHealth>,
+    pub balance_snapshot: Option<BalanceSnapshot>,
+    pub api_key: Option<String>,
+    pub api_key_secret: Option<RuntimeRoutingSecret>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutingProxyDefaults {
+    pub collector_proxy_mode: String,
+    pub collector_proxy_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

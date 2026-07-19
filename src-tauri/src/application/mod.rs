@@ -2,5 +2,7 @@ pub(crate) mod clock;
 pub(crate) mod credentials;
 pub(crate) mod error;
 pub(crate) mod ids;
+pub(crate) mod queries;
+pub(crate) mod routing;
 pub(crate) mod settings;
 pub(crate) mod stations;

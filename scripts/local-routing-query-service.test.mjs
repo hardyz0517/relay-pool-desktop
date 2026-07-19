@@ -8,6 +8,6 @@ assert.match(querySource, /loadLocalRoutingWorkspace/);
 assert.match(querySource, /loadLocalRoutingWorkspaceApi/);
 assert.equal(querySource.includes("@tauri-apps/api/core"), false, "query layer must not invoke Tauri directly");
 assert.match(apiSource, /invoke<LocalRoutingWorkspace>\("load_local_routing_workspace"\)/);
-assert.match(apiSource, /isInvokeUnavailable/);
+assert.match(apiSource, /isTauriInvokeUnavailable/);
 
 console.log("local routing query boundary ok");

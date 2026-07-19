@@ -6,6 +6,17 @@ mod models {
         ));
     }
 
+    pub(crate) mod pricing {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/models/pricing.rs"
+        ));
+    }
+
+    pub(crate) mod proxy {
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/models/proxy.rs"));
+    }
+
     pub(crate) mod settings {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -132,6 +143,13 @@ mod persistence {
             ));
         }
 
+        pub(crate) mod routing_store {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/persistence/stores/routing_store.rs"
+            ));
+        }
+
         pub(crate) mod settings_store {
             include!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
@@ -167,6 +185,13 @@ mod application {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/application/ids.rs"
+        ));
+    }
+
+    pub(crate) mod routing {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/application/routing.rs"
         ));
     }
 
@@ -207,12 +232,14 @@ use application::{
         CredentialError, CredentialService, CredentialVault, EncryptedSecret, SecretBytes,
     },
     ids::IdGenerator,
+    routing::RoutingService,
     settings::SettingsService,
     stations::StationService,
 };
 use chrono::{TimeZone, Utc};
 use models::{
     remote_keys::RemoteKeyMatchStatus,
+    routing::{RoutingProxyDefaults, RuntimeRoutingCandidate},
     settings::UpdateSettingsInput,
     station_keys::{CreateStationKeyInput, UpdateStationKeyInput},
     stations::{CreateStationInput, UpdateStationInput},
@@ -613,6 +640,253 @@ async fn remote_key_binding_rejects_cross_station_keys() {
     assert_eq!(bound[0].match_status, RemoteKeyMatchStatus::Matched);
 }
 
+#[tokio::test]
+async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
+    let fixture = V2Fixture::create().await;
+    let station_service = fixture.station_service(vec!["station-routing"]).await;
+    let station = station_service
+        .create(station_input("RoutingStation"))
+        .await
+        .expect("station");
+
+    let mut connection = fixture.connect().await;
+    sqlx::query(
+        r#"
+        UPDATE settings
+           SET value = ?1
+         WHERE key = 'collector_proxy_mode'
+        "#,
+    )
+    .bind("manual")
+    .execute(&mut connection)
+    .await
+    .expect("proxy mode");
+    sqlx::query(
+        r#"
+        UPDATE settings
+           SET value = ?1
+         WHERE key = 'collector_proxy_url'
+        "#,
+    )
+    .bind("http://127.0.0.1:7890")
+    .execute(&mut connection)
+    .await
+    .expect("proxy url");
+    sqlx::query(
+        r#"
+        INSERT INTO secrets (
+            id, scope, owner_id, kind, masked_value, ciphertext, nonce, created_at, updated_at
+        ) VALUES (
+            'secret-routing-key',
+            'station_key',
+            'routing-key',
+            'api_key',
+            'sk-***ey',
+            x'010203',
+            x'0405060708090A0B0C0D0E0F',
+            '1',
+            '1'
+        )
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("secret");
+    sqlx::query(
+        r#"
+        INSERT INTO station_keys (
+            id, station_id, name, api_key, api_key_secret_id, enabled, priority,
+            max_concurrency, load_factor, schedulable, group_name, tier_label,
+            group_binding_id, group_id_hash, rate_multiplier, manual_rate_multiplier,
+            manual_rate_updated_at, rate_source, balance_scope, status, note,
+            created_at, updated_at
+        ) VALUES (
+            'routing-key',
+            ?1,
+            'Routing Key',
+            '',
+            'secret-routing-key',
+            1,
+            7,
+            3,
+            2,
+            1,
+            'Group A',
+            'Tier 1',
+            'binding-a',
+            'hash-a',
+            1.5,
+            NULL,
+            NULL,
+            'manual',
+            'station',
+            'unchecked',
+            NULL,
+            '1',
+            '1'
+        )
+        "#,
+    )
+    .bind(&station.id)
+    .execute(&mut connection)
+    .await
+    .expect("station key");
+    sqlx::query(
+        r#"
+        INSERT INTO station_key_capabilities (
+            station_key_id, supports_chat_completions, supports_responses, supports_embeddings,
+            supports_stream, supports_tools, supports_vision, supports_reasoning,
+            model_allowlist_json, model_blocklist_json, preferred_models_json,
+            only_use_as_backup, routing_tags_json, updated_at
+        ) VALUES (
+            'routing-key',
+            1, 1, 0, 1, 0, 0, 0,
+            '["gpt-5"]',
+            '[]',
+            '["gpt-5.1"]',
+            0,
+            '["primary"]',
+            '1'
+        )
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("capabilities");
+    sqlx::query(
+        r#"
+        INSERT INTO station_key_health (
+            station_key_id, endpoint_revision, last_success_at, last_failure_at,
+            consecutive_failures, success_count, failure_count, avg_latency_ms,
+            last_error_summary, cooldown_until, updated_at
+        ) VALUES (
+            'routing-key',
+            1,
+            '111',
+            '222',
+            2,
+            7,
+            3,
+            88,
+            'timeout',
+            '333',
+            '444'
+        )
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("health");
+    sqlx::query(
+        r#"
+        INSERT INTO balance_snapshots (
+            id, station_id, station_key_id, scope, value, currency, credit_unit,
+            used_value, total_value, today_request_count, total_request_count,
+            today_consumption, total_consumption, today_base_consumption,
+            total_base_consumption, today_token_count, total_token_count,
+            today_input_token_count, today_output_token_count,
+            total_input_token_count, total_output_token_count,
+            account_concurrency_limit, low_balance_threshold, status, source,
+            confidence, collected_at, created_at, updated_at
+        ) VALUES (
+            'balance-routing',
+            ?1,
+            'routing-key',
+            'station',
+            12.5,
+            'CNY',
+            'credit',
+            1.5,
+            14.0,
+            3,
+            9,
+            2.5,
+            9.9,
+            2.0,
+            8.8,
+            10,
+            30,
+            12,
+            18,
+            12,
+            18,
+            8,
+            10.0,
+            'healthy',
+            'collector',
+            0.85,
+            '555',
+            '1',
+            '2'
+        )
+        "#,
+    )
+    .bind(&station.id)
+    .execute(&mut connection)
+    .await
+    .expect("balance");
+    sqlx::query(
+        r#"
+        INSERT INTO model_aliases (
+            id, client_model, upstream_model, enabled, note, created_at, updated_at
+        ) VALUES (
+            'alias-routing',
+            'gpt-test',
+            'gpt-5',
+            1,
+            'routing alias',
+            '1',
+            '1'
+        )
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("alias");
+    connection.close().await.expect("close fixture");
+
+    let service = RoutingService::new(fixture.runtime().await.handle());
+    let candidates = service.load_runtime_candidates().await.expect("candidates");
+    let proxy_defaults = service.load_proxy_defaults().await.expect("defaults");
+    let alias_pairs = service.list_model_alias_pairs().await.expect("alias pairs");
+    let health = service
+        .station_key_health_by_id("routing-key")
+        .await
+        .expect("health by id");
+    let balances = service
+        .list_balance_snapshots_for_station(&station.id)
+        .await
+        .expect("balances");
+
+    assert_eq!(proxy_defaults.collector_proxy_mode, "manual");
+    assert_eq!(
+        proxy_defaults.collector_proxy_url.as_deref(),
+        Some("http://127.0.0.1:7890")
+    );
+    assert_eq!(
+        alias_pairs,
+        vec![("gpt-test".to_string(), "gpt-5".to_string())]
+    );
+    assert_eq!(health.consecutive_failures, 2);
+    assert_eq!(balances.len(), 1);
+    assert_eq!(balances[0].scope, "station");
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].station_key_id, "routing-key");
+    assert_eq!(candidates[0].priority, 7);
+    assert_eq!(candidates[0].routing_order, None);
+    assert_eq!(candidates[0].collector_proxy_mode, "inherit");
+    assert_eq!(candidates[0].collector_proxy_url.as_deref(), None);
+    assert_eq!(candidates[0].capabilities.preferred_models, vec!["gpt-5.1"]);
+    assert!(candidates[0].api_key_secret.is_some());
+    assert!(matches!(
+        candidates[0]
+            .balance_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.status.as_str()),
+        Some("healthy")
+    ));
+}
+
 fn station_input(name: &str) -> CreateStationInput {
     CreateStationInput {
         name: name.to_string(),
@@ -1003,8 +1277,8 @@ fn binary_031() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 1),
         database_generation: 2,
-        readable_schema: 1..=3,
-        writable_schema: BTreeSet::from([3]),
+        readable_schema: 1..=4,
+        writable_schema: BTreeSet::from([4]),
     }
 }
 

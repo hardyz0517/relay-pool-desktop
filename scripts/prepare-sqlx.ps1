@@ -16,7 +16,7 @@ foreach ($candidate in @($db, "$db-wal", "$db-shm")) {
 
 $old = $env:DATABASE_URL
 try {
-    $env:DATABASE_URL = "sqlite://$($db.Replace('\', '/'))"
+    $env:DATABASE_URL = "sqlite:///$($db.Replace('\', '/'))"
     Push-Location (Join-Path $repo "src-tauri")
     cargo sqlx database create
     if ($LASTEXITCODE) { throw "sqlx database create failed" }
