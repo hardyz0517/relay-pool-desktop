@@ -6072,6 +6072,7 @@ mod tests {
                 collector_max_concurrency: settings.collector_max_concurrency,
                 allow_depleted_fallback: settings.allow_depleted_fallback,
                 developer_mode_enabled: settings.developer_mode_enabled,
+                tray_behavior: None,
             })
             .expect("enable automatic routing");
     }

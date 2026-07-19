@@ -3,6 +3,7 @@ pub mod config;
 pub mod decision;
 pub mod diagnostic;
 pub mod inspect;
+pub mod installation_lease;
 pub mod relocation;
 pub mod types;
 

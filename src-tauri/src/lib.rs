@@ -7,6 +7,8 @@ mod services;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub use services::data_store::installation_lease::{InstallationLease, LeaseError};
+
 use services::data_store::{
     config::{
         create_installation_marker, installation_marker_exists, read_config, write_config,
@@ -23,17 +25,39 @@ use tauri::WindowEvent;
 
 const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
 
-#[derive(Debug, Clone, Copy)]
-struct WindowLifecyclePolicy;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrayBehavior {
+    MinimizeToTray,
+    CloseToTray,
+    Disabled,
+}
 
-impl WindowLifecyclePolicy {
+impl TrayBehavior {
+    fn from_setting(value: &str) -> Self {
+        match value {
+            "minimize_to_tray" => Self::MinimizeToTray,
+            "disabled" => Self::Disabled,
+            _ => Self::CloseToTray,
+        }
+    }
+
     fn hides_on_close(self) -> bool {
-        true
+        matches!(self, Self::CloseToTray)
     }
 
     fn hides_on_minimize(self) -> bool {
-        false
+        matches!(self, Self::MinimizeToTray)
     }
+}
+
+fn current_tray_behavior<R: tauri::Runtime>(window: &tauri::Window<R>) -> TrayBehavior {
+    let Some(database) = window.try_state::<services::database::AppDatabase>() else {
+        return TrayBehavior::CloseToTray;
+    };
+    database
+        .get_settings()
+        .map(|settings| TrayBehavior::from_setting(&settings.tray_behavior))
+        .unwrap_or(TrayBehavior::CloseToTray)
 }
 
 fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
@@ -219,10 +243,17 @@ pub fn run() {
         .setup(|app| {
             setup_tray(app)?;
             let secret_manager = services::secrets::SecretManager::initialize()?;
+            let app_config_dir = app
+                .path()
+                .app_config_dir()
+                .map_err(|error| format!("无法解析应用配置目录: {error}"))?;
+            let installation_lease = InstallationLease::try_acquire(&app_config_dir)
+                .map_err(|error| format!("failed to acquire installation lease: {error}"))?;
             let default_data_dir = app
                 .path()
                 .app_data_dir()
                 .map_err(|error| format!("无法解析应用数据目录: {error}"))?;
+            app.manage(installation_lease);
             let prepared_data_store = prepare_data_store(default_data_dir)?;
             app.manage(secret_manager);
             match prepared_data_store {
@@ -261,7 +292,7 @@ pub fn run() {
                 return;
             }
 
-            let behavior = WindowLifecyclePolicy;
+            let behavior = current_tray_behavior(window);
             match event {
                 WindowEvent::CloseRequested { api, .. } if behavior.hides_on_close() => {
                     api.prevent_close();
@@ -408,12 +439,17 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::WindowLifecyclePolicy;
+    use super::TrayBehavior;
 
     #[test]
-    fn fixed_window_policy_hides_only_on_close() {
-        let behavior = WindowLifecyclePolicy;
-        assert!(behavior.hides_on_close());
-        assert!(!behavior.hides_on_minimize());
+    fn tray_behavior_maps_window_lifecycle_modes() {
+        assert!(TrayBehavior::CloseToTray.hides_on_close());
+        assert!(!TrayBehavior::CloseToTray.hides_on_minimize());
+
+        assert!(!TrayBehavior::MinimizeToTray.hides_on_close());
+        assert!(TrayBehavior::MinimizeToTray.hides_on_minimize());
+
+        assert!(!TrayBehavior::Disabled.hides_on_close());
+        assert!(!TrayBehavior::Disabled.hides_on_minimize());
     }
 }

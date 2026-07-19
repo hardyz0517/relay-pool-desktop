@@ -23,6 +23,7 @@ pub struct AppSettings {
     pub collector_max_concurrency: u16,
     pub allow_depleted_fallback: bool,
     pub developer_mode_enabled: bool,
+    pub tray_behavior: String,
     pub data_dir: String,
     pub pending_data_dir: Option<String>,
     pub data_dir_change_requires_restart: bool,
@@ -48,6 +49,7 @@ pub struct UpdateSettingsInput {
     pub collector_max_concurrency: u16,
     pub allow_depleted_fallback: bool,
     pub developer_mode_enabled: bool,
+    pub tray_behavior: Option<String>,
 }
 
 #[cfg(test)]

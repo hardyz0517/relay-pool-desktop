@@ -140,7 +140,7 @@ static NEXT_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[cfg(test)]
 const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
 const DATABASE_FILE: &str = "relay-pool-desktop.sqlite3";
-const DEFAULT_SETTINGS: [(&str, &str); 18] = [
+const DEFAULT_SETTINGS: [(&str, &str); 19] = [
     ("local_proxy_port", "8787"),
     ("local_key", "sk-local-pool-change-me"),
     ("default_routing_strategy", "cost_stable_first"),
@@ -159,6 +159,7 @@ const DEFAULT_SETTINGS: [(&str, &str); 18] = [
     ("collector_max_concurrency", "3"),
     ("allow_depleted_fallback", "false"),
     ("developer_mode_enabled", "false"),
+    ("tray_behavior", "close_to_tray"),
 ];
 
 #[derive(Clone)]
@@ -816,6 +817,10 @@ impl AppDatabase {
         let scheduler_advanced_settings = input
             .scheduler_advanced_settings
             .unwrap_or(current_settings.scheduler_advanced_settings);
+        let tray_behavior = input
+            .tray_behavior
+            .unwrap_or(current_settings.tray_behavior);
+        let tray_behavior = validate_tray_behavior_setting(&tray_behavior)?;
 
         if let Some(max_rate_multiplier) = max_rate_multiplier {
             if !max_rate_multiplier.is_finite() || max_rate_multiplier < 0.0 {
@@ -889,6 +894,7 @@ impl AppDatabase {
                 "developer_mode_enabled",
                 input.developer_mode_enabled.to_string(),
             ),
+            ("tray_behavior", tray_behavior),
         ];
 
         for (key, value) in values {
@@ -14313,10 +14319,22 @@ fn settings_from_connection(
             "false",
         )?,
         developer_mode_enabled: developer_mode_enabled_from_connection(connection)?,
+        tray_behavior: validate_tray_behavior_setting(&read_setting_or_default(
+            connection,
+            "tray_behavior",
+            "close_to_tray",
+        )?)?,
         data_dir: data_dir.to_string(),
         pending_data_dir,
         data_dir_change_requires_restart,
     })
+}
+
+fn validate_tray_behavior_setting(value: &str) -> Result<String, String> {
+    match value {
+        "minimize_to_tray" | "close_to_tray" | "disabled" => Ok(value.to_string()),
+        _ => Err("invalid tray_behavior".to_string()),
+    }
 }
 
 fn developer_mode_enabled_from_connection(connection: &Connection) -> Result<bool, String> {
@@ -16072,6 +16090,7 @@ mod tests {
                 collector_max_concurrency: 3,
                 allow_depleted_fallback: false,
                 developer_mode_enabled: false,
+                tray_behavior: None,
             })
             .expect("settings");
 
