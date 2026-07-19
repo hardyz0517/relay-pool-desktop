@@ -36,8 +36,24 @@ pub(crate) enum PersistenceError {
     InvalidCompatibilityMetadata,
     #[error("migration metadata missing")]
     MissingMigrationMetadata,
+    #[error("runtime is not accepting new persistence work")]
+    RuntimeUnavailable,
+    #[error("persistence session is already closed")]
+    SessionClosed,
+    #[error("commit outcome is unknown")]
+    CommitOutcomeUnknown,
+    #[error("I/O failure")]
+    IoFailed { kind: std::io::ErrorKind },
+    #[error("backup verification failed")]
+    BackupVerificationFailed,
     #[error("SQLx failure")]
     Sqlx(#[from] sqlx::Error),
     #[error("migration failed")]
     Migration(#[from] sqlx::migrate::MigrateError),
+}
+
+impl From<std::io::Error> for PersistenceError {
+    fn from(error: std::io::Error) -> Self {
+        Self::IoFailed { kind: error.kind() }
+    }
 }

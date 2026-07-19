@@ -6,6 +6,34 @@ mod persistence {
         ));
     }
 
+    pub(crate) mod write_coordinator {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/write_coordinator.rs"
+        ));
+    }
+
+    pub(crate) mod write_session {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/write_session.rs"
+        ));
+    }
+
+    pub(crate) mod read_session {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/read_session.rs"
+        ));
+    }
+
+    pub(crate) mod backup {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/backup.rs"
+        ));
+    }
+
     pub(crate) mod runtime {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),

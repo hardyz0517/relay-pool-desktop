@@ -1,5 +1,7 @@
 use std::{
+    future::Future,
     path::Path,
+    pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -10,13 +12,17 @@ use sqlx::{
 };
 
 use crate::persistence::{
+    backup::{create_verified_backup, VerifiedBackup},
     error::PersistenceError,
     health_check::{record_runtime_open, runtime_health, RuntimeHealth},
     migrations::applied_schema_version,
+    read_session::ReadSession,
     schema_compatibility::{
         compatibility_decision_code, decide_open_mode, BinaryCompatibility, OpenMode,
         SchemaCompatibility,
     },
+    write_coordinator::WriteCoordinator,
+    write_session::WriteSession,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -76,9 +82,57 @@ fn rank(state: RuntimeState) -> u8 {
 pub(crate) struct PersistenceHandle {
     pool: SqlitePool,
     lifecycle: Arc<RuntimeLifecycle>,
+    writes: Arc<WriteCoordinator>,
 }
 
-#[derive(Debug)]
+impl PersistenceHandle {
+    pub(super) fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
+    pub(crate) async fn begin_read(&self) -> Result<ReadSession, PersistenceError> {
+        if !self.lifecycle.accepts_new_work() {
+            return Err(PersistenceError::RuntimeUnavailable);
+        }
+        Ok(ReadSession::new(self.pool.begin().await?))
+    }
+
+    pub(crate) async fn begin_write(&self) -> Result<WriteSession, PersistenceError> {
+        if !self.lifecycle.accepts_new_work() {
+            return Err(PersistenceError::RuntimeUnavailable);
+        }
+        let permit = self
+            .writes
+            .acquire()
+            .await
+            .map_err(|_| PersistenceError::RuntimeUnavailable)?;
+        let transaction = self.pool.begin().await?;
+        Ok(WriteSession::new(transaction, permit, self.writes.clone()))
+    }
+
+    pub(crate) async fn write<T>(
+        &self,
+        operation: impl for<'session> FnOnce(
+            &'session mut WriteSession,
+        ) -> Pin<
+            Box<dyn Future<Output = Result<T, PersistenceError>> + Send + 'session>,
+        >,
+    ) -> Result<T, PersistenceError> {
+        let mut session = self.begin_write().await?;
+        let output = operation(&mut session).await?;
+        session.commit().await?;
+        Ok(output)
+    }
+
+    pub(crate) async fn backup_to(
+        &self,
+        final_path: &Path,
+    ) -> Result<VerifiedBackup, PersistenceError> {
+        create_verified_backup(&self.pool, final_path).await
+    }
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct PersistenceRuntime {
     handle: PersistenceHandle,
     compatibility: SchemaCompatibility,
@@ -119,11 +173,38 @@ impl PersistenceRuntime {
             .transition(RuntimeState::Ready)
             .expect("ready state");
         Ok(Self {
-            handle: PersistenceHandle { pool, lifecycle },
+            handle: PersistenceHandle {
+                pool,
+                lifecycle,
+                writes: Arc::new(WriteCoordinator::new()),
+            },
             compatibility,
             open_mode,
             decision_code: decision.as_code(),
         })
+    }
+
+    pub(crate) fn handle(&self) -> PersistenceHandle {
+        self.handle.clone()
+    }
+
+    pub(crate) async fn begin_read(&self) -> Result<ReadSession, PersistenceError> {
+        self.handle.begin_read().await
+    }
+
+    pub(crate) async fn begin_write(&self) -> Result<WriteSession, PersistenceError> {
+        self.handle.begin_write().await
+    }
+
+    pub(crate) async fn write<T>(
+        &self,
+        operation: impl for<'session> FnOnce(
+            &'session mut WriteSession,
+        ) -> Pin<
+            Box<dyn Future<Output = Result<T, PersistenceError>> + Send + 'session>,
+        >,
+    ) -> Result<T, PersistenceError> {
+        self.handle.write(operation).await
     }
 
     pub(crate) fn open_mode(&self) -> OpenMode {
