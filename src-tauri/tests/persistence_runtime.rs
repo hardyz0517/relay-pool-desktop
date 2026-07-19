@@ -142,10 +142,10 @@ async fn readable_but_not_writable_opens_in_inspection_only_mode() {
     let db = V2Fixture::create().await;
     db.set_compatibility(SchemaCompatibility {
         database_generation: 2,
-        schema_version: 1,
+        schema_version: 2,
         min_reader_app_version: Version::new(0, 3, 1),
         min_writer_app_version: Version::new(0, 4, 0),
-        updated_by_migration: 1,
+        updated_by_migration: 2,
     })
     .await;
 
@@ -154,7 +154,7 @@ async fn readable_but_not_writable_opens_in_inspection_only_mode() {
         .expect("inspection runtime");
 
     assert_eq!(runtime.open_mode(), OpenMode::InspectionOnly);
-    assert_eq!(runtime.compatibility().schema_version, 1);
+    assert_eq!(runtime.compatibility().schema_version, 2);
     assert_eq!(
         runtime.health().await.expect("health").open_mode,
         "inspection_only"
@@ -233,7 +233,7 @@ async fn valid_writable_open_records_health_without_exposing_pool() {
 }
 
 fn binary_031() -> BinaryCompatibility {
-    binary_for_schema(1)
+    binary_for_schema(2)
 }
 
 fn binary_for_schema(schema: i64) -> BinaryCompatibility {

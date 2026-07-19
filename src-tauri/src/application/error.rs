@@ -35,3 +35,30 @@ pub(crate) enum ApplicationError {
     #[error("internal failure")]
     Internal,
 }
+
+impl From<crate::persistence::error::PersistenceError> for ApplicationError {
+    fn from(error: crate::persistence::error::PersistenceError) -> Self {
+        use crate::persistence::error::PersistenceError;
+
+        match error {
+            PersistenceError::RuntimeUnavailable => Self::Unavailable,
+            PersistenceError::IncompatibleSchema { .. } => Self::IncompatibleSchema,
+            PersistenceError::MissingDatabase => Self::Unavailable,
+            PersistenceError::MissingCompatibilityMetadata
+            | PersistenceError::InvalidCompatibilityMetadata
+            | PersistenceError::MissingMigrationMetadata => Self::IncompatibleSchema,
+            PersistenceError::Migration(_) => Self::MigrationFailed,
+            PersistenceError::IoFailed { .. } => Self::IoFailed,
+            PersistenceError::SessionClosed => Self::Internal,
+            PersistenceError::CommitOutcomeUnknown => Self::CommitOutcomeUnknown,
+            PersistenceError::BackupVerificationFailed => Self::IntegrityFailed,
+            PersistenceError::Sqlx(sqlx::Error::RowNotFound) => Self::NotFound,
+            PersistenceError::Sqlx(sqlx::Error::Database(database))
+                if database.is_unique_violation() || database.is_foreign_key_violation() =>
+            {
+                Self::ConstraintViolation
+            }
+            PersistenceError::Sqlx(_) => Self::Internal,
+        }
+    }
+}

@@ -10,6 +10,9 @@ use std::{
 };
 use tauri::{ipc::Channel, Manager, State};
 
+pub(crate) mod settings;
+pub(crate) mod stations;
+
 use crate::{
     models::{
         capture::{CaptureSessionStatus, CapturedHttpEvent, CapturedHttpEventInput},

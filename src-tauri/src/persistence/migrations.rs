@@ -66,8 +66,8 @@ fn latest_binary() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 1),
         database_generation: 2,
-        readable_schema: 1..=1,
-        writable_schema: BTreeSet::from([1]),
+        readable_schema: 1..=2,
+        writable_schema: BTreeSet::from([2]),
     }
 }
 
