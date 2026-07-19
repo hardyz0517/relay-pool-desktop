@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "status": "source-profile-freeze; sqlite fixtures are generated and replace provisional hashes in Task 12",
+  "hash_contract": {
+    "provisional_fixture_hash_algorithm": "sha256(UTF-8 'database.rs-git-blob:' + database_source_blob)",
+    "provisional_fixture_hash_semantics": "Deterministic source descriptor only; it is not a claim that a SQLite fixture already exists.",
+    "final_fixture_hash_algorithm": "Task 12: sha256 over canonical ordered sqlite_schema rows plus deterministic sanitized canary manifest",
+    "profile_grouping": "Tags sharing the exact database.rs Git blob share a provisional profile. Task 12 may merge or split only from generated sqlite_schema evidence."
+  },
+  "profiles": {
+    "profile_001": {"database_source_blob": "ea849b9aebd529a4c97c9db3682c829affb21f00", "fixture_status": "pending-task-12", "provisional_fixture_hash": "7fd033afb817143de2bef97b3c300bbf6a2c3eb736a8ba087d69065a58f2de60"},
+    "profile_002": {"database_source_blob": "46dcf11466832f9ba444a96ec9a85621a1dc5f71", "fixture_status": "pending-task-12", "provisional_fixture_hash": "6f4d520d448ded711099c4b0113e5329378cc74485f804614477c259aa393f29"},
+    "profile_003": {"database_source_blob": "0f3fbd21026bb906c41f3dea93c2515a27241126", "fixture_status": "pending-task-12", "provisional_fixture_hash": "05bea3c1c7ef599603fe42de2e096d9112b5eb67d86db5e7e0a68bedbf33ecb5"},
+    "profile_004": {"database_source_blob": "71cbaeec8be1b697d02324d1641044beb8cceeac", "fixture_status": "pending-task-12", "provisional_fixture_hash": "ffadd3659b93c702bc9afcdc95b4fbc1b030f5c211e27bfaed6af2bebbab6aa5"},
+    "profile_005": {"database_source_blob": "e68c7d717865421dded431f947cf5d272e48e7b4", "fixture_status": "pending-task-12", "provisional_fixture_hash": "a0f57983f27f3e4403182df2f1917ae532a27de1c812d34947fb265c814adabc"},
+    "profile_006": {"database_source_blob": "548a9bd4ac7cee95099effe9586108f0ad60c477", "fixture_status": "pending-task-12", "provisional_fixture_hash": "4030422b917eb1dd8f1dda8a2ad702ac3347000b110f53a0b9b2867d4c2e87ed"},
+    "profile_007": {"database_source_blob": "71ecda6a1a14f863aae4c2709bf47b95856af900", "fixture_status": "pending-task-12", "provisional_fixture_hash": "9f555abe97c614076ec171976e9405c8a809cfa73b6158038af169bd0eb6a594"},
+    "profile_008": {"database_source_blob": "63c893ad7d9925b4373b711235bb5de344c6980d", "fixture_status": "pending-task-12", "provisional_fixture_hash": "297f9d721df1ec6757c43f05410087213bf5258563f3ddf8eff8a5844a78f905"},
+    "profile_009": {"database_source_blob": "7c8e9f59c193ecd299389d1fcf4b1061701bc85d", "fixture_status": "pending-task-12", "provisional_fixture_hash": "f6fa9368a6ae14ec1c61925c045a32ad6823c81b6d660c8b54e20f22d40faea9"},
+    "profile_010": {"database_source_blob": "331cc1d3317fcaf2f62d1de033f1ea2abf957638", "fixture_status": "pending-task-12", "provisional_fixture_hash": "b566557401afc07320ae9a4cb9e59bd0852336d9293d65f9c18e922f9b5ee828"},
+    "profile_011": {"database_source_blob": "8f3a1aef3c8e13faf4aa6a546f35765b2876ecfb", "fixture_status": "pending-task-12", "provisional_fixture_hash": "e63aa32f88af4afcb8f5e36caeb8fbee690679b5748b38da78aa29af1b6404e0"}
+  },
+  "releases": {
+    "v0.1.0": {"tree": "7856b3924e3f366d07f5d88804c6cfc58290b3cd", "schema_profile": "profile_001", "provisional_fixture_hash": "7fd033afb817143de2bef97b3c300bbf6a2c3eb736a8ba087d69065a58f2de60"},
+    "v0.1.1": {"tree": "2952d9607cdf64c7deeb95ccdbd95fb8d49fc8d7", "schema_profile": "profile_002", "provisional_fixture_hash": "6f4d520d448ded711099c4b0113e5329378cc74485f804614477c259aa393f29"},
+    "v0.2.0": {"tree": "cd1302e72feaf34705651044bf4039dc78d88b89", "schema_profile": "profile_003", "provisional_fixture_hash": "05bea3c1c7ef599603fe42de2e096d9112b5eb67d86db5e7e0a68bedbf33ecb5"},
+    "v0.2.1": {"tree": "ea4b6799c11c5c76d7b5d08db1c08566235651b5", "schema_profile": "profile_004", "provisional_fixture_hash": "ffadd3659b93c702bc9afcdc95b4fbc1b030f5c211e27bfaed6af2bebbab6aa5"},
+    "v0.2.2": {"tree": "cc5955795dc5303f2b7068059af9584c134fd00d", "schema_profile": "profile_005", "provisional_fixture_hash": "a0f57983f27f3e4403182df2f1917ae532a27de1c812d34947fb265c814adabc"},
+    "v0.2.3": {"tree": "ecb453ea5540db4361bbfe631af58719de442fab", "schema_profile": "profile_006", "provisional_fixture_hash": "4030422b917eb1dd8f1dda8a2ad702ac3347000b110f53a0b9b2867d4c2e87ed"},
+    "v0.2.4": {"tree": "33b264aa32d852e99576d37b59e49f688518723d", "schema_profile": "profile_006", "provisional_fixture_hash": "4030422b917eb1dd8f1dda8a2ad702ac3347000b110f53a0b9b2867d4c2e87ed"},
+    "v0.2.5": {"tree": "dfc1ecfc8aa9af422bc1874b86ed6e35b66e5420", "schema_profile": "profile_007", "provisional_fixture_hash": "9f555abe97c614076ec171976e9405c8a809cfa73b6158038af169bd0eb6a594"},
+    "v0.2.6": {"tree": "e976b5e7f84cfe0664ea4cc30cf7dce155e667b1", "schema_profile": "profile_008", "provisional_fixture_hash": "297f9d721df1ec6757c43f05410087213bf5258563f3ddf8eff8a5844a78f905"},
+    "v0.2.7": {"tree": "f2841d52167314cce4b15988fc3270cfc037c13e", "schema_profile": "profile_009", "provisional_fixture_hash": "f6fa9368a6ae14ec1c61925c045a32ad6823c81b6d660c8b54e20f22d40faea9"},
+    "v0.2.8": {"tree": "b43cd7c57dc4de1f89404b6196a617b41eb398c8", "schema_profile": "profile_010", "provisional_fixture_hash": "b566557401afc07320ae9a4cb9e59bd0852336d9293d65f9c18e922f9b5ee828"},
+    "v0.3.0": {"tree": "0a6794aac18c26d8324c0cba76d17c9ef560b359", "schema_profile": "profile_011", "provisional_fixture_hash": "e63aa32f88af4afcb8f5e36caeb8fbee690679b5748b38da78aa29af1b6404e0"},
+    "v0.3.1": {"tree": "3a812aeb59b8d9155b3d17c76cf1a02a26576496", "schema_profile": "profile_011", "provisional_fixture_hash": "e63aa32f88af4afcb8f5e36caeb8fbee690679b5748b38da78aa29af1b6404e0"}
+  }
+}

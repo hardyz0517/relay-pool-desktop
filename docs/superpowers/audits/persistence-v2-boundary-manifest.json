@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "evidence": {
+    "captured_at": "2026-07-19",
+    "commit": "f70980790c013afea87f15884c736945ccb73323",
+    "method": "CodeGraph MCP status/search/callers/impact plus literal AppDatabase reference scan after symbol discovery",
+    "codegraph": {
+      "files": 830,
+      "nodes": 22307,
+      "edges": 31746,
+      "scope_note": "Global index includes generated/build sources; temporary_legacy_paths and scoped direct-reference counts are the migration boundary authority."
+    },
+    "physical_appdatabase_path_count": 21,
+    "consumer_unit_count": 22,
+    "consumer_unit_note": "NewAPI mod.rs is one physical Rust path with separately owned production and test consumer units.",
+    "consumer_evidence_entry_count": 33,
+    "consumer_evidence_note": "temporary_legacy_consumers is a symbol/path evidence inventory, not the canonical unit collection; each evidence entry may represent a symbol cluster and multiple entries may belong to one canonical unit."
+  },
+  "allowed_exports": {
+    "application": [],
+    "persistence": [],
+    "services::database": ["AppDatabase", "now_millis_for_services"],
+    "services::data_store::config": ["DataDirConfigV2"],
+    "services::proxy::response_body": ["FinalizationDispatcher"]
+  },
+  "allowed_edges": [
+    {"from": "lib", "to": "services::database::AppDatabase", "temporary": true},
+    {"from": "commands", "to": "services::database::AppDatabase", "temporary": true},
+    {"from": "services::proxy", "to": "services::database::AppDatabase", "temporary": true},
+    {"from": "services::collectors", "to": "services::database::AppDatabase", "temporary": true},
+    {"from": "services::channel_monitors", "to": "services::database::AppDatabase", "temporary": true},
+    {"from": "services::remote_keys", "to": "services::database::AppDatabase", "temporary": true},
+    {"from": "services::shared_capabilities", "to": "services::database::AppDatabase", "temporary": true},
+    {"from": "services::station_collectors", "to": "services::database::AppDatabase", "temporary": true},
+    {"from": "services::collectors::adapters::newapi", "to": "services::database::AppDatabase", "temporary": true},
+    {"from": "lib", "to": "services::data_store::config::DataDirConfigV2", "temporary": true},
+    {"from": "commands", "to": "services::data_store::config::DataDirConfigV2", "temporary": true},
+    {"from": "services::data_store", "to": "services::data_store::config::DataDirConfigV2", "temporary": true},
+    {"from": "services::proxy::runtime", "to": "services::proxy::response_body::FinalizationDispatcher", "temporary": true}
+  ],
+  "temporary_legacy_consumers": [
+    {"group": "command", "path": "src-tauri/src/commands/mod.rs", "symbols": ["bind_remote_station_key", "cleanup_before_update", "clear_change_events", "clear_request_logs", "clear_station_credentials", "collect_station_info", "collect_station_task", "collect_sub2api_station", "create_channel_monitor", "create_channel_monitor_template", "create_local_station_key_from_remote", "create_remote_station_key", "create_station", "create_station_key", "delete_channel_monitor", "delete_channel_monitor_template", "delete_model_alias", "delete_pricing_rule", "delete_station", "delete_station_key", "detect_station_info", "detect_sub2api_station", "dismiss_change_event", "duplicate_channel_monitor_template", "finish_capture_session", "finish_capture_session_from_events", "finish_capture_session_with_events", "finish_web_authorization_session", "mark_change_event_read", "mark_change_events_read", "prepare_ccswitch_import", "prepare_local_proxy_for_update", "record_capture_event", "record_station_key_connectivity_result", "reorder_key_pool", "reorder_local_routing_keys", "reorder_station_keys", "reorder_stations", "reset_model_base_prices_to_builtins", "resolve_change_event", "restart_local_proxy", "run_channel_monitor_now", "save_station_key_with_defaults", "scan_remote_station_keys", "start_capture_session", "start_local_proxy", "stop_local_proxy", "test_station_key_connectivity", "test_station_key_connectivity_blocking", "test_station_login", "unbind_remote_station_key", "update_channel_monitor", "update_channel_monitor_template", "update_local_access_key", "update_station", "update_station_credentials", "update_station_key", "update_station_key_capabilities", "update_station_key_group_binding", "update_station_session", "upsert_balance_snapshot", "upsert_change_event", "upsert_model_alias", "upsert_model_base_price", "upsert_pricing_rule", "upsert_station_group_binding"]},
+    {"group": "proxy", "path": "src-tauri/src/services/proxy/runtime.rs", "symbols": ["ProxyRuntimeState::new"]},
+    {"group": "proxy", "path": "src-tauri/src/services/proxy/routing_repository.rs", "symbols": ["SqliteRoutingRepository::new"]},
+    {"group": "proxy", "path": "src-tauri/src/services/proxy/legacy_runtime.rs", "symbols": ["start", "start_unlocked"]},
+    {"group": "proxy", "path": "src-tauri/src/services/proxy/routing_snapshot.rs", "symbols": ["load_local_routing_workspace"]},
+    {"group": "collector", "path": "src-tauri/src/services/collectors/apply.rs", "symbols": ["apply_adapter_output", "apply_superseded_adapter_output"]},
+    {"group": "collector", "path": "src-tauri/src/services/collectors/mod.rs", "symbols": ["append_remote_key_refresh_event", "collect_full_station_task", "collect_station_info", "collect_station_task", "detect_station_info", "dispatch_adapter_output", "full_business_summary", "test_station_login"]},
+    {"group": "collector", "path": "src-tauri/src/services/collectors/sub2api.rs", "symbols": ["build_login_state_snapshot", "collect_login_state", "detect_station", "effective_station_proxy", "run_probe"]},
+    {"group": "collector", "path": "src-tauri/src/services/collectors/adapters/openai_compatible.rs", "symbols": ["collect", "collect_models"]},
+    {"group": "collector", "path": "src-tauri/src/services/collectors/adapters/sub2api.rs", "symbols": ["collect", "collect_account_profile_balance", "collect_balance", "collect_dashboard_usage_stats", "collect_groups", "create_remote_key", "effective_station_proxy", "login_and_store_access_token", "login_and_store_access_token_with_budget", "remote_group_id_for_create", "resolve_sub2api_access_token", "routeable_keys_for_station", "scan_remote_key_full_secret", "scan_remote_keys"]},
+    {"group": "collector", "path": "src-tauri/src/services/collectors/adapters/newapi/auth.rs", "symbols": ["login_with_password"]},
+    {"group": "collector", "path": "src-tauri/src/services/collectors/adapters/newapi/client.rs", "symbols": ["authenticated_json", "get_authenticated_json", "post_authenticated_json", "resolve_auth_context"]},
+    {"group": "collector", "path": "src-tauri/src/services/collectors/adapters/newapi/mod.rs", "symbols": ["test_login_credentials", "scan_remote_keys", "scan_remote_key_full_secret", "create_remote_key", "fetch_newapi_token_items", "reveal_full_key_for_token_value", "collect", "collect_balance_and_groups", "collect_authenticated_task", "collect_usage_stats", "collect_log_stat_window", "collect_log_window", "collect_dashboard_usage_window", "collect_dashboard_usage_total", "collect_dashboard_usage_total_backwards", "fetch_status"]},
+    {"group": "collector", "path": "src-tauri/src/services/remote_keys.rs", "symbols": ["remote_key_capability", "list_remote_keys", "scan_remote_keys", "create_remote_key", "create_local_key_from_remote_key", "bind_remote_key", "scan_remote_keys_with_adapter", "create_remote_key_with_adapter", "remote_key_full_secret_with_adapter", "save_created_remote_key", "enrich_remote_key_discoveries", "local_station_key_candidates", "sync_station_key_metadata", "find_group_binding_for_remote_key", "save_remote_key_discovery"]},
+    {"group": "collector", "path": "src-tauri/src/services/station_collectors.rs", "symbols": ["StationCollectorRunner::start", "runner_loop", "run_station_collection_guarded"]},
+    {"group": "query", "path": "src-tauri/src/services/shared_capabilities.rs", "symbols": ["channel_monitor_summaries_from_database"]},
+    {"group": "settings", "path": "src-tauri/src/lib.rs", "symbols": ["AppState::Ready", "startup initialization and AppDatabase registration"]},
+    {"group": "monitor", "path": "src-tauri/src/services/channel_monitors/mod.rs", "symbols": ["ChannelMonitorRunner::start", "insert_failed_key_run", "insert_monitor_request_log", "insert_probe_run", "insert_skipped_run", "monitor_request_cost", "monitor_targets", "run_channel_monitor_now", "run_monitor", "run_monitor_for_key", "run_monitor_once", "run_monitor_once_guarded", "runner_loop", "target_endpoint_revision_matches", "update_station_endpoint_ping", "update_station_endpoint_pings"]},
+    {"group": "query", "path": "src-tauri/src/commands/mod.rs", "symbols": ["get_latest_collector_snapshot", "get_local_access_key", "get_proxy_status", "get_remote_key_capability", "get_secret_migration_status", "get_station_credentials", "get_station_key_capabilities", "get_station_key_health", "list_balance_snapshots", "list_balance_snapshots_for_station", "list_change_events", "list_change_events_for_station", "list_channel_monitor_runs", "list_channel_monitor_summaries", "list_channel_monitor_templates", "list_channel_monitors", "list_channel_status_summaries", "list_collector_runs", "list_collector_snapshots", "list_current_station_balance_snapshots", "list_group_rate_records", "list_key_pool_items", "list_model_aliases", "list_model_base_prices", "list_pricing_rules", "list_remote_station_keys", "list_request_logs", "list_station_endpoint_health", "list_station_group_bindings", "list_station_group_options", "list_station_key_health", "list_station_keys", "list_stations", "load_channel_status_workspace", "load_local_routing_workspace", "load_pricing_comparison_workspace", "ping_station_endpoint", "ping_station_endpoint_for_tests", "resolve_station_key_pricing_context", "simulate_route"]},
+    {"group": "settings", "path": "src-tauri/src/commands/mod.rs", "symbols": ["choose_data_dir", "get_settings", "import_relay_pool_to_ccswitch", "reset_data_dir", "run_secret_safety_scan", "update_settings"]},
+    {"group": "test", "path": "src-tauri/src/services/database.rs", "symbols": ["tests module (all AppDatabase in-memory and released-shape regression consumers)"]},
+    {"group": "test", "path": "src-tauri/src/commands/mod.rs", "symbols": ["tests module AppDatabase consumers"]},
+    {"group": "test", "path": "src-tauri/src/services/collectors/apply.rs", "symbols": ["tests module AppDatabase consumers"]},
+    {"group": "test", "path": "src-tauri/src/services/collectors/mod.rs", "symbols": ["tests module AppDatabase consumers"]},
+    {"group": "test", "path": "src-tauri/src/services/collectors/sub2api.rs", "symbols": ["tests module AppDatabase consumers"]},
+    {"group": "test", "path": "src-tauri/src/services/collectors/adapters/sub2api.rs", "symbols": ["tests module AppDatabase consumers"]},
+    {"group": "test", "path": "src-tauri/src/services/collectors/adapters/newapi/mod.rs", "symbols": ["tests module AppDatabase consumers"]},
+    {"group": "test", "path": "src-tauri/src/services/channel_monitors/mod.rs", "symbols": ["tests module AppDatabase consumers"]},
+    {"group": "test", "path": "src-tauri/src/services/proxy/routing_repository.rs", "symbols": ["tests module AppDatabase consumers"]},
+    {"group": "test", "path": "src-tauri/src/services/proxy/runtime.rs", "symbols": ["tests module AppDatabase consumers"]},
+    {"group": "test", "path": "src-tauri/src/services/proxy/legacy_runtime.rs", "symbols": ["tests module AppDatabase consumers"]},
+    {"group": "test", "path": "src-tauri/src/services/proxy/soak_tests.rs", "symbols": ["cfg(test) module AppDatabase consumers"]},
+    {"group": "test", "path": "src-tauri/src/services/proxy/test_support.rs", "symbols": ["cfg(test) support AppDatabase consumers"]}
+  ],
+  "temporary_legacy_paths": [
+    "src-tauri/src/services/database.rs",
+    "src-tauri/src/commands/mod.rs",
+    "src-tauri/src/services/proxy/runtime.rs",
+    "src-tauri/src/services/proxy/routing_repository.rs",
+    "src-tauri/src/services/proxy/legacy_runtime.rs",
+    "src-tauri/src/services/proxy/routing_snapshot.rs",
+    "src-tauri/src/services/proxy/soak_tests.rs",
+    "src-tauri/src/services/proxy/test_support.rs",
+    "src-tauri/src/services/collectors/apply.rs",
+    "src-tauri/src/services/collectors/mod.rs",
+    "src-tauri/src/services/collectors/sub2api.rs",
+    "src-tauri/src/services/collectors/adapters/openai_compatible.rs",
+    "src-tauri/src/services/collectors/adapters/sub2api.rs",
+    "src-tauri/src/services/collectors/adapters/newapi/auth.rs",
+    "src-tauri/src/services/collectors/adapters/newapi/client.rs",
+    "src-tauri/src/services/collectors/adapters/newapi/mod.rs",
+    "src-tauri/src/services/channel_monitors/mod.rs"
+    ,"src-tauri/src/lib.rs"
+    ,"src-tauri/src/services/remote_keys.rs"
+    ,"src-tauri/src/services/shared_capabilities.rs"
+    ,"src-tauri/src/services/station_collectors.rs"
+  ],
+  "allowed_consumers": {
+    "persistence::legacy_import": ["lib"]
+  },
+  "fan_in_baseline": {
+    "AppDatabase": {"codegraph_callers_returned": 100, "codegraph_callers_truncated": true, "direct_reference_lines_in_scoped_rust": 507},
+    "DataDirConfigV2": {"codegraph_import_sites": 6, "codegraph_impact_symbols": 2},
+    "FinalizationDispatcher": {"codegraph_import_sites": 2, "codegraph_impact_symbols": 4}
+  },
+  "fan_out_baseline": {
+    "AppDatabase": {"codegraph_impact_symbols": 550},
+    "DataDirConfigV2": {"codegraph_impact_symbols": 2},
+    "FinalizationDispatcher": {"codegraph_impact_symbols": 45}
+  }
+}

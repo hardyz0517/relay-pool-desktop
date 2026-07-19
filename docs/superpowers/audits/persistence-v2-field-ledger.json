@@ -1,0 +1,240 @@
+{
+  "version": 1,
+  "schema": {
+    "inheritance_rule": "Every listed column inherits owner, writers, readers, sensitivity, retention, and v2_disposition from its table unless column_overrides supplies that key.",
+    "required_table_keys": ["owner", "writers", "readers", "sensitivity", "retention", "v2_disposition", "columns"],
+    "evidence": "src-tauri/src/services/database.rs CREATE TABLE, ALTER TABLE, and add_column_if_missing paths at a611ff065fad14fa8a73f099666052387072308c"
+  },
+  "tables": {
+    "stations": {
+      "owner": "station_catalog",
+      "writers": ["station application use cases", "collector projection"],
+      "readers": ["station queries", "routing", "collectors", "monitoring"],
+      "sensitivity": "confidential-configuration",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "name", "station_type", "website_url", "api_base_url", "endpoint_revision", "api_key", "api_key_secret_id", "collector_proxy_mode", "collector_proxy_url", "upstream_api_format", "enabled", "priority", "credit_per_cny", "balance_raw", "balance_cny", "low_balance_threshold_cny", "collection_interval_minutes", "status", "latency_ms", "last_checked_at", "last_pricing_fetched_at", "note", "created_at", "updated_at"],
+      "column_overrides": {
+        "api_key": {"owner": "credential_vault", "sensitivity": "secret-plaintext-legacy", "v2_disposition": "drop-with-evidence", "proof_query": "SELECT COUNT(*) FROM stations WHERE NULLIF(TRIM(api_key), '') IS NOT NULL AND api_key_secret_id IS NULL"},
+        "api_key_secret_id": {"owner": "credential_vault", "sensitivity": "secret-reference"},
+        "balance_raw": {"owner": "pricing_evidence", "v2_disposition": "migrate-compatibility-cache"},
+        "balance_cny": {"owner": "pricing_evidence", "v2_disposition": "migrate-compatibility-cache"},
+        "last_pricing_fetched_at": {"owner": "pricing_evidence", "v2_disposition": "migrate-compatibility-cache"}
+      }
+    },
+    "settings": {
+      "owner": "settings",
+      "writers": ["settings application use cases", "data-directory recovery"],
+      "readers": ["settings queries", "startup", "proxy", "collectors"],
+      "sensitivity": "confidential-configuration",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["key", "value", "updated_at"]
+    },
+    "station_credentials": {
+      "owner": "credential_vault",
+      "writers": ["credential and session application use cases", "legacy secret migrator"],
+      "readers": ["credential queries", "collector authentication"],
+      "sensitivity": "secret-metadata",
+      "retention": "retain-until-owner-station-or-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "station_id", "login_username", "login_password", "login_password_secret_id", "remember_password", "login_status", "login_error", "last_login_at", "session_status", "session_expires_at", "access_token_secret_id", "refresh_token_secret_id", "cookie_secret_id", "newapi_user_id", "token_expires_at", "token_refreshed_at", "session_source", "created_at", "updated_at"],
+      "column_overrides": {
+        "login_password": {"sensitivity": "secret-plaintext-legacy", "v2_disposition": "drop-with-evidence", "proof_query": "SELECT COUNT(*) FROM station_credentials WHERE login_password IS NOT NULL AND login_password_secret_id IS NULL"},
+        "login_username": {"sensitivity": "personal-identifier"},
+        "login_error": {"sensitivity": "redacted-operational"}
+      }
+    },
+    "station_keys": {
+      "owner": "station_catalog",
+      "writers": ["station-key application use cases", "collector binding projection", "routing feedback"],
+      "readers": ["station-key queries", "routing", "collectors", "monitoring"],
+      "sensitivity": "confidential-configuration",
+      "retention": "retain-until-owner-station-or-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "station_id", "name", "api_key", "api_key_secret_id", "enabled", "priority", "routing_order", "max_concurrency", "load_factor", "schedulable", "group_binding_id", "group_id_hash", "group_name", "tier_label", "rate_multiplier", "rate_source", "rate_collected_at", "balance_scope", "status", "manual_rate_multiplier", "manual_rate_updated_at", "last_checked_at", "last_used_at", "note", "created_at", "updated_at"],
+      "column_overrides": {
+        "api_key": {"owner": "credential_vault", "sensitivity": "secret-plaintext-legacy", "v2_disposition": "drop-with-evidence", "proof_query": "SELECT COUNT(*) FROM station_keys WHERE NULLIF(TRIM(api_key), '') IS NOT NULL AND api_key_secret_id IS NULL"},
+        "api_key_secret_id": {"owner": "credential_vault", "sensitivity": "secret-reference"},
+        "group_name": {"owner": "routing_catalog", "v2_disposition": "migrate-compatibility-cache"},
+        "group_id_hash": {"owner": "routing_catalog", "v2_disposition": "migrate-compatibility-cache"},
+        "rate_multiplier": {"owner": "pricing_evidence", "v2_disposition": "migrate-compatibility-cache"},
+        "rate_source": {"owner": "pricing_evidence", "v2_disposition": "migrate-compatibility-cache"},
+        "rate_collected_at": {"owner": "pricing_evidence", "v2_disposition": "migrate-compatibility-cache"}
+      }
+    },
+    "station_key_capabilities": {
+      "owner": "routing_catalog",
+      "writers": ["station-key capability use cases"],
+      "readers": ["routing", "station-key queries"],
+      "sensitivity": "configuration",
+      "retention": "retain-until-owner-station-key-or-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["station_key_id", "supports_chat_completions", "supports_responses", "supports_embeddings", "supports_stream", "supports_tools", "supports_vision", "supports_reasoning", "model_allowlist_json", "model_blocklist_json", "preferred_models_json", "only_use_as_backup", "routing_tags_json", "updated_at"]
+    },
+    "remote_station_keys": {
+      "owner": "station_catalog",
+      "writers": ["remote-key scan and binding use cases"],
+      "readers": ["remote-key queries", "station-key creation"],
+      "sensitivity": "redacted-upstream-metadata",
+      "retention": "retain-until-owner-station-or-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "station_id", "remote_key_id_hash", "remote_key_name", "api_key_masked", "api_key_fingerprint", "group_id_hash", "group_name", "tier_label", "rate_multiplier", "rate_source", "created_at_remote", "last_used_at", "raw_source", "match_status", "matched_station_key_id", "match_confidence", "collected_at", "updated_at"]
+    },
+    "station_group_bindings": {
+      "owner": "routing_catalog",
+      "writers": ["group-binding use cases", "collector projection"],
+      "readers": ["routing", "pricing", "station and key queries"],
+      "sensitivity": "redacted-upstream-metadata",
+      "retention": "retain-until-owner-station-or-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "station_id", "station_key_id", "binding_kind", "parent_group_binding_id", "group_key_hash", "group_id_hash", "group_id_enc", "group_name", "binding_status", "default_rate_multiplier", "user_rate_multiplier", "effective_rate_multiplier", "inferred_group_category", "group_category_override", "rate_source", "confidence", "last_seen_at", "last_checked_at", "last_rate_changed_at", "raw_json_redacted", "created_at", "updated_at"],
+      "column_overrides": {"group_id_enc": {"sensitivity": "encrypted-upstream-identifier"}}
+    },
+    "group_rate_records": {
+      "owner": "pricing_evidence",
+      "writers": ["collector projection"],
+      "readers": ["pricing queries", "routing economics", "change detection"],
+      "sensitivity": "redacted-upstream-evidence",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "station_id", "station_key_id", "group_binding_id", "binding_kind", "group_key_hash", "group_name", "default_rate_multiplier", "user_rate_multiplier", "effective_rate_multiplier", "inferred_group_category", "source", "confidence", "raw_json_redacted", "checked_at", "created_at"]
+    },
+    "pricing_rules": {
+      "owner": "pricing",
+      "writers": ["pricing application use cases", "collector normalization"],
+      "readers": ["pricing queries", "routing economics", "request finalization"],
+      "sensitivity": "configuration",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "station_id", "station_key_id", "group_binding_id", "group_name", "tier_label", "model", "input_price", "output_price", "fixed_price", "currency", "unit", "price_type", "rate_multiplier", "source", "base_price_source", "normalization_status", "confidence", "enabled", "note", "collected_at", "valid_from", "valid_until", "created_at", "updated_at"]
+    },
+    "model_base_prices": {
+      "owner": "pricing",
+      "writers": ["pricing application use cases", "builtin price seeding"],
+      "readers": ["pricing queries", "routing economics"],
+      "sensitivity": "public-pricing-metadata",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "provider", "model", "input_price", "output_price", "currency", "unit", "source_url", "source_label", "source_checked_at", "enabled", "built_in", "note", "created_at", "updated_at"]
+    },
+    "balance_snapshots": {
+      "owner": "pricing_evidence",
+      "writers": ["balance collector", "balance application use cases"],
+      "readers": ["dashboard and station queries", "change detection", "routing economics"],
+      "sensitivity": "account-usage-evidence",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "station_id", "station_key_id", "scope", "value", "currency", "credit_unit", "used_value", "total_value", "today_request_count", "total_request_count", "today_consumption", "total_consumption", "today_base_consumption", "total_base_consumption", "today_token_count", "total_token_count", "today_input_token_count", "today_output_token_count", "total_input_token_count", "total_output_token_count", "account_concurrency_limit", "low_balance_threshold", "status", "source", "confidence", "collected_at", "created_at", "updated_at"]
+    },
+    "collector_snapshots": {
+      "owner": "collector_evidence",
+      "writers": ["collector application use cases"],
+      "readers": ["collector queries", "pricing projection", "change detection"],
+      "sensitivity": "redacted-upstream-evidence",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "station_id", "endpoint_revision", "source", "status", "fetched_at", "summary_json", "normalized_json", "raw_json_redacted", "error_message", "created_at"],
+      "column_overrides": {"error_message": {"sensitivity": "redacted-operational"}}
+    },
+    "collector_runs": {
+      "owner": "collector_evidence",
+      "writers": ["collector application use cases"],
+      "readers": ["collector queries", "change detection"],
+      "sensitivity": "redacted-operational",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "station_id", "endpoint_revision", "parent_run_id", "adapter", "task_type", "status", "started_at", "finished_at", "duration_ms", "endpoint_count", "success_count", "failure_count", "manual_action_required", "error_code", "error_message", "snapshot_id", "created_at"]
+    },
+    "channel_monitor_request_templates": {
+      "owner": "monitoring",
+      "writers": ["monitor-template application use cases", "builtin template seeding"],
+      "readers": ["monitor runner", "monitor queries"],
+      "sensitivity": "configuration-with-redacted-body",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "name", "endpoint_kind", "method", "path", "request_body_json", "enabled", "built_in", "note", "created_at", "updated_at"]
+    },
+    "channel_monitors": {
+      "owner": "monitoring",
+      "writers": ["monitor application use cases", "monitor scheduler"],
+      "readers": ["monitor runner", "monitor queries"],
+      "sensitivity": "configuration",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "name", "target_type", "station_id", "station_key_id", "template_id", "enabled", "interval_seconds", "jitter_seconds", "timeout_seconds", "max_concurrency", "consecutive_failure_threshold", "fallback_models_json", "last_run_at", "next_run_at", "last_status", "last_error_message", "note", "created_at", "updated_at"]
+    },
+    "channel_monitor_runs": {
+      "owner": "monitoring_evidence",
+      "writers": ["monitor runner"],
+      "readers": ["monitor status queries", "pricing projection"],
+      "sensitivity": "redacted-operational",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "monitor_id", "template_id", "station_id", "station_key_id", "status", "started_at", "finished_at", "duration_ms", "http_status", "latency_ms", "response_model", "fallback_model", "error_message", "created_at"]
+    },
+    "request_logs": {
+      "owner": "request_observability",
+      "writers": ["proxy ingress", "proxy finalization", "channel monitor"],
+      "readers": ["request-log queries", "pricing and diagnostics"],
+      "sensitivity": "redacted-request-evidence",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "request_id", "started_at", "finished_at", "duration_ms", "method", "path", "model", "stream", "status", "lifecycle_status", "station_key_id", "station_id", "upstream_base_url", "fallback_count", "error_message", "route_policy", "route_reason", "rejected_candidates_json", "body_bytes", "attempt_count", "route_wait_ms", "upstream_headers_ms", "failure_source", "attempts_json", "completion_source", "prompt_tokens", "completion_tokens", "total_tokens", "cache_creation_tokens", "cache_read_tokens", "reasoning_effort", "first_token_ms", "billing_mode", "estimated_input_cost", "estimated_output_cost", "estimated_total_cost", "base_input_cost", "base_output_cost", "base_fixed_cost", "base_total_cost", "cost_currency", "pricing_rule_id", "pricing_source", "cost_status", "group_binding_id", "normalization_status", "balance_scope", "economic_context_json", "created_at"]
+    },
+    "change_events": {
+      "owner": "change_center",
+      "writers": ["collector, pricing, balance and health change detectors", "change-event application use cases"],
+      "readers": ["change-center queries"],
+      "sensitivity": "redacted-operational-evidence",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "severity", "event_type", "status", "title", "message", "object_type", "object_id", "station_id", "station_key_id", "pricing_rule_id", "request_log_id", "old_value_json", "new_value_json", "impact_json", "dedupe_key", "source", "detected_at", "resolved_at", "created_at", "updated_at"]
+    },
+    "model_aliases": {
+      "owner": "routing_catalog",
+      "writers": ["model-alias application use cases"],
+      "readers": ["routing", "model-alias queries"],
+      "sensitivity": "configuration",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "client_model", "upstream_model", "enabled", "note", "created_at", "updated_at"]
+    },
+    "station_key_health": {
+      "owner": "routing_health",
+      "writers": ["proxy feedback", "connectivity tests"],
+      "readers": ["routing", "health queries"],
+      "sensitivity": "redacted-operational",
+      "retention": "retain-until-owner-station-key-or-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["station_key_id", "endpoint_revision", "last_success_at", "last_failure_at", "consecutive_failures", "success_count", "failure_count", "total_duration_ms", "avg_latency_ms", "last_error_summary", "cooldown_until", "updated_at"]
+    },
+    "station_endpoint_health": {
+      "owner": "routing_health",
+      "writers": ["endpoint probes", "monitor runner"],
+      "readers": ["routing", "health and station queries"],
+      "sensitivity": "redacted-operational",
+      "retention": "retain-until-owner-station-or-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["station_id", "endpoint_revision", "status", "latency_ms", "error_summary", "updated_at"]
+    },
+    "secrets": {
+      "owner": "credential_vault",
+      "writers": ["credential vault", "legacy secret migrator"],
+      "readers": ["credential vault only"],
+      "sensitivity": "encrypted-secret",
+      "retention": "retain-until-unreferenced-owner-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "scope", "owner_id", "kind", "ciphertext", "nonce", "aad", "masked_value", "value_hash", "encryption_version", "created_at", "updated_at"]
+    },
+    "secret_migration_events": {
+      "owner": "credential_vault",
+      "writers": ["legacy secret migrator"],
+      "readers": ["secret migration status and diagnostics"],
+      "sensitivity": "redacted-security-audit",
+      "retention": "retain-until-explicit-user-cleanup",
+      "v2_disposition": "migrate",
+      "columns": ["id", "owner_table", "owner_id", "secret_kind", "status", "error_message", "created_at"]
+    }
+  }
+}
