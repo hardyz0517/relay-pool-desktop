@@ -1,0 +1,28 @@
+﻿{
+    "profile":  "profile_001",
+    "schema_hash":  "859a884555aa27bb9ac2bc726f12f68b32db6b6f3fa269b64f371c1462aff94b",
+    "fixture_sha256":  "ad1f159cd6feabbb7d9bb4d6a37bf4fbc979f98eab03a42f402eb6fa863f34c9",
+    "table_counts":  {
+                         "balance_snapshots":  0,
+                         "change_events":  0,
+                         "channel_monitor_request_templates":  4,
+                         "channel_monitor_runs":  0,
+                         "channel_monitors":  0,
+                         "collector_runs":  0,
+                         "collector_snapshots":  0,
+                         "group_rate_records":  0,
+                         "model_aliases":  1,
+                         "model_base_prices":  196,
+                         "pricing_rules":  0,
+                         "remote_station_keys":  0,
+                         "request_logs":  0,
+                         "secrets":  0,
+                         "station_credentials":  0,
+                         "station_endpoint_health":  0,
+                         "station_group_bindings":  0,
+                         "station_key_capabilities":  0,
+                         "station_key_health":  0,
+                         "station_keys":  1,
+                         "stations":  1
+                     }
+}

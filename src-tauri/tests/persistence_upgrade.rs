@@ -79,10 +79,18 @@ use sqlx::{sqlite::SqliteConnectOptions, Connection, SqliteConnection};
 #[tokio::test]
 async fn every_released_profile_imports_to_the_expected_manifest() {
     let fixtures = released_fixtures();
+    let expected_profiles = released_profile_ids_from_manifest();
+    let actual_profiles = fixtures
+        .iter()
+        .map(|fixture| fixture.expected.profile.clone())
+        .collect::<BTreeSet<_>>();
     assert_eq!(
-        fixtures.len(),
-        6,
-        "fixture generation must classify every released schema"
+        actual_profiles, expected_profiles,
+        "fixture directories must exactly match the released-schema manifest"
+    );
+    assert!(
+        !fixtures.is_empty(),
+        "released fixtures are a required upgrade gate"
     );
     for fixture in fixtures {
         let before = file_evidence(&fixture.source);
@@ -92,7 +100,7 @@ async fn every_released_profile_imports_to_the_expected_manifest() {
         assert_eq!(profile.id(), fixture.expected.profile);
         let target_path = temp_db_path(profile.id());
         create_v2_target(&target_path).await;
-        let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_7())
+        let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
             .await
             .expect("V2 runtime");
 
@@ -156,10 +164,24 @@ fn released_fixtures() -> Vec<ReleasedFixture> {
         .map(|entry| {
             let source = entry.path().join("source.sqlite3");
             let manifest = entry.path().join("expected_manifest.json");
-            let expected = serde_json::from_slice(&fs::read(manifest).expect("expected manifest"))
-                .expect("valid expected manifest");
+            let bytes = fs::read(manifest).expect("expected manifest");
+            let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+            let expected = serde_json::from_slice(bytes).expect("valid expected manifest");
             ReleasedFixture { source, expected }
         })
+        .collect()
+}
+
+fn released_profile_ids_from_manifest() -> BTreeSet<String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../docs/superpowers/audits/persistence-v2-released-schema-manifest.json");
+    let raw = fs::read(path).expect("released schema manifest");
+    serde_json::from_slice::<serde_json::Value>(&raw).expect("valid released schema manifest")
+        ["profiles"]
+        .as_object()
+        .expect("manifest profiles object")
+        .keys()
+        .cloned()
         .collect()
 }
 
@@ -171,13 +193,13 @@ async fn create_v2_target(path: &Path) {
         .await
         .expect("target connection");
     migrator()
-        .run(&mut connection)
+        .run_direct(&mut connection)
         .await
         .expect("V2 migrations");
     connection.close().await.expect("close target");
 }
 
-fn binary_v2_schema_7() -> BinaryCompatibility {
+fn binary_v2_schema_8() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 1),
         database_generation: 2,

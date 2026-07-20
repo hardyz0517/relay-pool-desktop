@@ -1,6 +1,7 @@
 mod backup;
 pub(crate) mod error;
 mod health_check;
+pub(crate) mod legacy_import;
 mod migrations;
 mod read_session;
 pub(crate) mod runtime;
