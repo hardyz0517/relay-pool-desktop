@@ -53,16 +53,14 @@ impl RequestLogStore {
         .await?
         .rows_affected();
         if inserted == 0 {
-            let existing = request_log_start_by_request_id(
-                session.connection(),
-                &record.context.request_id,
-            )
-            .await?
-                .ok_or_else(|| {
-                    PersistenceError::InvariantViolation(
-                        "request start duplicate missing row".to_string(),
-                    )
-                })?;
+            let existing =
+                request_log_start_by_request_id(session.connection(), &record.context.request_id)
+                    .await?
+                    .ok_or_else(|| {
+                        PersistenceError::InvariantViolation(
+                            "request start duplicate missing row".to_string(),
+                        )
+                    })?;
             if existing != *record {
                 return Err(PersistenceError::InvariantViolation(
                     "duplicate request start does not match canonical record".to_string(),
@@ -244,14 +242,14 @@ async fn request_terminal_by_request_id(
     request_id: &str,
 ) -> Result<Option<RequestTerminalRow>, PersistenceError> {
     let row = sqlx::query(
-            "SELECT request_id, status, lifecycle_status, terminal_kind, terminal_code,
+        "SELECT request_id, status, lifecycle_status, terminal_kind, terminal_code,
                     terminal_detail, protocol_completed, delivery_terminal,
                     selected_attempt_ordinal, attempt_count, fallback_count, terminal_at_ms
              FROM request_logs WHERE request_id = ?",
-        )
-        .bind(request_id)
-        .fetch_optional(&mut *connection)
-        .await?;
+    )
+    .bind(request_id)
+    .fetch_optional(&mut *connection)
+    .await?;
     Ok(row.map(|row| RequestTerminalRow {
         request_id: row.get(0),
         status: row.get(1),
@@ -387,19 +385,19 @@ async fn request_log_start_by_request_id(
     request_id: &str,
 ) -> Result<Option<RequestStartRecord>, PersistenceError> {
     let row = sqlx::query(
-            "SELECT request_id, method, path, endpoint, CAST(started_at AS INTEGER)
+        "SELECT request_id, method, path, endpoint, CAST(started_at AS INTEGER)
              FROM request_logs WHERE request_id = ?",
-        )
-        .bind(request_id)
-        .fetch_optional(&mut *connection)
-        .await?
-        .map(|row| RequestStartRow {
-            request_id: row.get(0),
-            method: row.get(1),
-            local_path: row.get(2),
-            endpoint: row.get(3),
-            received_at_ms: row.get(4),
-        });
+    )
+    .bind(request_id)
+    .fetch_optional(&mut *connection)
+    .await?
+    .map(|row| RequestStartRow {
+        request_id: row.get(0),
+        method: row.get(1),
+        local_path: row.get(2),
+        endpoint: row.get(3),
+        received_at_ms: row.get(4),
+    });
     Ok(row.map(|row| RequestStartRecord {
         context: crate::services::proxy::lifecycle::request::RequestContextSnapshot {
             request_id: row.request_id,
@@ -520,16 +518,16 @@ async fn request_attempt_by_request_and_ordinal(
     ordinal: u16,
 ) -> Result<Option<AttemptRow>, PersistenceError> {
     let row = sqlx::query(
-            "SELECT request_id, ordinal, station_id, station_key_id, endpoint_revision,
+        "SELECT request_id, ordinal, station_id, station_key_id, endpoint_revision,
                     started_at_ms, terminal_kind, failure_kind, failure_blame,
                     retry_disposition, health_effect, health_cooldown_until_ms,
                     public_code, sanitized_detail, output_committed, terminal_at_ms
              FROM request_attempts WHERE request_id = ? AND ordinal = ?",
-        )
-        .bind(request_id)
-        .bind(i64::from(ordinal))
-        .fetch_optional(&mut *connection)
-        .await?;
+    )
+    .bind(request_id)
+    .bind(i64::from(ordinal))
+    .fetch_optional(&mut *connection)
+    .await?;
     Ok(row.map(|row| AttemptRow {
         request_id: row.get(0),
         ordinal: row.get(1),
@@ -575,12 +573,8 @@ async fn apply_attempt_health(
 
     let now_ms = record.terminal_at_ms;
     let now = now_ms.to_string();
-    let current = station_key_health_by_key_id(
-        connection,
-        &record.context.station_key_id,
-        &now,
-    )
-    .await?;
+    let current =
+        station_key_health_by_key_id(connection, &record.context.station_key_id, &now).await?;
     let endpoint_revision = record.context.endpoint_revision;
     let next = match mode {
         "success" => StationKeyHealthMutation::success(
@@ -763,26 +757,26 @@ async fn station_key_health_by_key_id(
     now: &str,
 ) -> Result<StationKeyHealth, PersistenceError> {
     let row = sqlx::query(
-            "SELECT station_key_id, last_success_at, last_failure_at, consecutive_failures,
+        "SELECT station_key_id, last_success_at, last_failure_at, consecutive_failures,
                     success_count, failure_count, avg_latency_ms, last_error_summary,
                     cooldown_until, updated_at
              FROM station_key_health WHERE station_key_id = ?",
-        )
-        .bind(station_key_id)
-        .fetch_optional(&mut *connection)
-        .await?
-        .map(|row| StationKeyHealth {
-            station_key_id: row.get(0),
-            last_success_at: row.get(1),
-            last_failure_at: row.get(2),
-            consecutive_failures: row.get(3),
-            success_count: row.get(4),
-            failure_count: row.get(5),
-            avg_latency_ms: row.get(6),
-            last_error_summary: row.get(7),
-            cooldown_until: row.get(8),
-            updated_at: row.get(9),
-        });
+    )
+    .bind(station_key_id)
+    .fetch_optional(&mut *connection)
+    .await?
+    .map(|row| StationKeyHealth {
+        station_key_id: row.get(0),
+        last_success_at: row.get(1),
+        last_failure_at: row.get(2),
+        consecutive_failures: row.get(3),
+        success_count: row.get(4),
+        failure_count: row.get(5),
+        avg_latency_ms: row.get(6),
+        last_error_summary: row.get(7),
+        cooldown_until: row.get(8),
+        updated_at: row.get(9),
+    });
     Ok(row.unwrap_or_else(|| StationKeyHealth {
         station_key_id: station_key_id.to_string(),
         last_success_at: None,
@@ -1235,8 +1229,7 @@ mod v2_tests {
 
     use crate::{
         persistence::{
-            migrations::migrator,
-            runtime::PersistenceRuntime,
+            migrations::migrator, runtime::PersistenceRuntime,
             schema_compatibility::BinaryCompatibility,
         },
         services::proxy::lifecycle::{
@@ -1255,8 +1248,8 @@ mod v2_tests {
         BinaryCompatibility {
             app_version: Version::new(0, 3, 1),
             database_generation: 2,
-            readable_schema: 1..=5,
-            writable_schema: BTreeSet::from([5]),
+            readable_schema: 1..=7,
+            writable_schema: BTreeSet::from([7]),
         }
     }
 
@@ -1272,7 +1265,9 @@ mod v2_tests {
         pool.close().await;
         // Keep the directory alive for the lifetime of the test runtime.
         std::mem::forget(root);
-        PersistenceRuntime::open(&path, binary()).await.expect("runtime")
+        PersistenceRuntime::open(&path, binary())
+            .await
+            .expect("runtime")
     }
 
     fn start_record(id: &str) -> RequestStartRecord {
@@ -1328,18 +1323,22 @@ mod v2_tests {
         let store = RequestLogStore;
         let record = start_record("req-start");
         let mut first = runtime.begin_write().await.expect("write");
-        assert!(store
-            .start_request(&mut first, &record, 1000)
-            .await
-            .expect("start")
-            .inserted);
+        assert!(
+            store
+                .start_request(&mut first, &record, 1000)
+                .await
+                .expect("start")
+                .inserted
+        );
         first.commit().await.expect("commit");
         let mut second = runtime.begin_write().await.expect("write");
-        assert!(!store
-            .start_request(&mut second, &record, 1000)
-            .await
-            .expect("duplicate")
-            .inserted);
+        assert!(
+            !store
+                .start_request(&mut second, &record, 1000)
+                .await
+                .expect("duplicate")
+                .inserted
+        );
         second.commit().await.expect("commit");
     }
 
@@ -1356,10 +1355,22 @@ mod v2_tests {
         session.commit().await.expect("commit");
         let attempt = attempt_record("req-attempt");
         let mut first = runtime.begin_write().await.expect("write");
-        assert!(store.finish_attempt(&mut first, &attempt).await.expect("attempt").inserted);
+        assert!(
+            store
+                .finish_attempt(&mut first, &attempt)
+                .await
+                .expect("attempt")
+                .inserted
+        );
         first.commit().await.expect("commit");
         let mut duplicate = runtime.begin_write().await.expect("write");
-        assert!(!store.finish_attempt(&mut duplicate, &attempt).await.expect("duplicate").inserted);
+        assert!(
+            !store
+                .finish_attempt(&mut duplicate, &attempt)
+                .await
+                .expect("duplicate")
+                .inserted
+        );
         duplicate.commit().await.expect("commit");
         let mut read = runtime.begin_read().await.expect("read");
         let row = sqlx::query("SELECT COUNT(*), success_count FROM request_attempts a JOIN station_key_health h ON h.station_key_id = a.station_key_id WHERE a.request_id = ?")
@@ -1384,18 +1395,22 @@ mod v2_tests {
         start.commit().await.expect("commit");
         let final_record = terminal_record("req-terminal");
         let mut first = runtime.begin_write().await.expect("write");
-        assert!(store
-            .finish_request(&mut first, &final_record, 1100)
-            .await
-            .expect("finish")
-            .finalized);
+        assert!(
+            store
+                .finish_request(&mut first, &final_record, 1100)
+                .await
+                .expect("finish")
+                .finalized
+        );
         first.commit().await.expect("commit");
         let mut duplicate = runtime.begin_write().await.expect("write");
-        assert!(!store
-            .finish_request(&mut duplicate, &final_record, 1100)
-            .await
-            .expect("duplicate")
-            .finalized);
+        assert!(
+            !store
+                .finish_request(&mut duplicate, &final_record, 1100)
+                .await
+                .expect("duplicate")
+                .finalized
+        );
         duplicate.commit().await.expect("commit");
     }
 }

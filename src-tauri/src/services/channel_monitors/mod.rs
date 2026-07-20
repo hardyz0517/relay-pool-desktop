@@ -13,6 +13,7 @@ use std::{
 };
 
 use crate::{
+    application::{error::ApplicationError, monitoring::MonitoringService, pagination::PageLimit},
     models::{
         channel_monitors::{
             ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
@@ -39,6 +40,86 @@ const DEFAULT_MONITOR_MODEL: &str = "gpt-4.1-mini";
 const DEFAULT_MONITOR_CHALLENGE: &str = "ping";
 const MONITOR_ALREADY_RUNNING_ERROR: &str = "Channel monitor is already running";
 static ACTIVE_MONITOR_RUNS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+#[allow(dead_code)]
+pub(crate) trait ChannelMonitorPersistencePort: Send + Sync {
+    fn get_monitor(
+        &self,
+        monitor_id: String,
+    ) -> futures_util::future::BoxFuture<'static, Result<ChannelMonitor, ApplicationError>>;
+
+    fn get_template(
+        &self,
+        template_id: String,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<ChannelMonitorRequestTemplate, ApplicationError>,
+    >;
+
+    fn due_monitors(
+        &self,
+        limit: u32,
+    ) -> futures_util::future::BoxFuture<'static, Result<Vec<ChannelMonitor>, ApplicationError>>;
+
+    fn record_run(
+        &self,
+        input: CreateChannelMonitorRunInput,
+    ) -> futures_util::future::BoxFuture<'static, Result<ChannelMonitorRun, ApplicationError>>;
+}
+
+#[allow(dead_code)]
+#[derive(Clone)]
+pub(crate) struct V2ChannelMonitorPersistenceAdapter {
+    monitoring: MonitoringService,
+}
+
+#[allow(dead_code)]
+impl V2ChannelMonitorPersistenceAdapter {
+    pub(crate) fn new(monitoring: MonitoringService) -> Self {
+        Self { monitoring }
+    }
+}
+
+impl ChannelMonitorPersistencePort for V2ChannelMonitorPersistenceAdapter {
+    fn get_monitor(
+        &self,
+        monitor_id: String,
+    ) -> futures_util::future::BoxFuture<'static, Result<ChannelMonitor, ApplicationError>> {
+        let monitoring = self.monitoring.clone();
+        Box::pin(async move { monitoring.get_monitor(&monitor_id).await })
+    }
+
+    fn get_template(
+        &self,
+        template_id: String,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<ChannelMonitorRequestTemplate, ApplicationError>,
+    > {
+        let monitoring = self.monitoring.clone();
+        Box::pin(async move { monitoring.get_template(&template_id).await })
+    }
+
+    fn due_monitors(
+        &self,
+        limit: u32,
+    ) -> futures_util::future::BoxFuture<'static, Result<Vec<ChannelMonitor>, ApplicationError>>
+    {
+        let monitoring = self.monitoring.clone();
+        Box::pin(async move {
+            let limit = PageLimit::new(limit)?;
+            monitoring.due_monitors(limit).await
+        })
+    }
+
+    fn record_run(
+        &self,
+        input: CreateChannelMonitorRunInput,
+    ) -> futures_util::future::BoxFuture<'static, Result<ChannelMonitorRun, ApplicationError>> {
+        let monitoring = self.monitoring.clone();
+        Box::pin(async move { monitoring.record_run(input).await })
+    }
+}
 
 #[allow(dead_code)]
 pub fn run_channel_monitor_now(

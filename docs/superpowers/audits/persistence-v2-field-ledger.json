@@ -162,7 +162,7 @@
       "sensitivity": "configuration",
       "retention": "retain-until-explicit-user-cleanup",
       "v2_disposition": "migrate",
-      "columns": ["id", "name", "target_type", "station_id", "station_key_id", "template_id", "enabled", "interval_seconds", "jitter_seconds", "timeout_seconds", "max_concurrency", "consecutive_failure_threshold", "fallback_models_json", "last_run_at", "next_run_at", "last_status", "last_error_message", "note", "created_at", "updated_at"]
+      "columns": ["id", "name", "target_type", "station_id", "station_key_id", "template_id", "enabled", "interval_seconds", "jitter_seconds", "timeout_seconds", "max_concurrency", "consecutive_failure_threshold", "fallback_models_json", "last_run_at", "last_run_id", "next_run_at", "last_status", "last_error_message", "note", "created_at", "updated_at"]
     },
     "channel_monitor_runs": {
       "owner": "monitoring_evidence",

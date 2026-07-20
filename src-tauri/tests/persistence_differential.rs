@@ -252,10 +252,10 @@ mod application {
         ));
     }
 
-    pub(crate) mod request_lifecycle_persistence {
+    pub(crate) mod request_finalization {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/src/application/request_lifecycle_persistence.rs"
+            "/src/application/request_finalization.rs"
         ));
     }
 }
@@ -275,7 +275,7 @@ use application::{
         CredentialError, CredentialService, CredentialVault, EncryptedSecret, SecretBytes,
     },
     ids::IdGenerator,
-    request_lifecycle_persistence::RequestLifecyclePersistenceService,
+    request_finalization::RequestFinalizationService,
     routing::RoutingService,
     settings::SettingsService,
     stations::StationService,
@@ -288,10 +288,9 @@ use models::{
     station_keys::{CreateStationKeyInput, UpdateStationKeyInput},
     stations::{CreateStationInput, UpdateStationInput},
 };
-use persistence::{runtime::PersistenceRuntime, schema_compatibility::BinaryCompatibility};
 use persistence::stores::request_log_store::RequestLogStore;
+use persistence::{runtime::PersistenceRuntime, schema_compatibility::BinaryCompatibility};
 use semver::Version;
-use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Connection, Row};
 use services::proxy::lifecycle::{
     delivery::DeliveryTerminal,
     ports::RequestLifecycleStore,
@@ -300,6 +299,7 @@ use services::proxy::lifecycle::{
         RequestStartRecord, RequestTerminal,
     },
 };
+use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Connection, Row};
 
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -307,7 +307,7 @@ static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(1);
 async fn request_finalization_is_idempotent_in_v2() {
     let fixture = V2Fixture::create().await;
     let runtime = Arc::new(fixture.runtime().await);
-    let service = RequestLifecyclePersistenceService::new(runtime, RequestLogStore);
+    let service = RequestFinalizationService::new(runtime.handle());
     let context = RequestContextSnapshot {
         request_id: "request-finalization-1".to_string(),
         method: "POST".to_string(),
@@ -1374,8 +1374,8 @@ fn binary_031() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 1),
         database_generation: 2,
-        readable_schema: 1..=5,
-        writable_schema: BTreeSet::from([5]),
+        readable_schema: 1..=7,
+        writable_schema: BTreeSet::from([7]),
     }
 }
 

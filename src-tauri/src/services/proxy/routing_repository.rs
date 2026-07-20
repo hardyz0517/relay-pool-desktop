@@ -1,4 +1,3 @@
-use base64::{engine::general_purpose, Engine as _};
 use crate::{
     application::routing::RoutingService,
     models::{
@@ -18,6 +17,7 @@ use crate::{
         secrets::crypto::{decrypt_secret, EncryptedPayload},
     },
 };
+use base64::{engine::general_purpose, Engine as _};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RoutingExecutionSettings {
@@ -137,7 +137,6 @@ impl RoutingRepository for V2RoutingRepository {
                 .map_err(|error| format!("load V2 balance snapshots failed: {error}"))
         })
     }
-
 }
 
 impl RoutingRepository for SqliteRoutingRepository {

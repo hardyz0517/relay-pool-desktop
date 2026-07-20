@@ -6,7 +6,7 @@ use crate::{
     application::clock::{Clock, SystemClock},
     persistence::{
         error::PersistenceError,
-        runtime::PersistenceRuntime,
+        runtime::PersistenceHandle,
         stores::request_log_store::{
             AttemptPersistenceResult, RequestLogStore, RequestStartPersistenceResult,
             RequestTerminalPersistenceResult,
@@ -23,46 +23,35 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub(crate) struct RequestLifecyclePersistenceService {
-    runtime: Arc<PersistenceRuntime>,
-    store: RequestLogStore,
+pub(crate) struct RequestFinalizationService {
+    runtime: PersistenceHandle,
     clock: Arc<dyn Clock>,
 }
 
-impl RequestLifecyclePersistenceService {
-    pub(crate) fn new(runtime: Arc<PersistenceRuntime>, store: RequestLogStore) -> Self {
+impl RequestFinalizationService {
+    pub(crate) fn new(runtime: PersistenceHandle) -> Self {
         Self {
             runtime,
-            store,
             clock: Arc::new(SystemClock),
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn with_clock(
-        runtime: Arc<PersistenceRuntime>,
-        store: RequestLogStore,
-        clock: Arc<dyn Clock>,
-    ) -> Self {
-        Self {
-            runtime,
-            store,
-            clock,
-        }
+    pub(crate) fn with_clock(runtime: PersistenceHandle, clock: Arc<dyn Clock>) -> Self {
+        Self { runtime, clock }
     }
 }
 
-impl RequestLifecycleStore for RequestLifecyclePersistenceService {
+impl RequestLifecycleStore for RequestFinalizationService {
     fn start_request(
         &self,
         record: RequestStartRecord,
     ) -> BoxFuture<'static, Result<RequestStartAck, LifecycleWriteError>> {
-        let runtime = Arc::clone(&self.runtime);
-        let store = self.store;
+        let runtime = self.runtime.clone();
         let created_at_ms = self.clock.now_utc().timestamp_millis();
         Box::pin(async move {
             let mut session = runtime.begin_write().await.map_err(map_persistence_error)?;
-            let outcome: RequestStartPersistenceResult = store
+            let outcome: RequestStartPersistenceResult = RequestLogStore
                 .start_request(&mut session, &record, created_at_ms)
                 .await
                 .map_err(map_persistence_error)?;
@@ -77,11 +66,10 @@ impl RequestLifecycleStore for RequestLifecyclePersistenceService {
         &self,
         record: AttemptTerminalRecord,
     ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
-        let runtime = Arc::clone(&self.runtime);
-        let store = self.store;
+        let runtime = self.runtime.clone();
         Box::pin(async move {
             let mut session = runtime.begin_write().await.map_err(map_persistence_error)?;
-            let outcome: AttemptPersistenceResult = store
+            let outcome: AttemptPersistenceResult = RequestLogStore
                 .finish_attempt(&mut session, &record)
                 .await
                 .map_err(map_persistence_error)?;
@@ -97,12 +85,11 @@ impl RequestLifecycleStore for RequestLifecyclePersistenceService {
         &self,
         record: FinalRequestRecord,
     ) -> BoxFuture<'static, Result<RequestCommitAck, LifecycleWriteError>> {
-        let runtime = Arc::clone(&self.runtime);
-        let store = self.store;
+        let runtime = self.runtime.clone();
         let terminal_at_ms = self.clock.now_utc().timestamp_millis();
         Box::pin(async move {
             let mut session = runtime.begin_write().await.map_err(map_persistence_error)?;
-            let outcome: RequestTerminalPersistenceResult = store
+            let outcome: RequestTerminalPersistenceResult = RequestLogStore
                 .finish_request(&mut session, &record, terminal_at_ms)
                 .await
                 .map_err(map_persistence_error)?;

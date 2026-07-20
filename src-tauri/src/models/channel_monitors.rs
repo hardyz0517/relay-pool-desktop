@@ -119,6 +119,20 @@ pub struct ChannelMonitorRun {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelMonitorRunCursor {
+    pub started_at_ms: i64,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelMonitorRunPage {
+    pub items: Vec<ChannelMonitorRun>,
+    pub next_cursor: Option<ChannelMonitorRunCursor>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateChannelMonitorRunInput {

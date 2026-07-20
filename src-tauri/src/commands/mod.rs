@@ -11,6 +11,8 @@ use std::{
 use tauri::{ipc::Channel, Manager, State};
 
 pub(crate) mod credentials;
+pub(crate) mod monitoring;
+pub(crate) mod pricing;
 pub(crate) mod routing;
 pub(crate) mod settings;
 pub(crate) mod stations;

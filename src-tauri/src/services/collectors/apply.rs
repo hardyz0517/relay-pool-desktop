@@ -16,6 +16,14 @@ use crate::{
 use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 
+use crate::application::{
+    collectors::{
+        CanonicalBalanceFact, CanonicalCollectorFacts, CanonicalGroupFact, CanonicalModelFact,
+        CanonicalRateFact, CollectorApplyOutcome, CollectorApplyRequest, CollectorService,
+    },
+    error::ApplicationError,
+};
+
 #[derive(Debug, Clone)]
 pub struct AppliedAdapterOutput {
     pub result: CollectorRunResult,
@@ -748,6 +756,156 @@ fn endpoint_counts_from_summary(summary: &serde_json::Value, status: &str) -> (i
         .count() as i64;
     let failure_count = endpoint_count.saturating_sub(success_count);
     (endpoint_count, success_count, failure_count)
+}
+
+pub(crate) trait CollectorApplyPort: Send + Sync {
+    fn apply<'a>(
+        &'a self,
+        request: CollectorApplyRequest,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<CollectorApplyOutcome, ApplicationError>>
+                + Send
+                + 'a,
+        >,
+    >;
+}
+
+#[derive(Clone)]
+pub(crate) struct V2CollectorApplyAdapter {
+    service: CollectorService,
+}
+
+impl V2CollectorApplyAdapter {
+    pub(crate) fn new(service: CollectorService) -> Self {
+        Self { service }
+    }
+}
+
+impl CollectorApplyPort for V2CollectorApplyAdapter {
+    fn apply<'a>(
+        &'a self,
+        request: CollectorApplyRequest,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<CollectorApplyOutcome, ApplicationError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(self.service.apply_result(request))
+    }
+}
+
+pub(crate) async fn apply_adapter_output_v2(
+    port: &dyn CollectorApplyPort,
+    run_key: String,
+    station_id: String,
+    endpoint_revision: i64,
+    parent_run_id: Option<String>,
+    next_due_at: Option<String>,
+    output: AdapterOutput,
+) -> Result<CollectorApplyOutcome, ApplicationError> {
+    let mut facts = output.facts;
+    append_station_balance_aggregates(&mut facts.balances);
+    let endpoint_counts = endpoint_counts_from_summary(&output.summary_json, &output.status);
+    let request = CollectorApplyRequest {
+        run_key,
+        station_id,
+        endpoint_revision,
+        parent_run_id,
+        adapter: output.adapter,
+        task_type: output.task.as_str().to_string(),
+        status: output.status.clone(),
+        facts: CanonicalCollectorFacts {
+            balances: facts
+                .balances
+                .into_iter()
+                .map(|fact| CanonicalBalanceFact {
+                    station_id: fact.station_id,
+                    station_key_id: fact.station_key_id,
+                    scope: fact.scope,
+                    value: fact.value,
+                    used_value: fact.used_value,
+                    total_value: fact.total_value,
+                    today_request_count: fact.today_request_count,
+                    total_request_count: fact.total_request_count,
+                    today_consumption: fact.today_consumption,
+                    total_consumption: fact.total_consumption,
+                    today_base_consumption: fact.today_base_consumption,
+                    total_base_consumption: fact.total_base_consumption,
+                    today_token_count: fact.today_token_count,
+                    total_token_count: fact.total_token_count,
+                    today_input_token_count: fact.today_input_token_count,
+                    today_output_token_count: fact.today_output_token_count,
+                    total_input_token_count: fact.total_input_token_count,
+                    total_output_token_count: fact.total_output_token_count,
+                    account_concurrency_limit: fact.account_concurrency_limit,
+                    currency: fact.currency,
+                    credit_unit: fact.credit_unit,
+                    status: fact.status,
+                    source: fact.source,
+                    confidence: fact.confidence,
+                    collected_at: fact.collected_at,
+                })
+                .collect(),
+            groups: facts
+                .groups
+                .into_iter()
+                .map(|fact| CanonicalGroupFact {
+                    station_id: fact.station_id,
+                    group_id: fact.group_id,
+                    group_key_hash: fact.group_key_hash,
+                    group_name: fact.group_name,
+                    source: fact.source,
+                    confidence: fact.confidence,
+                    inferred_group_category: fact.inferred_group_category,
+                    raw_json_redacted: fact.raw_json_redacted,
+                })
+                .collect(),
+            rates: facts
+                .rates
+                .into_iter()
+                .map(|fact| CanonicalRateFact {
+                    station_id: fact.station_id,
+                    station_key_id: fact.station_key_id,
+                    group_id: fact.group_id,
+                    group_key_hash: fact.group_key_hash,
+                    group_name: fact.group_name,
+                    default_rate_multiplier: fact.default_rate_multiplier,
+                    user_rate_multiplier: fact.user_rate_multiplier,
+                    effective_rate_multiplier: fact.effective_rate_multiplier,
+                    inferred_group_category: fact.inferred_group_category,
+                    source: fact.source,
+                    confidence: fact.confidence,
+                    checked_at: fact.checked_at,
+                    raw_json_redacted: fact.raw_json_redacted,
+                })
+                .collect(),
+            models: facts
+                .models
+                .into_iter()
+                .map(|fact| CanonicalModelFact {
+                    station_id: fact.station_id,
+                    model: fact.model,
+                    available: fact.available,
+                    source: fact.source,
+                    confidence: fact.confidence,
+                })
+                .collect(),
+        },
+        summary_json: output.summary_json,
+        normalized_json: output.normalized_json,
+        raw_json_redacted: output.raw_json_redacted,
+        error_code: output.error_code,
+        error_message: output.error_message,
+        endpoint_count: endpoint_counts.0,
+        success_count: endpoint_counts.1,
+        failure_count: endpoint_counts.2,
+        manual_action_required: output.status == "manual_required",
+        next_due_at,
+    };
+    port.apply(request).await
 }
 
 #[cfg(test)]

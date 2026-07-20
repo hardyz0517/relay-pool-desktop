@@ -7,12 +7,9 @@ use std::{
 };
 
 use crate::{
-    application::request_lifecycle_persistence::RequestLifecyclePersistenceService,
+    application::request_finalization::RequestFinalizationService,
     models::proxy::{ProxyLifecycle, ProxyStatus},
-    persistence::{
-        runtime::PersistenceRuntime,
-        stores::request_log_store::RequestLogStore,
-    },
+    persistence::runtime::PersistenceRuntime,
     services::{
         database::{now_millis_for_services, AppDatabase},
         proxy::{
@@ -186,17 +183,16 @@ impl ProxyRuntimeState {
         })?;
         let persistence_runtime = Arc::new(
             PersistenceRuntime::open_current(config.database.db_path())
-            .await
-            .map_err(|error| {
-                let message = format!("open persistence runtime failed: {error}");
-                let failed = failed_status(config.port, message.clone());
-                self.publish_status(failed);
-                message
-            })?,
+                .await
+                .map_err(|error| {
+                    let message = format!("open persistence runtime failed: {error}");
+                    let failed = failed_status(config.port, message.clone());
+                    self.publish_status(failed);
+                    message
+                })?,
         );
-        let lifecycle_store = Arc::new(RequestLifecyclePersistenceService::new(
-            persistence_runtime,
-            RequestLogStore,
+        let lifecycle_store = Arc::new(RequestFinalizationService::new(
+            persistence_runtime.handle(),
         ));
         let (lifecycle_writer, lifecycle_worker) =
             LifecycleWriter::start(lifecycle_writer_capacity(&config.limits), lifecycle_store)
