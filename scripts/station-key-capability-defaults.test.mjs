@@ -8,6 +8,8 @@ const poolPage = readFileSync("src/features/key-pool/KeyPoolPage.tsx", "utf8");
 const stationKeysApi = readFileSync("src/lib/api/stationKeys.ts", "utf8");
 
 assert.match(defaults, /OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS/);
+assert.match(defaults, /supportsTools:\s*true/);
+assert.match(defaults, /supportsReasoning:\s*true/);
 assert.match(featureDefaults, /@\/lib\/stationKeyCapabilityDefaults/);
 assert.match(poolPage, /schedulable/);
 assert.doesNotMatch(editPage, /supportsTools:\s*true/);

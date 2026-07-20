@@ -1,13 +1,15 @@
-use std::sync::{
-    atomic::{AtomicU32, AtomicU64, Ordering},
-    Arc,
+use std::{
+    sync::{
+        atomic::{AtomicU32, AtomicU64, Ordering},
+        Arc, OnceLock,
+    },
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
     body::{to_bytes, Body},
     extract::State,
     http::{header, HeaderMap, Method, Response, StatusCode, Uri},
-    response::IntoResponse,
     routing::{get, post},
     Router,
 };
@@ -19,12 +21,21 @@ use crate::models::routing::RouteEndpointKind;
 
 use super::{
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
+    lifecycle::{
+        delivery::DeliveryTerminal,
+        request::{
+            FinalRequestRecord, RequestContextSnapshot, RequestFailure, RequestStartRecord,
+            RequestTerminal, RequestTerminalSnapshot,
+        },
+        writer::{LifecycleWriter, WriterAdmissionError},
+    },
     limits::{BodyBudget, BodyBudgetError, ProxyServerLimits, RequestLease},
     local_auth::{self, AuthDecision},
+    observability::RequestObservation,
     request::{
-        CanonicalProxyRequest, ProxyHttpResponse, ProxyResponsePayload, RequestRequirements,
+        CanonicalProxyRequest, ProxyHttpResponse, ProxyResponsePayload, RequestLifecycleAdmission,
+        RequestRequirements,
     },
-    routing_repository::FinalRequestOutcome,
 };
 
 const REQUEST_ID_HEADER: &str = "x-relay-request-id";
@@ -53,6 +64,7 @@ pub(crate) struct IngressState {
     active_requests: Arc<AtomicU32>,
     request_count: Arc<AtomicU64>,
     executor: Arc<dyn IngressExecutor>,
+    lifecycle_writer: Option<LifecycleWriter>,
 }
 
 impl IngressState {
@@ -67,6 +79,7 @@ impl IngressState {
             executor,
             Arc::new(AtomicU32::new(0)),
             Arc::new(AtomicU64::new(0)),
+            None,
         )
     }
 
@@ -76,6 +89,7 @@ impl IngressState {
         executor: Arc<dyn IngressExecutor>,
         active_requests: Arc<AtomicU32>,
         request_count: Arc<AtomicU64>,
+        lifecycle_writer: Option<LifecycleWriter>,
     ) -> Self {
         Self {
             local_access_key: local_access_key.into(),
@@ -85,6 +99,7 @@ impl IngressState {
             request_count,
             limits,
             executor,
+            lifecycle_writer,
         }
     }
 }
@@ -97,7 +112,7 @@ pub(crate) fn router(state: Arc<IngressState>) -> Router {
         .route("/v1/chat/completions", post(handle).options(handle))
         .route("/v1/responses", post(handle).options(handle))
         .route("/v1/embeddings", post(handle).options(handle))
-        .fallback(not_found)
+        .fallback(handle)
         .with_state(state)
 }
 
@@ -152,34 +167,29 @@ async fn handle(
         }
     }
 
-    let endpoint = match endpoint_for(&method, uri.path()) {
-        Some(endpoint) => endpoint,
-        None => {
-            return with_cors(
-                failure_response(proxy_failure(
-                    ProxyFailureCode::InternalProxyError,
-                    StatusCode::METHOD_NOT_ALLOWED,
-                    "method is not allowed for local proxy endpoint",
-                )),
-                &request_id,
-                cors_origin,
-            )
-        }
+    let route = route_disposition(&method, uri.path());
+    let lifecycle_context = request_lifecycle_context(
+        &request_id,
+        &method,
+        uri.path(),
+        route_context_endpoint(&route),
+    );
+    let lifecycle_admission = match admit_request_lifecycle(&state, lifecycle_context).await {
+        Ok(admission) => admission,
+        Err(failure) => return with_cors(failure_response(failure), &request_id, cors_origin),
     };
     let content_length = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<usize>().ok());
     if content_length.is_some_and(|length| length > state.limits.max_body_bytes) {
-        return with_cors(
-            failure_response(proxy_failure(
-                ProxyFailureCode::RequestBodyTooLarge,
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "request body is too large",
-            )),
-            &request_id,
-            cors_origin,
+        let failure = proxy_failure(
+            ProxyFailureCode::RequestBodyTooLarge,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "request body is too large",
         );
+        finalize_ingress_failure(lifecycle_admission, &failure).await;
+        return with_cors(failure_response(failure), &request_id, cors_origin);
     }
     let body = match timeout(
         state.limits.body_timeout,
@@ -189,15 +199,13 @@ async fn handle(
     {
         Ok(Ok(body)) if body.len() <= state.limits.max_body_bytes => body,
         Ok(Ok(_)) => {
-            return with_cors(
-                failure_response(proxy_failure(
-                    ProxyFailureCode::RequestBodyTooLarge,
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    "request body is too large",
-                )),
-                &request_id,
-                cors_origin,
-            )
+            let failure = proxy_failure(
+                ProxyFailureCode::RequestBodyTooLarge,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request body is too large",
+            );
+            finalize_ingress_failure(lifecycle_admission, &failure).await;
+            return with_cors(failure_response(failure), &request_id, cors_origin);
         }
         Ok(Err(error)) => {
             let mut failure = proxy_failure(
@@ -206,37 +214,59 @@ async fn handle(
                 "request body is invalid",
             );
             failure.internal_detail = Some(error.to_string());
+            finalize_ingress_failure(lifecycle_admission, &failure).await;
             return with_cors(failure_response(failure), &request_id, cors_origin);
         }
         Err(_) => {
-            return with_cors(
-                failure_response(proxy_failure(
-                    ProxyFailureCode::RequestBodyTimeout,
-                    StatusCode::REQUEST_TIMEOUT,
-                    "request body timed out",
-                )),
-                &request_id,
-                cors_origin,
-            )
+            let failure = proxy_failure(
+                ProxyFailureCode::RequestBodyTimeout,
+                StatusCode::REQUEST_TIMEOUT,
+                "request body timed out",
+            );
+            finalize_ingress_failure(lifecycle_admission, &failure).await;
+            return with_cors(failure_response(failure), &request_id, cors_origin);
+        }
+    };
+    let (model, stream, reasoning_effort, requirements, previous_response_id) =
+        match request_metadata(&body) {
+            Ok(metadata) => metadata,
+            Err(failure) => {
+                finalize_ingress_failure(lifecycle_admission, &failure).await;
+                return with_cors(failure_response(failure), &request_id, cors_origin);
+            }
+        };
+    let endpoint = match route {
+        RouteDisposition::Known(endpoint) => endpoint,
+        RouteDisposition::UnknownRoute => {
+            let failure = proxy_failure(
+                ProxyFailureCode::InternalProxyError,
+                StatusCode::NOT_FOUND,
+                "local proxy endpoint was not found",
+            );
+            finalize_ingress_failure(lifecycle_admission, &failure).await;
+            return with_cors(failure_response(failure), &request_id, cors_origin);
+        }
+        RouteDisposition::MethodNotAllowed => {
+            let failure = proxy_failure(
+                ProxyFailureCode::InternalProxyError,
+                StatusCode::METHOD_NOT_ALLOWED,
+                "method is not allowed for local proxy endpoint",
+            );
+            finalize_ingress_failure(lifecycle_admission, &failure).await;
+            return with_cors(failure_response(failure), &request_id, cors_origin);
         }
     };
     let body_budget = match state.body_budget.acquire(body.len()).await {
         Ok(lease) => lease,
         Err(BodyBudgetError::InsufficientCapacity) => {
-            return with_cors(
-                failure_response(proxy_failure(
-                    ProxyFailureCode::LocalProxyMemoryBusy,
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "local proxy body budget is exhausted",
-                )),
-                &request_id,
-                cors_origin,
-            )
+            let failure = proxy_failure(
+                ProxyFailureCode::LocalProxyMemoryBusy,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "local proxy body budget is exhausted",
+            );
+            finalize_ingress_failure(lifecycle_admission, &failure).await;
+            return with_cors(failure_response(failure), &request_id, cors_origin);
         }
-    };
-    let (model, stream, requirements, previous_response_id) = match request_metadata(&body) {
-        Ok(metadata) => metadata,
-        Err(failure) => return with_cors(failure_response(failure), &request_id, cors_origin),
     };
     let canonical = CanonicalProxyRequest::new(
         request_id.clone(),
@@ -244,12 +274,14 @@ async fn handle(
         endpoint,
         model,
         stream,
+        reasoning_effort,
         requirements,
         body,
         forwarded_headers(&headers),
         header_string(&headers, "idempotency-key"),
         header_string(&headers, "x-relay-session-hash"),
         previous_response_id,
+        lifecycle_admission,
         body_budget,
         request_lease,
     );
@@ -259,12 +291,126 @@ async fn handle(
     }
 }
 
-async fn not_found() -> impl IntoResponse {
-    failure_response(proxy_failure(
-        ProxyFailureCode::InternalProxyError,
-        StatusCode::NOT_FOUND,
-        "local proxy endpoint was not found",
-    ))
+fn request_lifecycle_context(
+    request_id: &str,
+    method: &Method,
+    path: &str,
+    endpoint: impl Into<String>,
+) -> RequestContextSnapshot {
+    let endpoint = endpoint.into();
+    RequestContextSnapshot {
+        request_id: request_id.to_string(),
+        method: if endpoint == "Models" {
+            "GET".to_string()
+        } else if method == Method::GET {
+            "GET".to_string()
+        } else {
+            "POST".to_string()
+        },
+        local_path: path.to_string(),
+        endpoint,
+        received_at_ms: now_millis(),
+    }
+}
+
+enum RouteDisposition {
+    Known(RouteEndpointKind),
+    UnknownRoute,
+    MethodNotAllowed,
+}
+
+fn route_context_endpoint(route: &RouteDisposition) -> String {
+    match route {
+        RouteDisposition::Known(endpoint) => format!("{endpoint:?}"),
+        RouteDisposition::UnknownRoute => "UnknownRoute".to_string(),
+        RouteDisposition::MethodNotAllowed => "MethodNotAllowed".to_string(),
+    }
+}
+
+fn route_disposition(method: &Method, path: &str) -> RouteDisposition {
+    match (method, path) {
+        (&Method::GET, "/usage") | (&Method::GET, "/v1/usage") | (&Method::GET, "/v1/models") => {
+            RouteDisposition::Known(RouteEndpointKind::Models)
+        }
+        (&Method::POST, "/v1/chat/completions") => {
+            RouteDisposition::Known(RouteEndpointKind::ChatCompletions)
+        }
+        (&Method::POST, "/v1/responses") => RouteDisposition::Known(RouteEndpointKind::Responses),
+        (&Method::POST, "/v1/embeddings") => RouteDisposition::Known(RouteEndpointKind::Embeddings),
+        (_, "/usage")
+        | (_, "/v1/usage")
+        | (_, "/v1/models")
+        | (_, "/v1/chat/completions")
+        | (_, "/v1/responses")
+        | (_, "/v1/embeddings") => RouteDisposition::MethodNotAllowed,
+        _ => RouteDisposition::UnknownRoute,
+    }
+}
+
+async fn admit_request_lifecycle(
+    state: &IngressState,
+    context: RequestContextSnapshot,
+) -> Result<Option<RequestLifecycleAdmission>, ProxyFailure> {
+    let Some(writer) = state.lifecycle_writer.as_ref() else {
+        return Ok(None);
+    };
+    let request_reservation = writer
+        .try_reserve_request()
+        .map_err(lifecycle_admission_failure)?;
+    let (terminal, start_ack) = request_reservation.send_start(RequestStartRecord {
+        context: context.clone(),
+    });
+    start_ack
+        .await
+        .map_err(|_| lifecycle_unavailable_failure("request-start ack dropped"))?
+        .map_err(lifecycle_write_failure)?;
+    Ok(Some(RequestLifecycleAdmission { context, terminal }))
+}
+
+async fn finalize_ingress_failure(
+    admission: Option<RequestLifecycleAdmission>,
+    failure: &ProxyFailure,
+) {
+    let Some(admission) = admission else {
+        return;
+    };
+    let record = FinalRequestRecord::new(
+        admission.context,
+        RequestTerminalSnapshot {
+            terminal: RequestTerminal::Failed(RequestFailure {
+                code: failure.code.as_str().to_string(),
+                detail: Some(failure.public_message.clone()),
+            }),
+            delivery: DeliveryTerminal::NotStarted,
+        },
+        None,
+        failure.attempt_count.unwrap_or(0).clamp(0, u16::MAX as i64) as u16,
+        failure
+            .attempt_count
+            .unwrap_or(0)
+            .saturating_sub(1)
+            .clamp(0, u16::MAX as i64) as u16,
+        Default::default(),
+    );
+    let _ = admission.terminal.send(record).await;
+}
+
+fn lifecycle_admission_failure(error: WriterAdmissionError) -> ProxyFailure {
+    lifecycle_unavailable_failure(format!("lifecycle writer admission rejected: {error:?}"))
+}
+
+fn lifecycle_write_failure(error: super::lifecycle::ports::LifecycleWriteError) -> ProxyFailure {
+    lifecycle_unavailable_failure(format!("lifecycle write failed: {error:?}"))
+}
+
+fn lifecycle_unavailable_failure(message: impl Into<String>) -> ProxyFailure {
+    ProxyFailure::new(
+        ProxyFailureCode::LocalProxyBusy,
+        FailureSource::Local,
+        RetryClass::Never,
+        StatusCode::SERVICE_UNAVAILABLE,
+        message,
+    )
 }
 
 fn acquire_request_lease(state: &IngressState) -> Option<RequestLease> {
@@ -274,22 +420,20 @@ fn acquire_request_lease(state: &IngressState) -> Option<RequestLease> {
         .map(|permit| RequestLease::new(permit, Arc::clone(&state.active_requests)))
 }
 
-fn endpoint_for(method: &Method, path: &str) -> Option<RouteEndpointKind> {
-    match (method, path) {
-        (&Method::GET, "/usage") | (&Method::GET, "/v1/usage") => Some(RouteEndpointKind::Models),
-        (&Method::GET, "/v1/models") => Some(RouteEndpointKind::Models),
-        (&Method::POST, "/v1/chat/completions") => Some(RouteEndpointKind::ChatCompletions),
-        (&Method::POST, "/v1/responses") => Some(RouteEndpointKind::Responses),
-        (&Method::POST, "/v1/embeddings") => Some(RouteEndpointKind::Embeddings),
-        _ => None,
-    }
-}
-
 fn request_metadata(
     body: &Bytes,
-) -> Result<(Option<String>, bool, RequestRequirements, Option<String>), ProxyFailure> {
+) -> Result<
+    (
+        Option<String>,
+        bool,
+        Option<String>,
+        RequestRequirements,
+        Option<String>,
+    ),
+    ProxyFailure,
+> {
     if body.is_empty() {
-        return Ok((None, false, RequestRequirements::default(), None));
+        return Ok((None, false, None, RequestRequirements::default(), None));
     }
     let value = serde_json::from_slice::<serde_json::Value>(body).map_err(|error| {
         let mut failure = proxy_failure(
@@ -312,15 +456,20 @@ fn request_metadata(
         .get("previous_response_id")
         .and_then(serde_json::Value::as_str)
         .map(ToString::to_string);
+    let observation = RequestObservation::from_json(&value);
     let requirements = RequestRequirements {
         uses_tools: value.get("tools").is_some_and(|tools| !tools.is_null()),
         uses_vision: false,
-        uses_reasoning: value
-            .get("reasoning")
-            .is_some_and(|reasoning| !reasoning.is_null()),
+        uses_reasoning: observation.uses_reasoning,
         ..RequestRequirements::default()
     };
-    Ok((model, stream, requirements, previous_response_id))
+    Ok((
+        model,
+        stream,
+        observation.reasoning_effort,
+        requirements,
+        previous_response_id,
+    ))
 }
 
 fn forwarded_headers(headers: &HeaderMap) -> HeaderMap {
@@ -429,9 +578,26 @@ fn proxy_failure(
 }
 
 fn next_request_id() -> String {
+    static PROCESS_NAMESPACE: OnceLock<(u64, u32)> = OnceLock::new();
     static NEXT_REQUEST_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let &(process_started_at_ms, process_id) = PROCESS_NAMESPACE.get_or_init(|| {
+        let started_at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u64::MAX as u128) as u64;
+        (started_at_ms, std::process::id())
+    });
     let id = NEXT_REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    format!("req_{id:016x}")
+    format!("req_{process_started_at_ms:016x}_{process_id:08x}_{id:016x}")
+}
+
+fn now_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(i64::MAX as u128) as i64
 }
 
 pub(crate) struct NotWiredExecutor;
@@ -448,7 +614,6 @@ impl IngressExecutor for NotWiredExecutor {
                 payload: ProxyResponsePayload::Buffered(Bytes::from_static(
                     br#"{"error":{"message":"v2 execution not wired","type":"relay_pool_error","param":null,"code":"v2_execution_not_wired"}}"#,
                 )),
-                outcome: FinalRequestOutcome::success("not_wired"),
             })
         })
     }
@@ -470,6 +635,22 @@ mod tests {
     use crate::services::proxy::limits::ProxyServerLimits;
 
     use super::*;
+
+    #[test]
+    fn request_ids_include_a_process_namespace() {
+        let request_id = next_request_id();
+        let segments = request_id.split('_').collect::<Vec<_>>();
+
+        assert_eq!(
+            segments.len(),
+            4,
+            "request ids must include process-start and pid namespaces so a restart cannot reuse persisted ids"
+        );
+        assert_eq!(segments[0], "req");
+        assert!(segments[1].len() >= 13);
+        assert_eq!(segments[2].len(), 8);
+        assert_eq!(segments[3].len(), 16);
+    }
 
     #[tokio::test]
     async fn ingress_requires_auth_and_returns_request_id() {
@@ -751,7 +932,6 @@ mod tests {
                     payload: ProxyResponsePayload::Buffered(Bytes::from_static(
                         br#"{"error":{"message":"v2 execution not wired","type":"relay_pool_error","param":null,"code":"v2_execution_not_wired"}}"#,
                     )),
-                    outcome: FinalRequestOutcome::success("not_wired"),
                 })
             })
         }

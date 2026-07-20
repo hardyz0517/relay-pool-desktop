@@ -53,6 +53,7 @@ zeroize = "1"
 
 [dev-dependencies]
 syn = { version = "2", features = ["full", "visit"] }
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }

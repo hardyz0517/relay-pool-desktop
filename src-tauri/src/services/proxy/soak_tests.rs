@@ -4,17 +4,17 @@ use http::StatusCode;
 
 use crate::services::{
     database::AppDatabase,
-    proxy::runtime::{ProxyRuntimeMode, ProxyRuntimeState, ProxyStartConfig},
+    proxy::runtime::{ProxyRuntimeState, ProxyStartConfig},
     secrets::crypto::generate_data_key,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn v2_soak_returns_all_resource_counters_to_zero() {
-    let database = AppDatabase::new_in_memory_for_tests().expect("database");
+    let database = AppDatabase::new_temp_file_for_tests("soak").expect("database");
     database
         .update_local_access_key("relay-local-secret".to_string())
         .expect("local key");
-    let runtime = ProxyRuntimeState::for_tests(ProxyRuntimeMode::V2);
+    let runtime = ProxyRuntimeState::for_tests();
     let started = runtime
         .start(ProxyStartConfig::new(database, generate_data_key(), 0))
         .await

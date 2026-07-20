@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { CheckCheck, ChevronLeft, ChevronRight, RefreshCw, Search, Trash2 } from "lucide-react";
+import { CheckCheck, RefreshCw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   usePageRefreshEnabled,
@@ -9,6 +9,7 @@ import {
   Button,
   ConfirmDialog,
   EmptyState,
+  Pagination,
   SegmentedControl,
   SelectControl,
   StatusBadge,
@@ -272,31 +273,13 @@ export function ChangeCenterPage() {
                 </label>
               </div>
 
-              <div className="flex items-center" aria-label="变更中心分页">
-                <button
-                  type="button"
-                  aria-label="上一页"
-                  title="上一页"
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
-                  disabled={loading || saving || pageInfo.page <= 1}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-l-[4px] border border-border bg-surface text-muted-foreground transition-colors hover:bg-surface-subtle hover:text-foreground focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:text-muted-foreground/45"
-                >
-                  <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-                </button>
-                <span className="inline-flex h-8 min-w-9 items-center justify-center border-y border-primary bg-info-surface px-2 font-medium text-info-foreground">
-                  {pageInfo.page}
-                </span>
-                <button
-                  type="button"
-                  aria-label="下一页"
-                  title="下一页"
-                  onClick={() => setPage((current) => Math.min(pageInfo.totalPages, current + 1))}
-                  disabled={loading || saving || pageInfo.page >= pageInfo.totalPages}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-r-[4px] border border-border bg-surface text-muted-foreground transition-colors hover:bg-surface-subtle hover:text-foreground focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:text-muted-foreground/45"
-                >
-                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
-                </button>
-              </div>
+              <Pagination
+                ariaLabel="变更中心分页"
+                page={pageInfo.page}
+                totalPages={pageInfo.totalPages}
+                disabled={loading || saving}
+                onPageChange={setPage}
+              />
             </div>
           )}
         </div>

@@ -324,13 +324,12 @@ assert.ok(
 
 assert.ok(
   pageSource.includes("function StationIssueTagBadge") &&
-    pageSource.includes("tabIndex={tag.title ? 0 : undefined}") &&
-    pageSource.includes("aria-describedby={tag.title ? tooltipId : undefined}") &&
-    pageSource.includes('role="tooltip"') &&
-    pageSource.includes("group-hover/tag:visible") &&
-    pageSource.includes("group-focus/tag:visible") &&
-    pageSource.includes("title={tag.title ?? tag.label}"),
-  "detailed station issue tags should expose the same reason on hover, keyboard focus, ARIA, and native-title fallback",
+    pageSource.includes("title={tag.title ?? tag.label}") &&
+    !pageSource.includes('role="tooltip"') &&
+    !pageSource.includes("group-hover/tag:visible") &&
+    !pageSource.includes("group-focus/tag:visible") &&
+    !pageSource.includes("aria-describedby={tag.title ? tooltipId : undefined}"),
+  "detailed station issue tags should rely on the native title and not render a duplicate custom tooltip",
 );
 
 assert.ok(

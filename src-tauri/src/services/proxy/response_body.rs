@@ -1,143 +1,211 @@
 use std::{
     future::Future,
     pin::Pin,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
     task::{Context, Poll},
     time::Duration,
 };
 
 use bytes::Bytes;
 use futures_util::Stream;
-use tokio::{
-    sync::{mpsc, OwnedSemaphorePermit, Semaphore},
-    time::Sleep,
-};
+use tokio::time::Sleep;
 
 use super::{
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
+    lifecycle::{
+        attempt::{
+            AttemptContext, AttemptFailureKind, AttemptTerminal, AttemptTerminalRecord,
+            ClassifiedAttemptFailure, FailureBlame, HealthEffect, RetryDisposition,
+        },
+        delivery::DeliveryTerminal,
+        request::PendingFinalRequestRecord,
+        writer::{AttemptWriteReservation, RequestTerminalReservation},
+    },
+    limits::RequestLease,
     observability::SseUsageObserver,
     request::ByteStream,
-    routing_repository::{FinalRequestOutcome, RoutingRepository},
 };
 
 use crate::services::database::now_millis_for_services;
 
 const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
-#[derive(Clone)]
-pub(crate) struct FinalizationDispatcher {
-    sender: mpsc::Sender<FinalizationJob>,
-    semaphore: Arc<Semaphore>,
+pub(crate) struct SelectedAttemptFinalization {
+    reservation: AttemptWriteReservation,
+    context: AttemptContext,
 }
 
-impl FinalizationDispatcher {
-    pub(crate) fn new(capacity: usize, repository: Arc<dyn RoutingRepository>) -> Self {
-        let capacity = capacity.max(1);
-        let (sender, mut receiver) = mpsc::channel::<FinalizationJob>(capacity);
-        tauri::async_runtime::spawn(async move {
-            while let Some(job) = receiver.recv().await {
-                let _permit = job.permit;
-                let _ = repository.record_final_outcome(job.outcome).await;
-            }
-        });
+impl SelectedAttemptFinalization {
+    pub(crate) fn new(reservation: AttemptWriteReservation, context: AttemptContext) -> Self {
         Self {
-            sender,
-            semaphore: Arc::new(Semaphore::new(capacity)),
+            reservation,
+            context,
+        }
+    }
+}
+
+pub(crate) struct LifecycleFinalizationLease {
+    terminal: Option<RequestTerminalReservation>,
+    selected_attempt: Option<SelectedAttemptFinalization>,
+    finalized: bool,
+}
+
+enum FinalizationState {
+    Lifecycle(PendingFinalRequestRecord),
+}
+
+pub(crate) enum FinalizationOutcome {
+    Completed,
+    Failed {
+        code: String,
+        detail: Option<String>,
+    },
+    Interrupted {
+        detail: Option<String>,
+    },
+}
+
+enum FinalizationTarget {
+    Lifecycle(LifecycleFinalizationLease),
+}
+
+impl LifecycleFinalizationLease {
+    pub(crate) fn new(
+        terminal: RequestTerminalReservation,
+        selected_attempt: Option<SelectedAttemptFinalization>,
+    ) -> Self {
+        Self {
+            terminal: Some(terminal),
+            selected_attempt,
+            finalized: false,
         }
     }
 
-    pub(crate) fn try_reserve(&self) -> Option<FinalizationLease> {
-        Arc::clone(&self.semaphore)
-            .try_acquire_owned()
-            .ok()
-            .map(|permit| FinalizationLease {
-                sender: self.sender.clone(),
-                permit: Some(permit),
-                finalized: Arc::new(AtomicBool::new(false)),
-            })
-    }
-}
-
-pub(crate) struct FinalizationLease {
-    sender: mpsc::Sender<FinalizationJob>,
-    permit: Option<OwnedSemaphorePermit>,
-    finalized: Arc<AtomicBool>,
-}
-
-impl FinalizationLease {
-    pub(crate) fn finalize(mut self, outcome: FinalRequestOutcome) {
-        if self.finalized.swap(true, Ordering::AcqRel) {
+    pub(crate) fn finalize(
+        mut self,
+        record: PendingFinalRequestRecord,
+        delivery: DeliveryTerminal,
+        outcome: FinalizationOutcome,
+        attempt_terminal: Option<AttemptTerminal>,
+    ) {
+        if self.finalized {
             return;
         }
-        let Some(permit) = self.permit.take() else {
+        self.finalized = true;
+        let Some(terminal) = self.terminal.take() else {
             return;
         };
-        let job = FinalizationJob { outcome, permit };
-        match self.sender.try_send(job) {
-            Ok(()) => {}
-            Err(tokio::sync::mpsc::error::TrySendError::Full(job))
-            | Err(tokio::sync::mpsc::error::TrySendError::Closed(job)) => {
-                let sender = self.sender.clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = sender.send(job).await;
-                });
+        if let Some(selected_attempt) = self.selected_attempt.take() {
+            if let Some(attempt_terminal) = attempt_terminal {
+                let record = AttemptTerminalRecord {
+                    context: selected_attempt.context,
+                    terminal: attempt_terminal,
+                    output_committed: record.annotations().body_bytes.unwrap_or_default() > 0,
+                    terminal_at_ms: now_millis_for_services() as i64,
+                };
+                let _attempt_ack = selected_attempt.reservation.send(record);
+            }
+        }
+        let final_record = match outcome {
+            FinalizationOutcome::Completed => record.complete(delivery),
+            FinalizationOutcome::Failed { code, detail } => record.fail(code, detail, delivery),
+            FinalizationOutcome::Interrupted { detail } => record.interrupt(delivery, detail),
+        };
+        let _ack = terminal.send(final_record);
+    }
+}
+
+impl FinalizationTarget {
+    fn finalize(
+        self,
+        state: FinalizationState,
+        delivery: DeliveryTerminal,
+        outcome: FinalizationOutcome,
+        attempt_terminal: Option<AttemptTerminal>,
+    ) {
+        match (self, state) {
+            (Self::Lifecycle(lease), FinalizationState::Lifecycle(record)) => {
+                lease.finalize(record, delivery, outcome, attempt_terminal)
             }
         }
     }
 }
 
-struct FinalizationJob {
-    outcome: FinalRequestOutcome,
-    permit: OwnedSemaphorePermit,
-}
-
-pub(crate) fn buffered_finalizing_stream(
+pub(crate) fn buffered_lifecycle_finalizing_stream(
     body: Bytes,
-    outcome: FinalRequestOutcome,
-    lease: FinalizationLease,
+    record: PendingFinalRequestRecord,
+    lease: LifecycleFinalizationLease,
+    request_lease: RequestLease,
 ) -> ByteStream {
-    finalizing_stream(
+    lifecycle_finalizing_stream(
         Box::pin(futures_util::stream::once(async move { Ok(body) })),
-        outcome,
+        record,
         lease,
+        request_lease,
     )
 }
 
-pub(crate) fn finalizing_stream(
+pub(crate) fn lifecycle_finalizing_stream(
     stream: ByteStream,
-    outcome: FinalRequestOutcome,
-    lease: FinalizationLease,
+    record: PendingFinalRequestRecord,
+    lease: LifecycleFinalizationLease,
+    request_lease: RequestLease,
 ) -> ByteStream {
-    finalizing_stream_with_idle_timeout(stream, outcome, lease, DEFAULT_STREAM_IDLE_TIMEOUT)
+    lifecycle_finalizing_stream_with_idle_timeout(
+        stream,
+        record,
+        lease,
+        request_lease,
+        DEFAULT_STREAM_IDLE_TIMEOUT,
+    )
 }
 
-pub(crate) fn finalizing_stream_with_idle_timeout(
+pub(crate) fn lifecycle_finalizing_stream_with_idle_timeout(
     stream: ByteStream,
-    outcome: FinalRequestOutcome,
-    lease: FinalizationLease,
+    record: PendingFinalRequestRecord,
+    lease: LifecycleFinalizationLease,
+    request_lease: RequestLease,
     idle_timeout: Duration,
 ) -> ByteStream {
-    Box::pin(FinalizingStream {
+    finalizing_stream_with_target(
         stream,
-        outcome: Some(outcome),
-        lease: Some(lease),
+        FinalizationState::Lifecycle(record),
+        FinalizationTarget::Lifecycle(lease),
+        Some(request_lease),
+        idle_timeout,
+    )
+}
+
+fn finalizing_stream_with_target(
+    stream: ByteStream,
+    state: FinalizationState,
+    target: FinalizationTarget,
+    request_lease: Option<RequestLease>,
+    idle_timeout: Duration,
+) -> ByteStream {
+    let now_ms = now_millis_for_services() as i64;
+    let started_at_ms = match &state {
+        FinalizationState::Lifecycle(record) => record.context().received_at_ms.min(now_ms),
+    };
+    Box::pin(LifecycleBody {
+        stream,
+        state: Some(state),
+        target: Some(target),
+        request_lease,
         observer: SseUsageObserver::default(),
         idle_timeout,
         sleep: None,
         completed: false,
         body_bytes: 0,
         first_token_ms: None,
-        started_at_ms: now_millis_for_services() as i64,
+        started_at_ms,
     })
 }
 
-struct FinalizingStream {
+struct LifecycleBody {
     stream: ByteStream,
-    outcome: Option<FinalRequestOutcome>,
-    lease: Option<FinalizationLease>,
+    state: Option<FinalizationState>,
+    target: Option<FinalizationTarget>,
+    request_lease: Option<RequestLease>,
     observer: SseUsageObserver,
     idle_timeout: Duration,
     sleep: Option<Pin<Box<Sleep>>>,
@@ -147,7 +215,7 @@ struct FinalizingStream {
     started_at_ms: i64,
 }
 
-impl Stream for FinalizingStream {
+impl Stream for LifecycleBody {
     type Item = Result<Bytes, ProxyFailure>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -166,8 +234,17 @@ impl Stream for FinalizingStream {
                 Poll::Ready(Some(Err(failure)))
             }
             Poll::Ready(None) => {
+                if self.responses_stream_ended_incomplete() {
+                    let failure = incomplete_responses_stream_failure();
+                    self.finalize_failure(&failure, "body_incomplete");
+                    return Poll::Ready(Some(Err(failure)));
+                }
                 self.completed = true;
-                self.finalize_once();
+                self.finalize_once(
+                    DeliveryTerminal::BodyCompleted,
+                    FinalizationOutcome::Completed,
+                    Some(AttemptTerminal::Succeeded),
+                );
                 Poll::Ready(None)
             }
             Poll::Pending => {
@@ -187,25 +264,61 @@ impl Stream for FinalizingStream {
     }
 }
 
-impl FinalizingStream {
-    fn finalize_once(&mut self) {
-        self.apply_observations();
-        if let (Some(outcome), Some(lease)) = (self.outcome.take(), self.lease.take()) {
-            lease.finalize(outcome);
+impl LifecycleBody {
+    fn responses_stream_ended_incomplete(&self) -> bool {
+        match self.state.as_ref() {
+            Some(FinalizationState::Lifecycle(record)) => {
+                record.annotations().stream
+                    && record.context().local_path == "/v1/responses"
+                    && !self.observer.response_completed()
+            }
+            None => false,
         }
     }
 
+    fn finalize_once(
+        &mut self,
+        delivery: DeliveryTerminal,
+        outcome: FinalizationOutcome,
+        attempt_terminal: Option<AttemptTerminal>,
+    ) {
+        self.apply_observations();
+        if let (Some(state), Some(target)) = (self.state.take(), self.target.take()) {
+            target.finalize(state, delivery, outcome, attempt_terminal);
+        }
+        self.request_lease.take();
+    }
+
     fn finalize_failure(&mut self, failure: &ProxyFailure, completion_source: &str) {
-        if let Some(outcome) = self.outcome.as_mut() {
-            outcome.status = "failed".to_string();
-            outcome.lifecycle_status = Some(failure.code.as_str().to_string());
-            outcome.error_message = Some(failure.public_message.clone());
-            outcome.failure_source = Some(failure_source_label(failure.source).to_string());
-            outcome.completion_source = Some(completion_source.to_string());
-            outcome.feedback = None;
+        match self.state.as_mut() {
+            Some(FinalizationState::Lifecycle(record)) => {
+                record.annotations_mut().failure_source =
+                    Some(failure_source_label(failure.source).to_string());
+                record.annotations_mut().completion_source = Some(completion_source.to_string());
+            }
+            None => {}
         }
         self.completed = true;
-        self.finalize_once();
+        let attempt_terminal = if failure.source == FailureSource::Upstream {
+            Some(AttemptTerminal::Failed(ClassifiedAttemptFailure {
+                kind: AttemptFailureKind::StreamInterrupted,
+                blame: FailureBlame::Upstream,
+                retry: RetryDisposition::StopRequest,
+                health: HealthEffect::ObserveFailure,
+                public_code: failure.code.as_str().to_string(),
+                sanitized_detail: Some(failure.public_message.clone()),
+            }))
+        } else {
+            None
+        };
+        self.finalize_once(
+            DeliveryTerminal::BodyCompleted,
+            FinalizationOutcome::Failed {
+                code: failure.code.as_str().to_string(),
+                detail: Some(failure.public_message.clone()),
+            },
+            attempt_terminal,
+        );
     }
 
     fn observe_chunk(&mut self, bytes: &Bytes) {
@@ -218,26 +331,28 @@ impl FinalizingStream {
     }
 
     fn apply_observations(&mut self) {
-        if let Some(outcome) = self.outcome.as_mut() {
-            if self.body_bytes > 0 {
-                outcome.body_bytes = Some(self.body_bytes);
+        match self.state.as_mut() {
+            Some(FinalizationState::Lifecycle(record)) => {
+                let annotations = record.annotations_mut();
+                if self.body_bytes > 0 {
+                    annotations.body_bytes = Some(self.body_bytes);
+                }
+                if annotations.first_token_ms.is_none() {
+                    annotations.first_token_ms = self.first_token_ms;
+                }
+                if let Some(usage) = self.observer.usage() {
+                    annotations.prompt_tokens = usage.input_tokens.or(annotations.prompt_tokens);
+                    annotations.completion_tokens =
+                        usage.output_tokens.or(annotations.completion_tokens);
+                    annotations.total_tokens = usage.total_tokens.or(annotations.total_tokens);
+                    annotations.cache_creation_tokens = usage
+                        .cache_creation_tokens
+                        .or(annotations.cache_creation_tokens);
+                    annotations.cache_read_tokens =
+                        usage.cache_read_tokens.or(annotations.cache_read_tokens);
+                }
             }
-            if outcome.first_token_ms.is_none() {
-                outcome.first_token_ms = self.first_token_ms;
-            }
-            if let Some(usage) = self.observer.usage() {
-                outcome.prompt_tokens = usage.input_tokens.or(outcome.prompt_tokens);
-                outcome.completion_tokens = usage.output_tokens.or(outcome.completion_tokens);
-                outcome.total_tokens = usage.total_tokens.or(outcome.total_tokens);
-                outcome.cache_creation_tokens = usage
-                    .cache_creation_tokens
-                    .or(outcome.cache_creation_tokens);
-                outcome.cache_read_tokens = usage.cache_read_tokens.or(outcome.cache_read_tokens);
-            }
-            let now = now_millis_for_services().to_string();
-            outcome.finished_at = now;
-            outcome.duration_ms =
-                Some((now_millis_for_services() as i64 - self.started_at_ms).max(0));
+            None => {}
         }
     }
 
@@ -246,16 +361,29 @@ impl FinalizingStream {
     }
 
     fn finalize_downstream_drop(&mut self) {
-        if let Some(outcome) = self.outcome.as_mut() {
-            outcome.status = "interrupted".to_string();
-            outcome.lifecycle_status = Some("downstream_dropped".to_string());
-            outcome.error_message =
-                Some("downstream disconnected before body completion".to_string());
-            outcome.failure_source = Some("downstream".to_string());
-            outcome.completion_source = Some("downstream_dropped".to_string());
-            outcome.feedback = None;
+        match self.state.as_mut() {
+            Some(FinalizationState::Lifecycle(record)) => {
+                record.annotations_mut().failure_source = Some("downstream".to_string());
+                record.annotations_mut().completion_source = Some("downstream_dropped".to_string());
+            }
+            None => {}
         }
-        self.finalize_once();
+        self.finalize_once(
+            DeliveryTerminal::DownstreamDropped,
+            FinalizationOutcome::Interrupted {
+                detail: Some("downstream disconnected before body completion".to_string()),
+            },
+            Some(AttemptTerminal::Failed(ClassifiedAttemptFailure {
+                kind: AttemptFailureKind::DownstreamDrop,
+                blame: FailureBlame::Downstream,
+                retry: RetryDisposition::StopRequest,
+                health: HealthEffect::Neutral,
+                public_code: "DownstreamDropped".to_string(),
+                sanitized_detail: Some(
+                    "downstream disconnected before body completion".to_string(),
+                ),
+            })),
+        );
     }
 }
 
@@ -269,7 +397,17 @@ fn stream_idle_timeout_failure(timeout: Duration) -> ProxyFailure {
     )
 }
 
-impl Drop for FinalizingStream {
+fn incomplete_responses_stream_failure() -> ProxyFailure {
+    ProxyFailure::new(
+        ProxyFailureCode::UpstreamStreamFailed,
+        FailureSource::Upstream,
+        RetryClass::AfterCommitStop,
+        http::StatusCode::BAD_GATEWAY,
+        "upstream responses stream ended before response.completed",
+    )
+}
+
+impl Drop for LifecycleBody {
     fn drop(&mut self) {
         if !self.completed {
             self.finalize_downstream_drop();
@@ -299,60 +437,151 @@ pub(crate) fn downstream_disconnected_failure() -> ProxyFailure {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, Mutex,
+    };
 
     use bytes::Bytes;
     use futures_util::{future::BoxFuture, stream, StreamExt};
+    use tokio::sync::Semaphore;
 
-    use crate::{
-        models::{pricing::BalanceSnapshot, proxy::RequestLog},
-        services::proxy::{
-            error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
-            router::RichRouteCandidate,
-            routing_repository::{FinalRequestOutcome, RoutingRepository},
+    use crate::services::proxy::{
+        error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
+        lifecycle::{
+            attempt::{
+                AttemptContext, AttemptFailureKind, AttemptTerminal, AttemptTerminalRecord,
+                FailureBlame, HealthEffect, RetryDisposition,
+            },
+            delivery::DeliveryTerminal,
+            ports::{
+                AttemptCommitAck, LifecycleWriteError, RequestCommitAck, RequestLifecycleStore,
+                RequestStartAck,
+            },
+            request::{
+                AttemptId, FinalRequestRecord, PendingFinalRequestRecord, RequestContextSnapshot,
+                RequestLogAnnotations, RequestStartRecord, RequestTerminal,
+            },
+            writer::{LifecycleWriter, LifecycleWriterWorker},
         },
+        limits::RequestLease,
     };
 
     use super::{
-        buffered_finalizing_stream, finalizing_stream, finalizing_stream_with_idle_timeout,
-        FinalizationDispatcher,
+        buffered_lifecycle_finalizing_stream, lifecycle_finalizing_stream_with_idle_timeout,
+        LifecycleFinalizationLease, SelectedAttemptFinalization,
     };
 
     #[tokio::test]
     async fn response_body_finalizes_success_only_after_eof() {
-        let repository = Arc::new(RecordingRepository::default());
-        let dispatcher = FinalizationDispatcher::new(1, repository.clone());
-        let lease = dispatcher.try_reserve().expect("lease");
-        let mut body = buffered_finalizing_stream(
-            Bytes::from_static(b"ok"),
-            success_outcome("response-body-eof"),
+        let fixture = LifecycleBodyFixture::new("response-body-eof", "/v1/chat/completions").await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
             lease,
+            request_lease,
+            record,
+            active_requests,
+        } = fixture;
+        let mut body = buffered_lifecycle_finalizing_stream(
+            Bytes::from_static(b"ok"),
+            record,
+            lease,
+            request_lease,
         );
 
-        assert_eq!(repository.calls(), 0);
+        assert_eq!(store.calls(), 0);
         assert_eq!(
             body.next().await.unwrap().unwrap(),
             Bytes::from_static(b"ok")
         );
-        assert_eq!(repository.calls(), 0, "chunk delivery is not completion");
+        assert_eq!(store.calls(), 0, "chunk delivery is not completion");
         assert!(body.next().await.is_none());
-        repository.wait_for_calls(1).await;
+        store.wait_for_calls(1).await;
 
-        assert_eq!(repository.calls(), 1);
-        let outcome = repository.last().expect("outcome");
-        assert_eq!(outcome.status, "success");
-        assert_eq!(outcome.completion_source.as_deref(), Some("upstream"));
+        assert_eq!(store.calls(), 1);
+        let record = store.last_request().expect("record");
+        assert_eq!(record.context.request_id, "response-body-eof");
+        assert!(matches!(
+            record.terminal.terminal,
+            RequestTerminal::Completed(_)
+        ));
+        assert_eq!(record.terminal.delivery, DeliveryTerminal::BodyCompleted);
+        assert_eq!(
+            record.annotations.completion_source.as_deref(),
+            Some("upstream")
+        );
+        assert_eq!(record.annotations.body_bytes, Some(2));
+        assert_eq!(active_requests.load(Ordering::SeqCst), 0);
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
+    #[tokio::test]
+    async fn response_body_timing_uses_the_original_request_start() {
+        let now = crate::services::database::now_millis_for_services() as i64;
+        let fixture = LifecycleBodyFixture::new_with_start(
+            "response-body-request-start",
+            "/v1/chat/completions",
+            now - 100,
+        )
+        .await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            lease,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+        let mut body = buffered_lifecycle_finalizing_stream(
+            Bytes::from_static(b"ok"),
+            record,
+            lease,
+            request_lease,
+        );
+
+        assert!(body.next().await.unwrap().is_ok());
+        assert!(body.next().await.is_none());
+        store.wait_for_calls(1).await;
+
+        let record = store.last_request().expect("record");
+        assert!(
+            record
+                .annotations
+                .first_token_ms
+                .is_some_and(|value| value >= 100),
+            "first token timing must include time before the response wrapper was created"
+        );
+
+        drop(writer);
+        worker.join().await.expect("worker join");
     }
 
     #[tokio::test]
     async fn response_body_drop_after_chunk_before_eof_finalizes_downstream_disconnect_once() {
-        let repository = Arc::new(RecordingRepository::default());
-        let dispatcher = FinalizationDispatcher::new(1, repository.clone());
-        let lease = dispatcher.try_reserve().expect("lease");
-        let mut body = buffered_finalizing_stream(
-            Bytes::from_static(b"ok"),
-            success_outcome("response-body-drop-after-chunk"),
+        let fixture = LifecycleBodyFixture::new_with_selected_attempt(
+            "response-body-drop-after-chunk",
+            "/v1/chat/completions",
+        )
+        .await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
             lease,
+            request_lease,
+            record,
+            active_requests,
+        } = fixture;
+        let mut body = buffered_lifecycle_finalizing_stream(
+            Bytes::from_static(b"ok"),
+            record,
+            lease,
+            request_lease,
         );
 
         assert_eq!(
@@ -360,223 +589,469 @@ mod tests {
             Bytes::from_static(b"ok")
         );
         drop(body);
-        repository.wait_for_calls(1).await;
+        store.wait_for_calls(1).await;
 
-        assert_eq!(repository.calls(), 1);
-        let outcome = repository.last().expect("outcome");
-        assert_eq!(outcome.status, "interrupted");
+        assert_eq!(store.calls(), 1);
+        let record = store.last_request().expect("record");
+        assert!(matches!(
+            record.terminal.terminal,
+            RequestTerminal::Interrupted(_)
+        ));
         assert_eq!(
-            outcome.lifecycle_status.as_deref(),
+            record.terminal.delivery,
+            DeliveryTerminal::DownstreamDropped
+        );
+        assert_eq!(
+            record.annotations.completion_source.as_deref(),
             Some("downstream_dropped")
         );
         assert_eq!(
-            outcome.completion_source.as_deref(),
-            Some("downstream_dropped")
+            record.annotations.failure_source.as_deref(),
+            Some("downstream")
         );
-        assert!(outcome.feedback.is_none());
+        assert_eq!(store.attempt_calls(), 1);
+        let attempt = store.last_attempt().expect("attempt record");
+        assert!(matches!(
+            attempt.terminal,
+            AttemptTerminal::Failed(ref failure)
+                if failure.kind == AttemptFailureKind::DownstreamDrop
+                    && failure.blame == FailureBlame::Downstream
+                    && failure.retry == RetryDisposition::StopRequest
+                    && failure.health == HealthEffect::Neutral
+        ));
+        assert!(attempt.output_committed);
+        assert_eq!(active_requests.load(Ordering::SeqCst), 0);
+
+        drop(writer);
+        worker.join().await.expect("worker join");
     }
 
     #[tokio::test]
     async fn response_body_drop_before_poll_finalizes_downstream_disconnect_once() {
-        let repository = Arc::new(RecordingRepository::default());
-        let dispatcher = FinalizationDispatcher::new(1, repository.clone());
-        let lease = dispatcher.try_reserve().expect("lease");
-        let body = buffered_finalizing_stream(
-            Bytes::from_static(b"ok"),
-            success_outcome("response-body-drop-before-poll"),
+        let fixture =
+            LifecycleBodyFixture::new("response-body-drop-before-poll", "/v1/chat/completions")
+                .await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
             lease,
+            request_lease,
+            record,
+            active_requests,
+        } = fixture;
+        let body = buffered_lifecycle_finalizing_stream(
+            Bytes::from_static(b"ok"),
+            record,
+            lease,
+            request_lease,
         );
 
         drop(body);
-        repository.wait_for_calls(1).await;
+        store.wait_for_calls(1).await;
 
-        assert_eq!(repository.calls(), 1);
-        let outcome = repository.last().expect("outcome");
-        assert_eq!(outcome.status, "interrupted");
+        assert_eq!(store.calls(), 1);
+        let record = store.last_request().expect("record");
+        assert!(matches!(
+            record.terminal.terminal,
+            RequestTerminal::Interrupted(_)
+        ));
         assert_eq!(
-            outcome.lifecycle_status.as_deref(),
-            Some("downstream_dropped")
+            record.terminal.delivery,
+            DeliveryTerminal::DownstreamDropped
         );
-    }
+        assert_eq!(active_requests.load(Ordering::SeqCst), 0);
 
-    #[tokio::test]
-    async fn response_body_repository_failure_does_not_panic_or_retry() {
-        let repository = Arc::new(RecordingRepository::failing());
-        let dispatcher = FinalizationDispatcher::new(1, repository.clone());
-        let lease = dispatcher.try_reserve().expect("lease");
-        let mut body = buffered_finalizing_stream(
-            Bytes::from_static(b"ok"),
-            success_outcome("response-body-repository-failure"),
-            lease,
-        );
-
-        assert_eq!(
-            body.next().await.unwrap().unwrap(),
-            Bytes::from_static(b"ok")
-        );
-        assert!(body.next().await.is_none());
-        repository.wait_for_calls(1).await;
-        tokio::task::yield_now().await;
-
-        assert_eq!(repository.calls(), 1);
+        drop(writer);
+        worker.join().await.expect("worker join");
     }
 
     #[tokio::test]
     async fn response_body_stream_error_finalizes_failure_once() {
-        let repository = Arc::new(RecordingRepository::default());
-        let dispatcher = FinalizationDispatcher::new(1, repository.clone());
-        let lease = dispatcher.try_reserve().expect("lease");
-        let mut body = finalizing_stream(
-            Box::pin(stream::iter(vec![Err(stream_failure())])),
-            success_outcome("response-body-stream-error"),
+        let fixture =
+            LifecycleBodyFixture::new("response-body-stream-error", "/v1/chat/completions").await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
             lease,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+        let mut body = lifecycle_finalizing_stream_with_idle_timeout(
+            Box::pin(stream::iter(vec![Err(stream_failure())])),
+            record,
+            lease,
+            request_lease,
+            std::time::Duration::from_secs(1),
         );
 
         let failure = body.next().await.unwrap().expect_err("stream failure");
         assert_eq!(failure.code, ProxyFailureCode::UpstreamStreamFailed);
         drop(body);
-        repository.wait_for_calls(1).await;
+        store.wait_for_calls(1).await;
 
-        assert_eq!(repository.calls(), 1);
-        let outcome = repository.last().expect("outcome");
-        assert_eq!(outcome.status, "failed");
+        assert_eq!(store.calls(), 1);
+        let record = store.last_request().expect("record");
+        assert!(matches!(
+            record.terminal.terminal,
+            RequestTerminal::Failed(_)
+        ));
+        assert_eq!(record.terminal.delivery, DeliveryTerminal::BodyCompleted);
         assert_eq!(
-            outcome.lifecycle_status.as_deref(),
-            Some("upstream_stream_failed")
+            record.annotations.failure_source.as_deref(),
+            Some("upstream")
         );
-        assert_eq!(outcome.failure_source.as_deref(), Some("upstream"));
-        assert_eq!(outcome.completion_source.as_deref(), Some("body_error"));
-        assert!(outcome.feedback.is_none());
+        assert_eq!(
+            record.annotations.completion_source.as_deref(),
+            Some("body_error")
+        );
+
+        drop(writer);
+        worker.join().await.expect("worker join");
     }
 
     #[tokio::test]
     async fn response_body_stream_idle_timeout_finalizes_upstream_failure_once() {
-        let repository = Arc::new(RecordingRepository::default());
-        let dispatcher = FinalizationDispatcher::new(1, repository.clone());
-        let lease = dispatcher.try_reserve().expect("lease");
-        let mut body = finalizing_stream_with_idle_timeout(
-            Box::pin(stream::pending()),
-            success_outcome("response-body-idle-timeout"),
+        let fixture =
+            LifecycleBodyFixture::new("response-body-idle-timeout", "/v1/chat/completions").await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
             lease,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+        let mut body = lifecycle_finalizing_stream_with_idle_timeout(
+            Box::pin(stream::pending()),
+            record,
+            lease,
+            request_lease,
             std::time::Duration::from_millis(1),
         );
 
         let failure = body.next().await.unwrap().expect_err("idle timeout");
         assert_eq!(failure.code, ProxyFailureCode::UpstreamStreamFailed);
         drop(body);
-        repository.wait_for_calls(1).await;
+        store.wait_for_calls(1).await;
 
-        assert_eq!(repository.calls(), 1);
-        let outcome = repository.last().expect("outcome");
-        assert_eq!(outcome.status, "failed");
+        assert_eq!(store.calls(), 1);
+        let record = store.last_request().expect("record");
+        assert!(matches!(
+            record.terminal.terminal,
+            RequestTerminal::Failed(_)
+        ));
         assert_eq!(
-            outcome.lifecycle_status.as_deref(),
-            Some("upstream_stream_failed")
+            record.annotations.failure_source.as_deref(),
+            Some("upstream")
         );
-        assert_eq!(outcome.failure_source.as_deref(), Some("upstream"));
         assert_eq!(
-            outcome.completion_source.as_deref(),
+            record.annotations.completion_source.as_deref(),
             Some("body_idle_timeout")
         );
-        assert!(outcome.feedback.is_none());
+
+        drop(writer);
+        worker.join().await.expect("worker join");
     }
 
     #[tokio::test]
     async fn response_body_stream_eof_records_sse_usage() {
-        let repository = Arc::new(RecordingRepository::default());
-        let dispatcher = FinalizationDispatcher::new(1, repository.clone());
-        let lease = dispatcher.try_reserve().expect("lease");
-        let mut body = finalizing_stream(
-            Box::pin(stream::iter(vec![Ok(Bytes::from_static(
+        let fixture =
+            LifecycleBodyFixture::new("response-body-sse-usage", "/v1/chat/completions").await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            lease,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+        let mut body = buffered_lifecycle_finalizing_stream(
+            Bytes::from_static(
                 br#"data: {"type":"response.completed","response":{"id":"resp_v2","usage":{"input_tokens":9,"output_tokens":4,"total_tokens":13}}}
 
 "#,
-            ))])),
-            success_outcome("response-body-sse-usage"),
+            ),
+            record,
             lease,
+            request_lease,
         );
 
         assert!(body.next().await.unwrap().is_ok());
         assert!(body.next().await.is_none());
-        repository.wait_for_calls(1).await;
+        store.wait_for_calls(1).await;
 
-        let outcome = repository.last().expect("outcome");
-        assert_eq!(outcome.status, "success");
-        assert_eq!(outcome.prompt_tokens, Some(9));
-        assert_eq!(outcome.completion_tokens, Some(4));
-        assert_eq!(outcome.total_tokens, Some(13));
+        let record = store.last_request().expect("record");
+        assert_eq!(
+            record.annotations.completion_source.as_deref(),
+            Some("upstream")
+        );
+        assert_eq!(record.annotations.prompt_tokens, Some(9));
+        assert_eq!(record.annotations.completion_tokens, Some(4));
+        assert_eq!(record.annotations.total_tokens, Some(13));
+
+        drop(writer);
+        worker.join().await.expect("worker join");
     }
 
-    #[derive(Default)]
-    struct RecordingRepository {
-        outcomes: Mutex<Vec<FinalRequestOutcome>>,
-        fail: bool,
+    #[tokio::test]
+    async fn response_body_responses_eof_without_completed_event_finalizes_failure() {
+        let fixture =
+            LifecycleBodyFixture::new("response-body-incomplete-responses-stream", "/v1/responses")
+                .await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            lease,
+            request_lease,
+            mut record,
+            ..
+        } = fixture;
+        record.annotations_mut().stream = true;
+        let mut body = buffered_lifecycle_finalizing_stream(
+            Bytes::from_static(
+                br#"data: {"type":"response.created","response":{"id":"resp_incomplete"}}
+
+"#,
+            ),
+            record,
+            lease,
+            request_lease,
+        );
+
+        assert!(body.next().await.unwrap().is_ok());
+        let failure = body
+            .next()
+            .await
+            .expect("incomplete stream failure")
+            .expect_err("upstream stream must fail");
+        assert_eq!(failure.code, ProxyFailureCode::UpstreamStreamFailed);
+        store.wait_for_calls(1).await;
+
+        let record = store.last_request().expect("record");
+        assert!(matches!(
+            record.terminal.terminal,
+            RequestTerminal::Failed(_)
+        ));
+        assert_eq!(
+            record.annotations.failure_source.as_deref(),
+            Some("upstream")
+        );
+        assert_eq!(
+            record.annotations.completion_source.as_deref(),
+            Some("body_incomplete")
+        );
+
+        drop(writer);
+        worker.join().await.expect("worker join");
     }
 
-    impl RecordingRepository {
-        fn failing() -> Self {
+    struct RecordingStore {
+        start_records: Arc<Mutex<Vec<RequestStartRecord>>>,
+        attempt_records: Arc<Mutex<Vec<AttemptTerminalRecord>>>,
+        request_records: Arc<Mutex<Vec<FinalRequestRecord>>>,
+    }
+
+    impl RecordingStore {
+        fn new() -> Self {
             Self {
-                outcomes: Mutex::new(Vec::new()),
-                fail: true,
+                start_records: Arc::new(Mutex::new(Vec::new())),
+                attempt_records: Arc::new(Mutex::new(Vec::new())),
+                request_records: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
         fn calls(&self) -> usize {
-            self.outcomes.lock().expect("outcomes lock").len()
+            self.request_records.lock().expect("records lock").len()
         }
 
-        fn last(&self) -> Option<FinalRequestOutcome> {
-            self.outcomes.lock().expect("outcomes lock").last().cloned()
+        fn last_request(&self) -> Option<FinalRequestRecord> {
+            self.request_records
+                .lock()
+                .expect("records lock")
+                .last()
+                .cloned()
+        }
+
+        fn attempt_calls(&self) -> usize {
+            self.attempt_records.lock().expect("attempt lock").len()
+        }
+
+        fn last_attempt(&self) -> Option<AttemptTerminalRecord> {
+            self.attempt_records
+                .lock()
+                .expect("attempt lock")
+                .last()
+                .cloned()
         }
 
         async fn wait_for_calls(&self, expected: usize) {
-            for _ in 0..20 {
+            for _ in 0..1_000 {
                 if self.calls() >= expected {
                     return;
                 }
-                tokio::task::yield_now().await;
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
             }
             assert_eq!(self.calls(), expected);
         }
     }
 
-    impl RoutingRepository for RecordingRepository {
-        fn load_runtime_candidates(
+    impl RequestLifecycleStore for RecordingStore {
+        fn start_request(
             &self,
-        ) -> BoxFuture<'static, Result<Vec<RichRouteCandidate>, String>> {
-            Box::pin(async { Ok(Vec::new()) })
-        }
-
-        fn record_final_outcome(
-            &self,
-            outcome: FinalRequestOutcome,
-        ) -> BoxFuture<'static, Result<Option<RequestLog>, String>> {
-            let fail = self.fail;
-            self.outcomes.lock().expect("outcomes lock").push(outcome);
+            record: RequestStartRecord,
+        ) -> BoxFuture<'static, Result<RequestStartAck, LifecycleWriteError>> {
+            let records = Arc::clone(&self.start_records);
             Box::pin(async move {
-                if fail {
-                    Err("synthetic finalization failure".to_string())
-                } else {
-                    Ok(None)
-                }
+                records.lock().expect("start lock").push(record);
+                Ok(RequestStartAck { inserted: true })
             })
         }
 
-        fn load_balance_snapshots(
+        fn finish_attempt(
             &self,
-        ) -> BoxFuture<'static, Result<Vec<BalanceSnapshot>, String>> {
-            Box::pin(async { Ok(Vec::new()) })
+            record: AttemptTerminalRecord,
+        ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
+            let records = Arc::clone(&self.attempt_records);
+            Box::pin(async move {
+                records.lock().expect("attempt lock").push(record);
+                Ok(AttemptCommitAck {
+                    inserted: true,
+                    health_applied: true,
+                })
+            })
+        }
+
+        fn finish_request(
+            &self,
+            record: FinalRequestRecord,
+        ) -> BoxFuture<'static, Result<RequestCommitAck, LifecycleWriteError>> {
+            let records = Arc::clone(&self.request_records);
+            Box::pin(async move {
+                records.lock().expect("finish lock").push(record);
+                Ok(RequestCommitAck { finalized: true })
+            })
         }
     }
 
-    fn success_outcome(request_id: &str) -> FinalRequestOutcome {
-        let mut outcome = FinalRequestOutcome::success("success");
-        outcome.request_id = request_id.to_string();
-        outcome.completion_source = Some("upstream".to_string());
-        outcome
+    struct LifecycleBodyFixture {
+        store: Arc<RecordingStore>,
+        writer: LifecycleWriter,
+        worker: LifecycleWriterWorker,
+        lease: LifecycleFinalizationLease,
+        request_lease: RequestLease,
+        record: PendingFinalRequestRecord,
+        active_requests: Arc<AtomicU32>,
     }
 
-    #[allow(dead_code)]
+    impl LifecycleBodyFixture {
+        async fn new(request_id: &str, local_path: &str) -> Self {
+            Self::new_with_start(
+                request_id,
+                local_path,
+                crate::services::database::now_millis_for_services() as i64,
+            )
+            .await
+        }
+
+        async fn new_with_start(request_id: &str, local_path: &str, received_at_ms: i64) -> Self {
+            Self::new_with_start_and_attempt(request_id, local_path, received_at_ms, false).await
+        }
+
+        async fn new_with_selected_attempt(request_id: &str, local_path: &str) -> Self {
+            Self::new_with_start_and_attempt(
+                request_id,
+                local_path,
+                crate::services::database::now_millis_for_services() as i64,
+                true,
+            )
+            .await
+        }
+
+        async fn new_with_start_and_attempt(
+            request_id: &str,
+            local_path: &str,
+            received_at_ms: i64,
+            include_selected_attempt: bool,
+        ) -> Self {
+            let context = RequestContextSnapshot {
+                request_id: request_id.to_string(),
+                method: "POST".to_string(),
+                local_path: local_path.to_string(),
+                endpoint: local_path.to_string(),
+                received_at_ms,
+            };
+            let mut annotations = RequestLogAnnotations::default();
+            annotations.model = Some("gpt-test".to_string());
+            annotations.stream = true;
+            annotations.selected_station_key_id = Some("key-test".to_string());
+            annotations.selected_station_id = Some("station-test".to_string());
+            annotations.upstream_base_url = Some("https://example.test/v1".to_string());
+            annotations.route_policy = Some("priority_fallback".to_string());
+            annotations.route_reason = Some("selected test key".to_string());
+            annotations.rejected_candidates_json = Some("[]".to_string());
+            annotations.route_wait_ms = Some(0);
+            annotations.completion_source = Some("upstream".to_string());
+            annotations.attempts_json = None;
+            annotations.reasoning_effort = None;
+
+            let store = Arc::new(RecordingStore::new());
+            let (writer, worker) = LifecycleWriter::start(4, store.clone()).expect("writer");
+            let reservation = writer.try_reserve_request().expect("request reservation");
+            let (terminal, start_ack) = reservation.send_start(RequestStartRecord {
+                context: context.clone(),
+            });
+            start_ack
+                .await
+                .expect("start ack channel")
+                .expect("start ack");
+
+            let active_requests = Arc::new(AtomicU32::new(0));
+            let request_permit = Arc::new(Semaphore::new(1))
+                .acquire_owned()
+                .await
+                .expect("request permit");
+            let request_lease = RequestLease::new(request_permit, Arc::clone(&active_requests));
+            let selected_attempt = if include_selected_attempt {
+                let reservation = writer.try_reserve_attempt().expect("attempt reservation");
+                let context = AttemptContext {
+                    attempt_id: AttemptId::new(request_id, 0),
+                    station_id: "station-test".to_string(),
+                    station_key_id: "key-test".to_string(),
+                    endpoint_revision: 1,
+                    started_at_ms: received_at_ms,
+                };
+                Some(SelectedAttemptFinalization::new(reservation, context))
+            } else {
+                None
+            };
+            let selected_attempt_id = selected_attempt
+                .as_ref()
+                .map(|attempt| attempt.context.attempt_id.clone());
+
+            Self {
+                store,
+                writer,
+                worker,
+                lease: LifecycleFinalizationLease::new(terminal, selected_attempt),
+                request_lease,
+                record: PendingFinalRequestRecord::new(
+                    context,
+                    selected_attempt_id,
+                    1,
+                    0,
+                    annotations,
+                ),
+                active_requests,
+            }
+        }
+    }
+
     fn stream_failure() -> ProxyFailure {
         ProxyFailure::new(
             ProxyFailureCode::UpstreamStreamFailed,

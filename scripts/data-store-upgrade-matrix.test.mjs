@@ -104,7 +104,7 @@ for (const item of matrix) {
   if (executedFilters.has(item.cargoFilter)) continue;
   const result = spawnSync(
     "cargo",
-    ["test", "--manifest-path", cargoManifest, item.cargoFilter, "--", "--nocapture"],
+    ["test", "--manifest-path", cargoManifest, "--lib", item.cargoFilter, "--", "--nocapture"],
     { stdio: "inherit", shell: process.platform === "win32" },
   );
   assert.equal(result.status, 0, `rust fixture test failed for ${item.risk}: ${item.cargoFilter}`);

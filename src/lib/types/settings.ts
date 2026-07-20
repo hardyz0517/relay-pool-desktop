@@ -66,6 +66,7 @@ export const DEFAULT_SCHEDULER_ADVANCED_SETTINGS: SchedulerAdvancedSettings = {
 
 export type AppSettings = {
   localProxyPort: number;
+  localProxyStartOnLaunch: boolean;
   localKeyMasked: string;
   defaultRoutingStrategy: RoutingStrategy;
   collectorProxyMode: CollectorProxyMode;

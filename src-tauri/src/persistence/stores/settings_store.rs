@@ -221,6 +221,12 @@ async fn settings_from_connection(
 
     Ok(AppSettings {
         local_proxy_port: parse_setting(&mut *connection, "local_proxy_port").await?,
+        local_proxy_start_on_launch: parse_setting_or_default(
+            &mut *connection,
+            "local_proxy_start_on_launch",
+            "false",
+        )
+        .await?,
         local_key_masked: mask_secret(&local_key),
         default_routing_strategy: read_setting(&mut *connection, "default_routing_strategy")
             .await?,
@@ -478,6 +484,7 @@ fn is_supported_setting_key(key: &str) -> bool {
     matches!(
         key,
         "local_proxy_port"
+            | "local_proxy_start_on_launch"
             | "local_key"
             | "default_routing_strategy"
             | "collector_proxy_mode"

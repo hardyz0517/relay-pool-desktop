@@ -7,6 +7,9 @@ use crate::models::{proxy::UpstreamApiFormat, routing::RouteEndpointKind};
 use super::{
     adapters::responses::upstream_responses_path,
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
+    protocol::{
+        CompletionPolicy, DownstreamTransform, ResponsePlan, TransportMode, UpstreamProtocol,
+    },
     request::CanonicalProxyRequest,
     responses_chat_fallback::{
         normalize_for_chat, normalize_for_chat_streaming, responses_fallback_error_message,
@@ -44,14 +47,14 @@ impl EndpointAdapter {
                 path: "/v1/models".to_string(),
                 headers: upstream_headers(&request.forwarded_headers, None),
                 body: Bytes::new(),
-                response_mode: ResponseMode::BufferedJson,
+                response_plan: buffered_json_plan(UpstreamProtocol::ModelsJson),
             }),
             Self::Embeddings => Ok(PreparedUpstreamRequest {
                 method: Method::POST,
                 path: "/v1/embeddings".to_string(),
                 headers: upstream_headers(&request.forwarded_headers, Some("application/json")),
                 body: rewrite_json_model(&request.body, mapped_model)?,
-                response_mode: ResponseMode::BufferedJson,
+                response_plan: buffered_json_plan(UpstreamProtocol::EmbeddingsJson),
             }),
             Self::ChatCompletions => Ok(PreparedUpstreamRequest {
                 method: Method::POST,
@@ -65,11 +68,24 @@ impl EndpointAdapter {
                     }),
                 ),
                 body: rewrite_json_model(&request.body, mapped_model)?,
-                response_mode: if request.stream {
-                    ResponseMode::StreamPassthrough
-                } else {
-                    ResponseMode::BufferedJson
-                },
+                response_plan: response_plan(
+                    if request.stream {
+                        TransportMode::Streaming
+                    } else {
+                        TransportMode::Buffered
+                    },
+                    if request.stream {
+                        UpstreamProtocol::ChatCompletionsSse
+                    } else {
+                        UpstreamProtocol::ChatCompletionsJson
+                    },
+                    DownstreamTransform::Passthrough,
+                    if request.stream {
+                        CompletionPolicy::ChatDoneSentinel
+                    } else {
+                        CompletionPolicy::ValidatedJsonBody
+                    },
+                ),
             }),
             Self::Responses => prepare_responses(request, candidate, mapped_model),
         }
@@ -82,15 +98,7 @@ pub(crate) struct PreparedUpstreamRequest {
     pub path: String,
     pub headers: HeaderMap,
     pub body: Bytes,
-    pub response_mode: ResponseMode,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ResponseMode {
-    BufferedJson,
-    BufferedChatToResponses,
-    StreamPassthrough,
-    StreamChatToResponses,
+    pub response_plan: ResponsePlan,
 }
 
 pub(crate) fn response_headers_for_downstream(headers: &HeaderMap) -> HeaderMap {
@@ -138,11 +146,24 @@ fn prepare_responses(
                 }),
             ),
             body: rewrite_json_value_model(normalized, mapped_model)?,
-            response_mode: if request.stream {
-                ResponseMode::StreamChatToResponses
-            } else {
-                ResponseMode::BufferedChatToResponses
-            },
+            response_plan: response_plan(
+                if request.stream {
+                    TransportMode::Streaming
+                } else {
+                    TransportMode::Buffered
+                },
+                if request.stream {
+                    UpstreamProtocol::ChatCompletionsSse
+                } else {
+                    UpstreamProtocol::ChatCompletionsJson
+                },
+                DownstreamTransform::ChatToResponses,
+                if request.stream {
+                    CompletionPolicy::ChatDoneSentinel
+                } else {
+                    CompletionPolicy::ValidatedJsonBody
+                },
+            ),
         });
     }
 
@@ -158,12 +179,48 @@ fn prepare_responses(
             }),
         ),
         body: rewrite_json_model(&request.body, mapped_model)?,
-        response_mode: if request.stream {
-            ResponseMode::StreamPassthrough
-        } else {
-            ResponseMode::BufferedJson
-        },
+        response_plan: response_plan(
+            if request.stream {
+                TransportMode::Streaming
+            } else {
+                TransportMode::Buffered
+            },
+            if request.stream {
+                UpstreamProtocol::ResponsesSse
+            } else {
+                UpstreamProtocol::ResponsesJson
+            },
+            DownstreamTransform::Passthrough,
+            if request.stream {
+                CompletionPolicy::ResponsesTerminalEvent
+            } else {
+                CompletionPolicy::ValidatedJsonBody
+            },
+        ),
     })
+}
+
+fn buffered_json_plan(upstream_protocol: UpstreamProtocol) -> ResponsePlan {
+    response_plan(
+        TransportMode::Buffered,
+        upstream_protocol,
+        DownstreamTransform::Passthrough,
+        CompletionPolicy::ValidatedJsonBody,
+    )
+}
+
+fn response_plan(
+    transport: TransportMode,
+    upstream_protocol: UpstreamProtocol,
+    downstream_transform: DownstreamTransform,
+    completion_policy: CompletionPolicy,
+) -> ResponsePlan {
+    ResponsePlan {
+        transport,
+        upstream_protocol,
+        downstream_transform,
+        completion_policy,
+    }
 }
 
 fn upstream_headers(forwarded: &HeaderMap, accept: Option<&'static str>) -> HeaderMap {
@@ -255,7 +312,8 @@ mod tests {
         },
     };
 
-    use super::{EndpointAdapter, ResponseMode};
+    use super::{buffered_json_plan, response_plan, EndpointAdapter};
+    use super::{CompletionPolicy, DownstreamTransform, TransportMode, UpstreamProtocol};
 
     #[tokio::test]
     async fn endpoint_adapters_prepare_exact_paths_models_and_headers() {
@@ -287,7 +345,10 @@ mod tests {
         );
         assert_eq!(prepared.headers.get("openai-project").unwrap(), "proj-1");
         assert!(!prepared.headers.contains_key(header::AUTHORIZATION));
-        assert_eq!(prepared.response_mode, ResponseMode::BufferedJson);
+        assert_eq!(
+            prepared.response_plan,
+            buffered_json_plan(UpstreamProtocol::ResponsesJson)
+        );
     }
 
     #[tokio::test]
@@ -319,7 +380,15 @@ mod tests {
                 ["include_usage"],
             true
         );
-        assert_eq!(prepared.response_mode, ResponseMode::StreamChatToResponses);
+        assert_eq!(
+            prepared.response_plan,
+            response_plan(
+                TransportMode::Streaming,
+                UpstreamProtocol::ChatCompletionsSse,
+                DownstreamTransform::ChatToResponses,
+                CompletionPolicy::ChatDoneSentinel,
+            )
+        );
     }
 
     #[tokio::test]
@@ -374,7 +443,15 @@ mod tests {
             .prepare(&chat, &direct, Some("upstream-model"))
             .unwrap();
         assert_eq!(chat.path, "/v1/chat/completions");
-        assert_eq!(chat.response_mode, ResponseMode::StreamPassthrough);
+        assert_eq!(
+            chat.response_plan,
+            response_plan(
+                TransportMode::Streaming,
+                UpstreamProtocol::ChatCompletionsSse,
+                DownstreamTransform::Passthrough,
+                CompletionPolicy::ChatDoneSentinel,
+            )
+        );
         let bridged = EndpointAdapter::Responses
             .prepare(&responses, &chat_bridge, Some("bridge-model"))
             .unwrap();
@@ -383,7 +460,15 @@ mod tests {
             serde_json::from_slice::<Value>(&bridged.body).unwrap()["messages"][0]["content"],
             "hi"
         );
-        assert_eq!(bridged.response_mode, ResponseMode::BufferedChatToResponses);
+        assert_eq!(
+            bridged.response_plan,
+            response_plan(
+                TransportMode::Buffered,
+                UpstreamProtocol::ChatCompletionsJson,
+                DownstreamTransform::ChatToResponses,
+                CompletionPolicy::ValidatedJsonBody,
+            )
+        );
     }
 
     #[test]
@@ -429,9 +514,11 @@ mod tests {
             endpoint,
             Some("client-model".to_string()),
             stream,
+            None,
             RequestRequirements::default(),
             Bytes::from_static(body),
             forwarded_headers,
+            None,
             None,
             None,
             None,

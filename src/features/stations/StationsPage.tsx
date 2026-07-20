@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   closestCenter,
   type DraggableAttributes,
@@ -1779,13 +1779,9 @@ function stationIssueTagClassName(tone: "info" | "warning" | "error" | "disabled
 }
 
 function StationIssueTagBadge({ tag }: { tag: StationIssueTag }) {
-  const tooltipId = useId();
-
   return (
     <span
-      className="group/tag relative hidden sm:inline-flex"
-      tabIndex={tag.title ? 0 : undefined}
-      aria-describedby={tag.title ? tooltipId : undefined}
+      className="hidden sm:inline-flex"
       title={tag.title ?? tag.label}
       onKeyDown={(event) => event.stopPropagation()}
     >
@@ -1798,19 +1794,6 @@ function StationIssueTagBadge({ tag }: { tag: StationIssueTag }) {
       >
         {tag.label}
       </span>
-      {tag.title ? (
-        <span
-          id={tooltipId}
-          role="tooltip"
-          className={cn(
-            "pointer-events-none invisible absolute left-0 top-full z-30 mt-2 w-max max-w-[min(28rem,calc(100vw-3rem))]",
-            "whitespace-pre-line rounded-[10px] border border-border bg-surface px-3 py-2 text-xs font-normal leading-5 text-foreground opacity-0 shadow-surface",
-            "transition-opacity duration-150 group-hover/tag:visible group-hover/tag:opacity-100 group-focus/tag:visible group-focus/tag:opacity-100",
-          )}
-        >
-          {tag.title}
-        </span>
-      ) : null}
     </span>
   );
 }

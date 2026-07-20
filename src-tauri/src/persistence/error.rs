@@ -40,6 +40,12 @@ pub(crate) enum PersistenceError {
     RuntimeUnavailable,
     #[error("persistence session is already closed")]
     SessionClosed,
+    #[error("persistence invariant violated")]
+    InvariantViolation(String),
+    #[error("constraint violation")]
+    ConstraintViolation,
+    #[error("stale endpoint revision")]
+    StaleRevision,
     #[error("commit outcome is unknown")]
     CommitOutcomeUnknown,
     #[error("I/O failure")]

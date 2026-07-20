@@ -34,8 +34,10 @@ assert.match(legacyRuntime, /local_auth::authorize_headers\(&request\.headers, &
 assert.match(legacyRuntime, /invalid_local_api_key/);
 assert.match(legacyRuntime, /local_auth::allowed_origin/);
 assert.doesNotMatch(legacyRuntime, /access-control-allow-origin:\s*\*/i);
-assert.match(runtime, /ProxyRuntimeMode/);
-assert.match(runtime, /super::legacy_runtime::ProxyRuntimeState/);
+assert.match(runtime, /V2ProxyExecutor/);
+assert.match(runtime, /RequestLifecyclePersistenceService/);
+assert.match(runtime, /LifecycleWriter::start/);
+assert.doesNotMatch(runtime, /ProxyRuntimeMode/);
 assert.doesNotMatch(runtime, /fn forward_(chat|responses|embeddings)_request/);
 assert.match(legacyRuntime, /fn forward_responses_request/);
 assert.match(database, /ensure_secure_local_access_key/);

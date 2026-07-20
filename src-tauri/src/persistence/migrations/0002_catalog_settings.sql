@@ -6,6 +6,7 @@ CREATE TABLE settings (
 
 INSERT INTO settings (key, value, updated_at) VALUES
     ('local_proxy_port', '8787', strftime('%s', 'now')),
+    ('local_proxy_start_on_launch', 'false', strftime('%s', 'now')),
     ('local_key', 'sk-local-pool-change-me', strftime('%s', 'now')),
     ('default_routing_strategy', 'cost_stable_first', strftime('%s', 'now')),
     ('collector_proxy_mode', 'direct', strftime('%s', 'now')),

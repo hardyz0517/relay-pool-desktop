@@ -8,9 +8,10 @@ use tokio::sync::RwLock;
 use crate::services::{outbound::current_system_proxy_url, station_endpoints::build_api_url};
 
 use super::{
-    endpoint_adapter::{PreparedUpstreamRequest, ResponseMode},
+    endpoint_adapter::PreparedUpstreamRequest,
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
     limits::ProxyServerLimits,
+    protocol::TransportMode,
     redact_error_message,
     request::ByteStream,
     RouteCandidate,
@@ -129,10 +130,8 @@ impl UpstreamClientPool {
         let response = request.send().await.map_err(upstream_connect_failure)?;
         let status = response.status();
         let headers = response.headers().clone();
-        match prepared.response_mode {
-            ResponseMode::StreamPassthrough | ResponseMode::StreamChatToResponses
-                if status.is_success() =>
-            {
+        match prepared.response_plan.transport {
+            TransportMode::Streaming if status.is_success() => {
                 let chunks = response
                     .bytes_stream()
                     .map_err(upstream_stream_failure)
@@ -143,10 +142,7 @@ impl UpstreamClientPool {
                     chunks,
                 })
             }
-            ResponseMode::BufferedJson
-            | ResponseMode::BufferedChatToResponses
-            | ResponseMode::StreamPassthrough
-            | ResponseMode::StreamChatToResponses => {
+            TransportMode::Buffered | TransportMode::Streaming => {
                 let body = response.bytes().await.map_err(upstream_connect_failure)?;
                 Ok(UpstreamAttempt::Buffered {
                     status,
@@ -241,13 +237,18 @@ fn required_proxy_url(url: Option<&str>) -> Result<&str, ProxyFailure> {
 }
 
 fn upstream_connect_failure(error: reqwest::Error) -> ProxyFailure {
-    ProxyFailure::new(
+    let connection_not_established = error.is_connect();
+    let mut failure = ProxyFailure::new(
         ProxyFailureCode::UpstreamConnectFailed,
         FailureSource::Upstream,
         RetryClass::BeforeOutput,
         StatusCode::BAD_GATEWAY,
         redact_error_message(&format!("upstream request failed: {error}")),
-    )
+    );
+    if connection_not_established {
+        failure.internal_detail = Some("connection_not_established".to_string());
+    }
+    failure
 }
 
 fn upstream_stream_failure(error: reqwest::Error) -> ProxyFailure {
@@ -290,9 +291,13 @@ mod tests {
     use crate::{
         models::proxy::UpstreamApiFormat,
         services::proxy::{
-            endpoint_adapter::{PreparedUpstreamRequest, ResponseMode},
+            endpoint_adapter::PreparedUpstreamRequest,
             error::ProxyFailureCode,
             limits::ProxyServerLimits,
+            protocol::{
+                CompletionPolicy, DownstreamTransform, ResponsePlan, TransportMode,
+                UpstreamProtocol,
+            },
             test_support::{LoopbackUpstream, ScriptedResponse},
             RouteCandidate,
         },
@@ -395,7 +400,12 @@ mod tests {
             path: path.to_string(),
             headers: HeaderMap::new(),
             body: Bytes::new(),
-            response_mode: ResponseMode::BufferedJson,
+            response_plan: ResponsePlan {
+                transport: TransportMode::Buffered,
+                upstream_protocol: UpstreamProtocol::ModelsJson,
+                downstream_transform: DownstreamTransform::Passthrough,
+                completion_policy: CompletionPolicy::ValidatedJsonBody,
+            },
         }
     }
 

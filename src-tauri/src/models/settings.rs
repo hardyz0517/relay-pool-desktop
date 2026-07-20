@@ -6,6 +6,7 @@ use super::routing::{RoutingGroupFilter, SchedulerAdvancedSettings};
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub local_proxy_port: u16,
+    pub local_proxy_start_on_launch: bool,
     pub local_key_masked: String,
     pub default_routing_strategy: String,
     pub collector_proxy_mode: String,

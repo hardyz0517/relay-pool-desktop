@@ -1,0 +1,59 @@
+{
+  "date": "2026-07-19",
+  "scope": "src-tauri/src/services/proxy",
+  "status": "post-cutover-architecture-gated",
+  "owners": [
+    {
+      "concern": "request",
+      "target": "src-tauri/src/services/proxy/lifecycle/request.rs::RequestLifecycle",
+      "production_owner": "src-tauri/src/services/proxy/lifecycle/request.rs::FinalRequestRecord",
+      "cutover_task": 14,
+      "task17_status": "legacy outcome symbol absent from production proxy sources"
+    },
+    {
+      "concern": "attempt",
+      "target": "src-tauri/src/services/proxy/lifecycle/attempt.rs::AttemptLifecycle",
+      "production_owner": "src-tauri/src/services/proxy/lifecycle/attempt.rs::AttemptTerminalRecord",
+      "cutover_task": 14,
+      "task17_status": "health and retry decisions are typed on normalized attempt records"
+    },
+    {
+      "concern": "protocol",
+      "target": "src-tauri/src/services/proxy/protocol/mod.rs::ResponsePlan",
+      "production_owner": "src-tauri/src/services/proxy/protocol/mod.rs::ResponsePlan",
+      "cutover_task": 14,
+      "task17_status": "ResponseMode absent from production proxy sources"
+    },
+    {
+      "concern": "delivery",
+      "target": "src-tauri/src/services/proxy/lifecycle/delivery.rs::DeliveryTerminal",
+      "production_owner": "src-tauri/src/services/proxy/response_body.rs::LifecycleBody",
+      "cutover_task": 13,
+      "task17_status": "body wrapper no longer carries legacy outcome naming"
+    },
+    {
+      "concern": "durable_write",
+      "target": "src-tauri/src/services/proxy/lifecycle/writer.rs::LifecycleWriter",
+      "production_owner": "src-tauri/src/services/proxy/lifecycle/writer.rs::LifecycleWriter",
+      "cutover_task": 14,
+      "task17_status": "single bounded writer channel; no production dispatcher fallback"
+    }
+  ],
+  "compatibility_boundaries": [
+    {
+      "concern": "legacy_runtime",
+      "status": "compiled only for cfg(test); not production-exported"
+    },
+    {
+      "concern": "request_logs.attempts_json",
+      "status": "schema/read compatibility only; production lifecycle annotations write null"
+    }
+  ],
+  "forbidden_during_transition": [
+    "new AppDatabase methods",
+    "production V1/V2 dual write",
+    "second production SQL adapter",
+    "per-job fallback spawn",
+    "permanent request-id HashSet"
+  ]
+}

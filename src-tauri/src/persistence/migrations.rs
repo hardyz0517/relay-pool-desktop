@@ -56,18 +56,22 @@ pub(crate) async fn run_pending_v2_migrations_after_verified_backup(
 
     let compatibility = load_schema_compatibility(&pool).await?;
     let schema_version = applied_schema_version(&pool).await?;
-    decide_open_mode(&latest_binary(), &compatibility, schema_version)?;
+    decide_open_mode(
+        &current_binary_compatibility(),
+        &compatibility,
+        schema_version,
+    )?;
     pool.close().await;
     validate_read_only_sqlite(database_path).await?;
     Ok(compatibility)
 }
 
-fn latest_binary() -> BinaryCompatibility {
+pub(crate) fn current_binary_compatibility() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 1),
         database_generation: 2,
-        readable_schema: 1..=4,
-        writable_schema: BTreeSet::from([4]),
+        readable_schema: 1..=5,
+        writable_schema: BTreeSet::from([5]),
     }
 }
 

@@ -141,6 +141,14 @@ pub(crate) struct PersistenceRuntime {
 }
 
 impl PersistenceRuntime {
+    pub(crate) async fn open_current(path: &Path) -> Result<Self, PersistenceError> {
+        Self::open(
+            path,
+            crate::persistence::migrations::current_binary_compatibility(),
+        )
+        .await
+    }
+
     pub(crate) async fn open(
         path: &Path,
         binary: BinaryCompatibility,

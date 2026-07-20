@@ -44,10 +44,11 @@ assert.deepEqual(
   { page: 1, totalPages: 1, start: 0, end: 0 },
 );
 
-const [pageSource, tableSource, dataTableSource] = await Promise.all([
+const [pageSource, tableSource, dataTableSource, paginationSource] = await Promise.all([
   readFile("src/features/logs/LogsPage.tsx", "utf8"),
   readFile("src/features/logs/RequestLogTable.tsx", "utf8"),
   readFile("src/components/ui/DataTableLite.tsx", "utf8"),
+  readFile("src/components/ui/Pagination.tsx", "utf8"),
 ]);
 
 assert.ok(
@@ -79,13 +80,16 @@ assert.ok(
 );
 
 assert.ok(
-  tableSource.includes("ChevronLeft") &&
-    tableSource.includes("ChevronRight") &&
+  tableSource.includes("<Pagination") &&
+    tableSource.includes('ariaLabel="使用记录分页"') &&
+    tableSource.includes("totalPages={pageInfo.totalPages}") &&
     tableSource.includes("每页") &&
     tableSource.includes("[20, 50, 100]") &&
-    tableSource.includes('aria-label="上一页"') &&
-    tableSource.includes('aria-label="下一页"'),
-  "request log pagination should provide accessible page-size and chevron controls",
+    paginationSource.includes("buildPaginationItems") &&
+    paginationSource.includes('aria-label="上一页"') &&
+    paginationSource.includes('aria-label="下一页"') &&
+    paginationSource.includes('aria-current={item === safePage ? "page" : undefined}'),
+  "request log pagination should provide page-size controls and shared classic numbered navigation",
 );
 
 assert.ok(
