@@ -18,8 +18,34 @@ describe("data recovery API", () => {
     const { getDataStoreStartupState } = await import("./dataRecovery");
 
     await expect(getDataStoreStartupState()).resolves.toEqual({
+      mode: "writable",
+      databaseGeneration: "two",
+      compatibility: {
+        decisionCode: "writable",
+        schemaVersion: null,
+        appVersion: "browser-preview",
+      },
+      capabilities: {
+        canBackup: false,
+        canExportDiagnostic: false,
+        canCheckForUpdates: false,
+        canLocateCandidate: false,
+        canActivateCandidate: false,
+        canCreateDataStore: false,
+      },
       decision: { kind: "ready", candidateId: "browser-preview" },
       candidates: [],
+    });
+  });
+
+  it("activates an inspected candidate by opaque id instead of returning its path", async () => {
+    mocks.invoke.mockResolvedValue({ restartRequired: true });
+    const { activateDataStoreCandidate } = await import("./dataRecovery");
+
+    await activateDataStoreCandidate("candidate-7");
+
+    expect(mocks.invoke).toHaveBeenCalledWith("activate_data_store_candidate", {
+      candidateId: "candidate-7",
     });
   });
 
@@ -31,5 +57,23 @@ describe("data recovery API", () => {
 
     mocks.invoke.mockRejectedValue(new Error("Command get_data_store_startup_state not found"));
     await expect(getDataStoreStartupState()).rejects.toThrow(/not found/i);
+  });
+
+  it("fails closed when a stale or malformed startup DTO is returned", async () => {
+    const { getDataStoreStartupState } = await import("./dataRecovery");
+
+    mocks.invoke.mockResolvedValue({
+      decision: { kind: "ready", candidateId: "legacy" },
+      candidates: [],
+    });
+
+    await expect(getDataStoreStartupState()).rejects.toThrow(/invalid data store startup response/i);
+  });
+
+  it("fails closed when manual location returns a malformed candidate", async () => {
+    mocks.invoke.mockResolvedValue({ id: "candidate-without-health" });
+    const { locateDataStoreCandidate } = await import("./dataRecovery");
+
+    await expect(locateDataStoreCandidate()).rejects.toThrow(/invalid data store candidate response/i);
   });
 });

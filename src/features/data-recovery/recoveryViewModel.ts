@@ -1,4 +1,5 @@
 import type {
+  CompatibilityDecisionCode,
   DataStoreCandidate,
   DataStoreStartupDecision,
   DataStoreStartupView,
@@ -10,6 +11,7 @@ export type RecoveryCandidateViewModel = {
   path: string;
   roleLabel: string;
   healthLabel: string;
+  generationLabel: string;
   schemaLabel: string;
   summary: string;
   metadata: string;
@@ -18,15 +20,36 @@ export type RecoveryCandidateViewModel = {
 };
 
 export type RecoveryViewModel = {
+  eyebrow: string;
   title: string;
   description: string;
+  requiresDestructiveActionConfirmation: boolean;
   candidates: RecoveryCandidateViewModel[];
 };
 
 export function buildRecoveryViewModel(state: DataStoreStartupView): RecoveryViewModel {
   return {
+    ...describeStartup(state),
+    candidates: state.candidates.map((candidate) =>
+      toCandidateViewModel(candidate, state.capabilities.canActivateCandidate),
+    ),
+  };
+}
+
+function describeStartup(state: DataStoreStartupView) {
+  if (state.mode === "inspectionOnly") {
+    return {
+      eyebrow: "只读检查模式",
+      title: "当前版本不能安全写入此数据库",
+      description: describeCompatibility(state.compatibility.decisionCode),
+      requiresDestructiveActionConfirmation: false,
+    };
+  }
+
+  return {
+    eyebrow: "本地数据恢复",
     ...describeDecision(state.decision),
-    candidates: state.candidates.map(toCandidateViewModel),
+    requiresDestructiveActionConfirmation: true,
   };
 }
 
@@ -39,17 +62,35 @@ function describeDecision(decision: DataStoreStartupDecision) {
   }
   if (decision.kind === "firstRun") {
     return {
-      title: "准备初始化本地数据",
-      description: `即将在默认目录创建新的本地数据库：${decision.defaultDataDir}`,
+      title: "准备初始化 generation 2 本地数据",
+      description: `即将在默认目录创建新的 generation 2 数据库：${decision.defaultDataDir}`,
     };
   }
   if (decision.kind === "needsRecovery") {
     return describeRecoveryReason(decision.reason);
   }
+  if (decision.kind === "inspectionOnly") {
+    return {
+      title: "当前版本只能读取数据库",
+      description: describeCompatibility(decision.reason),
+    };
+  }
   return {
     title: "本地数据已就绪",
     description: "Relay Pool 可以继续启动。",
   };
+}
+
+function describeCompatibility(reason: CompatibilityDecisionCode) {
+  const descriptions: Record<CompatibilityDecisionCode, string> = {
+    writable: "数据库与当前版本兼容，可以安全读写。",
+    inspectionOnly: "数据库可以读取，但当前版本没有写入资格。业务服务、代理、采集和监控均未启动。",
+    generationMismatch: "数据库 generation 与当前版本不匹配。应用已停止业务启动，避免写入错误的数据文件。",
+    readerTooOld: "当前应用版本低于数据库要求的最低读取版本。请升级应用后重试。",
+    writerTooOld: "当前应用版本低于数据库要求的最低写入版本。你仍可导出诊断、查看备份或检查更新。",
+    metadataMismatch: "数据库兼容性元数据与 migration 记录不一致。应用已关闭业务写入，请先保留现场并导出诊断。",
+  };
+  return descriptions[reason];
 }
 
 function describeRecoveryReason(reason: RecoveryReason) {
@@ -76,38 +117,78 @@ function describeRecoveryReason(reason: RecoveryReason) {
     },
     pendingRelocation: {
       title: "数据目录迁移未完成",
-      description: "检测到旧版迁移状态。Relay Pool 不会自动覆盖任何现有数据库，需要你确认要使用的数据文件。",
+      description: "检测到未完成的数据目录迁移。Relay Pool 不会自动覆盖任何现有数据库，需要你确认后续恢复动作。",
+    },
+    unsupportedLegacySchema: {
+      title: "旧数据库版本无法识别",
+      description: "此 generation 1 数据库不在已发布版本的升级矩阵内。源文件保持只读且不会被修改，请导出诊断。",
+    },
+    incompatibleSchema: {
+      title: "数据库结构与当前版本不兼容",
+      description: "兼容性检查未通过。业务服务不会启动，也不会尝试忽略未知字段继续写入。",
+    },
+    upgradeRecoveryRequired: {
+      title: "数据库升级需要恢复",
+      description: "检测到未完成的 generation 升级。应用已依据升级日志停止启动，请保留数据文件并执行允许的恢复动作。",
+    },
+    relocationUpgradeConflict: {
+      title: "检测到两个未完成的数据操作",
+      description: "数据目录迁移与 generation 升级状态同时存在。应用不会自动选择或合并状态，需要先导出诊断并人工处理。",
+    },
+    generationReopenFailed: {
+      title: "generation 2 数据库重新打开失败",
+      description: "升级结果未通过最终 reopen/health 检查。旧 generation 仍受保护，业务服务没有启动。",
     },
   };
   return descriptions[reason];
 }
 
-function toCandidateViewModel(candidate: DataStoreCandidate): RecoveryCandidateViewModel {
-  const selectable = candidate.health === "healthy" && candidate.schemaCompatible;
+function toCandidateViewModel(
+  candidate: DataStoreCandidate,
+  activationAllowed: boolean,
+): RecoveryCandidateViewModel {
+  const compatibilityWritable = candidate.compatibility?.decisionCode === "writable";
+  const selectable = activationAllowed && candidate.health === "healthy" && compatibilityWritable;
   return {
     id: candidate.id,
     path: candidate.path,
     roleLabel: roleLabels[candidate.role],
     healthLabel: healthLabels[candidate.health],
-    schemaLabel: candidate.schemaCompatible ? "结构兼容" : "结构不兼容",
+    generationLabel: candidate.databaseGeneration
+      ? `Generation ${candidate.databaseGeneration === "two" ? "2" : "1"}`
+      : "Generation 未知",
+    schemaLabel: schemaLabel(candidate),
     summary: formatCounts(candidate.counts),
     metadata: formatMetadata(candidate),
     selectable,
-    disabledReason: selectable ? null : disabledReason(candidate),
+    disabledReason: selectable ? null : disabledReason(candidate, activationAllowed),
   };
 }
 
-function disabledReason(candidate: DataStoreCandidate) {
+function schemaLabel(candidate: DataStoreCandidate) {
+  const compatibility = candidate.compatibility;
+  if (!compatibility) return "兼容性未确认";
+  const schema = compatibility.schemaVersion === null
+    ? "schema 未知"
+    : `schema ${compatibility.schemaVersion}`;
+  return `${schema} · ${compatibilityLabels[compatibility.decisionCode]}`;
+}
+
+function disabledReason(candidate: DataStoreCandidate, activationAllowed: boolean) {
+  if (!activationAllowed) return "当前启动模式不允许切换数据库";
   if (candidate.health !== "healthy") return healthLabels[candidate.health];
-  if (!candidate.schemaCompatible) return "数据库结构不兼容";
+  if (!candidate.compatibility) return "数据库兼容性尚未确认";
+  if (candidate.compatibility.decisionCode !== "writable") {
+    return compatibilityLabels[candidate.compatibility.decisionCode];
+  }
   return "不可选择";
 }
 
 const roleLabels: Record<DataStoreCandidate["role"], string> = {
   active: "当前记录",
   default: "默认目录",
-  source: "迁移来源",
-  pending: "迁移目标",
+  source: "升级来源",
+  pending: "待切换目标",
   backup: "备份",
   located: "手动定位",
 };
@@ -118,6 +199,15 @@ const healthLabels: Record<DataStoreCandidate["health"], string> = {
   unreadable: "无法读取",
   invalidSqlite: "不是有效的 SQLite 数据库",
   integrityFailed: "完整性检查失败",
+};
+
+const compatibilityLabels: Record<CompatibilityDecisionCode, string> = {
+  writable: "可读写",
+  inspectionOnly: "仅可检查",
+  generationMismatch: "generation 不匹配",
+  readerTooOld: "当前版本不可读取",
+  writerTooOld: "当前版本不可写入",
+  metadataMismatch: "兼容性元数据不一致",
 };
 
 const countLabels: Record<string, string> = {

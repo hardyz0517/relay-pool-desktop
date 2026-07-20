@@ -16,10 +16,32 @@ vi.mock("@/lib/api/dataRecovery", () => ({
   getDataStoreStartupState: mocks.getDataStoreStartupState,
 }));
 
+vi.mock("@/features/updater/UpdaterProvider", () => ({
+  useUpdater: () => ({
+    state: { phase: "idle" },
+    checkNow: vi.fn(),
+  }),
+}));
+
 let host: HTMLDivElement;
 let root: Root;
 
 const readyState: DataStoreStartupView = {
+  mode: "writable",
+  databaseGeneration: "two",
+  compatibility: {
+    decisionCode: "writable",
+    schemaVersion: 7,
+    appVersion: "0.4.0",
+  },
+  capabilities: {
+    canBackup: true,
+    canExportDiagnostic: true,
+    canCheckForUpdates: true,
+    canLocateCandidate: false,
+    canActivateCandidate: false,
+    canCreateDataStore: false,
+  },
   decision: { kind: "ready", candidateId: "active" },
   candidates: [],
 };
@@ -66,6 +88,17 @@ describe("DataStoreBootstrap", () => {
 
   it("renders recovery UI instead of the business app when startup needs recovery", async () => {
     mocks.getDataStoreStartupState.mockResolvedValue({
+      mode: "recovery",
+      databaseGeneration: "two",
+      compatibility: null,
+      capabilities: {
+        canBackup: true,
+        canExportDiagnostic: true,
+        canCheckForUpdates: true,
+        canLocateCandidate: true,
+        canActivateCandidate: false,
+        canCreateDataStore: false,
+      },
       decision: { kind: "needsRecovery", reason: "missing" },
       candidates: [
         {
@@ -73,7 +106,8 @@ describe("DataStoreBootstrap", () => {
           role: "active",
           path: "D:\\missing\\relay-pool-desktop.sqlite3",
           health: "missing",
-          schemaCompatible: false,
+          databaseGeneration: "one",
+          compatibility: null,
           sizeBytes: null,
           modifiedAt: null,
           counts: {},
@@ -85,6 +119,40 @@ describe("DataStoreBootstrap", () => {
     await act(async () => undefined);
 
     expect(host.textContent).toContain("需要确认本地数据位置");
+    expect(host.querySelector('[data-testid="business-app"]')).toBeNull();
+    await unmountBootstrap();
+  });
+
+  it("does not mount the business app in inspection-only mode", async () => {
+    mocks.getDataStoreStartupState.mockResolvedValue({
+      mode: "inspectionOnly",
+      databaseGeneration: "two",
+      compatibility: {
+        decisionCode: "writerTooOld",
+        schemaVersion: 8,
+        appVersion: "0.4.0",
+      },
+      capabilities: {
+        canBackup: true,
+        canExportDiagnostic: true,
+        canCheckForUpdates: true,
+        canLocateCandidate: false,
+        canActivateCandidate: false,
+        canCreateDataStore: false,
+      },
+      decision: {
+        kind: "inspectionOnly",
+        candidateId: "active-v2",
+        reason: "writerTooOld",
+      },
+      candidates: [],
+    });
+
+    await renderBootstrap();
+    await act(async () => undefined);
+
+    expect(host.textContent).toContain("只读检查模式");
+    expect(host.textContent).toContain("当前版本不能安全写入此数据库");
     expect(host.querySelector('[data-testid="business-app"]')).toBeNull();
     await unmountBootstrap();
   });

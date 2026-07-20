@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { App } from "@/app/App";
 import { Button } from "@/components/ui/button";
@@ -19,28 +19,31 @@ type DataStoreBootstrapProps = {
 
 export function DataStoreBootstrap({ renderReady = () => <App /> }: DataStoreBootstrapProps) {
   const [status, setStatus] = useState<BootstrapStatus>({ kind: "loading" });
+  const requestSequence = useRef(0);
 
   const reload = useCallback(() => {
-    let cancelled = false;
+    const requestId = ++requestSequence.current;
     setStatus({ kind: "loading" });
     void getDataStoreStartupState().then(
       (state) => {
-        if (!cancelled) setStatus({ kind: "loaded", state });
+        if (requestSequence.current === requestId) setStatus({ kind: "loaded", state });
       },
       (error) => {
-        if (!cancelled) setStatus({ kind: "error", error });
+        if (requestSequence.current === requestId) setStatus({ kind: "error", error });
       },
     );
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
-  useEffect(() => reload(), [reload]);
+  useEffect(() => {
+    reload();
+    return () => {
+      requestSequence.current += 1;
+    };
+  }, [reload]);
 
   if (status.kind === "loading") return <StartupLoadingScreen />;
   if (status.kind === "error") return <StartupFatalError error={status.error} onRetry={reload} />;
-  if (status.state.decision.kind !== "ready") {
+  if (status.state.mode !== "writable" || status.state.decision.kind !== "ready") {
     return <DataRecoveryScreen state={status.state} onActivated={reload} />;
   }
   return <>{renderReady()}</>;
