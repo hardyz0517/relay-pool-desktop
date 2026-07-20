@@ -34,6 +34,7 @@ impl RequestLogStore {
         &self,
         session: &mut WriteSession,
         record: &RequestStartRecord,
+        created_at_ms: i64,
     ) -> Result<RequestStartPersistenceResult, PersistenceError> {
         let inserted = sqlx::query(
             "INSERT OR IGNORE INTO request_logs (
@@ -47,7 +48,7 @@ impl RequestLogStore {
         .bind(&record.context.method)
         .bind(&record.context.local_path)
         .bind(&record.context.endpoint)
-        .bind(now_string())
+        .bind(created_at_ms.to_string())
         .execute(session.connection())
         .await?
         .rows_affected();
@@ -135,8 +136,10 @@ impl RequestLogStore {
         &self,
         session: &mut WriteSession,
         record: &FinalRequestRecord,
+        terminal_at_ms: i64,
     ) -> Result<RequestTerminalPersistenceResult, PersistenceError> {
-        let finalized = update_request_terminal(session.connection(), record).await?;
+        let finalized =
+            update_request_terminal(session.connection(), record, terminal_at_ms).await?;
         Ok(RequestTerminalPersistenceResult { finalized })
     }
 }
@@ -144,10 +147,10 @@ impl RequestLogStore {
 async fn update_request_terminal(
     connection: &mut SqliteConnection,
     record: &FinalRequestRecord,
+    terminal_at_ms: i64,
 ) -> Result<bool, PersistenceError> {
-    let now_ms = crate::services::database::now_millis_for_services() as i64;
-    let finished_at = now_ms.to_string();
-    let duration_ms = (now_ms - record.context.received_at_ms).max(0);
+    let finished_at = terminal_at_ms.to_string();
+    let duration_ms = (terminal_at_ms - record.context.received_at_ms).max(0);
     let (
         status,
         lifecycle_status,
@@ -212,7 +215,7 @@ async fn update_request_terminal(
     .bind(selected_attempt_ordinal)
     .bind(attempt_count)
     .bind(fallback_count)
-    .bind(now_ms)
+    .bind(terminal_at_ms)
     .bind(&record.context.request_id)
     .execute(&mut *connection)
     .await?
@@ -358,10 +361,6 @@ fn request_terminal_shape(
             false,
         ),
     }
-}
-
-fn now_string() -> String {
-    crate::services::database::now_millis_for_services().to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -576,8 +575,12 @@ async fn apply_attempt_health(
 
     let now_ms = record.terminal_at_ms;
     let now = now_ms.to_string();
-    let current =
-        station_key_health_by_key_id(connection, &record.context.station_key_id).await?;
+    let current = station_key_health_by_key_id(
+        connection,
+        &record.context.station_key_id,
+        &now,
+    )
+    .await?;
     let endpoint_revision = record.context.endpoint_revision;
     let next = match mode {
         "success" => StationKeyHealthMutation::success(
@@ -757,6 +760,7 @@ impl StationKeyHealthMutation {
 async fn station_key_health_by_key_id(
     connection: &mut SqliteConnection,
     station_key_id: &str,
+    now: &str,
 ) -> Result<StationKeyHealth, PersistenceError> {
     let row = sqlx::query(
             "SELECT station_key_id, last_success_at, last_failure_at, consecutive_failures,
@@ -789,7 +793,7 @@ async fn station_key_health_by_key_id(
         avg_latency_ms: None,
         last_error_summary: None,
         cooldown_until: None,
-        updated_at: now_string(),
+        updated_at: now.to_string(),
     }))
 }
 
@@ -1324,10 +1328,18 @@ mod v2_tests {
         let store = RequestLogStore;
         let record = start_record("req-start");
         let mut first = runtime.begin_write().await.expect("write");
-        assert!(store.start_request(&mut first, &record).await.expect("start").inserted);
+        assert!(store
+            .start_request(&mut first, &record, 1000)
+            .await
+            .expect("start")
+            .inserted);
         first.commit().await.expect("commit");
         let mut second = runtime.begin_write().await.expect("write");
-        assert!(!store.start_request(&mut second, &record).await.expect("duplicate").inserted);
+        assert!(!store
+            .start_request(&mut second, &record, 1000)
+            .await
+            .expect("duplicate")
+            .inserted);
         second.commit().await.expect("commit");
     }
 
@@ -1337,7 +1349,10 @@ mod v2_tests {
         let store = RequestLogStore;
         let record = start_record("req-attempt");
         let mut session = runtime.begin_write().await.expect("write");
-        store.start_request(&mut session, &record).await.expect("start");
+        store
+            .start_request(&mut session, &record, 1000)
+            .await
+            .expect("start");
         session.commit().await.expect("commit");
         let attempt = attempt_record("req-attempt");
         let mut first = runtime.begin_write().await.expect("write");
@@ -1362,14 +1377,25 @@ mod v2_tests {
         let store = RequestLogStore;
         let record = start_record("req-terminal");
         let mut start = runtime.begin_write().await.expect("write");
-        store.start_request(&mut start, &record).await.expect("start");
+        store
+            .start_request(&mut start, &record, 1000)
+            .await
+            .expect("start");
         start.commit().await.expect("commit");
         let final_record = terminal_record("req-terminal");
         let mut first = runtime.begin_write().await.expect("write");
-        assert!(store.finish_request(&mut first, &final_record).await.expect("finish").finalized);
+        assert!(store
+            .finish_request(&mut first, &final_record, 1100)
+            .await
+            .expect("finish")
+            .finalized);
         first.commit().await.expect("commit");
         let mut duplicate = runtime.begin_write().await.expect("write");
-        assert!(!store.finish_request(&mut duplicate, &final_record).await.expect("duplicate").finalized);
+        assert!(!store
+            .finish_request(&mut duplicate, &final_record, 1100)
+            .await
+            .expect("duplicate")
+            .finalized);
         duplicate.commit().await.expect("commit");
     }
 }

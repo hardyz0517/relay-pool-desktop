@@ -3,6 +3,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 
 use crate::{
+    application::clock::{Clock, SystemClock},
     persistence::{
         error::PersistenceError,
         runtime::PersistenceRuntime,
@@ -25,11 +26,29 @@ use crate::{
 pub(crate) struct RequestLifecyclePersistenceService {
     runtime: Arc<PersistenceRuntime>,
     store: RequestLogStore,
+    clock: Arc<dyn Clock>,
 }
 
 impl RequestLifecyclePersistenceService {
     pub(crate) fn new(runtime: Arc<PersistenceRuntime>, store: RequestLogStore) -> Self {
-        Self { runtime, store }
+        Self {
+            runtime,
+            store,
+            clock: Arc::new(SystemClock),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_clock(
+        runtime: Arc<PersistenceRuntime>,
+        store: RequestLogStore,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self {
+            runtime,
+            store,
+            clock,
+        }
     }
 }
 
@@ -40,10 +59,11 @@ impl RequestLifecycleStore for RequestLifecyclePersistenceService {
     ) -> BoxFuture<'static, Result<RequestStartAck, LifecycleWriteError>> {
         let runtime = Arc::clone(&self.runtime);
         let store = self.store;
+        let created_at_ms = self.clock.now_utc().timestamp_millis();
         Box::pin(async move {
             let mut session = runtime.begin_write().await.map_err(map_persistence_error)?;
             let outcome: RequestStartPersistenceResult = store
-                .start_request(&mut session, &record)
+                .start_request(&mut session, &record, created_at_ms)
                 .await
                 .map_err(map_persistence_error)?;
             session.commit().await.map_err(map_persistence_error)?;
@@ -79,10 +99,11 @@ impl RequestLifecycleStore for RequestLifecyclePersistenceService {
     ) -> BoxFuture<'static, Result<RequestCommitAck, LifecycleWriteError>> {
         let runtime = Arc::clone(&self.runtime);
         let store = self.store;
+        let terminal_at_ms = self.clock.now_utc().timestamp_millis();
         Box::pin(async move {
             let mut session = runtime.begin_write().await.map_err(map_persistence_error)?;
             let outcome: RequestTerminalPersistenceResult = store
-                .finish_request(&mut session, &record)
+                .finish_request(&mut session, &record, terminal_at_ms)
                 .await
                 .map_err(map_persistence_error)?;
             session.commit().await.map_err(map_persistence_error)?;

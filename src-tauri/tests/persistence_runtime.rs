@@ -233,7 +233,7 @@ async fn valid_writable_open_records_health_without_exposing_pool() {
 }
 
 fn binary_031() -> BinaryCompatibility {
-    binary_for_schema(4)
+    binary_for_schema(5)
 }
 
 fn binary_for_schema(schema: i64) -> BinaryCompatibility {

@@ -47,6 +47,35 @@ mod models {
 }
 
 mod services {
+    pub(crate) mod proxy {
+        pub(crate) mod lifecycle {
+            pub(crate) mod attempt {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/src/services/proxy/lifecycle/attempt.rs"
+                ));
+            }
+            pub(crate) mod delivery {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/src/services/proxy/lifecycle/delivery.rs"
+                ));
+            }
+            pub(crate) mod ports {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/src/services/proxy/lifecycle/ports.rs"
+                ));
+            }
+            pub(crate) mod request {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/src/services/proxy/lifecycle/request.rs"
+                ));
+            }
+        }
+    }
+
     pub(crate) mod outbound {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -163,6 +192,13 @@ mod persistence {
                 "/src/persistence/stores/credential_store.rs"
             ));
         }
+
+        pub(crate) mod request_log_store {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/persistence/stores/request_log_store.rs"
+            ));
+        }
     }
 }
 
@@ -215,6 +251,13 @@ mod application {
             "/src/application/settings.rs"
         ));
     }
+
+    pub(crate) mod request_lifecycle_persistence {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/application/request_lifecycle_persistence.rs"
+        ));
+    }
 }
 
 use std::{
@@ -232,6 +275,7 @@ use application::{
         CredentialError, CredentialService, CredentialVault, EncryptedSecret, SecretBytes,
     },
     ids::IdGenerator,
+    request_lifecycle_persistence::RequestLifecyclePersistenceService,
     routing::RoutingService,
     settings::SettingsService,
     stations::StationService,
@@ -245,10 +289,63 @@ use models::{
     stations::{CreateStationInput, UpdateStationInput},
 };
 use persistence::{runtime::PersistenceRuntime, schema_compatibility::BinaryCompatibility};
+use persistence::stores::request_log_store::RequestLogStore;
 use semver::Version;
 use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Connection, Row};
+use services::proxy::lifecycle::{
+    delivery::DeliveryTerminal,
+    ports::RequestLifecycleStore,
+    request::{
+        FinalRequestRecord, RequestCompletion, RequestContextSnapshot, RequestLifecycle,
+        RequestStartRecord, RequestTerminal,
+    },
+};
 
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(1);
+
+#[tokio::test]
+async fn request_finalization_is_idempotent_in_v2() {
+    let fixture = V2Fixture::create().await;
+    let runtime = Arc::new(fixture.runtime().await);
+    let service = RequestLifecyclePersistenceService::new(runtime, RequestLogStore);
+    let context = RequestContextSnapshot {
+        request_id: "request-finalization-1".to_string(),
+        method: "POST".to_string(),
+        local_path: "/v1/chat/completions".to_string(),
+        endpoint: "chat_completions".to_string(),
+        received_at_ms: 1000,
+    };
+    service
+        .start_request(RequestStartRecord {
+            context: context.clone(),
+        })
+        .await
+        .expect("request start");
+
+    let mut lifecycle = RequestLifecycle::new(context);
+    lifecycle.admit().expect("admit");
+    let final_record: FinalRequestRecord = lifecycle
+        .terminalize(
+            RequestTerminal::Completed(RequestCompletion {
+                protocol_completed: true,
+                attempt_id: None,
+            }),
+            DeliveryTerminal::BodyCompleted,
+        )
+        .expect("terminal");
+    let first = service
+        .finish_request(final_record.clone())
+        .await
+        .expect("first finalization");
+    let duplicate = service
+        .finish_request(final_record)
+        .await
+        .expect("duplicate finalization");
+
+    assert!(first.finalized);
+    assert!(!duplicate.finalized);
+    assert_eq!(fixture.count("request_logs").await, 1);
+}
 
 #[tokio::test]
 async fn station_endpoint_change_is_atomic_and_matches_v1_contract_boundary() {
@@ -1277,8 +1374,8 @@ fn binary_031() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 1),
         database_generation: 2,
-        readable_schema: 1..=4,
-        writable_schema: BTreeSet::from([4]),
+        readable_schema: 1..=5,
+        writable_schema: BTreeSet::from([5]),
     }
 }
 
