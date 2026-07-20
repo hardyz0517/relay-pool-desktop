@@ -254,8 +254,7 @@ pub fn run() {
             }
             app.manage(services::capture::session::CaptureSessionStore::default());
             app.manage(services::proxy::runtime::ProxyRuntimeState::default());
-            #[cfg(debug_assertions)]
-            services::proxy::dev_auto_start::schedule(app.handle().clone());
+            services::proxy::startup_auto_start::schedule(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {

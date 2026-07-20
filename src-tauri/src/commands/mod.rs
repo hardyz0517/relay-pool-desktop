@@ -445,12 +445,17 @@ pub async fn start_local_proxy(
     secrets: State<'_, SecretManager>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
-    crate::services::proxy::startup::start_from_persisted_settings(
+    let status = crate::services::proxy::startup::start_from_persisted_settings(
         database.inner(),
         *secrets.data_key(),
         proxy.inner(),
     )
-    .await
+    .await?;
+    if let Err(error) = database.set_local_proxy_start_on_launch(true) {
+        let _ = proxy.stop(status.port).await;
+        return Err(error);
+    }
+    Ok(status)
 }
 
 #[tauri::command]
@@ -459,7 +464,9 @@ pub async fn stop_local_proxy(
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
     let settings = database.get_settings()?;
-    proxy.stop(settings.local_proxy_port).await
+    let status = proxy.stop(settings.local_proxy_port).await?;
+    database.set_local_proxy_start_on_launch(false)?;
+    Ok(status)
 }
 
 #[tauri::command]
@@ -488,13 +495,18 @@ pub async fn restart_local_proxy(
 ) -> Result<ProxyStatus, String> {
     let settings = database.get_settings()?;
     database.migrate_plaintext_secrets(secrets.data_key())?;
-    proxy
+    let status = proxy
         .restart(ProxyStartConfig::new(
             database.inner().clone(),
             *secrets.data_key(),
             settings.local_proxy_port,
         ))
-        .await
+        .await?;
+    if let Err(error) = database.set_local_proxy_start_on_launch(true) {
+        let _ = proxy.stop(status.port).await;
+        return Err(error);
+    }
+    Ok(status)
 }
 
 #[tauri::command]

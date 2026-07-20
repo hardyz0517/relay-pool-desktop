@@ -143,8 +143,9 @@ static NEXT_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[cfg(test)]
 const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
 const DATABASE_FILE: &str = "relay-pool-desktop.sqlite3";
-const DEFAULT_SETTINGS: [(&str, &str); 18] = [
+const DEFAULT_SETTINGS: [(&str, &str); 19] = [
     ("local_proxy_port", "8787"),
+    ("local_proxy_start_on_launch", "false"),
     ("local_key", "sk-local-pool-change-me"),
     ("default_routing_strategy", "cost_stable_first"),
     ("collector_proxy_mode", "direct"),
@@ -802,6 +803,20 @@ impl AppDatabase {
         self.settings_from_open_connection(&connection)
     }
 
+    pub fn local_proxy_start_on_launch_enabled(&self) -> Result<bool, String> {
+        let connection = self.connection()?;
+        local_proxy_start_on_launch_from_connection(&connection)
+    }
+
+    pub fn set_local_proxy_start_on_launch(&self, enabled: bool) -> Result<(), String> {
+        let connection = self.connection()?;
+        upsert_setting(
+            &connection,
+            "local_proxy_start_on_launch",
+            &enabled.to_string(),
+        )
+    }
+
     pub fn update_settings(&self, input: UpdateSettingsInput) -> Result<AppSettings, String> {
         if input.local_proxy_port == 0 {
             return Err("本地代理端口必须大于 0".to_string());
@@ -1428,7 +1443,11 @@ impl AppDatabase {
         for (index, id) in key_ids.iter().enumerate() {
             let updated = transaction
                 .execute(
-                    "UPDATE station_keys SET priority = ?1, updated_at = ?2 WHERE id = ?3",
+                    "UPDATE station_keys
+                        SET priority = ?1,
+                            routing_order = ?1,
+                            updated_at = ?2
+                      WHERE id = ?3",
                     params![index as i64, now_string(), id],
                 )
                 .map_err(|error| format!("更新 Key 池排序失败: {error}"))?;
@@ -14282,6 +14301,7 @@ fn settings_from_connection(
 
     Ok(AppSettings {
         local_proxy_port: parse_setting(connection, "local_proxy_port")?,
+        local_proxy_start_on_launch: local_proxy_start_on_launch_from_connection(connection)?,
         local_key_masked: mask_secret(&local_key),
         default_routing_strategy: read_setting(connection, "default_routing_strategy")?,
         collector_proxy_mode: normalize_proxy_mode(
@@ -14353,6 +14373,12 @@ fn developer_mode_enabled_from_connection(connection: &Connection) -> Result<boo
     read_setting_or_default(connection, "developer_mode_enabled", "false")?
         .parse()
         .map_err(|_| "设置项 developer_mode_enabled 格式无效".to_string())
+}
+
+fn local_proxy_start_on_launch_from_connection(connection: &Connection) -> Result<bool, String> {
+    read_setting_or_default(connection, "local_proxy_start_on_launch", "false")?
+        .parse()
+        .map_err(|_| "设置项 local_proxy_start_on_launch 格式无效".to_string())
 }
 
 fn read_setting(connection: &Connection, key: &str) -> Result<String, String> {
@@ -16110,6 +16136,43 @@ mod tests {
             settings.collector_proxy_url.as_deref(),
             Some("http://127.0.0.1:7890")
         );
+    }
+
+    #[test]
+    fn local_proxy_start_on_launch_defaults_false_and_persists() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+
+        assert!(!database
+            .local_proxy_start_on_launch_enabled()
+            .expect("default launch setting"));
+        assert!(
+            !database
+                .get_settings()
+                .expect("default settings")
+                .local_proxy_start_on_launch
+        );
+
+        database
+            .set_local_proxy_start_on_launch(true)
+            .expect("enable start on launch");
+
+        assert!(database
+            .local_proxy_start_on_launch_enabled()
+            .expect("enabled launch setting"));
+        assert!(
+            database
+                .get_settings()
+                .expect("enabled settings")
+                .local_proxy_start_on_launch
+        );
+
+        database
+            .set_local_proxy_start_on_launch(false)
+            .expect("disable start on launch");
+
+        assert!(!database
+            .local_proxy_start_on_launch_enabled()
+            .expect("disabled launch setting"));
     }
 
     #[test]
@@ -19211,6 +19274,70 @@ mod tests {
 
         assert_eq!(ids, vec![second_key.id.as_str(), first_key.id.as_str()]);
         assert_eq!(priorities, vec![0, 0]);
+    }
+
+    #[test]
+    fn reorder_key_pool_updates_global_routing_order_source_of_truth() {
+        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let first_station = test_station(&database, "first-key-pool-reorder");
+        let second_station = test_station(&database, "second-key-pool-reorder");
+        let first_key = database
+            .list_station_keys(first_station.id)
+            .expect("first station keys")
+            .remove(0);
+        let second_key = database
+            .list_station_keys(second_station.id)
+            .expect("second station keys")
+            .remove(0);
+
+        let saved = database
+            .reorder_key_pool(vec![second_key.id.clone(), first_key.id.clone()])
+            .expect("save key pool order");
+        let saved_ids = saved
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            saved_ids,
+            vec![second_key.id.as_str(), first_key.id.as_str()]
+        );
+
+        let items = database.list_key_pool_items().expect("key pool items");
+        let item_ids = items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            item_ids,
+            vec![second_key.id.as_str(), first_key.id.as_str()]
+        );
+
+        let rows = {
+            let connection = database.connection().expect("connection");
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, priority, routing_order
+                       FROM station_keys
+                      WHERE id IN (?1, ?2)
+                      ORDER BY routing_order ASC",
+                )
+                .expect("prepare station key order query");
+            statement
+                .query_map(params![&second_key.id, &first_key.id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })
+                .expect("query station key order")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("station key order rows")
+        };
+        assert_eq!(
+            rows,
+            vec![(second_key.id.clone(), 0, 0), (first_key.id.clone(), 1, 1),]
+        );
     }
 
     #[test]

@@ -36,6 +36,7 @@ type SettingsFormState = {
 
 const fallbackSettings: AppSettings = {
   localProxyPort: 8787,
+  localProxyStartOnLaunch: false,
   localKeyMasked: "未读取",
   defaultRoutingStrategy: "automatic_balanced",
   collectorProxyMode: "direct",

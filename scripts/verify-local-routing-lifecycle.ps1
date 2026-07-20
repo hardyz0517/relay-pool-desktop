@@ -3,11 +3,15 @@ param(
     [string]$DatabasePath = (Join-Path $env:APPDATA "dev.relaypool.desktop\relay-pool-desktop.sqlite3"),
     [string]$Bearer = $env:RELAY_POOL_LOCAL_BEARER,
     [string]$Model = $env:RELAY_POOL_E2E_MODEL,
+    [string]$EmbeddingsModel = $env:RELAY_POOL_E2E_EMBEDDINGS_MODEL,
     [switch]$Smoke,
+    [switch]$SkipEmbeddings,
     [switch]$SkipDbVerify
 )
 
 $ErrorActionPreference = "Stop"
+
+Add-Type -AssemblyName System.Net.Http
 
 function Fail($Message) {
     Write-Error $Message
@@ -80,7 +84,8 @@ function Invoke-LifecycleRequest($Name, $Method, $Path, $BodyObject, [switch]$St
         $bytes = 0
         $terminal = $null
         if ($Stream -or $CancelAfterFirstChunk) {
-            $streamReader = [System.IO.StreamReader]::new($response.Content.ReadAsStream())
+            $responseStream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+            $streamReader = [System.IO.StreamReader]::new($responseStream)
             try {
                 while (-not $streamReader.EndOfStream) {
                     $line = $streamReader.ReadLine()
@@ -136,12 +141,17 @@ $matrix = @(
     @{ name = "chat-stream"; method = "Post"; path = "/v1/chat/completions"; body = @{ model = $Model; messages = @(@{ role = "user"; content = "Stream one short lifecycle verification sentence." }); stream = $true }; stream = $true; cancel = $false },
     @{ name = "responses-non-stream"; method = "Post"; path = "/v1/responses"; body = @{ model = $Model; input = "Reply with one short lifecycle verification sentence."; stream = $false }; stream = $false; cancel = $false },
     @{ name = "responses-stream"; method = "Post"; path = "/v1/responses"; body = @{ model = $Model; input = "Stream one short lifecycle verification sentence."; stream = $true }; stream = $true; cancel = $false },
-    @{ name = "embeddings"; method = "Post"; path = "/v1/embeddings"; body = @{ model = $Model; input = "lifecycle verification" }; stream = $false; cancel = $false },
     @{ name = "chat-stream-cancel"; method = "Post"; path = "/v1/chat/completions"; body = @{ model = $Model; messages = @(@{ role = "user"; content = "Stream slowly enough that the client can cancel after the first chunk." }); stream = $true }; stream = $true; cancel = $true }
 )
 
 if ($Smoke) {
     $matrix = $matrix | Where-Object { $_.name -in @("models", "chat-non-stream") }
+} elseif ($EmbeddingsModel) {
+    $matrix += @{ name = "embeddings"; method = "Post"; path = "/v1/embeddings"; body = @{ model = $EmbeddingsModel; input = "lifecycle verification" }; stream = $false; cancel = $false }
+} elseif ($SkipEmbeddings) {
+    Write-Warning "Skipping embeddings E2E because RELAY_POOL_E2E_EMBEDDINGS_MODEL is not set."
+} else {
+    Fail "Set RELAY_POOL_E2E_EMBEDDINGS_MODEL to an embedding-capable configured model, or pass -SkipEmbeddings to verify chat/responses stream lifecycle only."
 }
 
 $results = New-Object System.Collections.Generic.List[object]

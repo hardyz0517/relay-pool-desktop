@@ -373,7 +373,16 @@ impl LifecycleBody {
             FinalizationOutcome::Interrupted {
                 detail: Some("downstream disconnected before body completion".to_string()),
             },
-            None,
+            Some(AttemptTerminal::Failed(ClassifiedAttemptFailure {
+                kind: AttemptFailureKind::DownstreamDrop,
+                blame: FailureBlame::Downstream,
+                retry: RetryDisposition::StopRequest,
+                health: HealthEffect::Neutral,
+                public_code: "DownstreamDropped".to_string(),
+                sanitized_detail: Some(
+                    "downstream disconnected before body completion".to_string(),
+                ),
+            })),
         );
     }
 }
@@ -440,14 +449,17 @@ mod tests {
     use crate::services::proxy::{
         error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
         lifecycle::{
-            attempt::AttemptTerminalRecord,
+            attempt::{
+                AttemptContext, AttemptFailureKind, AttemptTerminal, AttemptTerminalRecord,
+                FailureBlame, HealthEffect, RetryDisposition,
+            },
             delivery::DeliveryTerminal,
             ports::{
                 AttemptCommitAck, LifecycleWriteError, RequestCommitAck, RequestLifecycleStore,
                 RequestStartAck,
             },
             request::{
-                FinalRequestRecord, PendingFinalRequestRecord, RequestContextSnapshot,
+                AttemptId, FinalRequestRecord, PendingFinalRequestRecord, RequestContextSnapshot,
                 RequestLogAnnotations, RequestStartRecord, RequestTerminal,
             },
             writer::{LifecycleWriter, LifecycleWriterWorker},
@@ -457,7 +469,7 @@ mod tests {
 
     use super::{
         buffered_lifecycle_finalizing_stream, lifecycle_finalizing_stream_with_idle_timeout,
-        LifecycleFinalizationLease,
+        LifecycleFinalizationLease, SelectedAttemptFinalization,
     };
 
     #[tokio::test]
@@ -551,9 +563,11 @@ mod tests {
 
     #[tokio::test]
     async fn response_body_drop_after_chunk_before_eof_finalizes_downstream_disconnect_once() {
-        let fixture =
-            LifecycleBodyFixture::new("response-body-drop-after-chunk", "/v1/chat/completions")
-                .await;
+        let fixture = LifecycleBodyFixture::new_with_selected_attempt(
+            "response-body-drop-after-chunk",
+            "/v1/chat/completions",
+        )
+        .await;
         let LifecycleBodyFixture {
             store,
             writer,
@@ -595,6 +609,17 @@ mod tests {
             record.annotations.failure_source.as_deref(),
             Some("downstream")
         );
+        assert_eq!(store.attempt_calls(), 1);
+        let attempt = store.last_attempt().expect("attempt record");
+        assert!(matches!(
+            attempt.terminal,
+            AttemptTerminal::Failed(ref failure)
+                if failure.kind == AttemptFailureKind::DownstreamDrop
+                    && failure.blame == FailureBlame::Downstream
+                    && failure.retry == RetryDisposition::StopRequest
+                    && failure.health == HealthEffect::Neutral
+        ));
+        assert!(attempt.output_committed);
         assert_eq!(active_requests.load(Ordering::SeqCst), 0);
 
         drop(writer);
@@ -828,6 +853,7 @@ mod tests {
 
     struct RecordingStore {
         start_records: Arc<Mutex<Vec<RequestStartRecord>>>,
+        attempt_records: Arc<Mutex<Vec<AttemptTerminalRecord>>>,
         request_records: Arc<Mutex<Vec<FinalRequestRecord>>>,
     }
 
@@ -835,6 +861,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 start_records: Arc::new(Mutex::new(Vec::new())),
+                attempt_records: Arc::new(Mutex::new(Vec::new())),
                 request_records: Arc::new(Mutex::new(Vec::new())),
             }
         }
@@ -847,6 +874,18 @@ mod tests {
             self.request_records
                 .lock()
                 .expect("records lock")
+                .last()
+                .cloned()
+        }
+
+        fn attempt_calls(&self) -> usize {
+            self.attempt_records.lock().expect("attempt lock").len()
+        }
+
+        fn last_attempt(&self) -> Option<AttemptTerminalRecord> {
+            self.attempt_records
+                .lock()
+                .expect("attempt lock")
                 .last()
                 .cloned()
         }
@@ -876,9 +915,11 @@ mod tests {
 
         fn finish_attempt(
             &self,
-            _record: AttemptTerminalRecord,
+            record: AttemptTerminalRecord,
         ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
-            Box::pin(async {
+            let records = Arc::clone(&self.attempt_records);
+            Box::pin(async move {
+                records.lock().expect("attempt lock").push(record);
                 Ok(AttemptCommitAck {
                     inserted: true,
                     health_applied: true,
@@ -919,6 +960,25 @@ mod tests {
         }
 
         async fn new_with_start(request_id: &str, local_path: &str, received_at_ms: i64) -> Self {
+            Self::new_with_start_and_attempt(request_id, local_path, received_at_ms, false).await
+        }
+
+        async fn new_with_selected_attempt(request_id: &str, local_path: &str) -> Self {
+            Self::new_with_start_and_attempt(
+                request_id,
+                local_path,
+                crate::services::database::now_millis_for_services() as i64,
+                true,
+            )
+            .await
+        }
+
+        async fn new_with_start_and_attempt(
+            request_id: &str,
+            local_path: &str,
+            received_at_ms: i64,
+            include_selected_attempt: bool,
+        ) -> Self {
             let context = RequestContextSnapshot {
                 request_id: request_id.to_string(),
                 method: "POST".to_string(),
@@ -957,14 +1017,36 @@ mod tests {
                 .await
                 .expect("request permit");
             let request_lease = RequestLease::new(request_permit, Arc::clone(&active_requests));
+            let selected_attempt = if include_selected_attempt {
+                let reservation = writer.try_reserve_attempt().expect("attempt reservation");
+                let context = AttemptContext {
+                    attempt_id: AttemptId::new(request_id, 0),
+                    station_id: "station-test".to_string(),
+                    station_key_id: "key-test".to_string(),
+                    endpoint_revision: 1,
+                    started_at_ms: received_at_ms,
+                };
+                Some(SelectedAttemptFinalization::new(reservation, context))
+            } else {
+                None
+            };
+            let selected_attempt_id = selected_attempt
+                .as_ref()
+                .map(|attempt| attempt.context.attempt_id.clone());
 
             Self {
                 store,
                 writer,
                 worker,
-                lease: LifecycleFinalizationLease::new(terminal, None),
+                lease: LifecycleFinalizationLease::new(terminal, selected_attempt),
                 request_lease,
-                record: PendingFinalRequestRecord::new(context, None, 1, 0, annotations),
+                record: PendingFinalRequestRecord::new(
+                    context,
+                    selected_attempt_id,
+                    1,
+                    0,
+                    annotations,
+                ),
                 active_requests,
             }
         }

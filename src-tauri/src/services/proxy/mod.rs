@@ -2,8 +2,6 @@ use crate::models::proxy::UpstreamApiFormat;
 use serde_json::Value;
 
 pub mod adapters;
-#[cfg(debug_assertions)]
-pub mod dev_auto_start;
 pub mod endpoint_adapter;
 pub mod error;
 pub mod execution;
@@ -33,6 +31,7 @@ pub mod runtime;
 pub mod scheduler;
 pub mod server;
 pub mod startup;
+pub mod startup_auto_start;
 pub mod upstream;
 
 #[cfg(test)]

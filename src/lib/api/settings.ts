@@ -13,6 +13,7 @@ export const SETTINGS_UPDATED_EVENT = "relay-pool-settings-updated";
 
 let memorySettings: AppSettings = {
   localProxyPort: 8787,
+  localProxyStartOnLaunch: false,
   localKeyMasked: "未读取",
   defaultRoutingStrategy: "automatic_balanced",
   collectorProxyMode: "direct",
@@ -107,6 +108,7 @@ function normalizeSettings(settings: AppSettings): AppSettings {
     ...settings,
     pendingDataDir: typeof maybeSettings.pendingDataDir === "string" ? maybeSettings.pendingDataDir : null,
     dataDirChangeRequiresRestart: normalizeBoolean(maybeSettings.dataDirChangeRequiresRestart),
+    localProxyStartOnLaunch: normalizeBoolean(maybeSettings.localProxyStartOnLaunch),
     defaultRoutingStrategy: normalizeRoutingStrategy(settings.defaultRoutingStrategy),
     collectorProxyMode: normalizeCollectorProxyMode(maybeSettings.collectorProxyMode),
     collectorProxyUrl:

@@ -357,6 +357,7 @@ impl ExecutionEngine {
     ) -> Result<ProxyExecutionResponse, ProxyFailure> {
         let mut seen_ids = HashSet::new();
         let mut models = Vec::new();
+        let mut attempted_count = 0_i64;
         let mut failed_count = 0_i64;
         let mut last_failure = None;
         let mut headers = HeaderMap::new();
@@ -366,6 +367,7 @@ impl ExecutionEngine {
             .take(self.retry_policy.max_attempts(candidates.len()))
             .enumerate()
         {
+            attempted_count = attempted_count.max(attempt_index as i64 + 1);
             let attempt_started_at_ms = now_millis_for_services() as i64;
             match self
                 .attempts
@@ -471,6 +473,7 @@ impl ExecutionEngine {
             &request,
             "models_aggregated_success",
             failed_count,
+            attempted_count,
         ))
     }
 
@@ -740,7 +743,7 @@ impl ProxyExecutionResponse {
         request: &CanonicalProxyRequest,
         lifecycle_status: &str,
     ) -> Self {
-        Self::local_buffered_with_fallback(status, headers, body, request, lifecycle_status, 0)
+        Self::local_buffered_with_fallback(status, headers, body, request, lifecycle_status, 0, 0)
     }
 
     fn local_buffered_with_fallback(
@@ -750,6 +753,7 @@ impl ProxyExecutionResponse {
         request: &CanonicalProxyRequest,
         _lifecycle_status: &str,
         fallback_count: i64,
+        attempt_count: i64,
     ) -> Self {
         let body_bytes = body.len() as i64;
         Self {
@@ -784,7 +788,7 @@ impl ProxyExecutionResponse {
                     first_token_ms: None,
                 },
                 selected_attempt: None,
-                attempt_count: 0,
+                attempt_count: attempt_count.max(0) as u16,
                 fallback_count: fallback_count.max(0) as u16,
             },
         }
@@ -1302,6 +1306,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn models_aggregation_preserves_attempt_count_in_lifecycle_evidence() {
+        let repository = Arc::new(FakeRepository::with_candidates(vec![
+            rich_candidate("a"),
+            rich_candidate("b"),
+        ]));
+        let attempts = Arc::new(FakeAttemptExecutor::responses(vec![
+            Err(failure(500)),
+            Ok(buffered_success(
+                br#"{"data":[{"id":"gpt-test","object":"model"}]}"#,
+            )),
+        ]));
+        let engine = ExecutionEngine::new(repository, attempts.clone());
+
+        let response = engine
+            .execute(canonical_models_request().await)
+            .await
+            .expect("models response");
+
+        assert_eq!(attempts.seen_ids(), ["a", "b"]);
+        assert_eq!(response.lifecycle.attempt_count, 2);
+        assert_eq!(response.lifecycle.fallback_count, 1);
+    }
+
+    #[tokio::test]
     async fn execution_engine_tries_at_most_three_distinct_candidates() {
         let repository = Arc::new(FakeRepository::with_candidates(vec![
             rich_candidate("a"),
@@ -1658,6 +1686,32 @@ mod tests {
             RouteEndpointKind::ChatCompletions,
             Some("gpt-test".to_string()),
             true,
+            None,
+            RequestRequirements::default(),
+            body,
+            HeaderMap::new(),
+            None,
+            None,
+            None,
+            None,
+            body_budget,
+            RequestLease::new(permit, Arc::new(std::sync::atomic::AtomicU32::new(0))),
+        )
+    }
+
+    async fn canonical_models_request() -> CanonicalProxyRequest {
+        let body = Bytes::new();
+        let budget = BodyBudget::new(1024 * 1024);
+        let body_budget = budget.acquire(body.len()).await.expect("budget");
+        let permit = Arc::new(tokio::sync::Semaphore::new(1))
+            .try_acquire_owned()
+            .expect("permit");
+        CanonicalProxyRequest::new(
+            "req-models".to_string(),
+            "/v1/models".to_string(),
+            RouteEndpointKind::Models,
+            None,
+            false,
             None,
             RequestRequirements::default(),
             body,
