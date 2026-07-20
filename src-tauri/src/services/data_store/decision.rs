@@ -20,6 +20,41 @@ pub(crate) struct DecisionInput {
     pub default_data_dir: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StartupStep {
+    Lease,
+    ConfigInspection,
+    RecoveryPlanning,
+    LegacyDetection,
+    BackupImportValidation,
+    Tombstone,
+    GenerationCommit,
+    V2Reopen,
+    HealthCheck,
+    AppServices,
+    Proxy,
+    Collectors,
+    Monitors,
+}
+
+pub(crate) const fn startup_order() -> &'static [StartupStep] {
+    &[
+        StartupStep::Lease,
+        StartupStep::ConfigInspection,
+        StartupStep::RecoveryPlanning,
+        StartupStep::LegacyDetection,
+        StartupStep::BackupImportValidation,
+        StartupStep::Tombstone,
+        StartupStep::GenerationCommit,
+        StartupStep::V2Reopen,
+        StartupStep::HealthCheck,
+        StartupStep::AppServices,
+        StartupStep::Proxy,
+        StartupStep::Collectors,
+        StartupStep::Monitors,
+    ]
+}
+
 pub(crate) fn decide_startup(input: &DecisionInput) -> StartupDecision {
     if input.pending_relocation {
         return StartupDecision::NeedsRecovery {
@@ -93,7 +128,7 @@ fn recovery_reason_for_health(health: &CandidateHealth) -> RecoveryReason {
 }
 #[cfg(test)]
 mod tests {
-    use super::{decide_startup, CandidateFacts, DecisionInput};
+    use super::{decide_startup, startup_order, CandidateFacts, DecisionInput, StartupStep};
     use crate::services::data_store::types::{
         CandidateHealth, CandidateRole, RecoveryReason, StartupDecision,
     };
@@ -200,6 +235,35 @@ mod tests {
             StartupDecision::NeedsRecovery {
                 reason: RecoveryReason::PendingRelocation
             }
+        );
+    }
+
+    #[test]
+    fn startup_order_places_runtime_registration_after_v2_health() {
+        let order = startup_order();
+        assert!(
+            order.iter().position(|step| *step == StartupStep::V2Reopen)
+                < order
+                    .iter()
+                    .position(|step| *step == StartupStep::AppServices)
+        );
+        assert!(
+            order
+                .iter()
+                .position(|step| *step == StartupStep::HealthCheck)
+                < order.iter().position(|step| *step == StartupStep::Proxy)
+        );
+        assert!(
+            order.iter().position(|step| *step == StartupStep::Proxy)
+                < order
+                    .iter()
+                    .position(|step| *step == StartupStep::Collectors)
+        );
+        assert!(
+            order
+                .iter()
+                .position(|step| *step == StartupStep::Collectors)
+                < order.iter().position(|step| *step == StartupStep::Monitors)
         );
     }
     fn input(

@@ -5,6 +5,8 @@ use std::{
 
 use serde::Serialize;
 
+use super::config::DatabaseGeneration;
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum RecoveryReason {
@@ -84,6 +86,7 @@ pub struct DataStoreStartupState {
     pub candidates: Vec<DataStoreCandidate>,
     default_data_dir: PathBuf,
     pub(crate) relocation_intent: Option<DataStoreRelocationIntent>,
+    database_generation: DatabaseGeneration,
 }
 
 impl DataStoreStartupState {
@@ -98,7 +101,17 @@ impl DataStoreStartupState {
             candidates,
             default_data_dir,
             relocation_intent,
+            database_generation: DatabaseGeneration::One,
         }
+    }
+
+    pub(crate) fn with_database_generation(mut self, generation: DatabaseGeneration) -> Self {
+        self.database_generation = generation;
+        self
+    }
+
+    pub(crate) fn database_generation(&self) -> DatabaseGeneration {
+        self.database_generation
     }
 
     pub fn view(&self) -> DataStoreStartupView {
