@@ -6,5 +6,8 @@ mod read_session;
 pub(crate) mod runtime;
 mod schema_compatibility;
 pub(crate) mod stores;
+pub(crate) mod upgrade_journal;
+pub(crate) mod upgrade_recovery_executor;
+pub(crate) mod upgrade_recovery_plan;
 mod write_coordinator;
 mod write_session;

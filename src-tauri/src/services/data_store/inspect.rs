@@ -2,6 +2,8 @@ use std::{collections::BTreeMap, fs, path::Path};
 
 use rusqlite::{Connection, OpenFlags};
 
+use crate::persistence::upgrade_recovery_executor::read_legacy_tombstone;
+
 use super::types::{CandidateHealth, CandidateRole, DataStoreCandidate};
 
 const RECOGNIZED_TABLES: [&str; 4] = ["stations", "station_keys", "channel_monitors", "settings"];
@@ -10,6 +12,7 @@ const RECOGNIZED_TABLES: [&str; 4] = ["stations", "station_keys", "channel_monit
 pub(crate) struct InspectedDataStoreCandidate {
     pub candidate: DataStoreCandidate,
     pub contains_relay_pool_schema: bool,
+    pub is_legacy_tombstone: bool,
 }
 
 pub(crate) fn inspect_candidate(
@@ -32,7 +35,40 @@ fn inspect_with_quick_check(
             false,
             BTreeMap::new(),
             None,
+            false,
         ));
+    }
+
+    match read_legacy_tombstone(path) {
+        Ok(Some(_)) => {
+            let metadata = fs::metadata(path).map_err(|error| {
+                format!(
+                    "failed to read candidate metadata {}: {error}",
+                    path.display()
+                )
+            })?;
+            return Ok(make_candidate(
+                path,
+                role,
+                CandidateHealth::InvalidSqlite,
+                false,
+                BTreeMap::new(),
+                Some(&metadata),
+                true,
+            ));
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return Ok(make_candidate(
+                path,
+                role,
+                CandidateHealth::InvalidSqlite,
+                false,
+                BTreeMap::new(),
+                fs::metadata(path).ok().as_ref(),
+                false,
+            ));
+        }
     }
 
     let metadata = fs::metadata(path).map_err(|error| {
@@ -42,7 +78,15 @@ fn inspect_with_quick_check(
         )
     })?;
     let with_metadata = |health, schema, counts| {
-        make_candidate(path, role.clone(), health, schema, counts, Some(&metadata))
+        make_candidate(
+            path,
+            role.clone(),
+            health,
+            schema,
+            counts,
+            Some(&metadata),
+            false,
+        )
     };
     let connection = match Connection::open_with_flags(
         path,
@@ -96,6 +140,7 @@ fn make_candidate(
     contains_relay_pool_schema: bool,
     counts: BTreeMap<String, i64>,
     metadata: Option<&fs::Metadata>,
+    is_legacy_tombstone: bool,
 ) -> InspectedDataStoreCandidate {
     let size_bytes = metadata.map(fs::Metadata::len);
     let modified_at = metadata
@@ -114,6 +159,7 @@ fn make_candidate(
             counts,
         },
         contains_relay_pool_schema,
+        is_legacy_tombstone,
     }
 }
 
@@ -170,6 +216,9 @@ fn count_tables(
 #[cfg(test)]
 mod tests {
     use super::{inspect_candidate, inspect_with_quick_check, table_exists};
+    use crate::persistence::{
+        upgrade_journal::UpgradeAttemptId, upgrade_recovery_executor::replace_legacy_with_tombstone,
+    };
     use crate::services::data_store::types::{CandidateHealth, CandidateRole};
     use rusqlite::Connection;
     use std::{fs, path::PathBuf, time::SystemTime};
@@ -247,6 +296,23 @@ mod tests {
         ] {
             assert!(!serialized.contains(secret), "leaked {secret}");
         }
+    }
+
+    #[test]
+    fn valid_tombstone_is_recognized_before_sqlite_open_without_exposing_attempt() {
+        let path = db_path("legacy-tombstone");
+        fs::write(&path, b"SQLite format 3\0legacy").expect("legacy");
+        let attempt =
+            UpgradeAttemptId::parse("019f7d50-9d44-7000-8000-000000000001").expect("attempt");
+        replace_legacy_with_tombstone(&path, &attempt).expect("tombstone");
+
+        let inspected = inspect_candidate(&path, CandidateRole::Active).expect("inspect");
+
+        assert!(inspected.is_legacy_tombstone);
+        assert_eq!(inspected.candidate.health, CandidateHealth::InvalidSqlite);
+        assert!(!inspected.contains_relay_pool_schema);
+        let summary = serde_json::to_string(&inspected.candidate).expect("summary");
+        assert!(!summary.contains(attempt.as_str()));
     }
 
     fn protected_db(name: &str, tables: &[(&str, usize)]) -> PathBuf {
