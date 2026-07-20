@@ -1,33 +1,41 @@
-use std::{collections::HashSet, sync::Arc};
-
 use crate::{
     models::{
         pricing::BalanceSnapshot,
-        proxy::{CreateRequestLogInput, RequestLog},
+        routing::{RoutingGroupFilter, RoutingPolicy, SchedulerAdvancedSettings},
     },
-    services::{
-        database::{
-            now_millis_for_services, AppDatabase, FinalizeRequestLogInput, RequestLogFeedbackInput,
-            RequestLogFeedbackKind,
-        },
-        proxy::router::RichRouteCandidate,
-    },
+    services::{database::AppDatabase, proxy::router::RichRouteCandidate},
 };
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RoutingExecutionSettings {
+    pub policy: RoutingPolicy,
+    pub max_rate_multiplier: Option<f64>,
+    pub routing_group_filter: RoutingGroupFilter,
+    pub scheduler_advanced_settings: SchedulerAdvancedSettings,
+    pub allow_depleted_fallback: bool,
+}
+
+impl Default for RoutingExecutionSettings {
+    fn default() -> Self {
+        Self {
+            policy: RoutingPolicy::PriorityFallback,
+            max_rate_multiplier: None,
+            routing_group_filter: RoutingGroupFilter::default(),
+            scheduler_advanced_settings: SchedulerAdvancedSettings::default(),
+            allow_depleted_fallback: false,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct SqliteRoutingRepository {
     database: AppDatabase,
     data_key: [u8; 32],
-    finalized_request_ids: Arc<std::sync::Mutex<HashSet<String>>>,
 }
 
 impl SqliteRoutingRepository {
     pub(crate) fn new(database: AppDatabase, data_key: [u8; 32]) -> Self {
-        Self {
-            database,
-            data_key,
-            finalized_request_ids: Arc::new(std::sync::Mutex::new(HashSet::new())),
-        }
+        Self { database, data_key }
     }
 }
 
@@ -42,16 +50,17 @@ pub(crate) trait RoutingRepository: Send + Sync {
         Box::pin(async { Ok(Vec::new()) })
     }
 
+    fn load_execution_settings(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, Result<RoutingExecutionSettings, String>> {
+        Box::pin(async { Ok(RoutingExecutionSettings::default()) })
+    }
+
     fn load_balance_snapshots(
         &self,
     ) -> futures_util::future::BoxFuture<'static, Result<Vec<BalanceSnapshot>, String>> {
         Box::pin(async { Ok(Vec::new()) })
     }
-
-    fn record_final_outcome(
-        &self,
-        outcome: FinalRequestOutcome,
-    ) -> futures_util::future::BoxFuture<'static, Result<Option<RequestLog>, String>>;
 }
 
 impl RoutingRepository for SqliteRoutingRepository {
@@ -69,61 +78,23 @@ impl RoutingRepository for SqliteRoutingRepository {
         })
     }
 
-    fn record_final_outcome(
+    fn load_execution_settings(
         &self,
-        outcome: FinalRequestOutcome,
-    ) -> futures_util::future::BoxFuture<'static, Result<Option<RequestLog>, String>> {
+    ) -> futures_util::future::BoxFuture<'static, Result<RoutingExecutionSettings, String>> {
         let database = self.database.clone();
-        let finalized = Arc::clone(&self.finalized_request_ids);
         Box::pin(async move {
             tauri::async_runtime::spawn_blocking(move || {
-                let request_id = outcome.request_id.clone();
-                let mut finalized = finalized
-                    .lock()
-                    .map_err(|_| "final outcome guard lock poisoned".to_string())?;
-                if finalized.contains(&request_id) {
-                    return Ok(None);
-                }
-
-                let feedback = outcome
-                    .feedback
-                    .as_ref()
-                    .map(|feedback| RequestLogFeedbackInput {
-                        station_key_id: feedback.station_key_id.clone(),
-                        station_id: feedback.station_id.clone(),
-                        station_endpoint_revision: feedback.station_endpoint_revision,
-                        kind: match feedback.kind {
-                            CandidateFeedbackKind::Success => RequestLogFeedbackKind::Success,
-                            CandidateFeedbackKind::Failure => RequestLogFeedbackKind::Failure,
-                        },
-                    });
-                let body_bytes = outcome.body_bytes;
-                let attempt_count = outcome.attempt_count;
-                let route_wait_ms = outcome.route_wait_ms;
-                let upstream_headers_ms = outcome.upstream_headers_ms;
-                let failure_source = outcome.failure_source.clone();
-                let attempts_json = outcome.attempts_json.clone();
-                let completion_source = outcome.completion_source.clone();
-                let log = outcome.into_request_log_input();
-                let result = database.finalize_request_log(FinalizeRequestLogInput {
-                    request_id: request_id.clone(),
-                    log,
-                    body_bytes,
-                    attempt_count,
-                    route_wait_ms,
-                    upstream_headers_ms,
-                    failure_source,
-                    attempts_json,
-                    completion_source,
-                    feedback,
-                })?;
-                if result.is_some() {
-                    finalized.insert(request_id);
-                }
-                Ok(result)
+                let settings = database.get_settings()?;
+                Ok(RoutingExecutionSettings {
+                    policy: routing_policy_from_setting(&settings.default_routing_strategy),
+                    max_rate_multiplier: settings.max_rate_multiplier,
+                    routing_group_filter: settings.default_routing_group_filter,
+                    scheduler_advanced_settings: settings.scheduler_advanced_settings,
+                    allow_depleted_fallback: settings.allow_depleted_fallback,
+                })
             })
             .await
-            .map_err(|error| format!("routing repository final outcome task failed: {error}"))?
+            .map_err(|error| format!("routing settings task failed: {error}"))?
         })
     }
 
@@ -150,141 +121,16 @@ impl RoutingRepository for SqliteRoutingRepository {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FinalRequestOutcome {
-    pub request_id: String,
-    pub method: String,
-    pub path: String,
-    pub model: Option<String>,
-    pub stream: bool,
-    pub status: String,
-    pub lifecycle_status: Option<String>,
-    pub selected_station_key_id: Option<String>,
-    pub selected_station_id: Option<String>,
-    pub upstream_base_url: Option<String>,
-    pub fallback_count: i64,
-    pub error_message: Option<String>,
-    pub route_policy: Option<String>,
-    pub route_reason: Option<String>,
-    pub rejected_candidates_json: Option<String>,
-    pub body_bytes: Option<i64>,
-    pub attempt_count: Option<i64>,
-    pub route_wait_ms: Option<i64>,
-    pub upstream_headers_ms: Option<i64>,
-    pub failure_source: Option<String>,
-    pub attempts_json: Option<String>,
-    pub completion_source: Option<String>,
-    pub prompt_tokens: Option<i64>,
-    pub completion_tokens: Option<i64>,
-    pub total_tokens: Option<i64>,
-    pub cache_creation_tokens: Option<i64>,
-    pub cache_read_tokens: Option<i64>,
-    pub first_token_ms: Option<i64>,
-    pub started_at: String,
-    pub finished_at: String,
-    pub duration_ms: Option<i64>,
-    pub feedback: Option<CandidateFeedback>,
-}
-
-impl FinalRequestOutcome {
-    pub(crate) fn success(status: impl Into<String>) -> Self {
-        let now = now_millis_for_services().to_string();
-        Self {
-            request_id: format!("outcome_{now}"),
-            method: "GET".to_string(),
-            path: "/v1/models".to_string(),
-            model: None,
-            stream: false,
-            status: status.into(),
-            lifecycle_status: None,
-            selected_station_key_id: None,
-            selected_station_id: None,
-            upstream_base_url: None,
-            fallback_count: 0,
-            error_message: None,
-            route_policy: None,
-            route_reason: None,
-            rejected_candidates_json: None,
-            body_bytes: None,
-            attempt_count: None,
-            route_wait_ms: None,
-            upstream_headers_ms: None,
-            failure_source: None,
-            attempts_json: None,
-            completion_source: None,
-            prompt_tokens: None,
-            completion_tokens: None,
-            total_tokens: None,
-            cache_creation_tokens: None,
-            cache_read_tokens: None,
-            first_token_ms: None,
-            started_at: now.clone(),
-            finished_at: now,
-            duration_ms: None,
-            feedback: None,
-        }
-    }
-
-    fn into_request_log_input(self) -> CreateRequestLogInput {
-        CreateRequestLogInput {
-            method: self.method,
-            path: self.path,
-            model: self.model,
-            stream: self.stream,
-            status: self.status,
-            lifecycle_status: self.lifecycle_status,
-            station_key_id: self.selected_station_key_id,
-            station_id: self.selected_station_id,
-            upstream_base_url: self.upstream_base_url,
-            fallback_count: self.fallback_count,
-            error_message: self.error_message,
-            route_policy: self.route_policy,
-            route_reason: self.route_reason,
-            rejected_candidates_json: self.rejected_candidates_json,
-            prompt_tokens: self.prompt_tokens,
-            completion_tokens: self.completion_tokens,
-            total_tokens: self.total_tokens,
-            cache_creation_tokens: self.cache_creation_tokens,
-            cache_read_tokens: self.cache_read_tokens,
-            reasoning_effort: None,
-            first_token_ms: self.first_token_ms,
-            billing_mode: None,
-            estimated_input_cost: None,
-            estimated_output_cost: None,
-            estimated_total_cost: None,
-            base_input_cost: None,
-            base_output_cost: None,
-            base_fixed_cost: None,
-            base_total_cost: None,
-            cost_currency: None,
-            pricing_rule_id: None,
-            pricing_source: None,
-            cost_status: None,
-            group_binding_id: None,
-            normalization_status: None,
-            balance_scope: None,
-            economic_context_json: None,
-            started_at: self.started_at,
-            finished_at: Some(self.finished_at),
-            duration_ms: self.duration_ms,
-        }
+fn routing_policy_from_setting(value: &str) -> RoutingPolicy {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "automatic_balanced" | "automatic" => RoutingPolicy::AutomaticBalanced,
+        "stable_first" | "stable" => RoutingPolicy::StableFirst,
+        "backup_only" => RoutingPolicy::BackupOnly,
+        "cheap_first" => RoutingPolicy::CheapFirst,
+        "cost_stable_first" => RoutingPolicy::CostStableFirst,
+        _ => RoutingPolicy::PriorityFallback,
     }
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CandidateFeedback {
-    pub station_key_id: String,
-    pub station_id: String,
-    pub station_endpoint_revision: i64,
-    pub kind: CandidateFeedbackKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CandidateFeedbackKind {
-    Success,
-    Failure,
-}
-
 #[cfg(test)]
 mod tests {
     use std::{sync::mpsc, time::Duration};
@@ -320,96 +166,6 @@ mod tests {
         assert!(candidates
             .iter()
             .any(|candidate| candidate.candidate.api_key == "sk-async-load"));
-    }
-
-    #[tokio::test]
-    async fn repository_records_one_final_outcome_for_endpoint_revision() {
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
-        let data_key = generate_data_key();
-        let seeded = seed_candidate(&database, &data_key, "final");
-        let repository = SqliteRoutingRepository::new(database.clone(), data_key);
-        let outcome = success_outcome(
-            "req-final-1",
-            &seeded.station_id,
-            &seeded.station_key_id,
-            seeded.station_endpoint_revision,
-        );
-
-        let first = repository
-            .record_final_outcome(outcome.clone())
-            .await
-            .expect("first outcome");
-        let second = repository
-            .record_final_outcome(outcome)
-            .await
-            .expect("duplicate outcome");
-
-        assert!(first.is_some());
-        assert!(second.is_none());
-        let logs = database.list_local_proxy_request_logs().expect("logs");
-        assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].status, "success");
-        let health = database
-            .get_station_key_health(seeded.station_key_id)
-            .expect("health");
-        assert_eq!(health.success_count, 1);
-    }
-
-    #[tokio::test]
-    async fn final_outcome_writes_log_and_candidate_feedback_once() {
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
-        let data_key = generate_data_key();
-        let seeded = seed_candidate(&database, &data_key, "final-idempotent");
-        let first_repository = SqliteRoutingRepository::new(database.clone(), data_key);
-        let second_repository = SqliteRoutingRepository::new(database.clone(), data_key);
-        let outcome = success_outcome(
-            "req-final-idempotent",
-            &seeded.station_id,
-            &seeded.station_key_id,
-            seeded.station_endpoint_revision,
-        );
-
-        first_repository
-            .record_final_outcome(outcome.clone())
-            .await
-            .expect("first outcome");
-        second_repository
-            .record_final_outcome(outcome)
-            .await
-            .expect("duplicate outcome");
-
-        let logs = database.list_local_proxy_request_logs().expect("logs");
-        assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].request_id.as_deref(), Some("req-final-idempotent"));
-        let health = database
-            .get_station_key_health(seeded.station_key_id)
-            .expect("health");
-        assert_eq!(health.success_count, 1);
-    }
-
-    #[tokio::test]
-    async fn repository_rejects_stale_final_outcome_endpoint_revision() {
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
-        let data_key = generate_data_key();
-        let seeded = seed_candidate(&database, &data_key, "stale-final");
-        change_station_endpoint(&database, &seeded.station_id);
-        let repository = SqliteRoutingRepository::new(database.clone(), data_key);
-
-        let error = repository
-            .record_final_outcome(success_outcome(
-                "req-stale-final",
-                &seeded.station_id,
-                &seeded.station_key_id,
-                seeded.station_endpoint_revision,
-            ))
-            .await
-            .expect_err("stale endpoint revision rejects final outcome");
-
-        assert_eq!(error, "station_endpoint_revision_changed");
-        assert!(database
-            .list_local_proxy_request_logs()
-            .expect("logs")
-            .is_empty());
     }
 
     struct SeededCandidate {
@@ -467,53 +223,6 @@ mod tests {
             station_id: station.id,
             station_key_id: key.id,
             station_endpoint_revision: station.endpoint_revision,
-        }
-    }
-
-    fn success_outcome(
-        request_id: &str,
-        station_id: &str,
-        station_key_id: &str,
-        station_endpoint_revision: i64,
-    ) -> FinalRequestOutcome {
-        FinalRequestOutcome {
-            request_id: request_id.to_string(),
-            method: "POST".to_string(),
-            path: "/v1/chat/completions".to_string(),
-            model: Some("gpt-test".to_string()),
-            stream: false,
-            status: "success".to_string(),
-            lifecycle_status: Some("buffered_success".to_string()),
-            selected_station_key_id: Some(station_key_id.to_string()),
-            selected_station_id: Some(station_id.to_string()),
-            upstream_base_url: Some("https://example.test/v1".to_string()),
-            fallback_count: 0,
-            error_message: None,
-            route_policy: Some("priority_fallback".to_string()),
-            route_reason: Some("selected first healthy key".to_string()),
-            rejected_candidates_json: Some("[]".to_string()),
-            body_bytes: Some(128),
-            attempt_count: Some(1),
-            route_wait_ms: Some(0),
-            upstream_headers_ms: Some(5),
-            failure_source: None,
-            attempts_json: Some("[]".to_string()),
-            completion_source: Some("upstream".to_string()),
-            prompt_tokens: Some(1),
-            completion_tokens: Some(2),
-            total_tokens: Some(3),
-            cache_creation_tokens: None,
-            cache_read_tokens: None,
-            first_token_ms: None,
-            started_at: "1000".to_string(),
-            finished_at: "1045".to_string(),
-            duration_ms: Some(45),
-            feedback: Some(CandidateFeedback {
-                station_key_id: station_key_id.to_string(),
-                station_id: station_id.to_string(),
-                station_endpoint_revision,
-                kind: CandidateFeedbackKind::Success,
-            }),
         }
     }
 

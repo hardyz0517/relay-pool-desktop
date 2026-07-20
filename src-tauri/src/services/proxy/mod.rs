@@ -2,15 +2,20 @@ use crate::models::proxy::UpstreamApiFormat;
 use serde_json::Value;
 
 pub mod adapters;
+#[cfg(debug_assertions)]
+pub mod dev_auto_start;
 pub mod endpoint_adapter;
 pub mod error;
 pub mod execution;
 pub mod http_request;
 pub mod ingress;
-pub mod legacy_runtime;
+#[cfg(test)]
+pub(crate) mod legacy_runtime;
+pub(crate) mod lifecycle;
 pub mod limits;
 mod local_auth;
 pub mod observability;
+pub(crate) mod protocol;
 pub mod request;
 pub mod response_body;
 pub mod responses_chat_fallback;
@@ -27,10 +32,15 @@ pub mod routing_types;
 pub mod runtime;
 pub mod scheduler;
 pub mod server;
+pub mod startup;
 pub mod upstream;
 
 #[cfg(test)]
 mod contract_tests;
+#[cfg(test)]
+mod lifecycle_concurrency_tests;
+#[cfg(test)]
+mod lifecycle_fault_tests;
 #[cfg(test)]
 mod soak_tests;
 #[cfg(test)]

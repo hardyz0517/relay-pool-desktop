@@ -38,8 +38,8 @@ impl Default for ProxyServerLimits {
             header_timeout: Duration::from_secs(10),
             body_timeout: Duration::from_secs(30),
             upstream_connect_timeout: Duration::from_secs(10),
-            upstream_first_byte_timeout: Duration::from_secs(120),
-            precommit_timeout: Duration::from_secs(180),
+            upstream_first_byte_timeout: Duration::from_secs(30),
+            precommit_timeout: Duration::from_secs(60),
             buffered_execution_timeout: Duration::from_secs(300),
             stream_idle_timeout: Duration::from_secs(90),
             shutdown_timeout: Duration::from_secs(30),
@@ -152,8 +152,8 @@ mod tests {
         assert_eq!(limits.header_timeout, Duration::from_secs(10));
         assert_eq!(limits.body_timeout, Duration::from_secs(30));
         assert_eq!(limits.upstream_connect_timeout, Duration::from_secs(10));
-        assert_eq!(limits.upstream_first_byte_timeout, Duration::from_secs(120));
-        assert_eq!(limits.precommit_timeout, Duration::from_secs(180));
+        assert_eq!(limits.upstream_first_byte_timeout, Duration::from_secs(30));
+        assert_eq!(limits.precommit_timeout, Duration::from_secs(60));
         assert_eq!(limits.buffered_execution_timeout, Duration::from_secs(300));
         assert_eq!(limits.stream_idle_timeout, Duration::from_secs(90));
         assert_eq!(limits.shutdown_timeout, Duration::from_secs(30));

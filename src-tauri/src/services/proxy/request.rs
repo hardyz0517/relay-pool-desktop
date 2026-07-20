@@ -5,8 +5,8 @@ use http::{HeaderMap, StatusCode};
 use crate::models::routing::{RouteEndpointKind, RoutingGroupFilter};
 
 use super::{
+    lifecycle::{request::RequestContextSnapshot, writer::RequestTerminalReservation},
     limits::{BodyBudgetLease, RequestLease},
-    routing_repository::FinalRequestOutcome,
 };
 
 pub type ByteStream =
@@ -31,21 +31,27 @@ impl Default for RequestRequirements {
     }
 }
 
-#[derive(Debug)]
 pub struct CanonicalProxyRequest {
     pub request_id: String,
     pub local_path: String,
     pub endpoint: RouteEndpointKind,
     pub model: Option<String>,
     pub stream: bool,
+    pub reasoning_effort: Option<String>,
     pub requirements: RequestRequirements,
     pub body: Bytes,
     pub forwarded_headers: HeaderMap,
     pub idempotency_key: Option<String>,
     pub session_hash: Option<String>,
     pub previous_response_id: Option<String>,
+    lifecycle_admission: Option<RequestLifecycleAdmission>,
     _body_budget: BodyBudgetLease,
-    _request_lease: RequestLease,
+    request_lease: Option<RequestLease>,
+}
+
+pub(crate) struct RequestLifecycleAdmission {
+    pub(crate) context: RequestContextSnapshot,
+    pub(crate) terminal: RequestTerminalReservation,
 }
 
 impl CanonicalProxyRequest {
@@ -56,12 +62,14 @@ impl CanonicalProxyRequest {
         endpoint: RouteEndpointKind,
         model: Option<String>,
         stream: bool,
+        reasoning_effort: Option<String>,
         requirements: RequestRequirements,
         body: Bytes,
         forwarded_headers: HeaderMap,
         idempotency_key: Option<String>,
         session_hash: Option<String>,
         previous_response_id: Option<String>,
+        lifecycle_admission: Option<RequestLifecycleAdmission>,
         body_budget: BodyBudgetLease,
         request_lease: RequestLease,
     ) -> Self {
@@ -71,15 +79,25 @@ impl CanonicalProxyRequest {
             endpoint,
             model,
             stream,
+            reasoning_effort,
             requirements,
             body,
             forwarded_headers,
             idempotency_key,
             session_hash,
             previous_response_id,
+            lifecycle_admission,
             _body_budget: body_budget,
-            _request_lease: request_lease,
+            request_lease: Some(request_lease),
         }
+    }
+
+    pub(crate) fn take_lifecycle_admission(&mut self) -> Option<RequestLifecycleAdmission> {
+        self.lifecycle_admission.take()
+    }
+
+    pub(crate) fn take_request_lease(&mut self) -> Option<RequestLease> {
+        self.request_lease.take()
     }
 }
 
@@ -92,5 +110,4 @@ pub struct ProxyHttpResponse {
     pub status: StatusCode,
     pub headers: HeaderMap,
     pub payload: ProxyResponsePayload,
-    pub outcome: FinalRequestOutcome,
 }

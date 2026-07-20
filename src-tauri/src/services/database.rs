@@ -80,6 +80,7 @@ pub struct ChannelStatusWindowFacts {
     pub timeline: Vec<ChannelStatusTimelinePoint>,
 }
 
+#[cfg(test)]
 pub(crate) struct FinalizeRequestLogInput {
     pub request_id: String,
     pub log: CreateRequestLogInput,
@@ -93,6 +94,7 @@ pub(crate) struct FinalizeRequestLogInput {
     pub feedback: Option<RequestLogFeedbackInput>,
 }
 
+#[cfg(test)]
 pub(crate) struct RequestLogFeedbackInput {
     pub station_key_id: String,
     pub station_id: String,
@@ -101,6 +103,7 @@ pub(crate) struct RequestLogFeedbackInput {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum RequestLogFeedbackKind {
     Success,
     Failure,
@@ -516,6 +519,31 @@ impl AppDatabase {
             default_data_dir: PathBuf::from(":memory:"),
             pending_data_dir: Arc::new(Mutex::new(None)),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_temp_file_for_tests(name: &str) -> Result<Self, String> {
+        let safe_name: String = name
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                    ch
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let safe_name = if safe_name.is_empty() {
+            "database".to_string()
+        } else {
+            safe_name
+        };
+        let root = std::env::temp_dir().join(format!(
+            "relay-pool-{safe_name}-{}-{}",
+            std::process::id(),
+            NEXT_ID_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        Self::initialize_new_at(root.join("default"), root.join("active"))
     }
 
     fn connection(&self) -> Result<MutexGuard<'_, Connection>, String> {
@@ -1629,6 +1657,7 @@ impl AppDatabase {
         insert_request_log_in_connection(&connection, input)
     }
 
+    #[cfg(test)]
     pub(crate) fn finalize_request_log(
         &self,
         input: FinalizeRequestLogInput,
@@ -11524,6 +11553,7 @@ fn insert_request_log_in_connection(
     Ok(saved)
 }
 
+#[cfg(test)]
 fn insert_finalized_request_log_in_connection(
     connection: &Connection,
     input: &FinalizeRequestLogInput,

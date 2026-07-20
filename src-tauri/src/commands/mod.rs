@@ -445,15 +445,12 @@ pub async fn start_local_proxy(
     secrets: State<'_, SecretManager>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
-    let settings = database.get_settings()?;
-    database.migrate_plaintext_secrets(secrets.data_key())?;
-    proxy
-        .start(ProxyStartConfig::new(
-            database.inner().clone(),
-            *secrets.data_key(),
-            settings.local_proxy_port,
-        ))
-        .await
+    crate::services::proxy::startup::start_from_persisted_settings(
+        database.inner(),
+        *secrets.data_key(),
+        proxy.inner(),
+    )
+    .await
 }
 
 #[tauri::command]

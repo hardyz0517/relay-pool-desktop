@@ -1,5 +1,7 @@
+mod application;
 mod commands;
 mod models;
+mod persistence;
 mod services;
 
 use std::path::{Path, PathBuf};
@@ -252,6 +254,8 @@ pub fn run() {
             }
             app.manage(services::capture::session::CaptureSessionStore::default());
             app.manage(services::proxy::runtime::ProxyRuntimeState::default());
+            #[cfg(debug_assertions)]
+            services::proxy::dev_auto_start::schedule(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {

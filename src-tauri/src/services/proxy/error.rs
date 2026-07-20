@@ -10,6 +10,18 @@ pub enum FailureSource {
     Internal,
 }
 
+impl FailureSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Routing => "routing",
+            Self::Upstream => "upstream",
+            Self::Downstream => "downstream",
+            Self::Internal => "internal",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryClass {
     Never,
@@ -75,6 +87,11 @@ pub struct ProxyFailure {
     pub public_message: String,
     pub internal_detail: Option<String>,
     pub candidate_id: Option<String>,
+    pub candidate_station_id: Option<String>,
+    pub candidate_endpoint_revision: Option<i64>,
+    pub candidate_upstream_base_url: Option<String>,
+    pub attempt_count: Option<i64>,
+    pub route_policy: Option<String>,
 }
 
 impl ProxyFailure {
@@ -93,6 +110,11 @@ impl ProxyFailure {
             public_message: public_message.into(),
             internal_detail: None,
             candidate_id: None,
+            candidate_station_id: None,
+            candidate_endpoint_revision: None,
+            candidate_upstream_base_url: None,
+            attempt_count: None,
+            route_policy: None,
         }
     }
 
