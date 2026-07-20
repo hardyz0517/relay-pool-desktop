@@ -338,7 +338,7 @@ impl Fixture {
     }
 
     async fn service(&self) -> CollectorService {
-        let runtime = PersistenceRuntime::open(&self.path, binary_7())
+        let runtime = PersistenceRuntime::open(&self.path, binary_8())
             .await
             .expect("open runtime");
         CollectorService::new(
@@ -384,11 +384,11 @@ impl Fixture {
     }
 }
 
-fn binary_7() -> BinaryCompatibility {
+fn binary_8() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 1),
         database_generation: 2,
-        readable_schema: 1..=7,
-        writable_schema: BTreeSet::from([7]),
+        readable_schema: 1..=8,
+        writable_schema: BTreeSet::from([8]),
     }
 }

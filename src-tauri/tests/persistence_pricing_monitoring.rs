@@ -1,7 +1,7 @@
 use sqlx::{Connection, Row, SqliteConnection};
 
 #[tokio::test]
-async fn schema_seven_supports_bounded_deterministic_growth_queries() {
+async fn schema_eight_supports_bounded_deterministic_growth_queries() {
     let mut connection = migrated_connection().await;
     seed_station(&mut connection).await;
 
@@ -157,7 +157,7 @@ async fn latest_pricing_evidence_has_explicit_tie_breakers() {
 }
 
 #[tokio::test]
-async fn schema_seven_query_plans_use_growth_indexes() {
+async fn schema_eight_query_plans_use_growth_indexes() {
     let mut connection = migrated_connection().await;
     let cases = [
         (
@@ -197,6 +197,61 @@ async fn schema_seven_query_plans_use_growth_indexes() {
     }
 }
 
+#[tokio::test]
+async fn schema_eight_preserves_released_login_and_endpoint_health_fields() {
+    let mut connection = migrated_connection().await;
+    seed_station(&mut connection).await;
+
+    sqlx::query(
+        r#"
+        INSERT INTO station_credentials (
+            station_id, login_username, remember_password, login_status,
+            session_status, session_source, created_at, updated_at
+        ) VALUES ('station-1', 'released-user', 1, 'logged_in',
+                  'active', 'web', '100', '200')
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("station credentials");
+    sqlx::query(
+        r#"
+        INSERT INTO station_endpoint_health (
+            station_id, endpoint_revision, status, latency_ms,
+            checked_at, error_summary, updated_at
+        ) VALUES ('station-1', 1, 'failed', 321, '300', 'timeout', '400')
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("station endpoint health");
+
+    let credentials = sqlx::query(
+        "SELECT login_username, created_at FROM station_credentials WHERE station_id = 'station-1'",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("read station credentials");
+    assert_eq!(
+        credentials.get::<String, _>("login_username"),
+        "released-user"
+    );
+    assert_eq!(credentials.get::<String, _>("created_at"), "100");
+
+    let health = sqlx::query(
+        "SELECT status, latency_ms, checked_at, error_summary, updated_at
+         FROM station_endpoint_health WHERE station_id = 'station-1'",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("read station endpoint health");
+    assert_eq!(health.get::<String, _>("status"), "failed");
+    assert_eq!(health.get::<i64, _>("latency_ms"), 321);
+    assert_eq!(health.get::<String, _>("checked_at"), "300");
+    assert_eq!(health.get::<String, _>("error_summary"), "timeout");
+    assert_eq!(health.get::<String, _>("updated_at"), "400");
+}
+
 async fn migrated_connection() -> SqliteConnection {
     let mut connection = SqliteConnection::connect("sqlite::memory:")
         .await
@@ -213,6 +268,7 @@ async fn migrated_connection() -> SqliteConnection {
         include_str!("../src/persistence/migrations/0005_request_logs.sql"),
         include_str!("../src/persistence/migrations/0006_collectors_changes.sql"),
         include_str!("../src/persistence/migrations/0007_pricing_monitoring.sql"),
+        include_str!("../src/persistence/migrations/0008_legacy_parity.sql"),
     ] {
         sqlx::raw_sql(migration)
             .execute(&mut connection)
@@ -225,7 +281,7 @@ async fn migrated_connection() -> SqliteConnection {
     .fetch_one(&mut connection)
     .await
     .expect("schema version");
-    assert_eq!(schema_version, 7);
+    assert_eq!(schema_version, 8);
     connection
 }
 
