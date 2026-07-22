@@ -367,6 +367,10 @@ pub fn run() {
                         None,
                         data_directory_port,
                     );
+                    tauri::async_runtime::block_on(app_services.settings.repair_legacy_settings())
+                        .map_err(|error| {
+                            format!("failed to repair legacy application settings: {error}")
+                        })?;
                     tauri::async_runtime::block_on(app_services.settings.ensure_local_access_key())
                         .map_err(|error| {
                             format!("failed to initialize the local proxy access key: {error}")

@@ -1,6 +1,8 @@
 ﻿{
     "profile":  "profile_001",
-    "schema_hash":  "859a884555aa27bb9ac2bc726f12f68b32db6b6f3fa269b64f371c1462aff94b",
+    "raw_schema_hash":  "859a884555aa27bb9ac2bc726f12f68b32db6b6f3fa269b64f371c1462aff94b",
+    "semantic_base_schema_hash":  "0ed1e6119418312648ca378d80abfe016f24d5bd7df1cb72006bd8ab39b69358",
+    "request_lifecycle_schema_hash":  null,
     "fixture_sha256":  "ad1f159cd6feabbb7d9bb4d6a37bf4fbc979f98eab03a42f402eb6fa863f34c9",
     "table_counts":  {
                          "balance_snapshots":  0,

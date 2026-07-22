@@ -6,7 +6,9 @@ use crate::persistence::{legacy_import::LegacyReadSession, runtime::PersistenceH
 
 pub(super) const DESCRIPTOR: LegacyProfileDescriptor = LegacyProfileDescriptor {
     id: "profile_001",
-    schema_hash: "859a884555aa27bb9ac2bc726f12f68b32db6b6f3fa269b64f371c1462aff94b",
+    base_schema_hash: "0ed1e6119418312648ca378d80abfe016f24d5bd7df1cb72006bd8ab39b69358",
+    request_lifecycle_schema_hash:
+        "e04a8e99ad24a1f218de9d095ba83999095868d25fdb2751fdc2c576bbc48ba1",
     #[cfg(test)]
     import,
 };
@@ -15,6 +17,7 @@ pub(super) const DESCRIPTOR: LegacyProfileDescriptor = LegacyProfileDescriptor {
 fn import<'a>(
     source: &'a mut LegacyReadSession,
     target: &'a PersistenceHandle,
+    request_lifecycle: bool,
 ) -> ImportFuture<'a> {
-    additive_import(DESCRIPTOR.id, source, target)
+    additive_import(DESCRIPTOR.id, source, target, request_lifecycle)
 }

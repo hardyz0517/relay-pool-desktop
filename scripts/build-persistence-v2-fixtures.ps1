@@ -126,6 +126,103 @@ insert_known("model_aliases", {
 connection.commit()
 connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
+request_lifecycle_columns = {
+    "endpoint", "terminal_kind", "terminal_code", "terminal_detail",
+    "protocol_completed", "delivery_terminal", "selected_attempt_ordinal", "terminal_at_ms",
+}
+
+def normalize_identifier(value):
+    return (value or "").strip().lower()
+
+def normalize_type(value):
+    return " ".join((value or "").split()).upper()
+
+def record(kind, *fields):
+    return "\x1f".join((kind, *(str(field) for field in fields)))
+
+def hash_records(records):
+    return hashlib.sha256("\n".join(sorted(records)).encode("utf-8")).hexdigest()
+
+def semantic_fingerprint():
+    base_records = []
+    capability_records = []
+    request_attempts_present = False
+    lifecycle_columns_present = set()
+    objects = connection.execute("""
+        SELECT type, name, tbl_name
+        FROM sqlite_schema
+        WHERE name NOT LIKE 'sqlite_%'
+          AND type IN ('table', 'view', 'trigger')
+        ORDER BY type, name, tbl_name
+    """).fetchall()
+    for object_type, name, table_name in objects:
+        normalized_name = normalize_identifier(name)
+        normalized_table = normalize_identifier(table_name)
+        is_attempts = object_type == "table" and normalized_name == "request_attempts"
+        request_attempts_present = request_attempts_present or is_attempts
+        target = capability_records if is_attempts else base_records
+        target.append(record("object", object_type, normalized_name, normalized_table))
+        if object_type != "table":
+            continue
+
+        for column in connection.execute("""
+            SELECT name, type, \"notnull\", pk, hidden
+            FROM pragma_table_xinfo(?)
+        """, (name,)):
+            column_name, column_type, not_null, primary_key_position, hidden = column
+            normalized_column = normalize_identifier(column_name)
+            column_record = record(
+                "column", normalized_name, normalized_column, normalize_type(column_type),
+                not_null, primary_key_position, hidden,
+            )
+            is_lifecycle_column = (
+                normalized_name == "request_logs"
+                and normalized_column in request_lifecycle_columns
+            )
+            if is_attempts or is_lifecycle_column:
+                capability_records.append(column_record)
+                if is_lifecycle_column:
+                    lifecycle_columns_present.add(normalized_column)
+            else:
+                base_records.append(column_record)
+
+        for foreign_key in connection.execute("""
+            SELECT \"table\", \"from\", \"to\", on_update, on_delete, \"match\"
+            FROM pragma_foreign_key_list(?)
+        """, (name,)):
+            referenced_table, source_column, referenced_column, on_update, on_delete, match_kind = foreign_key
+            foreign_key_record = record(
+                "foreign_key", normalized_name, normalize_identifier(referenced_table),
+                normalize_identifier(source_column), normalize_identifier(referenced_column),
+                on_update.upper(), on_delete.upper(), match_kind.upper(),
+            )
+            (capability_records if is_attempts else base_records).append(foreign_key_record)
+
+        for index_name, unique, origin, partial in connection.execute("""
+            SELECT name, \"unique\", origin, partial FROM pragma_index_list(?)
+        """, (name,)):
+            if not unique or origin == "pk":
+                continue
+            fields = [normalized_name, origin, partial]
+            for column_name, descending, collation, is_key in connection.execute("""
+                SELECT COALESCE(name, ''), \"desc\", COALESCE(coll, ''), \"key\"
+                FROM pragma_index_xinfo(?) WHERE \"key\" = 1 ORDER BY seqno
+            """, (index_name,)):
+                fields.append(
+                    f"{normalize_identifier(column_name)}:{descending}:{collation.upper()}:{is_key}"
+                )
+            (capability_records if is_attempts else base_records).append(record("unique", *fields))
+
+    has_capability_markers = request_attempts_present or bool(lifecycle_columns_present)
+    return {
+        "semantic_base_schema_hash": hash_records(base_records),
+        "semantic_base_record_count": len(base_records),
+        "request_lifecycle_schema_hash": (
+            hash_records(capability_records) if has_capability_markers else None
+        ),
+        "request_lifecycle_record_count": len(capability_records),
+    }
+
 schema_rows = connection.execute("""
     SELECT type, name, tbl_name, COALESCE(sql, '')
     FROM sqlite_schema
@@ -133,13 +230,14 @@ schema_rows = connection.execute("""
     ORDER BY type ASC, name ASC, tbl_name ASC
 """).fetchall()
 canonical = "\n".join("\x1f".join(row) for row in schema_rows).encode("utf-8")
-schema_hash = hashlib.sha256(canonical).hexdigest()
+raw_schema_hash = hashlib.sha256(canonical).hexdigest()
+fingerprint = semantic_fingerprint()
 target_tables = {
     "settings", "secrets", "stations", "station_credentials", "station_keys",
     "remote_station_keys", "station_key_capabilities", "model_aliases", "collector_runs",
     "collector_snapshots", "station_group_bindings", "group_rate_records", "pricing_rules",
     "model_base_prices", "balance_snapshots", "channel_monitor_request_templates",
-    "channel_monitors", "channel_monitor_runs", "request_logs", "station_key_health",
+    "channel_monitors", "channel_monitor_runs", "request_logs", "request_attempts", "station_key_health",
     "station_endpoint_health", "change_events",
 }
 tables = [row[0] for row in connection.execute(
@@ -155,7 +253,12 @@ connection.close()
 with open(database_path, "rb") as fixture:
     fixture_hash = hashlib.sha256(fixture.read()).hexdigest()
 with open(evidence_path, "w", encoding="utf-8", newline="\n") as output:
-    json.dump({"schema_hash": schema_hash, "fixture_hash": fixture_hash, "table_counts": table_counts}, output, indent=2)
+    json.dump({
+        "raw_schema_hash": raw_schema_hash,
+        **fingerprint,
+        "fixture_hash": fixture_hash,
+        "table_counts": table_counts,
+    }, output, indent=2)
     output.write("\n")
 '@
     $pythonPath = Join-Path $tempRoot 'fixture_evidence.py'
@@ -191,7 +294,12 @@ try {
         $worktrees.Remove($worktree) | Out-Null
     }
 
-    $groups = $releaseEvidence.GetEnumerator() | Group-Object { $_.Value.evidence.schema_hash }
+    $existingManifest = if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+        Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+    } else {
+        $null
+    }
+    $groups = $releaseEvidence.GetEnumerator() | Group-Object { $_.Value.evidence.semantic_base_schema_hash }
     $profiles = [ordered]@{}
     $releases = [ordered]@{}
     $profileNumber = 0
@@ -205,23 +313,42 @@ try {
         Copy-Item -LiteralPath $representative.Value.database -Destination (Join-Path $profileDir 'source.sqlite3') -Force
         $expected = [ordered]@{
             profile = $profileId
-            schema_hash = $representative.Value.evidence.schema_hash
+            raw_schema_hash = $representative.Value.evidence.raw_schema_hash
+            semantic_base_schema_hash = $representative.Value.evidence.semantic_base_schema_hash
+            request_lifecycle_schema_hash = $representative.Value.evidence.request_lifecycle_schema_hash
             fixture_sha256 = $representative.Value.evidence.fixture_hash
             table_counts = $representative.Value.evidence.table_counts
         }
         $expected | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $profileDir 'expected_manifest.json') -Encoding utf8
         $tagsForProfile = @($group.Group | ForEach-Object { $_.Key })
+        $acceptedCapabilities = @(
+            $group.Group | ForEach-Object { $_.Value.evidence.request_lifecycle_schema_hash } | Where-Object { $_ }
+        )
+        if ($null -ne $existingManifest) {
+            $existingProfileProperty = $existingManifest.profiles.PSObject.Properties[$profileId]
+            if ($null -ne $existingProfileProperty) {
+                $acceptedCapabilities += @($existingProfileProperty.Value.accepted_capabilities.request_lifecycle)
+            }
+        }
+        $acceptedCapabilities = @($acceptedCapabilities | Sort-Object -Unique)
         $profiles[$profileId] = [ordered]@{
-            schema_hash = $representative.Value.evidence.schema_hash
+            semantic_base_schema_hash = $representative.Value.evidence.semantic_base_schema_hash
+            accepted_capabilities = [ordered]@{
+                request_lifecycle = $acceptedCapabilities
+            }
+            fixture_raw_schema_hash = $representative.Value.evidence.raw_schema_hash
             fixture_sha256 = $representative.Value.evidence.fixture_hash
-            fixture_status = 'generated-task-12'
+            fixture_status = 'generated'
             releases = $tagsForProfile
         }
         foreach ($release in $group.Group) {
             $releases[$release.Key] = [ordered]@{
                 tree = $release.Value.tree
                 schema_profile = $profileId
-                schema_hash = $release.Value.evidence.schema_hash
+                raw_schema_hash = $release.Value.evidence.raw_schema_hash
+                semantic_base_schema_hash = $release.Value.evidence.semantic_base_schema_hash
+                request_lifecycle_schema_hash = $release.Value.evidence.request_lifecycle_schema_hash
+                fixture_sha256 = $release.Value.evidence.fixture_hash
             }
         }
     }
@@ -233,18 +360,25 @@ try {
             throw "generated profile $($profile.Key) has no explicit importer module; review and add it before accepting fixtures"
         }
         $sourceText = Get-Content -Raw -LiteralPath $profileSource
-        if ($sourceText -notmatch [regex]::Escape([string]$profile.Value.schema_hash)) {
-            throw "generated schema hash for $($profile.Key) does not match its explicit importer descriptor"
+        if ($sourceText -notmatch [regex]::Escape([string]$profile.Value.semantic_base_schema_hash)) {
+            throw "generated semantic base hash for $($profile.Key) does not match its explicit importer descriptor"
+        }
+        foreach ($capabilityHash in $profile.Value.accepted_capabilities.request_lifecycle) {
+            if ($sourceText -notmatch [regex]::Escape([string]$capabilityHash)) {
+                throw "accepted request lifecycle hash for $($profile.Key) does not match its explicit importer descriptor"
+            }
         }
     }
 
     $manifest = [ordered]@{
-        version = 2
+        version = 3
         status = 'released-schema-fixtures-generated'
         hash_contract = [ordered]@{
-            schema_hash_algorithm = "sha256(ordered sqlite_schema rows joined with U+001F and LF; sqlite_% excluded)"
+            raw_schema_hash_algorithm = "sha256(ordered sqlite_schema DDL rows joined with U+001F and LF; provenance only)"
+            semantic_schema_hash_algorithm = "v1 sha256(sorted object, column, foreign-key, and unique-constraint records; DDL text, column order, defaults, and non-unique indexes excluded)"
+            capability_contract = "request_attempts and eight request_logs lifecycle columns are one fail-closed optional capability"
             fixture_hash_algorithm = 'sha256(source.sqlite3 after deterministic sanitized canary insertion and WAL checkpoint)'
-            profile_grouping = 'tags share a profile only when canonical schema hashes are identical'
+            profile_grouping = 'tags share a profile only when semantic base schema hashes are identical'
         }
         profiles = $profiles
         releases = $releases

@@ -17,6 +17,12 @@ mod persistence {
             "/src/persistence/write_session.rs"
         ));
     }
+    pub(crate) mod settings_compat {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/settings_compat.rs"
+        ));
+    }
     pub(crate) mod read_session {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -81,7 +87,7 @@ use persistence::{
 };
 use semver::Version;
 use sha2::{Digest, Sha256};
-use sqlx::{sqlite::SqliteConnectOptions, Connection, Row, SqliteConnection};
+use sqlx::{sqlite::SqliteConnectOptions, Connection, Executor, Row, SqliteConnection};
 
 #[tokio::test]
 async fn every_released_profile_imports_to_the_expected_manifest() {
@@ -101,10 +107,28 @@ async fn every_released_profile_imports_to_the_expected_manifest() {
     );
     for fixture in fixtures {
         let before = file_evidence(&fixture.source);
+        assert_eq!(
+            raw_schema_hash(&fixture.source).await,
+            fixture.expected.raw_schema_hash,
+            "raw fixture schema provenance drifted"
+        );
+        assert_eq!(
+            sha256_file(&fixture.source),
+            fixture.expected.fixture_sha256,
+            "fixture bytes drifted"
+        );
         let profile = detect_profile(&fixture.source)
             .await
             .expect("known profile");
         assert_eq!(profile.id(), fixture.expected.profile);
+        assert_eq!(
+            profile.base_schema_hash(),
+            fixture.expected.semantic_base_schema_hash
+        );
+        assert_eq!(
+            profile.request_lifecycle_schema_hash(),
+            fixture.expected.request_lifecycle_schema_hash.as_deref()
+        );
         assert_eq!(
             source_candidate_identity(&fixture.source)
                 .expect("source identity")
@@ -153,6 +177,472 @@ async fn every_released_profile_imports_to_the_expected_manifest() {
         drop(runtime);
         remove_sqlite_set(&target_path);
     }
+}
+
+#[tokio::test]
+async fn semantically_equivalent_legacy_ddl_is_accepted() {
+    let path = copy_released_fixture("semantic-legacy-schema");
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(false);
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .expect("semantic fixture");
+    connection
+        .execute("PRAGMA writable_schema = ON")
+        .await
+        .expect("enable writable schema");
+    let changed = sqlx::query(
+        r#"
+        UPDATE sqlite_schema
+        SET sql = REPLACE(sql, 'CREATE TABLE stations (', 'CREATE TABLE stations (   ')
+        WHERE type = 'table' AND name = 'stations'
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("rewrite equivalent DDL")
+    .rows_affected();
+    assert_eq!(changed, 1);
+    connection
+        .execute("PRAGMA writable_schema = OFF")
+        .await
+        .expect("disable writable schema");
+    connection.close().await.expect("close semantic fixture");
+
+    let profile = detect_profile(&path)
+        .await
+        .expect("semantic schema profile");
+    assert_eq!(profile.id(), "profile_001");
+    remove_sqlite_set(&path);
+}
+
+#[tokio::test]
+async fn case_only_identifier_changes_are_imported_without_data_loss() {
+    let path = copy_released_fixture("case-insensitive-legacy-schema");
+    rewrite_stations_id_declaration(&path, "ID TEXT PRIMARY KEY").await;
+    let before = file_evidence(&path);
+    let expected = released_fixtures()
+        .into_iter()
+        .next()
+        .expect("released fixture")
+        .expected;
+
+    let profile = detect_profile(&path)
+        .await
+        .expect("case-equivalent schema profile");
+    let target_path = temp_db_path("case-insensitive-import-target");
+    create_v2_target(&target_path).await;
+    let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
+        .await
+        .expect("V2 runtime");
+    import_profile(&profile, &path, &runtime.handle())
+        .await
+        .expect("case-equivalent fixture import");
+    validate_import(&runtime.handle(), &expected)
+        .await
+        .expect("complete imported manifest");
+
+    drop(runtime);
+    assert_eq!(file_evidence(&path), before, "source fixture changed");
+    remove_sqlite_set(&path);
+    remove_sqlite_set(&target_path);
+}
+
+#[tokio::test]
+async fn quoted_identifier_whitespace_is_not_treated_as_equivalent() {
+    let path = copy_released_fixture("whitespace-identifier-schema");
+    rewrite_stations_id_declaration(&path, "\" id \" TEXT PRIMARY KEY").await;
+    let before = file_evidence(&path);
+
+    assert!(matches!(
+        detect_profile(&path).await,
+        Err(UpgradeError::UnsupportedLegacySchema)
+    ));
+    assert_eq!(file_evidence(&path), before, "source fixture changed");
+    remove_sqlite_set(&path);
+}
+
+#[tokio::test]
+async fn legacy_setting_aliases_are_canonicalized_during_import() {
+    let source_path = copy_released_fixture("legacy-setting-alias");
+    let options = SqliteConnectOptions::new()
+        .filename(&source_path)
+        .create_if_missing(false);
+    let mut source = SqliteConnection::connect_with(&options)
+        .await
+        .expect("legacy settings fixture");
+    sqlx::query(
+        r#"
+        INSERT OR REPLACE INTO settings (key, value, updated_at)
+        VALUES ('tray_behavior', 'minimize-to-tray', 'legacy')
+        "#,
+    )
+    .execute(&mut source)
+    .await
+    .expect("seed legacy tray behavior");
+    source.close().await.expect("close legacy fixture");
+
+    let profile = detect_profile(&source_path)
+        .await
+        .expect("released profile");
+    let target_path = temp_db_path("legacy-setting-alias-target");
+    create_v2_target(&target_path).await;
+    let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
+        .await
+        .expect("V2 runtime");
+    import_profile(&profile, &source_path, &runtime.handle())
+        .await
+        .expect("legacy settings import");
+
+    let mut read = runtime.begin_read().await.expect("import read session");
+    let imported: String =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key = 'tray_behavior'")
+            .fetch_one(read.connection())
+            .await
+            .expect("imported tray behavior");
+    assert_eq!(imported, "minimize_to_tray");
+    drop(read);
+    drop(runtime);
+    remove_sqlite_set(&source_path);
+    remove_sqlite_set(&target_path);
+}
+
+#[tokio::test]
+async fn request_lifecycle_capability_imports_attempt_history() {
+    let path = copy_released_fixture("request-lifecycle-capability");
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(false);
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .expect("request lifecycle fixture");
+    for (column, column_type) in [
+        ("endpoint", "TEXT"),
+        ("terminal_kind", "TEXT"),
+        ("terminal_code", "TEXT"),
+        ("terminal_detail", "TEXT"),
+        ("protocol_completed", "INTEGER"),
+        ("delivery_terminal", "TEXT"),
+        ("selected_attempt_ordinal", "INTEGER"),
+        ("terminal_at_ms", "INTEGER"),
+    ] {
+        let sql = format!("ALTER TABLE request_logs ADD COLUMN {column} {column_type}");
+        sqlx::query(&sql)
+            .execute(&mut connection)
+            .await
+            .expect("add request lifecycle column");
+    }
+    connection
+        .execute(
+            r#"
+            CREATE TABLE request_attempts (
+                request_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                station_id TEXT NOT NULL,
+                station_key_id TEXT NOT NULL,
+                endpoint_revision INTEGER NOT NULL,
+                started_at_ms INTEGER NOT NULL,
+                terminal_kind TEXT NOT NULL,
+                failure_kind TEXT,
+                failure_blame TEXT,
+                retry_disposition TEXT,
+                health_effect TEXT NOT NULL,
+                health_cooldown_until_ms INTEGER,
+                public_code TEXT,
+                sanitized_detail TEXT,
+                output_committed INTEGER NOT NULL,
+                terminal_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (request_id, ordinal),
+                FOREIGN KEY(request_id) REFERENCES request_logs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX idx_request_attempts_station_key_terminal
+                ON request_attempts(station_key_id, terminal_at_ms DESC);
+            "#,
+        )
+        .await
+        .expect("request attempts schema");
+    sqlx::query(
+        r#"
+        INSERT INTO request_logs (
+            id, request_id, started_at, finished_at, method, path, endpoint, stream,
+            status, station_key_id, station_id, fallback_count, terminal_kind,
+            protocol_completed, selected_attempt_ordinal, terminal_at_ms, created_at
+        ) VALUES (
+            'legacy-request-001', 'upstream-request-001', '1000', '1100', 'POST',
+            '/v1/chat/completions', '/v1/chat/completions', 1, 'completed',
+            'fixture-station-key-001', 'fixture-station-001', 0, 'success', 1, 0,
+            1100, '1000'
+        )
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("request log fixture");
+    sqlx::query(
+        r#"
+        INSERT INTO request_attempts (
+            request_id, ordinal, station_id, station_key_id, endpoint_revision,
+            started_at_ms, terminal_kind, failure_kind, failure_blame,
+            retry_disposition, health_effect, health_cooldown_until_ms, public_code,
+            sanitized_detail, output_committed, terminal_at_ms
+        ) VALUES (
+            'legacy-request-001', 0, 'fixture-station-001', 'fixture-station-key-001',
+            1, 1000, 'upstream_error', 'upstream', 'upstream', 'retryable',
+            'failure', 1200, 'fixture_public_code', 'sanitized fixture detail', 1, 1100
+        )
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("request attempt fixture");
+    connection.close().await.expect("close capability fixture");
+    let before = file_evidence(&path);
+
+    let profile = detect_profile(&path)
+        .await
+        .expect("request lifecycle profile");
+    let target_path = temp_db_path("request-lifecycle-target");
+    create_v2_target(&target_path).await;
+    let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
+        .await
+        .expect("V2 runtime");
+    import_profile(&profile, &path, &runtime.handle())
+        .await
+        .expect("request lifecycle import");
+    let mut read = runtime.begin_read().await.expect("request lifecycle read");
+    let imported = sqlx::query(
+        r#"
+        SELECT request_id, ordinal, station_id, station_key_id, endpoint_revision,
+               started_at_ms, terminal_kind, failure_kind, failure_blame,
+               retry_disposition, health_effect, health_cooldown_until_ms, public_code,
+               sanitized_detail, output_committed, terminal_at_ms
+        FROM request_attempts
+        "#,
+    )
+    .fetch_one(read.connection())
+    .await
+    .expect("imported request attempt");
+    assert_eq!(
+        imported.get::<String, _>("request_id"),
+        "legacy-request-001"
+    );
+    assert_eq!(imported.get::<i64, _>("ordinal"), 0);
+    assert_eq!(
+        imported.get::<String, _>("station_id"),
+        "fixture-station-001"
+    );
+    assert_eq!(
+        imported.get::<String, _>("station_key_id"),
+        "fixture-station-key-001"
+    );
+    assert_eq!(imported.get::<i64, _>("endpoint_revision"), 1);
+    assert_eq!(imported.get::<i64, _>("started_at_ms"), 1000);
+    assert_eq!(imported.get::<String, _>("terminal_kind"), "upstream_error");
+    assert_eq!(imported.get::<String, _>("failure_kind"), "upstream");
+    assert_eq!(imported.get::<String, _>("failure_blame"), "upstream");
+    assert_eq!(imported.get::<String, _>("retry_disposition"), "retryable");
+    assert_eq!(imported.get::<String, _>("health_effect"), "failure");
+    assert_eq!(imported.get::<i64, _>("health_cooldown_until_ms"), 1200);
+    assert_eq!(
+        imported.get::<String, _>("public_code"),
+        "fixture_public_code"
+    );
+    assert_eq!(
+        imported.get::<String, _>("sanitized_detail"),
+        "sanitized fixture detail"
+    );
+    assert_eq!(imported.get::<i64, _>("output_committed"), 1);
+    assert_eq!(imported.get::<i64, _>("terminal_at_ms"), 1100);
+    let imported_request_id: String =
+        sqlx::query_scalar("SELECT request_id FROM request_logs WHERE id = 'legacy-request-001'")
+            .fetch_one(read.connection())
+            .await
+            .expect("preserved upstream request id");
+    assert_eq!(imported_request_id, "upstream-request-001");
+    drop(read);
+    drop(runtime);
+    assert_eq!(file_evidence(&path), before, "capability source changed");
+    remove_sqlite_set(&path);
+    remove_sqlite_set(&target_path);
+}
+
+#[tokio::test]
+async fn partial_request_lifecycle_capability_is_rejected() {
+    let path = copy_released_fixture("partial-request-lifecycle-capability");
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(false);
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .expect("partial capability fixture");
+    connection
+        .execute("ALTER TABLE request_logs ADD COLUMN endpoint TEXT")
+        .await
+        .expect("partial capability marker");
+    connection.close().await.expect("close partial fixture");
+    let before = file_evidence(&path);
+
+    assert!(matches!(
+        detect_profile(&path).await,
+        Err(UpgradeError::UnsupportedLegacySchema)
+    ));
+    assert_eq!(file_evidence(&path), before);
+    remove_sqlite_set(&path);
+}
+
+#[tokio::test]
+async fn orphaned_legacy_secrets_are_not_carried_into_v2() {
+    let path = copy_released_fixture("orphaned-legacy-secret");
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(false);
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .expect("orphan secret fixture");
+    sqlx::query(
+        r#"
+        INSERT INTO secrets (
+            id, scope, owner_id, kind, ciphertext, nonce, aad, masked_value,
+            value_hash, encryption_version, created_at, updated_at
+        ) VALUES (
+            'orphan-secret-001', 'station_key', 'deleted-key-001', 'api_key',
+            'synthetic-ciphertext', 'synthetic-nonce',
+            'station_key:deleted-key-001:api_key', '****', 'synthetic-hash', 1,
+            '1000', '1000'
+        )
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("orphan secret row");
+    connection.close().await.expect("close orphan fixture");
+
+    let profile = detect_profile(&path).await.expect("known schema");
+    let target_path = temp_db_path("orphaned-legacy-secret-target");
+    create_v2_target(&target_path).await;
+    let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
+        .await
+        .expect("V2 runtime");
+    import_profile(&profile, &path, &runtime.handle())
+        .await
+        .expect("orphan secret import");
+    let mut read = runtime.begin_read().await.expect("secret count read");
+    let secret_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM secrets")
+        .fetch_one(read.connection())
+        .await
+        .expect("secret count");
+    assert_eq!(secret_count, 0);
+    drop(read);
+    drop(runtime);
+    remove_sqlite_set(&path);
+    remove_sqlite_set(&target_path);
+}
+
+#[tokio::test]
+async fn request_logs_with_deleted_keys_keep_history_with_a_null_reference() {
+    let path = copy_released_fixture("request-log-deleted-key");
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(false);
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .expect("request log fixture");
+    sqlx::query(
+        r#"
+        INSERT INTO request_logs (
+            id, started_at, method, path, stream, status, station_key_id, station_id,
+            fallback_count, created_at
+        ) VALUES (
+            'legacy-log-deleted-key', '1000', 'POST', '/v1/chat/completions', 1,
+            'success', 'deleted-key-001', 'fixture-station-001', 0, '1000'
+        )
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("request log row");
+    connection.close().await.expect("close request log fixture");
+
+    let profile = detect_profile(&path).await.expect("known schema");
+    let target_path = temp_db_path("request-log-deleted-key-target");
+    create_v2_target(&target_path).await;
+    let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
+        .await
+        .expect("V2 runtime");
+    import_profile(&profile, &path, &runtime.handle())
+        .await
+        .expect("request log import");
+    let mut read = runtime.begin_read().await.expect("request log read");
+    let imported = sqlx::query(
+        "SELECT station_key_id, station_id FROM request_logs WHERE id = 'legacy-log-deleted-key'",
+    )
+    .fetch_one(read.connection())
+    .await
+    .expect("imported request log");
+    assert_eq!(imported.get::<Option<String>, _>("station_key_id"), None);
+    assert_eq!(
+        imported.get::<String, _>("station_id"),
+        "fixture-station-001"
+    );
+    drop(read);
+    drop(runtime);
+    remove_sqlite_set(&path);
+    remove_sqlite_set(&target_path);
+}
+
+#[tokio::test]
+async fn change_events_with_deleted_owners_keep_history_with_null_references() {
+    let path = copy_released_fixture("change-event-deleted-owner");
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(false);
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .expect("change event fixture");
+    sqlx::query(
+        r#"
+        INSERT INTO change_events (
+            id, severity, event_type, status, title, message, object_type, object_id,
+            station_id, station_key_id, dedupe_key, source, detected_at, created_at, updated_at
+        ) VALUES (
+            'legacy-change-deleted-owner', 'warning', 'fixture', 'unread', 'Fixture',
+            'Synthetic fixture event', 'station', 'deleted-station-001',
+            'deleted-station-001', 'deleted-key-001', 'fixture-deleted-owner', 'fixture',
+            '1000', '1000', '1000'
+        )
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("change event row");
+    connection
+        .close()
+        .await
+        .expect("close change event fixture");
+
+    let profile = detect_profile(&path).await.expect("known schema");
+    let target_path = temp_db_path("change-event-deleted-owner-target");
+    create_v2_target(&target_path).await;
+    let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
+        .await
+        .expect("V2 runtime");
+    import_profile(&profile, &path, &runtime.handle())
+        .await
+        .expect("change event import");
+    let mut read = runtime.begin_read().await.expect("change event read");
+    let imported = sqlx::query(
+        "SELECT station_id, station_key_id FROM change_events WHERE id = 'legacy-change-deleted-owner'",
+    )
+    .fetch_one(read.connection())
+    .await
+    .expect("imported change event");
+    assert_eq!(imported.get::<Option<String>, _>("station_id"), None);
+    assert_eq!(imported.get::<Option<String>, _>("station_key_id"), None);
+    drop(read);
+    drop(runtime);
+    remove_sqlite_set(&path);
+    remove_sqlite_set(&target_path);
 }
 
 #[test]
@@ -330,6 +820,53 @@ fn released_fixtures() -> Vec<ReleasedFixture> {
         .collect()
 }
 
+fn copy_released_fixture(label: &str) -> PathBuf {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/persistence_upgrade/fixtures/profile_001/source.sqlite3");
+    let destination = temp_db_path(label);
+    fs::copy(source, &destination).expect("copy released fixture");
+    destination
+}
+
+async fn rewrite_stations_id_declaration(path: &Path, replacement: &str) {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false);
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .expect("legacy fixture");
+    connection
+        .execute("PRAGMA writable_schema = ON")
+        .await
+        .expect("enable writable schema");
+    sqlx::query(
+        r#"
+        UPDATE sqlite_schema
+        SET sql = REPLACE(sql, 'id TEXT PRIMARY KEY', ?1)
+        WHERE type = 'table' AND name = 'stations'
+        "#,
+    )
+    .bind(replacement)
+    .execute(&mut connection)
+    .await
+    .expect("rewrite station identifier");
+    let rewritten: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'stations'",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("rewritten station schema");
+    assert!(
+        rewritten.contains(replacement),
+        "fixture schema did not contain the expected station identifier declaration"
+    );
+    connection
+        .execute("PRAGMA writable_schema = OFF")
+        .await
+        .expect("disable writable schema");
+    connection.close().await.expect("close rewritten fixture");
+}
+
 fn released_profile_ids_from_manifest() -> BTreeSet<String> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../docs/superpowers/audits/persistence-v2-released-schema-manifest.json");
@@ -387,6 +924,52 @@ fn file_evidence(path: &Path) -> Vec<(String, u64, u128, String)> {
                 digest.iter().map(|byte| format!("{byte:02x}")).collect(),
             )
         })
+        .collect()
+}
+
+fn sha256_file(path: &Path) -> String {
+    Sha256::digest(fs::read(path).expect("fixture bytes"))
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+async fn raw_schema_hash(path: &Path) -> String {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
+        .read_only(true);
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .expect("fixture provenance connection");
+    let rows = sqlx::query(
+        r#"
+        SELECT type, name, tbl_name, COALESCE(sql, '') AS sql
+        FROM sqlite_schema
+        WHERE name NOT LIKE 'sqlite_%'
+        ORDER BY type ASC, name ASC, tbl_name ASC
+        "#,
+    )
+    .fetch_all(&mut connection)
+    .await
+    .expect("fixture raw schema");
+    connection.close().await.expect("close fixture provenance");
+    let mut digest = Sha256::new();
+    for (index, row) in rows.iter().enumerate() {
+        if index > 0 {
+            digest.update(b"\n");
+        }
+        for (field_index, field) in ["type", "name", "tbl_name", "sql"].iter().enumerate() {
+            if field_index > 0 {
+                digest.update([0x1f]);
+            }
+            digest.update(row.get::<String, _>(*field).as_bytes());
+        }
+    }
+    digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
         .collect()
 }
 

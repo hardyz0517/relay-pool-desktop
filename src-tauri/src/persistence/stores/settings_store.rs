@@ -8,7 +8,10 @@ use crate::{
         settings::{AppSettings, UpdateSettingsInput},
     },
     persistence::{
-        error::PersistenceError, read_session::ReadSession, write_session::WriteSession,
+        error::PersistenceError,
+        read_session::ReadSession,
+        settings_compat::{canonical_tray_behavior, repair_legacy_settings},
+        write_session::WriteSession,
     },
 };
 
@@ -237,6 +240,13 @@ impl SettingsStore {
             }
         }
         Ok(())
+    }
+
+    pub(crate) async fn repair_legacy_settings(
+        &self,
+        write: &mut WriteSession,
+    ) -> Result<u64, PersistenceError> {
+        repair_legacy_settings(write).await
     }
 }
 
@@ -503,10 +513,9 @@ fn validate_proxy_config(
 }
 
 fn validate_tray_behavior_setting(value: &str) -> Result<String, PersistenceError> {
-    match value {
-        "minimize_to_tray" | "close_to_tray" | "disabled" => Ok(value.to_string()),
-        _ => Err(PersistenceError::ConstraintViolation),
-    }
+    canonical_tray_behavior(value)
+        .map(str::to_string)
+        .ok_or(PersistenceError::ConstraintViolation)
 }
 
 fn invalid_persisted_setting() -> PersistenceError {

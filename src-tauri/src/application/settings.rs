@@ -55,6 +55,14 @@ impl SettingsService {
             .map_err(Into::into)
     }
 
+    pub(crate) async fn repair_legacy_settings(&self) -> Result<u64, ApplicationError> {
+        let store = self.store;
+        self.runtime
+            .write(|write| Box::pin(async move { store.repair_legacy_settings(write).await }))
+            .await
+            .map_err(Into::into)
+    }
+
     pub(crate) fn set_data_directory_projection(
         &self,
         active: String,
@@ -221,6 +229,61 @@ mod tests {
         assert!(first.starts_with("sk-local-"));
         assert_ne!(first, SettingsService::INSECURE_LOCAL_KEY_PLACEHOLDER);
         drop(service);
+        runtime.close().await.expect("close persistence runtime");
+    }
+
+    #[tokio::test]
+    async fn legacy_tray_behavior_is_read_compatibly_and_repaired_transactionally() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("legacy-settings.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&path)
+            .await
+            .expect("runtime");
+        runtime
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "UPDATE settings SET value = 'minimize-to-tray' WHERE key = 'tray_behavior'",
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("seed legacy setting");
+        let service = SettingsService::new(
+            runtime.handle(),
+            Arc::new(SystemClock),
+            temp.path().display().to_string(),
+            None,
+        );
+
+        let compatible = service.load().await.expect("compatible settings load");
+        assert_eq!(compatible.tray_behavior, "minimize_to_tray");
+        assert_eq!(
+            service
+                .repair_legacy_settings()
+                .await
+                .expect("repair legacy settings"),
+            1
+        );
+        assert_eq!(
+            service
+                .repair_legacy_settings()
+                .await
+                .expect("idempotent repair"),
+            0
+        );
+
+        let mut read = runtime.begin_read().await.expect("read repaired setting");
+        let persisted: String =
+            sqlx::query_scalar("SELECT value FROM settings WHERE key = 'tray_behavior'")
+                .fetch_one(read.connection())
+                .await
+                .expect("persisted tray behavior");
+        assert_eq!(persisted, "minimize_to_tray");
+        drop(read);
         runtime.close().await.expect("close persistence runtime");
     }
 }

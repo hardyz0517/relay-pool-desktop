@@ -15,6 +15,7 @@ const contracts = [
   ["node", ["scripts/updater-ui-contract.test.mjs"]],
   ["node", ["scripts/release-verification-entrypoint.test.mjs"]],
   ["node", ["scripts/persistence-v2-artifact-scan.test.mjs"]],
+  ["node", ["scripts/persistence-v2-fixture-manifest-contract.test.mjs"]],
   ["node", ["scripts/local-data-artifact-ignore.test.mjs"]],
   ["node", ["scripts/sqlx-offline-metadata.test.mjs"]],
   ["node", ["scripts/persistence-v1-performance-baseline.test.mjs"]],

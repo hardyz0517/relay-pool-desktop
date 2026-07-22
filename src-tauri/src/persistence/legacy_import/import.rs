@@ -6,7 +6,10 @@ use std::{
 use futures_util::TryStreamExt;
 use sqlx::{Column, Row, SqliteConnection, TypeInfo, ValueRef};
 
-use crate::persistence::{runtime::PersistenceHandle, write_session::WriteSession};
+use crate::persistence::{
+    runtime::PersistenceHandle, settings_compat::repair_legacy_settings,
+    write_session::WriteSession,
+};
 
 use super::{DetectedLegacyProfile, LegacyReadSession, LegacySecretBytes, UpgradeError};
 
@@ -100,7 +103,8 @@ pub(crate) async fn import_profile(
     target: &PersistenceHandle,
 ) -> Result<(), UpgradeError> {
     let mut source = verified_session(profile, source_path).await?;
-    let result = (profile.descriptor.import)(&mut source, target).await;
+    let result =
+        (profile.descriptor.import)(&mut source, target, profile.has_request_lifecycle()).await;
     source.close().await?;
     result
 }
@@ -118,6 +122,7 @@ pub(crate) async fn import_profile_with_secrets_and_phase_hook(
         &mut source,
         target,
         Some(transformer),
+        profile.has_request_lifecycle(),
         phase_hook,
     )
     .await;
@@ -130,7 +135,14 @@ async fn verified_session(
     source_path: &Path,
 ) -> Result<LegacyReadSession, UpgradeError> {
     let mut source = LegacyReadSession::open(source_path).await?;
-    if source.schema_hash().await? != profile.schema_hash() {
+    let fingerprint = source.schema_fingerprint().await?;
+    let verified = super::profiles::by_fingerprint(&fingerprint)
+        .filter(|detected| {
+            detected.id() == profile.id()
+                && detected.has_request_lifecycle() == profile.has_request_lifecycle()
+        })
+        .is_some();
+    if !verified {
         source.close().await?;
         return Err(UpgradeError::UnsupportedLegacySchema);
     }
@@ -143,9 +155,18 @@ pub(super) async fn import_additive_v1(
     source: &mut LegacyReadSession,
     target: &PersistenceHandle,
     transformer: Option<&dyn LegacySecretTransformer>,
+    request_lifecycle: bool,
 ) -> Result<(), UpgradeError> {
     let mut noop = |_| Ok(());
-    import_additive_v1_with_phase_hook(profile_id, source, target, transformer, &mut noop).await
+    import_additive_v1_with_phase_hook(
+        profile_id,
+        source,
+        target,
+        transformer,
+        request_lifecycle,
+        &mut noop,
+    )
+    .await
 }
 
 async fn import_additive_v1_with_phase_hook(
@@ -153,6 +174,7 @@ async fn import_additive_v1_with_phase_hook(
     source: &mut LegacyReadSession,
     target: &PersistenceHandle,
     transformer: Option<&dyn LegacySecretTransformer>,
+    request_lifecycle: bool,
     phase_hook: &mut (dyn FnMut(ImportPhase) -> Result<(), UpgradeError> + Send),
 ) -> Result<(), UpgradeError> {
     let mut write = target.begin_write().await?;
@@ -179,7 +201,7 @@ async fn import_additive_v1_with_phase_hook(
     import_pricing(profile_id, source, &mut write).await?;
     phase_hook(ImportPhase::Pricing)?;
 
-    import_historical_evidence(profile_id, source, &mut write).await?;
+    import_historical_evidence(profile_id, source, &mut write, request_lifecycle).await?;
     phase_hook(ImportPhase::HistoricalEvidence)?;
 
     import_health_and_changes(profile_id, source, &mut write).await?;
@@ -203,7 +225,9 @@ async fn import_settings_and_installation(
         write,
         table_plan("settings")?,
     )
-    .await
+    .await?;
+    repair_legacy_settings(write).await?;
+    Ok(())
 }
 
 async fn import_stations_and_endpoint_revision(
@@ -342,6 +366,7 @@ async fn import_historical_evidence(
     profile_id: &str,
     source: &mut LegacyReadSession,
     write: &mut WriteSession,
+    request_lifecycle: bool,
 ) -> Result<(), UpgradeError> {
     copy_table(
         profile_id,
@@ -385,6 +410,15 @@ async fn import_historical_evidence(
         table_plan("request_logs")?,
     )
     .await?;
+    if request_lifecycle {
+        copy_table(
+            profile_id,
+            source.connection(),
+            write,
+            table_plan("request_attempts")?,
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -473,14 +507,70 @@ async fn copy_table(
     while let Some(row) = rows.try_next().await? {
         let mut values = BTreeMap::new();
         for (index, column) in row.columns().iter().enumerate() {
-            values.insert(column.name().to_string(), decode_value(&row, index)?);
+            values.insert(
+                column.name().to_ascii_lowercase(),
+                decode_value(&row, index)?,
+            );
         }
         let mut imported = ImportedRow(values);
         apply_required_fallbacks(profile_id, plan.name, &mut imported)?;
+        normalize_legacy_references(write, plan.name, &mut imported).await?;
         if plan.name == "collector_snapshots" {
-            insert_synthetic_collector_run(write, &imported).await?;
+            insert_synthetic_collector_run(write, &imported)
+                .await
+                .map_err(|source| UpgradeError::ImportTable {
+                    table: plan.name,
+                    source,
+                })?;
         }
-        insert_row(write, plan.name, imported).await?;
+        insert_row(write, plan.name, imported)
+            .await
+            .map_err(|source| UpgradeError::ImportTable {
+                table: plan.name,
+                source,
+            })?;
+    }
+    Ok(())
+}
+
+async fn normalize_legacy_references(
+    write: &mut WriteSession,
+    table_name: &str,
+    row: &mut ImportedRow,
+) -> Result<(), UpgradeError> {
+    if table_name == "request_logs" {
+        clear_missing_optional_reference(write, row, "station_key_id", "station_keys").await?;
+        clear_missing_optional_reference(write, row, "station_id", "stations").await?;
+    } else if table_name == "change_events" {
+        for (column, target_table) in [
+            ("station_id", "stations"),
+            ("station_key_id", "station_keys"),
+            ("pricing_rule_id", "pricing_rules"),
+            ("request_log_id", "request_logs"),
+        ] {
+            clear_missing_optional_reference(write, row, column, target_table).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn clear_missing_optional_reference(
+    write: &mut WriteSession,
+    row: &mut ImportedRow,
+    column: &str,
+    target_table: &str,
+) -> Result<(), UpgradeError> {
+    let Some(value) = optional_text(row, column) else {
+        row.0.insert(column.to_string(), LegacyValue::Null);
+        return Ok(());
+    };
+    let sql = format!("SELECT EXISTS(SELECT 1 FROM {target_table} WHERE id = ?1)");
+    let exists: bool = sqlx::query_scalar(&sql)
+        .bind(value)
+        .fetch_one(write.connection())
+        .await?;
+    if !exists {
+        row.0.insert(column.to_string(), LegacyValue::Null);
     }
     Ok(())
 }
@@ -494,7 +584,7 @@ async fn table_columns(
         .fetch_all(source)
         .await?
         .into_iter()
-        .map(|row| row.get::<String, _>("name"))
+        .map(|row| row.get::<String, _>("name").to_ascii_lowercase())
         .collect())
 }
 
@@ -520,10 +610,7 @@ fn apply_required_fallbacks(
         "request_logs" => {
             let id = required_text(row, "id")?;
             let path = optional_text(row, "path").unwrap_or_else(|| "/v1/unknown".to_string());
-            row.0.insert(
-                "request_id".to_string(),
-                LegacyValue::Text(format!("legacy:{profile_id}:{id}")),
-            );
+            ensure_text(row, "request_id", format!("legacy:{profile_id}:{id}"));
             ensure_text(row, "endpoint", path);
         }
         "pricing_rules" => {
@@ -726,6 +813,9 @@ async fn load_secrets(
             let ciphertext: String = row.try_get("ciphertext")?;
             let nonce: String = row.try_get("nonce")?;
             let aad: String = row.try_get("aad")?;
+            if !legacy_secret_owner_exists(source, &scope, &owner_id, &kind).await? {
+                continue;
+            }
             if !encrypted_owners.insert((scope.clone(), owner_id.clone(), kind.clone())) {
                 continue;
             }
@@ -769,6 +859,28 @@ async fn load_secrets(
         .into_iter()
         .map(|material| transformer.transform(profile_id, material))
         .collect()
+}
+
+async fn legacy_secret_owner_exists(
+    source: &mut SqliteConnection,
+    scope: &str,
+    owner_id: &str,
+    kind: &str,
+) -> Result<bool, UpgradeError> {
+    let (table, id_column) = match (scope, kind) {
+        ("station", "api_key") => ("stations", "id"),
+        (
+            "station" | "station_credentials",
+            "login_password" | "access_token" | "refresh_token" | "cookie",
+        ) => ("station_credentials", "station_id"),
+        ("station_key", "api_key") => ("station_keys", "id"),
+        _ => return Err(UpgradeError::SecretTransformationFailed),
+    };
+    let sql = format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE {id_column} = ?1)");
+    Ok(sqlx::query_scalar(&sql)
+        .bind(owner_id)
+        .fetch_one(source)
+        .await?)
 }
 
 async fn insert_secret_record(
@@ -1312,6 +1424,27 @@ const TABLE_PLANS: &[TablePlan] = &[
         ],
     },
     TablePlan {
+        name: "request_attempts",
+        columns: &[
+            "request_id",
+            "ordinal",
+            "station_id",
+            "station_key_id",
+            "endpoint_revision",
+            "started_at_ms",
+            "terminal_kind",
+            "failure_kind",
+            "failure_blame",
+            "retry_disposition",
+            "health_effect",
+            "health_cooldown_until_ms",
+            "public_code",
+            "sanitized_detail",
+            "output_committed",
+            "terminal_at_ms",
+        ],
+    },
+    TablePlan {
         name: "station_key_health",
         columns: &[
             "station_key_id",
@@ -1419,6 +1552,7 @@ mod tests {
                 "balance_snapshots",
                 "channel_monitor_runs",
                 "request_logs",
+                "request_attempts",
             ],
         ),
         (

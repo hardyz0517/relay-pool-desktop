@@ -13,6 +13,10 @@ use super::UpgradeError;
 )]
 pub(crate) struct ExpectedImportManifest {
     pub(crate) profile: String,
+    pub(crate) raw_schema_hash: String,
+    pub(crate) semantic_base_schema_hash: String,
+    pub(crate) request_lifecycle_schema_hash: Option<String>,
+    pub(crate) fixture_sha256: String,
     pub(crate) table_counts: BTreeMap<String, i64>,
 }
 
@@ -67,6 +71,7 @@ const VALIDATED_TABLES: &[&str] = &[
     "channel_monitors",
     "channel_monitor_runs",
     "request_logs",
+    "request_attempts",
     "station_key_health",
     "station_endpoint_health",
     "change_events",

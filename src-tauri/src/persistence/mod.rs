@@ -13,6 +13,7 @@ pub(crate) use read_session::ReadSession;
 pub(crate) mod runtime;
 mod runtime_lifecycle;
 mod schema_compatibility;
+pub(crate) mod settings_compat;
 pub(crate) mod stores;
 pub(crate) mod upgrade_fault;
 pub(crate) mod upgrade_journal;

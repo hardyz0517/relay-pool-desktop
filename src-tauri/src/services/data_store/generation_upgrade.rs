@@ -146,6 +146,7 @@ impl LegacySecretTransformer for DataKeyLegacyTransformer {
                 kind,
                 value,
             } => {
+                let scope = canonical_v2_secret_scope(&scope, &kind)?.to_string();
                 let plaintext = String::from_utf8(value.as_bytes().to_vec())
                     .map_err(|_| UpgradeError::SecretTransformationFailed)?;
                 let payload = crate::services::secrets::crypto::encrypt_secret(
@@ -180,17 +181,38 @@ impl LegacySecretTransformer for DataKeyLegacyTransformer {
                 if aad != format!("{scope}:{owner_id}:{kind}") {
                     return Err(UpgradeError::SecretTransformationFailed);
                 }
+                let ciphertext = String::from_utf8(ciphertext.as_bytes().to_vec())
+                    .map_err(|_| UpgradeError::SecretTransformationFailed)?;
+                let nonce = String::from_utf8(nonce.as_bytes().to_vec())
+                    .map_err(|_| UpgradeError::SecretTransformationFailed)?;
+                let plaintext = crate::services::secrets::crypto::decrypt_secret(
+                    &self.data_key,
+                    &crate::services::secrets::crypto::EncryptedPayload {
+                        ciphertext,
+                        nonce,
+                        aad,
+                        value_hash: String::new(),
+                    },
+                )
+                .map_err(|_| UpgradeError::SecretTransformationFailed)?;
+                let scope = canonical_v2_secret_scope(&scope, &kind)?.to_string();
+                let payload = crate::services::secrets::crypto::encrypt_secret(
+                    &self.data_key,
+                    &plaintext,
+                    &format!("{scope}:{owner_id}:{kind}"),
+                )
+                .map_err(|_| UpgradeError::SecretTransformationFailed)?;
                 (
                     scope,
                     owner_id,
                     kind,
                     general_purpose::STANDARD
-                        .decode(ciphertext.as_bytes())
+                        .decode(payload.ciphertext)
                         .map_err(|_| UpgradeError::SecretTransformationFailed)?,
                     general_purpose::STANDARD
-                        .decode(nonce.as_bytes())
+                        .decode(payload.nonce)
                         .map_err(|_| UpgradeError::SecretTransformationFailed)?,
-                    "****".to_string(),
+                    crate::services::secrets::mask::mask_secret(&plaintext),
                 )
             }
         };
@@ -206,6 +228,17 @@ impl LegacySecretTransformer for DataKeyLegacyTransformer {
             created_at: now.clone(),
             updated_at: now,
         })
+    }
+}
+
+fn canonical_v2_secret_scope<'a>(scope: &'a str, kind: &str) -> Result<&'a str, UpgradeError> {
+    match (scope, kind) {
+        ("station", "api_key") | ("station_key", "api_key") => Ok(scope),
+        (
+            "station" | "station_credentials",
+            "login_password" | "access_token" | "refresh_token" | "cookie",
+        ) => Ok("station_credentials"),
+        _ => Err(UpgradeError::SecretTransformationFailed),
     }
 }
 
@@ -1027,6 +1060,44 @@ mod tests {
             .expect("restart generation two");
         assert_eq!(restarted_path, fixture.final_path);
         block_on(restarted.close()).expect("close restarted runtime");
+    }
+
+    #[test]
+    fn legacy_station_session_secret_is_reencrypted_for_v2_scope() {
+        let data_key = secrets::crypto::generate_data_key();
+        let legacy = secrets::crypto::encrypt_secret(
+            &data_key,
+            "synthetic-session-secret",
+            "station:station-1:cookie",
+        )
+        .expect("legacy encryption");
+        let transformed = DataKeyLegacyTransformer { data_key }
+            .transform(
+                "profile_001",
+                legacy_import::LegacySecretMaterial::EncryptedV1 {
+                    scope: "station".to_string(),
+                    owner_id: "station-1".to_string(),
+                    kind: "cookie".to_string(),
+                    ciphertext: legacy_import::LegacySecretBytes::new(
+                        legacy.ciphertext.into_bytes(),
+                    ),
+                    nonce: legacy_import::LegacySecretBytes::new(legacy.nonce.into_bytes()),
+                    aad: legacy.aad,
+                },
+            )
+            .expect("V2 transformation");
+        assert_eq!(transformed.scope, "station_credentials");
+        let plaintext = secrets::crypto::decrypt_secret(
+            &data_key,
+            &secrets::crypto::EncryptedPayload {
+                ciphertext: general_purpose::STANDARD.encode(transformed.ciphertext),
+                nonce: general_purpose::STANDARD.encode(transformed.nonce),
+                aad: "station_credentials:station-1:cookie".to_string(),
+                value_hash: String::new(),
+            },
+        )
+        .expect("V2 decryption");
+        assert_eq!(plaintext, "synthetic-session-secret");
     }
 
     #[test]

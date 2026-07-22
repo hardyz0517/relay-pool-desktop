@@ -1,15 +1,22 @@
 {
-  "version": 2,
+  "version": 3,
   "status": "released-schema-fixtures-generated",
-  "scope": "v0.3.1",
   "hash_contract": {
-    "schema_hash_algorithm": "sha256(ordered sqlite_schema rows joined with U+001F and LF; sqlite_% excluded)",
+    "raw_schema_hash_algorithm": "sha256(ordered sqlite_schema DDL rows joined with U+001F and LF; provenance only)",
+    "semantic_schema_hash_algorithm": "v1 sha256(sorted object, column, foreign-key, and unique-constraint records; DDL text, column order, defaults, and non-unique indexes excluded)",
+    "capability_contract": "request_attempts and eight request_logs lifecycle columns are one fail-closed optional capability",
     "fixture_hash_algorithm": "sha256(source.sqlite3 after deterministic sanitized canary insertion and WAL checkpoint)",
-    "profile_grouping": "only the v0.3.1 released schema is in scope for this upgrade"
+    "profile_grouping": "tags share a profile only when semantic base schema hashes are identical"
   },
   "profiles": {
     "profile_001": {
-      "schema_hash": "859a884555aa27bb9ac2bc726f12f68b32db6b6f3fa269b64f371c1462aff94b",
+      "semantic_base_schema_hash": "0ed1e6119418312648ca378d80abfe016f24d5bd7df1cb72006bd8ab39b69358",
+      "accepted_capabilities": {
+        "request_lifecycle": [
+          "e04a8e99ad24a1f218de9d095ba83999095868d25fdb2751fdc2c576bbc48ba1"
+        ]
+      },
+      "fixture_raw_schema_hash": "859a884555aa27bb9ac2bc726f12f68b32db6b6f3fa269b64f371c1462aff94b",
       "fixture_sha256": "ad1f159cd6feabbb7d9bb4d6a37bf4fbc979f98eab03a42f402eb6fa863f34c9",
       "fixture_status": "generated",
       "releases": ["v0.3.1"]
@@ -17,8 +24,11 @@
   },
   "releases": {
     "v0.3.1": {
+      "tree": "3a812aeb59b8d9155b3d17c76cf1a02a26576496",
       "schema_profile": "profile_001",
-      "schema_hash": "859a884555aa27bb9ac2bc726f12f68b32db6b6f3fa269b64f371c1462aff94b",
+      "raw_schema_hash": "859a884555aa27bb9ac2bc726f12f68b32db6b6f3fa269b64f371c1462aff94b",
+      "semantic_base_schema_hash": "0ed1e6119418312648ca378d80abfe016f24d5bd7df1cb72006bd8ab39b69358",
+      "request_lifecycle_schema_hash": null,
       "fixture_sha256": "ad1f159cd6feabbb7d9bb4d6a37bf4fbc979f98eab03a42f402eb6fa863f34c9"
     }
   }

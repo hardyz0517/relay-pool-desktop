@@ -25,6 +25,12 @@ pub(crate) use profiles::DetectedLegacyProfile;
 )]
 pub(crate) use validate::{validate_import, ExpectedImportManifest};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LegacySchemaFingerprint {
+    pub(crate) base_hash: String,
+    pub(crate) request_lifecycle_hash: Option<String>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum UpgradeError {
     #[error("legacy database is missing")]
@@ -41,6 +47,12 @@ pub(crate) enum UpgradeError {
     SecretTransformationFailed,
     #[error("legacy import validation failed")]
     ValidationFailed,
+    #[error("legacy table {table} import failed")]
+    ImportTable {
+        table: &'static str,
+        #[source]
+        source: crate::persistence::error::PersistenceError,
+    },
     #[error("legacy import SQL failed")]
     Sqlx(#[from] sqlx::Error),
     #[error("legacy import persistence failed")]
