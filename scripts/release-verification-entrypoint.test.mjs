@@ -27,6 +27,11 @@ assert.match(release, /run: pnpm verify:release/);
 assert.match(release, /RELAY_POOL_RELEASE_TAG: \$\{\{ github\.ref_name \}\}/);
 assert.match(release, /run: node scripts\/verify-release-version\.mjs --require-tag/);
 assert.match(release, /actions\/setup-python@[0-9a-f]{40}/);
+assert.match(
+  release,
+  /uses: actions\/checkout@[0-9a-f]{40}\s+with:\s+fetch-depth: 0/,
+  "release verification needs historical tags for the immutable v0.3.1 baseline",
+);
 assert.match(release, /run: pnpm verify:release-bundle/);
 assert.match(release, /tagName: \$\{\{ github\.ref_name \}\}/);
 assert.match(release, /releaseName: Relay Pool Desktop \$\{\{ github\.ref_name \}\}/);
