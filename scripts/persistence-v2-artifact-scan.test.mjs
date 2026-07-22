@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const scanner = "scripts/verify-persistence-v2-artifacts.mjs";
@@ -61,8 +61,34 @@ try {
 
   const policy = join(tracked, "policy.json");
   await writeFile(policy, '{"version":1,"trackedDatabaseFixtures":[]}\n');
-  await writeFile(join(tracked, "leaked.sqlite3-wal"), "tracked local state");
   assert.equal(spawnSync("git", ["init", "--quiet", tracked], { shell: false }).status, 0);
+
+  const ordinaryCheckout = resolve(parse(tracked).root, "workspace", "relay-pool-desktop");
+  await writeFile(join(tracked, "checkout-note.md"), `checkout: ${ordinaryCheckout}\n`);
+  assert.equal(
+    spawnSync("git", ["-C", tracked, "add", "--", "checkout-note.md"], { shell: false }).status,
+    0,
+  );
+  const checkoutPathResult = run(["--repo-root", tracked, "--policy", policy, "--tracked"]);
+  assert.equal(checkoutPathResult.status, 0, checkoutPathResult.stderr);
+
+  await writeFile(join(tracked, "home-note.md"), `home: ${homedir()}\n`);
+  assert.equal(
+    spawnSync("git", ["-C", tracked, "add", "--", "home-note.md"], { shell: false }).status,
+    0,
+  );
+  const homePathResult = run(["--repo-root", tracked, "--policy", policy, "--tracked"]);
+  assert.equal(homePathResult.status, 1);
+  assert.match(homePathResult.stderr, /local absolute path/);
+  assert.equal(
+    spawnSync("git", ["-C", tracked, "update-index", "--force-remove", "home-note.md"], {
+      shell: false,
+    }).status,
+    0,
+  );
+  await rm(join(tracked, "home-note.md"));
+
+  await writeFile(join(tracked, "leaked.sqlite3-wal"), "tracked local state");
   assert.equal(
     spawnSync("git", ["-C", tracked, "add", "--", "leaked.sqlite3-wal"], { shell: false }).status,
     0,

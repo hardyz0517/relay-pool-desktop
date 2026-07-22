@@ -68,12 +68,12 @@ function sha256(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
-function pathNeedles(repoRoot) {
-  const values = new Set([resolve(repoRoot), resolve(homedir())]);
-  return [...values].flatMap((value) => [value, value.replaceAll("\\", "/")]);
+function sensitivePathNeedles() {
+  const home = resolve(homedir());
+  return [home, home.replaceAll("\\", "/")];
 }
 
-function scanBuffer(buffer, label, { artifact, canaries, repoRoot }) {
+function scanBuffer(buffer, label, { artifact, canaries }) {
   const findings = [];
   const text = buffer.toString("utf8");
   const pathText = text.replaceAll("\\\\", "\\");
@@ -94,7 +94,7 @@ function scanBuffer(buffer, label, { artifact, canaries, repoRoot }) {
     if (pattern.test(text)) findings.push(`${label}: ${kind} is present`);
   }
 
-  const needles = artifact ? [] : pathNeedles(repoRoot);
+  const needles = artifact ? [] : sensitivePathNeedles();
   for (const needle of needles) {
     if (needle && text.includes(needle)) {
       findings.push(`${label}: local absolute path is present`);
@@ -181,7 +181,7 @@ async function scanTrackedIndex(repoRoot, policy, canaries) {
       const indexedPath = join(indexRoot, ...entry.path.split("/"));
       const buffer = await readFile(indexedPath);
       if (!fixture) {
-        findings.push(...scanBuffer(buffer, entry.path, { artifact: false, canaries, repoRoot }));
+        findings.push(...scanBuffer(buffer, entry.path, { artifact: false, canaries }));
         continue;
       }
 
@@ -304,7 +304,7 @@ export async function main(argv = process.argv.slice(2)) {
     findings.push(...sqliteFindings.map((finding) => `${basename(sqlite)}: ${finding}`));
   }
   for (const artifact of options.artifacts) {
-    findings.push(...(await scanArtifactPath(artifact, { canaries, repoRoot: options.repoRoot })));
+    findings.push(...(await scanArtifactPath(artifact, { canaries })));
   }
 
   if (findings.length > 0) {
