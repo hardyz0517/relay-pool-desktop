@@ -1,0 +1,343 @@
+{
+  "schema_version": 1,
+  "source_revision": "6a204908e2b3697e4c80951771950e29872942d9",
+  "stable_base_revision": "f8c74bb1942c4ab0ce3b48afd15b762920097b2a",
+  "captured_at": "2026-07-23T01:05:00+08:00",
+  "baseline_provenance": {
+    "branch": "codex/architecture-scale-upgrade",
+    "worktree": "D:/Dev/Projects/relay-pool-desktop-architecture-scale-upgrade",
+    "initial_worktree_status": "clean",
+    "main_checkout_revision": "5bfa25eb55d692ed7c6db0d01154c4e237a47204",
+    "main_checkout_dirty_paths": [],
+    "persistence_v2_paths_modified_by_task_0": [],
+    "concurrent_change_policy": "Only files present in source_revision are baseline evidence; Task 1/2 files created during validation are excluded."
+  },
+  "inventories": {
+    "commands": [
+      {
+        "id": "tauri-command-surface",
+        "paths": ["src-tauri/src/commands/mod.rs", "src-tauri/src/lib.rs"],
+        "owner": "Task 3 command registry, Task 5 ordinary transport, Task 6 streaming transport, Task 23 physical split",
+        "callers": ["src/lib/api", "src/lib/queries"],
+        "migration_task": 3,
+        "delete_task": 23,
+        "exception_reason": "121 compiled ACL command identities and a handwritten generate_handler list remain authoritative until generated registry cutover.",
+        "evidence_command": "rg -n \"#\\[tauri::command\\]|generate_handler!\" src-tauri/src/commands/mod.rs src-tauri/src/lib.rs",
+        "count": 121,
+        "groups": {
+          "data_store": ["app_status", "get_data_store_startup_state", "refresh_data_store_candidates", "locate_data_store_candidate", "activate_data_store_candidate", "create_new_data_store", "open_data_store_backup_dir", "export_data_store_diagnostic", "get_secret_migration_status", "run_secret_safety_scan"],
+          "stations_settings": ["list_stations", "create_station", "update_station", "delete_station", "reorder_stations", "get_settings", "get_local_access_key", "update_local_access_key", "import_relay_pool_to_ccswitch", "open_external_url", "updater_network_config", "inspect_latest_update_manifest", "update_settings", "choose_data_dir", "reset_data_dir"],
+          "proxy_logs": ["get_proxy_status", "load_local_routing_workspace", "reorder_local_routing_keys", "start_local_proxy", "stop_local_proxy", "cleanup_before_update", "prepare_local_proxy_for_update", "restart_local_proxy", "list_request_logs", "clear_request_logs"],
+          "keys_routing": ["list_station_keys", "create_station_key", "update_station_key", "save_station_key_with_defaults", "update_station_key_group_binding", "delete_station_key", "reorder_station_keys", "get_remote_key_capability", "list_remote_station_keys", "scan_remote_station_keys", "create_remote_station_key", "create_local_station_key_from_remote", "bind_remote_station_key", "unbind_remote_station_key", "list_key_pool_items", "reorder_key_pool", "get_station_key_capabilities", "update_station_key_capabilities", "list_model_aliases", "upsert_model_alias", "delete_model_alias", "list_station_key_health", "list_station_endpoint_health", "get_station_key_health", "ping_station_endpoint", "test_station_key_connectivity", "simulate_route"],
+          "monitoring": ["list_channel_monitors", "list_channel_monitor_summaries", "list_channel_status_summaries", "load_channel_status_workspace", "create_channel_monitor", "update_channel_monitor", "delete_channel_monitor", "list_channel_monitor_runs", "list_channel_monitor_templates", "create_channel_monitor_template", "update_channel_monitor_template", "duplicate_channel_monitor_template", "delete_channel_monitor_template", "run_channel_monitor_now"],
+          "pricing_facts": ["load_pricing_comparison_workspace", "list_pricing_rules", "list_model_base_prices", "upsert_model_base_price", "reset_model_base_prices_to_builtins", "upsert_pricing_rule", "delete_pricing_rule", "resolve_station_key_pricing_context", "list_balance_snapshots", "list_current_station_balance_snapshots", "list_balance_snapshots_for_station", "upsert_balance_snapshot", "list_station_group_bindings", "list_station_group_options", "upsert_station_group_binding", "list_group_rate_records", "list_collector_runs", "list_change_events", "clear_change_events", "list_change_events_for_station", "upsert_change_event", "mark_change_event_read", "mark_change_events_read", "dismiss_change_event", "resolve_change_event"],
+          "credentials_collectors_capture": ["get_station_credentials", "update_station_credentials", "update_station_session", "clear_station_credentials", "detect_sub2api_station", "collect_sub2api_station", "detect_station_info", "collect_station_info", "collect_station_task", "test_station_login", "test_station_login_input", "list_collector_snapshots", "get_latest_collector_snapshot", "start_capture_session", "get_capture_session_status", "record_capture_event", "clear_capture_session", "close_capture_session", "finish_capture_session", "finish_web_authorization_session"]
+        }
+      }
+    ],
+    "command_serialization_fixtures": [
+      {
+        "path": "docs/superpowers/audits/architecture-scale-command-serialization-fixture.json",
+        "owner": "Task 3",
+        "migration_task": 3,
+        "delete_task": 3,
+        "exception_reason": "Stage 0 freezes representative redacted current envelopes. Task 3 replaces this characterization with compiled registry serde goldens for every public DTO and error variant."
+      }
+    ],
+    "public_errors": [
+      {
+        "id": "string-command-errors",
+        "paths": ["src-tauri/src/commands/mod.rs", "src/lib/errors.ts", "src/lib/tauriErrors.ts"],
+        "owner": "Task 4",
+        "callers": ["All generated command consumers"],
+        "migration_task": 4,
+        "delete_task": 23,
+        "exception_reason": "Most commands expose Result<_, String>; classification is frontend text matching.",
+        "evidence_command": "rg -n \"Result<.*String>|isTauriCommandNotFound|isTauriInvokeUnavailable\" src-tauri/src/commands/mod.rs src/lib"
+      }
+    ],
+    "dtos": [
+      {
+        "id": "handwritten-cross-process-dtos",
+        "paths": ["src-tauri/src/models", "src/lib/types", "src/lib/api", "src/lib/queries"],
+        "owner": "Task 3",
+        "callers": ["src-tauri/src/commands/mod.rs", "src/features"],
+        "migration_task": 3,
+        "delete_task": 5,
+        "exception_reason": "Rust and TypeScript shapes are independently maintained until binding generation.",
+        "evidence_command": "rg -n \"derive\\(.*Serialize|export (interface|type)\" src-tauri/src/models src/lib/types"
+      }
+    ],
+    "tauri_registry_acl_capability_window": [
+      {
+        "id": "tauri-authority-surface",
+        "paths": ["src-tauri/src/lib.rs", "src-tauri/permissions/main-window.toml", "src-tauri/permissions/record-capture-event.toml", "src-tauri/capabilities/default.json", "src-tauri/capabilities/capture.json"],
+        "owner": "Task 3 registry and Task 8 security composition",
+        "callers": ["main", "capture-*"],
+        "migration_task": 3,
+        "delete_task": 8,
+        "exception_reason": "Compiled ACL and command registration are separate handwritten sources.",
+        "evidence_command": "rg -n \"commands\\.|permissions|windows|remote|urls\" src-tauri/src/lib.rs src-tauri/permissions src-tauri/capabilities"
+      }
+    ],
+    "csp_build_entries": [
+      {
+        "id": "production-entry-and-csp",
+        "paths": ["index.html", "src/main.tsx", "vite.config.ts", "src-tauri/tauri.conf.json"],
+        "owner": "Task 8",
+        "callers": ["Vite production build", "Tauri production bundle"],
+        "migration_task": 8,
+        "delete_task": 8,
+        "exception_reason": "Single production/preview entry and csp:null are temporary release risks.",
+        "evidence_command": "rg -n \"frontendDist|beforeBuildCommand|csp|main.tsx\" index.html vite.config.ts src-tauri/tauri.conf.json"
+      }
+    ],
+    "app_services_state": [
+      {
+        "id": "command-wide-app-services-state",
+        "paths": ["src-tauri/src/application/app_services.rs", "src-tauri/src/commands/mod.rs", "src-tauri/src/app_composition.rs", "src-tauri/src/runtime_composition.rs"],
+        "owner": "Task 7",
+        "callers": ["103 State<'_, AppServices> command parameters"],
+        "migration_task": 7,
+        "delete_task": 23,
+        "exception_reason": "Commands can currently reach the full service graph.",
+        "evidence_command": "rg -n \"State<'_, AppServices>\" src-tauri/src/commands/mod.rs"
+      }
+    ],
+    "feature_direct_invoke": [
+      {
+        "id": "legacy-frontend-transport",
+        "paths": ["src/lib/api/changeEvents.ts", "src/lib/api/channelMonitors.ts", "src/lib/api/collector.ts", "src/lib/api/collectorRuns.ts", "src/lib/api/dataRecovery.ts", "src/lib/api/economics.ts", "src/lib/api/external.ts", "src/lib/api/groupFacts.ts", "src/lib/api/localRouting.ts", "src/lib/api/proxy.ts", "src/lib/api/routing.ts", "src/lib/api/settings.ts", "src/lib/api/stationKeys.ts", "src/lib/api/stations.ts", "src/lib/api/updater.ts", "src/lib/queries/channelQueries.ts", "src/lib/queries/pricingQueries.ts"],
+        "owner": "Task 8 bridge and Task 9 feature cutover",
+        "callers": ["src/features", "src/lib/query/resourceQueries.ts"],
+        "migration_task": 8,
+        "delete_task": 9,
+        "exception_reason": "Direct invoke is isolated to legacy API/query wrappers; feature code must not add more.",
+        "evidence_command": "rg -l \"invoke\" src/lib/api src/lib/queries src/features"
+      }
+    ],
+    "fallbacks": [
+      {
+        "id": "browser-preview-business-fallbacks",
+        "paths": ["src/lib/api/changeEvents.ts", "src/lib/api/channelMonitors.ts", "src/lib/api/collector.ts", "src/lib/api/collectorRuns.ts", "src/lib/api/dataRecovery.ts", "src/lib/api/economics.ts", "src/lib/api/groupFacts.ts", "src/lib/api/localRouting.ts", "src/lib/api/proxy.ts", "src/lib/api/routing.ts", "src/lib/api/settings.ts", "src/lib/api/stationKeys.ts", "src/lib/api/stations.ts", "src/lib/queries/channelQueries.ts", "src/lib/queries/pricingQueries.ts"],
+        "owner": "Task 8 DemoBackend",
+        "callers": ["Production and preview currently share the same imports"],
+        "migration_task": 8,
+        "delete_task": 9,
+        "exception_reason": "Browser preview fallback is mixed into production transport catch paths.",
+        "evidence_command": "rg -n \"isTauriInvokeUnavailable|isTauriCommandNotFound|browser preview\" src/lib/api src/lib/queries"
+      }
+    ],
+    "dom_data_events": [
+      {
+        "id": "dom-server-state-events",
+        "paths": ["src/components/shell/AppShell.tsx", "src/lib/api/changeEvents.ts", "src/lib/api/proxy.ts", "src/lib/api/settings.ts", "src/lib/api/stationKeys.ts", "src/features/collectors/CollectorAdvancedSettings.tsx", "src/features/routing/LocalRoutingSettingsEditor.tsx", "src/features/routing/RoutingPage.tsx", "src/features/settings/SettingsPage.tsx"],
+        "owner": "Task 10 query policy, Task 13 remaining consumers",
+        "callers": ["CHANGE_EVENTS_UPDATED_EVENT", "PROXY_STATUS_UPDATED_EVENT", "SETTINGS_UPDATED_EVENT", "KEY_POOL_ITEMS_UPDATED_EVENT"],
+        "migration_task": 10,
+        "delete_task": 13,
+        "exception_reason": "DOM events currently synchronize TanStack Query and feature-local state.",
+        "evidence_command": "rg -n \"dispatchEvent|CustomEvent|_UPDATED_EVENT\" src"
+      }
+    ],
+    "use_queries_fan_out": [
+      {
+        "id": "stations-asset-n-plus-one",
+        "paths": ["src/features/stations/StationsPage.tsx", "src/lib/query/resourceQueries.ts", "src/lib/api/collector.ts"],
+        "owner": "Task 11",
+        "callers": ["StationsPage"],
+        "migration_task": 11,
+        "delete_task": 11,
+        "exception_reason": "One stationAsset query is created per station.",
+        "evidence_command": "rg -n -C 8 \"useQueries|stationAssetQueryOptions\" src/features/stations/StationsPage.tsx src/lib/query/resourceQueries.ts"
+      }
+    ],
+    "runners_threads_spawns": [
+      {
+        "id": "production-work-spawn-sites",
+        "paths": ["src-tauri/src/lib.rs", "src-tauri/src/commands/mod.rs", "src-tauri/src/application/data_directory.rs", "src-tauri/src/services/endpoint_ping.rs", "src-tauri/src/services/channel_monitors/mod.rs", "src-tauri/src/services/channel_monitors/probe.rs", "src-tauri/src/services/capture/web_authorization.rs", "src-tauri/src/services/outbound.rs", "src-tauri/src/services/station_collectors.rs", "src-tauri/src/services/proxy/lifecycle/writer.rs", "src-tauri/src/services/proxy/server.rs", "src-tauri/src/services/proxy/startup_auto_start.rs"],
+        "owner": "Task 14 supervisor/blocking/outbound kernels",
+        "callers": ["commands", "startup", "collectors", "monitors", "proxy", "capture"],
+        "migration_task": 14,
+        "delete_task": 18,
+        "exception_reason": "Work ownership is split across Tokio spawn, Tauri spawn_blocking and std::thread.",
+        "evidence_command": "rg -n \"thread::spawn|tokio::spawn|spawn_blocking|async_runtime::spawn\" src-tauri/src"
+      }
+    ],
+    "exit_sources": [
+      {
+        "id": "direct-exit-and-late-drain",
+        "paths": ["src-tauri/src/lib.rs", "src-tauri/src/services/updater.rs", "src-tauri/src/services/proxy"],
+        "owner": "Task 17 ExitCoordinator",
+        "callers": ["tray quit", "RunEvent::Exit", "updater", "window/OS lifecycle"],
+        "migration_task": 17,
+        "delete_task": 17,
+        "exception_reason": "Tray calls app.exit(0); primary drain occurs in RunEvent::Exit through block_on.",
+        "evidence_command": "rg -n \"app.exit|RunEvent::Exit|ExitRequested|block_on\" src-tauri/src"
+      }
+    ],
+    "operation_like_flows": [
+      {
+        "id": "unregistered-long-operations",
+        "paths": ["src-tauri/src/commands/mod.rs", "src-tauri/src/services/station_collectors.rs", "src-tauri/src/services/channel_monitors/mod.rs", "src-tauri/src/services/capture", "src-tauri/src/services/updater.rs", "src/features/key-pool/KeyPoolPage.tsx"],
+        "owner": "Task 15 OperationRegistry then Tasks 16-17",
+        "callers": ["connectivity probe", "collector", "monitor", "capture", "update"],
+        "migration_task": 15,
+        "delete_task": 18,
+        "exception_reason": "Long work lacks one admission/cancellation/terminal-query owner.",
+        "evidence_command": "rg -n \"progress|cancel|status|run_now|collect|capture|update\" src-tauri/src/commands/mod.rs src-tauri/src/services"
+      }
+    ],
+    "http_clients": [
+      {
+        "id": "production-ureq-and-client-construction",
+        "paths": ["src-tauri/src/services/outbound.rs", "src-tauri/src/services/endpoint_ping.rs", "src-tauri/src/services/channel_monitors/probe.rs", "src-tauri/src/services/collectors/sub2api.rs", "src-tauri/src/services/collectors/adapters/newapi/client.rs", "src-tauri/src/services/proxy/upstream.rs"],
+        "owner": "Task 14 outbound kernel and Task 22 final ureq deletion",
+        "callers": ["provider collectors", "endpoint probe", "monitor probe", "proxy upstream"],
+        "migration_task": 14,
+        "delete_task": 22,
+        "exception_reason": "Production still uses ureq and constructs clients outside one policy owner.",
+        "evidence_command": "rg -n \"ureq::|reqwest::Client::(new|builder)\" src-tauri/src/services"
+      }
+    ],
+    "provider_string_dispatch": [
+      {
+        "id": "provider-string-branching",
+        "paths": ["src-tauri/src/services/collectors/mod.rs", "src-tauri/src/services/collectors/adapters/newapi", "src-tauri/src/services/collectors/adapters/sub2api.rs", "src-tauri/src/services/collectors/adapters/openai_compatible.rs", "src-tauri/src/services/remote_keys.rs", "src-tauri/src/services/capture/web_authorization.rs"],
+        "owner": "Task 19 registry, Task 20 NewAPI, Task 21 Sub2API",
+        "callers": ["collector orchestration", "remote key management", "web authorization"],
+        "migration_task": 19,
+        "delete_task": 25,
+        "exception_reason": "Provider selection is distributed through platform/station type string branches.",
+        "evidence_command": "rg -n \"platform_type|newapi|sub2api|openai_compatible\" src-tauri/src/services"
+      }
+    ],
+    "secret_bearing_types": [
+      {
+        "id": "credential-and-session-secrets",
+        "paths": ["src-tauri/src/models/credentials.rs", "src-tauri/src/models/secrets.rs", "src-tauri/src/services/secrets", "src-tauri/src/services/collectors/adapters/newapi/auth.rs", "src-tauri/src/services/collectors/adapters/newapi/client.rs", "src-tauri/src/services/remote_keys.rs", "src/lib/types/stationKeys.ts"],
+        "owner": "Task 19 secret-safe capability contract",
+        "callers": ["credential application service", "provider drivers", "command DTOs"],
+        "migration_task": 19,
+        "delete_task": 25,
+        "exception_reason": "Raw String credentials cross multiple service/provider layers.",
+        "evidence_command": "rg -n \"api_key|access_token|cookie|password|secret|Authorization\" src-tauri/src/models src-tauri/src/services src/lib/types"
+      }
+    ],
+    "source_regex_tests": [
+      {
+        "id": "source-text-contract-suite",
+        "paths": ["scripts", "src-tauri/tests"],
+        "owner": "Task 2 compiled/parser gates, Task 25 deletion cleanup",
+        "callers": ["pnpm test:contracts"],
+        "migration_task": 2,
+        "delete_task": 25,
+        "exception_reason": "Numerous repository contracts inspect source text; only architecture boundaries move to parser/compiled gates.",
+        "evidence_command": "git grep -l -E \"readFile\\(|readFileSync\\(|read_to_string\\(|include_str!|Regex::new\" HEAD -- scripts src-tauri/tests"
+      }
+    ],
+    "target_output_directories": [
+      {
+        "id": "generated-and-qualification-artifacts",
+        "paths": ["dist", "dist-ssr", "target", "src-tauri/target", "output", "src-tauri/output", "src-tauri/gen/schemas"],
+        "owner": "Task 2 artifact gate and Task 25 cleanup",
+        "callers": ["Vite", "Cargo", "Tauri", "qualification scripts"],
+        "migration_task": 2,
+        "delete_task": 25,
+        "exception_reason": "Generated schemas are tracked while build/qualification outputs must remain ignored.",
+        "evidence_command": "git check-ignore -v dist src-tauri/target output; git ls-files src-tauri/gen/schemas"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "output/relay-pool-icon-size-preview.png",
+        "owner": "Task 25",
+        "migration_task": 25,
+        "delete_task": 25,
+        "exception_reason": "Legacy tracked UI comparison image predates the unified artifact policy; exact-file registration prevents broad output allowlisting."
+      },
+      {
+        "path": "output/taskbar-current-enlarged.png",
+        "owner": "Task 25",
+        "migration_task": 25,
+        "delete_task": 25,
+        "exception_reason": "Legacy tracked UI comparison image predates the unified artifact policy; exact-file registration prevents broad output allowlisting."
+      },
+      {
+        "path": "output/taskbar-icon-bounds-th32.png",
+        "owner": "Task 25",
+        "migration_task": 25,
+        "delete_task": 25,
+        "exception_reason": "Legacy tracked UI comparison image predates the unified artifact policy; exact-file registration prevents broad output allowlisting."
+      },
+      {
+        "path": "output/taskbar-qq-vs-relay-enlarged.png",
+        "owner": "Task 25",
+        "migration_task": 25,
+        "delete_task": 25,
+        "exception_reason": "Legacy tracked UI comparison image predates the unified artifact policy; exact-file registration prevents broad output allowlisting."
+      },
+      {
+        "path": "output/taskbar-relay-current-plus-new.png",
+        "owner": "Task 25",
+        "migration_task": 25,
+        "delete_task": 25,
+        "exception_reason": "Legacy tracked UI comparison image predates the unified artifact policy; exact-file registration prevents broad output allowlisting."
+      },
+      {
+        "path": "output/taskbar-relay-size-after-core-boost.png",
+        "owner": "Task 25",
+        "migration_task": 25,
+        "delete_task": 25,
+        "exception_reason": "Legacy tracked UI comparison image predates the unified artifact policy; exact-file registration prevents broad output allowlisting."
+      }
+    ]
+  },
+  "execution_shards": [
+    {"id":"S0-T1-adrs-capacity","stage":0,"paths":["docs/superpowers/adrs/architecture-scale/0001-ipc-contract-and-error.md","docs/superpowers/adrs/architecture-scale/0002-application-composition.md","docs/superpowers/adrs/architecture-scale/0003-backend-mode.md","docs/superpowers/adrs/architecture-scale/0004-query-and-page-visibility.md","docs/superpowers/adrs/architecture-scale/0005-work-lifecycle.md","docs/superpowers/adrs/architecture-scale/0006-provider-registry-and-outbound.md","docs/superpowers/adrs/architecture-scale/0007-ci-and-artifacts.md","docs/superpowers/audits/architecture-scale-capacity-budgets.json"],"owner":"Task 1","depends_on":["Task 0"],"cutover":"ADRs accepted and budgets machine-readable","delete_paths":[],"focused_gates":["ADR review","capacity schema"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"},
+    {"id":"S0-T2-fitness-ci","stage":0,"paths":["src-tauri/tests/architecture_scale_boundaries.rs","scripts/architecture/check-typescript-boundaries.mjs","scripts/architecture/check-command-registry.mjs","scripts/architecture/check-artifact-policy.mjs","scripts/architecture/check-tauri-security.mjs","scripts/architecture/check-build-entries.mjs","scripts/architecture/check-dependency-lifecycle.mjs","scripts/verify.ps1","scripts/check-advisories.ps1","deny.toml","eslint.config.mjs",".github/workflows/ci.yml",".github/workflows/release.yml","package.json","pnpm-lock.yaml",".gitignore"],"owner":"Task 2","depends_on":["Task 0","Task 1"],"cutover":"Parser/compiled gates and one verify entry fail closed","delete_paths":[],"focused_gates":["red fixtures","stale allowlist","artifact provenance"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"},
+    {"id":"S1-T3-bindings-registry","stage":1,"paths":["src-tauri/Cargo.toml","src-tauri/Cargo.lock","src-tauri/src/ipc/mod.rs","src-tauri/src/ipc/registry.rs","src/lib/bridge/generated.ts","scripts/generate-bindings.mjs","package.json"],"owner":"Task 3","depends_on":["Task 2"],"cutover":"One Rust registry generates bindings and ACL evidence","delete_paths":[],"focused_gates":["binding drift","registry parity","serialization fixtures"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"},
+    {"id":"S1-T4-errors-handshake","stage":1,"paths":["src-tauri/src/commands/error.rs","src-tauri/src/ipc/runtime_contract.rs","src/lib/bridge/errors.ts","src/app/bootstrap/runtimeContract.ts"],"owner":"Task 4","depends_on":["Task 3"],"cutover":"Stable public errors and runtime contract handshake","delete_paths":["src/lib/tauriErrors.ts"],"focused_gates":["error serialization","mismatch screen"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"},
+    {"id":"S1-T5-6-command-transport","stage":1,"paths":["src-tauri/src/commands/mod.rs","src/lib/api/changeEvents.ts","src/lib/api/channelMonitors.ts","src/lib/api/collector.ts","src/lib/api/collectorRuns.ts","src/lib/api/dataRecovery.ts","src/lib/api/economics.ts","src/lib/api/external.ts","src/lib/api/groupFacts.ts","src/lib/api/localRouting.ts","src/lib/api/proxy.ts","src/lib/api/routing.ts","src/lib/api/settings.ts","src/lib/api/stationKeys.ts","src/lib/api/stations.ts","src/lib/api/updater.ts","src/lib/queries/channelQueries.ts","src/lib/queries/pricingQueries.ts"],"owner":"Tasks 5-6","depends_on":["Task 4"],"cutover":"Generated ordinary and Channel transports replace handwritten invoke paths","delete_paths":["obsolete invoke wrappers","obsolete error parsers"],"focused_gates":["command parity","Channel terminal/cancel"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"},
+    {"id":"S2-T7-command-facades","stage":2,"paths":["src-tauri/src/application/command_facades/mod.rs","src-tauri/src/app_composition.rs","src-tauri/src/runtime_composition.rs","src-tauri/src/application/app_services.rs","src-tauri/src/commands/mod.rs"],"owner":"Task 7","depends_on":["Task 6"],"cutover":"Commands receive narrow facades through atomic composition","delete_paths":["command-wide State<AppServices> access"],"focused_gates":["constructor completeness","forbidden state access"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"},
+    {"id":"S2-T8-9-backend-cutover","stage":2,"paths":["src/app/bootstrap/backendMode.ts","src/app/bootstrap/createBackendClient.ts","src/lib/bridge/BackendClient.ts","src/lib/bridge/DesktopBackend.ts","src/lib/bridge/DemoBackend.ts","src/app/bootstrap/BackendBootstrap.tsx","src/app/IncompatibleRuntimeScreen.tsx","src/demo.tsx","demo.html","vite.demo.config.ts","src/main.tsx","vite.config.ts","package.json","src-tauri/tauri.conf.json","src-tauri/capabilities/default.json","src/features/key-pool/KeyPoolPage.tsx","src/features/stations/StationsPage.tsx","src/features/dashboard/DashboardPage.tsx","src/features/logs/LogsPage.tsx","src/features/changes/ChangeCenterPage.tsx","src/features/pricing/PricingPage.tsx","src/features/pricing/ModelBasePricesPage.tsx","src/features/routing/RoutingPage.tsx","src/features/settings/SettingsPage.tsx","src/features/collectors/CollectorsPage.tsx","src/features/channels/ChannelStatusPage.tsx"],"owner":"Tasks 8-9","depends_on":["Task 7"],"cutover":"Production DesktopBackend only; demo physically separate; feature direct invoke removed","delete_paths":["browser-preview fallbacks in src/lib/api and src/lib/queries"],"focused_gates":["bundle reachability","non-null CSP","feature invoke ban"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"},
+    {"id":"S3-T10-13-query-pages","stage":3,"paths":["src/app/navigation/PageVisibility.tsx","src/app/navigation/pageRetentionPolicy.ts","src/app/ShellPageHost.tsx","src/components/shell/PageActivity.tsx","src/features/key-pool/KeyPoolPage.tsx","src/features/stations/StationsPage.tsx","src/features/dashboard/DashboardPage.tsx","src/features/logs/LogsPage.tsx","src/features/changes/ChangeCenterPage.tsx","src/features/pricing/PricingPage.tsx","src/features/pricing/ModelBasePricesPage.tsx","src/features/routing/RoutingPage.tsx","src/features/settings/SettingsPage.tsx","src/features/collectors/CollectorsPage.tsx","src/features/channels/ChannelStatusPage.tsx","src/features/data-recovery/DataStoreBootstrap.tsx","src/features/data-recovery/DataRecoveryScreen.tsx","src/features/updater/UpdaterProvider.tsx","src/features/updater/UpdateDialog.tsx","src/components/shell/AppShell.tsx"],"owner":"Tasks 10-13","depends_on":["Task 9"],"cutover":"TanStack Query is sole server-state owner and aggregate workspaces remove fan-out","delete_paths":["DOM server-state events","StationsPage useQueries fan-out"],"focused_gates":["observer count","IPC/query budgets","hidden page policy"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"},
+    {"id":"S4-T14-18-work-runtime","stage":4,"paths":["src-tauri/src/background_tasks/mod.rs","src-tauri/src/background_tasks/task.rs","src-tauri/src/background_tasks/supervisor.rs","src-tauri/src/background_tasks/status.rs","src-tauri/src/background_tasks/shutdown.rs","src-tauri/src/background_tasks/blocking.rs","src-tauri/src/background_tasks/operation.rs","src-tauri/src/background_tasks/exit.rs","src-tauri/src/outbound/mod.rs","src-tauri/src/outbound/client.rs","src-tauri/src/outbound/policy.rs","src-tauri/src/outbound/proxy.rs","src-tauri/src/outbound/error.rs","src-tauri/src/application/connectivity_probe","src-tauri/src/services/station_collectors.rs","src-tauri/src/services/channel_monitors/mod.rs","src-tauri/src/services/channel_monitors/probe.rs","src-tauri/src/services/capture/mod.rs","src-tauri/src/services/capture/session.rs","src-tauri/src/services/capture/web_authorization.rs","src-tauri/src/application/data_directory.rs","src-tauri/src/services/updater.rs","src-tauri/src/services/proxy/mod.rs","src-tauri/src/services/proxy/server.rs","src-tauri/src/services/proxy/startup_auto_start.rs","src-tauri/src/app_composition.rs","src-tauri/src/runtime_composition.rs","src-tauri/src/lib.rs","src-tauri/capabilities/capture.json"],"owner":"Tasks 14-18","depends_on":["Task 13"],"cutover":"Tokio structured lifecycle, bounded blocking/outbound, operations and ExitCoordinator own all production work","delete_paths":["src-tauri/src/services/outbound.rs","direct app.exit callers","unowned production spawn sites"],"focused_gates":["spawn allowlist","HTTP construction allowlist","cancel/drain soak","ExitRequested lifecycle"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"},
+    {"id":"S5-T19-22-provider-capabilities","stage":5,"paths":["src-tauri/src/services/collectors/contract.rs","src-tauri/src/services/collectors/failure.rs","src-tauri/src/services/collectors/evidence.rs","src-tauri/src/services/collectors/orchestration.rs","src-tauri/src/services/collectors/drivers/mod.rs","src-tauri/src/services/collectors/mod.rs","src-tauri/src/services/collectors/adapters/newapi/mod.rs","src-tauri/src/services/collectors/adapters/newapi/auth.rs","src-tauri/src/services/collectors/adapters/newapi/client.rs","src-tauri/src/services/collectors/adapters/newapi/parsers.rs","src-tauri/src/services/collectors/adapters/sub2api.rs","src-tauri/src/services/collectors/adapters/openai_compatible.rs","src-tauri/src/services/remote_keys.rs","src-tauri/src/services/capture/web_authorization.rs","src-tauri/src/services/endpoint_ping.rs","src-tauri/src/services/channel_monitors/probe.rs","src-tauri/src/services/updater.rs"],"owner":"Tasks 19-22","depends_on":["Task 18"],"cutover":"Static capability registry and async outbound own provider operations","delete_paths":["production ureq dependency","provider string dispatch"],"focused_gates":["provider conformance","secret redaction","outbound policy","capability absence"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"},
+    {"id":"S6-T23-25-physical-debt","stage":6,"paths":["src-tauri/src/commands/mod.rs","src/features/key-pool/KeyPoolPage.tsx","src/features/stations/StationsPage.tsx","src/features/dashboard/DashboardPage.tsx","src/features/logs/LogsPage.tsx","src/features/changes/ChangeCenterPage.tsx","src/features/pricing/PricingPage.tsx","src/features/routing/RoutingPage.tsx","src/features/settings/SettingsPage.tsx","src/features/collectors/CollectorsPage.tsx","src/features/channels/ChannelStatusPage.tsx","src-tauri/src/services/collectors/adapters/newapi/mod.rs","src-tauri/src/services/collectors/adapters/sub2api.rs",".gitignore"],"owner":"Tasks 23-25","depends_on":["Task 22"],"cutover":"Oversized physical modules split after owners are stable; all temporary adapters deleted","delete_paths":["remaining migration adapters","stale source-regex architecture tests"],"focused_gates":["fan-in/fan-out budgets","artifact policy","zero temporary entries"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"},
+    {"id":"S7-T26-28-qualification","stage":7,"paths":["docs/superpowers/audits/2026-07-22-architecture-scale-deterministic-qualification.md","docs/superpowers/audits/2026-07-22-architecture-scale-soak-live-qualification.md","docs/superpowers/audits/2026-07-22-architecture-scale-upgrade-final-qualification.md","output/architecture-scale/qualification/deterministic","output/architecture-scale/qualification/soak","output/architecture-scale/qualification/live","output/architecture-scale/qualification/release"],"owner":"Tasks 26-28","depends_on":["Task 25"],"cutover":"Deterministic, soak/live and release-locked evidence refer to one revision","delete_paths":[],"focused_gates":["behavior parity","10/100/500 performance","shutdown soak","bundle secret/CSP/demo reachability"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"}
+  ],
+  "temporary_adapters": [
+    {"id":"legacy-browser-preview-fallback","paths":["src/lib/api","src/lib/queries"],"introduced_shard":"legacy-baseline","delete_shard":"S2-T8-9-backend-cutover","owner":"Task 8","expiry_stage":2,"reason":"Preview behavior is currently mixed with production transport."},
+    {"id":"legacy-sync-provider-adapters","paths":["src-tauri/src/services/collectors","src-tauri/src/services/outbound.rs"],"introduced_shard":"legacy-baseline","delete_shard":"S5-T19-22-provider-capabilities","owner":"Task 22","expiry_stage":5,"reason":"Provider operations remain synchronous until outbound and capability cutover."}
+  ],
+  "temporary_architecture_allowlist": [
+    {"id":"compiled-command-registry-pending","source_symbol":"src-tauri/src/lib.rs::run::tauri::generate_handler","target_symbol":"src-tauri/src/commands/mod.rs::#[tauri::command]","introduced_shard":"Task 0/Task 2","delete_shard":"S1-T3-bindings-registry","owner":"Task 3","expiry_stage":1,"reason":"Stage 0 has no repository-owned compiled registry yet; evidence is compiled ACL plus command inventory plus serialization fixtures. Task 3 must delete this entry."}
+  ],
+  "behavior_baselines": [
+    {"id":"desktop-data-store","samples":["read startup state","activate candidate","create store","typed/redacted error"],"owner":"Task 4/8","status":"covered by contract and Rust tests"},
+    {"id":"station-key-crud","samples":["station CRUD","key CRUD/reorder","group binding preservation","secret masking"],"owner":"Task 5/11","status":"covered by contract and Rust tests"},
+    {"id":"collector-monitor","samples":["collector facts and runs","monitor summaries and run-now","failure redaction"],"owner":"Task 12/16/17","status":"covered by contract and Rust tests"},
+    {"id":"proxy-lifecycle","samples":["startup","status","drain","update preparation","shutdown"],"owner":"Task 14/17","status":"covered by proxy lifecycle tests; ExitRequested characterization missing"},
+    {"id":"navigation-preview","samples":["page navigation/retention","desktop mode","browser preview"],"owner":"Task 8/10","status":"source-contract covered; production/demo bundle isolation not yet present"}
+  ],
+  "performance_baselines": [
+    {"id":"stations-query-topology-10","dataset":{"stations":10,"sha256":"781fa1b19da69361d0f4120c41edde45bdca25fe172a61840a25dd6ccdfcda5a"},"source_revision":"6a204908e2b3697e4c80951771950e29872942d9","profile":"vitest-jsdom-production-query-topology","machine_fingerprint":"windows-26200-ryzen7-3700x-16logical-17035784192bytes","warm_up":5,"samples":30,"raw_result_path":"output/architecture-scale/baseline/frontend-report.json","metrics":{"frontend_invoke_count":{"min":13,"max":13},"projected_response_json_bytes":{"p50":3526,"p95":3526},"data_ready_commit_ms":{"p50":31.0411,"p95":31.7979},"rendered_rows":10,"hidden_query_starts":0,"backend_read_port_round_trips":null,"real_tauri_ipc_payload_bytes":null,"webview2_page_commit_ms":null},"qualification":"frontend-jsdom-current-query-topology-baseline-only","status":"measured_frontend_downstream_runtime_blocked"},
+    {"id":"stations-query-topology-100","dataset":{"stations":100,"sha256":"b67d8c97d04f4961c05505d81b5fa853bf8073f55f1a68a4cfe42b2b92dbc46d"},"source_revision":"6a204908e2b3697e4c80951771950e29872942d9","profile":"vitest-jsdom-production-query-topology","machine_fingerprint":"windows-26200-ryzen7-3700x-16logical-17035784192bytes","warm_up":5,"samples":30,"raw_result_path":"output/architecture-scale/baseline/frontend-report.json","metrics":{"frontend_invoke_count":{"min":103,"max":103},"projected_response_json_bytes":{"p50":33385,"p95":33385},"data_ready_commit_ms":{"p50":30.1946,"p95":31.4792},"rendered_rows":100,"hidden_query_starts":0,"backend_read_port_round_trips":null,"real_tauri_ipc_payload_bytes":null,"webview2_page_commit_ms":null},"qualification":"frontend-jsdom-current-query-topology-baseline-only","status":"measured_frontend_downstream_runtime_blocked"},
+    {"id":"stations-query-topology-500","dataset":{"stations":500,"sha256":"750d661ab0fa83ba4fcfeb0c70f4e71649c03ea5d98463866b555a1470aa1390"},"source_revision":"6a204908e2b3697e4c80951771950e29872942d9","profile":"vitest-jsdom-production-query-topology","machine_fingerprint":"windows-26200-ryzen7-3700x-16logical-17035784192bytes","warm_up":5,"samples":30,"raw_result_path":"output/architecture-scale/baseline/frontend-report.json","metrics":{"frontend_invoke_count":{"min":503,"max":503},"projected_response_json_bytes":{"p50":170467,"p95":170467},"data_ready_commit_ms":{"p50":57.902,"p95":64.7161},"rendered_rows":500,"hidden_query_starts":0,"backend_read_port_round_trips":null,"real_tauri_ipc_payload_bytes":null,"webview2_page_commit_ms":null},"qualification":"frontend-jsdom-current-query-topology-baseline-only","status":"measured_frontend_downstream_runtime_blocked"},
+    {"id":"production-bundle","dataset":{"modules":2203,"sha256":"not-retained-generated-output"},"source_revision":"6a204908e2b3697e4c80951771950e29872942d9","profile":"vite-production","machine_fingerprint":"windows-26200-ryzen7-3700x-16logical-17035784192bytes","warm_up":"cold build","samples":1,"raw_result_path":null,"metrics":{"main_js_bytes":1021660,"main_js_gzip_bytes":282860},"status":"warning_single_sample_over_500kb"}
+  ],
+  "performance_blockers": [
+    {"id":"P1-backend-runtime-instrumentation","missing":["backend read-port round trips","runtime SQL statement count","backend query duration","SQLite query plan"],"owner":"Task 11","release_gate":26,"solution":"Instrument the final aggregate workspace read port and SQL path against the fixed 10/100/500 fixtures; retain repeated raw samples and query-plan evidence.","blocks":["Stage 3 aggregate performance gate","Task 26 deterministic performance qualification"],"does_not_block":"Stage 0 frontend baseline or correctness and boundary work"},
+    {"id":"P2-native-webview-instrumentation","missing":["real Tauri IPC payload bytes","real Tauri command duration","WebView2 page commit duration","native runner/thread/client/observer idle snapshots"],"owner":"Task 26","release_gate":26,"solution":"Run the fixed datasets and lifecycle probes in the final packaged Tauri/WebView2 runtime on the declared reference machine and profile.","blocks":["Task 26 native qualification","Task 28 final qualification"],"does_not_block":"Stage 0 frontend baseline or pre-release architecture migration"}
+  ],
+  "spec_traceability": [
+    {"spec":"3.1 ownership inventory","tasks":[0,2,7,23,25]},
+    {"spec":"3.4 security boundary","tasks":[0,2,8,17,28]},
+    {"spec":"5 typed IPC/backend composition","tasks":[3,4,5,6,8,9]},
+    {"spec":"8 query/page visibility","tasks":[10,11,12,13]},
+    {"spec":"10 structured lifecycle/outbound","tasks":[14,15,16,17,18]},
+    {"spec":"12 provider capabilities","tasks":[19,20,21,22]},
+    {"spec":"14 executable gates","tasks":[2,26,27,28]}
+  ]
+}

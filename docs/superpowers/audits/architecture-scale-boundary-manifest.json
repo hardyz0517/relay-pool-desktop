@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "source_revision": "6a204908e2b3697e4c80951771950e29872942d9",
+  "current_stage": 0,
+  "allowed_exports": [],
+  "allowed_edges": [],
+  "forbidden_edges": [],
+  "temporary_edges": [
+    {
+      "id": "compiled-command-registry-pending",
+      "source_symbol": "src-tauri/src/lib.rs::run::tauri::generate_handler",
+      "target_symbol": "src-tauri/src/commands/mod.rs::tauri_command_set",
+      "owner": "Task 3",
+      "introduced_shard": "Task 0",
+      "delete_shard": "Task 3",
+      "expiry_stage": 1,
+      "reason": "Stage 0 has no repository-owned compiled command registry. The temporary proof is compiled ACL parity with the complete command inventory plus the registered redacted serialization characterization."
+    },
+    {
+      "id": "legacy-composition-imports-feature-descendants",
+      "ecosystem": "typescript",
+      "identities": [
+        "src/app/App.tsx -> src/features/key-pool/AddKeyPage.tsx [static]",
+        "src/app/App.tsx -> src/features/key-pool/EditKeyPage.tsx [static]",
+        "src/app/App.tsx -> src/features/pricing/ModelBasePricesPage.tsx [static]",
+        "src/app/App.tsx -> src/features/stations/AddProviderPage.tsx [static]",
+        "src/app/App.tsx -> src/features/stations/StationDetailPage.tsx [static]",
+        "src/app/shellPageRegistry.tsx -> src/features/changes/ChangeCenterPage.tsx [static]",
+        "src/app/shellPageRegistry.tsx -> src/features/channels/ChannelStatusPage.tsx [static]",
+        "src/app/shellPageRegistry.tsx -> src/features/collectors/CollectorsPage.tsx [static]",
+        "src/app/shellPageRegistry.tsx -> src/features/dashboard/DashboardPage.tsx [static]",
+        "src/app/shellPageRegistry.tsx -> src/features/key-pool/KeyPoolPage.tsx [static]",
+        "src/app/shellPageRegistry.tsx -> src/features/logs/LogsPage.tsx [static]",
+        "src/app/shellPageRegistry.tsx -> src/features/pricing/PricingPage.tsx [static]",
+        "src/app/shellPageRegistry.tsx -> src/features/routing/RoutingPage.tsx [static]",
+        "src/app/shellPageRegistry.tsx -> src/features/settings/SettingsPage.tsx [static]",
+        "src/app/shellPageRegistry.tsx -> src/features/stations/StationsPage.tsx [static]"
+      ],
+      "owner": "Task 24",
+      "introduced_shard": "legacy-baseline",
+      "delete_shard": "Task 24",
+      "expiry_stage": 6,
+      "reason": "The composition root legitimately registers features but currently imports private page descendants because feature public entries do not yet exist. Task 24 replaces these with explicit feature exports."
+    },
+    {
+      "id": "legacy-bootstrap-production-graph-coupling",
+      "ecosystem": "typescript",
+      "identities": [
+        "src/main.tsx -> src/features/data-recovery/DataStoreBootstrap.tsx [static]",
+        "src/main.tsx -> src/features/updater/UpdaterProvider.tsx [static]",
+        "src/features/data-recovery/DataStoreBootstrap.tsx -> src/app/App.tsx [static]"
+      ],
+      "owner": "Task 8",
+      "introduced_shard": "legacy-baseline",
+      "delete_shard": "Task 8",
+      "expiry_stage": 2,
+      "reason": "The current bootstrap is feature-owned and reverses the composition dependency. Task 8 moves desktop/demo bootstrap ownership to the application root."
+    },
+    {
+      "id": "legacy-query-updater-change-owner-edges",
+      "ecosystem": "typescript",
+      "identities": [
+        "src/components/shell/AppShell.tsx -> src/features/changes/changeEventViewModels.ts [static]",
+        "src/features/dashboard/DashboardPage.tsx -> src/features/changes/changeEventViewModels.ts [static]",
+        "src/features/dashboard/DashboardPage.tsx -> src/features/updater/UpdaterProvider.tsx [static]",
+        "src/features/data-recovery/DataRecoveryScreen.tsx -> src/features/updater/UpdaterProvider.tsx [static]",
+        "src/features/data-recovery/DataRecoveryScreen.tsx -> src/features/updater/updateState.ts [static]",
+        "src/features/settings/SettingsPage.tsx -> src/features/updater/UpdaterProvider.tsx [static]",
+        "src/features/settings/SettingsPage.tsx -> src/features/updater/updateState.ts [static]",
+        "transitive:src/features/dashboard/DashboardPage.tsx => src/features/updater/UpdateDialog.tsx [via src/features/updater/UpdaterProvider.tsx]",
+        "transitive:src/features/dashboard/DashboardPage.tsx => src/features/updater/updateState.ts [via src/features/updater/UpdaterProvider.tsx]",
+        "transitive:src/features/data-recovery/DataRecoveryScreen.tsx => src/features/updater/UpdateDialog.tsx [via src/features/updater/UpdaterProvider.tsx]",
+        "transitive:src/features/data-recovery/DataRecoveryScreen.tsx => src/features/updater/updateState.ts [via src/features/updater/UpdaterProvider.tsx]",
+        "transitive:src/features/data-recovery/DataStoreBootstrap.tsx => src/features/updater/UpdaterProvider.tsx [via src/features/data-recovery/DataRecoveryScreen.tsx]",
+        "transitive:src/features/data-recovery/DataStoreBootstrap.tsx => src/features/updater/updateState.ts [via src/features/data-recovery/DataRecoveryScreen.tsx]",
+        "transitive:src/features/settings/SettingsPage.tsx => src/features/updater/UpdateDialog.tsx [via src/features/updater/UpdaterProvider.tsx]",
+        "transitive:src/features/settings/SettingsPage.tsx => src/features/updater/updateState.ts [via src/features/updater/UpdaterProvider.tsx]"
+      ],
+      "owner": "Tasks 12-13",
+      "introduced_shard": "legacy-baseline",
+      "delete_shard": "Task 13",
+      "expiry_stage": 3,
+      "reason": "Shell and resource pages reach feature-private updater/change state. Query/page-owner cutover must replace these edges with narrow application or feature public contracts."
+    },
+    {
+      "id": "legacy-cross-feature-visual-and-view-model-edges",
+      "ecosystem": "typescript",
+      "identities": [
+        "src/features/key-pool/AddKeyPage.tsx -> src/features/stations/groupOptionViewModels.ts [static]",
+        "src/features/key-pool/EditKeyPage.tsx -> src/features/stations/components/StationGroupChip.tsx [static]",
+        "src/features/key-pool/EditKeyPage.tsx -> src/features/stations/groupOptionViewModels.ts [static]",
+        "src/features/key-pool/KeyPoolPage.tsx -> src/features/channels/channelMonitorViewModel.ts [static]",
+        "src/features/key-pool/KeyPoolPage.tsx -> src/features/stations/components/StationGroupChip.tsx [static]",
+        "src/features/key-pool/KeyPoolPage.tsx -> src/features/stations/groupOptionViewModels.ts [static]",
+        "src/features/pricing/PricingPage.tsx -> src/features/stations/components/Sub2ApiPlatformIcon.tsx [static]",
+        "src/features/pricing/PricingPage.tsx -> src/features/stations/groupVisualMeta.ts [static]",
+        "src/features/pricing/PricingPage.tsx -> src/features/stations/groupVisualStyles.ts [static]",
+        "transitive:src/features/key-pool/EditKeyPage.tsx => src/features/stations/components/Sub2ApiPlatformIcon.tsx [via src/features/stations/components/StationGroupChip.tsx]",
+        "transitive:src/features/key-pool/EditKeyPage.tsx => src/features/stations/groupOptionViewModels.ts [via src/features/stations/components/StationGroupChip.tsx]",
+        "transitive:src/features/key-pool/EditKeyPage.tsx => src/features/stations/groupVisualMeta.ts [via src/features/stations/components/StationGroupChip.tsx]",
+        "transitive:src/features/key-pool/EditKeyPage.tsx => src/features/stations/groupVisualStyles.ts [via src/features/stations/components/StationGroupChip.tsx]",
+        "transitive:src/features/key-pool/KeyPoolPage.tsx => src/features/stations/components/Sub2ApiPlatformIcon.tsx [via src/features/stations/components/StationGroupChip.tsx]",
+        "transitive:src/features/key-pool/KeyPoolPage.tsx => src/features/stations/groupOptionViewModels.ts [via src/features/stations/components/StationGroupChip.tsx]",
+        "transitive:src/features/key-pool/KeyPoolPage.tsx => src/features/stations/groupVisualMeta.ts [via src/features/stations/components/StationGroupChip.tsx]",
+        "transitive:src/features/key-pool/KeyPoolPage.tsx => src/features/stations/groupVisualStyles.ts [via src/features/stations/components/StationGroupChip.tsx]",
+        "transitive:src/features/pricing/PricingPage.tsx => src/features/stations/groupVisualMeta.ts [via src/features/stations/components/Sub2ApiPlatformIcon.tsx]",
+        "transitive:src/features/pricing/PricingPage.tsx => src/features/stations/groupVisualMeta.ts [via src/features/stations/groupVisualStyles.ts]"
+      ],
+      "owner": "Task 24",
+      "introduced_shard": "legacy-baseline",
+      "delete_shard": "Task 24",
+      "expiry_stage": 6,
+      "reason": "Feature-private components and view models are reused across domains. Task 24 moves true shared visuals/contracts to shared ownership and exposes remaining feature APIs only through public entries."
+    }
+  ],
+  "command_state_allowlist": [],
+  "spawn_allowlist": [
+    "crate::application::data_directory::<impl>::reset_to_default::tokio::task::spawn_blocking",
+    "crate::application::data_directory::<impl>::select_pending::tokio::task::spawn_blocking",
+    "crate::commands::choose_data_dir::tauri::async_runtime::spawn_blocking",
+    "crate::commands::create_local_station_key_from_remote::tauri::async_runtime::spawn_blocking",
+    "crate::commands::create_remote_station_key::tauri::async_runtime::spawn_blocking",
+    "crate::commands::inspect_latest_update_manifest::tauri::async_runtime::spawn_blocking",
+    "crate::commands::open_path_with_system::<method>::spawn",
+    "crate::commands::open_url_with_system::<method>::spawn",
+    "crate::commands::ping_station_endpoint::tauri::async_runtime::spawn_blocking",
+    "crate::commands::read_capture_window_cookie_header::tauri::async_runtime::spawn_blocking",
+    "crate::commands::run_station_collection_v2::tauri::async_runtime::spawn_blocking",
+    "crate::commands::scan_remote_station_keys::tauri::async_runtime::spawn_blocking",
+    "crate::commands::start_capture_session::tauri::async_runtime::spawn_blocking",
+    "crate::commands::test_station_key_connectivity::tauri::async_runtime::spawn_blocking",
+    "crate::commands::test_station_login::tauri::async_runtime::spawn_blocking",
+    "crate::commands::test_station_login_input::tauri::async_runtime::spawn_blocking",
+    "crate::services::channel_monitors::<impl>::probe::tauri::async_runtime::spawn_blocking",
+    "crate::services::channel_monitors::<impl>::start_v2::thread::spawn",
+    "crate::services::proxy::lifecycle::writer::<impl>::start::tokio::spawn",
+    "crate::services::proxy::server::spawn_server::tokio::spawn",
+    "crate::services::proxy::startup_auto_start::schedule::tauri::async_runtime::spawn",
+    "crate::services::station_collectors::<impl>::collect_task::tauri::async_runtime::spawn_blocking",
+    "crate::services::station_collectors::<impl>::start_v2::thread::spawn"
+  ],
+  "http_client_construction_allowlist": [
+    "crate::services::channel_monitors::probe::run_monitor_probe::ureq::AgentBuilder::new",
+    "crate::services::endpoint_ping::ping_station_endpoint::ureq::AgentBuilder::new",
+    "crate::services::outbound::agent_builder_for_proxy::ureq::AgentBuilder::new",
+    "crate::services::proxy::upstream::build_client::reqwest::Client::builder"
+  ],
+  "fan_in_baseline": {
+    "src-tauri/src/application/app_services.rs::AppServices": {
+      "resolved_rust_module_fan_in": 6,
+      "direct_command_state_consumers": 103,
+      "measurement": "syn production-cfg module/use graph plus compiled-source command-signature inventory",
+      "owner": "Task 7",
+      "delete_task": 7
+    },
+    "src/lib/api-and-queries::invoke": {
+      "direct_call_sites": 115,
+      "measurement": "Stage 0 TypeScript source inventory",
+      "owner": "Tasks 8-9",
+      "delete_task": 9
+    }
+  },
+  "fan_out_baseline": {
+    "src/features/stations/StationsPage.tsx::stationAssetQueries": {
+      "formula": "station_count",
+      "baseline_10": 10,
+      "baseline_100": 100,
+      "baseline_500": 500,
+      "owner": "Task 11",
+      "delete_task": 11
+    },
+    "src-tauri/src/commands/mod.rs::command_surface": {
+      "resolved_rust_use_fan_out": 119,
+      "registered_commands": 121,
+      "owner": "Tasks 3-7 and 23",
+      "delete_task": 23
+    }
+  },
+  "allowlist_policy": {
+    "new_entries_require": ["exact_identity", "reason", "owner", "introduced_shard", "delete_shard", "expiry_stage"],
+    "stale_entries_fail": true,
+    "expired_entries_fail": true,
+    "file_only_or_free_text_identity_allowed": false
+  }
+}

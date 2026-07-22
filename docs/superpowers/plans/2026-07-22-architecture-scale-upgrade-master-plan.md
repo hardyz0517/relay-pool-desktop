@@ -238,11 +238,11 @@ Task 0 复核本矩阵；任何 design requirement 没有 implementation owner�
 - Read only: `docs/superpowers/specs/2026-07-22-architecture-scale-upgrade-design.md`
 - Read only: 当前 production/frontend/runtime/provider 文件
 
-- [ ] **Step 1：确认 Persistence V2 稳定基点**
+- [x] **Step 1：确认 Persistence V2 稳定基点**
 
 记录主 checkout dirty paths 和 stable base commit。任何 persistence 未提交文件只记路径，不读取后顺手修改。创建 worktree 后证明工作树不包含这些 dirty hunks。
 
-- [ ] **Step 2：生成机器可读 inventory**
+- [x] **Step 2：生成机器可读 inventory**
 
 inventory 至少列出 command、公开错误、DTO、command registry/ACL/capability/window、CSP/build entry、`State<AppServices>`、feature direct invoke、fallback、DOM data event、`useQueries` fan-out、runner/thread、spawn、exit source、operation-like flow、`ureq`/HTTP client construction、provider string dispatch、secret-bearing type、source-regex tests、target/output 目录。每项包含 owner、callers、迁移 Task、删除 Task、例外理由和证据命令。
 
@@ -268,7 +268,7 @@ boundary manifest 是 parser/compiled gate 的唯一 allowlist owner，至少包
 
 Tauri security manifest 至少包含 production/dev/preview config paths、CSP、window label pattern、local/remote capability、command permission、allowed remote URL shell、application exact-origin validator、external navigation owner、demo entry reachability、owner 和 expiry shard。当前 `csp: null` 与宽 remote capture URL 必须显式记录风险；宽 URL shell 只有在 application 二次校验存在时才可暂留，production `csp: null` 必须在 Task 8 消除。
 
-- [ ] **Step 3：跑 baseline**
+- [x] **Step 3：跑 baseline**
 
 ```powershell
 pnpm.cmd install --frozen-lockfile
@@ -281,19 +281,21 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 
 记录精确 revision、profile、通过/失败数、耗时和既有失败。未分类的红 baseline 阻止 Task 1。
 
-- [ ] **Step 4：冻结行为样本**
+- [x] **Step 4：冻结行为样本**
 
 保存 Desktop read/write/error、station/key CRUD、collector facts、monitor state、proxy startup/drain、page navigation、demo/browser preview 的最小 characterization 清单。所有样本只存脱敏数据。
 
 Threat model 至少覆盖恶意/失陷 provider、lookalike/cross-station origin、redirect/header 泄露、remote capture window IPC abuse、main renderer compromise、stale WebView assets、secret 出现在日志/fixture/bundle、update/exit race、重复 remote create 和强制终止。每项记录 asset、trust boundary、abuse case、现有控制、目标控制、owner shard 和验证证据；不扩张到账号/云平台威胁。
 
-- [ ] **Step 5：冻结依赖生命周期基线**
+- [x] **Step 5：冻结依赖生命周期基线**
 
 基于官方支持政策、安全公告和实际 lockfile，记录当前 React 18、Vite 6、Tauri 2、TanStack Query 5、Tokio 1、reqwest、Axum、SQLx、Rust toolchain/edition、Node/pnpm 以及 binding/architecture build tools。每项包含 resolved version、support/EOL 状态、advisory、MSRV/Node/Windows/Tauri 兼容性、source URL/check date、keep/upgrade/block 决策、owner、prerequisite shard 和下次复查日期。未知支持状态不能默认判定安全；大版本升级不与架构 owner cutover 混合，但 unsupported/EOL 或不可接受高危风险必须在受影响 Stage 前完成独立升级。
 
-- [ ] **Step 6：冻结性能、容量与生命周期基线**
+- [x] **Step 6：冻结性能、容量与生命周期基线**
 
 在同一 release/debug profile 分别记录 10/100/500 数据集的 IPC count、backend query/read-port count、payload bytes、query/page commit duration；记录 runner/thread/spawn、HTTP client、operation-like work、页面 observer/listener 和 idle/shutdown 状态。每条 baseline 包含 dataset hash、binary/source revision、profile、machine fingerprint、warm-up/sample 方法和原始结果路径，不用单次耗时下结论。
+
+Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stations/keys fixture，并取得 frontend invoke count、projected response JSON bytes、TanStack Query lifecycle 和 data-ready React commit 的原始样本。当前没有 runtime measurement owner 的 `backend_read_port_round_trips`、`backend_sql_statement_count_runtime`、`backend_query_duration_ms`、`sqlite_query_plan`、`real_tauri_ipc_payload_bytes`、`real_tauri_command_duration_ms` 和 `webview2_page_commit_ms` 必须写成 `value: null, qualification: blocked`，分别登记 owner Task 11 和 release gate Task 26；禁止填 0 或用源码静态计数冒充实测。Stage 0 可在这些 blocker 有唯一 owner/关闭 Task 时建立基线，但 Stage 3/7 对应 Gate 在 blocker 关闭前不得通过。
 
 **退出：** inventory 无 `unknown owner`；所有迁移对象都有删除 Task；baseline 可复现；Persistence V2 文件零改动。
 
@@ -310,14 +312,14 @@ Threat model 至少覆盖恶意/失陷 provider、lookalike/cross-station origin
 - Create: `docs/superpowers/adrs/architecture-scale/0007-ci-and-artifacts.md`
 - Create: `docs/superpowers/audits/architecture-scale-capacity-budgets.json`
 
-- [ ] 对 specta/tauri-specta 的 command、serde rename、enum、nullable、Channel 支持做最小 spike；同时记录维护活跃度、最近兼容 release、Tauri 2/Rust MSRV、Windows CI、deterministic output 和 transitive dependency 风险。只有全部通过才选用并固定版本；否则使用窄 repository build-time generator，runtime/domain contract 不依赖具体工具。
-- [ ] 冻结 command timeout、aggregate page limit/payload limit、Query stale/gc policy 与 cache memory budget、retained-page 最大数、task queue、operation queue、operation progress ring、terminal TTL/最大保留数/GC 周期、blocking queue、provider endpoint fan-out、outbound body size、diagnostic buffer/log rotation、per-kind shutdown timeout、global shutdown budget 的具体数值和 owner。
-- [ ] budget ledger 定义父子预算传播和不变量：子步骤只消费 remaining budget，所有 per-kind shutdown 等待受 global deadline 截断，queue wait + execution + retry/fallback 不得各自重新取得完整 timeout。
-- [ ] 冻结性能资格方法：10/100/500 固定数据集 hash、warm-up 次数、sample 数、同机/同 profile 要求、p50/p95 统计、绝对 SLO、允许的相对回归阈值、soak 时长和内存/handle/client/listener 增长上限。单次最快值和跨机器比较不能作为 gate。
-- [ ] ADR 明确 `AppServices` 只可作为 construction bundle，command facade 不是全方法转发层。
-- [ ] work-lifecycle ADR 在 `TaskTracker` 与 bounded `JoinSet` 中选定一个主要 join owner，证明 panic/join error、close/wait、admission race、重复 shutdown 和 Tauri lifecycle 集成；禁止长期两套并存或自定义 executor/thread pool。
-- [ ] Backend mode ADR 明确 production Tauri entry 与 browser preview/test Vite entry 物理分离、production build 不可达 demo、DemoBackend unsupported policy、deterministic clock/data、reset 行为和可见标识。
-- [ ] ADR 明确 source-regex test 的淘汰范围、parser/ESLint/cargo-deny 等 CI 工具的固定版本与安装校验、advisory 例外格式和 artifact root；CI 禁止无版本 `cargo install` 或下载 latest。
+- [x] 对 specta/tauri-specta 的 command、serde rename、enum、nullable、Channel 支持做最小 spike；同时记录维护活跃度、最近兼容 release、Tauri 2/Rust MSRV、Windows CI、deterministic output 和 transitive dependency 风险。只有全部通过才选用并固定版本；否则使用窄 repository build-time generator，runtime/domain contract 不依赖具体工具。
+- [x] 冻结 command timeout、aggregate page limit/payload limit、Query stale/gc policy 与 cache memory budget、retained-page 最大数、task queue、operation queue、operation progress ring、terminal TTL/最大保留数/GC 周期、blocking queue、provider endpoint fan-out、outbound body size、diagnostic buffer/log rotation、per-kind shutdown timeout、global shutdown budget 的具体数值和 owner。
+- [x] budget ledger 定义父子预算传播和不变量：子步骤只消费 remaining budget，所有 per-kind shutdown 等待受 global deadline 截断，queue wait + execution + retry/fallback 不得各自重新取得完整 timeout。
+- [x] 冻结性能资格方法：10/100/500 固定数据集 hash、warm-up 次数、sample 数、同机/同 profile 要求、p50/p95 统计、绝对 SLO、允许的相对回归阈值、soak 时长和内存/handle/client/listener 增长上限。单次最快值和跨机器比较不能作为 gate。
+- [x] ADR 明确 `AppServices` 只可作为 construction bundle，command facade 不是全方法转发层。
+- [x] work-lifecycle ADR 在 `TaskTracker` 与 bounded `JoinSet` 中选定一个主要 join owner，证明 panic/join error、close/wait、admission race、重复 shutdown 和 Tauri lifecycle 集成；禁止长期两套并存或自定义 executor/thread pool。
+- [x] Backend mode ADR 明确 production Tauri entry 与 browser preview/test Vite entry 物理分离、production build 不可达 demo、DemoBackend unsupported policy、deterministic clock/data、reset 行为和可见标识。
+- [x] ADR 明确 source-regex test 的淘汰范围、parser/ESLint/cargo-deny 等 CI 工具的固定版本与安装校验、advisory 例外格式和 artifact root；CI 禁止无版本 `cargo install` 或下载 latest。
 
 **退出：** 所有“有界”“及时”“较大”都已变成可执行数值或清楚的测量公式；ADR 不放宽 spec 禁止项。
 
@@ -344,26 +346,28 @@ Threat model 至少覆盖恶意/失陷 provider、lookalike/cross-station origin
 - Modify: `package.json`
 - Modify: `pnpm-lock.yaml`
 - Modify: `.gitignore`
+- Modify: `vite.config.ts`（仅统一 `output/**` watcher ignore；不得夹带构建重构）
 
-- [ ] Rust gate 使用 `cargo metadata`/目标 cfg + `syn` module visitor，RED fixtures 必须覆盖 qualified/ordinary path、`use foo::{self,*}`、alias、re-export、inline/out-of-line module、nested module、`cfg`/`cfg_attr` target semantics、macro/generated registry、same-name symbols、descendant fan-out、forbidden public export 和 dependency cycle。无法可靠解析的 construct 必须 fail closed 或进入有 owner/expiry 的精确例外，不能静默跳过。
-- [ ] TypeScript gate 用真实 project `tsconfig` 创建 Compiler Program，RED fixtures 覆盖 path alias、barrel/re-export、type-only import、dynamic import、同名 symbol、跨 feature descendant import 和循环依赖；不以字符串包含关系推断 ownership。
-- [ ] 能由 ESLint `no-restricted-imports`/标准规则表达的直接 import 边界优先用 ESLint；Compiler API 只负责标准规则无法表达的 resolved graph、barrel/dynamic/fan-out 约束，禁止维护两份冲突规则。
-- [ ] command registration/ACL/binding 一致性使用编译后的 registry/serialization fixture 校验，不能让 `syn` 猜 `generate_handler!` 宏展开。
-- [ ] 建立初始 allowlist：旧债可暂时存在但数量只能下降；新文件/新 edge 不得加入旧式模式。
-- [ ] gate 对 stale allowlist fail closed：manifest entry 没有匹配真实 edge、已过 expiry stage、symbol identity 变更或 fan-in/fan-out baseline 为空都失败；删除旧债时必须同步删除例外。
-- [ ] 建立 `pnpm lint`，覆盖 production TypeScript/TSX 和 architecture-specific rules；lint 配置缺失或只扫描部分 feature 时 fail closed。
-- [ ] `scripts/verify.ps1` 提供 fast、full、release profile；相同底层命令由 PR 和 release workflow 调用，workflow 不复制业务验证列表。
-- [ ] CI 安装严格使用 `pnpm install --frozen-lockfile`；Cargo check/clippy/test/build 使用 `--locked`。lockfile 漂移、缺失或安装脚本绕过 frozen/locked 都必须失败。
-- [ ] PR 至少执行 binding/check placeholder、frontend lint/test/build、Rust fmt/clippy/check/test、architecture gates 和 dependency advisory/license/source gate；缺少脚本或工具时 fail closed。
-- [ ] `dependency-advisory-exceptions.json` 的每个例外必须包含 ecosystem、package、advisory id、受影响判断、owner、批准日期和到期日期；未知字段、过期例外或全局 ignore 均失败。
-- [ ] dependency lifecycle gate 校验台账覆盖实际 lockfile/toolchain 中的关键组件、复查日期未过期、source 可追溯且没有 unresolved/unsupported/EOL/block 状态；版本 prerequisite shard 必须拥有独立 compatibility matrix、rollback 和 qualification，不能借架构测试代替 major upgrade 验收。
-- [ ] release 在同一入口上增加 `--locked` release build、Tauri bundle、签名、artifact scan 和 provenance。
-- [ ] 统一 `output/<purpose>`，让 Git、Vite watch、CodeGraph、test discovery 同步排除；检查现存 source-tree target/output 只登记，不在脏主 checkout 删除。
-- [ ] Tauri security gate 解析 production/dev/preview config、compiled command registry、capability manifests 和 window patterns；新增 `csp: null`、capture 调用 main command、registered/authorized mismatch、production demo entry 可达或无 application exact-origin owner 均失败。当前债务只能使用 security manifest 中有 owner/expiry 的临时 entry。
+- [x] Rust gate 使用 `cargo metadata`/目标 cfg + `syn` module visitor，RED fixtures 必须覆盖 qualified/ordinary path、`use foo::{self,*}`、alias、re-export、inline/out-of-line module、nested module、`cfg`/`cfg_attr` target semantics、macro/generated registry、same-name symbols、descendant fan-out、forbidden public export 和 dependency cycle。无法可靠解析的 construct 必须 fail closed 或进入有 owner/expiry 的精确例外，不能静默跳过。
+- [x] TypeScript gate 用真实 project `tsconfig` 创建 Compiler Program，RED fixtures 覆盖 path alias、barrel/re-export、type-only import、dynamic import、同名 symbol、跨 feature descendant import 和循环依赖；不以字符串包含关系推断 ownership。
+- [x] 能由 ESLint `no-restricted-imports`/标准规则表达的直接 import 边界优先用 ESLint；Compiler API 只负责标准规则无法表达的 resolved graph、barrel/dynamic/fan-out 约束，禁止维护两份冲突规则。
+- [x] command registration/ACL/binding 一致性使用编译后的 registry/serialization fixture 校验，不能让 `syn` 猜 `generate_handler!` 宏展开。
+- [x] 建立初始 allowlist：旧债可暂时存在但数量只能下降；新文件/新 edge 不得加入旧式模式。
+- [x] gate 对 stale allowlist fail closed：manifest entry 没有匹配真实 edge、已过 expiry stage、symbol identity 变更或 fan-in/fan-out baseline 为空都失败；删除旧债时必须同步删除例外。
+- [x] 建立 `pnpm lint`，覆盖 production TypeScript/TSX 和 architecture-specific rules；lint 配置缺失或只扫描部分 feature 时 fail closed。
+- [x] `scripts/verify.ps1` 提供 fast、full、release profile；相同底层命令由 PR 和 release workflow 调用，workflow 不复制业务验证列表。
+- [x] CI 安装严格使用 `pnpm install --frozen-lockfile`；Cargo check/clippy/test/build 使用 `--locked`。lockfile 漂移、缺失或安装脚本绕过 frozen/locked 都必须失败。
+- [x] PR 至少执行 binding/check placeholder、frontend lint/test/build、Rust fmt/clippy/check/test、architecture gates 和 dependency advisory/license/source gate；缺少脚本或工具时 fail closed。
+- [x] `dependency-advisory-exceptions.json` 的每个例外必须包含 ecosystem、package、advisory id、受影响判断、owner、批准日期和到期日期；未知字段、过期例外或全局 ignore 均失败。
+- [x] dependency lifecycle gate 校验台账覆盖实际 lockfile/toolchain 中的关键组件、复查日期未过期、source 可追溯且没有 unresolved/unsupported/EOL/block 状态；版本 prerequisite shard 必须拥有独立 compatibility matrix、rollback 和 qualification，不能借架构测试代替 major upgrade 验收。
+- [x] 建立 10/100/500 deterministic frontend scale baseline：fixture 双次生成 hash 一致，mock IPC 记录 command/count/projected response JSON bytes，独立 QueryClient 记录 lifecycle，React Profiler/浏览器时间线记录 data-ready commit；warm-up/sample/provenance 完整。未具备 backend/Tauri/WebView runtime owner 的指标保持 typed blocked，并由 Task 11/26 关闭。
+- [x] release 在同一入口上增加 `--locked` release build、Tauri bundle、签名、artifact scan 和 provenance。
+- [x] 统一 `output/<purpose>`，让 Git、Vite watch、CodeGraph、test discovery 同步排除；检查现存 source-tree target/output 只登记，不在脏主 checkout 删除。
+- [x] Tauri security gate 解析 production/dev/preview config、compiled command registry、capability manifests 和 window patterns；新增 `csp: null`、capture 调用 main command、registered/authorized mismatch、production demo entry 可达或无 application exact-origin owner 均失败。当前债务只能使用 security manifest 中有 owner/expiry 的临时 entry。
 
 **退出：** 新增旧模式会让 CI 红；PR workflow 已实际可运行；release 调用相同 entrypoint；不依赖结构 regex。
 
-**Stage 0 Gate：** Task 0-2 证据和 docs/scripts 独立提交；production behavior 未改变；从此所有新功能必须遵守目标边界。Threat/security manifest 完整，现有 `csp: null`、capture remote shell、direct exit/block_on 和 demo/mock 路径均有精确 owner/expiry shard，新增或扩大立即失败。Generator、Tokio join owner 和 build entry 的成熟度 ADR 已冻结；未完成 spike 不得进入实现。Dependency lifecycle ledger 覆盖实际 resolved versions；unsupported/EOL、不可接受高危风险或未知关键支持状态已转成有 owner 的 prerequisite blocker，不能带入受影响 Stage。
+**Stage 0 Gate：** Task 0-2 证据和 docs/scripts 独立提交；production behavior 未改变；从此所有新功能必须遵守目标边界。Threat/security manifest 完整，现有 `csp: null`、capture remote shell、direct exit/block_on 和 demo/mock 路径均有精确 owner/expiry shard，新增或扩大立即失败。Generator、Tokio join owner 和 build entry 的成熟度 ADR 已冻结；未完成 spike 不得进入实现。Dependency lifecycle ledger 覆盖实际 resolved versions；unsupported/EOL、不可接受高危风险或未知关键支持状态已转成有 owner 的 prerequisite blocker，不能带入受影响 Stage。10/100/500 frontend baseline 的 fixture hash和原始样本必须存在；backend/Tauri/WebView 指标允许暂为 typed blocked，但必须有 Task 11/26 owner，且不得被表述为性能通过。
 
 ## 9. Stage 1：Typed IPC、统一错误与运行时握手
 

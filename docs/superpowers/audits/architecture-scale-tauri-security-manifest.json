@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "source_revision": "6a204908e2b3697e4c80951771950e29872942d9",
+  "production_config": {
+    "path": "src-tauri/tauri.conf.json",
+    "owner": "Task 8",
+    "entry": "index.html -> src/main.tsx",
+    "csp": null
+  },
+  "development_config": {
+    "path": "src-tauri/tauri.conf.json",
+    "dev_url": "http://127.0.0.1:1430",
+    "owner": "Task 8"
+  },
+  "preview_config": {
+    "path": "vite.config.ts",
+    "entry": "index.html -> src/main.tsx",
+    "owner": "Task 8",
+    "status": "currently-shared-with-production"
+  },
+  "window_patterns": [
+    {
+      "label": "main",
+      "local": true,
+      "remote": false,
+      "capability": "src-tauri/capabilities/default.json",
+      "owner": "Task 8"
+    },
+    {
+      "label": "capture-*",
+      "local": false,
+      "remote": true,
+      "allowed_remote_url_shell": ["http://*", "https://*"],
+      "capability": "src-tauri/capabilities/capture.json",
+      "owner": "Task 17"
+    }
+  ],
+  "command_permissions": {
+    "main": {
+      "permission": "main-window",
+      "compiled_source": "src-tauri/gen/schemas/acl-manifests.json",
+      "owner": "Task 3"
+    },
+    "capture": {
+      "permissions": ["record-capture-event"],
+      "maximum_commands_after_cutover": ["record_capture_event", "finish_web_authorization_session"],
+      "owner": "Task 17"
+    }
+  },
+  "application_exact_origin_validator": {
+    "path": "src-tauri/src/services/capture/web_authorization.rs::validate_capture_event_origin",
+    "owner": "Task 17",
+    "status": "missing-at-stage-0",
+    "required_bindings": ["window_label", "station_id", "session_id", "session_revision", "exact_origin"]
+  },
+  "external_navigation": {
+    "owner": "Task 8",
+    "current_command": "open_external_url",
+    "target_policy": "parsed allowlisted scheme and explicit OS browser owner"
+  },
+  "demo_entry_reachability": {
+    "production": false,
+    "legacy_browser_fallback_reachable": true,
+    "owner": "Task 8",
+    "qualification": "Task 8 creates a physically separate demo graph and Task 28 scans the production bundle"
+  },
+  "temporary_entries": [
+    {
+      "id": "production-csp-null",
+      "owner": "Task 8",
+      "introduced_shard": "legacy-baseline",
+      "delete_shard": "S2-T8-9-backend-cutover",
+      "expiry_stage": 2,
+      "reason": "The current main WebView has no production CSP. Task 8 must install a non-null policy before production backend cutover."
+    },
+    {
+      "id": "capture-remote-wildcard-url-shell",
+      "owner": "Task 17",
+      "introduced_shard": "legacy-baseline",
+      "delete_shard": "S4-T17-blocking-capture-shutdown",
+      "expiry_stage": 4,
+      "reason": "Capture must navigate provider-owned origins, but the shell is too broad without per-invoke station/session/revision/exact-origin validation."
+    },
+    {
+      "id": "capture-exact-origin-validator-missing",
+      "owner": "Task 17",
+      "introduced_shard": "legacy-baseline",
+      "delete_shard": "S4-T17-blocking-capture-shutdown",
+      "expiry_stage": 4,
+      "reason": "Stage 0 found no application validator binding each remote invoke to the expected normalized exact origin."
+    },
+    {
+      "id": "production-demo-entry-not-physically-separated",
+      "owner": "Task 8",
+      "introduced_shard": "legacy-baseline",
+      "delete_shard": "S2-T8-9-backend-cutover",
+      "expiry_stage": 2,
+      "reason": "Browser preview fallback code is currently reachable from production imports even though no separate demo entry exists."
+    },
+    {
+      "id": "direct-exit-and-late-shutdown-drain",
+      "owner": "Task 17",
+      "introduced_shard": "legacy-baseline",
+      "delete_shard": "S4-T17-blocking-capture-shutdown",
+      "expiry_stage": 4,
+      "reason": "Tray exit is direct and the principal async drain occurs after RunEvent::Exit rather than in an idempotent ExitRequested coordinator."
+    }
+  ]
+}

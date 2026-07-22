@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "source_revision": "6a204908e2b3697e4c80951771950e29872942d9",
+  "qualification": "stage-0-redacted-characterization-only",
+  "owner": "Task 3",
+  "delete_task": 3,
+  "notes": "These samples freeze current JSON naming, nullability, list, enum-like string and redacted secret shapes. They are not a substitute for Task 3 compiled-registry serde goldens.",
+  "samples": [
+    {
+      "command": "create_station",
+      "input": {
+        "input": {
+          "name": "Fixture Station",
+          "stationType": "newapi",
+          "websiteUrl": "https://provider.invalid",
+          "apiBaseUrl": "https://provider.invalid/v1",
+          "apiKey": "sk-fixture-redacted",
+          "collectorProxyMode": "inherit",
+          "collectorProxyUrl": null,
+          "enabled": true,
+          "creditPerCny": 1,
+          "lowBalanceThresholdCny": 15,
+          "collectionIntervalMinutes": 5,
+          "note": null
+        }
+      },
+      "output": {
+        "id": "station-fixture",
+        "name": "Fixture Station",
+        "stationType": "newapi",
+        "websiteUrl": "https://provider.invalid",
+        "apiBaseUrl": "https://provider.invalid/v1",
+        "endpointRevision": 1,
+        "collectorProxyMode": "inherit",
+        "collectorProxyUrl": null,
+        "apiKeyMasked": "sk-fixture-...redacted",
+        "apiKeyPresent": true,
+        "keyCount": 1,
+        "enabled": true,
+        "priority": 0,
+        "creditPerCny": 1,
+        "balanceRaw": null,
+        "balanceCny": null,
+        "lowBalanceThresholdCny": 15,
+        "collectionIntervalMinutes": 5,
+        "status": "unchecked",
+        "latencyMs": null,
+        "lastCheckedAt": null,
+        "lastPricingFetchedAt": null,
+        "note": null,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "update_station_credentials",
+      "input": {
+        "input": {
+          "stationId": "station-fixture",
+          "loginUsername": "fixture-user",
+          "loginPassword": "fixture-password-redacted",
+          "rememberPassword": true
+        }
+      },
+      "output": {
+        "stationId": "station-fixture",
+        "loginUsername": "fixture-user",
+        "passwordPresent": true,
+        "accessTokenPresent": false,
+        "refreshTokenPresent": false,
+        "cookiePresent": false,
+        "rememberPassword": true,
+        "loginStatus": "saved",
+        "loginError": null,
+        "lastLoginAt": null,
+        "sessionStatus": "missing",
+        "sessionExpiresAt": null,
+        "newapiUserId": null,
+        "tokenExpiresAt": null,
+        "tokenRefreshedAt": null,
+        "sessionSource": "none",
+        "updatedAt": "2026-01-01T00:00:00Z"
+      },
+      "secret_policy": "Fixture values are synthetic and must remain visibly redacted."
+    },
+    {
+      "command": "list_stations",
+      "input": {},
+      "output": [
+        {
+          "id": "station-fixture",
+          "name": "Fixture Station",
+          "stationType": "newapi",
+          "websiteUrl": "https://provider.invalid",
+          "apiBaseUrl": "https://provider.invalid/v1",
+          "endpointRevision": 1,
+          "collectorProxyMode": "inherit",
+          "collectorProxyUrl": null,
+          "apiKeyMasked": "sk-fixture-...redacted",
+          "apiKeyPresent": true,
+          "keyCount": 1,
+          "enabled": true,
+          "priority": 0,
+          "creditPerCny": 1,
+          "balanceRaw": null,
+          "balanceCny": null,
+          "lowBalanceThresholdCny": 15,
+          "collectionIntervalMinutes": 5,
+          "status": "unchecked",
+          "latencyMs": null,
+          "lastCheckedAt": null,
+          "lastPricingFetchedAt": null,
+          "note": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "command": "get_capture_session_status",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "stationId": "station-fixture",
+        "status": "idle",
+        "captureCount": 0,
+        "recognizedFieldCount": 0,
+        "pendingConfirmationCount": 0,
+        "webAuthorizationCandidate": false,
+        "lastError": null
+      }
+    },
+    {
+      "command": "app_status",
+      "input": {},
+      "legacy_error": "redacted fixture error",
+      "target_error": {
+        "code": "internal",
+        "message": "Operation failed",
+        "details": null,
+        "correlationId": "corr-fixture",
+        "retryability": "never"
+      }
+    }
+  ]
+}

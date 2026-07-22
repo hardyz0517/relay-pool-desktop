@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "status": "accepted_with_downstream_qualification_blockers",
+  "recorded_at": "2026-07-23",
+  "source_revision": "6a204908e2b3697e4c80951771950e29872942d9",
+  "units": {
+    "time": "milliseconds",
+    "size": "bytes"
+  },
+  "budget_invariants": {
+    "deadline_model": "absolute_monotonic_deadline",
+    "remaining_budget_only": true,
+    "queue_execution_retry_share_parent_deadline": true,
+    "child_deadline_may_exceed_parent": false,
+    "shutdown_kind_deadline_is_capped_by_global_remaining": true,
+    "timeout_is_not_success": true
+  },
+  "ipc": {
+    "read_timeout_ms": 10000,
+    "mutation_timeout_ms": 15000,
+    "operation_control_timeout_ms": 2000,
+    "long_work_must_return_operation_id": true
+  },
+  "aggregate_reads": {
+    "default_page_rows": 100,
+    "max_page_rows": 500,
+    "max_decoded_payload_bytes": 1048576,
+    "max_ipc_calls_per_resource_refresh": 1,
+    "max_backend_read_port_round_trips_per_resource_refresh": 2,
+    "consistent_snapshot_required": true,
+    "stable_cursor_required": true
+  },
+  "query_cache": {
+    "default_stale_ms": 5000,
+    "fast_status_stale_ms": 1000,
+    "history_stale_ms": 2000,
+    "stable_settings_stale_ms": 60000,
+    "gc_ms": 600000,
+    "max_estimated_decoded_bytes": 67108864,
+    "warning_ratio": 0.8,
+    "max_in_flight_per_canonical_key": 1,
+    "hidden_page_active_queries": 0,
+    "max_retained_pages": 3
+  },
+  "daemon_tasks": {
+    "max_registered": 32,
+    "control_queue_capacity": 64,
+    "status_transport": "watch_latest",
+    "same_periodic_task_max_concurrency": 1,
+    "restart_max_attempts_per_10_minutes": 5,
+    "restart_backoff_initial_ms": 1000,
+    "restart_backoff_max_ms": 60000
+  },
+  "operations": {
+    "max_running_global": 8,
+    "max_running_per_concurrency_key": 1,
+    "admission_queue_capacity": 32,
+    "admission_queue_timeout_ms": 2000,
+    "progress_ring_entries_per_operation": 128,
+    "progress_entry_max_bytes": 8192,
+    "terminal_ttl_ms": 900000,
+    "terminal_max_entries": 256,
+    "expired_tombstone_ttl_ms": 3600000,
+    "gc_interval_ms": 60000,
+    "running_entries_are_evictable": false
+  },
+  "blocking_executor": {
+    "max_running": 4,
+    "queue_capacity": 16,
+    "queue_timeout_ms": 2000,
+    "default_execution_timeout_ms": 30000,
+    "sync_http_allowed": false,
+    "shutdown_wait_ms": 5000
+  },
+  "provider_outbound": {
+    "max_in_flight_global": 8,
+    "max_in_flight_per_station_operation": 4,
+    "success_body_max_bytes": 8388608,
+    "error_body_max_bytes": 65536,
+    "max_attempts": 2,
+    "default_parent_budget_ms": 30000,
+    "connect_timeout_cap_ms": 5000,
+    "redirect_max_hops": 5,
+    "https_downgrade_allowed": false,
+    "cross_origin_secret_headers_allowed": false,
+    "client_instances_scale_with_requests": false
+  },
+  "diagnostics": {
+    "in_memory_event_capacity": 4096,
+    "in_memory_max_bytes": 8388608,
+    "metric_series_max": 1024,
+    "log_file_max_bytes": 5242880,
+    "log_file_retained_count": 5,
+    "total_log_max_bytes": 26214400,
+    "raw_secret_or_body_logging_allowed": false
+  },
+  "shutdown": {
+    "global_ms": 45000,
+    "close_admission_ms": 500,
+    "foreground_operations_ms": 5000,
+    "channel_monitor_ms": 5000,
+    "station_collector_ms": 10000,
+    "blocking_executor_ms": 5000,
+    "outbound_ms": 5000,
+    "proxy_runtime_ms": 30000,
+    "persistence_owner_ms": 5000,
+    "owners_may_drain_in_parallel": true,
+    "timed_out_owner_must_be_reported": true
+  },
+  "qualification": {
+    "dataset_sizes": [10, 100, 500],
+    "dataset_manifest_version": "architecture-scale-dataset-v1",
+    "dataset_sha256": {
+      "10": "781fa1b19da69361d0f4120c41edde45bdca25fe172a61840a25dd6ccdfcda5a",
+      "100": "b67d8c97d04f4961c05505d81b5fa853bf8073f55f1a68a4cfe42b2b92dbc46d",
+      "500": "750d661ab0fa83ba4fcfeb0c70f4e71649c03ea5d98463866b555a1470aa1390"
+    },
+    "dataset_hash_status": "generated_and_verified_by_stage0_harness",
+    "warmup_runs": 5,
+    "sample_runs": 30,
+    "statistics": ["p50", "p95"],
+    "same_machine_required": true,
+    "same_profile_required": true,
+    "release_profile_required_for_release_gate": true,
+    "aggregate_query_p95_ms": 250,
+    "aggregate_ipc_p95_ms": 500,
+    "page_commit_p95_ms": 100,
+    "relative_p95_regression_max_ratio": 0.15,
+    "relative_rss_regression_max_ratio": 0.1,
+    "release_soak_ms": 3600000,
+    "soak_rss_net_growth_max_bytes": 33554432,
+    "soak_os_handle_net_growth_max": 8,
+    "soak_outbound_client_net_growth_max": 0,
+    "soak_listener_net_growth_max": 0,
+    "single_fastest_sample_is_gate_evidence": false,
+    "cross_machine_absolute_comparison_is_gate_evidence": false
+  },
+  "downstream_qualification_blockers": [
+    {
+      "id": "CAP-BACKEND-RUNTIME-MEASUREMENTS",
+      "reason": "Stage 0 records the production frontend query topology with deterministic mock IPC, but the aggregate backend read port and final SQL do not exist yet. Backend round trips, SQL statement count, query duration, and SQLite plan therefore remain null and blocked rather than inferred.",
+      "owner_task": 11,
+      "release_gate": 26,
+      "blocks": "Stage 3 aggregate-read performance gate and Stage 7 performance qualification"
+    },
+    {
+      "id": "CAP-NATIVE-WEBVIEW-MEASUREMENTS",
+      "reason": "Real Tauri IPC payload/duration and WebView2 page-commit evidence require the final packaged runtime. Stage 0 jsdom durations are frontend regression evidence only and are not release qualification.",
+      "owner_task": 26,
+      "release_gate": 26,
+      "blocks": "Stage 7 native performance qualification"
+    }
+  ]
+}

@@ -1187,7 +1187,7 @@ release workflow 不能拥有另一份复制的验证命令；两层必须调用
 - 本 spec 评审冻结。
 - 七个 ADR：IPC generator/error、application composition、Backend mode、Query/page visibility、work supervision、provider registry/async outbound、CI/artifact policy。
 - 当前 command/DTO/error/mock/AppServices/task/operation/ureq/spawn/driver/output inventory。
-- 行为和性能基线。
+- 行为和性能基线；10/100/500 frontend fixture/hash/原始样本必须真实生成。当前无测量 owner 的 backend/Tauri/WebView 指标以 typed blocked 记录并由 Stage 3/7 关闭，不得填 0 或用源码静态计数冒充实测。
 - parser-backed architecture gate 骨架。
 - 本地 threat model、Tauri CSP/capability/window baseline 和 production/dev/preview build-config 差异清单。
 - 成熟度决策记录：generator 维护/兼容性、Tokio lifecycle primitive、标准 ESLint/compiled gate 与 custom AST gate 的最小边界。
