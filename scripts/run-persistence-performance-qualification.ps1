@@ -435,7 +435,7 @@ function Invoke-V2Qualification {
         }
         return [ordered]@{
             sourcePath = $mockPath
-            rawOutput = Get-Content -Raw -LiteralPath $mockPath
+            rawOutput = [System.IO.File]::ReadAllText($mockPath, [System.Text.Encoding]::UTF8)
             sha256 = Get-Sha256File $mockPath
             isMock = $true
             measurementStartedAtUtc = $null
@@ -526,7 +526,7 @@ $resolvedOutput = Resolve-RepoPath $OutputPath
 if (-not (Test-Path -LiteralPath $resolvedBaseline -PathType Leaf)) {
     throw "baseline file does not exist: $resolvedBaseline"
 }
-$baseline = Get-Content -Raw -LiteralPath $resolvedBaseline | ConvertFrom-Json
+$baseline = [System.IO.File]::ReadAllText($resolvedBaseline, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
 Assert-ReconstructedBaseline $baseline
 
 $v2Capture = Invoke-V2Qualification

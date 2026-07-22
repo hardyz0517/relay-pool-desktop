@@ -28,6 +28,11 @@ assert.match(
   /\[regex\]::Match\(\(\$powerOutput \| Out-String\), '\[0-9a-fA-F\]\{8\}/,
   "the baseline environment must capture the locale-independent power-scheme GUID",
 );
+assert.match(
+  script,
+  /\[System\.IO\.File\]::ReadAllText\(\$probeOutput, \[System\.Text\.Encoding\]::UTF8\)/,
+  "the baseline must decode the UTF-8 probe report explicitly on Windows PowerShell",
+);
 
 const result = spawnSync(
   "powershell",

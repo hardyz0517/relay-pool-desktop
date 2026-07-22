@@ -9,7 +9,9 @@ dist-ssr/
 target/
 src-tauri/target/
 target-codex-red*/
-/output/*-target/
+/output/
+/src-tauri/output/
+/src-tauri/target-codex-*/
 
 # Environment and local config
 .env

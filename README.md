@@ -8,7 +8,7 @@
 
 <p align='center'>
   <a href='https://github.com/hardyz0517/relay-pool-desktop/releases/latest'><img alt='Release' src='https://img.shields.io/github/v/release/hardyz0517/relay-pool-desktop?label=release&color=2563eb' /></a>
-  <img alt='Version' src='https://img.shields.io/badge/version-v0.3.1-0f766e' />
+  <img alt='Version' src='https://img.shields.io/badge/version-v0.3.2-0f766e' />
   <img alt='Preview' src='https://img.shields.io/badge/status-technical%20preview-f59e0b' />
   <img alt='Platform' src='https://img.shields.io/badge/platform-Windows%20x64-111827' />
   <img alt='Tauri' src='https://img.shields.io/badge/Tauri-2.x-24c8db' />
@@ -28,7 +28,7 @@
 
 ---
 
-**当前版本：v0.3.1（技术预览）**。核心管理、本地代理、路由、采集、请求日志、Windows 预览安装包和应用内更新检查已经进入可运行状态；接口、数据结构、兼容范围和安装方式仍可能变化。请在真实凭据环境中谨慎升级，并先保留必要备份。
+**当前版本：v0.3.2（技术预览）**。核心管理、本地代理、路由、采集、请求日志、Windows 预览安装包和应用内更新检查已经进入可运行状态；接口、数据结构、兼容范围和安装方式仍可能变化。请在真实凭据环境中谨慎升级，并先保留必要备份。
 
 Relay Pool Desktop 是一款面向个人开发者和本地 AI 工具用户的桌面控制台。它把多个 Sub2API / NewAPI / OpenAI-compatible 中转站账号、站内 Key、余额、分组倍率、模型能力、健康状态和请求记录收束到本机，并向 Codex、Claude Code、Gemini CLI、CCSwitch 等客户端提供固定的 OpenAI-compatible 入口。
 
@@ -161,7 +161,9 @@ src/
 src-tauri/src/
   commands/            Tauri 命令边界
   models/              Rust 领域模型
-  services/            SQLite、采集、路由、代理、监控与凭据服务
+  application/         持久化用例与应用服务
+  persistence/         SQLx Store、migration、备份与恢复
+  services/            采集、路由、代理、监控与凭据服务
 docs/                   产品模型、阶段设计、安全策略与研究资料
 scripts/                聚焦业务契约的回归检查脚本
 ```
@@ -171,7 +173,7 @@ scripts/                聚焦业务契约的回归检查脚本
 - [Tauri 2](https://tauri.app/) + Rust
 - React 18 + TypeScript + Vite
 - Tailwind CSS
-- SQLite（`rusqlite`）
+- SQLite（`SQLx`）
 - Windows Credential Manager + AES-GCM
 
 ## 安全说明

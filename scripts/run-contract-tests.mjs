@@ -14,6 +14,7 @@ const contracts = [
   ["node", ["--test", "scripts/updater-state-flow.test.ts"]],
   ["node", ["scripts/updater-ui-contract.test.mjs"]],
   ["node", ["scripts/release-verification-entrypoint.test.mjs"]],
+  ["node", ["scripts/release-version-contract.test.mjs"]],
   ["node", ["scripts/persistence-v2-artifact-scan.test.mjs"]],
   ["node", ["scripts/persistence-v2-fixture-manifest-contract.test.mjs"]],
   ["node", ["scripts/local-data-artifact-ignore.test.mjs"]],

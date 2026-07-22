@@ -29,6 +29,27 @@ jobs:
         with:
           workspaces: src-tauri -> target
       - run: pnpm install --frozen-lockfile
+      - name: Verify release tag and source version
+        env:
+          RELAY_POOL_RELEASE_TAG: ${{ github.ref_name }}
+        run: pnpm verify:release-version -- --require-tag
+      - name: Load release notes
+        id: release_notes
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $path = "docs/release/v$version.md"
+          if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "missing release notes: $path"
+          }
+          $body = Get-Content -Raw -LiteralPath $path
+          if ([string]::IsNullOrWhiteSpace($body)) {
+            throw "release notes are empty: $path"
+          }
+          $delimiter = "RELEASE_NOTES_$([guid]::NewGuid().ToString('N'))"
+          "body<<$delimiter" >> $env:GITHUB_OUTPUT
+          $body >> $env:GITHUB_OUTPUT
+          $delimiter >> $env:GITHUB_OUTPUT
       - run: pnpm verify:release
       - uses: tauri-apps/tauri-action@fce9c6108b31ea247710505d3aaaa893ee6768d4
         env:
@@ -36,8 +57,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v__VERSION__
-          releaseName: Relay Pool Desktop v__VERSION__
+          tagName: ${{ github.ref_name }}
+          releaseName: Relay Pool Desktop ${{ github.ref_name }}
+          releaseBody: ${{ steps.release_notes.outputs.body }}
           releaseDraft: true
           prerelease: false
           args: --target x86_64-pc-windows-msvc

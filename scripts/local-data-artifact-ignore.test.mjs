@@ -33,7 +33,14 @@ const localArtifacts = [
   "diagnostic-report-2026-07-22.json",
 ];
 
-for (const artifact of localArtifacts) {
+const localBuildArtifacts = [
+  "output/dev-launch/runtime.log",
+  "output/node-modules-corrupt-pre-persistence-merge/package.json",
+  "src-tauri/output/runtime.log",
+  "src-tauri/target-codex-release-027/debug/relay-pool-desktop.exe",
+];
+
+for (const artifact of [...localArtifacts, ...localBuildArtifacts]) {
   const result = spawnSync(
     "git",
     ["check-ignore", "--no-index", "--quiet", "--", artifact],

@@ -252,7 +252,9 @@ try {
     if (-not (Test-Path -LiteralPath $probeOutput -PathType Leaf)) {
         throw 'V1 probe completed without producing its baseline JSON'
     }
-    $baseline = Get-Content -Raw -LiteralPath $probeOutput | ConvertFrom-Json
+    # Cargo emits the probe report as UTF-8 without a BOM; Windows PowerShell 5.1
+    # otherwise decodes non-ASCII environment metadata with the active code page.
+    $baseline = [System.IO.File]::ReadAllText($probeOutput, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
     if ($baseline.baselineKind -ne 'reconstructed-v0.3.1-source-baseline') {
         throw 'V1 probe output lost its reconstructed provenance label'
     }

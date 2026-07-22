@@ -124,6 +124,11 @@ try {
   );
   assert.match(
     qualificationWrapperSource,
+    /\[System\.IO\.File\]::ReadAllText\(\$resolvedBaseline, \[System\.Text\.Encoding\]::UTF8\)/,
+    "release qualification must decode the baseline JSON explicitly on Windows PowerShell",
+  );
+  assert.match(
+    qualificationWrapperSource,
     /if \(\$captured\.exitCode -ne 0\)[\s\S]+throw "V2 performance qualification failed/,
     "qualification wrapper must fail closed on a non-zero Cargo exit code",
   );
