@@ -16,6 +16,7 @@ pub enum RecoveryReason {
     IntegrityFailed,
     OpenOrMigrationFailed,
     PendingRelocation,
+    UpgradeRecoveryRequired,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -61,6 +62,7 @@ pub enum StartupDecision {
     Conflict { candidate_ids: Vec<String> },
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataStoreStartupView {
@@ -114,6 +116,7 @@ impl DataStoreStartupState {
         self.database_generation
     }
 
+    #[cfg(test)]
     pub fn view(&self) -> DataStoreStartupView {
         DataStoreStartupView {
             decision: self.decision.clone(),

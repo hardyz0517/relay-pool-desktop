@@ -1,55 +1,28 @@
 use std::path::Path;
 
-use rusqlite::{Connection, OpenFlags};
+use crate::persistence::{read_encrypted_secrets, StoredEncryptedSecret};
 
 use super::crypto::{decrypt_secret, EncryptedPayload};
 
 pub fn validate_database_secrets(path: &Path, data_key: &[u8; 32]) -> Result<(), String> {
-    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|error| format!("failed to open database for secret validation: {error}"))?;
-    if !table_exists(&connection, "secrets")? {
-        return Ok(());
-    }
-
-    let mut rows = connection
-        .prepare("SELECT id, ciphertext, nonce, aad, value_hash FROM secrets ORDER BY id")
-        .map_err(|error| format!("failed to prepare secret validation: {error}"))?;
-    let rows = rows
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                EncryptedPayload {
-                    ciphertext: row.get(1)?,
-                    nonce: row.get(2)?,
-                    aad: row.get(3)?,
-                    value_hash: row.get(4)?,
-                },
-            ))
-        })
-        .map_err(|error| format!("failed to read encrypted secrets: {error}"))?;
-
-    for row in rows {
-        let (id, payload) = row.map_err(|error| format!("failed to read secret row: {error}"))?;
+    let records: Vec<StoredEncryptedSecret> =
+        tauri::async_runtime::block_on(read_encrypted_secrets(path))
+            .map_err(|error| format!("failed to read database for secret validation: {error}"))?;
+    for record in records {
+        let payload = EncryptedPayload {
+            ciphertext: record.ciphertext,
+            nonce: record.nonce,
+            aad: record.aad,
+            value_hash: record.value_hash,
+        };
         decrypt_secret(data_key, &payload).map_err(|_| {
             format!(
                 "secret validation failed for row {}",
-                sanitized_row_identifier(&id)
+                sanitized_row_identifier(&record.id)
             )
         })?;
     }
-
     Ok(())
-}
-
-fn table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
-    connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
-            [table],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|exists| exists == 1)
-        .map_err(|error| format!("failed to inspect secret schema: {error}"))
 }
 
 fn sanitized_row_identifier(id: &str) -> String {
@@ -67,21 +40,25 @@ fn sanitized_row_identifier(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::validate_database_secrets;
+    use crate::persistence::runtime::PersistenceRuntime;
     use crate::services::secrets::crypto::{encrypt_secret, generate_data_key};
-    use rusqlite::{params, Connection};
-    use std::{fs, path::PathBuf, time::SystemTime};
+    use base64::{engine::general_purpose, Engine as _};
+    use sqlx::SqliteConnection;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        time::SystemTime,
+    };
 
     #[test]
     fn validation_accepts_missing_or_empty_secret_table() {
         let key = generate_data_key();
         let missing_table = db_path("missing-table");
-        Connection::open(&missing_table).expect("db");
+        drop(open(&missing_table));
         validate_database_secrets(&missing_table, &key).expect("missing table ok");
 
         let empty_table = db_path("empty-table");
-        let connection = Connection::open(&empty_table).expect("db");
-        create_secrets_table(&connection);
-        drop(connection);
+        initialize_v2(&empty_table);
         validate_database_secrets(&empty_table, &key).expect("empty table ok");
     }
 
@@ -90,25 +67,31 @@ mod tests {
         let key = generate_data_key();
         let wrong_key = generate_data_key();
         let path = db_path("encrypted-rows");
-        let connection = Connection::open(&path).expect("db");
-        create_secrets_table(&connection);
-        let payload =
-            encrypt_secret(&key, "sk-validation-canary", "station:key:api_key").expect("encrypt");
-        connection
-            .execute(
+        initialize_v2(&path);
+        let payload = encrypt_secret(&key, "sk-validation-canary", "station_key:key-1:api_key")
+            .expect("encrypt");
+        let mut connection = open_existing(&path);
+        tauri::async_runtime::block_on(
+            sqlx::query(
                 "INSERT INTO secrets (
-                    id, scope, owner_id, kind, ciphertext, nonce, aad, masked_value,
-                    value_hash, encryption_version, created_at, updated_at
-                ) VALUES (?1, 'station_key', 'key-1', 'api_key', ?2, ?3, ?4, 'sk-***', ?5, 1, '1', '1')",
-                params![
-                    "secret-row-canary",
-                    payload.ciphertext,
-                    payload.nonce,
-                    payload.aad,
-                    payload.value_hash
-                ],
+                    id, scope, owner_id, kind, masked_value, ciphertext, nonce,
+                    created_at, updated_at
+                ) VALUES (?1, 'station_key', 'key-1', 'api_key', 'sk-***', ?2, ?3, '1', '1')",
             )
-            .expect("secret row");
+            .bind("secret-row-canary")
+            .bind(
+                general_purpose::STANDARD
+                    .decode(payload.ciphertext)
+                    .expect("ciphertext"),
+            )
+            .bind(
+                general_purpose::STANDARD
+                    .decode(payload.nonce)
+                    .expect("nonce"),
+            )
+            .execute(&mut connection),
+        )
+        .expect("secret row");
         drop(connection);
 
         validate_database_secrets(&path, &key).expect("right key");
@@ -124,25 +107,62 @@ mod tests {
         }
     }
 
-    fn create_secrets_table(connection: &Connection) {
-        connection
-            .execute_batch(
-                "CREATE TABLE secrets (
-                    id TEXT PRIMARY KEY,
-                    scope TEXT NOT NULL,
-                    owner_id TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    ciphertext TEXT NOT NULL,
-                    nonce TEXT NOT NULL,
-                    aad TEXT NOT NULL,
-                    masked_value TEXT NOT NULL,
-                    value_hash TEXT NOT NULL,
-                    encryption_version INTEGER NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )",
+    #[test]
+    fn validation_remains_compatible_with_released_legacy_secret_rows() {
+        let key = generate_data_key();
+        let path = db_path("legacy-encrypted-row");
+        let mut connection = open(&path);
+        crate::services::data_store::test_support::execute_batch(
+            &mut connection,
+            "CREATE TABLE secrets (
+                id TEXT PRIMARY KEY,
+                scope TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                ciphertext TEXT NOT NULL,
+                nonce TEXT NOT NULL,
+                aad TEXT NOT NULL,
+                masked_value TEXT NOT NULL,
+                value_hash TEXT NOT NULL,
+                encryption_version INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+        );
+        let payload =
+            encrypt_secret(&key, "sk-legacy-canary", "station_key:key-1:api_key").expect("encrypt");
+        tauri::async_runtime::block_on(
+            sqlx::query(
+                "INSERT INTO secrets (
+                    id, scope, owner_id, kind, ciphertext, nonce, aad, masked_value,
+                    value_hash, encryption_version, created_at, updated_at
+                ) VALUES (?1, 'station_key', 'key-1', 'api_key', ?2, ?3, ?4, 'sk-***', ?5, 1, '1', '1')",
             )
-            .expect("secrets table");
+            .bind("legacy-secret-row")
+            .bind(payload.ciphertext)
+            .bind(payload.nonce)
+            .bind(payload.aad)
+            .bind(payload.value_hash)
+            .execute(&mut connection),
+        )
+        .expect("legacy secret row");
+        drop(connection);
+
+        validate_database_secrets(&path, &key).expect("legacy secret validates");
+    }
+
+    fn initialize_v2(path: &Path) {
+        let runtime = tauri::async_runtime::block_on(PersistenceRuntime::initialize_new(path))
+            .expect("initialize v2 database");
+        tauri::async_runtime::block_on(runtime.close()).expect("close persistence runtime");
+    }
+
+    fn open(path: &Path) -> SqliteConnection {
+        crate::services::data_store::test_support::open_database(path)
+    }
+
+    fn open_existing(path: &Path) -> SqliteConnection {
+        crate::services::data_store::test_support::open_existing_database(path)
     }
 
     fn db_path(name: &str) -> PathBuf {

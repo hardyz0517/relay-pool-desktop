@@ -14,7 +14,7 @@ use super::{
     responses_chat_fallback::{
         normalize_for_chat, normalize_for_chat_streaming, responses_fallback_error_message,
     },
-    RouteCandidate,
+    routing_types::RouteCandidate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,7 +132,7 @@ fn prepare_responses(
             normalize_for_chat(&body)
         }
         .map_err(|error| {
-            responses_chat_fallback_failure(&responses_fallback_error_message(&error))
+            responses_chat_fallback_failure(responses_fallback_error_message(&error))
         })?;
         return Ok(PreparedUpstreamRequest {
             method: Method::POST,
@@ -308,7 +308,7 @@ mod tests {
         services::proxy::{
             limits::{BodyBudget, RequestLease},
             request::{CanonicalProxyRequest, RequestRequirements},
-            RouteCandidate,
+            routing_types::RouteCandidate,
         },
     };
 

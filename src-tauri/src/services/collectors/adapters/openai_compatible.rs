@@ -4,8 +4,8 @@ use crate::services::{
     collectors::{
         adapters::{AdapterOutput, CollectorTask},
         facts::{CollectedModelFact, CollectorFacts},
+        CollectorSourcePort,
     },
-    database::AppDatabase,
     outbound::{credential_agent_builder_for_proxy, resolve_proxy_config},
     station_endpoints::build_api_url,
 };
@@ -32,7 +32,7 @@ fn parse_openai_models(station_id: &str, payload: &Value) -> Vec<CollectedModelF
 }
 
 pub fn collect(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: &str,
     task: CollectorTask,
@@ -55,7 +55,7 @@ pub fn collect(
 }
 
 pub fn collect_models(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: &str,
     task: CollectorTask,
@@ -157,8 +157,10 @@ pub fn collect_models(
         .iter()
         .map(|model| model.model.clone())
         .collect::<Vec<_>>();
-    let mut facts = CollectorFacts::default();
-    facts.models = models;
+    let facts = CollectorFacts {
+        models,
+        ..CollectorFacts::default()
+    };
 
     Ok(AdapterOutput {
         adapter: "openai-compatible".to_string(),

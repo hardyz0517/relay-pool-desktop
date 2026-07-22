@@ -76,4 +76,46 @@ describe("data recovery API", () => {
 
     await expect(locateDataStoreCandidate()).rejects.toThrow(/invalid data store candidate response/i);
   });
+
+  it("parses backend recovery evidence into a selectable candidate", async () => {
+    mocks.invoke.mockResolvedValue({
+      mode: "recovery",
+      databaseGeneration: "one",
+      compatibility: null,
+      capabilities: {
+        canBackup: true,
+        canExportDiagnostic: true,
+        canCheckForUpdates: true,
+        canLocateCandidate: true,
+        canActivateCandidate: true,
+        canCreateDataStore: true,
+      },
+      decision: { kind: "needsRecovery", reason: "upgradeRecoveryRequired" },
+      candidates: [{
+        id: "Located:D:\\Relay Pool\\relay-pool-desktop-v2.sqlite3",
+        role: "located",
+        path: "D:\\Relay Pool\\relay-pool-desktop-v2.sqlite3",
+        health: "healthy",
+        databaseGeneration: "two",
+        compatibility: {
+          decisionCode: "writable",
+          schemaVersion: null,
+          appVersion: "0.3.1",
+        },
+        sizeBytes: 4096,
+        modifiedAt: null,
+        counts: { stations: 2 },
+      }],
+    });
+    const { getDataStoreStartupState } = await import("./dataRecovery");
+    const { buildRecoveryViewModel } = await import("@/features/data-recovery/recoveryViewModel");
+
+    const state = await getDataStoreStartupState();
+    const viewModel = buildRecoveryViewModel(state);
+
+    expect(viewModel.candidates[0]).toMatchObject({
+      generationLabel: "Generation 2",
+      selectable: true,
+    });
+  });
 });

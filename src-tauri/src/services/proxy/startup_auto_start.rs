@@ -1,6 +1,6 @@
 use tauri::{AppHandle, Manager};
 
-use crate::services::{database::AppDatabase, secrets::SecretManager};
+use crate::{application::app_services::AppServices, services::secrets::SecretManager};
 
 use super::{runtime::ProxyRuntimeState, startup};
 
@@ -25,16 +25,21 @@ pub fn schedule(app: AppHandle) {
 }
 
 async fn start_managed_if_requested(app: &AppHandle) -> Result<(), String> {
-    let Some(database) = app.try_state::<AppDatabase>() else {
+    let Some(services) = app.try_state::<AppServices>() else {
         return Ok(());
     };
-    if !database.local_proxy_start_on_launch_enabled()? && !env_start_requested() {
+    let settings = services
+        .settings
+        .load()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !settings.local_proxy_start_on_launch && !env_start_requested() {
         return Ok(());
     }
 
     let secrets = app.state::<SecretManager>();
     let proxy = app.state::<ProxyRuntimeState>();
-    startup::start_from_persisted_settings(database.inner(), *secrets.data_key(), proxy.inner())
+    startup::start_from_v2_persisted_settings(services.inner(), *secrets.data_key(), proxy.inner())
         .await?;
     Ok(())
 }

@@ -3,7 +3,16 @@ use std::collections::{BTreeSet, HashSet};
 use serde_json::Value;
 use sqlx::Row;
 
-use crate::persistence::{error::PersistenceError, write_session::WriteSession};
+use crate::{
+    models::{
+        collector::CollectorSnapshot,
+        collector_runs::CollectorRun,
+        group_facts::{GroupRateRecord, StationGroupBinding},
+    },
+    persistence::{
+        error::PersistenceError, read_session::ReadSession, write_session::WriteSession,
+    },
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CollectorRunStart {
@@ -115,6 +124,35 @@ pub(crate) struct GroupWrite {
     pub now: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct StationGroupBindingWrite {
+    pub id: String,
+    pub station_id: String,
+    pub station_key_id: Option<String>,
+    pub binding_kind: String,
+    pub parent_group_binding_id: Option<String>,
+    pub group_key_hash: String,
+    pub group_id_hash: Option<String>,
+    pub group_name: String,
+    pub binding_status: String,
+    pub default_rate_multiplier: Option<f64>,
+    pub user_rate_multiplier: Option<f64>,
+    pub effective_rate_multiplier: Option<f64>,
+    pub inferred_group_category: Option<String>,
+    pub group_category_override: Option<String>,
+    pub rate_source: Option<String>,
+    pub confidence: f64,
+    pub last_seen_at: Option<String>,
+    pub raw_json_redacted: Option<Value>,
+    pub now: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StoredStationGroupBindingUpsert {
+    pub binding: StationGroupBinding,
+    pub transition: GroupTransition,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct GroupState {
     pub id: String,
@@ -195,6 +233,215 @@ pub(crate) struct CollectorTaskStateWrite {
 pub(crate) struct CollectorStore;
 
 impl CollectorStore {
+    pub(crate) async fn list_station_snapshots(
+        &self,
+        read: &mut ReadSession,
+        station_id: &str,
+        limit: i64,
+    ) -> Result<Vec<CollectorSnapshot>, PersistenceError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, station_id, endpoint_revision, source, status, fetched_at,
+                   summary_json, normalized_json, raw_json_redacted, error_message, created_at
+            FROM collector_snapshots
+            WHERE station_id = ?1
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?2
+            "#,
+        )
+        .bind(station_id)
+        .bind(limit)
+        .fetch_all(read.connection())
+        .await?;
+        rows.into_iter().map(row_to_collector_snapshot).collect()
+    }
+
+    pub(crate) async fn latest_station_snapshot(
+        &self,
+        read: &mut ReadSession,
+        station_id: &str,
+    ) -> Result<Option<CollectorSnapshot>, PersistenceError> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, station_id, endpoint_revision, source, status, fetched_at,
+                   summary_json, normalized_json, raw_json_redacted, error_message, created_at
+            FROM collector_snapshots
+            WHERE station_id = ?1
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(station_id)
+        .fetch_optional(read.connection())
+        .await?;
+        row.map(row_to_collector_snapshot).transpose()
+    }
+
+    pub(crate) async fn snapshot_by_id(
+        &self,
+        read: &mut ReadSession,
+        snapshot_id: &str,
+    ) -> Result<CollectorSnapshot, PersistenceError> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, station_id, endpoint_revision, source, status, fetched_at,
+                   summary_json, normalized_json, raw_json_redacted, error_message, created_at
+            FROM collector_snapshots
+            WHERE id = ?1
+            "#,
+        )
+        .bind(snapshot_id)
+        .fetch_optional(read.connection())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)?;
+        row_to_collector_snapshot(row)
+    }
+
+    pub(crate) async fn list_station_group_bindings(
+        &self,
+        read: &mut ReadSession,
+        station_id: &str,
+        limit: u32,
+    ) -> Result<Vec<StationGroupBinding>, PersistenceError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, station_id, station_key_id, binding_kind, parent_group_binding_id,
+                   group_key_hash, group_id_hash, group_name, binding_status,
+                   default_rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
+                   inferred_group_category, group_category_override, rate_source, confidence,
+                   last_seen_at, last_checked_at, last_rate_changed_at, raw_json_redacted,
+                   created_at, updated_at
+            FROM station_group_bindings
+            WHERE station_id = ?1
+            ORDER BY binding_kind ASC, binding_status ASC, group_name COLLATE NOCASE ASC, id ASC
+            LIMIT ?2
+            "#,
+        )
+        .bind(station_id)
+        .bind(limit)
+        .fetch_all(read.connection())
+        .await?;
+        rows.into_iter().map(row_to_station_group_binding).collect()
+    }
+
+    pub(crate) async fn list_selectable_station_group_bindings(
+        &self,
+        read: &mut ReadSession,
+        station_id: &str,
+        limit: u32,
+    ) -> Result<Vec<StationGroupBinding>, PersistenceError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, station_id, station_key_id, binding_kind, parent_group_binding_id,
+                   group_key_hash, group_id_hash, group_name, binding_status,
+                   default_rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
+                   inferred_group_category, group_category_override, rate_source, confidence,
+                   last_seen_at, last_checked_at, last_rate_changed_at, raw_json_redacted,
+                   created_at, updated_at
+            FROM station_group_bindings
+            WHERE station_id = ?1
+              AND binding_kind = 'station_group'
+              AND binding_status NOT IN ('disabled', 'manual_legacy')
+              AND COALESCE(rate_source, '') != 'legacy_key_group'
+            ORDER BY group_name COLLATE NOCASE ASC, id ASC
+            LIMIT ?2
+            "#,
+        )
+        .bind(station_id)
+        .bind(limit)
+        .fetch_all(read.connection())
+        .await?;
+        rows.into_iter().map(row_to_station_group_binding).collect()
+    }
+
+    pub(crate) async fn list_group_rate_records(
+        &self,
+        read: &mut ReadSession,
+        station_id: &str,
+        limit: u32,
+    ) -> Result<Vec<GroupRateRecord>, PersistenceError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, station_id, station_key_id, group_binding_id, binding_kind,
+                   group_key_hash, group_name, default_rate_multiplier, user_rate_multiplier,
+                   effective_rate_multiplier, inferred_group_category, source, confidence,
+                   raw_json_redacted, checked_at, created_at
+            FROM group_rate_records
+            WHERE station_id = ?1
+            ORDER BY checked_at DESC, created_at DESC, id DESC
+            LIMIT ?2
+            "#,
+        )
+        .bind(station_id)
+        .bind(limit)
+        .fetch_all(read.connection())
+        .await?;
+        rows.into_iter().map(row_to_group_rate_record).collect()
+    }
+
+    pub(crate) async fn list_latest_station_group_rates(
+        &self,
+        read: &mut ReadSession,
+        station_id: &str,
+        limit: u32,
+    ) -> Result<Vec<GroupRateRecord>, PersistenceError> {
+        let rows = sqlx::query(
+            r#"
+            WITH ranked AS (
+                SELECT r.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY CASE
+                               WHEN r.group_binding_id IS NULL
+                               THEN 'group:' || r.group_key_hash
+                               ELSE 'binding:' || r.group_binding_id
+                           END
+                           ORDER BY r.checked_at DESC, r.created_at DESC, r.id DESC
+                       ) AS row_number
+                FROM group_rate_records r
+                WHERE r.station_id = ?1 AND r.binding_kind = 'station_group'
+            )
+            SELECT id, station_id, station_key_id, group_binding_id, binding_kind,
+                   group_key_hash, group_name, default_rate_multiplier, user_rate_multiplier,
+                   effective_rate_multiplier, inferred_group_category, source, confidence,
+                   raw_json_redacted, checked_at, created_at
+            FROM ranked
+            WHERE row_number = 1
+            ORDER BY group_name COLLATE NOCASE ASC, checked_at DESC, id DESC
+            LIMIT ?2
+            "#,
+        )
+        .bind(station_id)
+        .bind(limit)
+        .fetch_all(read.connection())
+        .await?;
+        rows.into_iter().map(row_to_group_rate_record).collect()
+    }
+
+    pub(crate) async fn list_collector_runs(
+        &self,
+        read: &mut ReadSession,
+        station_id: &str,
+        limit: u32,
+    ) -> Result<Vec<CollectorRun>, PersistenceError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, station_id, endpoint_revision, parent_run_id, adapter, task_type,
+                   status, started_at, finished_at, duration_ms, endpoint_count,
+                   success_count, failure_count, manual_action_required, error_code,
+                   error_message, snapshot_id, created_at
+            FROM collector_runs
+            WHERE station_id = ?1
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?2
+            "#,
+        )
+        .bind(station_id)
+        .bind(limit)
+        .fetch_all(read.connection())
+        .await?;
+        rows.into_iter().map(row_to_collector_run).collect()
+    }
+
     pub(crate) async fn assert_endpoint_revision(
         &self,
         session: &mut WriteSession,
@@ -211,6 +458,118 @@ impl CollectorStore {
             return Err(PersistenceError::StaleRevision);
         }
         Ok(())
+    }
+
+    pub(crate) async fn upsert_station_group_binding(
+        &self,
+        session: &mut WriteSession,
+        binding: &StationGroupBindingWrite,
+    ) -> Result<StoredStationGroupBindingUpsert, PersistenceError> {
+        self.validate_group_binding_references(session, binding)
+            .await?;
+        let previous = self
+            .group_by_identity(
+                session,
+                &binding.station_id,
+                binding.station_key_id.as_deref(),
+                &binding.binding_kind,
+                &binding.group_key_hash,
+            )
+            .await?;
+        let id = previous
+            .as_ref()
+            .map(|state| state.id.clone())
+            .unwrap_or_else(|| binding.id.clone());
+        if binding.parent_group_binding_id.as_deref() == Some(id.as_str()) {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        let raw_json = binding
+            .raw_json_redacted
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(invalid_json)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO station_group_bindings (
+                id, station_id, station_key_id, binding_kind, parent_group_binding_id,
+                group_key_hash, group_id_hash, group_name, binding_status,
+                default_rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
+                inferred_group_category, group_category_override, rate_source, confidence,
+                last_seen_at, last_checked_at, last_rate_changed_at, raw_json_redacted,
+                created_at, updated_at
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                ?15, ?16, ?17, ?18, NULL, ?19, ?18, ?18
+            )
+            ON CONFLICT(id) DO UPDATE SET
+                station_key_id = excluded.station_key_id,
+                parent_group_binding_id = excluded.parent_group_binding_id,
+                group_id_hash = excluded.group_id_hash,
+                group_name = excluded.group_name,
+                binding_status = CASE
+                    WHEN station_group_bindings.binding_status = 'bound'
+                         AND excluded.binding_status NOT IN ('missing', 'disabled')
+                    THEN station_group_bindings.binding_status
+                    ELSE excluded.binding_status
+                END,
+                default_rate_multiplier = excluded.default_rate_multiplier,
+                user_rate_multiplier = excluded.user_rate_multiplier,
+                effective_rate_multiplier = excluded.effective_rate_multiplier,
+                inferred_group_category = excluded.inferred_group_category,
+                group_category_override = CASE
+                    WHEN excluded.rate_source IN ('manual', 'remote_scan')
+                    THEN excluded.group_category_override
+                    ELSE COALESCE(
+                        station_group_bindings.group_category_override,
+                        excluded.group_category_override
+                    )
+                END,
+                rate_source = excluded.rate_source,
+                confidence = excluded.confidence,
+                last_seen_at = excluded.last_seen_at,
+                last_checked_at = excluded.last_checked_at,
+                last_rate_changed_at = CASE
+                    WHEN station_group_bindings.effective_rate_multiplier
+                         IS NOT excluded.effective_rate_multiplier
+                    THEN excluded.updated_at
+                    ELSE station_group_bindings.last_rate_changed_at
+                END,
+                raw_json_redacted = excluded.raw_json_redacted,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(&id)
+        .bind(&binding.station_id)
+        .bind(&binding.station_key_id)
+        .bind(&binding.binding_kind)
+        .bind(&binding.parent_group_binding_id)
+        .bind(&binding.group_key_hash)
+        .bind(&binding.group_id_hash)
+        .bind(&binding.group_name)
+        .bind(&binding.binding_status)
+        .bind(binding.default_rate_multiplier)
+        .bind(binding.user_rate_multiplier)
+        .bind(binding.effective_rate_multiplier)
+        .bind(&binding.inferred_group_category)
+        .bind(&binding.group_category_override)
+        .bind(&binding.rate_source)
+        .bind(binding.confidence)
+        .bind(&binding.last_seen_at)
+        .bind(&binding.now)
+        .bind(raw_json)
+        .execute(session.connection())
+        .await?;
+
+        let saved = self.station_group_binding_by_id(session, &id).await?;
+        self.disable_shadow_station_group_bindings(session, &saved, &binding.now)
+            .await?;
+        let current = self.group_by_id(session, &id).await?;
+        Ok(StoredStationGroupBindingUpsert {
+            binding: saved,
+            transition: GroupTransition { previous, current },
+        })
     }
 
     pub(crate) async fn existing_apply(
@@ -662,6 +1021,102 @@ impl CollectorStore {
         })
     }
 
+    async fn validate_group_binding_references(
+        &self,
+        session: &mut WriteSession,
+        binding: &StationGroupBindingWrite,
+    ) -> Result<(), PersistenceError> {
+        match (
+            binding.binding_kind.as_str(),
+            binding.station_key_id.as_deref(),
+        ) {
+            ("station_group", None) => {}
+            ("key_binding", Some(station_key_id)) => {
+                let owned = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM station_keys WHERE id = ?1 AND station_id = ?2",
+                )
+                .bind(station_key_id)
+                .bind(&binding.station_id)
+                .fetch_one(session.connection())
+                .await?;
+                if owned != 1 {
+                    return Err(PersistenceError::ConstraintViolation);
+                }
+            }
+            _ => return Err(PersistenceError::ConstraintViolation),
+        }
+
+        if let Some(parent_id) = binding.parent_group_binding_id.as_deref() {
+            let owned = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM station_group_bindings
+                 WHERE id = ?1 AND station_id = ?2 AND binding_kind = 'station_group'",
+            )
+            .bind(parent_id)
+            .bind(&binding.station_id)
+            .fetch_one(session.connection())
+            .await?;
+            if owned != 1 {
+                return Err(PersistenceError::ConstraintViolation);
+            }
+        }
+        Ok(())
+    }
+
+    async fn station_group_binding_by_id(
+        &self,
+        session: &mut WriteSession,
+        id: &str,
+    ) -> Result<StationGroupBinding, PersistenceError> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, station_id, station_key_id, binding_kind, parent_group_binding_id,
+                   group_key_hash, group_id_hash, group_name, binding_status,
+                   default_rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
+                   inferred_group_category, group_category_override, rate_source, confidence,
+                   last_seen_at, last_checked_at, last_rate_changed_at, raw_json_redacted,
+                   created_at, updated_at
+            FROM station_group_bindings
+            WHERE id = ?1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(session.connection())
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)?;
+        row_to_station_group_binding(row)
+    }
+
+    async fn disable_shadow_station_group_bindings(
+        &self,
+        session: &mut WriteSession,
+        saved: &StationGroupBinding,
+        now: &str,
+    ) -> Result<(), PersistenceError> {
+        if saved.binding_kind != "station_group"
+            || saved.binding_status != "available"
+            || saved.rate_source.as_deref() == Some("remote_scan")
+        {
+            return Ok(());
+        }
+        sqlx::query(
+            "UPDATE station_group_bindings
+             SET binding_status = 'disabled', updated_at = ?1
+             WHERE station_id = ?2
+               AND binding_kind = 'station_group'
+               AND id != ?3
+               AND binding_status != 'disabled'
+               AND rate_source = 'remote_scan'
+               AND lower(trim(group_name)) = lower(trim(?4))",
+        )
+        .bind(now)
+        .bind(&saved.station_id)
+        .bind(&saved.id)
+        .bind(&saved.group_name)
+        .execute(session.connection())
+        .await?;
+        Ok(())
+    }
+
     async fn group_by_identity(
         &self,
         session: &mut WriteSession,
@@ -716,6 +1171,136 @@ impl CollectorStore {
         .await?;
         Ok(row_to_group_state(&row))
     }
+}
+
+fn row_to_collector_snapshot(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<CollectorSnapshot, PersistenceError> {
+    let parse_json = |column: &str| -> Result<Value, PersistenceError> {
+        serde_json::from_str(&row.get::<String, _>(column)).map_err(|_| {
+            PersistenceError::InvariantViolation(format!(
+                "collector snapshot contains invalid {column}"
+            ))
+        })
+    };
+    let raw_json_redacted = row
+        .get::<Option<String>, _>("raw_json_redacted")
+        .map(|value| {
+            serde_json::from_str(&value).map_err(|_| {
+                PersistenceError::InvariantViolation(
+                    "collector snapshot contains invalid raw_json_redacted".into(),
+                )
+            })
+        })
+        .transpose()?;
+    Ok(CollectorSnapshot {
+        id: row.get("id"),
+        station_id: row.get("station_id"),
+        endpoint_revision: row.get("endpoint_revision"),
+        source: row.get("source"),
+        status: row.get("status"),
+        fetched_at: row.get("fetched_at"),
+        summary_json: parse_json("summary_json")?,
+        normalized_json: parse_json("normalized_json")?,
+        raw_json_redacted,
+        error_message: row.get("error_message"),
+        created_at: row.get("created_at"),
+    })
+}
+
+fn row_to_station_group_binding(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<StationGroupBinding, PersistenceError> {
+    let raw_json = parse_optional_json(
+        row.try_get("raw_json_redacted")?,
+        "station group binding raw_json_redacted",
+    )?;
+    Ok(StationGroupBinding {
+        id: row.try_get("id")?,
+        station_id: row.try_get("station_id")?,
+        station_key_id: row.try_get("station_key_id")?,
+        binding_kind: row.try_get("binding_kind")?,
+        parent_group_binding_id: row.try_get("parent_group_binding_id")?,
+        group_key_hash: row.try_get("group_key_hash")?,
+        group_id_hash: row.try_get("group_id_hash")?,
+        group_name: row.try_get("group_name")?,
+        binding_status: row.try_get("binding_status")?,
+        default_rate_multiplier: row.try_get("default_rate_multiplier")?,
+        user_rate_multiplier: row.try_get("user_rate_multiplier")?,
+        effective_rate_multiplier: row.try_get("effective_rate_multiplier")?,
+        inferred_group_category: row.try_get("inferred_group_category")?,
+        group_category_override: row.try_get("group_category_override")?,
+        rate_source: row.try_get("rate_source")?,
+        confidence: row.try_get("confidence")?,
+        last_seen_at: row.try_get("last_seen_at")?,
+        last_checked_at: row.try_get("last_checked_at")?,
+        last_rate_changed_at: row.try_get("last_rate_changed_at")?,
+        raw_json_redacted: raw_json,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
+}
+
+fn row_to_group_rate_record(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<GroupRateRecord, PersistenceError> {
+    Ok(GroupRateRecord {
+        id: row.try_get("id")?,
+        station_id: row.try_get("station_id")?,
+        station_key_id: row.try_get("station_key_id")?,
+        group_binding_id: row.try_get("group_binding_id")?,
+        binding_kind: row.try_get("binding_kind")?,
+        group_key_hash: row.try_get("group_key_hash")?,
+        group_name: row.try_get("group_name")?,
+        default_rate_multiplier: row.try_get("default_rate_multiplier")?,
+        user_rate_multiplier: row.try_get("user_rate_multiplier")?,
+        effective_rate_multiplier: row.try_get("effective_rate_multiplier")?,
+        inferred_group_category: row.try_get("inferred_group_category")?,
+        source: row.try_get("source")?,
+        confidence: row.try_get("confidence")?,
+        raw_json_redacted: parse_optional_json(
+            row.try_get("raw_json_redacted")?,
+            "group rate raw_json_redacted",
+        )?,
+        checked_at: row.try_get("checked_at")?,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+fn row_to_collector_run(row: sqlx::sqlite::SqliteRow) -> Result<CollectorRun, PersistenceError> {
+    Ok(CollectorRun {
+        id: row.try_get("id")?,
+        station_id: row.try_get("station_id")?,
+        endpoint_revision: row.try_get("endpoint_revision")?,
+        parent_run_id: row.try_get("parent_run_id")?,
+        adapter: row.try_get("adapter")?,
+        task_type: row.try_get("task_type")?,
+        status: row.try_get("status")?,
+        started_at: row.try_get("started_at")?,
+        finished_at: row.try_get("finished_at")?,
+        duration_ms: row.try_get("duration_ms")?,
+        endpoint_count: row.try_get("endpoint_count")?,
+        success_count: row.try_get("success_count")?,
+        failure_count: row.try_get("failure_count")?,
+        manual_action_required: row.try_get::<i64, _>("manual_action_required")? != 0,
+        error_code: row.try_get("error_code")?,
+        error_message: row.try_get("error_message")?,
+        snapshot_id: row.try_get("snapshot_id")?,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+fn parse_optional_json(
+    value: Option<String>,
+    field: &str,
+) -> Result<Option<Value>, PersistenceError> {
+    value
+        .map(|json| {
+            serde_json::from_str(&json).map_err(|_| {
+                PersistenceError::InvariantViolation(format!("{field} contains invalid JSON"))
+            })
+        })
+        .transpose()
 }
 
 fn row_to_group_state(row: &sqlx::sqlite::SqliteRow) -> GroupState {

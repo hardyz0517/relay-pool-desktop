@@ -197,19 +197,64 @@ async fn lifecycle_writer_saturates_before_accepting_partial_request_reservation
 }
 
 #[tokio::test]
+async fn lifecycle_writer_snapshot_tracks_reservations_and_returns_to_zero_after_drain() {
+    let (writer, worker) =
+        LifecycleWriter::start(3, Arc::new(CountingStore::default())).expect("writer");
+    let request = writer.try_reserve_request().expect("request permits");
+    let attempt = writer.try_reserve_attempt().expect("attempt permit");
+
+    assert_eq!(writer.snapshot().current_outstanding, 3);
+    assert_eq!(writer.snapshot().peak_outstanding, 3);
+
+    drop(attempt);
+    let (terminal, start_ack) = request.send_start(start_record());
+    start_ack
+        .await
+        .expect("start ack channel")
+        .expect("start persisted");
+    terminal
+        .send(final_record())
+        .await
+        .expect("terminal ack channel")
+        .expect("terminal persisted");
+
+    let snapshot = writer.snapshot();
+    assert_eq!(snapshot.capacity, 3);
+    assert_eq!(snapshot.current_outstanding, 0);
+    assert_eq!(snapshot.peak_outstanding, 3);
+    assert_eq!(snapshot.submitted, 2);
+    assert_eq!(snapshot.completed, 2);
+    assert_eq!(snapshot.failed, 0);
+    assert_eq!(snapshot.cancelled_before_submission, 1);
+
+    drop(writer);
+    worker.join().await.expect("worker join");
+}
+
+#[tokio::test]
 async fn lifecycle_writer_worker_panic_closes_new_admission_and_drops_ack() {
     let (writer, worker) = LifecycleWriter::start(4, Arc::new(PanicStore)).expect("writer");
     let request = writer.try_reserve_request().expect("request permits");
-    let (_terminal, ack) = request.send_start(start_record());
+    let queued_attempt = writer.try_reserve_attempt().expect("queued attempt permit");
+    let (terminal, ack) = request.send_start(start_record());
+    let queued_ack = queued_attempt.send(attempt_record());
 
     assert!(
         ack.await.is_err(),
         "worker panic must drop the command ack instead of reporting success"
     );
+    assert!(
+        queued_ack.await.is_err(),
+        "worker panic must also drop queued command ack channels"
+    );
     assert!(matches!(
         writer.try_reserve_request(),
         Err(WriterAdmissionError::Closed)
     ));
+    drop(terminal);
+    let snapshot = writer.snapshot();
+    assert_eq!(snapshot.current_outstanding, 0);
+    assert_eq!(snapshot.failed, 2);
 
     drop(writer);
     assert!(

@@ -20,6 +20,7 @@ pub(crate) enum UpgradePhase {
 }
 
 impl UpgradePhase {
+    #[cfg(test)]
     pub(crate) const ALL: [Self; 6] = [
         Self::Prepared,
         Self::BackupVerified,
@@ -28,6 +29,17 @@ impl UpgradePhase {
         Self::GenerationCommitted,
         Self::V2Reopened,
     ];
+
+    const fn next(self) -> Option<Self> {
+        match self {
+            Self::Prepared => Some(Self::BackupVerified),
+            Self::BackupVerified => Some(Self::V2Validated),
+            Self::V2Validated => Some(Self::LegacyDeactivated),
+            Self::LegacyDeactivated => Some(Self::GenerationCommitted),
+            Self::GenerationCommitted => Some(Self::V2Reopened),
+            Self::V2Reopened => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -71,10 +83,6 @@ impl ReleasedSchemaProfile {
             return Err(JournalValidationError::InvalidSchemaProfile);
         }
         Ok(Self(value.to_owned()))
-    }
-
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
     }
 
     fn validate(&self) -> Result<(), JournalValidationError> {
@@ -123,10 +131,6 @@ impl UtcTimestamp {
             return Err(JournalValidationError::InvalidTimestamp);
         }
         Ok(Self(value.to_owned()))
-    }
-
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
     }
 
     fn as_utc(&self) -> Result<DateTime<Utc>, JournalValidationError> {
@@ -239,6 +243,57 @@ pub(crate) struct UpgradeJournal {
 }
 
 impl UpgradeJournal {
+    pub(crate) fn prepared(
+        attempt_id: UpgradeAttemptId,
+        released_schema_profile: ReleasedSchemaProfile,
+        source_candidate_identity: Sha256Digest,
+        created_at: UtcTimestamp,
+    ) -> Result<Self, JournalValidationError> {
+        Self::seal(UpgradeJournalPayload {
+            journal_version: JOURNAL_VERSION,
+            paths: JournalArtifactPaths::for_attempt(&attempt_id),
+            attempt_id,
+            phase: UpgradePhase::Prepared,
+            source_generation: GENERATION_1,
+            released_schema_profile,
+            source_candidate_identity,
+            verified_backup_sha256: None,
+            created_at: created_at.clone(),
+            updated_at: created_at,
+        })
+    }
+
+    pub(crate) fn advance(
+        &self,
+        next_phase: UpgradePhase,
+        verified_backup_sha256: Option<Sha256Digest>,
+        updated_at: UtcTimestamp,
+    ) -> Result<Self, JournalValidationError> {
+        if self.payload.phase.next() != Some(next_phase) {
+            return Err(JournalValidationError::NonAdjacentPhase);
+        }
+        let verified_backup_sha256 = match next_phase {
+            UpgradePhase::Prepared => return Err(JournalValidationError::NonAdjacentPhase),
+            UpgradePhase::BackupVerified => {
+                verified_backup_sha256.ok_or(JournalValidationError::InvalidPhaseShape)?
+            }
+            _ => {
+                if verified_backup_sha256.is_some() {
+                    return Err(JournalValidationError::InvalidPhaseShape);
+                }
+                self.payload
+                    .verified_backup_sha256
+                    .clone()
+                    .ok_or(JournalValidationError::InvalidPhaseShape)?
+            }
+        };
+        let mut payload = self.payload.clone();
+        payload.phase = next_phase;
+        payload.verified_backup_sha256 = Some(verified_backup_sha256);
+        payload.updated_at = updated_at;
+        Self::seal(payload)
+    }
+
     pub(crate) fn seal(payload: UpgradeJournalPayload) -> Result<Self, JournalValidationError> {
         payload.validate()?;
         let canonical_payload_checksum = payload.checksum()?;
@@ -304,6 +359,8 @@ pub(crate) enum JournalValidationError {
     ChecksumMismatch,
     #[error("upgrade journal serialization failed")]
     SerializationFailed,
+    #[error("upgrade journal phase transition is not adjacent")]
+    NonAdjacentPhase,
 }
 
 fn is_safe_relative_path(path: &str) -> bool {
@@ -322,4 +379,54 @@ fn is_safe_relative_path(path: &str) -> bool {
                         || matches!(byte, b'.' | b'-' | b'_')
                 })
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn timestamp(value: &str) -> UtcTimestamp {
+        UtcTimestamp::parse(value).expect("timestamp")
+    }
+
+    #[test]
+    fn journal_advances_only_through_adjacent_durable_phases() {
+        let attempt =
+            UpgradeAttemptId::parse("019f7d50-9d44-7000-8000-000000000001").expect("attempt");
+        let prepared = UpgradeJournal::prepared(
+            attempt,
+            ReleasedSchemaProfile::parse("v0.3.1").expect("profile"),
+            Sha256Digest::parse(&"a".repeat(64)).expect("source digest"),
+            timestamp("2026-07-21T00:00:00Z"),
+        )
+        .expect("prepared journal");
+        let backup = Sha256Digest::parse(&"b".repeat(64)).expect("backup digest");
+        let backup_verified = prepared
+            .advance(
+                UpgradePhase::BackupVerified,
+                Some(backup.clone()),
+                timestamp("2026-07-21T00:01:00Z"),
+            )
+            .expect("backup verified");
+
+        assert_eq!(
+            prepared.advance(
+                UpgradePhase::V2Validated,
+                None,
+                timestamp("2026-07-21T00:01:00Z")
+            ),
+            Err(JournalValidationError::NonAdjacentPhase)
+        );
+        let validated = backup_verified
+            .advance(
+                UpgradePhase::V2Validated,
+                None,
+                timestamp("2026-07-21T00:02:00Z"),
+            )
+            .expect("V2 validated");
+        assert_eq!(
+            validated.payload().verified_backup_sha256.as_ref(),
+            Some(&backup)
+        );
+    }
 }

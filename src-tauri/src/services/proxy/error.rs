@@ -6,6 +6,13 @@ pub enum FailureSource {
     Local,
     Routing,
     Upstream,
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "reserved by the downstream-disconnect failure contract"
+        )
+    )]
     Downstream,
     Internal,
 }
@@ -33,7 +40,15 @@ pub enum RetryClass {
 pub enum ProxyFailureCode {
     LocalProxyBusy,
     LocalProxyMemoryBusy,
+    #[expect(
+        dead_code,
+        reason = "reserved by the local proxy request-header failure contract"
+    )]
     RequestHeaderTimeout,
+    #[expect(
+        dead_code,
+        reason = "reserved by the local proxy request-header failure contract"
+    )]
     RequestHeaderTooLarge,
     RequestBodyTimeout,
     RequestBodyTooLarge,
@@ -46,8 +61,19 @@ pub enum ProxyFailureCode {
     UpstreamFirstByteTimeout,
     UpstreamHttpError,
     UpstreamStreamFailed,
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "reserved by the downstream-disconnect failure contract"
+        )
+    )]
     DownstreamDisconnected,
     ResponsesChatFallbackIncompatible,
+    #[expect(
+        dead_code,
+        reason = "reserved by the application-update admission contract"
+    )]
     ApplicationUpdateInProgress,
     InternalProxyError,
 }
@@ -86,9 +112,13 @@ pub struct ProxyFailure {
     pub http_status: StatusCode,
     pub public_message: String,
     pub internal_detail: Option<String>,
+    context: Option<Box<ProxyFailureContext>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ProxyFailureContext {
     pub candidate_id: Option<String>,
     pub candidate_station_id: Option<String>,
-    pub candidate_endpoint_revision: Option<i64>,
     pub candidate_upstream_base_url: Option<String>,
     pub attempt_count: Option<i64>,
     pub route_policy: Option<String>,
@@ -109,13 +139,43 @@ impl ProxyFailure {
             http_status,
             public_message: public_message.into(),
             internal_detail: None,
-            candidate_id: None,
-            candidate_station_id: None,
-            candidate_endpoint_revision: None,
-            candidate_upstream_base_url: None,
-            attempt_count: None,
-            route_policy: None,
+            context: None,
         }
+    }
+
+    pub(crate) fn context_mut(&mut self) -> &mut ProxyFailureContext {
+        self.context
+            .get_or_insert_with(|| Box::new(ProxyFailureContext::default()))
+    }
+
+    pub(crate) fn candidate_id(&self) -> Option<&str> {
+        self.context
+            .as_deref()
+            .and_then(|context| context.candidate_id.as_deref())
+    }
+
+    pub(crate) fn candidate_station_id(&self) -> Option<&str> {
+        self.context
+            .as_deref()
+            .and_then(|context| context.candidate_station_id.as_deref())
+    }
+
+    pub(crate) fn candidate_upstream_base_url(&self) -> Option<&str> {
+        self.context
+            .as_deref()
+            .and_then(|context| context.candidate_upstream_base_url.as_deref())
+    }
+
+    pub(crate) fn attempt_count(&self) -> Option<i64> {
+        self.context
+            .as_deref()
+            .and_then(|context| context.attempt_count)
+    }
+
+    pub(crate) fn route_policy(&self) -> Option<&str> {
+        self.context
+            .as_deref()
+            .and_then(|context| context.route_policy.as_deref())
     }
 
     pub fn into_response(self) -> (StatusCode, Value) {

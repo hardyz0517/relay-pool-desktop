@@ -36,6 +36,20 @@ impl StationService {
         self.store.list(&mut read).await.map_err(Into::into)
     }
 
+    pub(crate) async fn station_for_capture(
+        &self,
+        station_id: &str,
+    ) -> Result<Station, ApplicationError> {
+        if station_id.trim().is_empty() {
+            return Err(ApplicationError::ConstraintViolation);
+        }
+        let mut read = self.runtime.begin_read().await?;
+        self.store
+            .get(&mut read, station_id)
+            .await
+            .map_err(Into::into)
+    }
+
     pub(crate) async fn create(
         &self,
         input: CreateStationInput,

@@ -23,6 +23,7 @@ for (const command of [
   "open_data_store_backup_dir",
   "export_data_store_diagnostic",
 ]) {
-  assert.ok(commandsSource.includes(`pub fn ${command}`), `commands should expose ${command}`);
+  const commandDeclaration = new RegExp(`pub\\s+(?:async\\s+)?fn\\s+${command}\\b`);
+  assert.match(commandsSource, commandDeclaration, `commands should expose ${command}`);
   assert.ok(permissionSource.includes(command), `main-window ACL should grant ${command}`);
 }

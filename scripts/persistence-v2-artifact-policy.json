@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "trackedDatabaseFixtures": [
+    {
+      "path": "src-tauri/tests/persistence_upgrade/fixtures/profile_001/source.sqlite3",
+      "manifest": "src-tauri/tests/persistence_upgrade/fixtures/profile_001/expected_manifest.json",
+      "allowedSensitiveValues": [
+        {
+          "table": "settings",
+          "column": "value",
+          "value": "fixture-local-placeholder"
+        }
+      ]
+    }
+  ]
+}

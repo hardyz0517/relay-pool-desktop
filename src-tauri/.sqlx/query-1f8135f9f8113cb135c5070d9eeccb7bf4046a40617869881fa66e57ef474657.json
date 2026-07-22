@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            database_generation,\n            schema_version,\n            min_reader_app_version,\n            min_writer_app_version,\n            updated_by_migration\n        FROM persistence_schema_compatibility\n        WHERE singleton_key = 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "database_generation",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "schema_version",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "min_reader_app_version",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "min_writer_app_version",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_by_migration",
+        "ordinal": 4,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1f8135f9f8113cb135c5070d9eeccb7bf4046a40617869881fa66e57ef474657"
+}

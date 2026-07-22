@@ -47,6 +47,12 @@ mod persistence {
             "/src/persistence/migrations.rs"
         ));
     }
+    pub(crate) mod runtime_lifecycle {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/runtime_lifecycle.rs"
+        ));
+    }
     pub(crate) mod runtime {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -67,14 +73,15 @@ use std::{
 };
 
 use legacy_import::{
-    detect_profile, import_profile, validate_import, ExpectedImportManifest, UpgradeError,
+    detect_profile, import_profile, source_candidate_identity, validate_import,
+    ExpectedImportManifest, UpgradeError,
 };
 use persistence::{
     migrations::migrator, runtime::PersistenceRuntime, schema_compatibility::BinaryCompatibility,
 };
 use semver::Version;
 use sha2::{Digest, Sha256};
-use sqlx::{sqlite::SqliteConnectOptions, Connection, SqliteConnection};
+use sqlx::{sqlite::SqliteConnectOptions, Connection, Row, SqliteConnection};
 
 #[tokio::test]
 async fn every_released_profile_imports_to_the_expected_manifest() {
@@ -98,6 +105,12 @@ async fn every_released_profile_imports_to_the_expected_manifest() {
             .await
             .expect("known profile");
         assert_eq!(profile.id(), fixture.expected.profile);
+        assert_eq!(
+            source_candidate_identity(&fixture.source)
+                .expect("source identity")
+                .len(),
+            64
+        );
         let target_path = temp_db_path(profile.id());
         create_v2_target(&target_path).await;
         let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
@@ -110,6 +123,28 @@ async fn every_released_profile_imports_to_the_expected_manifest() {
         validate_import(&runtime.handle(), &fixture.expected)
             .await
             .expect("import manifest");
+        assert_eq!(runtime.compatibility_decision_code(), "writable");
+        assert_eq!(
+            runtime.health().await.expect("runtime health").open_mode,
+            "writable"
+        );
+        let mut read = runtime.begin_read().await.expect("import read session");
+        let imported_station_count = sqlx::query("SELECT COUNT(*) AS count FROM stations")
+            .fetch_one(read.connection())
+            .await
+            .expect("imported station count")
+            .get::<i64, _>("count");
+        assert_eq!(
+            imported_station_count,
+            fixture.expected.table_counts["stations"]
+        );
+        drop(read);
+
+        let backup_path = target_path.with_extension("verified-backup.sqlite3");
+        persistence::backup::create_verified_backup_from_path(&target_path, &backup_path)
+            .await
+            .expect("verified V2 backup");
+        remove_sqlite_set(&backup_path);
         assert_eq!(
             file_evidence(&fixture.source),
             before,
@@ -118,6 +153,129 @@ async fn every_released_profile_imports_to_the_expected_manifest() {
         drop(runtime);
         remove_sqlite_set(&target_path);
     }
+}
+
+#[test]
+fn legacy_secret_transform_contract_keeps_material_and_ciphertext_typed() {
+    use legacy_import::{
+        ImportPhase, ImportedEncryptedSecret, LegacySecretBytes, LegacySecretMaterial,
+        LegacySecretTransformer,
+    };
+
+    struct RejectingTransformer;
+
+    impl LegacySecretTransformer for RejectingTransformer {
+        fn transform(
+            &self,
+            profile_id: &str,
+            material: LegacySecretMaterial,
+        ) -> Result<ImportedEncryptedSecret, UpgradeError> {
+            assert_eq!(profile_id, "v0.3.1");
+            match material {
+                LegacySecretMaterial::Plaintext {
+                    scope,
+                    owner_id,
+                    kind,
+                    value,
+                } => {
+                    assert_eq!(
+                        (scope.as_str(), owner_id.as_str(), kind.as_str()),
+                        ("station", "s1", "api_key")
+                    );
+                    assert_eq!(value.as_bytes(), b"secret");
+                }
+                LegacySecretMaterial::EncryptedV1 { .. } => panic!("unexpected encrypted material"),
+            }
+            Err(UpgradeError::SecretTransformationFailed)
+        }
+    }
+
+    let material = LegacySecretMaterial::Plaintext {
+        scope: "station".to_string(),
+        owner_id: "s1".to_string(),
+        kind: "api_key".to_string(),
+        value: LegacySecretBytes::new(b"secret".to_vec()),
+    };
+    assert!(matches!(
+        RejectingTransformer.transform("v0.3.1", material),
+        Err(UpgradeError::SecretTransformationFailed)
+    ));
+
+    let encrypted = LegacySecretMaterial::EncryptedV1 {
+        scope: "station".to_string(),
+        owner_id: "s1".to_string(),
+        kind: "session".to_string(),
+        ciphertext: LegacySecretBytes::new(vec![1, 2]),
+        nonce: LegacySecretBytes::new(vec![3, 4]),
+        aad: "aad".to_string(),
+    };
+    let LegacySecretMaterial::EncryptedV1 {
+        scope,
+        owner_id,
+        kind,
+        ciphertext,
+        nonce,
+        aad,
+    } = encrypted
+    else {
+        unreachable!()
+    };
+    assert_eq!(
+        (
+            scope,
+            owner_id,
+            kind,
+            ciphertext.as_bytes().to_vec(),
+            nonce.as_bytes().to_vec(),
+            aad,
+        ),
+        (
+            "station".to_string(),
+            "s1".to_string(),
+            "session".to_string(),
+            vec![1, 2],
+            vec![3, 4],
+            "aad".to_string(),
+        )
+    );
+
+    let imported = ImportedEncryptedSecret {
+        id: "secret-1".to_string(),
+        scope: "station".to_string(),
+        owner_id: "s1".to_string(),
+        kind: "api_key".to_string(),
+        masked_value: "sk-***".to_string(),
+        ciphertext: vec![1],
+        nonce: vec![2],
+        created_at: "2026-07-22T00:00:00Z".to_string(),
+        updated_at: "2026-07-22T00:00:00Z".to_string(),
+    };
+    assert_eq!(
+        (
+            imported.id.as_str(),
+            imported.scope.as_str(),
+            imported.owner_id.as_str(),
+            imported.kind.as_str(),
+            imported.masked_value.as_str(),
+            imported.ciphertext.as_slice(),
+            imported.nonce.as_slice(),
+            imported.created_at.as_str(),
+            imported.updated_at.as_str(),
+        ),
+        (
+            "secret-1",
+            "station",
+            "s1",
+            "api_key",
+            "sk-***",
+            [1].as_slice(),
+            [2].as_slice(),
+            "2026-07-22T00:00:00Z",
+            "2026-07-22T00:00:00Z",
+        )
+    );
+    assert_eq!(ImportPhase::Pricing, ImportPhase::Pricing);
+    let _ = legacy_import::import_profile_with_secrets_and_phase_hook;
 }
 
 #[tokio::test]
@@ -200,11 +358,12 @@ async fn create_v2_target(path: &Path) {
 }
 
 fn binary_v2_schema_8() -> BinaryCompatibility {
+    let schema_version = persistence::migrations::current_schema_version();
     BinaryCompatibility {
         app_version: Version::new(0, 3, 1),
         database_generation: 2,
-        readable_schema: 1..=8,
-        writable_schema: BTreeSet::from([8]),
+        readable_schema: 1..=schema_version,
+        writable_schema: BTreeSet::from([schema_version]),
     }
 }
 

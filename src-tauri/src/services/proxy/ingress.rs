@@ -68,6 +68,8 @@ pub(crate) struct IngressState {
 }
 
 impl IngressState {
+    // Unit tests use an isolated ingress without runtime-owned counters or lifecycle writes.
+    #[cfg(test)]
     pub(crate) fn new(
         local_access_key: impl Into<String>,
         limits: ProxyServerLimits,
@@ -134,7 +136,7 @@ async fn handle(
     let request_id = next_request_id();
     let cors_origin = match cors_origin(&headers) {
         Ok(origin) => origin,
-        Err(response) => return response,
+        Err(failure) => return failure_response(failure),
     };
     if method == Method::OPTIONS {
         let mut response = Response::builder().status(StatusCode::NO_CONTENT);
@@ -227,14 +229,13 @@ async fn handle(
             return with_cors(failure_response(failure), &request_id, cors_origin);
         }
     };
-    let (model, stream, reasoning_effort, requirements, previous_response_id) =
-        match request_metadata(&body) {
-            Ok(metadata) => metadata,
-            Err(failure) => {
-                finalize_ingress_failure(lifecycle_admission, &failure).await;
-                return with_cors(failure_response(failure), &request_id, cors_origin);
-            }
-        };
+    let metadata = match request_metadata(&body) {
+        Ok(metadata) => metadata,
+        Err(failure) => {
+            finalize_ingress_failure(lifecycle_admission, &failure).await;
+            return with_cors(failure_response(failure), &request_id, cors_origin);
+        }
+    };
     let endpoint = match route {
         RouteDisposition::Known(endpoint) => endpoint,
         RouteDisposition::UnknownRoute => {
@@ -272,15 +273,15 @@ async fn handle(
         request_id.clone(),
         uri.path().to_string(),
         endpoint,
-        model,
-        stream,
-        reasoning_effort,
-        requirements,
+        metadata.model,
+        metadata.stream,
+        metadata.reasoning_effort,
+        metadata.requirements,
         body,
         forwarded_headers(&headers),
         header_string(&headers, "idempotency-key"),
         header_string(&headers, "x-relay-session-hash"),
-        previous_response_id,
+        metadata.previous_response_id,
         lifecycle_admission,
         body_budget,
         request_lease,
@@ -300,9 +301,7 @@ fn request_lifecycle_context(
     let endpoint = endpoint.into();
     RequestContextSnapshot {
         request_id: request_id.to_string(),
-        method: if endpoint == "Models" {
-            "GET".to_string()
-        } else if method == Method::GET {
+        method: if endpoint == "Models" || method == Method::GET {
             "GET".to_string()
         } else {
             "POST".to_string()
@@ -317,6 +316,14 @@ enum RouteDisposition {
     Known(RouteEndpointKind),
     UnknownRoute,
     MethodNotAllowed,
+}
+
+struct ParsedRequestMetadata {
+    model: Option<String>,
+    stream: bool,
+    reasoning_effort: Option<String>,
+    requirements: RequestRequirements,
+    previous_response_id: Option<String>,
 }
 
 fn route_context_endpoint(route: &RouteDisposition) -> String {
@@ -384,9 +391,12 @@ async fn finalize_ingress_failure(
             delivery: DeliveryTerminal::NotStarted,
         },
         None,
-        failure.attempt_count.unwrap_or(0).clamp(0, u16::MAX as i64) as u16,
         failure
-            .attempt_count
+            .attempt_count()
+            .unwrap_or(0)
+            .clamp(0, u16::MAX as i64) as u16,
+        failure
+            .attempt_count()
             .unwrap_or(0)
             .saturating_sub(1)
             .clamp(0, u16::MAX as i64) as u16,
@@ -420,20 +430,15 @@ fn acquire_request_lease(state: &IngressState) -> Option<RequestLease> {
         .map(|permit| RequestLease::new(permit, Arc::clone(&state.active_requests)))
 }
 
-fn request_metadata(
-    body: &Bytes,
-) -> Result<
-    (
-        Option<String>,
-        bool,
-        Option<String>,
-        RequestRequirements,
-        Option<String>,
-    ),
-    ProxyFailure,
-> {
+fn request_metadata(body: &Bytes) -> Result<ParsedRequestMetadata, ProxyFailure> {
     if body.is_empty() {
-        return Ok((None, false, None, RequestRequirements::default(), None));
+        return Ok(ParsedRequestMetadata {
+            model: None,
+            stream: false,
+            reasoning_effort: None,
+            requirements: RequestRequirements::default(),
+            previous_response_id: None,
+        });
     }
     let value = serde_json::from_slice::<serde_json::Value>(body).map_err(|error| {
         let mut failure = proxy_failure(
@@ -463,20 +468,20 @@ fn request_metadata(
         uses_reasoning: observation.uses_reasoning,
         ..RequestRequirements::default()
     };
-    Ok((
+    Ok(ParsedRequestMetadata {
         model,
         stream,
-        observation.reasoning_effort,
+        reasoning_effort: observation.reasoning_effort,
         requirements,
         previous_response_id,
-    ))
+    })
 }
 
 fn forwarded_headers(headers: &HeaderMap) -> HeaderMap {
     let mut forwarded = HeaderMap::new();
-    for name in SAFE_FORWARD_HEADERS {
-        if let Some(value) = headers.get(*name) {
-            forwarded.insert(http::HeaderName::from_static(*name), value.clone());
+    for &name in SAFE_FORWARD_HEADERS {
+        if let Some(value) = headers.get(name) {
+            forwarded.insert(http::HeaderName::from_static(name), value.clone());
         }
     }
     forwarded
@@ -489,7 +494,7 @@ fn header_string(headers: &HeaderMap, name: &'static str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn cors_origin(headers: &HeaderMap) -> Result<Option<&str>, Response<Body>> {
+fn cors_origin(headers: &HeaderMap) -> Result<Option<&str>, ProxyFailure> {
     let Some(origin) = headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
@@ -497,11 +502,11 @@ fn cors_origin(headers: &HeaderMap) -> Result<Option<&str>, Response<Body>> {
         return Ok(None);
     };
     local_auth::allowed_origin(origin).map(Some).ok_or_else(|| {
-        failure_response(proxy_failure(
+        proxy_failure(
             ProxyFailureCode::LocalAuthInvalid,
             StatusCode::FORBIDDEN,
             "origin is not allowed",
-        ))
+        )
     })
 }
 
@@ -543,12 +548,13 @@ fn proxy_response(response: ProxyHttpResponse) -> Response<Body> {
         builder = builder.header(name, value);
     }
     match response.payload {
+        #[cfg(test)]
         ProxyResponsePayload::Buffered(body) => {
             builder.body(Body::from(body)).expect("valid response")
         }
         ProxyResponsePayload::Stream(stream) => builder
             .body(Body::from_stream(stream.map_err(|failure| {
-                std::io::Error::new(std::io::ErrorKind::Other, failure.public_message)
+                std::io::Error::other(failure.public_message)
             })))
             .expect("valid response"),
     }
@@ -598,25 +604,6 @@ fn now_millis() -> i64 {
         .unwrap_or_default()
         .as_millis()
         .min(i64::MAX as u128) as i64
-}
-
-pub(crate) struct NotWiredExecutor;
-
-impl IngressExecutor for NotWiredExecutor {
-    fn execute(
-        &self,
-        _request: CanonicalProxyRequest,
-    ) -> BoxFuture<'static, Result<ProxyHttpResponse, ProxyFailure>> {
-        Box::pin(async {
-            Ok(ProxyHttpResponse {
-                status: StatusCode::NOT_IMPLEMENTED,
-                headers: HeaderMap::new(),
-                payload: ProxyResponsePayload::Buffered(Bytes::from_static(
-                    br#"{"error":{"message":"v2 execution not wired","type":"relay_pool_error","param":null,"code":"v2_execution_not_wired"}}"#,
-                )),
-            })
-        })
-    }
 }
 
 #[cfg(test)]

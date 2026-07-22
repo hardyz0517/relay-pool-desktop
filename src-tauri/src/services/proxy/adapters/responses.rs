@@ -4,15 +4,6 @@ use crate::models::proxy::UpstreamApiFormat;
 
 use super::openai::{extract_choice_text, wrap_chat_response_as_responses};
 
-pub fn extract_responses_metadata(body: &Value) -> (Option<String>, bool) {
-    let model = body
-        .get("model")
-        .and_then(Value::as_str)
-        .map(ToString::to_string);
-    let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    (model, stream)
-}
-
 pub fn upstream_responses_path(format: &UpstreamApiFormat) -> &'static str {
     match format {
         UpstreamApiFormat::OpenAiChatCompletions => "/v1/chat/completions",
@@ -20,13 +11,6 @@ pub fn upstream_responses_path(format: &UpstreamApiFormat) -> &'static str {
         | UpstreamApiFormat::Auto
         | UpstreamApiFormat::CustomOpenAiCompatible => "/v1/responses",
     }
-}
-
-pub fn should_try_chat_fallback(format: &UpstreamApiFormat) -> bool {
-    matches!(
-        format,
-        UpstreamApiFormat::Auto | UpstreamApiFormat::CustomOpenAiCompatible
-    )
 }
 
 pub fn render_responses_response(body: Value, fallback_model: Option<&str>) -> Value {
@@ -82,19 +66,5 @@ mod tests {
             upstream_responses_path(&UpstreamApiFormat::OpenAiChatCompletions),
             "/v1/chat/completions"
         );
-    }
-
-    #[test]
-    fn should_try_chat_fallback_only_for_ambiguous_formats() {
-        assert!(should_try_chat_fallback(&UpstreamApiFormat::Auto));
-        assert!(should_try_chat_fallback(
-            &UpstreamApiFormat::CustomOpenAiCompatible
-        ));
-        assert!(!should_try_chat_fallback(
-            &UpstreamApiFormat::OpenAiResponses
-        ));
-        assert!(!should_try_chat_fallback(
-            &UpstreamApiFormat::OpenAiChatCompletions
-        ));
     }
 }

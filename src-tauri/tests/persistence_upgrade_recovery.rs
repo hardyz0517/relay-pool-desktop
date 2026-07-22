@@ -1,4 +1,11 @@
 mod persistence {
+    pub(crate) mod upgrade_fault {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/upgrade_fault.rs"
+        ));
+    }
+
     pub(crate) mod upgrade_journal {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -22,15 +29,18 @@ mod persistence {
 }
 
 use persistence::{
+    upgrade_fault::NoUpgradeFaults,
     upgrade_journal::{
         JournalArtifactPaths, ReleasedSchemaProfile, Sha256Digest, UpgradeAttemptId,
         UpgradeJournal, UpgradeJournalPayload, UpgradePhase, UtcTimestamp, JOURNAL_VERSION,
     },
     upgrade_recovery_executor::{
         journal_artifact_paths_are_safe, observe_backup, observe_journal, observe_legacy_source,
-        read_legacy_tombstone, replace_legacy_with_tombstone, resolve_allowlisted_artifact,
-        write_journal_atomically, RecoveryExecution, RecoveryExecutor, UpgradeExecutionError,
-        UpgradeRecoveryIo,
+        publish_v2_candidate_with_faults, read_legacy_tombstone,
+        remove_file_and_sync_parent_with_faults, replace_legacy_with_tombstone,
+        resolve_allowlisted_artifact, write_journal_atomically,
+        write_journal_atomically_with_faults, RecoveryExecution, RecoveryExecutor,
+        UpgradeExecutionError, UpgradeRecoveryIo, UPGRADE_JOURNAL_FILE,
     },
     upgrade_recovery_plan::{
         BackupState, CompatibilityState, ConfigGeneration, JournalState, LegacySidecarState,
@@ -199,6 +209,11 @@ fn journal_round_trip_verifies_version_shape_paths_and_checksum() {
 
     assert_eq!(decoded, journal);
     assert_eq!(decoded.payload().journal_version, JOURNAL_VERSION);
+    assert_eq!(
+        decoded.payload().attempt_id.as_str(),
+        "019f7d50-9d44-7000-8000-000000000001"
+    );
+    assert_eq!(decoded.payload().source_candidate_identity.as_str(), HASH_A);
     assert!(!encoded.windows(b"D:\\".len()).any(|bytes| bytes == b"D:\\"));
 }
 
@@ -280,10 +295,8 @@ fn tombstone_replacement_is_self_verifying_and_removes_legacy_sidecars() {
     assert_eq!(read_legacy_tombstone(&legacy).expect("read"), Some(attempt));
     assert!(!root.path().join("relay-pool-desktop.sqlite3-wal").exists());
     assert!(!root.path().join("relay-pool-desktop.sqlite3-shm").exists());
-    let connection = rusqlite::Connection::open(&legacy).expect("open is lazy");
-    assert!(connection
-        .query_row::<i64, _, _>("PRAGMA schema_version", [], |row| row.get(0))
-        .is_err());
+    let bytes = fs::read(&legacy).expect("tombstone bytes");
+    assert!(!bytes.starts_with(b"SQLite format 3\0"));
 }
 
 #[test]
@@ -340,6 +353,32 @@ fn filesystem_observation_fails_closed_for_invalid_source_backup_and_journal() {
     );
     fs::write(&journal, b"{truncated").expect("journal");
     assert_eq!(observe_journal(&journal).state, JournalState::Invalid);
+}
+
+#[test]
+fn no_fault_file_wrappers_preserve_atomic_artifact_boundaries() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let journal_path = root.path().join(UPGRADE_JOURNAL_FILE);
+    let journal = valid_journal(UpgradePhase::Prepared);
+
+    write_journal_atomically_with_faults(&journal_path, &journal, &NoUpgradeFaults)
+        .expect("journal write");
+    assert_eq!(
+        observe_journal(&journal_path).state,
+        JournalState::Valid(UpgradePhase::Prepared)
+    );
+
+    let temporary = root.path().join("candidate.sqlite3.tmp");
+    let final_path = root.path().join("candidate.sqlite3");
+    fs::write(&temporary, b"SQLite format 3\0candidate").expect("candidate");
+    publish_v2_candidate_with_faults(&temporary, &final_path, &NoUpgradeFaults)
+        .expect("candidate publish");
+    assert!(!temporary.exists());
+    assert!(final_path.is_file());
+
+    remove_file_and_sync_parent_with_faults(&final_path, &NoUpgradeFaults)
+        .expect("candidate cleanup");
+    assert!(!final_path.exists());
 }
 
 struct FakeUpgradeIo {

@@ -1,0 +1,107 @@
+{
+  "reports": [
+    {
+      "schemaVersion": 1,
+      "suite": "standard",
+      "provenance": {
+        "v2Commit": "dddddddddddddddddddddddddddddddddddddddd",
+        "build": { "profile": "release", "locked": true },
+        "measurementStartedAtUtc": "2026-07-21T00:20:00.0000000Z",
+        "measurementCompletedAtUtc": "2026-07-21T00:30:00.0000000Z",
+        "worktreeSnapshot": {
+          "kind": "hashed-dirty-worktree",
+          "trackedDiffSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "untrackedContentSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      },
+      "environment": {
+        "cpuModel": "contract CPU",
+        "logicalProcessors": 16,
+        "installedMemoryBytes": 16000000000,
+        "windowsCaption": "contract Windows",
+        "windowsVersion": "10.0.1",
+        "windowsBuild": "1",
+        "activePowerScheme": "contract power scheme",
+        "rustcVersion": "rustc contract",
+        "cargoVersion": "cargo contract",
+        "gitHead": "dddddddddddddddddddddddddddddddddddddddd",
+        "worktreeDirty": true,
+        "worktreeStatusSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "antivirusProducts": [],
+        "defenderRealTimeProtection": "unavailable",
+        "windowsSearchService": "unavailable",
+        "debugAssertions": false
+      },
+      "fixture": {
+        "stations": 100,
+        "stationKeys": 1000,
+        "requestLogs": 10000,
+        "changeEvents": 100000
+      },
+      "workloads": {
+        "requestLogs": {
+          "rows": 500,
+          "projection": "production-request-log-service-full-row-projection"
+        },
+        "changeEvents": {
+          "queryLimit": 201,
+          "returnedRows": 200,
+          "projection": "production-change-service-first-page-projection"
+        },
+        "startup": { "migrationsIncluded": false }
+      },
+      "memory": {
+        "metric": "PROCESS_MEMORY_COUNTERS_EX.PrivateUsage",
+        "sampleIntervalMs": 10,
+        "sampleCount": 4,
+        "baselinePrivateUsageBytes": 100,
+        "peakPrivateUsageBytes": 200,
+        "peakPrivateUsageDeltaBytes": 100,
+        "limitBytes": 268435456
+      },
+      "queues": {
+        "qualificationScope": "write-coordinator-only-not-all-queues",
+        "writeCoordinator": {
+          "currentDepth": 0,
+          "peakDepth": 1,
+          "acquiredWrites": 41,
+          "totalWaitMicros": 2,
+          "committedWrites": 41,
+          "rolledBackWrites": 0
+        },
+        "finalizationService": {
+          "coverage": "production-request-finalization-service-terminal-transition",
+          "snapshot": null
+        }
+      },
+      "baselineMetrics": {},
+      "metrics": {
+        "hotRequestLogs": {
+          "samplesNs": [100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139]
+        },
+        "hotChangeEventsFirstPage": {
+          "samplesNs": [100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139]
+        }
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "suite": "startup-and-concurrent-finalization",
+      "provenance": {
+        "v2Commit": "dddddddddddddddddddddddddddddddddddddddd",
+        "build": { "profile": "release", "locked": true }
+      },
+      "environment": { "debugAssertions": false },
+      "workloads": { "startup": { "migrationsIncluded": false } },
+      "metrics": {
+        "startupWithoutMigration": {
+          "samplesNs": [100,101,102,103,104,105,106,107,108,109,110,111,112,113,114]
+        },
+        "finalization": {
+          "coverage": "production-request-finalization-service-terminal-transition",
+          "samplesNs": [100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139]
+        }
+      }
+    }
+  ]
+}

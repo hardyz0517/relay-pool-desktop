@@ -2,36 +2,24 @@
 pub(crate) enum ApplicationError {
     #[error("persistence unavailable")]
     Unavailable,
-    #[error("installation already running")]
-    InstallationAlreadyRunning,
-    #[error("resource busy")]
-    Busy,
     #[error("not found")]
     NotFound,
-    #[error("conflict")]
-    Conflict,
     #[error("stale revision")]
     StaleRevision,
     #[error("constraint violation")]
     ConstraintViolation,
     #[error("migration failed")]
     MigrationFailed,
-    #[error("unsupported legacy schema")]
-    UnsupportedLegacySchema,
     #[error("integrity failed")]
     IntegrityFailed,
     #[error("secret validation failed")]
     SecretValidationFailed,
     #[error("I/O failed")]
     IoFailed,
-    #[error("cancelled")]
-    Cancelled,
     #[error("schema incompatible")]
     IncompatibleSchema,
     #[error("commit outcome unknown")]
     CommitOutcomeUnknown,
-    #[error("recovery precondition changed")]
-    RecoveryPreconditionChanged,
     #[error("internal failure")]
     Internal,
 }
@@ -47,21 +35,42 @@ impl From<crate::persistence::error::PersistenceError> for ApplicationError {
             PersistenceError::MissingCompatibilityMetadata
             | PersistenceError::InvalidCompatibilityMetadata
             | PersistenceError::MissingMigrationMetadata => Self::IncompatibleSchema,
-            PersistenceError::Migration(_) => Self::MigrationFailed,
+            PersistenceError::MigrationFailed => Self::MigrationFailed,
             PersistenceError::IoFailed { .. } => Self::IoFailed,
             PersistenceError::SessionClosed => Self::Internal,
             PersistenceError::InvariantViolation(_) => Self::Internal,
+            PersistenceError::NotFound => Self::NotFound,
             PersistenceError::ConstraintViolation => Self::ConstraintViolation,
             PersistenceError::StaleRevision => Self::StaleRevision,
             PersistenceError::CommitOutcomeUnknown => Self::CommitOutcomeUnknown,
             PersistenceError::BackupVerificationFailed => Self::IntegrityFailed,
-            PersistenceError::Sqlx(sqlx::Error::RowNotFound) => Self::NotFound,
-            PersistenceError::Sqlx(sqlx::Error::Database(database))
-                if database.is_unique_violation() || database.is_foreign_key_violation() =>
-            {
-                Self::ConstraintViolation
-            }
-            PersistenceError::Sqlx(_) => Self::Internal,
+            PersistenceError::DatabaseFailed => Self::Internal,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ApplicationError;
+    use crate::persistence::error::PersistenceError;
+
+    #[test]
+    fn persistence_errors_map_to_stable_application_categories() {
+        assert!(matches!(
+            ApplicationError::from(PersistenceError::NotFound),
+            ApplicationError::NotFound
+        ));
+        assert!(matches!(
+            ApplicationError::from(PersistenceError::ConstraintViolation),
+            ApplicationError::ConstraintViolation
+        ));
+        assert!(matches!(
+            ApplicationError::from(PersistenceError::DatabaseFailed),
+            ApplicationError::Internal
+        ));
+        assert!(matches!(
+            ApplicationError::from(PersistenceError::MigrationFailed),
+            ApplicationError::MigrationFailed
+        ));
     }
 }

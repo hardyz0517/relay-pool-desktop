@@ -22,8 +22,8 @@ use crate::{
                 AdapterOutput, CollectorTask, CreatedRemoteKey,
             },
             facts::{CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts},
+            CollectorSourcePort,
         },
-        database::AppDatabase,
         group_categories::infer_group_category,
         outbound::{resolve_proxy_config, ProxyConfig},
         station_endpoints::{build_api_url, build_management_url},
@@ -511,7 +511,7 @@ pub fn remote_key_capability(station: &Station) -> Result<RemoteKeyCapability, S
 }
 
 pub fn scan_remote_keys(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: &str,
 ) -> Result<Vec<RemoteStationKey>, String> {
@@ -531,7 +531,7 @@ pub fn scan_remote_keys(
 }
 
 pub fn scan_remote_key_full_secret(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: &str,
     remote_key_id: &str,
@@ -566,7 +566,7 @@ pub fn scan_remote_key_full_secret(
 }
 
 pub fn create_remote_key(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     input: CreateRemoteStationKeyInput,
 ) -> Result<CreatedRemoteKey, String> {
@@ -618,14 +618,14 @@ pub fn create_remote_key(
 }
 
 fn resolve_sub2api_access_token(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
 ) -> Result<String, String> {
     let session = database.resolve_station_session_with_data_key(
         station.id.clone(),
         data_key,
-        crate::services::database::now_millis_for_services() as i64,
+        crate::services::time::now_millis_for_services() as i64,
     )?;
     if let Some(access_token) = session
         .access_token
@@ -643,7 +643,7 @@ fn resolve_sub2api_access_token(
 }
 
 fn effective_station_proxy(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     station: &Station,
 ) -> Result<ProxyConfig, String> {
     let settings = database.get_settings()?;
@@ -774,7 +774,7 @@ fn remote_key_from_value(
         match_status: RemoteKeyMatchStatus::Unbound,
         matched_station_key_id: None,
         match_confidence: 0.0,
-        collected_at: crate::services::database::now_millis_for_services().to_string(),
+        collected_at: crate::services::time::now_millis_for_services().to_string(),
     })
 }
 
@@ -792,7 +792,7 @@ fn remote_key_identity<'a>(
 }
 
 fn remote_group_id_for_create(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     input: &CreateRemoteStationKeyInput,
 ) -> Result<Option<String>, String> {
     let Some(group_binding_id) = input
@@ -854,7 +854,7 @@ fn remote_key_from_create_input(
         match_status: RemoteKeyMatchStatus::Unbound,
         matched_station_key_id: None,
         match_confidence: 0.0,
-        collected_at: crate::services::database::now_millis_for_services().to_string(),
+        collected_at: crate::services::time::now_millis_for_services().to_string(),
     }
 }
 
@@ -906,7 +906,7 @@ fn looks_like_full_api_key(value: &str) -> bool {
 }
 
 fn routeable_keys_for_station(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     station_id: &str,
 ) -> Result<Vec<StationKey>, String> {
     database
@@ -919,7 +919,7 @@ fn routeable_keys_for_station(
 }
 
 pub fn collect(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: &str,
     task: CollectorTask,
@@ -981,7 +981,7 @@ fn unsupported_output(
 }
 
 pub fn collect_groups(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: &str,
 ) -> Result<AdapterOutput, String> {
@@ -990,7 +990,7 @@ pub fn collect_groups(
     let session = database.resolve_station_session_with_data_key(
         station_id.to_string(),
         data_key,
-        crate::services::database::now_millis_for_services() as i64,
+        crate::services::time::now_millis_for_services() as i64,
     )?;
     let mut session_source = "reused_session";
     let mut access_token = match session.access_token {
@@ -1131,7 +1131,7 @@ fn manual_session_required_output(message: Option<String>) -> AdapterOutput {
 }
 
 fn login_and_store_access_token(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &crate::models::stations::Station,
 ) -> Result<Option<String>, String> {
@@ -1173,13 +1173,14 @@ fn login_and_store_access_token(
             token_expires_at: None,
         },
         data_key,
+        station.endpoint_revision,
     )?;
 
     Ok(Some(access_token))
 }
 
 fn login_and_store_access_token_with_budget(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &crate::models::stations::Station,
     budget: std::time::Duration,
@@ -1223,6 +1224,7 @@ fn login_and_store_access_token_with_budget(
             token_expires_at: None,
         },
         data_key,
+        station.endpoint_revision,
     )?;
 
     Ok(Some(access_token))
@@ -1511,7 +1513,7 @@ fn add_single_group_key_bindings(facts: &mut CollectorFacts, keys: &[StationKey]
 }
 
 pub fn collect_balance(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: &str,
 ) -> Result<AdapterOutput, String> {
@@ -1654,7 +1656,7 @@ pub fn collect_balance(
 }
 
 fn collect_account_profile_balance(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &crate::models::stations::Station,
     proxy: &ProxyConfig,
@@ -1665,7 +1667,7 @@ fn collect_account_profile_balance(
     let session = database.resolve_station_session_with_data_key(
         station.id.clone(),
         data_key,
-        crate::services::database::now_millis_for_services() as i64,
+        crate::services::time::now_millis_for_services() as i64,
     )?;
     let access_token = match session.access_token {
         Some(access_token) => access_token,
@@ -1798,7 +1800,7 @@ impl DashboardUsageStats {
 }
 
 fn collect_dashboard_usage_stats(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &crate::models::stations::Station,
     proxy: &ProxyConfig,
@@ -1809,7 +1811,7 @@ fn collect_dashboard_usage_stats(
     let session = database.resolve_station_session_with_data_key(
         station.id.clone(),
         data_key,
-        crate::services::database::now_millis_for_services() as i64,
+        crate::services::time::now_millis_for_services() as i64,
     )?;
     let access_token = match session.access_token {
         Some(access_token) => access_token,
@@ -2267,12 +2269,20 @@ mod tests {
     use super::*;
     use crate::{
         models::{
-            credentials::UpdateStationCredentialsInput, station_keys::CreateStationKeyInput,
-            stations::CreateStationInput,
+            credentials::{
+                PersistStationSessionInput, ResolvedSession, SessionResolveStatus,
+                StationCredentials, StationSessionCredentialKind, UpdateStationCredentialsInput,
+            },
+            group_facts::{StationGroupBinding, UpsertStationGroupBindingInput},
+            routing::{RoutingGroupFilter, SchedulerAdvancedSettings},
+            settings::AppSettings,
+            station_keys::{CreateStationKeyInput, StationKey},
+            stations::{CreateStationInput, Station},
         },
-        services::{database::AppDatabase, secrets::crypto::generate_data_key},
+        services::{collectors::CollectorSourcePort, secrets::crypto::generate_data_key},
     };
     use std::{
+        collections::HashMap,
         io::{Read, Write},
         net::{TcpListener, TcpStream},
         sync::{
@@ -2282,6 +2292,471 @@ mod tests {
         thread,
         time::Duration,
     };
+
+    struct TestCollectorSource {
+        state: Mutex<TestCollectorState>,
+    }
+
+    struct TestCollectorState {
+        next_id: u64,
+        stations: HashMap<String, Station>,
+        station_keys: HashMap<String, Vec<StationKey>>,
+        key_secrets: HashMap<String, String>,
+        credentials: HashMap<String, TestStationCredentials>,
+        group_bindings: HashMap<String, Vec<StationGroupBinding>>,
+    }
+
+    #[derive(Default)]
+    struct TestStationCredentials {
+        login_username: Option<String>,
+        login_password: Option<String>,
+        access_token: Option<String>,
+        refresh_token: Option<String>,
+        cookie: Option<String>,
+        newapi_user_id: Option<String>,
+        token_expires_at: Option<String>,
+    }
+
+    impl TestCollectorSource {
+        fn new() -> Self {
+            Self {
+                state: Mutex::new(TestCollectorState {
+                    next_id: 1,
+                    stations: HashMap::new(),
+                    station_keys: HashMap::new(),
+                    key_secrets: HashMap::new(),
+                    credentials: HashMap::new(),
+                    group_bindings: HashMap::new(),
+                }),
+            }
+        }
+
+        fn create_station(&self, input: CreateStationInput) -> Result<Station, String> {
+            self.create_station_with_data_key(input, None)
+        }
+
+        fn create_station_with_data_key(
+            &self,
+            input: CreateStationInput,
+            _data_key: Option<&[u8; 32]>,
+        ) -> Result<Station, String> {
+            let mut state = self.state.lock().map_err(|_| "test source lock poisoned")?;
+            let id = format!("station-{}", state.next_id);
+            state.next_id += 1;
+            let station = Station {
+                id: id.clone(),
+                name: input.name,
+                station_type: input.station_type,
+                website_url: input.website_url,
+                api_base_url: input.api_base_url,
+                endpoint_revision: 1,
+                collector_proxy_mode: input.collector_proxy_mode,
+                collector_proxy_url: input.collector_proxy_url,
+                api_key_masked: "***".to_string(),
+                api_key_present: !input.api_key.trim().is_empty(),
+                key_count: if input.api_key.trim().is_empty() {
+                    0
+                } else {
+                    1
+                },
+                enabled: input.enabled,
+                priority: 0,
+                credit_per_cny: input.credit_per_cny,
+                balance_raw: None,
+                balance_cny: None,
+                low_balance_threshold_cny: input.low_balance_threshold_cny,
+                collection_interval_minutes: input.collection_interval_minutes,
+                status: "unchecked".to_string(),
+                latency_ms: None,
+                last_checked_at: None,
+                last_pricing_fetched_at: None,
+                note: input.note,
+                created_at: "0".to_string(),
+                updated_at: "0".to_string(),
+            };
+            state.stations.insert(id.clone(), station.clone());
+            state
+                .credentials
+                .insert(id.clone(), TestStationCredentials::default());
+            if !input.api_key.trim().is_empty() {
+                let key_id = format!("station-key-{}", state.next_id);
+                state.next_id += 1;
+                let key = test_station_key(
+                    key_id.clone(),
+                    id.clone(),
+                    "Default Key".to_string(),
+                    input.enabled,
+                );
+                state.key_secrets.insert(key_id, input.api_key);
+                state.station_keys.entry(id).or_default().push(key);
+            }
+            Ok(station)
+        }
+
+        fn update_station_credentials_with_data_key(
+            &self,
+            input: UpdateStationCredentialsInput,
+            _data_key: &[u8; 32],
+        ) -> Result<(), String> {
+            let mut state = self.state.lock().map_err(|_| "test source lock poisoned")?;
+            let credentials = state
+                .credentials
+                .get_mut(&input.station_id)
+                .ok_or_else(|| "station credentials not found".to_string())?;
+            credentials.login_username = input.login_username;
+            credentials.login_password = input.login_password.filter(|_| input.remember_password);
+            Ok(())
+        }
+
+        fn update_station_session_with_data_key(
+            &self,
+            input: UpdateStationSessionInput,
+            data_key: &[u8; 32],
+        ) -> Result<StationCredentials, String> {
+            <Self as CollectorSourcePort>::update_station_session_with_data_key(
+                self, input, data_key, 1,
+            )
+        }
+
+        fn resolve_station_session_with_data_key(
+            &self,
+            station_id: String,
+            data_key: &[u8; 32],
+            now_ms: i64,
+        ) -> Result<ResolvedSession, String> {
+            <Self as CollectorSourcePort>::resolve_station_session_with_data_key(
+                self, station_id, data_key, now_ms,
+            )
+        }
+
+        fn create_station_key_with_data_key(
+            &self,
+            input: CreateStationKeyInput,
+            _data_key: &[u8; 32],
+        ) -> Result<StationKey, String> {
+            let mut state = self.state.lock().map_err(|_| "test source lock poisoned")?;
+            if !state.stations.contains_key(&input.station_id) {
+                return Err("station not found".to_string());
+            }
+            let id = format!("station-key-{}", state.next_id);
+            state.next_id += 1;
+            let key = test_station_key(
+                id.clone(),
+                input.station_id.clone(),
+                input.name,
+                input.enabled,
+            );
+            state.key_secrets.insert(id, input.api_key);
+            state
+                .station_keys
+                .entry(input.station_id)
+                .or_default()
+                .push(key.clone());
+            Ok(key)
+        }
+
+        fn upsert_station_group_binding(
+            &self,
+            input: UpsertStationGroupBindingInput,
+        ) -> Result<StationGroupBinding, String> {
+            let mut state = self.state.lock().map_err(|_| "test source lock poisoned")?;
+            let id = format!("group-binding-{}", state.next_id);
+            state.next_id += 1;
+            let binding = StationGroupBinding {
+                id,
+                station_id: input.station_id.clone(),
+                station_key_id: input.station_key_id,
+                binding_kind: input.binding_kind,
+                parent_group_binding_id: input.parent_group_binding_id,
+                group_key_hash: input.group_key_hash,
+                group_id_hash: input.group_id_hash,
+                group_name: input.group_name,
+                binding_status: input.binding_status,
+                default_rate_multiplier: input.default_rate_multiplier,
+                user_rate_multiplier: input.user_rate_multiplier,
+                effective_rate_multiplier: input.effective_rate_multiplier,
+                inferred_group_category: input.inferred_group_category,
+                group_category_override: input.group_category_override,
+                rate_source: input.rate_source,
+                confidence: input.confidence,
+                last_seen_at: input.last_seen_at,
+                last_checked_at: None,
+                last_rate_changed_at: None,
+                raw_json_redacted: input.raw_json_redacted,
+                created_at: "0".to_string(),
+                updated_at: "0".to_string(),
+            };
+            state
+                .group_bindings
+                .entry(input.station_id)
+                .or_default()
+                .push(binding.clone());
+            Ok(binding)
+        }
+    }
+
+    impl CollectorSourcePort for TestCollectorSource {
+        fn station_for_collector(&self, station_id: &str) -> Result<Station, String> {
+            self.state
+                .lock()
+                .map_err(|_| "test source lock poisoned".to_string())?
+                .stations
+                .get(station_id)
+                .cloned()
+                .ok_or_else(|| "station not found".to_string())
+        }
+
+        fn get_settings(&self) -> Result<AppSettings, String> {
+            Ok(test_settings())
+        }
+
+        fn list_station_keys(&self, station_id: String) -> Result<Vec<StationKey>, String> {
+            Ok(self
+                .state
+                .lock()
+                .map_err(|_| "test source lock poisoned".to_string())?
+                .station_keys
+                .get(&station_id)
+                .cloned()
+                .unwrap_or_default())
+        }
+
+        fn resolve_station_key_secret_with_data_key(
+            &self,
+            _data_key: &[u8; 32],
+            station_key_id: &str,
+        ) -> Result<String, String> {
+            self.state
+                .lock()
+                .map_err(|_| "test source lock poisoned".to_string())?
+                .key_secrets
+                .get(station_key_id)
+                .cloned()
+                .ok_or_else(|| "station key secret not found".to_string())
+        }
+
+        fn get_station_credentials(
+            &self,
+            station_id: String,
+        ) -> Result<StationCredentials, String> {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| "test source lock poisoned".to_string())?;
+            let credentials = state
+                .credentials
+                .get(&station_id)
+                .ok_or_else(|| "station credentials not found".to_string())?;
+            Ok(StationCredentials {
+                station_id,
+                login_username: credentials.login_username.clone(),
+                password_present: credentials.login_password.is_some(),
+                access_token_present: credentials.access_token.is_some(),
+                refresh_token_present: credentials.refresh_token.is_some(),
+                cookie_present: credentials.cookie.is_some(),
+                remember_password: credentials.login_password.is_some(),
+                login_status: "unknown".to_string(),
+                login_error: None,
+                last_login_at: None,
+                session_status: "none".to_string(),
+                session_expires_at: None,
+                newapi_user_id: credentials.newapi_user_id.clone(),
+                token_expires_at: credentials.token_expires_at.clone(),
+                token_refreshed_at: None,
+                session_source: "test".to_string(),
+                updated_at: None,
+            })
+        }
+
+        fn get_station_login_password_with_data_key(
+            &self,
+            station_id: String,
+            _data_key: &[u8; 32],
+        ) -> Result<Option<String>, String> {
+            Ok(self
+                .state
+                .lock()
+                .map_err(|_| "test source lock poisoned".to_string())?
+                .credentials
+                .get(&station_id)
+                .ok_or_else(|| "station credentials not found".to_string())?
+                .login_password
+                .clone())
+        }
+
+        fn resolve_station_session_with_data_key(
+            &self,
+            station_id: String,
+            _data_key: &[u8; 32],
+            _now_ms: i64,
+        ) -> Result<ResolvedSession, String> {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| "test source lock poisoned".to_string())?;
+            let credentials = state
+                .credentials
+                .get(&station_id)
+                .ok_or_else(|| "station credentials not found".to_string())?;
+            let has_session = credentials.access_token.is_some()
+                || credentials.refresh_token.is_some()
+                || credentials.cookie.is_some();
+            Ok(ResolvedSession {
+                status: if has_session {
+                    SessionResolveStatus::Ready
+                } else {
+                    SessionResolveStatus::ManualRequired
+                },
+                access_token: credentials.access_token.clone(),
+                refresh_token: credentials.refresh_token.clone(),
+                cookie: credentials.cookie.clone(),
+                newapi_user_id: credentials.newapi_user_id.clone(),
+                message: (!has_session).then(|| "session missing".to_string()),
+            })
+        }
+
+        fn update_station_session_with_data_key(
+            &self,
+            input: UpdateStationSessionInput,
+            _data_key: &[u8; 32],
+            expected_revision: i64,
+        ) -> Result<StationCredentials, String> {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| "test source lock poisoned".to_string())?;
+            let station = state
+                .stations
+                .get(&input.station_id)
+                .ok_or_else(|| "station not found".to_string())?;
+            if station.endpoint_revision != expected_revision {
+                return Err("endpoint revision changed".to_string());
+            }
+            let credentials = state
+                .credentials
+                .get_mut(&input.station_id)
+                .ok_or_else(|| "station credentials not found".to_string())?;
+            credentials.access_token = input.access_token;
+            credentials.refresh_token = input.refresh_token;
+            credentials.cookie = input.cookie;
+            credentials.newapi_user_id = input.newapi_user_id;
+            credentials.token_expires_at = input.token_expires_at;
+            drop(state);
+            self.get_station_credentials(input.station_id)
+        }
+
+        fn persist_station_session_with_data_key(
+            &self,
+            input: PersistStationSessionInput,
+            data_key: &[u8; 32],
+            expected_revision: i64,
+        ) -> Result<StationCredentials, String> {
+            <Self as CollectorSourcePort>::update_station_session_with_data_key(
+                self,
+                UpdateStationSessionInput {
+                    station_id: input.station_id,
+                    access_token: input.access_token,
+                    refresh_token: input.refresh_token,
+                    cookie: input.cookie,
+                    newapi_user_id: input.newapi_user_id,
+                    token_expires_at: input.token_expires_at,
+                },
+                data_key,
+                expected_revision,
+            )
+        }
+
+        fn invalidate_station_session_credential(
+            &self,
+            station_id: &str,
+            kind: StationSessionCredentialKind,
+        ) -> Result<(), String> {
+            let mut state = self.state.lock().map_err(|_| "test source lock poisoned")?;
+            let credentials = state
+                .credentials
+                .get_mut(station_id)
+                .ok_or_else(|| "station credentials not found".to_string())?;
+            match kind {
+                StationSessionCredentialKind::AccessToken => credentials.access_token = None,
+                StationSessionCredentialKind::RefreshToken => credentials.refresh_token = None,
+                StationSessionCredentialKind::Cookie => credentials.cookie = None,
+            }
+            Ok(())
+        }
+
+        fn list_station_group_bindings(
+            &self,
+            station_id: String,
+        ) -> Result<Vec<StationGroupBinding>, String> {
+            Ok(self
+                .state
+                .lock()
+                .map_err(|_| "test source lock poisoned".to_string())?
+                .group_bindings
+                .get(&station_id)
+                .cloned()
+                .unwrap_or_default())
+        }
+    }
+
+    fn test_station_key(id: String, station_id: String, name: String, enabled: bool) -> StationKey {
+        StationKey {
+            id,
+            station_id,
+            name,
+            api_key_masked: "***".to_string(),
+            api_key_present: true,
+            enabled,
+            priority: 0,
+            max_concurrency: 1,
+            load_factor: None,
+            schedulable: true,
+            group_name: None,
+            tier_label: None,
+            group_binding_id: None,
+            group_id_hash: None,
+            rate_multiplier: None,
+            manual_rate_multiplier: None,
+            manual_rate_updated_at: None,
+            rate_source: None,
+            rate_collected_at: None,
+            balance_scope: None,
+            status: "unchecked".to_string(),
+            last_checked_at: None,
+            last_used_at: None,
+            note: None,
+            created_at: "0".to_string(),
+            updated_at: "0".to_string(),
+        }
+    }
+
+    fn test_settings() -> AppSettings {
+        AppSettings {
+            local_proxy_port: 1430,
+            local_proxy_start_on_launch: false,
+            local_key_masked: String::new(),
+            default_routing_strategy: "automatic_balanced".to_string(),
+            collector_proxy_mode: "direct".to_string(),
+            collector_proxy_url: None,
+            max_rate_multiplier: None,
+            default_routing_group_filter: RoutingGroupFilter::default(),
+            scheduler_advanced_settings: SchedulerAdvancedSettings::default(),
+            low_balance_threshold_cny: 0.0,
+            collector_interval_minutes: 5,
+            balance_interval_minutes: 5,
+            group_rate_interval_minutes: 20,
+            model_list_interval_minutes: 60,
+            pricing_refresh_interval_minutes: 60,
+            collector_timeout_seconds: 20,
+            collector_max_concurrency: 1,
+            allow_depleted_fallback: false,
+            developer_mode_enabled: false,
+            tray_behavior: "hide".to_string(),
+            data_dir: String::new(),
+            pending_data_dir: None,
+            data_dir_change_requires_restart: false,
+        }
+    }
 
     #[test]
     fn sub2api_usage_parses_remaining_from_nested_quota() {
@@ -2668,7 +3143,7 @@ mod tests {
     #[test]
     fn create_remote_key_posts_selected_group_id_from_binding() {
         let server = TestCreateKeyServer::start();
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new();
         let data_key = generate_data_key();
         let station = database
             .create_station(CreateStationInput {
@@ -2751,7 +3226,7 @@ mod tests {
     #[test]
     fn create_remote_key_posts_numeric_group_id_as_number() {
         let server = TestCreateKeyServer::start();
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new();
         let data_key = generate_data_key();
         let station = database
             .create_station(CreateStationInput {
@@ -2882,7 +3357,7 @@ mod tests {
     #[test]
     fn sub2api_groups_logs_in_with_saved_password_when_access_token_missing() {
         let server = TestGroupServer::start();
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new();
         let data_key = generate_data_key();
         let station = database
             .create_station(CreateStationInput {
@@ -2935,7 +3410,7 @@ mod tests {
     #[test]
     fn sub2api_groups_relogs_in_when_saved_access_token_is_rejected() {
         let server = TestGroupServer::start();
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new();
         let data_key = generate_data_key();
         let station = database
             .create_station(CreateStationInput {
@@ -2994,7 +3469,7 @@ mod tests {
     #[test]
     fn sub2api_groups_marks_reused_session_in_summary() {
         let server = TestGroupServer::start();
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new();
         let data_key = generate_data_key();
         let station = database
             .create_station(CreateStationInput {
@@ -3038,7 +3513,7 @@ mod tests {
     #[test]
     fn sub2api_groups_retries_transient_rate_endpoint_failure() {
         let server = FlakyGroupServer::start();
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new();
         let data_key = generate_data_key();
         let station = database
             .create_station(CreateStationInput {
@@ -3080,7 +3555,7 @@ mod tests {
     #[test]
     fn sub2api_groups_record_auth_then_transient_recovery() {
         let server = AuthThenTransientGroupServer::start();
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new();
         let data_key = generate_data_key();
         let station = database
             .create_station(CreateStationInput {
@@ -3138,7 +3613,7 @@ mod tests {
     #[test]
     fn sub2api_balance_falls_back_to_account_profile_when_usage_is_unauthorized() {
         let server = TestBalanceFallbackServer::start();
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new();
         let data_key = generate_data_key();
         let station = database
             .create_station_with_data_key(
@@ -3186,7 +3661,7 @@ mod tests {
     #[test]
     fn sub2api_balance_refreshes_rejected_account_token() {
         let server = RefreshingBalanceFallbackServer::start();
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new();
         let data_key = generate_data_key();
         let station = database
             .create_station_with_data_key(
@@ -3248,7 +3723,7 @@ mod tests {
     #[test]
     fn sub2api_balance_collects_dashboard_usage_stats_with_account_token() {
         let server = BalanceDashboardStatsServer::start();
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new();
         let data_key = generate_data_key();
         let station = database
             .create_station_with_data_key(
@@ -3314,7 +3789,7 @@ mod tests {
     #[test]
     fn sub2api_balance_attempts_all_keys_before_transient_retries() {
         let server = FairBalanceServer::start();
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new();
         let data_key = generate_data_key();
         let station = database
             .create_station_with_data_key(

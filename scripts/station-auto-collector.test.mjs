@@ -6,8 +6,10 @@ const servicesModSource = await readFile("src-tauri/src/services/mod.rs", "utf8"
 const stationCollectorSource = await readFile("src-tauri/src/services/station_collectors.rs", "utf8").catch(
   () => "",
 );
-const collectorsSource = await readFile("src-tauri/src/services/collectors/mod.rs", "utf8");
-const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
+const stationCatalogSource = await readFile(
+  "src-tauri/src/persistence/stores/station_catalog.rs",
+  "utf8",
+);
 const sub2apiLoginSource = await readFile("src-tauri/src/services/collectors/sub2api.rs", "utf8");
 const sub2apiAdapterSource = await readFile("src-tauri/src/services/collectors/adapters/sub2api.rs", "utf8");
 const newapiAdapterSource = [
@@ -38,9 +40,9 @@ assert.ok(
 );
 
 assert.ok(
-  databaseSource.includes("due_station_collectors") &&
-    databaseSource.includes("collection_interval_minutes") &&
-    databaseSource.includes("* 60000 <= ?1"),
+  stationCatalogSource.includes("pub(crate) async fn due_collectors") &&
+    stationCatalogSource.includes("collection_interval_minutes") &&
+    stationCatalogSource.includes("* 60000) <= ?1"),
   "station collector due query should use each station's collection interval",
 );
 
@@ -48,12 +50,6 @@ assert.ok(
   stationCollectorSource.includes("CollectorTask::Balance") &&
     stationCollectorSource.includes("CollectorTask::Groups"),
   "station collector runner should collect balance and groups on each scheduled station run",
-);
-
-assert.ok(
-  collectorsSource.includes("remote_keys::scan_remote_keys") &&
-    collectorsSource.includes("append_remote_key_refresh_event"),
-  "station group collection should refresh remote key discoveries during scheduled station runs",
 );
 
 assert.ok(

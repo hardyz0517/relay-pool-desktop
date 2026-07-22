@@ -14,7 +14,7 @@ use super::{
     protocol::TransportMode,
     redact_error_message,
     request::ByteStream,
-    RouteCandidate,
+    routing_types::RouteCandidate,
 };
 
 #[derive(Clone)]
@@ -298,8 +298,8 @@ mod tests {
                 CompletionPolicy, DownstreamTransform, ResponsePlan, TransportMode,
                 UpstreamProtocol,
             },
+            routing_types::RouteCandidate,
             test_support::{LoopbackUpstream, ScriptedResponse},
-            RouteCandidate,
         },
     };
 

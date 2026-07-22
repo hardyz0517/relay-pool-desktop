@@ -4,23 +4,20 @@ use serde_json::{json, Value};
 use std::process::Command;
 use std::time::{Duration, Instant};
 use std::{
+    collections::{BTreeMap, VecDeque},
     io::Read,
     path::PathBuf,
+    sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{ipc::Channel, Manager, State};
 
-pub(crate) mod credentials;
 pub(crate) mod data_recovery;
-pub(crate) mod monitoring;
-pub(crate) mod pricing;
-pub(crate) mod routing;
-pub(crate) mod settings;
-pub(crate) mod stations;
 
 use crate::{
+    application::{app_services::AppServices, error::ApplicationError, pagination::PageLimit},
     models::{
-        capture::{CaptureSessionStatus, CapturedHttpEvent, CapturedHttpEventInput},
+        capture::{CaptureSessionStatus, CapturedHttpEventInput},
         change_events::{ChangeEvent, UpsertChangeEventInput},
         channel_monitors::{
             ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
@@ -40,9 +37,8 @@ use crate::{
             UpsertStationGroupBindingInput,
         },
         pricing::{
-            BalanceSnapshot, ModelBasePrice, PricingRule, PricingStatus, RequestKind,
-            ResolvedPricingContext, UpsertBalanceSnapshotInput, UpsertModelBasePriceInput,
-            UpsertPricingRuleInput,
+            BalanceSnapshot, ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
+            UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
         },
         proxy::{ProxyStatus, RequestLog, UpstreamApiFormat},
         remote_keys::{
@@ -54,7 +50,6 @@ use crate::{
             ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyCapabilities,
             StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
         },
-        secrets::{SecretMigrationReport, SecretScanFinding},
         settings::{AppSettings, UpdateSettingsInput},
         shared_capabilities::{
             ChannelMonitorSummary, ChannelStatusSummary, ChannelStatusWorkspace,
@@ -73,39 +68,135 @@ use crate::{
         capture, collectors,
         data_store::{
             backup::backup_selected_database,
-            config::{create_installation_marker, write_config, DataDirConfigV2},
+            config::{
+                create_installation_marker, write_config_v3, DataDirConfigV3, DatabaseGeneration,
+            },
             diagnostic::build_diagnostic_report,
             inspect::inspect_candidate,
             inspect_startup,
-            relocation::write_active_data_dir_selection,
             types::{
                 ActivationResult, CandidateHealth, CandidateRole, DataStoreCandidate,
-                DataStoreStartupState, DataStoreStartupView,
+                DataStoreStartupState,
             },
         },
-        database::{now_millis_for_services, AppDatabase},
         endpoint_ping::ping_station_endpoint as probe_station_endpoint,
-        pricing::{pricing_context_from_pricing_parts, RequestPricingParts},
-        proxy::{
-            redact_error_message,
-            runtime::{ProxyRuntimeState, ProxyStartConfig},
-            should_fallback,
-        },
+        proxy::{redact_error_message, runtime::ProxyRuntimeState, should_fallback},
         remote_keys,
         secrets::{validation::validate_database_secrets, SecretManager},
         station_endpoints::{build_api_url, url_belongs_to_base},
+        time::now_millis_for_services,
         updater::{self, PublishedUpdateInspection, UpdaterNetworkConfig},
     },
+    TrayBehavior,
 };
 
 const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
 const DATABASE_FILE: &str = "relay-pool-desktop.sqlite3";
+const DATABASE_FILE_V2: &str = "relay-pool-desktop-v2.sqlite3";
 
 const STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const STATION_KEY_CONNECTIVITY_CANDIDATE_LIMIT: usize = 2;
 const STATION_KEY_CONNECTIVITY_SSE_PENDING_LIMIT: usize = 64 * 1024;
 const DEFAULT_STATION_KEY_CONNECTIVITY_MODEL: &str = "gpt-4.1-mini";
+
+const LOCATED_CANDIDATE_LIMIT: usize = 32;
+
+#[derive(Default)]
+pub(crate) struct LocatedDataStoreCandidates(Mutex<LocatedDataStoreCandidatesInner>);
+
+#[derive(Default)]
+struct LocatedDataStoreCandidatesInner {
+    paths: BTreeMap<String, PathBuf>,
+    insertion_order: VecDeque<String>,
+}
+
+impl LocatedDataStoreCandidates {
+    fn record(&self, candidate: &DataStoreCandidate) {
+        let mut inner = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if inner.paths.contains_key(&candidate.id) {
+            inner
+                .insertion_order
+                .retain(|candidate_id| candidate_id != &candidate.id);
+        }
+        inner
+            .paths
+            .insert(candidate.id.clone(), PathBuf::from(&candidate.path));
+        inner.insertion_order.push_back(candidate.id.clone());
+        while inner.paths.len() > LOCATED_CANDIDATE_LIMIT {
+            if let Some(expired) = inner.insertion_order.pop_front() {
+                inner.paths.remove(&expired);
+            }
+        }
+    }
+
+    fn path(&self, candidate_id: &str) -> Option<PathBuf> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .paths
+            .get(candidate_id)
+            .cloned()
+    }
+}
+
+#[cfg(test)]
+mod located_candidate_tests {
+    use super::{LocatedDataStoreCandidates, LOCATED_CANDIDATE_LIMIT};
+    use crate::services::data_store::types::{CandidateHealth, CandidateRole, DataStoreCandidate};
+
+    #[test]
+    fn only_backend_inspected_candidate_ids_enter_the_registry() {
+        let registry = LocatedDataStoreCandidates::default();
+        let candidate = DataStoreCandidate {
+            id: "inspected-id".to_string(),
+            role: CandidateRole::Located,
+            path: "relay-pool-desktop-v2.sqlite3".to_string(),
+            health: CandidateHealth::Healthy,
+            schema_compatible: true,
+            size_bytes: None,
+            modified_at: None,
+            counts: std::collections::BTreeMap::new(),
+        };
+
+        registry.record(&candidate);
+
+        assert_eq!(
+            registry.path("inspected-id"),
+            Some(std::path::PathBuf::from(&candidate.path))
+        );
+        assert_eq!(registry.path("user-supplied-id"), None);
+    }
+
+    #[test]
+    fn located_candidate_registry_is_bounded() {
+        let registry = LocatedDataStoreCandidates::default();
+        for index in 0..=LOCATED_CANDIDATE_LIMIT {
+            registry.record(&DataStoreCandidate {
+                id: format!("candidate-{index:02}"),
+                role: CandidateRole::Located,
+                path: format!("candidate-{index:02}.sqlite3"),
+                health: CandidateHealth::Healthy,
+                schema_compatible: true,
+                size_bytes: None,
+                modified_at: None,
+                counts: std::collections::BTreeMap::new(),
+            });
+        }
+
+        assert_eq!(registry.path("candidate-00"), None);
+        assert_eq!(
+            registry.path(&format!("candidate-{LOCATED_CANDIDATE_LIMIT:02}")),
+            Some(std::path::PathBuf::from(format!(
+                "candidate-{LOCATED_CANDIDATE_LIMIT:02}.sqlite3"
+            )))
+        );
+    }
+}
+
 #[tauri::command]
 pub fn app_status() -> AppStatus {
     AppStatus::default()
@@ -114,45 +205,70 @@ pub fn app_status() -> AppStatus {
 #[tauri::command]
 pub fn get_data_store_startup_state(
     state: State<'_, DataStoreStartupState>,
-) -> DataStoreStartupView {
-    state.view()
+) -> data_recovery::DataStoreStartupView {
+    data_recovery::startup_view(&state)
 }
 
 #[tauri::command]
 pub fn refresh_data_store_candidates(
     state: State<'_, DataStoreStartupState>,
-) -> Result<DataStoreStartupView, String> {
-    inspect_startup(state.default_data_dir()).map(|state| state.view())
+) -> Result<data_recovery::DataStoreStartupView, String> {
+    inspect_startup(state.default_data_dir()).map(|state| data_recovery::startup_view(&state))
 }
 
 #[tauri::command]
-pub fn locate_data_store_candidate() -> Result<Option<DataStoreCandidate>, String> {
+pub fn locate_data_store_candidate(
+    located: State<'_, LocatedDataStoreCandidates>,
+) -> Result<Option<data_recovery::DataStoreCandidateView>, String> {
     let Some(path) = rfd::FileDialog::new()
         .add_filter("Relay Pool SQLite", &["sqlite3"])
         .pick_file()
     else {
         return Ok(None);
     };
-    if path.file_name().and_then(|name| name.to_str()) != Some(DATABASE_FILE) {
-        return Err(format!("selected database must be named {DATABASE_FILE}"));
+    if !is_supported_database_file(&path) {
+        return Err(format!(
+            "selected database must be named {DATABASE_FILE} or {DATABASE_FILE_V2}"
+        ));
     }
-    inspect_candidate(&path, CandidateRole::Located)
-        .map(|inspected| inspected.candidate)
-        .map(Some)
+    let candidate = inspect_candidate(&path, CandidateRole::Located)?.candidate;
+    located.record(&candidate);
+    Ok(Some(data_recovery::candidate_view(&candidate)))
 }
 
 #[tauri::command]
 pub fn activate_data_store_candidate(
     state: State<'_, DataStoreStartupState>,
+    located: State<'_, LocatedDataStoreCandidates>,
     secrets: State<'_, SecretManager>,
-    candidate_path: String,
+    candidate_id: String,
 ) -> Result<ActivationResult, String> {
-    let candidate_path = PathBuf::from(candidate_path);
+    let candidate_path = state
+        .candidates
+        .iter()
+        .find(|candidate| candidate.id == candidate_id)
+        .map(|candidate| PathBuf::from(&candidate.path))
+        .or_else(|| located.path(&candidate_id))
+        .ok_or_else(|| {
+            "selected data store candidate is not part of inspected evidence".to_string()
+        })?;
     let canonical_path = candidate_path
         .canonicalize()
         .map_err(|error| format!("failed to resolve selected database path: {error}"))?;
-    if canonical_path.file_name().and_then(|name| name.to_str()) != Some(DATABASE_FILE) {
-        return Err(format!("selected database must be named {DATABASE_FILE}"));
+    if !is_supported_database_file(&canonical_path) {
+        return Err(format!(
+            "selected database must be named {DATABASE_FILE} or {DATABASE_FILE_V2}"
+        ));
+    }
+
+    if crate::services::data_store::generation_upgrade::commit_explicit_generation_two_recovery(
+        state.default_data_dir(),
+        &canonical_path,
+        *secrets.data_key(),
+    )? {
+        return Ok(ActivationResult {
+            restart_required: true,
+        });
     }
 
     let inspected = inspect_candidate(&canonical_path, CandidateRole::Located)?;
@@ -168,13 +284,20 @@ pub fn activate_data_store_candidate(
     let active_data_dir = canonical_path
         .parent()
         .ok_or_else(|| "selected database path has no parent directory".to_string())?;
-    write_config(
+    let database_generation =
+        if canonical_path.file_name().and_then(|name| name.to_str()) == Some(DATABASE_FILE_V2) {
+            DatabaseGeneration::Two
+        } else {
+            DatabaseGeneration::One
+        };
+    write_config_v3(
         &state.default_data_dir().join(DATA_DIR_CONFIG_FILE),
-        &DataDirConfigV2 {
-            version: 2,
+        &DataDirConfigV3 {
+            version: 3,
             active_data_dir: Some(active_data_dir.to_path_buf()),
             pending_data_dir: None,
             source_data_dir: None,
+            database_generation,
             updated_at: data_store_updated_at(),
         },
     )?;
@@ -186,7 +309,7 @@ pub fn activate_data_store_candidate(
 }
 
 #[tauri::command]
-pub fn create_new_data_store(
+pub async fn create_new_data_store(
     state: State<'_, DataStoreStartupState>,
     confirmed: bool,
 ) -> Result<ActivationResult, String> {
@@ -196,17 +319,26 @@ pub fn create_new_data_store(
     let Some(data_dir) = rfd::FileDialog::new().pick_folder() else {
         return Err("no data directory selected".to_string());
     };
-    let db_path = data_dir.join(DATABASE_FILE);
+    let db_path = data_dir.join(DatabaseGeneration::Two.database_file());
     if db_path.exists() {
         return Err(format!(
             "target database already exists: {}",
             db_path.display()
         ));
     }
-    let database =
-        AppDatabase::initialize_new_at(state.default_data_dir().to_path_buf(), data_dir.clone())?;
-    drop(database);
-    write_active_data_dir_selection(state.default_data_dir(), &data_dir)?;
+    crate::services::data_store::generation_upgrade::initialize_empty_generation_two(&db_path)
+        .await?;
+    write_config_v3(
+        &state.default_data_dir().join(DATA_DIR_CONFIG_FILE),
+        &DataDirConfigV3 {
+            version: 3,
+            active_data_dir: Some(data_dir.clone()),
+            pending_data_dir: None,
+            source_data_dir: None,
+            database_generation: DatabaseGeneration::Two,
+            updated_at: data_store_updated_at(),
+        },
+    )?;
     create_installation_marker(state.default_data_dir())?;
     Ok(ActivationResult {
         restart_required: true,
@@ -259,57 +391,93 @@ fn data_store_updated_at() -> String {
 }
 
 #[tauri::command]
-pub fn list_stations(database: State<'_, AppDatabase>) -> Result<Vec<Station>, String> {
-    database.list_stations()
+pub async fn list_stations(services: State<'_, AppServices>) -> Result<Vec<Station>, String> {
+    services
+        .stations
+        .list()
+        .await
+        .map_err(command_application_error)
+}
+
+fn is_supported_database_file(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == DATABASE_FILE || name == DATABASE_FILE_V2)
 }
 
 #[tauri::command]
-pub fn create_station(
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+pub async fn create_station(
+    services: State<'_, AppServices>,
     input: CreateStationInput,
 ) -> Result<Station, String> {
-    database.create_station_with_data_key(input, Some(secrets.data_key()))
+    services
+        .stations
+        .create(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn update_station(
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+pub async fn update_station(
+    services: State<'_, AppServices>,
     input: UpdateStationInput,
 ) -> Result<Station, String> {
-    database.update_station_with_data_key(input, Some(secrets.data_key()))
+    services
+        .stations
+        .update_station(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn delete_station(database: State<'_, AppDatabase>, id: String) -> Result<(), String> {
-    database.delete_station(id)
+pub async fn delete_station(services: State<'_, AppServices>, id: String) -> Result<(), String> {
+    services
+        .stations
+        .delete(id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn reorder_stations(
-    database: State<'_, AppDatabase>,
+pub async fn reorder_stations(
+    services: State<'_, AppServices>,
     station_ids: Vec<String>,
 ) -> Result<Vec<Station>, String> {
-    database.reorder_stations(station_ids)
+    services
+        .stations
+        .reorder(station_ids)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn get_settings(database: State<'_, AppDatabase>) -> Result<AppSettings, String> {
-    database.get_settings()
+pub async fn get_settings(services: State<'_, AppServices>) -> Result<AppSettings, String> {
+    services
+        .settings
+        .load()
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn get_local_access_key(database: State<'_, AppDatabase>) -> Result<String, String> {
-    database.ensure_secure_local_access_key()
+pub async fn get_local_access_key(services: State<'_, AppServices>) -> Result<String, String> {
+    services
+        .settings
+        .ensure_local_access_key()
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn update_local_access_key(
-    database: State<'_, AppDatabase>,
+pub async fn update_local_access_key(
+    services: State<'_, AppServices>,
     value: String,
 ) -> Result<AppSettings, String> {
-    database.update_local_access_key(value)
+    services
+        .settings
+        .update_local_access_key(value)
+        .await
+        .map_err(command_application_error)
 }
 
 #[derive(Debug, Serialize)]
@@ -322,20 +490,29 @@ pub struct CcswitchImportResult {
 
 #[tauri::command]
 pub async fn import_relay_pool_to_ccswitch(
-    database: State<'_, AppDatabase>,
     secrets: State<'_, SecretManager>,
+    services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<CcswitchImportResult, String> {
-    let settings = database.get_settings()?;
-    database.migrate_plaintext_secrets(secrets.data_key())?;
+    let settings = services
+        .settings
+        .load()
+        .await
+        .map_err(command_application_error)?;
+    let local_access_key = services
+        .settings
+        .ensure_local_access_key()
+        .await
+        .map_err(command_application_error)?;
     let proxy_status = proxy
-        .start(ProxyStartConfig::new(
-            database.inner().clone(),
+        .start(crate::services::proxy::startup::config_from_v2_services(
+            services.inner(),
             *secrets.data_key(),
+            local_access_key.clone(),
             settings.local_proxy_port,
         ))
         .await?;
-    let (result, deeplink) = prepare_ccswitch_import(&database, &proxy_status)?;
+    let (result, deeplink) = prepare_ccswitch_import(&local_access_key, &proxy_status);
 
     open_url_with_system(&deeplink)?;
 
@@ -343,10 +520,9 @@ pub async fn import_relay_pool_to_ccswitch(
 }
 
 fn prepare_ccswitch_import(
-    database: &AppDatabase,
+    local_access_key: &str,
     status: &ProxyStatus,
-) -> Result<(CcswitchImportResult, String), String> {
-    let local_access_key = database.ensure_secure_local_access_key()?;
+) -> (CcswitchImportResult, String) {
     let endpoint = format!("http://{}:{}/v1", status.bind_addr, status.port);
     let homepage = format!("http://{}:{}", status.bind_addr, status.port);
     let provider_name = "Relay Pool Desktop".to_string();
@@ -355,16 +531,16 @@ fn prepare_ccswitch_import(
         &provider_name,
         &homepage,
         &endpoint,
-        &local_access_key,
+        local_access_key,
     );
-    Ok((
+    (
         CcswitchImportResult {
             app: "codex".to_string(),
             provider_name,
             endpoint,
         },
         deeplink,
-    ))
+    )
 }
 
 #[tauri::command]
@@ -390,43 +566,71 @@ pub async fn inspect_latest_update_manifest(
 }
 
 #[tauri::command]
-pub fn update_settings(
-    database: State<'_, AppDatabase>,
+pub async fn update_settings(
+    services: State<'_, AppServices>,
+    tray_behavior: State<'_, crate::TrayBehaviorState>,
     input: UpdateSettingsInput,
 ) -> Result<AppSettings, String> {
-    database.update_settings(input)
+    let settings = services
+        .settings
+        .update(input)
+        .await
+        .map_err(command_application_error)?;
+    tray_behavior.set(TrayBehavior::from_setting(&settings.tray_behavior));
+    Ok(settings)
+}
+
+fn command_application_error(error: ApplicationError) -> String {
+    error.to_string()
 }
 
 #[tauri::command]
-pub fn choose_data_dir(database: State<'_, AppDatabase>) -> Result<AppSettings, String> {
-    let Some(data_dir) = rfd::FileDialog::new().pick_folder() else {
-        return database.get_settings();
+pub async fn choose_data_dir(services: State<'_, AppServices>) -> Result<AppSettings, String> {
+    let selected = tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().pick_folder())
+        .await
+        .map_err(|error| format!("data directory dialog failed to join: {error}"))?;
+    let Some(data_dir) = selected else {
+        return services
+            .settings
+            .load()
+            .await
+            .map_err(command_application_error);
     };
-    database.set_pending_data_dir(data_dir)
+    services
+        .data_directory
+        .select_pending(data_dir)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn reset_data_dir(database: State<'_, AppDatabase>) -> Result<AppSettings, String> {
-    database.reset_data_dir_to_default()
+pub async fn reset_data_dir(services: State<'_, AppServices>) -> Result<AppSettings, String> {
+    services
+        .data_directory
+        .reset_to_default()
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn get_proxy_status(
-    database: State<'_, AppDatabase>,
+pub async fn get_proxy_status(
+    services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
-    let settings = database.get_settings()?;
+    let settings = services
+        .settings
+        .load()
+        .await
+        .map_err(command_application_error)?;
     Ok(proxy.status(settings.local_proxy_port))
 }
 
 #[tauri::command]
-pub fn load_local_routing_workspace(
-    database: State<'_, AppDatabase>,
+pub async fn load_local_routing_workspace(
+    services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<crate::services::proxy::routing_types::LocalRoutingWorkspace, String> {
-    let settings = database.get_settings()?;
-    let proxy_status = proxy.status(settings.local_proxy_port);
-    database.load_local_routing_workspace(proxy_status)
+    load_local_routing_workspace_v2(services.inner(), proxy.inner()).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -436,475 +640,683 @@ pub struct ReorderLocalRoutingKeysInput {
 }
 
 #[tauri::command]
-pub fn reorder_local_routing_keys(
-    database: State<'_, AppDatabase>,
+pub async fn reorder_local_routing_keys(
+    services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
     input: ReorderLocalRoutingKeysInput,
 ) -> Result<crate::services::proxy::routing_types::LocalRoutingWorkspace, String> {
-    database.reorder_local_routing_keys(input.station_key_ids)?;
-    let settings = database.get_settings()?;
+    services
+        .routing
+        .reorder_local_routing_keys(input.station_key_ids)
+        .await
+        .map_err(command_application_error)?;
+    load_local_routing_workspace_v2(services.inner(), proxy.inner()).await
+}
+
+async fn load_local_routing_workspace_v2(
+    services: &AppServices,
+    proxy: &ProxyRuntimeState,
+) -> Result<crate::services::proxy::routing_types::LocalRoutingWorkspace, String> {
+    let settings = services
+        .settings
+        .load()
+        .await
+        .map_err(command_application_error)?;
+    let request_logs = services
+        .request_logs
+        .list_recent(PageLimit::new(500).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)?;
     let proxy_status = proxy.status(settings.local_proxy_port);
-    database.load_local_routing_workspace(proxy_status)
+    services
+        .routing
+        .load_local_routing_workspace(settings, request_logs, proxy_status)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
 pub async fn start_local_proxy(
-    database: State<'_, AppDatabase>,
     secrets: State<'_, SecretManager>,
+    services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
-    let status = crate::services::proxy::startup::start_from_persisted_settings(
-        database.inner(),
-        *secrets.data_key(),
-        proxy.inner(),
-    )
-    .await?;
-    if let Err(error) = database.set_local_proxy_start_on_launch(true) {
+    let settings = services
+        .settings
+        .load()
+        .await
+        .map_err(command_application_error)?;
+    let local_key = services
+        .settings
+        .ensure_local_access_key()
+        .await
+        .map_err(command_application_error)?;
+    let status = proxy
+        .start(crate::services::proxy::startup::config_from_v2_services(
+            services.inner(),
+            *secrets.data_key(),
+            local_key,
+            settings.local_proxy_port,
+        ))
+        .await?;
+    if let Err(error) = services
+        .settings
+        .set_local_proxy_start_on_launch(true)
+        .await
+    {
         let _ = proxy.stop(status.port).await;
-        return Err(error);
+        return Err(command_application_error(error));
     }
     Ok(status)
 }
 
 #[tauri::command]
 pub async fn stop_local_proxy(
-    database: State<'_, AppDatabase>,
+    services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
-    let settings = database.get_settings()?;
+    let settings = services
+        .settings
+        .load()
+        .await
+        .map_err(command_application_error)?;
     let status = proxy.stop(settings.local_proxy_port).await?;
-    database.set_local_proxy_start_on_launch(false)?;
+    services
+        .settings
+        .set_local_proxy_start_on_launch(false)
+        .await
+        .map_err(command_application_error)?;
     Ok(status)
 }
 
 #[tauri::command]
 pub async fn cleanup_before_update(
-    database: State<'_, AppDatabase>,
+    services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
-    let settings = database.get_settings()?;
+    let settings = services
+        .settings
+        .load()
+        .await
+        .map_err(command_application_error)?;
     proxy.cleanup_before_update(settings.local_proxy_port).await
 }
 
 #[tauri::command]
 pub async fn prepare_local_proxy_for_update(
-    database: State<'_, AppDatabase>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
-    let _settings = database.get_settings()?;
     proxy.prepare_for_update(Duration::from_secs(30)).await
 }
 
 #[tauri::command]
 pub async fn restart_local_proxy(
-    database: State<'_, AppDatabase>,
     secrets: State<'_, SecretManager>,
+    services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
 ) -> Result<ProxyStatus, String> {
-    let settings = database.get_settings()?;
-    database.migrate_plaintext_secrets(secrets.data_key())?;
+    let settings = services
+        .settings
+        .load()
+        .await
+        .map_err(command_application_error)?;
+    let local_key = services
+        .settings
+        .ensure_local_access_key()
+        .await
+        .map_err(command_application_error)?;
     let status = proxy
-        .restart(ProxyStartConfig::new(
-            database.inner().clone(),
+        .restart(crate::services::proxy::startup::config_from_v2_services(
+            services.inner(),
             *secrets.data_key(),
+            local_key,
             settings.local_proxy_port,
         ))
         .await?;
-    if let Err(error) = database.set_local_proxy_start_on_launch(true) {
+    if let Err(error) = services
+        .settings
+        .set_local_proxy_start_on_launch(true)
+        .await
+    {
         let _ = proxy.stop(status.port).await;
-        return Err(error);
+        return Err(command_application_error(error));
     }
     Ok(status)
 }
 
 #[tauri::command]
-pub fn list_request_logs(database: State<'_, AppDatabase>) -> Result<Vec<RequestLog>, String> {
-    database.list_request_logs()
+pub async fn list_request_logs(
+    services: State<'_, AppServices>,
+) -> Result<Vec<RequestLog>, String> {
+    services
+        .request_logs
+        .list_recent(PageLimit::new(500).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn clear_request_logs(database: State<'_, AppDatabase>) -> Result<(), String> {
-    database.clear_request_logs()
+pub async fn clear_request_logs(services: State<'_, AppServices>) -> Result<(), String> {
+    services
+        .request_logs
+        .clear()
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn get_secret_migration_status(
-    database: State<'_, AppDatabase>,
-) -> Result<SecretMigrationReport, String> {
-    database.secret_migration_status()
-}
-
-#[tauri::command]
-pub fn run_secret_safety_scan(
-    database: State<'_, AppDatabase>,
-) -> Result<Vec<SecretScanFinding>, String> {
-    database.run_secret_safety_scan()
-}
-
-#[tauri::command]
-pub fn list_station_keys(
-    database: State<'_, AppDatabase>,
+pub async fn list_station_keys(
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<Vec<StationKey>, String> {
-    database.list_station_keys(station_id)
+    services
+        .credentials
+        .list_station_keys(station_id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn create_station_key(
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+pub async fn create_station_key(
+    services: State<'_, AppServices>,
     input: CreateStationKeyInput,
 ) -> Result<StationKey, String> {
-    database.create_station_key_with_data_key(input, secrets.data_key())
+    services
+        .credentials
+        .create_station_key(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn update_station_key(
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+pub async fn update_station_key(
+    services: State<'_, AppServices>,
     input: UpdateStationKeyInput,
 ) -> Result<StationKey, String> {
-    database.update_station_key_with_data_key(input, secrets.data_key())
+    services
+        .credentials
+        .update_station_key(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn save_station_key_with_defaults(
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+pub async fn save_station_key_with_defaults(
+    services: State<'_, AppServices>,
     input: SaveStationKeyWithDefaultsInput,
 ) -> Result<SaveStationKeyWithDefaultsResult, String> {
-    database.save_station_key_with_defaults(secrets.data_key(), input)
+    services
+        .credentials
+        .save_station_key_with_defaults(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn update_station_key_group_binding(
-    database: State<'_, AppDatabase>,
+pub async fn update_station_key_group_binding(
+    services: State<'_, AppServices>,
     input: UpdateStationKeyGroupBindingInput,
 ) -> Result<StationKey, String> {
-    database.update_station_key_group_binding(input)
+    services
+        .credentials
+        .update_station_key_group_binding(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn delete_station_key(database: State<'_, AppDatabase>, id: String) -> Result<(), String> {
-    database.delete_station_key(id)
+pub async fn delete_station_key(
+    services: State<'_, AppServices>,
+    id: String,
+) -> Result<(), String> {
+    services
+        .credentials
+        .delete_station_key(id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn reorder_station_keys(
-    database: State<'_, AppDatabase>,
+pub async fn reorder_station_keys(
+    services: State<'_, AppServices>,
     station_id: String,
     key_ids: Vec<String>,
 ) -> Result<Vec<StationKey>, String> {
-    database.reorder_station_keys(station_id, key_ids)
+    services
+        .credentials
+        .reorder_station_keys(station_id, key_ids)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn get_remote_key_capability(
-    database: State<'_, AppDatabase>,
+pub async fn get_remote_key_capability(
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<RemoteKeyCapability, String> {
-    remote_keys::remote_key_capability(&database, station_id)
+    services
+        .credentials
+        .get_remote_key_capability(station_id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_remote_station_keys(
-    database: State<'_, AppDatabase>,
+pub async fn list_remote_station_keys(
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<Vec<RemoteStationKey>, String> {
-    remote_keys::list_remote_keys(&database, station_id)
+    services
+        .credentials
+        .list_remote_station_keys(station_id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
 pub async fn scan_remote_station_keys(
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<RemoteKeyScanResult, String> {
-    let database = database.inner().clone();
-    let data_key = *secrets.data_key();
-    tauri::async_runtime::spawn_blocking(move || {
-        remote_keys::scan_remote_keys(&database, &data_key, station_id)
+    let source = collectors::V2CollectorSourceAdapter::new(
+        services.collectors.clone(),
+        services.credentials.clone(),
+        services.settings.clone(),
+    );
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        remote_keys::prepare_remote_key_scan_v2(&source, station_id)
     })
     .await
-    .map_err(|error| format!("远端 Key 扫描任务执行失败: {error}"))?
+    .map_err(|error| format!("远端 Key 扫描任务执行失败: {error}"))??;
+    remote_keys::finish_remote_key_scan_v2(services.credentials.as_ref(), prepared).await
 }
 
 #[tauri::command]
 pub async fn create_remote_station_key(
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+    services: State<'_, AppServices>,
     input: CreateRemoteStationKeyInput,
 ) -> Result<CreateRemoteStationKeyResult, String> {
-    let database = database.inner().clone();
-    let data_key = *secrets.data_key();
-    tauri::async_runtime::spawn_blocking(move || {
-        remote_keys::create_remote_key(&database, &data_key, input)
+    let source = collectors::V2CollectorSourceAdapter::new(
+        services.collectors.clone(),
+        services.credentials.clone(),
+        services.settings.clone(),
+    );
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        remote_keys::prepare_remote_key_creation_v2(&source, input)
     })
     .await
-    .map_err(|error| format!("远端 Key 创建任务执行失败: {error}"))?
+    .map_err(|error| format!("远端 Key 创建任务执行失败: {error}"))??;
+    remote_keys::finish_remote_key_creation_v2(services.credentials.as_ref(), prepared).await
 }
 
 #[tauri::command]
 pub async fn create_local_station_key_from_remote(
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+    services: State<'_, AppServices>,
     remote_key_id: String,
     station_id: String,
 ) -> Result<CreateLocalStationKeyFromRemoteResult, String> {
-    let database = database.inner().clone();
-    let data_key = *secrets.data_key();
-    tauri::async_runtime::spawn_blocking(move || {
-        remote_keys::create_local_key_from_remote_key(
-            &database,
-            &data_key,
-            station_id,
-            remote_key_id,
-        )
+    let source = collectors::V2CollectorSourceAdapter::new(
+        services.collectors.clone(),
+        services.credentials.clone(),
+        services.settings.clone(),
+    );
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        remote_keys::prepare_local_key_from_remote_v2(&source, station_id, remote_key_id)
     })
     .await
-    .map_err(|error| format!("远端 Key 同步本地任务执行失败: {error}"))?
+    .map_err(|error| format!("远端 Key 同步本地任务执行失败: {error}"))??;
+    remote_keys::finish_local_key_from_remote_v2(services.credentials.as_ref(), prepared).await
 }
 
 #[tauri::command]
-pub fn bind_remote_station_key(
-    database: State<'_, AppDatabase>,
+pub async fn bind_remote_station_key(
+    services: State<'_, AppServices>,
     input: BindRemoteStationKeyInput,
 ) -> Result<Vec<RemoteStationKey>, String> {
-    remote_keys::bind_remote_key(&database, input)
+    services
+        .credentials
+        .bind_remote_station_key(input.remote_key_id, input.station_key_id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn unbind_remote_station_key(
-    database: State<'_, AppDatabase>,
+pub async fn unbind_remote_station_key(
+    services: State<'_, AppServices>,
     remote_key_id: String,
     station_id: String,
 ) -> Result<Vec<RemoteStationKey>, String> {
-    database.unbind_remote_station_key(remote_key_id, station_id)
+    services
+        .credentials
+        .unbind_remote_station_key(remote_key_id, station_id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_key_pool_items(database: State<'_, AppDatabase>) -> Result<Vec<KeyPoolItem>, String> {
-    database.list_key_pool_items()
+pub async fn list_key_pool_items(
+    services: State<'_, AppServices>,
+) -> Result<Vec<KeyPoolItem>, String> {
+    services
+        .credentials
+        .list_key_pool_items()
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn reorder_key_pool(
-    database: State<'_, AppDatabase>,
+pub async fn reorder_key_pool(
+    services: State<'_, AppServices>,
     key_ids: Vec<String>,
 ) -> Result<Vec<KeyPoolItem>, String> {
-    database.reorder_key_pool(key_ids)
+    services
+        .credentials
+        .reorder_key_pool(key_ids)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn get_station_key_capabilities(
-    database: State<'_, AppDatabase>,
+pub async fn get_station_key_capabilities(
+    services: State<'_, AppServices>,
     station_key_id: String,
 ) -> Result<StationKeyCapabilities, String> {
-    database.get_station_key_capabilities(station_key_id)
+    services
+        .credentials
+        .get_station_key_capabilities(station_key_id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn update_station_key_capabilities(
-    database: State<'_, AppDatabase>,
+pub async fn update_station_key_capabilities(
+    services: State<'_, AppServices>,
     input: UpdateStationKeyCapabilitiesInput,
 ) -> Result<StationKeyCapabilities, String> {
-    database.update_station_key_capabilities(input)
+    services
+        .credentials
+        .update_station_key_capabilities(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_model_aliases(database: State<'_, AppDatabase>) -> Result<Vec<ModelAlias>, String> {
-    database.list_model_aliases()
+pub async fn list_model_aliases(
+    services: State<'_, AppServices>,
+) -> Result<Vec<ModelAlias>, String> {
+    services
+        .routing
+        .list_model_aliases()
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn upsert_model_alias(
-    database: State<'_, AppDatabase>,
+pub async fn upsert_model_alias(
+    services: State<'_, AppServices>,
     input: UpsertModelAliasInput,
 ) -> Result<ModelAlias, String> {
-    database.upsert_model_alias(input)
+    services
+        .routing
+        .upsert_model_alias(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn delete_model_alias(database: State<'_, AppDatabase>, id: String) -> Result<(), String> {
-    database.delete_model_alias(id)
+pub async fn delete_model_alias(
+    services: State<'_, AppServices>,
+    id: String,
+) -> Result<(), String> {
+    services
+        .routing
+        .delete_model_alias(id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_station_key_health(
-    database: State<'_, AppDatabase>,
+pub async fn list_station_key_health(
+    services: State<'_, AppServices>,
 ) -> Result<Vec<StationKeyHealth>, String> {
-    database.list_station_key_health()
+    services
+        .routing
+        .list_station_key_health()
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_station_endpoint_health(
-    database: State<'_, AppDatabase>,
+pub async fn list_station_endpoint_health(
+    services: State<'_, AppServices>,
 ) -> Result<Vec<StationEndpointHealth>, String> {
-    database.list_station_endpoint_health()
+    services
+        .routing
+        .list_station_endpoint_health()
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_channel_monitors(
-    database: State<'_, AppDatabase>,
+pub async fn list_channel_monitors(
+    services: State<'_, AppServices>,
 ) -> Result<Vec<ChannelMonitor>, String> {
-    database.list_channel_monitors()
+    services
+        .monitoring
+        .list_monitors(PageLimit::new(200).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_channel_monitor_summaries(
-    database: State<'_, AppDatabase>,
+pub async fn list_channel_monitor_summaries(
+    services: State<'_, AppServices>,
     run_since: Option<String>,
     run_limit: Option<usize>,
 ) -> Result<Vec<ChannelMonitorSummary>, String> {
-    database.list_channel_monitor_summaries(run_since.as_deref(), run_limit)
+    services
+        .monitoring
+        .list_channel_monitor_summaries(run_since.as_deref(), run_limit)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_channel_status_summaries(
-    database: State<'_, AppDatabase>,
+pub async fn list_channel_status_summaries(
+    services: State<'_, AppServices>,
 ) -> Result<Vec<ChannelStatusSummary>, String> {
-    database.list_channel_status_summaries()
+    services
+        .channel_status
+        .load(PageLimit::new(200).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn load_channel_status_workspace(
-    database: State<'_, AppDatabase>,
+pub async fn load_channel_status_workspace(
+    services: State<'_, AppServices>,
 ) -> Result<ChannelStatusWorkspace, String> {
-    database.load_channel_status_workspace()
+    services
+        .channel_status
+        .load_workspace(PageLimit::new(200).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn load_pricing_comparison_workspace(
-    database: State<'_, AppDatabase>,
+pub async fn load_pricing_comparison_workspace(
+    services: State<'_, AppServices>,
 ) -> Result<PricingComparisonWorkspace, String> {
-    database.load_pricing_comparison_workspace()
+    services
+        .pricing_comparison
+        .load(PageLimit::new(500).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn create_channel_monitor(
-    database: State<'_, AppDatabase>,
+pub async fn create_channel_monitor(
+    services: State<'_, AppServices>,
     input: CreateChannelMonitorInput,
 ) -> Result<ChannelMonitor, String> {
-    database.create_channel_monitor(input)
+    services
+        .monitoring
+        .create_monitor(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn update_channel_monitor(
-    database: State<'_, AppDatabase>,
+pub async fn update_channel_monitor(
+    services: State<'_, AppServices>,
     input: UpdateChannelMonitorInput,
 ) -> Result<ChannelMonitor, String> {
-    database.update_channel_monitor(input)
+    services
+        .monitoring
+        .update_monitor(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn delete_channel_monitor(database: State<'_, AppDatabase>, id: String) -> Result<(), String> {
-    database.delete_channel_monitor(id)
-}
-
-#[tauri::command]
-pub fn list_channel_monitor_runs(
-    database: State<'_, AppDatabase>,
-    monitor_id: String,
-) -> Result<Vec<ChannelMonitorRun>, String> {
-    database.list_channel_monitor_runs(monitor_id)
-}
-
-#[tauri::command]
-pub fn list_channel_monitor_templates(
-    database: State<'_, AppDatabase>,
-) -> Result<Vec<ChannelMonitorRequestTemplate>, String> {
-    database.list_channel_monitor_templates()
-}
-
-#[tauri::command]
-pub fn create_channel_monitor_template(
-    database: State<'_, AppDatabase>,
-    input: CreateChannelMonitorTemplateInput,
-) -> Result<ChannelMonitorRequestTemplate, String> {
-    database.create_channel_monitor_template(input)
-}
-
-#[tauri::command]
-pub fn update_channel_monitor_template(
-    database: State<'_, AppDatabase>,
-    input: UpdateChannelMonitorTemplateInput,
-) -> Result<ChannelMonitorRequestTemplate, String> {
-    database.update_channel_monitor_template(input)
-}
-
-#[tauri::command]
-pub fn duplicate_channel_monitor_template(
-    database: State<'_, AppDatabase>,
-    id: String,
-) -> Result<ChannelMonitorRequestTemplate, String> {
-    database.duplicate_channel_monitor_template(id)
-}
-
-#[tauri::command]
-pub fn delete_channel_monitor_template(
-    database: State<'_, AppDatabase>,
+pub async fn delete_channel_monitor(
+    services: State<'_, AppServices>,
     id: String,
 ) -> Result<(), String> {
-    database.delete_channel_monitor_template(id)
+    services
+        .monitoring
+        .delete_monitor(id)
+        .await
+        .map_err(command_application_error)
+}
+
+#[tauri::command]
+pub async fn list_channel_monitor_runs(
+    services: State<'_, AppServices>,
+    monitor_id: String,
+) -> Result<Vec<ChannelMonitorRun>, String> {
+    services
+        .monitoring
+        .list_run_page(
+            &monitor_id,
+            None,
+            PageLimit::new(500).expect("bounded limit"),
+        )
+        .await
+        .map(|page| page.items)
+        .map_err(command_application_error)
+}
+
+#[tauri::command]
+pub async fn list_channel_monitor_templates(
+    services: State<'_, AppServices>,
+) -> Result<Vec<ChannelMonitorRequestTemplate>, String> {
+    services
+        .monitoring
+        .list_templates(PageLimit::new(200).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
+}
+
+#[tauri::command]
+pub async fn create_channel_monitor_template(
+    services: State<'_, AppServices>,
+    input: CreateChannelMonitorTemplateInput,
+) -> Result<ChannelMonitorRequestTemplate, String> {
+    services
+        .monitoring
+        .create_template(input)
+        .await
+        .map_err(command_application_error)
+}
+
+#[tauri::command]
+pub async fn update_channel_monitor_template(
+    services: State<'_, AppServices>,
+    input: UpdateChannelMonitorTemplateInput,
+) -> Result<ChannelMonitorRequestTemplate, String> {
+    services
+        .monitoring
+        .update_template(input)
+        .await
+        .map_err(command_application_error)
+}
+
+#[tauri::command]
+pub async fn duplicate_channel_monitor_template(
+    services: State<'_, AppServices>,
+    id: String,
+) -> Result<ChannelMonitorRequestTemplate, String> {
+    services
+        .monitoring
+        .duplicate_template(id)
+        .await
+        .map_err(command_application_error)
+}
+
+#[tauri::command]
+pub async fn delete_channel_monitor_template(
+    services: State<'_, AppServices>,
+    id: String,
+) -> Result<(), String> {
+    services
+        .monitoring
+        .delete_template(id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
 pub async fn run_channel_monitor_now(
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+    services: State<'_, AppServices>,
     monitor_id: String,
 ) -> Result<Vec<ChannelMonitorRun>, String> {
-    let database = database.inner().clone();
-    let data_key = *secrets.data_key();
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::services::channel_monitors::run_channel_monitor_now(
-            &database,
-            &data_key,
-            &monitor_id,
-        )
-    })
-    .await
-    .map_err(|error| format!("Channel monitor run failed to join: {error}"))?
+    crate::services::channel_monitors::v2_runner_port(services.inner())
+        .run_monitor(monitor_id)
+        .await
 }
 
 #[tauri::command]
-pub fn get_station_key_health(
-    database: State<'_, AppDatabase>,
+pub async fn get_station_key_health(
+    services: State<'_, AppServices>,
     station_key_id: String,
 ) -> Result<StationKeyHealth, String> {
-    database.get_station_key_health(station_key_id)
+    services
+        .routing
+        .station_key_health_by_id(&station_key_id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn ping_station_endpoint(
-    database: State<'_, AppDatabase>,
+pub async fn ping_station_endpoint(
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<EndpointPingResult, String> {
-    ping_station_endpoint_for_tests(&database, station_id, 5)
-}
-
-fn ping_station_endpoint_for_tests(
-    database: &AppDatabase,
-    station_id: String,
-    timeout_seconds: u64,
-) -> Result<EndpointPingResult, String> {
-    let station = database
-        .list_stations()?
-        .into_iter()
-        .find(|station| station.id == station_id)
-        .ok_or_else(|| "未找到要 PING 的中转站".to_string())?;
+    let target = services
+        .routing
+        .station_endpoint_probe_target(&station_id)
+        .await
+        .map_err(command_application_error)?;
     let checked_at = now_millis_for_services().to_string();
-    let probe = probe_station_endpoint(
-        &station.api_base_url,
-        Duration::from_secs(timeout_seconds.max(1)),
-    );
-    let health = database.upsert_station_endpoint_health(
-        &station.id,
-        &probe.status,
-        probe.latency_ms,
-        &checked_at,
-        probe.error_summary.as_deref(),
-    )?;
+    let api_base_url = target.api_base_url.clone();
+    let probe = tauri::async_runtime::spawn_blocking(move || {
+        probe_station_endpoint(&api_base_url, Duration::from_secs(5))
+    })
+    .await
+    .map_err(|error| format!("endpoint ping worker failed to join: {error}"))?;
+    let health = services
+        .routing
+        .record_station_endpoint_health(
+            target.station_id,
+            target.endpoint_revision,
+            probe.status,
+            probe.latency_ms,
+            checked_at.clone(),
+            probe.error_summary,
+        )
+        .await
+        .map_err(command_application_error)?;
     Ok(EndpointPingResult {
         station_id: health.station_id,
         ok: probe.ok,
@@ -1001,381 +1413,498 @@ impl StationKeyConnectivityProbeResult {
 
 #[tauri::command]
 pub async fn test_station_key_connectivity(
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+    services: State<'_, AppServices>,
     station_key_id: String,
     model: String,
     progress: Channel<StationKeyConnectivityTestEvent>,
 ) -> Result<StationKeyConnectivityTestResult, String> {
-    let database = database.inner().clone();
-    let data_key = *secrets.data_key();
-    tauri::async_runtime::spawn_blocking(move || {
-        test_station_key_connectivity_blocking(
-            &database,
-            &data_key,
-            &station_key_id,
-            &model,
-            progress,
-        )
+    let key = services
+        .credentials
+        .list_key_pool_items()
+        .await
+        .map_err(command_application_error)?
+        .into_iter()
+        .find(|item| item.id == station_key_id)
+        .ok_or_else(|| "Station Key does not exist".to_string())?;
+    if !key.api_key_present {
+        return Err("Station Key does not have a saved API key".to_string());
+    }
+    let secret = services
+        .credentials
+        .resolve_station_key_secret(station_key_id.clone())
+        .await
+        .map_err(command_application_error)?;
+    let api_key = String::from_utf8(secret.as_bytes().to_vec())
+        .map(zeroize::Zeroizing::new)
+        .map_err(|_| "Station Key API key is not valid UTF-8".to_string())?;
+    let capabilities = services
+        .credentials
+        .get_station_key_capabilities(station_key_id.clone())
+        .await
+        .map_err(command_application_error)?;
+    let station_id = key.station_id.clone();
+    let endpoint_revision = key.station_endpoint_revision;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        test_station_key_connectivity_prepared_blocking(key, api_key, capabilities, model, progress)
     })
     .await
-    .map_err(|error| format!("测试密钥连通性任务失败: {error}"))?
+    .map_err(|error| format!("测试密钥连通性任务失败: {error}"))??;
+    services
+        .routing
+        .record_station_key_connectivity(
+            station_key_id,
+            station_id,
+            endpoint_revision,
+            result.ok,
+            result.duration_ms,
+            result.message.clone(),
+        )
+        .await
+        .map_err(command_application_error)?;
+    Ok(result)
 }
 
 #[tauri::command]
-pub fn simulate_route(
-    database: State<'_, AppDatabase>,
+pub async fn simulate_route(
+    services: State<'_, AppServices>,
     input: RouteSimulationInput,
 ) -> Result<RouteSimulationResult, String> {
-    database.simulate_route(input)
+    services
+        .routing
+        .simulate_route(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_pricing_rules(database: State<'_, AppDatabase>) -> Result<Vec<PricingRule>, String> {
-    database.list_pricing_rules()
+pub async fn list_pricing_rules(
+    services: State<'_, AppServices>,
+) -> Result<Vec<PricingRule>, String> {
+    services
+        .pricing
+        .list_pricing_rules(PageLimit::new(200).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_model_base_prices(
-    database: State<'_, AppDatabase>,
+pub async fn list_model_base_prices(
+    services: State<'_, AppServices>,
 ) -> Result<Vec<ModelBasePrice>, String> {
-    database.list_model_base_prices()
+    services
+        .pricing
+        .list_model_base_prices(PageLimit::new(200).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn upsert_model_base_price(
-    database: State<'_, AppDatabase>,
+pub async fn upsert_model_base_price(
+    services: State<'_, AppServices>,
     input: UpsertModelBasePriceInput,
 ) -> Result<ModelBasePrice, String> {
-    database.upsert_model_base_price(input)
+    services
+        .pricing
+        .upsert_model_base_price(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn reset_model_base_prices_to_builtins(
-    database: State<'_, AppDatabase>,
+pub async fn reset_model_base_prices_to_builtins(
+    services: State<'_, AppServices>,
 ) -> Result<Vec<ModelBasePrice>, String> {
-    database.reset_model_base_prices_to_builtins()
+    services
+        .pricing
+        .reset_model_base_prices_to_builtins(PageLimit::new(500).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn upsert_pricing_rule(
-    database: State<'_, AppDatabase>,
+pub async fn upsert_pricing_rule(
+    services: State<'_, AppServices>,
     input: UpsertPricingRuleInput,
 ) -> Result<PricingRule, String> {
-    database.upsert_pricing_rule(input)
+    services
+        .pricing
+        .upsert_pricing_rule(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn delete_pricing_rule(database: State<'_, AppDatabase>, id: String) -> Result<(), String> {
-    database.delete_pricing_rule(id)
+pub async fn delete_pricing_rule(
+    services: State<'_, AppServices>,
+    id: String,
+) -> Result<(), String> {
+    services
+        .pricing
+        .delete_pricing_rule(id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn resolve_station_key_pricing_context(
-    database: State<'_, AppDatabase>,
+pub async fn resolve_station_key_pricing_context(
+    services: State<'_, AppServices>,
     station_key_id: String,
     requested_model: String,
     request_kind: Option<RequestKind>,
 ) -> Result<ResolvedPricingContext, String> {
-    let model = requested_model.trim().to_string();
-    let economics = database
-        .route_candidate_economics_for_model(station_key_id.clone(), Some(model.clone()))?;
-    let Some(economics) = economics else {
-        return Ok(ResolvedPricingContext {
-            station_key_id,
-            station_id: "unknown".to_string(),
-            requested_model: model,
-            resolved_model: "unknown".to_string(),
-            request_kind: request_kind.unwrap_or(RequestKind::Text),
-            group_binding_id: None,
-            base_input_price: None,
-            base_output_price: None,
-            base_fixed_price: None,
-            currency: "unknown".to_string(),
-            unit: "per_1m_tokens".to_string(),
-            base_price_source: None,
-            effective_rate_multiplier: None,
-            rate_source: None,
-            rate_collected_at: None,
-            estimated_input_price: None,
-            estimated_output_price: None,
-            estimated_fixed_price: None,
-            pricing_status: PricingStatus::Unpriced,
-            confidence: 0.0,
-            source_chain: Vec::new(),
-            reason: Some("pricing_not_available".to_string()),
-            resolved_at: now_millis_for_services().to_string(),
-        });
-    };
-
-    let mut context = pricing_context_from_pricing_parts(&RequestPricingParts {
-        station_key_id: &station_key_id,
-        station_id: None,
-        model: Some(&model),
-        pricing_rule_id: economics.pricing_rule_id.as_deref(),
-        pricing_model: economics.pricing_model.as_deref(),
-        group_binding_id: economics.group_binding_id.as_deref(),
-        rate_multiplier: economics.rate_multiplier,
-        normalization_status: economics.normalization_status.as_deref(),
-        price_confidence: economics.price_confidence,
-        base_input_price: economics.base_input_price,
-        base_output_price: economics.base_output_price,
-        base_fixed_price: economics.base_fixed_price,
-        estimated_input_price: economics.estimated_input_price,
-        estimated_output_price: economics.estimated_output_price,
-        fixed_price: economics.fixed_price,
-        price_currency: economics.price_currency.as_deref(),
-        pricing_source: economics.pricing_source.as_deref(),
-        collected_at: economics.balance_collected_at.as_deref(),
-    });
-    context.request_kind = request_kind.unwrap_or(RequestKind::Text);
-    Ok(context)
+    services
+        .pricing
+        .resolve_station_key_pricing_context(&station_key_id, &requested_model, request_kind)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_balance_snapshots(
-    database: State<'_, AppDatabase>,
+pub async fn list_balance_snapshots(
+    services: State<'_, AppServices>,
 ) -> Result<Vec<BalanceSnapshot>, String> {
-    database.list_balance_snapshots()
+    services
+        .pricing
+        .latest_station_balances(PageLimit::new(200).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_current_station_balance_snapshots(
-    database: State<'_, AppDatabase>,
+pub async fn list_current_station_balance_snapshots(
+    services: State<'_, AppServices>,
 ) -> Result<Vec<BalanceSnapshot>, String> {
-    database.list_current_station_balance_snapshots()
+    services
+        .pricing
+        .latest_station_balances(PageLimit::new(200).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_balance_snapshots_for_station(
-    database: State<'_, AppDatabase>,
+pub async fn list_balance_snapshots_for_station(
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<Vec<BalanceSnapshot>, String> {
-    database.list_balance_snapshots_for_station(station_id)
+    services
+        .routing
+        .list_balance_snapshots_for_station(&station_id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn upsert_balance_snapshot(
-    database: State<'_, AppDatabase>,
+pub async fn upsert_balance_snapshot(
+    services: State<'_, AppServices>,
     input: UpsertBalanceSnapshotInput,
 ) -> Result<BalanceSnapshot, String> {
-    database.upsert_balance_snapshot(input)
+    services
+        .pricing
+        .upsert_balance_snapshot(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_station_group_bindings(
-    database: State<'_, AppDatabase>,
+pub async fn list_station_group_bindings(
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<Vec<StationGroupBinding>, String> {
-    database.list_station_group_bindings(station_id)
+    services
+        .collectors
+        .list_station_group_bindings(&station_id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_station_group_options(
-    database: State<'_, AppDatabase>,
+pub async fn list_station_group_options(
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<Vec<StationGroupOption>, String> {
-    database.list_station_group_options(station_id)
+    services
+        .collectors
+        .list_station_group_options(&station_id, PageLimit::new(500).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn upsert_station_group_binding(
-    database: State<'_, AppDatabase>,
+pub async fn upsert_station_group_binding(
+    services: State<'_, AppServices>,
     input: UpsertStationGroupBindingInput,
 ) -> Result<StationGroupBinding, String> {
-    database.upsert_station_group_binding(input)
+    services
+        .collectors
+        .upsert_station_group_binding(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_group_rate_records(
-    database: State<'_, AppDatabase>,
+pub async fn list_group_rate_records(
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<Vec<GroupRateRecord>, String> {
-    database.list_group_rate_records(station_id)
+    services
+        .collectors
+        .list_group_rate_records(&station_id, PageLimit::new(500).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_collector_runs(
-    database: State<'_, AppDatabase>,
+pub async fn list_collector_runs(
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<Vec<CollectorRun>, String> {
-    database.list_collector_runs(station_id)
+    services
+        .collectors
+        .list_collector_runs(&station_id, PageLimit::new(500).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_change_events(database: State<'_, AppDatabase>) -> Result<Vec<ChangeEvent>, String> {
-    database.list_change_events()
+pub async fn list_change_events(
+    services: State<'_, AppServices>,
+) -> Result<Vec<ChangeEvent>, String> {
+    services
+        .changes
+        .list(None, PageLimit::new(200).expect("bounded limit"))
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn clear_change_events(database: State<'_, AppDatabase>) -> Result<(), String> {
-    database.clear_change_events()
+pub async fn clear_change_events(services: State<'_, AppServices>) -> Result<(), String> {
+    services
+        .changes
+        .clear()
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn list_change_events_for_station(
-    database: State<'_, AppDatabase>,
+pub async fn list_change_events_for_station(
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<Vec<ChangeEvent>, String> {
-    database.list_change_events_for_station(station_id)
+    services
+        .changes
+        .list(
+            Some(&station_id),
+            PageLimit::new(200).expect("bounded limit"),
+        )
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn upsert_change_event(
-    database: State<'_, AppDatabase>,
+pub async fn upsert_change_event(
+    services: State<'_, AppServices>,
     input: UpsertChangeEventInput,
 ) -> Result<ChangeEvent, String> {
-    database.upsert_change_event(input)
+    services
+        .changes
+        .upsert(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn mark_change_event_read(
-    database: State<'_, AppDatabase>,
+pub async fn mark_change_event_read(
+    services: State<'_, AppServices>,
     id: String,
 ) -> Result<ChangeEvent, String> {
-    database.mark_change_event_read(id)
+    services
+        .changes
+        .mark_read(id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn mark_change_events_read(
-    database: State<'_, AppDatabase>,
+pub async fn mark_change_events_read(
+    services: State<'_, AppServices>,
     ids: Vec<String>,
 ) -> Result<Vec<ChangeEvent>, String> {
-    database.mark_change_events_read(ids)
+    services
+        .changes
+        .mark_many_read(ids)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn dismiss_change_event(
-    database: State<'_, AppDatabase>,
+pub async fn dismiss_change_event(
+    services: State<'_, AppServices>,
     id: String,
 ) -> Result<ChangeEvent, String> {
-    database.dismiss_change_event(id)
+    services
+        .changes
+        .dismiss(id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn resolve_change_event(
-    database: State<'_, AppDatabase>,
+pub async fn resolve_change_event(
+    services: State<'_, AppServices>,
     id: String,
 ) -> Result<ChangeEvent, String> {
-    database.resolve_change_event(id)
+    services
+        .changes
+        .resolve(id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn get_station_credentials(
-    database: State<'_, AppDatabase>,
+pub async fn get_station_credentials(
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<StationCredentials, String> {
-    database.get_station_credentials(station_id)
+    services
+        .credentials
+        .get_station_credentials(station_id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn update_station_credentials(
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+pub async fn update_station_credentials(
+    services: State<'_, AppServices>,
     input: UpdateStationCredentialsInput,
 ) -> Result<StationCredentials, String> {
-    database.update_station_credentials_with_data_key(input, secrets.data_key())
+    services
+        .credentials
+        .update_station_credentials(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn update_station_session(
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+pub async fn update_station_session(
+    services: State<'_, AppServices>,
     input: UpdateStationSessionInput,
 ) -> Result<StationCredentials, String> {
-    database.update_station_session_with_data_key(input, secrets.data_key())
+    services
+        .credentials
+        .update_station_session(input)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn clear_station_credentials(
-    database: State<'_, AppDatabase>,
+pub async fn clear_station_credentials(
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<StationCredentials, String> {
-    database.clear_station_credentials(station_id)
+    services
+        .credentials
+        .clear_station_credentials(station_id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
 pub async fn detect_sub2api_station(
-    database: State<'_, AppDatabase>,
+    services: State<'_, AppServices>,
+    secrets: State<'_, SecretManager>,
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
-    detect_station_info(database, station_id).await
+    run_station_collection_v2(
+        services.inner(),
+        *secrets.data_key(),
+        station_id,
+        collectors::adapters::CollectorTask::Detect,
+    )
+    .await
 }
 
 #[tauri::command]
 pub async fn collect_sub2api_station(
-    database: State<'_, AppDatabase>,
+    services: State<'_, AppServices>,
     secrets: State<'_, SecretManager>,
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
-    collect_station_info(database, secrets, station_id).await
+    run_station_collection_v2(
+        services.inner(),
+        *secrets.data_key(),
+        station_id,
+        collectors::adapters::CollectorTask::Full,
+    )
+    .await
 }
 
 #[tauri::command]
 pub async fn detect_station_info(
-    database: State<'_, AppDatabase>,
+    services: State<'_, AppServices>,
+    secrets: State<'_, SecretManager>,
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
-    let database = database.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        collectors::detect_station_info(&database, station_id)
-    })
+    run_station_collection_v2(
+        services.inner(),
+        *secrets.data_key(),
+        station_id,
+        collectors::adapters::CollectorTask::Detect,
+    )
     .await
-    .map_err(|error| format!("采集任务执行失败: {error}"))?
 }
 
 #[tauri::command]
 pub async fn collect_station_info(
-    database: State<'_, AppDatabase>,
+    services: State<'_, AppServices>,
     secrets: State<'_, SecretManager>,
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
-    let database = database.inner().clone();
-    let data_key = *secrets.data_key();
-    tauri::async_runtime::spawn_blocking(move || {
-        collectors::collect_station_info(&database, &data_key, station_id)
-    })
+    run_station_collection_v2(
+        services.inner(),
+        *secrets.data_key(),
+        station_id,
+        collectors::adapters::CollectorTask::Full,
+    )
     .await
-    .map_err(|error| format!("采集任务执行失败: {error}"))?
 }
 
 #[tauri::command]
 pub async fn collect_station_task(
-    database: State<'_, AppDatabase>,
+    services: State<'_, AppServices>,
     secrets: State<'_, SecretManager>,
     station_id: String,
     task_type: String,
 ) -> Result<CollectorRunResult, String> {
-    let database = database.inner().clone();
-    let data_key = *secrets.data_key();
-    tauri::async_runtime::spawn_blocking(move || {
-        let task = match task_type.as_str() {
-            "detect" => collectors::adapters::CollectorTask::Detect,
-            "balance" => collectors::adapters::CollectorTask::Balance,
-            "groups" => collectors::adapters::CollectorTask::Groups,
-            "models" => collectors::adapters::CollectorTask::Models,
-            "full" => collectors::adapters::CollectorTask::Full,
-            _ => return Err("未知采集任务类型".to_string()),
-        };
-        collectors::collect_station_task(&database, &data_key, station_id, task)
-    })
-    .await
-    .map_err(|error| format!("采集任务执行失败: {error}"))?
+    let task = match task_type.as_str() {
+        "detect" => collectors::adapters::CollectorTask::Detect,
+        "balance" => collectors::adapters::CollectorTask::Balance,
+        "groups" => collectors::adapters::CollectorTask::Groups,
+        "models" => collectors::adapters::CollectorTask::Models,
+        "full" => collectors::adapters::CollectorTask::Full,
+        _ => return Err("未知采集任务类型".to_string()),
+    };
+    run_station_collection_v2(services.inner(), *secrets.data_key(), station_id, task).await
 }
 
 #[tauri::command]
 pub async fn test_station_login(
-    database: State<'_, AppDatabase>,
+    services: State<'_, AppServices>,
     secrets: State<'_, SecretManager>,
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
-    let database = database.inner().clone();
     let data_key = *secrets.data_key();
-    tauri::async_runtime::spawn_blocking(move || {
-        collectors::test_station_login(&database, &data_key, station_id)
+    let source = collectors::V2CollectorSourceAdapter::new(
+        services.collectors.clone(),
+        services.credentials.clone(),
+        services.settings.clone(),
+    );
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        collectors::prepare_station_login_test_v2(&source, &data_key, station_id)
     })
     .await
     .map_err(|error| format!("登录测试执行失败: {error}"))?
+    .map_err(command_application_error)?;
+    apply_prepared_collection_v2(services.inner(), prepared).await
 }
 
 #[tauri::command]
@@ -1387,44 +1916,101 @@ pub async fn test_station_login_input(
         .map_err(|error| format!("连通性测试执行失败: {error}"))?
 }
 
-#[tauri::command]
-pub fn list_collector_snapshots(
-    database: State<'_, AppDatabase>,
+async fn run_station_collection_v2(
+    services: &AppServices,
+    data_key: [u8; 32],
     station_id: String,
-) -> Result<Vec<CollectorSnapshot>, String> {
-    database.list_collector_snapshots(station_id)
+    task: collectors::adapters::CollectorTask,
+) -> Result<CollectorRunResult, String> {
+    let source = collectors::V2CollectorSourceAdapter::new(
+        services.collectors.clone(),
+        services.credentials.clone(),
+        services.settings.clone(),
+    );
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        collectors::prepare_station_collection_v2(&source, &data_key, station_id, task)
+    })
+    .await
+    .map_err(|error| format!("采集任务执行失败: {error}"))?
+    .map_err(command_application_error)?;
+    apply_prepared_collection_v2(services, prepared).await
+}
+
+async fn apply_prepared_collection_v2(
+    services: &AppServices,
+    prepared: collectors::PreparedStationCollection,
+) -> Result<CollectorRunResult, String> {
+    let apply = collectors::apply::V2CollectorApplyAdapter::new((*services.collectors).clone());
+    collectors::apply_prepared_station_collection_v2(&services.collectors, &apply, prepared)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
-pub fn get_latest_collector_snapshot(
-    database: State<'_, AppDatabase>,
+pub async fn list_collector_snapshots(
+    services: State<'_, AppServices>,
+    station_id: String,
+) -> Result<Vec<CollectorSnapshot>, String> {
+    let limit = PageLimit::new(100).map_err(command_application_error)?;
+    services
+        .collectors
+        .list_station_snapshots(&station_id, limit)
+        .await
+        .map_err(command_application_error)
+}
+
+#[tauri::command]
+pub async fn get_latest_collector_snapshot(
+    services: State<'_, AppServices>,
     station_id: String,
 ) -> Result<Option<CollectorSnapshot>, String> {
-    database.get_latest_collector_snapshot(station_id)
+    services
+        .collectors
+        .latest_station_snapshot(&station_id)
+        .await
+        .map_err(command_application_error)
 }
 
 #[tauri::command]
 pub async fn start_capture_session(
     app: tauri::AppHandle,
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+    services: State<'_, AppServices>,
     sessions: State<'_, capture::session::CaptureSessionStore>,
     station_id: String,
 ) -> Result<CaptureSessionStatus, String> {
-    let station = database.station_for_collector(&station_id)?;
-    let credentials = database.get_station_credentials(station_id.clone())?;
-    let login_password = if credentials.password_present {
-        database.get_station_login_password_with_data_key(station_id.clone(), secrets.data_key())?
+    let station = services
+        .stations
+        .station_for_capture(&station_id)
+        .await
+        .map_err(command_application_error)?;
+    let credentials = services
+        .credentials
+        .get_station_credentials(station_id.clone())
+        .await
+        .map_err(command_application_error)?;
+    let login_password_secret = if credentials.password_present {
+        services
+            .credentials
+            .get_station_login_password(station_id.clone())
+            .await
+            .map_err(command_application_error)?
     } else {
         None
     };
+    let login_password = login_password_secret
+        .as_ref()
+        .map(|secret| {
+            std::str::from_utf8(secret.as_bytes())
+                .map_err(|_| "stored station login password is not valid UTF-8".to_string())
+        })
+        .transpose()?;
     let label = capture_window_label(&station_id);
     let endpoint_revision = station.endpoint_revision;
     let script = capture_script(
         &station_id,
         &label,
         credentials.login_username.as_deref(),
-        login_password.as_deref(),
+        login_password,
     );
     let app_handle = app.clone();
     let label_for_start = label.clone();
@@ -1477,13 +2063,16 @@ pub fn get_capture_session_status(
 }
 
 #[tauri::command]
-pub fn record_capture_event(
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+pub async fn record_capture_event(
+    services: State<'_, AppServices>,
     sessions: State<'_, capture::session::CaptureSessionStore>,
     input: CapturedHttpEventInput,
 ) -> Result<CaptureSessionStatus, String> {
-    let station = database.station_for_collector(&input.station_id)?;
+    let station = services
+        .stations
+        .station_for_capture(&input.station_id)
+        .await
+        .map_err(command_application_error)?;
     if !capture_request_belongs_to_station(
         &station.website_url,
         &station.api_base_url,
@@ -1492,17 +2081,18 @@ pub fn record_capture_event(
         return Err("捕获事件不属于当前站点 Base URL，已拒绝。".to_string());
     }
     let web_authorization_user_id = web_authorization_candidate_user_id_from_input(&input);
-    if let Some(session) = capture::extract_session_credentials(&input) {
-        let expected_revision = sessions
-            .endpoint_revision(&input.station_id)?
-            .ok_or_else(capture_endpoint_revision_missing_message)?;
-        database
-            .persist_station_session_if_revision(session, expected_revision, secrets.data_key())
-            .map_err(capture_endpoint_revision_error)?;
-    }
+    let captured_credentials = capture::extract_session_credentials(&input);
     let station_id = input.station_id.clone();
     let event = capture::sanitize_event(input);
-    sessions.push_event(&station_id, event, web_authorization_user_id)
+    let receipt = sessions.push_event(&station_id, event, web_authorization_user_id)?;
+    if let Some(session) = captured_credentials {
+        services
+            .credentials
+            .persist_station_session_if_revision(session, receipt.endpoint_revision)
+            .await
+            .map_err(capture_endpoint_revision_error)?;
+    }
+    Ok(receipt.status)
 }
 
 #[tauri::command]
@@ -1529,31 +2119,36 @@ pub fn close_capture_session(
 }
 
 #[tauri::command]
-pub fn finish_capture_session(
-    database: State<'_, AppDatabase>,
+pub async fn finish_capture_session(
+    services: State<'_, AppServices>,
     sessions: State<'_, capture::session::CaptureSessionStore>,
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
-    finish_capture_session_from_events(&database, &sessions, station_id, None)
+    let commit = sessions.begin_finish(&station_id)?;
+    let result =
+        finish_capture_session_with_events(services.inner(), &station_id, &commit, None).await;
+    match result {
+        Ok(result) => {
+            sessions.complete_commit(&station_id, &commit)?;
+            Ok(result)
+        }
+        Err(error) => Err(abort_capture_commit(
+            sessions.inner(),
+            &station_id,
+            &commit,
+            error,
+        )),
+    }
 }
 
-fn finish_capture_session_from_events(
-    database: &AppDatabase,
-    sessions: &capture::session::CaptureSessionStore,
-    station_id: String,
+async fn finish_capture_session_with_events(
+    services: &AppServices,
+    station_id: &str,
+    commit: &capture::session::CaptureCommit,
     web_authorization_summary: Option<Value>,
 ) -> Result<CollectorRunResult, String> {
-    let events = sessions.take_events(&station_id)?;
-    finish_capture_session_with_events(database, station_id, events, web_authorization_summary)
-}
-
-fn finish_capture_session_with_events(
-    database: &AppDatabase,
-    station_id: String,
-    events: Vec<CapturedHttpEvent>,
-    web_authorization_summary: Option<Value>,
-) -> Result<CollectorRunResult, String> {
-    let (mut summary, normalized, raw) = capture::summarize_events(&events);
+    let events = &commit.events;
+    let (mut summary, normalized, raw) = capture::summarize_events(events);
     if let Some(web_authorization_summary) = web_authorization_summary {
         if let Some(summary) = summary.as_object_mut() {
             summary.insert("webAuthorization".to_string(), web_authorization_summary);
@@ -1569,38 +2164,39 @@ fn finish_capture_session_with_events(
     } else {
         None
     };
-    let snapshot = database.insert_collector_snapshot(
-        &station_id,
-        "webview-capture",
-        &status,
-        summary,
-        normalized,
-        Some(raw),
-        error_message,
-    )?;
-    Ok(CollectorRunResult {
-        snapshot,
-        events: Vec::new(),
-    })
+    services
+        .collectors
+        .record_capture_snapshot(crate::application::collectors::CaptureSnapshotRequest {
+            station_id: station_id.to_string(),
+            endpoint_revision: commit.endpoint_revision,
+            status,
+            summary_json: summary,
+            normalized_json: normalized,
+            raw_json_redacted: Some(raw),
+            error_message,
+            event_count: events.len() as i64,
+        })
+        .await
+        .map_err(capture_endpoint_revision_error)
 }
 
 #[tauri::command]
 pub async fn finish_web_authorization_session(
     app: tauri::AppHandle,
-    database: State<'_, AppDatabase>,
-    secrets: State<'_, SecretManager>,
+    services: State<'_, AppServices>,
     sessions: State<'_, capture::session::CaptureSessionStore>,
     station_id: String,
 ) -> Result<CollectorRunResult, String> {
-    let station = database.station_for_collector(&station_id)?;
+    let station = services
+        .stations
+        .station_for_capture(&station_id)
+        .await
+        .map_err(command_application_error)?;
     let candidate = sessions
         .web_authorization_candidate(&station_id)?
         .ok_or_else(|| {
             "网页登录授权尚未捕获到用户身份，请在授权窗口完成登录后重试。".to_string()
         })?;
-    let expected_revision = sessions
-        .endpoint_revision(&station_id)?
-        .ok_or_else(capture_endpoint_revision_missing_message)?;
     let cookie_header =
         read_capture_window_cookie_header(app, &station_id, &station.website_url).await?;
     let verified = capture::web_authorization::verify_newapi_cookie_session(
@@ -1609,36 +2205,70 @@ pub async fn finish_web_authorization_session(
         &candidate.user_id,
         Duration::from_secs(20),
     )?;
+    let commit = sessions.begin_web_authorization_commit(&station_id, &candidate)?;
+    let persist_result = services
+        .credentials
+        .persist_station_session_if_revision(
+            PersistStationSessionInput {
+                station_id: station_id.clone(),
+                access_token: None,
+                refresh_token: None,
+                cookie: Some(verified.cookie_header),
+                newapi_user_id: Some(verified.newapi_user_id),
+                token_expires_at: None,
+                session_expires_at: None,
+                session_source: verified.session_source,
+            },
+            commit.endpoint_revision,
+        )
+        .await
+        .map_err(capture_endpoint_revision_error);
+    if let Err(error) = persist_result {
+        return Err(abort_capture_commit(
+            sessions.inner(),
+            &station_id,
+            &commit,
+            error,
+        ));
+    }
 
-    let (_, events) = sessions.commit_web_authorization(&station_id, &candidate, || {
-        database
-            .persist_station_session_if_revision(
-                PersistStationSessionInput {
-                    station_id: station_id.clone(),
-                    access_token: None,
-                    refresh_token: None,
-                    cookie: Some(verified.cookie_header),
-                    newapi_user_id: Some(verified.newapi_user_id),
-                    token_expires_at: None,
-                    session_expires_at: None,
-                    session_source: verified.session_source,
-                },
-                expected_revision,
-                secrets.data_key(),
-            )
-            .map_err(capture_endpoint_revision_error)
-    })?;
-
-    finish_capture_session_with_events(
-        &database,
-        station_id,
-        events,
+    let result = finish_capture_session_with_events(
+        services.inner(),
+        &station_id,
+        &commit,
         Some(capture::web_authorization_summary(
             "success",
             Some("web_authorization"),
             true,
         )),
     )
+    .await;
+    match result {
+        Ok(result) => {
+            sessions.complete_commit(&station_id, &commit)?;
+            Ok(result)
+        }
+        Err(error) => Err(abort_capture_commit(
+            sessions.inner(),
+            &station_id,
+            &commit,
+            error,
+        )),
+    }
+}
+
+fn abort_capture_commit(
+    sessions: &capture::session::CaptureSessionStore,
+    station_id: &str,
+    commit: &capture::session::CaptureCommit,
+    persistence_error: String,
+) -> String {
+    match sessions.abort_commit(station_id, commit) {
+        Ok(()) => persistence_error,
+        Err(recovery_error) => {
+            format!("{persistence_error}; capture session recovery failed: {recovery_error}")
+        }
+    }
 }
 
 fn capture_window_label(station_id: &str) -> String {
@@ -1687,11 +2317,11 @@ fn capture_endpoint_revision_missing_message() -> String {
     "endpoint_revision_changed: 捕获会话已过期，请重新打开网页登录 / 捕获窗口。".to_string()
 }
 
-fn capture_endpoint_revision_error(error: String) -> String {
-    if error == "station_endpoint_revision_changed" {
+fn capture_endpoint_revision_error(error: ApplicationError) -> String {
+    if matches!(error, ApplicationError::StaleRevision) {
         capture_endpoint_revision_missing_message()
     } else {
-        error
+        command_application_error(error)
     }
 }
 
@@ -1992,29 +2622,27 @@ struct SystemUrlLauncher {
     args: Vec<String>,
 }
 
+#[cfg(target_os = "windows")]
 fn system_url_launcher(url: &str) -> SystemUrlLauncher {
-    #[cfg(target_os = "windows")]
-    {
-        return SystemUrlLauncher {
-            program: "rundll32.exe",
-            args: vec!["url.dll,FileProtocolHandler".to_string(), url.to_string()],
-        };
+    SystemUrlLauncher {
+        program: "rundll32.exe",
+        args: vec!["url.dll,FileProtocolHandler".to_string(), url.to_string()],
     }
+}
 
-    #[cfg(target_os = "macos")]
-    {
-        return SystemUrlLauncher {
-            program: "open",
-            args: vec![url.to_string()],
-        };
+#[cfg(target_os = "macos")]
+fn system_url_launcher(url: &str) -> SystemUrlLauncher {
+    SystemUrlLauncher {
+        program: "open",
+        args: vec![url.to_string()],
     }
+}
 
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        return SystemUrlLauncher {
-            program: "xdg-open",
-            args: vec![url.to_string()],
-        };
+#[cfg(all(unix, not(target_os = "macos")))]
+fn system_url_launcher(url: &str) -> SystemUrlLauncher {
+    SystemUrlLauncher {
+        program: "xdg-open",
+        args: vec![url.to_string()],
     }
 }
 
@@ -2055,53 +2683,36 @@ fn validate_external_http_url(url: &str) -> Result<&str, String> {
     Ok(trimmed)
 }
 
-fn test_station_key_connectivity_blocking(
-    database: &AppDatabase,
-    data_key: &[u8; 32],
-    station_key_id: &str,
-    model: &str,
+fn test_station_key_connectivity_prepared_blocking(
+    key: KeyPoolItem,
+    api_key: zeroize::Zeroizing<String>,
+    capabilities: StationKeyCapabilities,
+    model: String,
     progress: Channel<StationKeyConnectivityTestEvent>,
 ) -> Result<StationKeyConnectivityTestResult, String> {
-    let key = database
-        .list_key_pool_items()?
-        .into_iter()
-        .find(|item| item.id == station_key_id)
-        .ok_or_else(|| "Station Key 不存在，无法测试连通性".to_string())?;
-    if !key.api_key_present {
-        return Err("该密钥没有保存 API Key，无法测试连通性。".to_string());
-    }
-
-    let api_key = database.resolve_station_key_secret_with_data_key(data_key, station_key_id)?;
-    let capabilities = database
-        .get_station_key_capabilities(station_key_id.to_string())
-        .ok();
-    let upstream_api_format = database
-        .proxy_route_candidates_with_data_key(data_key)
-        .ok()
-        .and_then(|candidates| {
-            candidates
-                .into_iter()
-                .find(|candidate| candidate.station_key_id == station_key_id)
-                .map(|candidate| candidate.upstream_api_format)
-        })
-        .unwrap_or(UpstreamApiFormat::Auto);
+    let upstream_api_format = match key.station_upstream_api_format.as_str() {
+        "openai_chat_completions" => UpstreamApiFormat::OpenAiChatCompletions,
+        "openai_responses" => UpstreamApiFormat::OpenAiResponses,
+        "custom_openai_compatible" => UpstreamApiFormat::CustomOpenAiCompatible,
+        _ => UpstreamApiFormat::Auto,
+    };
     let discovered_models =
-        discover_station_key_connectivity_models(&key.station_api_base_url, &api_key)
+        discover_station_key_connectivity_models(&key.station_api_base_url, api_key.as_str())
             .unwrap_or_default();
     let requested_model = model.trim().to_string();
     let candidates = station_key_connectivity_model_candidates(
-        capabilities.as_ref(),
+        Some(&capabilities),
         Some(requested_model.as_str()),
         &discovered_models,
     );
     let (model, result) = run_station_key_connectivity_model_attempts(&candidates, |candidate| {
         run_station_key_connectivity_single_model_probe(
             &upstream_api_format,
-            capabilities.as_ref(),
+            Some(&capabilities),
             |kind| {
                 send_station_key_connectivity_probe(
                     &key.station_api_base_url,
-                    &api_key,
+                    api_key.as_str(),
                     candidate,
                     kind,
                     &progress,
@@ -2109,17 +2720,8 @@ fn test_station_key_connectivity_blocking(
             },
         )
     });
-
-    record_station_key_connectivity_result(
-        database,
-        station_key_id,
-        result.ok,
-        result.duration_ms,
-        &result.message,
-    )?;
-
     Ok(StationKeyConnectivityTestResult {
-        station_key_id: station_key_id.to_string(),
+        station_key_id: key.id,
         ok: result.ok,
         status_code: result.status_code,
         duration_ms: result.duration_ms,
@@ -2908,23 +3510,6 @@ fn truncate_connectivity_reply(value: &str) -> String {
     }
 }
 
-fn record_station_key_connectivity_result(
-    database: &AppDatabase,
-    station_key_id: &str,
-    ok: bool,
-    duration_ms: i64,
-    message: &str,
-) -> Result<(), String> {
-    let now = now_millis_for_services().to_string();
-    if ok {
-        database.record_station_key_success(station_key_id, duration_ms, &now)?;
-        database.touch_station_key_usage(station_key_id, "healthy", None, Some(&now))
-    } else {
-        database.record_station_key_failure(station_key_id, message, &now)?;
-        database.touch_station_key_usage(station_key_id, "error", None, Some(&now))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3042,8 +3627,7 @@ mod tests {
     }
 
     #[test]
-    fn ccswitch_import_ensures_placeholder_key_before_building_deeplink() {
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+    fn ccswitch_import_uses_v2_local_access_key_before_building_deeplink() {
         let status = ProxyStatus {
             running: true,
             lifecycle: crate::models::proxy::ProxyLifecycle::Running,
@@ -3055,11 +3639,10 @@ mod tests {
             request_count: 0,
         };
 
-        let (_, deeplink) = prepare_ccswitch_import(&database, &status).expect("import plan");
-        let persisted = database.get_local_access_key().expect("persisted key");
+        let local_access_key = "sk-v2-test";
+        let (_, deeplink) = prepare_ccswitch_import(local_access_key, &status);
 
-        assert_ne!(persisted, "sk-local-pool-change-me");
-        assert!(deeplink.contains(&format!("apiKey={}", encode_query_param(&persisted))));
+        assert!(deeplink.contains(&format!("apiKey={}", encode_query_param(local_access_key))));
     }
 
     #[test]

@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::services::{
     channel_monitors::{
-        redaction::{redact_monitor_json, redact_monitor_text},
+        redaction::redact_monitor_text,
         templates::{normalize_monitor_method, RenderedMonitorRequest},
     },
     proxy::observability::{ObservedUsage, SseUsageObserver},
@@ -44,7 +44,6 @@ pub struct MonitorProbeResult {
     pub latency_ms: i64,
     pub first_token_ms: Option<i64>,
     pub error_summary: Option<String>,
-    pub response_excerpt_redacted: Option<String>,
     pub usage: Option<MonitorProbeUsage>,
 }
 
@@ -60,12 +59,11 @@ pub fn run_monitor_probe(
             started_at,
             None,
             "Invalid monitor request path; expected same-origin absolute path",
-            None,
         );
     };
     let method = match normalize_monitor_method(&request.method) {
         Ok(method) => method,
-        Err(error) => return failed_result(started_at, None, &error, None),
+        Err(error) => return failed_result(started_at, None, &error),
     };
     if let Some((name, _)) = request
         .headers
@@ -76,7 +74,6 @@ pub fn run_monitor_probe(
             started_at,
             None,
             &format!("Invalid monitor request header name: {name}"),
-            None,
         );
     }
     if let Some((name, _)) = request
@@ -88,7 +85,6 @@ pub fn run_monitor_probe(
             started_at,
             None,
             &format!("Invalid monitor request header value for: {name}"),
-            None,
         );
     }
 
@@ -127,12 +123,7 @@ pub fn run_monitor_probe(
         Err(ureq::Error::Status(_, response)) => {
             response_result(started_at, response, request.stream)
         }
-        Err(error) => failed_result(
-            started_at,
-            None,
-            &format!("Network probe failed: {error}"),
-            None,
-        ),
+        Err(error) => failed_result(started_at, None, &format!("Network probe failed: {error}")),
     }
 }
 
@@ -172,7 +163,6 @@ fn response_result(
     let response_json = body
         .as_ref()
         .and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok());
-    let excerpt = response_excerpt_from_body(body.as_deref(), response_json.as_ref());
     let ok = status_code < 400;
     let error_summary = if ok {
         None
@@ -188,7 +178,6 @@ fn response_result(
         latency_ms: elapsed_ms(started_at),
         first_token_ms: None,
         error_summary,
-        response_excerpt_redacted: excerpt,
         usage: response_json.as_ref().and_then(parse_monitor_probe_usage),
     }
 }
@@ -197,7 +186,6 @@ fn streaming_response_result(started_at: Instant, response: ureq::Response) -> M
     let status_code = response.status();
     let mut reader = response.into_reader();
     let mut observer = SseUsageObserver::default();
-    let mut excerpt_bytes = Vec::new();
     let mut first_token_ms = None;
     let mut read_error = None;
     let mut buffer = [0_u8; 8192];
@@ -217,23 +205,18 @@ fn streaming_response_result(started_at: Instant, response: ureq::Response) -> M
             first_token_ms = Some(elapsed_ms(started_at));
         }
         observer.push(&buffer[..count]);
-        let remaining = MAX_RESPONSE_EXCERPT_BYTES as usize - excerpt_bytes.len();
-        excerpt_bytes.extend_from_slice(&buffer[..count.min(remaining)]);
     }
 
     let ok = status_code < 400 && read_error.is_none();
     let error_summary = read_error.or_else(|| {
         (!ok).then(|| redact_monitor_text(&format!("Upstream returned HTTP {status_code}")))
     });
-    let excerpt = response_excerpt_from_body(Some(&excerpt_bytes), None);
-
     MonitorProbeResult {
         ok,
         status_code: Some(status_code),
         latency_ms: elapsed_ms(started_at),
         first_token_ms,
         error_summary,
-        response_excerpt_redacted: excerpt,
         usage: observer.usage().cloned().map(MonitorProbeUsage::from),
     }
 }
@@ -248,17 +231,6 @@ fn response_body(response: ureq::Response) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-fn response_excerpt_from_body(body: Option<&[u8]>, parsed_json: Option<&Value>) -> Option<String> {
-    let bytes = body?;
-    if bytes.is_empty() {
-        return None;
-    }
-    if let Some(value) = parsed_json {
-        return serde_json::to_string(&redact_monitor_json(value)).ok();
-    }
-    Some(redact_monitor_text(&String::from_utf8_lossy(bytes)))
-}
-
 fn parse_monitor_probe_usage(value: &Value) -> Option<MonitorProbeUsage> {
     ObservedUsage::from_json(value).map(MonitorProbeUsage::from)
 }
@@ -267,7 +239,6 @@ fn failed_result(
     started_at: Instant,
     status_code: Option<u16>,
     error_summary: &str,
-    response_excerpt_redacted: Option<String>,
 ) -> MonitorProbeResult {
     MonitorProbeResult {
         ok: false,
@@ -275,7 +246,6 @@ fn failed_result(
         latency_ms: elapsed_ms(started_at),
         first_token_ms: None,
         error_summary: Some(redact_monitor_text(error_summary)),
-        response_excerpt_redacted,
         usage: None,
     }
 }
@@ -357,11 +327,6 @@ mod tests {
         assert!(result.ok);
         assert_eq!(result.status_code, Some(200));
         assert_eq!(result.error_summary, None);
-        assert!(result
-            .response_excerpt_redacted
-            .as_deref()
-            .unwrap()
-            .contains("[REDACTED]"));
         assert!(raw_request.starts_with("POST /v1/chat/completions HTTP/1.1"));
         assert!(raw_request.contains("Authorization: Bearer sk-probe-key"));
         assert!(raw_request.contains("x-monitor: yes"));

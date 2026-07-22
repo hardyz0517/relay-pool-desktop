@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::models::pricing::RequestCostEstimate;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelMonitorRequestTemplate {
@@ -149,4 +151,42 @@ pub struct CreateChannelMonitorRunInput {
     pub response_model: Option<String>,
     pub fallback_model: Option<String>,
     pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MonitorProbeUsageEvidence {
+    pub(crate) prompt_tokens: Option<i64>,
+    pub(crate) completion_tokens: Option<i64>,
+    pub(crate) total_tokens: Option<i64>,
+    pub(crate) cache_creation_tokens: Option<i64>,
+    pub(crate) cache_read_tokens: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MonitorRequestPricingEvidence {
+    pub(crate) estimate: RequestCostEstimate,
+    pub(crate) group_binding_id: Option<String>,
+    pub(crate) normalization_status: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CompletedMonitorRequestEvidence {
+    pub(crate) method: String,
+    pub(crate) path: String,
+    pub(crate) endpoint: String,
+    pub(crate) model: String,
+    pub(crate) stream: bool,
+    pub(crate) reasoning_effort: Option<String>,
+    pub(crate) station_key_id: String,
+    pub(crate) station_id: String,
+    pub(crate) upstream_base_url: String,
+    pub(crate) first_token_ms: Option<i64>,
+    pub(crate) usage: Option<MonitorProbeUsageEvidence>,
+    pub(crate) pricing: MonitorRequestPricingEvidence,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CompletedMonitorProbe {
+    pub(crate) run: CreateChannelMonitorRunInput,
+    pub(crate) request: Option<CompletedMonitorRequestEvidence>,
 }

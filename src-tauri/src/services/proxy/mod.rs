@@ -1,14 +1,11 @@
-use crate::models::proxy::UpstreamApiFormat;
-use serde_json::Value;
-
 pub mod adapters;
 pub mod endpoint_adapter;
 pub mod error;
 pub mod execution;
+// The raw TCP parser supports loopback fixtures; production ingress is Hyper-based.
+#[cfg(test)]
 pub mod http_request;
 pub mod ingress;
-#[cfg(test)]
-pub(crate) mod legacy_runtime;
 pub(crate) mod lifecycle;
 pub mod limits;
 mod local_auth;
@@ -18,24 +15,16 @@ pub mod request;
 pub mod response_body;
 pub mod responses_chat_fallback;
 pub mod responses_chat_stream;
-pub mod router;
-pub mod routing_affinity;
-pub mod routing_failure;
-pub mod routing_health;
-pub mod routing_policy;
-pub mod routing_probe;
+pub(crate) use crate::application::routing_engine::{
+    router, routing_failure, routing_types, scheduler,
+};
 pub mod routing_repository;
-pub mod routing_snapshot;
-pub mod routing_types;
 pub mod runtime;
-pub mod scheduler;
 pub mod server;
 pub mod startup;
 pub mod startup_auto_start;
 pub mod upstream;
 
-#[cfg(test)]
-mod contract_tests;
 #[cfg(test)]
 mod lifecycle_concurrency_tests;
 #[cfg(test)]
@@ -44,37 +33,6 @@ mod lifecycle_fault_tests;
 mod soak_tests;
 #[cfg(test)]
 mod test_support;
-
-#[derive(Debug, Clone)]
-pub struct RouteCandidate {
-    pub station_key_id: String,
-    pub station_id: String,
-    pub station_endpoint_revision: i64,
-    pub upstream_base_url: String,
-    pub api_key: String,
-    pub collector_proxy_mode: String,
-    pub collector_proxy_url: Option<String>,
-    pub upstream_api_format: UpstreamApiFormat,
-    pub priority: i64,
-    pub max_concurrency: i64,
-    pub load_factor: Option<i64>,
-    pub schedulable: bool,
-}
-
-pub fn enabled_candidates(mut candidates: Vec<RouteCandidate>) -> Vec<RouteCandidate> {
-    candidates.retain(|candidate| candidate.schedulable);
-    candidates.sort_by_key(|candidate| candidate.priority);
-    candidates
-}
-
-pub fn extract_chat_request_metadata(body: &Value) -> (Option<String>, bool) {
-    let model = body
-        .get("model")
-        .and_then(Value::as_str)
-        .map(ToString::to_string);
-    let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    (model, stream)
-}
 
 pub fn should_fallback(status: u16) -> bool {
     if status < 400 {
@@ -88,18 +46,6 @@ pub fn should_fallback(status: u16) -> bool {
             failure.action,
             routing_failure::RouteFailureAction::HardFail
         )
-}
-
-pub fn openai_error(message: &str, status: &str) -> Value {
-    let message = crate::services::secrets::mask::redact_text(message);
-    serde_json::json!({
-        "error": {
-            "message": message,
-            "type": "relay_pool_error",
-            "param": Value::Null,
-            "code": status,
-        }
-    })
 }
 
 pub fn redact_error_message(message: &str) -> String {
@@ -120,58 +66,6 @@ pub fn redact_error_message(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn enabled_candidates_sorts_by_priority() {
-        let candidates = vec![
-            candidate("key-b", 20),
-            candidate("key-a", 0),
-            candidate("key-c", 10),
-        ];
-
-        let sorted = enabled_candidates(candidates);
-
-        let ids: Vec<_> = sorted
-            .iter()
-            .map(|item| item.station_key_id.as_str())
-            .collect();
-        assert_eq!(ids, vec!["key-a", "key-c", "key-b"]);
-    }
-
-    #[test]
-    fn extract_chat_request_metadata_detects_model_and_stream() {
-        let body = serde_json::json!({
-            "model": "gpt-test",
-            "stream": true,
-            "messages": []
-        });
-
-        let (model, stream) = extract_chat_request_metadata(&body);
-
-        assert_eq!(model.as_deref(), Some("gpt-test"));
-        assert!(stream);
-    }
-
-    #[test]
-    fn openai_error_uses_compatible_shape() {
-        let value = openai_error("No enabled keys", "no_enabled_keys");
-
-        assert_eq!(value["error"]["message"], "No enabled keys");
-        assert_eq!(value["error"]["type"], "relay_pool_error");
-        assert_eq!(value["error"]["code"], "no_enabled_keys");
-    }
-
-    #[test]
-    fn openai_error_redacts_secret_like_message() {
-        let value = openai_error(
-            "upstream said Bearer sk-p8-secret-plaintext-canary",
-            "upstream_error",
-        );
-        let text = serde_json::to_string(&value).expect("json");
-
-        assert!(!text.contains("sk-p8-secret-plaintext-canary"));
-        assert!(text.contains("[REDACTED]"));
-    }
 
     #[test]
     fn redact_error_message_masks_key_like_content() {
@@ -204,22 +98,5 @@ mod tests {
         assert!(!should_fallback(400));
         assert!(!should_fallback(404));
         assert!(!should_fallback(200));
-    }
-
-    fn candidate(id: &str, priority: i64) -> RouteCandidate {
-        RouteCandidate {
-            station_key_id: id.to_string(),
-            station_id: format!("station-{id}"),
-            station_endpoint_revision: 1,
-            upstream_base_url: "https://example.test/v1".to_string(),
-            api_key: format!("sk-{id}"),
-            collector_proxy_mode: "direct".to_string(),
-            collector_proxy_url: None,
-            upstream_api_format: UpstreamApiFormat::Auto,
-            priority,
-            max_concurrency: 0,
-            load_factor: None,
-            schedulable: true,
-        }
     }
 }

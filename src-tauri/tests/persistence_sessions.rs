@@ -34,6 +34,13 @@ mod persistence {
         ));
     }
 
+    pub(crate) mod runtime_lifecycle {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/runtime_lifecycle.rs"
+        ));
+    }
+
     pub(crate) mod runtime {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -84,7 +91,7 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 async fn cancelled_uncommitted_write_rolls_back_and_releases_permit() {
     let runtime = V2Fixture::create().await.open().await;
     let store = TestStore;
-    let write_runtime = runtime.clone();
+    let write_runtime = runtime.handle();
     let task = tokio::spawn(async move {
         let mut write = write_runtime.begin_write().await.expect("begin write");
         TestStore
@@ -138,6 +145,15 @@ async fn verified_backup_captures_committed_wal_data_and_reopens_read_only() {
         .expect("verified backup");
 
     assert_eq!(backup.final_path, backup_path);
+    assert_eq!(
+        read_value_from_file(&backup.final_path).await,
+        "wal-committed"
+    );
+
+    let path_backup = fixture.path.with_file_name("verified-path-backup.sqlite3");
+    let backup = persistence::backup::create_verified_backup_from_path(&fixture.path, &path_backup)
+        .await
+        .expect("path-backed verified backup");
     assert_eq!(
         read_value_from_file(&backup.final_path).await,
         "wal-committed"
@@ -246,18 +262,25 @@ impl V2Fixture {
     }
 
     async fn open(&self) -> PersistenceRuntime {
-        PersistenceRuntime::open(&self.path, binary_031())
+        let runtime = PersistenceRuntime::open(&self.path, binary_031())
             .await
-            .expect("open runtime")
+            .expect("open runtime");
+        assert_eq!(runtime.compatibility_decision_code(), "writable");
+        assert_eq!(
+            runtime.health().await.expect("runtime health").open_mode,
+            "writable"
+        );
+        runtime
     }
 }
 
 fn binary_031() -> BinaryCompatibility {
+    let schema_version = persistence::migrations::current_schema_version();
     BinaryCompatibility {
         app_version: Version::new(0, 3, 1),
         database_generation: 2,
-        readable_schema: 1..=8,
-        writable_schema: BTreeSet::from([8]),
+        readable_schema: 1..=schema_version,
+        writable_schema: BTreeSet::from([schema_version]),
     }
 }
 

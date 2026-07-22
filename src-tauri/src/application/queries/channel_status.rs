@@ -6,11 +6,18 @@ use crate::{
         channel_monitors::{ChannelMonitor, ChannelMonitorRun},
         shared_capabilities::{
             ChannelStatusSummary, ChannelStatusTimelinePoint, ChannelStatusWindowSummary,
+            ChannelStatusWorkspace,
         },
     },
     persistence::{
         runtime::PersistenceHandle,
-        stores::monitoring_store::{ChannelStatusRunRow, ChannelWindowAggregate, MonitoringStore},
+        stores::{
+            credential_store::CredentialStore,
+            monitoring_store::{ChannelStatusRunRow, ChannelWindowAggregate, MonitoringStore},
+            request_log_store::RequestLogStore,
+            routing_store::RoutingStore,
+        },
+        ReadSession,
     },
 };
 
@@ -22,6 +29,9 @@ pub(crate) struct ChannelStatusQuery {
     runtime: PersistenceHandle,
     clock: Arc<dyn Clock>,
     store: MonitoringStore,
+    credentials: CredentialStore,
+    request_logs: RequestLogStore,
+    routing: RoutingStore,
 }
 
 impl ChannelStatusQuery {
@@ -30,6 +40,9 @@ impl ChannelStatusQuery {
             runtime,
             clock,
             store: MonitoringStore,
+            credentials: CredentialStore,
+            request_logs: RequestLogStore,
+            routing: RoutingStore,
         }
     }
 
@@ -39,29 +52,47 @@ impl ChannelStatusQuery {
     ) -> Result<Vec<ChannelStatusSummary>, ApplicationError> {
         let now_ms = self.clock.now_utc().timestamp_millis();
         let mut read = self.runtime.begin_read().await?;
-        let monitors = self
-            .store
-            .list_monitors(&mut read, monitor_limit.get())
+        self.load_summaries(&mut read, monitor_limit, now_ms).await
+    }
+
+    pub(crate) async fn load_workspace(
+        &self,
+        monitor_limit: PageLimit,
+    ) -> Result<ChannelStatusWorkspace, ApplicationError> {
+        let now_ms = self.clock.now_utc().timestamp_millis();
+        let mut read = self.runtime.begin_read().await?;
+        let key_pool_items = self.credentials.list_key_pool_items(&mut read).await?;
+        let request_logs = self.request_logs.list_recent(&mut read, 500).await?;
+        let station_key_health = self.routing.list_station_key_health(&mut read).await?;
+        let channel_status_summaries = self
+            .load_summaries(&mut read, monitor_limit, now_ms)
             .await?;
+        Ok(ChannelStatusWorkspace {
+            key_pool_items,
+            request_logs,
+            station_key_health,
+            channel_status_summaries,
+        })
+    }
+
+    async fn load_summaries(
+        &self,
+        read: &mut ReadSession,
+        monitor_limit: PageLimit,
+        now_ms: i64,
+    ) -> Result<Vec<ChannelStatusSummary>, ApplicationError> {
+        let monitors = self.store.list_monitors(read, monitor_limit.get()).await?;
         let recent_runs = self
             .store
-            .recent_status_runs(&mut read, monitor_limit.get(), RECENT_RUN_LIMIT)
+            .recent_status_runs(read, monitor_limit.get(), RECENT_RUN_LIMIT)
             .await?;
         let day = self
             .store
-            .window_aggregates(
-                &mut read,
-                now_ms.saturating_sub(DAY_MS),
-                monitor_limit.get(),
-            )
+            .window_aggregates(read, now_ms.saturating_sub(DAY_MS), monitor_limit.get())
             .await?;
         let week = self
             .store
-            .window_aggregates(
-                &mut read,
-                now_ms.saturating_sub(7 * DAY_MS),
-                monitor_limit.get(),
-            )
+            .window_aggregates(read, now_ms.saturating_sub(7 * DAY_MS), monitor_limit.get())
             .await?;
 
         Ok(build_summaries(monitors, recent_runs, day, week, now_ms))

@@ -15,12 +15,15 @@ use crate::models::{
 use crate::services::{
     collectors::{
         adapters::{AdapterOutput, CollectorTask, CreatedRemoteKey},
-        facts::{CollectedBalanceFact, CollectorFacts},
+        facts::CollectorFacts,
+        CollectorSourcePort,
     },
-    database::AppDatabase,
     outbound::{credential_agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
     station_endpoints::build_management_url,
 };
+
+#[cfg(test)]
+use crate::services::collectors::facts::CollectedBalanceFact;
 
 const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const NEWAPI_REMOTE_KEY_PAGE_SIZE: usize = 100;
@@ -32,7 +35,7 @@ const NEWAPI_DASHBOARD_TOTAL_START_TIMESTAMP: i64 = 0;
 const NEWAPI_DASHBOARD_TOTAL_MAX_WINDOWS: usize = 240;
 
 pub(crate) fn login_with_password(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
     login_username: &str,
@@ -49,10 +52,12 @@ pub(crate) fn test_login_credentials(
     auth::test_login_credentials(base_url, login_username, login_password)
 }
 
+#[cfg(test)]
 fn parse_newapi_balance(station_id: &str, payload: &Value) -> CollectedBalanceFact {
     parsers::parse_balance_fact(station_id, payload, Some(500000.0))
 }
 
+#[cfg(test)]
 fn parse_newapi_group_facts(station_id: &str, payload: &Value) -> CollectorFacts {
     parsers::parse_group_facts(station_id, payload)
 }
@@ -70,7 +75,7 @@ pub fn remote_key_capability(station: &Station) -> Result<RemoteKeyCapability, S
 }
 
 pub fn scan_remote_keys(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: &str,
 ) -> Result<Vec<RemoteStationKey>, String> {
@@ -80,7 +85,7 @@ pub fn scan_remote_keys(
 }
 
 pub fn scan_remote_key_full_secret(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: &str,
     remote_key_id: &str,
@@ -101,7 +106,7 @@ pub fn scan_remote_key_full_secret(
 }
 
 pub fn create_remote_key(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     input: CreateRemoteStationKeyInput,
 ) -> Result<CreatedRemoteKey, String> {
@@ -148,7 +153,7 @@ pub fn create_remote_key(
 }
 
 fn fetch_newapi_token_items(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
 ) -> Result<Vec<Value>, String> {
@@ -218,7 +223,7 @@ fn created_token_matches(value: &Value, expected_name: &str) -> bool {
 }
 
 fn reveal_full_key_for_token_value(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
     value: &Value,
@@ -319,7 +324,7 @@ fn remote_key_from_value(
         match_status: RemoteKeyMatchStatus::Unbound,
         matched_station_key_id: None,
         match_confidence: 0.0,
-        collected_at: crate::services::database::now_millis_for_services().to_string(),
+        collected_at: crate::services::time::now_millis_for_services().to_string(),
     })
 }
 
@@ -391,7 +396,7 @@ fn looks_like_full_api_key(value: &str) -> bool {
 }
 
 pub fn collect(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: &str,
     task: CollectorTask,
@@ -532,8 +537,10 @@ fn build_groups_output(station_id: &str, data: &Value, endpoint_result: Value) -
 }
 
 fn build_models_output(station_id: &str, data: &Value, endpoint_result: Value) -> AdapterOutput {
-    let mut facts = CollectorFacts::default();
-    facts.models = parsers::parse_models(station_id, data);
+    let facts = CollectorFacts {
+        models: parsers::parse_models(station_id, data),
+        ..CollectorFacts::default()
+    };
     let model_names = facts
         .models
         .iter()
@@ -570,7 +577,7 @@ fn build_models_output(station_id: &str, data: &Value, endpoint_result: Value) -
 }
 
 pub fn collect_balance_and_groups(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: &str,
     task: CollectorTask,
@@ -579,7 +586,7 @@ pub fn collect_balance_and_groups(
 }
 
 fn collect_authenticated_task(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: &str,
     task: CollectorTask,
@@ -734,7 +741,7 @@ impl NewApiUsageStats {
 }
 
 fn collect_usage_stats(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
     self_data: &Value,
@@ -838,7 +845,7 @@ impl<T> UsageCollectionResultExt<T> for Result<(T, Vec<Value>), String> {
 }
 
 fn collect_log_stat_window(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
     start_timestamp: i64,
@@ -867,7 +874,7 @@ fn collect_log_stat_window(
 }
 
 fn collect_log_window(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
     start_timestamp: i64,
@@ -979,7 +986,7 @@ fn collect_log_window(
 }
 
 fn collect_dashboard_usage_window(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
     start_timestamp: i64,
@@ -1056,7 +1063,7 @@ fn collect_dashboard_usage_window(
 }
 
 fn collect_dashboard_usage_total(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
     self_data: &Value,
@@ -1075,7 +1082,7 @@ fn collect_dashboard_usage_total(
 }
 
 fn collect_dashboard_usage_total_backwards(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
     now: i64,
@@ -1300,7 +1307,7 @@ fn checked_sum_f64(left: Option<f64>, right: Option<f64>) -> Option<f64> {
 }
 
 fn fetch_status(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     station: &Station,
 ) -> Result<(parsers::NewApiStatus, Value), String> {
     let settings = database.get_settings()?;
@@ -1425,14 +1432,24 @@ fn sha256_hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use crate::{
-        models::{credentials::UpdateStationSessionInput, stations::CreateStationInput},
+        models::{
+            credentials::{
+                PersistStationSessionInput, ResolvedSession, SessionResolveStatus,
+                StationCredentials, StationSessionCredentialKind, UpdateStationSessionInput,
+            },
+            group_facts::StationGroupBinding,
+            routing::{RoutingGroupFilter, SchedulerAdvancedSettings},
+            settings::AppSettings,
+            station_keys::StationKey,
+        },
         services::{
             collectors::adapters::newapi::test_support::{json_response, TestHttpServer},
-            database::AppDatabase,
+            collectors::CollectorSourcePort,
             secrets::crypto::generate_data_key,
         },
     };
     use serde_json::json;
+    use std::sync::Mutex;
 
     #[test]
     #[ignore = "requires RELAY_POOL_LIVE_NEWAPI_RUN=1 plus live NewAPI credentials in env"]
@@ -1446,24 +1463,9 @@ mod tests {
             .expect("RELAY_POOL_LIVE_NEWAPI_USERNAME");
         let password = std::env::var("RELAY_POOL_LIVE_NEWAPI_PASSWORD")
             .expect("RELAY_POOL_LIVE_NEWAPI_PASSWORD");
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&base_url);
         let data_key = generate_data_key();
-        let station = database
-            .create_station(CreateStationInput {
-                name: "live newapi smoke".to_string(),
-                station_type: "newapi".to_string(),
-                website_url: base_url.to_string(),
-                api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
-                collector_proxy_mode: "inherit".to_string(),
-                collector_proxy_url: None,
-                api_key: String::new(),
-                enabled: true,
-                credit_per_cny: 1.0,
-                low_balance_threshold_cny: None,
-                collection_interval_minutes: 5,
-                note: None,
-            })
-            .expect("station");
+        let station = test_station(&database, &base_url);
 
         let login = login_with_password(&database, &data_key, &station, &username, &password)
             .expect("login");
@@ -1588,7 +1590,7 @@ mod tests {
                 }),
             )),
         ]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -1704,7 +1706,7 @@ mod tests {
                 }),
             )),
         ]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -1745,7 +1747,7 @@ mod tests {
                 }
             }),
         ))]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -1775,7 +1777,7 @@ mod tests {
                 }
             }),
         ))]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -1804,7 +1806,7 @@ mod tests {
                 }
             }),
         ))]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -1824,7 +1826,7 @@ mod tests {
                 "data": { "rpm": 1, "tpm": 25 }
             }),
         ))]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -1846,7 +1848,7 @@ mod tests {
                 "data": { "quota": 500000, "base_cost": 9.5 }
             }),
         ))]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -1882,7 +1884,7 @@ mod tests {
                 ]
             }),
         ))]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -1914,7 +1916,7 @@ mod tests {
                 }
             }),
         ))]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -1973,7 +1975,7 @@ mod tests {
                 }),
             )),
         ]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -2177,7 +2179,7 @@ mod tests {
                 }),
             )),
         ]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -2280,7 +2282,7 @@ mod tests {
                 }),
             )),
         ]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -2388,7 +2390,7 @@ mod tests {
                 }),
             )),
         ]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -2477,7 +2479,7 @@ mod tests {
                 }),
             )),
         ]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -2610,7 +2612,7 @@ mod tests {
                 }),
             )),
         ]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -2683,7 +2685,7 @@ mod tests {
                 }
             }),
         ))]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -2721,7 +2723,7 @@ mod tests {
                 json!({"success": false, "message": "bad gateway"}),
             )),
         ]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -2762,7 +2764,7 @@ mod tests {
                 }),
             )),
         ]);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
+        let database = TestCollectorSource::new(&server.base_url);
         let data_key = generate_data_key();
         let station = test_station(&database, &server.base_url);
         persist_access_token_session(&database, &data_key, &station.id);
@@ -2797,26 +2799,16 @@ mod tests {
         assert!(requests[2].starts_with("POST /api/token/301/key "));
     }
 
-    fn test_station(database: &AppDatabase, base_url: &str) -> Station {
-        database
-            .create_station(CreateStationInput {
-                name: "newapi station".to_string(),
-                station_type: "newapi".to_string(),
-                website_url: base_url.to_string(),
-                api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
-                collector_proxy_mode: "inherit".to_string(),
-                collector_proxy_url: None,
-                api_key: String::new(),
-                enabled: true,
-                credit_per_cny: 1.0,
-                low_balance_threshold_cny: None,
-                collection_interval_minutes: 5,
-                note: None,
-            })
-            .expect("station")
+    fn test_station(database: &TestCollectorSource, base_url: &str) -> Station {
+        assert_eq!(database.station.website_url, base_url);
+        database.station.clone()
     }
 
-    fn persist_access_token_session(database: &AppDatabase, data_key: &[u8; 32], station_id: &str) {
+    fn persist_access_token_session(
+        database: &TestCollectorSource,
+        data_key: &[u8; 32],
+        station_id: &str,
+    ) {
         database
             .update_station_session_with_data_key(
                 UpdateStationSessionInput {
@@ -2828,7 +2820,233 @@ mod tests {
                     token_expires_at: None,
                 },
                 data_key,
+                database.station.endpoint_revision,
             )
             .expect("session");
+    }
+
+    struct TestCollectorSource {
+        station: Station,
+        settings: AppSettings,
+        session: Mutex<TestSession>,
+    }
+
+    #[derive(Default)]
+    struct TestSession {
+        access_token: Option<String>,
+        refresh_token: Option<String>,
+        cookie: Option<String>,
+        newapi_user_id: Option<String>,
+        session_source: String,
+    }
+
+    impl TestCollectorSource {
+        fn new(base_url: &str) -> Self {
+            Self {
+                station: Station {
+                    id: "test-newapi-station".to_string(),
+                    name: "newapi station".to_string(),
+                    station_type: "newapi".to_string(),
+                    website_url: base_url.to_string(),
+                    api_base_url: format!("{}/v1", base_url.trim_end_matches('/')),
+                    endpoint_revision: 1,
+                    collector_proxy_mode: "inherit".to_string(),
+                    collector_proxy_url: None,
+                    api_key_masked: String::new(),
+                    api_key_present: false,
+                    key_count: 0,
+                    enabled: true,
+                    priority: 0,
+                    credit_per_cny: 1.0,
+                    balance_raw: None,
+                    balance_cny: None,
+                    low_balance_threshold_cny: None,
+                    collection_interval_minutes: 5,
+                    status: "unknown".to_string(),
+                    latency_ms: None,
+                    last_checked_at: None,
+                    last_pricing_fetched_at: None,
+                    note: None,
+                    created_at: "0".to_string(),
+                    updated_at: "0".to_string(),
+                },
+                settings: AppSettings {
+                    local_proxy_port: 1430,
+                    local_proxy_start_on_launch: false,
+                    local_key_masked: String::new(),
+                    default_routing_strategy: "priority_fallback".to_string(),
+                    collector_proxy_mode: "direct".to_string(),
+                    collector_proxy_url: None,
+                    max_rate_multiplier: None,
+                    default_routing_group_filter: RoutingGroupFilter::default(),
+                    scheduler_advanced_settings: SchedulerAdvancedSettings::default(),
+                    low_balance_threshold_cny: 0.0,
+                    collector_interval_minutes: 5,
+                    balance_interval_minutes: 5,
+                    group_rate_interval_minutes: 20,
+                    model_list_interval_minutes: 60,
+                    pricing_refresh_interval_minutes: 60,
+                    collector_timeout_seconds: 15,
+                    collector_max_concurrency: 3,
+                    allow_depleted_fallback: false,
+                    developer_mode_enabled: false,
+                    tray_behavior: "close_to_tray".to_string(),
+                    data_dir: String::new(),
+                    pending_data_dir: None,
+                    data_dir_change_requires_restart: false,
+                },
+                session: Mutex::new(TestSession::default()),
+            }
+        }
+
+        fn credentials(&self) -> StationCredentials {
+            let session = self.session.lock().expect("session lock");
+            StationCredentials {
+                station_id: self.station.id.clone(),
+                login_username: None,
+                password_present: false,
+                access_token_present: session.access_token.is_some(),
+                refresh_token_present: session.refresh_token.is_some(),
+                cookie_present: session.cookie.is_some(),
+                remember_password: false,
+                login_status: "unknown".to_string(),
+                login_error: None,
+                last_login_at: None,
+                session_status: "active".to_string(),
+                session_expires_at: None,
+                newapi_user_id: session.newapi_user_id.clone(),
+                token_expires_at: None,
+                token_refreshed_at: None,
+                session_source: session.session_source.clone(),
+                updated_at: None,
+            }
+        }
+
+        fn assert_revision(&self, expected_revision: i64) -> Result<(), String> {
+            (expected_revision == self.station.endpoint_revision)
+                .then_some(())
+                .ok_or_else(|| "endpoint revision changed".to_string())
+        }
+    }
+
+    impl CollectorSourcePort for TestCollectorSource {
+        fn station_for_collector(&self, station_id: &str) -> Result<Station, String> {
+            (station_id == self.station.id)
+                .then(|| self.station.clone())
+                .ok_or_else(|| "station not found".to_string())
+        }
+
+        fn get_settings(&self) -> Result<AppSettings, String> {
+            Ok(self.settings.clone())
+        }
+
+        fn list_station_keys(&self, _station_id: String) -> Result<Vec<StationKey>, String> {
+            Ok(Vec::new())
+        }
+
+        fn resolve_station_key_secret_with_data_key(
+            &self,
+            _data_key: &[u8; 32],
+            _station_key_id: &str,
+        ) -> Result<String, String> {
+            Err("station key not found".to_string())
+        }
+
+        fn get_station_credentials(
+            &self,
+            station_id: String,
+        ) -> Result<StationCredentials, String> {
+            self.station_for_collector(&station_id)?;
+            Ok(self.credentials())
+        }
+
+        fn get_station_login_password_with_data_key(
+            &self,
+            _station_id: String,
+            _data_key: &[u8; 32],
+        ) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+
+        fn resolve_station_session_with_data_key(
+            &self,
+            station_id: String,
+            _data_key: &[u8; 32],
+            _now_ms: i64,
+        ) -> Result<ResolvedSession, String> {
+            self.station_for_collector(&station_id)?;
+            let session = self.session.lock().expect("session lock");
+            let has_session = session.access_token.is_some() || session.cookie.is_some();
+            Ok(ResolvedSession {
+                status: if has_session {
+                    SessionResolveStatus::Ready
+                } else {
+                    SessionResolveStatus::ManualRequired
+                },
+                access_token: session.access_token.clone(),
+                refresh_token: session.refresh_token.clone(),
+                cookie: session.cookie.clone(),
+                newapi_user_id: session.newapi_user_id.clone(),
+                message: (!has_session).then(|| "manual session required".to_string()),
+            })
+        }
+
+        fn update_station_session_with_data_key(
+            &self,
+            input: UpdateStationSessionInput,
+            _data_key: &[u8; 32],
+            expected_revision: i64,
+        ) -> Result<StationCredentials, String> {
+            self.assert_revision(expected_revision)?;
+            self.station_for_collector(&input.station_id)?;
+            let mut session = self.session.lock().expect("session lock");
+            session.access_token = input.access_token;
+            session.refresh_token = input.refresh_token;
+            session.cookie = input.cookie;
+            session.newapi_user_id = input.newapi_user_id;
+            session.session_source = "test".to_string();
+            drop(session);
+            Ok(self.credentials())
+        }
+
+        fn persist_station_session_with_data_key(
+            &self,
+            input: PersistStationSessionInput,
+            _data_key: &[u8; 32],
+            expected_revision: i64,
+        ) -> Result<StationCredentials, String> {
+            self.assert_revision(expected_revision)?;
+            self.station_for_collector(&input.station_id)?;
+            let mut session = self.session.lock().expect("session lock");
+            session.access_token = input.access_token;
+            session.refresh_token = input.refresh_token;
+            session.cookie = input.cookie;
+            session.newapi_user_id = input.newapi_user_id;
+            session.session_source = input.session_source;
+            drop(session);
+            Ok(self.credentials())
+        }
+
+        fn invalidate_station_session_credential(
+            &self,
+            station_id: &str,
+            kind: StationSessionCredentialKind,
+        ) -> Result<(), String> {
+            self.station_for_collector(station_id)?;
+            let mut session = self.session.lock().expect("session lock");
+            match kind {
+                StationSessionCredentialKind::AccessToken => session.access_token = None,
+                StationSessionCredentialKind::RefreshToken => session.refresh_token = None,
+                StationSessionCredentialKind::Cookie => session.cookie = None,
+            }
+            Ok(())
+        }
+
+        fn list_station_group_bindings(
+            &self,
+            _station_id: String,
+        ) -> Result<Vec<StationGroupBinding>, String> {
+            Ok(Vec::new())
+        }
     }
 }

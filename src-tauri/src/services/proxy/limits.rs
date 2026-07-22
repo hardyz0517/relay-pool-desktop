@@ -49,7 +49,6 @@ impl Default for ProxyServerLimits {
 
 #[derive(Debug, Clone)]
 pub struct BodyBudget {
-    capacity_bytes: usize,
     semaphore: Arc<Semaphore>,
 }
 
@@ -57,7 +56,6 @@ impl BodyBudget {
     pub fn new(capacity_bytes: usize) -> Self {
         let permits = bytes_to_permits(capacity_bytes);
         Self {
-            capacity_bytes: permits * BODY_BUDGET_UNIT_BYTES,
             semaphore: Arc::new(Semaphore::new(permits)),
         }
     }
@@ -75,12 +73,10 @@ impl BodyBudget {
         })
     }
 
+    // Capacity visibility is only needed by lease-accounting tests.
+    #[cfg(test)]
     pub fn available_bytes(&self) -> usize {
         self.semaphore.available_permits() * BODY_BUDGET_UNIT_BYTES
-    }
-
-    pub fn capacity_bytes(&self) -> usize {
-        self.capacity_bytes
     }
 }
 

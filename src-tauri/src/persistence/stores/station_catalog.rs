@@ -1,14 +1,14 @@
 use sqlx::{Executor, Row, Sqlite, SqliteConnection};
 
 use crate::{
-    models::stations::{CreateStationInput, Station, UpdateStationInput},
+    models::{
+        proxy::{normalize_proxy_mode, normalize_proxy_url},
+        secrets::mask_secret,
+        station_endpoints::{normalize_station_endpoints, same_origin},
+        stations::{CreateStationInput, Station, UpdateStationInput},
+    },
     persistence::{
         error::PersistenceError, read_session::ReadSession, write_session::WriteSession,
-    },
-    services::{
-        outbound::{normalize_proxy_mode, normalize_proxy_url},
-        secrets::mask::mask_secret,
-        station_endpoints::{normalize_station_endpoints, same_origin},
     },
 };
 
@@ -36,6 +36,56 @@ impl StationCatalogStore {
         list_stations(read.connection()).await
     }
 
+    pub(crate) async fn get(
+        &self,
+        read: &mut ReadSession,
+        station_id: &str,
+    ) -> Result<Station, PersistenceError> {
+        station_by_id(read.connection(), station_id).await
+    }
+
+    pub(crate) async fn due_collectors(
+        &self,
+        read: &mut ReadSession,
+        now_ms: i64,
+        limit: u32,
+    ) -> Result<Vec<Station>, PersistenceError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, name, station_type, website_url, api_base_url, endpoint_revision,
+                   api_key,
+                   (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
+                   enabled, priority, credit_per_cny, balance_raw, balance_cny,
+                   low_balance_threshold_cny, collection_interval_minutes, status, latency_ms,
+                   last_checked_at, last_pricing_fetched_at, note, created_at, updated_at,
+                   (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id) AS api_key_masked,
+                   api_key_secret_id, collector_proxy_mode, collector_proxy_url
+            FROM stations
+            WHERE enabled = 1
+              AND (
+                   (
+                    CASE
+                        WHEN last_checked_at IS NULL AND last_pricing_fetched_at IS NULL THEN 0
+                        WHEN last_checked_at IS NULL THEN CAST(last_pricing_fetched_at AS INTEGER)
+                        WHEN last_pricing_fetched_at IS NULL THEN CAST(last_checked_at AS INTEGER)
+                        WHEN CAST(last_checked_at AS INTEGER) >= CAST(last_pricing_fetched_at AS INTEGER)
+                            THEN CAST(last_checked_at AS INTEGER)
+                        ELSE CAST(last_pricing_fetched_at AS INTEGER)
+                    END
+                   ) + (collection_interval_minutes * 60000) <= ?1
+                   OR (last_checked_at IS NULL AND last_pricing_fetched_at IS NULL)
+              )
+            ORDER BY priority ASC, created_at ASC, id ASC
+            LIMIT ?2
+            "#,
+        )
+        .bind(now_ms)
+        .bind(i64::from(limit))
+        .fetch_all(read.connection())
+        .await?;
+        rows.into_iter().map(row_to_station).collect()
+    }
+
     pub(crate) async fn insert(
         &self,
         write: &mut WriteSession,
@@ -50,7 +100,7 @@ impl StationCatalogStore {
         )?;
         let endpoints =
             normalize_station_endpoints(&station.input.website_url, &station.input.api_base_url)
-                .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound))?;
+                .map_err(|_| PersistenceError::ConstraintViolation)?;
         let collector_proxy_mode = normalize_proxy_mode(&station.input.collector_proxy_mode, true);
         let collector_proxy_url = normalize_proxy_url(station.input.collector_proxy_url);
         let priority = next_station_priority(write.connection()).await?;
@@ -121,7 +171,7 @@ impl StationCatalogStore {
             .await?
             .rows_affected();
         if deleted == 0 {
-            return Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound));
+            return Err(PersistenceError::NotFound);
         }
         normalize_station_priorities(write.connection()).await
     }
@@ -133,7 +183,7 @@ impl StationCatalogStore {
         now: &str,
     ) -> Result<Vec<Station>, PersistenceError> {
         if station_ids.is_empty() {
-            return Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound));
+            return Err(PersistenceError::ConstraintViolation);
         }
         for (index, id) in station_ids.iter().enumerate() {
             let updated =
@@ -145,7 +195,7 @@ impl StationCatalogStore {
                     .await?
                     .rows_affected();
             if updated == 0 {
-                return Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound));
+                return Err(PersistenceError::NotFound);
             }
         }
         list_stations(write.connection()).await
@@ -167,7 +217,7 @@ async fn update_station(
     .fetch_optional(&mut *connection)
     .await?;
     let Some(existing) = existing else {
-        return Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound));
+        return Err(PersistenceError::NotFound);
     };
     let existing_api_key: String = existing.get("api_key");
     let existing_secret_id: Option<String> = existing.get("api_key_secret_id");
@@ -186,16 +236,16 @@ async fn update_station(
         .unwrap_or(existing_api_key);
     let endpoints =
         normalize_station_endpoints(&change.input.website_url, &change.input.api_base_url)
-            .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound))?;
+            .map_err(|_| PersistenceError::ConstraintViolation)?;
     let website_url_changed = endpoints.website_url != existing_website_url;
     let api_base_url_changed = endpoints.api_base_url != existing_api_base_url;
     let endpoints_changed = website_url_changed || api_base_url_changed;
     let website_origin_changed = endpoints_changed
         && !same_origin(&existing_website_url, &endpoints.website_url)
-            .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound))?;
+            .map_err(|_| invalid_persisted_station_endpoint())?;
     let api_origin_changed = endpoints_changed
         && !same_origin(&existing_api_base_url, &endpoints.api_base_url)
-            .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound))?;
+            .map_err(|_| invalid_persisted_station_endpoint())?;
     let endpoint_revision = if endpoints_changed {
         existing_endpoint_revision.max(1) + 1
     } else {
@@ -403,7 +453,7 @@ where
     .await?;
     row.map(row_to_station)
         .transpose()?
-        .ok_or(PersistenceError::Sqlx(sqlx::Error::RowNotFound))
+        .ok_or(PersistenceError::NotFound)
 }
 
 fn row_to_station(row: sqlx::sqlite::SqliteRow) -> Result<Station, PersistenceError> {
@@ -486,9 +536,13 @@ fn validate_station_fields(
             "sub2api" | "newapi" | "openai-compatible" | "custom"
         )
     {
-        return Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound));
+        return Err(PersistenceError::ConstraintViolation);
     }
     Ok(())
+}
+
+fn invalid_persisted_station_endpoint() -> PersistenceError {
+    PersistenceError::InvariantViolation("invalid persisted station endpoint".to_string())
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {

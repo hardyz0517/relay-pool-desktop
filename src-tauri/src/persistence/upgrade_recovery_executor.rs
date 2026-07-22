@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    upgrade_journal::{Sha256Digest, UpgradeAttemptId, UpgradeJournal, UpgradePhase},
+    upgrade_fault::{
+        AtomicStep, TombstoneStep, UpgradeFailpoint, UpgradeFaultInjector, UpgradeInjectedFailure,
+    },
+    upgrade_journal::{Sha256Digest, UpgradeAttemptId, UpgradeJournal},
     upgrade_recovery_plan::{
         BackupState, JournalState, LegacySourceState, ObservedUpgradeState, RecoveryHaltReason,
         RecoveryPlan, RecoveryPlanner,
@@ -129,12 +132,12 @@ impl RecoveryExecutor {
 
         match execution.expected.source {
             LegacySourceState::Generation1 => {
-                if &io.source_sha256()? != &journal.payload().source_candidate_identity {
+                if io.source_sha256()? != journal.payload().source_candidate_identity {
                     return Err(UpgradeExecutionError::RecoveryPreconditionChanged);
                 }
             }
             LegacySourceState::ValidTombstone => {
-                if &io.tombstone_attempt_id()? != &journal.payload().attempt_id {
+                if io.tombstone_attempt_id()? != journal.payload().attempt_id {
                     return Err(UpgradeExecutionError::RecoveryPreconditionChanged);
                 }
             }
@@ -178,6 +181,8 @@ pub(crate) enum UpgradeExecutionError {
     JournalInvalid,
     #[error("upgrade recovery I/O failed during {0:?}")]
     Io(UpgradeIoOperation),
+    #[error(transparent)]
+    Injected(#[from] UpgradeInjectedFailure),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,6 +192,7 @@ pub(crate) enum UpgradeIoOperation {
     Write,
     SyncFile,
     Replace,
+    #[cfg(not(windows))]
     SyncParent,
     RemoveSidecar,
     Verify,
@@ -206,9 +212,26 @@ struct LegacyTombstone {
     canonical_payload_checksum: Sha256Digest,
 }
 
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "the recovery integration target exercises the no-fault tombstone wrapper"
+)]
 pub(crate) fn replace_legacy_with_tombstone(
     legacy_path: &Path,
     attempt_id: &UpgradeAttemptId,
+) -> Result<(), UpgradeExecutionError> {
+    replace_legacy_with_tombstone_with_faults(
+        legacy_path,
+        attempt_id,
+        &super::upgrade_fault::NoUpgradeFaults,
+    )
+}
+
+pub(crate) fn replace_legacy_with_tombstone_with_faults(
+    legacy_path: &Path,
+    attempt_id: &UpgradeAttemptId,
+    faults: &dyn UpgradeFaultInjector,
 ) -> Result<(), UpgradeExecutionError> {
     if !legacy_path.is_file() {
         return Err(UpgradeExecutionError::RecoveryPreconditionChanged);
@@ -232,13 +255,21 @@ pub(crate) fn replace_legacy_with_tombstone(
             .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::Write))?,
     );
 
+    faults.check(UpgradeFailpoint::Tombstone(TombstoneStep::BeforeWrite))?;
     let temporary = unique_sibling(legacy_path, "tombstone");
-    write_new_synced(&temporary, &bytes)?;
+    write_new(&temporary, &bytes)?;
+    faults.check(UpgradeFailpoint::Tombstone(TombstoneStep::BeforeFileSync))?;
+    sync_file(&temporary)?;
+    faults.check(UpgradeFailpoint::Tombstone(TombstoneStep::BeforeReplace))?;
     if let Err(error) = replace_existing_file(&temporary, legacy_path) {
         let _ = fs::remove_file(&temporary);
         return Err(error);
     }
+    faults.check(UpgradeFailpoint::Tombstone(
+        TombstoneStep::AfterReplaceBeforeParentSync,
+    ))?;
     sync_parent(parent)?;
+    faults.check(UpgradeFailpoint::Tombstone(TombstoneStep::AfterDurableSync))?;
 
     for suffix in ["-wal", "-shm"] {
         let mut sidecar = legacy_path.as_os_str().to_os_string();
@@ -288,6 +319,11 @@ pub(crate) fn read_legacy_tombstone(
         .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::Verify))
 }
 
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "the recovery integration target exercises the no-fault journal wrapper"
+)]
 pub(crate) fn write_journal_atomically(
     journal_path: &Path,
     journal: &UpgradeJournal,
@@ -296,6 +332,22 @@ pub(crate) fn write_journal_atomically(
         .to_canonical_json()
         .map_err(|_| UpgradeExecutionError::JournalInvalid)?;
     write_same_directory_atomically(journal_path, &bytes)
+}
+
+pub(crate) fn write_journal_atomically_with_faults(
+    journal_path: &Path,
+    journal: &UpgradeJournal,
+    faults: &dyn UpgradeFaultInjector,
+) -> Result<(), UpgradeExecutionError> {
+    let phase = journal.payload().phase;
+    let bytes = journal
+        .to_canonical_json()
+        .map_err(|_| UpgradeExecutionError::JournalInvalid)?;
+    write_same_directory_atomically_with(journal_path, &bytes, |edge| {
+        faults
+            .check(UpgradeFailpoint::Journal { phase, edge })
+            .map_err(Into::into)
+    })
 }
 
 pub(crate) fn observe_journal(journal_path: &Path) -> ObservedJournal {
@@ -357,28 +409,51 @@ pub(crate) fn journal_artifact_paths_are_safe(root: &Path, journal: &UpgradeJour
         .all(|relative| resolve_allowlisted_artifact(root, relative).is_ok())
 }
 
-pub(crate) fn publish_v2_candidate(
+pub(crate) fn publish_v2_candidate_with_faults(
     temporary_path: &Path,
     final_path: &Path,
+    faults: &dyn UpgradeFaultInjector,
 ) -> Result<(), UpgradeExecutionError> {
     if final_path.exists() || temporary_path.parent() != final_path.parent() {
         return Err(UpgradeExecutionError::RecoveryPreconditionChanged);
     }
+    faults.check(UpgradeFailpoint::Activation(AtomicStep::BeforeWrite))?;
+    faults.check(UpgradeFailpoint::Activation(AtomicStep::BeforeFileSync))?;
+    sync_file(temporary_path)?;
+    faults.check(UpgradeFailpoint::Activation(AtomicStep::BeforeReplace))?;
     fs::rename(temporary_path, final_path)
         .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::Replace))?;
+    faults.check(UpgradeFailpoint::Activation(
+        AtomicStep::AfterReplaceBeforeParentSync,
+    ))?;
     sync_parent(
         final_path
             .parent()
             .ok_or(UpgradeExecutionError::RecoveryPreconditionChanged)?,
-    )
+    )?;
+    faults.check(UpgradeFailpoint::Activation(AtomicStep::AfterDurableSync))?;
+    Ok(())
 }
 
-pub(crate) fn remove_file_and_sync_parent(path: &Path) -> Result<(), UpgradeExecutionError> {
+pub(crate) fn remove_file_and_sync_parent_with_faults(
+    path: &Path,
+    faults: &dyn UpgradeFaultInjector,
+) -> Result<(), UpgradeExecutionError> {
     let parent = path
         .parent()
         .ok_or(UpgradeExecutionError::RecoveryPreconditionChanged)?;
+    faults.check(UpgradeFailpoint::JournalCleanup(AtomicStep::BeforeWrite))?;
+    faults.check(UpgradeFailpoint::JournalCleanup(AtomicStep::BeforeFileSync))?;
+    faults.check(UpgradeFailpoint::JournalCleanup(AtomicStep::BeforeReplace))?;
     fs::remove_file(path).map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::Replace))?;
-    sync_parent(parent)
+    faults.check(UpgradeFailpoint::JournalCleanup(
+        AtomicStep::AfterReplaceBeforeParentSync,
+    ))?;
+    sync_parent(parent)?;
+    faults.check(UpgradeFailpoint::JournalCleanup(
+        AtomicStep::AfterDurableSync,
+    ))?;
+    Ok(())
 }
 
 pub(crate) fn sha256_file(path: &Path) -> Result<Sha256Digest, UpgradeExecutionError> {
@@ -439,18 +514,35 @@ pub(crate) fn resolve_allowlisted_artifact(
             }
         }
     }
-    Ok(cursor)
+    Ok(root.join(relative_path))
 }
 
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "the recovery integration target exercises the no-fault atomic writer"
+)]
 fn write_same_directory_atomically(
     final_path: &Path,
     bytes: &[u8],
 ) -> Result<(), UpgradeExecutionError> {
+    write_same_directory_atomically_with(final_path, bytes, |_| Ok(()))
+}
+
+fn write_same_directory_atomically_with(
+    final_path: &Path,
+    bytes: &[u8],
+    mut check: impl FnMut(AtomicStep) -> Result<(), UpgradeExecutionError>,
+) -> Result<(), UpgradeExecutionError> {
     let parent = final_path
         .parent()
         .ok_or(UpgradeExecutionError::RecoveryPreconditionChanged)?;
+    check(AtomicStep::BeforeWrite)?;
     let temporary = unique_sibling(final_path, "write");
-    write_new_synced(&temporary, bytes)?;
+    write_new(&temporary, bytes)?;
+    check(AtomicStep::BeforeFileSync)?;
+    sync_file(&temporary)?;
+    check(AtomicStep::BeforeReplace)?;
     let replace_result = if final_path.exists() {
         replace_existing_file(&temporary, final_path)
     } else {
@@ -461,18 +553,28 @@ fn write_same_directory_atomically(
         let _ = fs::remove_file(&temporary);
         return Err(error);
     }
-    sync_parent(parent)
+    check(AtomicStep::AfterReplaceBeforeParentSync)?;
+    sync_parent(parent)?;
+    check(AtomicStep::AfterDurableSync)
 }
 
-fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), UpgradeExecutionError> {
+fn write_new(path: &Path, bytes: &[u8]) -> Result<(), UpgradeExecutionError> {
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
         .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::CreateTemporary))?;
     file.write_all(bytes)
-        .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::Write))?;
-    file.sync_all()
+        .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::Write))
+}
+
+fn sync_file(path: &Path) -> Result<(), UpgradeExecutionError> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::Read))?
+        .sync_all()
         .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::SyncFile))
 }
 
@@ -541,19 +643,4 @@ fn sync_parent(_parent: &Path) -> Result<(), UpgradeExecutionError> {
 fn digest_bytes(bytes: &[u8]) -> Sha256Digest {
     Sha256Digest::parse(&format!("{:x}", Sha256::digest(bytes)))
         .expect("SHA-256 formatter returns a valid lowercase digest")
-}
-
-pub(crate) fn next_phase_for(plan: RecoveryPlan) -> Option<UpgradePhase> {
-    match plan {
-        RecoveryPlan::RestartFromSource => Some(UpgradePhase::BackupVerified),
-        RecoveryPlan::RebuildV2FromVerifiedBackup => Some(UpgradePhase::V2Validated),
-        RecoveryPlan::ActivateValidatedV2 | RecoveryPlan::RecordLegacyDeactivated => {
-            Some(UpgradePhase::LegacyDeactivated)
-        }
-        RecoveryPlan::CommitGeneration2 => Some(UpgradePhase::GenerationCommitted),
-        RecoveryPlan::ReopenGeneration2 => Some(UpgradePhase::V2Reopened),
-        RecoveryPlan::RestoreGeneration1
-        | RecoveryPlan::CleanupCompletedJournal
-        | RecoveryPlan::Halt(_) => None,
-    }
 }

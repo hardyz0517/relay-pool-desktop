@@ -1,10 +1,14 @@
 pub mod backup;
 pub mod config;
+pub(crate) mod data_directory_port;
 pub mod decision;
 pub mod diagnostic;
+pub(crate) mod generation_upgrade;
 pub mod inspect;
 pub mod installation_lease;
 pub mod relocation;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod types;
 
 use std::{
@@ -12,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use config::{installation_marker_exists, read_config, DataDirConfigV2};
+use config::{installation_marker_exists, read_config_v3, DataDirConfigV3, DatabaseGeneration};
 use decision::{decide_startup, CandidateFacts, DecisionInput};
 use inspect::{inspect_candidate, InspectedDataStoreCandidate};
 use types::{
@@ -21,19 +25,32 @@ use types::{
 };
 
 const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
+#[cfg(test)]
 const DATABASE_FILE: &str = "relay-pool-desktop.sqlite3";
+const DATABASE_FILE_V2: &str = "relay-pool-desktop-v2.sqlite3";
 
 pub fn inspect_startup(default_data_dir: &Path) -> Result<DataStoreStartupState, String> {
     let config_path = default_data_dir.join(DATA_DIR_CONFIG_FILE);
-    let config = match read_config(&config_path) {
+    let raw_config_version = fs::read_to_string(&config_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| value.get("version").and_then(serde_json::Value::as_u64));
+    let config = match read_config_v3(&config_path) {
         Ok(config) => config,
         Err(_) => return inspect_with_unreadable_config(default_data_dir),
     };
-    let initialized = config.is_some() || installation_marker_exists(default_data_dir);
-    let relocation_intent = config.as_ref().and_then(trusted_relocation_intent);
-    let pending_relocation = config
+    let generation = config
         .as_ref()
-        .is_some_and(|c| c.version == 1 && c.pending_data_dir != c.source_data_dir);
+        .map(|config| config.database_generation)
+        .unwrap_or(DatabaseGeneration::One);
+    let database_file = generation.database_file();
+    let initialized = config.is_some() || installation_marker_exists(default_data_dir);
+    let relocation_intent = config
+        .as_ref()
+        .and_then(|config| trusted_relocation_intent(config, database_file));
+    let pending_relocation = config.as_ref().is_some_and(|c| {
+        raw_config_version.unwrap_or(1) < 2 && c.pending_data_dir != c.source_data_dir
+    });
     let active_data_dir = config
         .as_ref()
         .and_then(|c| c.active_data_dir.clone())
@@ -46,16 +63,28 @@ pub fn inspect_startup(default_data_dir: &Path) -> Result<DataStoreStartupState,
         } else {
             CandidateRole::Default
         },
+        database_file,
     )?);
+    let orphan_v2_candidate_id = if config.is_none() {
+        let orphan = inspect_candidate(
+            &default_data_dir.join(DATABASE_FILE_V2),
+            CandidateRole::Located,
+        )?;
+        let candidate_id = include_candidate(&orphan).then(|| orphan.candidate.id.clone());
+        inspected.push(orphan);
+        candidate_id
+    } else {
+        None
+    };
     if let Some(config) = &config {
         for (data_dir, role) in [
             (&config.source_data_dir, CandidateRole::Source),
             (&config.pending_data_dir, CandidateRole::Pending),
         ] {
-            push_config_candidate(&mut inspected, data_dir, role)?;
+            push_config_candidate(&mut inspected, data_dir, role, database_file)?;
         }
     }
-    push_owned_backup_candidates(&mut inspected, default_data_dir)?;
+    push_owned_backup_candidates(&mut inspected, default_data_dir, database_file)?;
     dedupe_candidates(&mut inspected);
 
     let facts: Vec<_> = inspected
@@ -64,7 +93,7 @@ pub fn inspect_startup(default_data_dir: &Path) -> Result<DataStoreStartupState,
         .map(candidate_facts)
         .collect();
     let active = active_data_dir.as_ref().and_then(|dir| {
-        let path = dir.join(DATABASE_FILE).display().to_string();
+        let path = dir.join(database_file).display().to_string();
         inspected
             .iter()
             .find(|c| c.candidate.role == CandidateRole::Active && c.candidate.path == path)
@@ -82,20 +111,35 @@ pub fn inspect_startup(default_data_dir: &Path) -> Result<DataStoreStartupState,
         pending_relocation,
         default_data_dir: default_data_dir.to_path_buf(),
     });
+    let decision = match decision {
+        StartupDecision::Ready { candidate_id }
+            if orphan_v2_candidate_id.as_ref() == Some(&candidate_id) =>
+        {
+            StartupDecision::NeedsRecovery {
+                reason: RecoveryReason::UpgradeRecoveryRequired,
+            }
+        }
+        other => other,
+    };
     Ok(DataStoreStartupState::new(
         decision,
         candidates,
         default_data_dir.to_path_buf(),
         relocation_intent,
-    ))
+    )
+    .with_database_generation(generation))
 }
 
 fn inspect_with_unreadable_config(
     default_data_dir: &Path,
 ) -> Result<DataStoreStartupState, String> {
-    let candidate = inspect_data_dir(default_data_dir, CandidateRole::Default)?;
+    let candidate = inspect_data_dir(
+        default_data_dir,
+        CandidateRole::Default,
+        DatabaseGeneration::One.database_file(),
+    )?;
     let candidates = include_candidate(&candidate)
-        .then(|| candidate.candidate)
+        .then_some(candidate.candidate)
         .into_iter()
         .collect();
     Ok(DataStoreStartupState::new(
@@ -105,16 +149,20 @@ fn inspect_with_unreadable_config(
         candidates,
         default_data_dir.to_path_buf(),
         None,
-    ))
+    )
+    .with_database_generation(DatabaseGeneration::One))
 }
 
-fn trusted_relocation_intent(config: &DataDirConfigV2) -> Option<DataStoreRelocationIntent> {
-    if config.version != 2 || config.active_data_dir != config.source_data_dir {
+fn trusted_relocation_intent(
+    config: &DataDirConfigV3,
+    database_file: &str,
+) -> Option<DataStoreRelocationIntent> {
+    if config.version != 3 || config.active_data_dir != config.source_data_dir {
         return None;
     }
     let source_data_dir = config.source_data_dir.clone()?;
     let target_data_dir = config.pending_data_dir.clone()?;
-    (!target_data_dir.join(DATABASE_FILE).exists()).then_some(DataStoreRelocationIntent {
+    (!target_data_dir.join(database_file).exists()).then_some(DataStoreRelocationIntent {
         source_data_dir,
         target_data_dir,
     })
@@ -123,17 +171,19 @@ fn trusted_relocation_intent(config: &DataDirConfigV2) -> Option<DataStoreReloca
 fn inspect_data_dir(
     data_dir: &Path,
     role: CandidateRole,
+    database_file: &str,
 ) -> Result<InspectedDataStoreCandidate, String> {
-    inspect_candidate(&data_dir.join(DATABASE_FILE), role)
+    inspect_candidate(&data_dir.join(database_file), role)
 }
 
 fn push_config_candidate(
     inspected: &mut Vec<InspectedDataStoreCandidate>,
     data_dir: &Option<PathBuf>,
     role: CandidateRole,
+    database_file: &str,
 ) -> Result<(), String> {
     if let Some(data_dir) = data_dir {
-        inspected.push(inspect_data_dir(data_dir, role)?);
+        inspected.push(inspect_data_dir(data_dir, role, database_file)?);
     }
     Ok(())
 }
@@ -141,6 +191,7 @@ fn push_config_candidate(
 fn push_owned_backup_candidates(
     inspected: &mut Vec<InspectedDataStoreCandidate>,
     default_data_dir: &Path,
+    database_file: &str,
 ) -> Result<(), String> {
     let backups_root = default_data_dir.join("backups");
     if !backups_root.is_dir() {
@@ -157,7 +208,7 @@ fn push_owned_backup_candidates(
             .path();
         if path.is_dir() {
             inspected.push(inspect_candidate(
-                &path.join(DATABASE_FILE),
+                &path.join(database_file),
                 CandidateRole::Backup,
             )?);
         }
@@ -190,10 +241,11 @@ fn dedupe_candidates(candidates: &mut Vec<InspectedDataStoreCandidate>) {
 mod tests {
     use super::{inspect_startup, DATABASE_FILE};
     use crate::services::data_store::{
-        config::{create_installation_marker, write_config, DataDirConfigV2},
+        config::{
+            create_installation_marker, write_config, DataDirConfigV2, DatabaseGeneration,
+        },
         types::{CandidateRole, DataStoreRelocationIntent, RecoveryReason, StartupDecision},
     };
-    use rusqlite::Connection;
     use std::{fs, path::{Path, PathBuf}, time::SystemTime};
 
     #[test]
@@ -289,10 +341,61 @@ mod tests {
         assert_eq!(state.candidates[0].role, CandidateRole::Default);
     }
 
+    #[test]
+    fn generation_one_config_is_not_overridden_by_a_residual_v2_file() {
+        let dir = temp_root("generation-authority");
+        create_db(&dir);
+        save_v2(&dir, Some(dir.clone()), None, None);
+        fs::write(
+            dir.join(DatabaseGeneration::Two.database_file()),
+            b"untrusted residual v2 bytes",
+        )
+        .expect("residual v2 file");
+
+        let state = inspect_startup(&dir).expect("generation-one startup");
+
+        assert_eq!(state.database_generation(), DatabaseGeneration::One);
+        assert!(matches!(state.decision, StartupDecision::Ready { .. }));
+        assert!(state
+            .candidates
+            .iter()
+            .all(|candidate| !candidate.path.ends_with(DatabaseGeneration::Two.database_file())));
+    }
+
+    #[test]
+    fn orphan_v2_without_config_is_recovery_evidence_not_an_automatic_first_run() {
+        let dir = temp_root("orphan-v2");
+        create_db_file(&dir.join(DatabaseGeneration::Two.database_file()));
+
+        let state = inspect_startup(&dir).expect("orphan V2 startup");
+
+        assert_eq!(state.database_generation(), DatabaseGeneration::One);
+        assert!(matches!(
+            state.decision,
+            StartupDecision::NeedsRecovery {
+                reason: RecoveryReason::UpgradeRecoveryRequired
+            }
+        ));
+        assert_eq!(state.candidates.len(), 1);
+        assert_eq!(state.candidates[0].role, CandidateRole::Located);
+        assert!(state.candidates[0]
+            .path
+            .ends_with(DatabaseGeneration::Two.database_file()));
+    }
+
     fn create_db(data_dir: &Path) {
         fs::create_dir_all(data_dir).expect("data dir");
-        let db = Connection::open(data_dir.join(DATABASE_FILE)).expect("db");
-        db.execute_batch("CREATE TABLE stations(name TEXT); INSERT INTO stations VALUES ('station')").expect("fixture");
+        create_db_file(&data_dir.join(DATABASE_FILE));
+    }
+
+    fn create_db_file(path: &Path) {
+        fs::create_dir_all(path.parent().expect("database parent")).expect("data dir");
+        let mut db = crate::services::data_store::test_support::open_database(path);
+        crate::services::data_store::test_support::execute_batch(
+            &mut db,
+            "CREATE TABLE stations(name TEXT); INSERT INTO stations VALUES ('station')",
+        );
+        crate::services::data_store::test_support::close_database(db);
     }
 
     fn config_path(dir: &Path) -> PathBuf { dir.join("relay-pool-data-dir.json") }

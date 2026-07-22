@@ -1,20 +1,7 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 pub type CollectorTaskType = String;
 pub type CollectorRunStatus = String;
-
-pub const COLLECTOR_TASK_DETECT: &str = "detect";
-pub const COLLECTOR_TASK_BALANCE: &str = "balance";
-pub const COLLECTOR_TASK_GROUPS: &str = "groups";
-pub const COLLECTOR_TASK_MODELS: &str = "models";
-pub const COLLECTOR_TASK_FULL: &str = "full";
-
-pub const COLLECTOR_RUN_SUCCESS: &str = "success";
-pub const COLLECTOR_RUN_PARTIAL: &str = "partial";
-pub const COLLECTOR_RUN_FAILED: &str = "failed";
-pub const COLLECTOR_RUN_MANUAL_REQUIRED: &str = "manual_required";
-pub const COLLECTOR_RUN_RUNNING: &str = "running";
-pub const COLLECTOR_RUN_SUPERSEDED: &str = "superseded";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,30 +26,6 @@ pub struct CollectorRun {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateCollectorRunInput {
-    pub station_id: String,
-    pub parent_run_id: Option<String>,
-    pub adapter: String,
-    pub task_type: CollectorTaskType,
-}
-
-pub type StartCollectorRunInput = CreateCollectorRunInput;
-
-#[derive(Debug, Clone)]
-pub struct FinishCollectorRunInput {
-    pub id: String,
-    pub status: CollectorRunStatus,
-    pub endpoint_count: i64,
-    pub success_count: i64,
-    pub failure_count: i64,
-    pub manual_action_required: bool,
-    pub error_code: Option<String>,
-    pub error_message: Option<String>,
-    pub snapshot_id: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,8 +38,8 @@ mod tests {
             endpoint_revision: 1,
             parent_run_id: Some("run-parent".to_string()),
             adapter: "sub2api".to_string(),
-            task_type: COLLECTOR_TASK_FULL.to_string(),
-            status: COLLECTOR_RUN_PARTIAL.to_string(),
+            task_type: "full".to_string(),
+            status: "partial".to_string(),
             started_at: "1000".to_string(),
             finished_at: Some("1100".to_string()),
             duration_ms: Some(100),

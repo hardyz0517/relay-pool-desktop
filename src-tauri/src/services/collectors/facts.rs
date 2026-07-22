@@ -68,27 +68,10 @@ pub struct CollectedModelFact {
     pub confidence: f64,
 }
 
-#[derive(Debug, Clone)]
-pub struct CollectorDiagnosticFact {
-    pub endpoint: String,
-    pub status: String,
-    pub duration_ms: Option<i64>,
-    pub error_code: Option<String>,
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ManualActionRequiredFact {
-    pub code: String,
-    pub message: String,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct CollectorFacts {
     pub balances: Vec<CollectedBalanceFact>,
     pub groups: Vec<CollectedGroupFact>,
     pub rates: Vec<CollectedRateFact>,
     pub models: Vec<CollectedModelFact>,
-    pub diagnostics: Vec<CollectorDiagnosticFact>,
-    pub manual_action: Option<ManualActionRequiredFact>,
 }

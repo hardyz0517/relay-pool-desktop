@@ -37,7 +37,6 @@ function assertNoMatch(source, pattern, label) {
 
 const productionProxyFiles = (await filesUnder(proxyDir))
   .filter((file) => file.endsWith(".rs"))
-  .filter((file) => !relative(file).includes("legacy_runtime.rs"))
   .filter((file) => !relative(file).includes("test_support.rs"))
   .filter((file) => !relative(file).includes("_tests.rs"));
 
@@ -62,16 +61,16 @@ for (const file of productionProxyFiles) {
 }
 
 const proxyModule = await read("src-tauri/src/services/proxy/mod.rs");
-assert.match(
-  proxyModule,
-  /#\[cfg\(test\)\]\s*pub\(crate\) mod legacy_runtime;/,
-  "legacy runtime may only be compiled for tests"
-);
 assert.doesNotMatch(
-  proxyModule.replace(/#\[cfg\(test\)\]\s*pub\(crate\) mod legacy_runtime;/, ""),
-  /\bpub mod legacy_runtime\b/,
-  "legacy runtime must not be production-exported"
+  proxyModule,
+  /\blegacy_runtime\b/,
+  "legacy runtime must not be exported in production or tests"
 );
+const legacyRuntime = await read("src-tauri/src/services/proxy/legacy_runtime.rs").catch((error) => {
+  assert.equal(error.code, "ENOENT", "legacy runtime read should fail only because the file is absent");
+  return null;
+});
+assert.equal(legacyRuntime, null, "legacy runtime source must remain deleted");
 
 const request = await read("src-tauri/src/services/proxy/request.rs");
 assert.match(request, /pub struct ProxyHttpResponse \{\s*pub status: StatusCode,\s*pub headers: HeaderMap,\s*pub payload: ProxyResponsePayload,\s*\}/s);

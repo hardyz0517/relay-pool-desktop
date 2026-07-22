@@ -1,8 +1,8 @@
-pub mod audit;
 pub mod crypto;
 pub mod keychain;
 pub mod mask;
 pub mod validation;
+pub(crate) mod vault;
 
 #[derive(Clone)]
 pub struct SecretManager {

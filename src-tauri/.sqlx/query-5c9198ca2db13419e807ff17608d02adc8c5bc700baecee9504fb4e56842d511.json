@@ -1,0 +1,314 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id AS \"id!\", request_id AS \"request_id?\", started_at,\n                   finished_at AS \"finished_at?\", duration_ms AS \"duration_ms?\",\n                   method, path, model AS \"model?\", stream AS \"stream!: bool\", status,\n                   lifecycle_status AS \"lifecycle_status?\",\n                   station_key_id AS \"station_key_id?\", station_id AS \"station_id?\",\n                   upstream_base_url AS \"upstream_base_url?\", fallback_count,\n                   error_message AS \"error_message?\", route_policy AS \"route_policy?\",\n                   route_reason AS \"route_reason?\",\n                   rejected_candidates_json AS \"rejected_candidates_json?\",\n                   body_bytes AS \"body_bytes?\", attempt_count AS \"attempt_count?\",\n                   route_wait_ms AS \"route_wait_ms?\",\n                   upstream_headers_ms AS \"upstream_headers_ms?\",\n                   failure_source AS \"failure_source?\", attempts_json AS \"attempts_json?\",\n                   completion_source AS \"completion_source?\",\n                   prompt_tokens AS \"prompt_tokens?\",\n                   completion_tokens AS \"completion_tokens?\", total_tokens AS \"total_tokens?\",\n                   cache_creation_tokens AS \"cache_creation_tokens?\",\n                   cache_read_tokens AS \"cache_read_tokens?\",\n                   reasoning_effort AS \"reasoning_effort?\",\n                   first_token_ms AS \"first_token_ms?\", billing_mode AS \"billing_mode?\",\n                   estimated_input_cost AS \"estimated_input_cost?\",\n                   estimated_output_cost AS \"estimated_output_cost?\",\n                   estimated_total_cost AS \"estimated_total_cost?\",\n                   base_input_cost AS \"base_input_cost?\",\n                   base_output_cost AS \"base_output_cost?\",\n                   base_fixed_cost AS \"base_fixed_cost?\",\n                   base_total_cost AS \"base_total_cost?\", cost_currency AS \"cost_currency?\",\n                   pricing_rule_id AS \"pricing_rule_id?\", pricing_source AS \"pricing_source?\",\n                   cost_status AS \"cost_status?\", group_binding_id AS \"group_binding_id?\",\n                   normalization_status AS \"normalization_status?\",\n                   balance_scope AS \"balance_scope?\",\n                   economic_context_json AS \"economic_context_json?\", created_at\n            FROM request_logs\n            ORDER BY created_at DESC, id DESC\n            LIMIT ?1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "request_id?",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "started_at",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "finished_at?",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "duration_ms?",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "method",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "path",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "model?",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "stream!: bool",
+        "ordinal": 8,
+        "type_info": "Integer"
+      },
+      {
+        "name": "status",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "lifecycle_status?",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "station_key_id?",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "station_id?",
+        "ordinal": 12,
+        "type_info": "Text"
+      },
+      {
+        "name": "upstream_base_url?",
+        "ordinal": 13,
+        "type_info": "Text"
+      },
+      {
+        "name": "fallback_count",
+        "ordinal": 14,
+        "type_info": "Integer"
+      },
+      {
+        "name": "error_message?",
+        "ordinal": 15,
+        "type_info": "Text"
+      },
+      {
+        "name": "route_policy?",
+        "ordinal": 16,
+        "type_info": "Text"
+      },
+      {
+        "name": "route_reason?",
+        "ordinal": 17,
+        "type_info": "Text"
+      },
+      {
+        "name": "rejected_candidates_json?",
+        "ordinal": 18,
+        "type_info": "Text"
+      },
+      {
+        "name": "body_bytes?",
+        "ordinal": 19,
+        "type_info": "Integer"
+      },
+      {
+        "name": "attempt_count?",
+        "ordinal": 20,
+        "type_info": "Integer"
+      },
+      {
+        "name": "route_wait_ms?",
+        "ordinal": 21,
+        "type_info": "Integer"
+      },
+      {
+        "name": "upstream_headers_ms?",
+        "ordinal": 22,
+        "type_info": "Integer"
+      },
+      {
+        "name": "failure_source?",
+        "ordinal": 23,
+        "type_info": "Text"
+      },
+      {
+        "name": "attempts_json?",
+        "ordinal": 24,
+        "type_info": "Text"
+      },
+      {
+        "name": "completion_source?",
+        "ordinal": 25,
+        "type_info": "Text"
+      },
+      {
+        "name": "prompt_tokens?",
+        "ordinal": 26,
+        "type_info": "Integer"
+      },
+      {
+        "name": "completion_tokens?",
+        "ordinal": 27,
+        "type_info": "Integer"
+      },
+      {
+        "name": "total_tokens?",
+        "ordinal": 28,
+        "type_info": "Integer"
+      },
+      {
+        "name": "cache_creation_tokens?",
+        "ordinal": 29,
+        "type_info": "Integer"
+      },
+      {
+        "name": "cache_read_tokens?",
+        "ordinal": 30,
+        "type_info": "Integer"
+      },
+      {
+        "name": "reasoning_effort?",
+        "ordinal": 31,
+        "type_info": "Text"
+      },
+      {
+        "name": "first_token_ms?",
+        "ordinal": 32,
+        "type_info": "Integer"
+      },
+      {
+        "name": "billing_mode?",
+        "ordinal": 33,
+        "type_info": "Text"
+      },
+      {
+        "name": "estimated_input_cost?",
+        "ordinal": 34,
+        "type_info": "Float"
+      },
+      {
+        "name": "estimated_output_cost?",
+        "ordinal": 35,
+        "type_info": "Float"
+      },
+      {
+        "name": "estimated_total_cost?",
+        "ordinal": 36,
+        "type_info": "Float"
+      },
+      {
+        "name": "base_input_cost?",
+        "ordinal": 37,
+        "type_info": "Float"
+      },
+      {
+        "name": "base_output_cost?",
+        "ordinal": 38,
+        "type_info": "Float"
+      },
+      {
+        "name": "base_fixed_cost?",
+        "ordinal": 39,
+        "type_info": "Float"
+      },
+      {
+        "name": "base_total_cost?",
+        "ordinal": 40,
+        "type_info": "Float"
+      },
+      {
+        "name": "cost_currency?",
+        "ordinal": 41,
+        "type_info": "Text"
+      },
+      {
+        "name": "pricing_rule_id?",
+        "ordinal": 42,
+        "type_info": "Text"
+      },
+      {
+        "name": "pricing_source?",
+        "ordinal": 43,
+        "type_info": "Text"
+      },
+      {
+        "name": "cost_status?",
+        "ordinal": 44,
+        "type_info": "Text"
+      },
+      {
+        "name": "group_binding_id?",
+        "ordinal": 45,
+        "type_info": "Text"
+      },
+      {
+        "name": "normalization_status?",
+        "ordinal": 46,
+        "type_info": "Text"
+      },
+      {
+        "name": "balance_scope?",
+        "ordinal": 47,
+        "type_info": "Text"
+      },
+      {
+        "name": "economic_context_json?",
+        "ordinal": 48,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 49,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "5c9198ca2db13419e807ff17608d02adc8c5bc700baecee9504fb4e56842d511"
+}

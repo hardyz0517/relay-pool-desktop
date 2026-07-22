@@ -18,7 +18,10 @@ const groupOptionViewModelSource = await readFile(
   "src/features/stations/groupOptionViewModels.ts",
   "utf8",
 );
-const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
+const collectorStoreSource = await readFile(
+  "src-tauri/src/persistence/stores/collector_store.rs",
+  "utf8",
+);
 const stationDetailViewModelSource = await readFile(
   "src/features/stations/stationDetailViewModels.ts",
   "utf8",
@@ -219,7 +222,7 @@ assert.ok(
 );
 
 assert.ok(
-  /async function saveGroupRows\(targetStationId: string, rows: StationGroupDraft\[\]\)[\s\S]*listStationGroupBindings\(targetStationId\)/.test(addProviderSource),
+  /async function saveGroupRows\([^)]*\)[\s\S]*listStationGroupBindings\(targetStationId\)/.test(addProviderSource),
   "saving group rows should compare against persisted bindings so edit-page deletion affects detail-page storage",
 );
 
@@ -293,12 +296,12 @@ assert.ok(
 );
 
 assert.ok(
-  databaseSource.includes("excluded.binding_status NOT IN ('missing', 'disabled')"),
+  collectorStoreSource.includes("excluded.binding_status NOT IN ('missing', 'disabled')"),
   "explicitly disabling a group binding should override the protected bound status so detail-page rows disappear after edit deletion",
 );
 
 assert.ok(
-  databaseSource.includes("disable_shadow_station_group_bindings"),
+  collectorStoreSource.includes("disable_shadow_station_group_bindings"),
   "collector group writes should disable older same-name remote_scan shadow bindings",
 );
 

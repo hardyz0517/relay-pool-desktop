@@ -2,7 +2,8 @@ use serde_json::{json, Value};
 
 use crate::models::{credentials::PersistStationSessionInput, stations::Station};
 use crate::services::{
-    collectors::adapters::newapi::parsers, database::AppDatabase, secrets::mask::redact_text,
+    collectors::{adapters::newapi::parsers, CollectorSourcePort},
+    secrets::mask::redact_text,
     station_endpoints::build_management_url,
 };
 
@@ -85,7 +86,7 @@ pub(super) fn normalize_set_cookie_headers(headers: &[String]) -> Option<String>
 }
 
 pub(crate) fn login_with_password(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
     login_username: &str,
@@ -107,6 +108,7 @@ pub(crate) fn login_with_password(
             session_source: "password_login".to_string(),
         },
         data_key,
+        station.endpoint_revision,
     )?;
     Ok(login.outcome)
 }

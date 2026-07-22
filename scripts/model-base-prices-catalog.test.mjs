@@ -5,17 +5,18 @@ const sub2ApiCommit = "e316ebf52838a89d57fc790981cce7520f819ac8";
 const expectedBuiltinCount = 196;
 const sourceLabel = "Sub2API model pricing catalog";
 
-const rustFile = await readFile("src-tauri/src/services/database.rs", "utf8");
+const rustCatalogFile = await readFile("src-tauri/src/services/pricing_catalog.rs", "utf8");
+const rustStoreFile = await readFile("src-tauri/src/persistence/stores/pricing_store.rs", "utf8");
 const tsFile = await readFile("src/lib/api/economics.ts", "utf8");
 const rustCatalogSource = extractBetween(
-  rustFile,
-  "const BUILTIN_MODEL_BASE_PRICE_CHECKED_AT",
-  "fn seed_builtin_model_base_prices",
+  rustCatalogFile,
+  "pub(crate) const BUILTIN_MODEL_BASE_PRICE_CHECKED_AT",
+  "pub(crate) struct StaticBuiltinModelBasePriceCatalog",
 );
 const rustSeedSource = extractBetween(
-  rustFile,
-  "fn seed_builtin_model_base_prices",
-  "fn seed_builtin_channel_monitor_templates_in_connection",
+  rustStoreFile,
+  "pub(crate) async fn reset_model_base_prices_to_builtins",
+  "pub(crate) async fn ensure_builtin_model_base_prices",
 );
 const tsSource = extractBetween(
   tsFile,
@@ -49,8 +50,8 @@ for (const source of [rustCatalogSource, tsSource]) {
   assert.ok(!source.includes("per_1m_tokens"), "builtin catalog should not use the old per_1m_tokens unit");
 }
 
-assert.ok(rustSeedSource.includes("'M'"), "Rust seed should use the short M unit label");
-assert.ok(!rustSeedSource.includes("per_1m_tokens"), "Rust seed should not use the old per_1m_tokens unit");
+assert.ok(rustCatalogFile.includes('unit: "M".to_string()'), "Rust catalog adapter should use the short M unit label");
+assert.ok(!rustCatalogFile.includes("per_1m_tokens"), "Rust catalog should not use the old per_1m_tokens unit");
 assert.ok(tsSource.includes('unit: "M"'), "TypeScript fallback should use the short M unit label");
 
 for (const row of [

@@ -1,12 +1,11 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
-use rusqlite::{Connection, OpenFlags};
-
-use crate::persistence::upgrade_recovery_executor::read_legacy_tombstone;
+use crate::persistence::{
+    inspect_relay_pool_database, upgrade_recovery_executor::read_legacy_tombstone,
+    ReadOnlyDatabaseHealth, ReadOnlyDatabaseInspection,
+};
 
 use super::types::{CandidateHealth, CandidateRole, DataStoreCandidate};
-
-const RECOGNIZED_TABLES: [&str; 4] = ["stations", "station_keys", "channel_monitors", "settings"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct InspectedDataStoreCandidate {
@@ -88,34 +87,7 @@ fn inspect_with_quick_check(
             false,
         )
     };
-    let connection = match Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ) {
-        Ok(connection) => connection,
-        Err(error) => {
-            return Ok(with_metadata(
-                classify_open_error(&error),
-                false,
-                BTreeMap::new(),
-            ))
-        }
-    };
-
-    let quick_check = match quick_check_override {
-        Some(value) => value,
-        None => match run_quick_check(&connection) {
-            Ok(value) => value,
-            Err(_) => {
-                return Ok(with_metadata(
-                    CandidateHealth::InvalidSqlite,
-                    false,
-                    BTreeMap::new(),
-                ));
-            }
-        },
-    };
-    if !quick_check.eq_ignore_ascii_case("ok") {
+    if quick_check_override.is_some_and(|value| !value.eq_ignore_ascii_case("ok")) {
         return Ok(with_metadata(
             CandidateHealth::IntegrityFailed,
             false,
@@ -123,13 +95,20 @@ fn inspect_with_quick_check(
         ));
     }
 
-    let tables = recognized_tables(&connection)?;
-    let contains_relay_pool_schema = !tables.is_empty();
-    let counts = count_tables(&connection, &tables)?;
+    let inspection: ReadOnlyDatabaseInspection =
+        tauri::async_runtime::block_on(inspect_relay_pool_database(path))
+            .map_err(|error| format!("failed to inspect candidate database: {error}"))?;
+    let health = match inspection.health {
+        ReadOnlyDatabaseHealth::Healthy => CandidateHealth::Healthy,
+        ReadOnlyDatabaseHealth::IntegrityFailed => CandidateHealth::IntegrityFailed,
+        ReadOnlyDatabaseHealth::InvalidSqlite => CandidateHealth::InvalidSqlite,
+        ReadOnlyDatabaseHealth::Unreadable => CandidateHealth::Unreadable,
+    };
+    let contains_relay_pool_schema = !inspection.table_counts.is_empty();
     Ok(with_metadata(
-        CandidateHealth::Healthy,
+        health,
         contains_relay_pool_schema,
-        counts,
+        inspection.table_counts,
     ))
 }
 
@@ -163,65 +142,19 @@ fn make_candidate(
     }
 }
 
-fn classify_open_error(error: &rusqlite::Error) -> CandidateHealth {
-    let message = error.to_string().to_ascii_lowercase();
-    if message.contains("permission") || message.contains("access") {
-        CandidateHealth::Unreadable
-    } else {
-        CandidateHealth::InvalidSqlite
-    }
-}
-
-fn run_quick_check(connection: &Connection) -> Result<String, rusqlite::Error> {
-    connection.query_row("PRAGMA quick_check", [], |row| row.get(0))
-}
-
-fn recognized_tables(connection: &Connection) -> Result<Vec<&'static str>, String> {
-    let mut tables = Vec::new();
-    for table in RECOGNIZED_TABLES {
-        if table_exists(connection, table)? {
-            tables.push(table);
-        }
-    }
-    Ok(tables)
-}
-
-fn table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
-    connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
-            [table],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|exists| exists == 1)
-        .map_err(|error| format!("failed to read candidate schema: {error}"))
-}
-
-fn count_tables(
-    connection: &Connection,
-    tables: &[&'static str],
-) -> Result<BTreeMap<String, i64>, String> {
-    let mut counts = BTreeMap::new();
-    for table in tables {
-        let count = connection
-            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
-                row.get(0)
-            })
-            .map_err(|error| format!("failed to count candidate table {table}: {error}"))?;
-        counts.insert((*table).to_string(), count);
-    }
-    Ok(counts)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{inspect_candidate, inspect_with_quick_check, table_exists};
+    use super::{inspect_candidate, inspect_with_quick_check};
     use crate::persistence::{
         upgrade_journal::UpgradeAttemptId, upgrade_recovery_executor::replace_legacy_with_tombstone,
     };
     use crate::services::data_store::types::{CandidateHealth, CandidateRole};
-    use rusqlite::Connection;
-    use std::{fs, path::PathBuf, time::SystemTime};
+    use sqlx::SqliteConnection;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        time::SystemTime,
+    };
 
     #[test]
     fn missing_invalid_and_integrity_failed_are_classified_without_creating_paths() {
@@ -267,24 +200,28 @@ mod tests {
     #[test]
     fn read_only_inspection_does_not_initialize_schema_or_touch_metadata() {
         let path = db_path("read-only");
-        let connection = open(&path);
-        sql(&connection, "CREATE TABLE unrelated(id TEXT)");
-        drop(connection);
+        let mut connection = open(&path);
+        sql(&mut connection, "CREATE TABLE unrelated(id TEXT)");
+        crate::services::data_store::test_support::close_database(connection);
         let before = file_facts(&path);
 
         let inspected = inspect_candidate(&path, CandidateRole::Located).expect("unrelated");
         assert_eq!(file_facts(&path), before);
         assert_eq!(inspected.candidate.health, CandidateHealth::Healthy);
         assert!(!inspected.contains_relay_pool_schema);
-        assert!(!table_exists(&open(&path), "settings").expect("table query"));
+        let settings_exists = crate::services::data_store::test_support::query_i64(
+            &path,
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings')",
+        );
+        assert_eq!(settings_exists, 0);
     }
 
     #[test]
     fn serialized_summary_excludes_station_urls_keys_cookies_and_secret_values() {
         let path = db_path("redaction");
-        let connection = open(&path);
-        connection.execute_batch("CREATE TABLE stations(name TEXT, base_url TEXT, cookie TEXT); CREATE TABLE settings(key TEXT, value TEXT); INSERT INTO stations VALUES ('Sensitive Station', 'https://secret.example/v1', 'session-cookie'); INSERT INTO settings VALUES ('local_key', 'sk-sensitive');").expect("fixture");
-        drop(connection);
+        let mut connection = open(&path);
+        sql(&mut connection, "CREATE TABLE stations(name TEXT, base_url TEXT, cookie TEXT); CREATE TABLE settings(key TEXT, value TEXT); INSERT INTO stations VALUES ('Sensitive Station', 'https://secret.example/v1', 'session-cookie'); INSERT INTO settings VALUES ('local_key', 'sk-sensitive');");
+        crate::services::data_store::test_support::close_database(connection);
 
         let inspected = inspect_candidate(&path, CandidateRole::Located).expect("redaction");
         let serialized = serde_json::to_string(&inspected.candidate).expect("serialize");
@@ -317,16 +254,17 @@ mod tests {
 
     fn protected_db(name: &str, tables: &[(&str, usize)]) -> PathBuf {
         let path = db_path(name);
-        let connection = open(&path);
+        let mut connection = open(&path);
         for (table, rows) in tables {
-            create_table(&connection, table);
+            create_table(&mut connection, table);
             for _ in 0..*rows {
                 sql(
-                    &connection,
+                    &mut connection,
                     &format!("INSERT INTO {table}(name) VALUES ('value')"),
                 );
             }
         }
+        crate::services::data_store::test_support::close_database(connection);
         path
     }
 
@@ -344,19 +282,19 @@ mod tests {
         std::env::temp_dir().join(format!("relay-pool-inspect-{name}-{unique}"))
     }
 
-    fn create_table(connection: &Connection, table: &str) {
+    fn create_table(connection: &mut SqliteConnection, table: &str) {
         sql(connection, &format!("CREATE TABLE {table}(name TEXT)"));
     }
 
-    fn open(path: &PathBuf) -> Connection {
-        Connection::open(path).expect("db")
+    fn open(path: &Path) -> SqliteConnection {
+        crate::services::data_store::test_support::open_database(path)
     }
 
-    fn sql(connection: &Connection, sql: &str) {
-        connection.execute(sql, []).expect("sql");
+    fn sql(connection: &mut SqliteConnection, sql: &str) {
+        crate::services::data_store::test_support::execute_batch(connection, sql);
     }
 
-    fn file_facts(path: &PathBuf) -> (u64, Option<SystemTime>) {
+    fn file_facts(path: &Path) -> (u64, Option<SystemTime>) {
         let metadata = fs::metadata(path).expect("metadata");
         (metadata.len(), metadata.modified().ok())
     }

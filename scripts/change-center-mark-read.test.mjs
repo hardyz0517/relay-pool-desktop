@@ -361,7 +361,11 @@ const appShellSource = await readFile("src/components/shell/AppShell.tsx", "utf8
 const mockChangeEventsSource = await readFile("src/lib/mock/changeEvents.ts", "utf8");
 const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
 const tauriLibSource = await readFile("src-tauri/src/lib.rs", "utf8");
-const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
+const changeServiceSource = await readFile("src-tauri/src/application/changes.rs", "utf8");
+const changeStoreSource = await readFile(
+  "src-tauri/src/persistence/stores/change_store.rs",
+  "utf8",
+);
 
 assert.ok(
   changeEventsApiSource.includes("CHANGE_EVENTS_UPDATED_EVENT"),
@@ -497,17 +501,20 @@ assert.ok(
 );
 
 assert.ok(
-  tauriCommandsSource.includes("pub fn clear_change_events") &&
+  tauriCommandsSource.includes("pub async fn clear_change_events") &&
+    tauriCommandsSource.includes(".changes") &&
+    tauriCommandsSource.includes(".clear()") &&
     tauriLibSource.includes("commands::clear_change_events") &&
-    databaseSource.includes("pub fn clear_change_events") &&
-    databaseSource.includes("DELETE FROM change_events"),
+    changeServiceSource.includes("pub(crate) async fn clear") &&
+    changeStoreSource.includes("DELETE FROM change_events"),
   "Tauri should register a clear_change_events command that deletes persisted change-event history",
 );
 
 assert.ok(
-  tauriCommandsSource.includes("pub fn mark_change_events_read") &&
+  tauriCommandsSource.includes("pub async fn mark_change_events_read") &&
+    tauriCommandsSource.includes(".mark_many_read(ids)") &&
     tauriLibSource.includes("commands::mark_change_events_read") &&
-    databaseSource.includes("pub fn mark_change_events_read") &&
-    databaseSource.includes("status = ?2, updated_at = ?3 WHERE id = ?1 AND status = ?4"),
+    changeServiceSource.includes("pub(crate) async fn mark_many_read") &&
+    changeStoreSource.includes("WHERE id = ?1 AND status = 'unread'"),
   "batch read persistence should be registered and only transition rows that are still unread",
 );

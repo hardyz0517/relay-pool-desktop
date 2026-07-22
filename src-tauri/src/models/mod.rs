@@ -12,6 +12,7 @@ pub mod routing;
 pub mod secrets;
 pub mod settings;
 pub mod shared_capabilities;
+pub mod station_endpoints;
 pub mod station_keys;
 pub mod stations;
 

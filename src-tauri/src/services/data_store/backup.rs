@@ -1,17 +1,15 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 
-use rusqlite::{backup::Backup, Connection, OpenFlags};
+use crate::persistence::create_verified_backup_from_path;
 
 use super::{
     inspect::inspect_candidate,
     types::{CandidateHealth, CandidateRole},
 };
-
-const BACKUP_FILE_NAME: &str = "relay-pool-desktop.sqlite3";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BackupResult {
@@ -59,6 +57,15 @@ fn backup_selected_database_inner(
     if matches!(failure, Some(BackupFailure::InsufficientSpacePreflight)) {
         return Err("injected insufficient-space preflight failure".to_string());
     }
+    let source_file_name = source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "source database path has no valid file name".to_string())?;
+    if source_file_name != "relay-pool-desktop.sqlite3"
+        && source_file_name != "relay-pool-desktop-v2.sqlite3"
+    {
+        return Err("source database file name is not owned by Relay Pool".to_string());
+    }
 
     let backups_root = default_app_data.join("backups");
     fs::create_dir_all(&backups_root).map_err(|error| {
@@ -68,22 +75,14 @@ fn backup_selected_database_inner(
         )
     })?;
     let backup_dir = create_unique_backup_dir(&backups_root)?;
-    let temp_backup_path = backup_dir.join(format!("{BACKUP_FILE_NAME}.tmp"));
-    let final_backup_path = backup_dir.join(BACKUP_FILE_NAME);
+    let final_backup_path = backup_dir.join(source_file_name);
 
     #[cfg(test)]
     if matches!(failure, Some(BackupFailure::DestinationOpen)) {
         return Err("injected destination-open failure".to_string());
     }
 
-    write_sqlite_backup(source_path, &temp_backup_path)?;
-    verify_backup(&temp_backup_path)?;
-    fs::rename(&temp_backup_path, &final_backup_path).map_err(|error| {
-        format!(
-            "failed to publish backup {}: {error}",
-            final_backup_path.display()
-        )
-    })?;
+    write_sqlite_backup(source_path, &final_backup_path)?;
     verify_backup(&final_backup_path)?;
 
     Ok(BackupResult {
@@ -113,16 +112,12 @@ fn create_unique_backup_dir(backups_root: &Path) -> Result<PathBuf, String> {
 }
 
 fn write_sqlite_backup(source_path: &Path, temp_backup_path: &Path) -> Result<(), String> {
-    let source = Connection::open_with_flags(source_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|error| format!("failed to open source database for backup: {error}"))?;
-    let mut destination = Connection::open(temp_backup_path)
-        .map_err(|error| format!("failed to open backup destination: {error}"))?;
-    let backup = Backup::new(&source, &mut destination)
-        .map_err(|error| format!("failed to start sqlite backup: {error}"))?;
-    backup
-        .run_to_completion(5, Duration::from_millis(250), None)
-        .map_err(|error| format!("failed to copy sqlite backup: {error}"))?;
-    Ok(())
+    tauri::async_runtime::block_on(create_verified_backup_from_path(
+        source_path,
+        temp_backup_path,
+    ))
+    .map(|_| ())
+    .map_err(|error| format!("failed to create verified sqlite backup: {error}"))
 }
 
 fn verify_backup(path: &Path) -> Result<(), String> {
@@ -141,28 +136,30 @@ mod tests {
     use super::{
         backup_selected_database, backup_selected_database_with_failure_for_test, BackupFailure,
     };
-    use crate::services::data_store::inspect::inspect_candidate;
-    use crate::services::data_store::types::{CandidateHealth, CandidateRole};
-    use rusqlite::Connection;
-    use std::{fs, path::PathBuf, time::SystemTime};
+    use crate::services::data_store::{
+        config::{write_config_v3, DataDirConfigV3, DatabaseGeneration},
+        inspect::inspect_candidate,
+        inspect_startup,
+        types::{CandidateHealth, CandidateRole},
+    };
+    use sqlx::SqliteConnection;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        time::SystemTime,
+    };
 
     #[test]
     fn wal_mode_backup_contains_committed_rows_and_passes_quick_check() {
         let root = temp_root("wal-backup");
-        let source = root.join("source.sqlite3");
+        let source = root.join("relay-pool-desktop.sqlite3");
         let backup_root = root.join("app-data");
-        let connection = Connection::open(&source).expect("source");
-        connection
-            .pragma_update(None, "journal_mode", "WAL")
-            .expect("wal");
-        connection
-            .execute("CREATE TABLE stations(name TEXT)", [])
-            .expect("table");
-        connection
-            .execute("INSERT INTO stations VALUES ('committed')", [])
-            .expect("row");
+        let mut connection = open(&source);
+        execute_batch(
+            &mut connection,
+            "CREATE TABLE stations(name TEXT); INSERT INTO stations VALUES ('committed')",
+        );
         assert!(source.with_extension("sqlite3-wal").exists());
-        drop(connection);
 
         let backup = backup_selected_database(&source, &backup_root).expect("backup");
         let inspected =
@@ -171,21 +168,20 @@ mod tests {
         assert_eq!(inspected.candidate.health, CandidateHealth::Healthy);
         assert_eq!(inspected.candidate.counts.get("stations"), Some(&1));
         assert!(backup.backup_path.starts_with(backup_root.join("backups")));
+        crate::services::data_store::test_support::close_database(connection);
     }
 
     #[test]
     fn injected_backup_failures_leave_source_unchanged() {
         let root = temp_root("backup-failures");
-        let source = root.join("source.sqlite3");
+        let source = root.join("relay-pool-desktop.sqlite3");
         let backup_root = root.join("app-data");
-        let connection = Connection::open(&source).expect("source");
-        connection
-            .execute("CREATE TABLE stations(name TEXT)", [])
-            .expect("table");
-        connection
-            .execute("INSERT INTO stations VALUES ('original')", [])
-            .expect("row");
-        drop(connection);
+        let mut connection = open(&source);
+        execute_batch(
+            &mut connection,
+            "CREATE TABLE stations(name TEXT); INSERT INTO stations VALUES ('original')",
+        );
+        crate::services::data_store::test_support::close_database(connection);
         let before = source_facts(&source);
 
         for failure in [
@@ -200,13 +196,62 @@ mod tests {
         }
     }
 
-    fn source_facts(path: &PathBuf) -> (u64, i64) {
+    #[test]
+    fn generation_two_backup_keeps_its_discoverable_file_name() {
+        let root = temp_root("v2-backup-name");
+        let source = root.join("relay-pool-desktop-v2.sqlite3");
+        let backup_root = root.join("app-data");
+        let mut connection = open(&source);
+        execute_batch(
+            &mut connection,
+            "CREATE TABLE stations(name TEXT); INSERT INTO stations VALUES ('v2')",
+        );
+        crate::services::data_store::test_support::close_database(connection);
+
+        let backup = backup_selected_database(&source, &backup_root).expect("v2 backup");
+
+        assert_eq!(
+            backup
+                .backup_path
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("relay-pool-desktop-v2.sqlite3")
+        );
+        assert!(backup.backup_path.is_file());
+        write_config_v3(
+            &backup_root.join("relay-pool-data-dir.json"),
+            &DataDirConfigV3 {
+                version: 3,
+                active_data_dir: Some(root.clone()),
+                pending_data_dir: None,
+                source_data_dir: None,
+                database_generation: DatabaseGeneration::Two,
+                updated_at: "2026-07-21T00:00:00Z".to_string(),
+            },
+        )
+        .expect("generation-two config");
+        let startup = inspect_startup(&backup_root).expect("discover backup");
+        assert!(startup.candidates.iter().any(|candidate| {
+            candidate.role == CandidateRole::Backup
+                && candidate.path == backup.backup_path.display().to_string()
+        }));
+    }
+
+    fn source_facts(path: &Path) -> (u64, i64) {
         let size = fs::metadata(path).expect("metadata").len();
-        let count = Connection::open(path)
-            .expect("source")
-            .query_row("SELECT COUNT(*) FROM stations", [], |row| row.get(0))
-            .expect("count");
+        let count = crate::services::data_store::test_support::query_i64(
+            path,
+            "SELECT COUNT(*) FROM stations",
+        );
         (size, count)
+    }
+
+    fn open(path: &Path) -> SqliteConnection {
+        crate::services::data_store::test_support::open_database(path)
+    }
+
+    fn execute_batch(connection: &mut SqliteConnection, statements: &str) {
+        crate::services::data_store::test_support::execute_batch(connection, statements);
     }
 
     fn temp_root(name: &str) -> PathBuf {

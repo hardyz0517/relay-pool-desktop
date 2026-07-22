@@ -44,14 +44,11 @@ fn child_process_installation_lease_blocks_second_helper_until_release() {
     holder.stop();
 
     let probe = spawn_helper("probe", root.path());
-    assert_eq!(
-        probe
-            .wait_with_output()
-            .expect("probe after release")
-            .status
-            .success(),
-        true
-    );
+    assert!(probe
+        .wait_with_output()
+        .expect("probe after release")
+        .status
+        .success());
 }
 
 #[test]

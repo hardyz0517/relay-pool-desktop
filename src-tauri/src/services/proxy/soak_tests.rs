@@ -2,23 +2,13 @@ use std::time::Duration;
 
 use http::StatusCode;
 
-use crate::services::{
-    database::AppDatabase,
-    proxy::runtime::{ProxyRuntimeState, ProxyStartConfig},
-    secrets::crypto::generate_data_key,
-};
+use crate::services::proxy::{runtime::ProxyRuntimeState, test_support::V2ProxyTestFixture};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn v2_soak_returns_all_resource_counters_to_zero() {
-    let database = AppDatabase::new_temp_file_for_tests("soak").expect("database");
-    database
-        .update_local_access_key("relay-local-secret".to_string())
-        .expect("local key");
+    let fixture = V2ProxyTestFixture::new().await;
     let runtime = ProxyRuntimeState::for_tests();
-    let started = runtime
-        .start(ProxyStartConfig::new(database, generate_data_key(), 0))
-        .await
-        .expect("start v2");
+    let started = runtime.start(fixture.config(0)).await.expect("start v2");
     let client = reqwest::Client::new();
 
     for _ in 0..100 {

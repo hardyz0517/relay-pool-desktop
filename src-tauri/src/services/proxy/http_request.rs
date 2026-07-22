@@ -14,7 +14,6 @@ const FORWARDED_REQUEST_HEADERS: &[&str] = &[
 
 #[derive(Clone)]
 pub struct ParsedRequest {
-    pub method: String,
     pub path: String,
     pub target: String,
     pub headers: HashMap<String, String>,
@@ -52,7 +51,7 @@ pub fn parse_http_request<R: std::io::Read>(
     if !status.is_complete() {
         return Err("HTTP 请求头不完整".to_string());
     }
-    let method = parsed
+    let _method = parsed
         .method
         .ok_or_else(|| "缺少 HTTP method".to_string())?
         .to_uppercase();
@@ -102,7 +101,6 @@ pub fn parse_http_request<R: std::io::Read>(
     };
 
     Ok(ParsedRequest {
-        method,
         path,
         target,
         headers,

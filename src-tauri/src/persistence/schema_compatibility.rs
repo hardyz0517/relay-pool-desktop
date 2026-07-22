@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, ops::RangeInclusive};
 
 use semver::Version;
-use sqlx::{Executor, Row, Sqlite};
+use sqlx::{Executor, Sqlite};
 
 use crate::persistence::error::{CompatibilityDecisionCode, PersistenceError};
 
@@ -71,6 +71,11 @@ pub(crate) fn decide_open_mode(
     Ok(OpenMode::Writable)
 }
 
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "compatibility decision codes are asserted by runtime and schema integration targets"
+)]
 pub(crate) fn compatibility_decision_code(
     binary: &BinaryCompatibility,
     database: &SchemaCompatibility,
@@ -93,7 +98,7 @@ pub(crate) async fn load_schema_compatibility<'e, E>(
 where
     E: Executor<'e, Database = Sqlite>,
 {
-    let row = sqlx::query(
+    let row = sqlx::query!(
         r#"
         SELECT
             database_generation,
@@ -110,11 +115,11 @@ where
 
     let row = row.ok_or(PersistenceError::MissingCompatibilityMetadata)?;
     Ok(SchemaCompatibility {
-        database_generation: row.get("database_generation"),
-        schema_version: row.get("schema_version"),
-        min_reader_app_version: parse_version(row.get("min_reader_app_version"))?,
-        min_writer_app_version: parse_version(row.get("min_writer_app_version"))?,
-        updated_by_migration: row.get("updated_by_migration"),
+        database_generation: row.database_generation,
+        schema_version: row.schema_version,
+        min_reader_app_version: parse_version(&row.min_reader_app_version)?,
+        min_writer_app_version: parse_version(&row.min_writer_app_version)?,
+        updated_by_migration: row.updated_by_migration,
     })
 }
 

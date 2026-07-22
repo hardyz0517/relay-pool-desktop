@@ -1,3 +1,4 @@
+#[cfg(test)]
 use serde_json::{Map, Value};
 
 const REDACTED: &str = "[REDACTED]";
@@ -26,6 +27,7 @@ pub fn redact_monitor_text(input: &str) -> String {
     truncate_text(&redact_secret_tokens(&assignment_redacted))
 }
 
+#[cfg(test)]
 pub fn redact_monitor_json(value: &Value) -> Value {
     match value {
         Value::Object(map) => Value::Object(redact_object(map)),
@@ -35,6 +37,7 @@ pub fn redact_monitor_json(value: &Value) -> Value {
     }
 }
 
+#[cfg(test)]
 fn redact_object(map: &Map<String, Value>) -> Map<String, Value> {
     map.iter()
         .map(|(key, value)| {

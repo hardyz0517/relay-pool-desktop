@@ -1,5 +1,5 @@
 use std::sync::{
-    atomic::{AtomicU8, Ordering},
+    atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering},
     Arc,
 };
 
@@ -33,6 +33,31 @@ pub(crate) struct WriterHealth {
     state: AtomicU8,
 }
 
+// Snapshot counters are test observability, not part of the production writer API.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LifecycleWriterSnapshot {
+    pub(crate) capacity: usize,
+    pub(crate) current_outstanding: usize,
+    pub(crate) peak_outstanding: usize,
+    pub(crate) submitted: u64,
+    pub(crate) completed: u64,
+    pub(crate) failed: u64,
+    pub(crate) cancelled_before_submission: u64,
+}
+
+#[derive(Debug)]
+struct LifecycleWriterMetrics {
+    #[cfg(test)]
+    capacity: usize,
+    current_outstanding: AtomicUsize,
+    peak_outstanding: AtomicUsize,
+    submitted: AtomicU64,
+    completed: AtomicU64,
+    failed: AtomicU64,
+    cancelled_before_submission: AtomicU64,
+}
+
 impl WriterHealth {
     fn new() -> Self {
         Self {
@@ -55,37 +80,47 @@ impl WriterHealth {
 
 pub(crate) enum LifecycleWriteCommand {
     StartRequest {
-        record: RequestStartRecord,
+        record: Box<RequestStartRecord>,
         ack: oneshot::Sender<Result<RequestStartAck, LifecycleWriteError>>,
     },
     FinishAttempt {
-        record: AttemptTerminalRecord,
+        record: Box<AttemptTerminalRecord>,
         ack: oneshot::Sender<Result<AttemptCommitAck, LifecycleWriteError>>,
     },
     FinishRequest {
-        record: FinalRequestRecord,
+        record: Box<FinalRequestRecord>,
         ack: oneshot::Sender<Result<RequestCommitAck, LifecycleWriteError>>,
     },
 }
 
 #[derive(Clone)]
 pub(crate) struct LifecycleWriter {
-    sender: mpsc::Sender<LifecycleWriteCommand>,
+    sender: mpsc::Sender<QueuedLifecycleWriteCommand>,
     health: Arc<WriterHealth>,
+    metrics: Arc<LifecycleWriterMetrics>,
 }
 
 pub(crate) struct LifecycleWriterWorker {
     join: JoinHandle<()>,
-    health: Arc<WriterHealth>,
 }
 
 pub(crate) struct RequestWriteReservation {
-    start: mpsc::OwnedPermit<LifecycleWriteCommand>,
-    terminal: mpsc::OwnedPermit<LifecycleWriteCommand>,
+    start: ReservationSlot,
+    terminal: ReservationSlot,
 }
 
 pub(crate) struct AttemptWriteReservation {
-    terminal: mpsc::OwnedPermit<LifecycleWriteCommand>,
+    terminal: ReservationSlot,
+}
+
+struct ReservationSlot {
+    permit: Option<mpsc::OwnedPermit<QueuedLifecycleWriteCommand>>,
+    metrics: Arc<LifecycleWriterMetrics>,
+}
+
+struct QueuedLifecycleWriteCommand {
+    command: LifecycleWriteCommand,
+    completion: CommandCompletion,
 }
 
 impl LifecycleWriter {
@@ -98,31 +133,42 @@ impl LifecycleWriter {
         }
         let (sender, mut receiver) = mpsc::channel(capacity);
         let health = Arc::new(WriterHealth::new());
+        let metrics = Arc::new(LifecycleWriterMetrics::new(capacity));
         let worker_health = Arc::clone(&health);
         let join = tokio::spawn(async move {
-            while let Some(command) = receiver.recv().await {
-                let failed = match command {
+            while let Some(queued) = receiver.recv().await {
+                let QueuedLifecycleWriteCommand {
+                    command,
+                    completion,
+                } = queued;
+                match command {
                     LifecycleWriteCommand::StartRequest { record, ack } => {
-                        let result = store.start_request(record).await;
+                        let result = store.start_request(*record).await;
                         let failed = result.is_err();
+                        if failed {
+                            worker_health.mark_unhealthy();
+                        }
+                        completion.finish(failed);
                         let _ = ack.send(result);
-                        failed
                     }
                     LifecycleWriteCommand::FinishAttempt { record, ack } => {
-                        let result = store.finish_attempt(record).await;
+                        let result = store.finish_attempt(*record).await;
                         let failed = result.is_err();
+                        if failed {
+                            worker_health.mark_unhealthy();
+                        }
+                        completion.finish(failed);
                         let _ = ack.send(result);
-                        failed
                     }
                     LifecycleWriteCommand::FinishRequest { record, ack } => {
-                        let result = store.finish_request(record).await;
+                        let result = store.finish_request(*record).await;
                         let failed = result.is_err();
+                        if failed {
+                            worker_health.mark_unhealthy();
+                        }
+                        completion.finish(failed);
                         let _ = ack.send(result);
-                        failed
                     }
-                };
-                if failed {
-                    worker_health.mark_unhealthy();
                 }
             }
             worker_health.mark_closed();
@@ -131,21 +177,28 @@ impl LifecycleWriter {
             Self {
                 sender,
                 health: Arc::clone(&health),
+                metrics,
             },
-            LifecycleWriterWorker { join, health },
+            LifecycleWriterWorker { join },
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn health(&self) -> &Arc<WriterHealth> {
         &self.health
+    }
+
+    #[cfg(test)]
+    pub(crate) fn snapshot(&self) -> LifecycleWriterSnapshot {
+        self.metrics.snapshot()
     }
 
     pub(crate) fn try_reserve_request(
         &self,
     ) -> Result<RequestWriteReservation, WriterAdmissionError> {
         self.ensure_healthy()?;
-        let start = reserve(&self.sender)?;
-        let terminal = reserve(&self.sender)?;
+        let start = reserve(&self.sender, &self.metrics)?;
+        let terminal = reserve(&self.sender, &self.metrics)?;
         Ok(RequestWriteReservation { start, terminal })
     }
 
@@ -154,7 +207,7 @@ impl LifecycleWriter {
     ) -> Result<AttemptWriteReservation, WriterAdmissionError> {
         self.ensure_healthy()?;
         Ok(AttemptWriteReservation {
-            terminal: reserve(&self.sender)?,
+            terminal: reserve(&self.sender, &self.metrics)?,
         })
     }
 
@@ -176,8 +229,10 @@ impl RequestWriteReservation {
         oneshot::Receiver<Result<RequestStartAck, LifecycleWriteError>>,
     ) {
         let (ack, receiver) = oneshot::channel();
-        self.start
-            .send(LifecycleWriteCommand::StartRequest { record, ack });
+        self.start.send(LifecycleWriteCommand::StartRequest {
+            record: Box::new(record),
+            ack,
+        });
         (
             RequestTerminalReservation {
                 terminal: self.terminal,
@@ -188,7 +243,7 @@ impl RequestWriteReservation {
 }
 
 pub(crate) struct RequestTerminalReservation {
-    terminal: mpsc::OwnedPermit<LifecycleWriteCommand>,
+    terminal: ReservationSlot,
 }
 
 impl RequestTerminalReservation {
@@ -197,8 +252,10 @@ impl RequestTerminalReservation {
         record: FinalRequestRecord,
     ) -> oneshot::Receiver<Result<RequestCommitAck, LifecycleWriteError>> {
         let (ack, receiver) = oneshot::channel();
-        self.terminal
-            .send(LifecycleWriteCommand::FinishRequest { record, ack });
+        self.terminal.send(LifecycleWriteCommand::FinishRequest {
+            record: Box::new(record),
+            ack,
+        });
         receiver
     }
 }
@@ -209,8 +266,10 @@ impl AttemptWriteReservation {
         record: AttemptTerminalRecord,
     ) -> oneshot::Receiver<Result<AttemptCommitAck, LifecycleWriteError>> {
         let (ack, receiver) = oneshot::channel();
-        self.terminal
-            .send(LifecycleWriteCommand::FinishAttempt { record, ack });
+        self.terminal.send(LifecycleWriteCommand::FinishAttempt {
+            record: Box::new(record),
+            ack,
+        });
         receiver
     }
 }
@@ -219,22 +278,127 @@ impl LifecycleWriterWorker {
     pub(crate) async fn join(self) -> Result<(), tokio::task::JoinError> {
         self.join.await
     }
-
-    pub(crate) fn health(&self) -> &Arc<WriterHealth> {
-        &self.health
-    }
 }
 
 fn reserve(
-    sender: &mpsc::Sender<LifecycleWriteCommand>,
-) -> Result<mpsc::OwnedPermit<LifecycleWriteCommand>, WriterAdmissionError> {
-    sender
+    sender: &mpsc::Sender<QueuedLifecycleWriteCommand>,
+    metrics: &Arc<LifecycleWriterMetrics>,
+) -> Result<ReservationSlot, WriterAdmissionError> {
+    let permit = sender
         .clone()
         .try_reserve_owned()
         .map_err(|error| match error {
             mpsc::error::TrySendError::Full(_) => WriterAdmissionError::Full,
             mpsc::error::TrySendError::Closed(_) => WriterAdmissionError::Closed,
-        })
+        })?;
+    metrics.reserve();
+    Ok(ReservationSlot {
+        permit: Some(permit),
+        metrics: Arc::clone(metrics),
+    })
+}
+
+impl LifecycleWriterMetrics {
+    fn new(_capacity: usize) -> Self {
+        Self {
+            #[cfg(test)]
+            capacity: _capacity,
+            current_outstanding: AtomicUsize::new(0),
+            peak_outstanding: AtomicUsize::new(0),
+            submitted: AtomicU64::new(0),
+            completed: AtomicU64::new(0),
+            failed: AtomicU64::new(0),
+            cancelled_before_submission: AtomicU64::new(0),
+        }
+    }
+
+    fn reserve(&self) {
+        let current = self.current_outstanding.fetch_add(1, Ordering::AcqRel) + 1;
+        self.peak_outstanding.fetch_max(current, Ordering::AcqRel);
+    }
+
+    fn submit(&self) {
+        self.submitted.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn finish(&self, failed: bool) {
+        if failed {
+            self.failed.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.completed.fetch_add(1, Ordering::Relaxed);
+        }
+        self.release();
+    }
+
+    fn cancel(&self) {
+        self.cancelled_before_submission
+            .fetch_add(1, Ordering::Relaxed);
+        self.release();
+    }
+
+    fn release(&self) {
+        let previous = self.current_outstanding.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(previous > 0, "lifecycle writer outstanding underflow");
+    }
+
+    #[cfg(test)]
+    fn snapshot(&self) -> LifecycleWriterSnapshot {
+        LifecycleWriterSnapshot {
+            capacity: self.capacity,
+            current_outstanding: self.current_outstanding.load(Ordering::Acquire),
+            peak_outstanding: self.peak_outstanding.load(Ordering::Acquire),
+            submitted: self.submitted.load(Ordering::Relaxed),
+            completed: self.completed.load(Ordering::Relaxed),
+            failed: self.failed.load(Ordering::Relaxed),
+            cancelled_before_submission: self.cancelled_before_submission.load(Ordering::Relaxed),
+        }
+    }
+}
+
+impl ReservationSlot {
+    fn send(mut self, command: LifecycleWriteCommand) {
+        let permit = self.permit.take().expect("reservation permit");
+        self.metrics.submit();
+        permit.send(QueuedLifecycleWriteCommand {
+            command,
+            completion: CommandCompletion::new(Arc::clone(&self.metrics)),
+        });
+    }
+}
+
+impl Drop for ReservationSlot {
+    fn drop(&mut self) {
+        if self.permit.is_some() {
+            self.metrics.cancel();
+        }
+    }
+}
+
+struct CommandCompletion {
+    metrics: Arc<LifecycleWriterMetrics>,
+    finished: bool,
+}
+
+impl CommandCompletion {
+    fn new(metrics: Arc<LifecycleWriterMetrics>) -> Self {
+        Self {
+            metrics,
+            finished: false,
+        }
+    }
+
+    fn finish(mut self, failed: bool) {
+        self.metrics.finish(failed);
+        self.finished = true;
+    }
+}
+
+impl Drop for CommandCompletion {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.metrics.finish(true);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -2,23 +2,18 @@ use sqlx::{Executor, Row, Sqlite, SqliteConnection};
 
 use crate::{
     models::{
+        proxy::{normalize_proxy_mode, normalize_proxy_url},
         routing::{RoutingGroupFilter, SchedulerAdvancedSettings},
+        secrets::mask_secret,
         settings::{AppSettings, UpdateSettingsInput},
     },
     persistence::{
         error::PersistenceError, read_session::ReadSession, write_session::WriteSession,
     },
-    services::{
-        outbound::{normalize_proxy_mode, normalize_proxy_url},
-        secrets::mask::mask_secret,
-    },
 };
 
-#[derive(Clone, Debug)]
-pub(crate) struct SettingsStore {
-    data_dir: String,
-    pending_data_dir: Option<String>,
-}
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SettingsStore;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SettingsUpdate {
@@ -27,23 +22,47 @@ pub(crate) struct SettingsUpdate {
 }
 
 impl SettingsStore {
-    pub(crate) fn new(data_dir: String, pending_data_dir: Option<String>) -> Self {
-        Self {
-            data_dir,
-            pending_data_dir,
-        }
+    pub(crate) fn new() -> Self {
+        Self
     }
 
     pub(crate) async fn load(
         &self,
         read: &mut ReadSession,
+        data_dir: &str,
+        pending_data_dir: Option<String>,
     ) -> Result<AppSettings, PersistenceError> {
-        settings_from_connection(
-            read.connection(),
-            &self.data_dir,
-            self.pending_data_dir.clone(),
+        settings_from_connection(read.connection(), data_dir, pending_data_dir).await
+    }
+
+    pub(crate) async fn ensure_local_access_key(
+        &self,
+        write: &mut WriteSession,
+        generated: &str,
+        insecure_placeholder: &str,
+        now: &str,
+    ) -> Result<String, PersistenceError> {
+        sqlx::query_scalar::<_, String>(
+            r#"
+            UPDATE settings
+            SET value = CASE
+                    WHEN TRIM(value) = '' OR value = ?1 THEN ?2
+                    ELSE value
+                END,
+                updated_at = CASE
+                    WHEN TRIM(value) = '' OR value = ?1 THEN ?3
+                    ELSE updated_at
+                END
+            WHERE key = 'local_key'
+            RETURNING value
+            "#,
         )
-        .await
+        .bind(insecure_placeholder)
+        .bind(generated)
+        .bind(now)
+        .fetch_optional(write.connection())
+        .await?
+        .ok_or(PersistenceError::NotFound)
     }
 
     pub(crate) async fn update_local_access_key(
@@ -51,16 +70,28 @@ impl SettingsStore {
         write: &mut WriteSession,
         value: &str,
         now: &str,
+        data_dir: &str,
+        pending_data_dir: Option<String>,
     ) -> Result<AppSettings, PersistenceError> {
         let local_key = value.trim();
         if local_key.is_empty() {
-            return Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound));
+            return Err(PersistenceError::ConstraintViolation);
         }
         upsert_setting(write.connection(), "local_key", local_key, now).await?;
-        settings_from_connection(
+        settings_from_connection(write.connection(), data_dir, pending_data_dir).await
+    }
+
+    pub(crate) async fn set_local_proxy_start_on_launch(
+        &self,
+        write: &mut WriteSession,
+        enabled: bool,
+        now: &str,
+    ) -> Result<(), PersistenceError> {
+        upsert_setting(
             write.connection(),
-            &self.data_dir,
-            self.pending_data_dir.clone(),
+            "local_proxy_start_on_launch",
+            &enabled.to_string(),
+            now,
         )
         .await
     }
@@ -69,14 +100,13 @@ impl SettingsStore {
         &self,
         write: &mut WriteSession,
         update: SettingsUpdate,
+        data_dir: &str,
+        pending_data_dir: Option<String>,
     ) -> Result<AppSettings, PersistenceError> {
         validate_settings(&update.input)?;
-        let current = settings_from_connection(
-            write.connection(),
-            &self.data_dir,
-            self.pending_data_dir.clone(),
-        )
-        .await?;
+        let current =
+            settings_from_connection(write.connection(), data_dir, pending_data_dir.clone())
+                .await?;
         let collector_proxy_mode = validate_proxy_config(
             &update.input.collector_proxy_mode,
             update.input.collector_proxy_url.clone(),
@@ -89,7 +119,7 @@ impl SettingsStore {
             .unwrap_or(current.max_rate_multiplier);
         if let Some(value) = max_rate_multiplier {
             if !value.is_finite() || value < 0.0 {
-                return Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound));
+                return Err(PersistenceError::ConstraintViolation);
             }
         }
         let default_routing_group_filter = update
@@ -102,7 +132,7 @@ impl SettingsStore {
             .unwrap_or(current.scheduler_advanced_settings);
         scheduler_advanced_settings
             .validate()
-            .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound))?;
+            .map_err(|_| PersistenceError::ConstraintViolation)?;
         let tray_behavior = validate_tray_behavior_setting(
             update
                 .input
@@ -114,7 +144,7 @@ impl SettingsStore {
         let default_routing_group_filter =
             serialize_routing_group_filter_setting(&default_routing_group_filter)?;
         let scheduler_advanced_settings = serde_json::to_string(&scheduler_advanced_settings)
-            .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound))?;
+            .map_err(|_| setting_serialization_failed())?;
         let values = [
             (
                 "local_proxy_port",
@@ -185,14 +215,16 @@ impl SettingsStore {
         for (key, value) in values {
             upsert_setting(write.connection(), key, &value, &update.now).await?;
         }
-        settings_from_connection(
-            write.connection(),
-            &self.data_dir,
-            self.pending_data_dir.clone(),
-        )
-        .await
+        settings_from_connection(write.connection(), data_dir, pending_data_dir).await
     }
 
+    #[cfg_attr(
+        test,
+        allow(
+            dead_code,
+            reason = "upgrade integration targets import allowlisted settings through the application service"
+        )
+    )]
     pub(crate) async fn import_known_legacy_settings(
         &self,
         write: &mut WriteSession,
@@ -322,7 +354,7 @@ where
         .fetch_optional(executor)
         .await?
         .map(|row| row.get("value"))
-        .ok_or(PersistenceError::Sqlx(sqlx::Error::RowNotFound))
+        .ok_or(PersistenceError::NotFound)
 }
 
 async fn read_setting_or_default<'e, E>(
@@ -349,7 +381,7 @@ where
     read_setting(executor, key)
         .await?
         .parse()
-        .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound))
+        .map_err(|_| invalid_persisted_setting())
 }
 
 async fn parse_setting_or_default<'e, E, T>(
@@ -364,7 +396,7 @@ where
     read_setting_or_default(executor, key, default_value)
         .await?
         .parse()
-        .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound))
+        .map_err(|_| invalid_persisted_setting())
 }
 
 async fn upsert_setting<'e, E>(
@@ -397,9 +429,9 @@ fn parse_optional_f64_setting(value: &str) -> Result<Option<f64>, PersistenceErr
     }
     let parsed = value
         .parse::<f64>()
-        .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound))?;
+        .map_err(|_| invalid_persisted_setting())?;
     if !parsed.is_finite() {
-        return Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound));
+        return Err(invalid_persisted_setting());
     }
     Ok(Some(parsed))
 }
@@ -407,12 +439,9 @@ fn parse_optional_f64_setting(value: &str) -> Result<Option<f64>, PersistenceErr
 fn serialize_routing_group_filter_setting(
     filter: &RoutingGroupFilter,
 ) -> Result<String, PersistenceError> {
-    match serde_json::to_value(filter)
-        .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound))?
-    {
+    match serde_json::to_value(filter).map_err(|_| setting_serialization_failed())? {
         serde_json::Value::String(value) => Ok(value),
-        value => serde_json::to_string(&value)
-            .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound)),
+        value => serde_json::to_string(&value).map_err(|_| setting_serialization_failed()),
     }
 }
 
@@ -426,7 +455,7 @@ fn parse_routing_group_filter_setting(value: &str) -> Result<RoutingGroupFilter,
                 value.to_string(),
             ))
         })
-        .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound))
+        .map_err(|_| invalid_persisted_setting())
 }
 
 fn parse_scheduler_advanced_settings(
@@ -435,11 +464,11 @@ fn parse_scheduler_advanced_settings(
     if value.trim().is_empty() {
         return Ok(SchedulerAdvancedSettings::default());
     }
-    let settings: SchedulerAdvancedSettings = serde_json::from_str(value)
-        .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound))?;
+    let settings: SchedulerAdvancedSettings =
+        serde_json::from_str(value).map_err(|_| invalid_persisted_setting())?;
     settings
         .validate()
-        .map_err(|_| PersistenceError::Sqlx(sqlx::Error::RowNotFound))?;
+        .map_err(|_| invalid_persisted_setting())?;
     Ok(settings)
 }
 
@@ -455,7 +484,7 @@ fn validate_settings(input: &UpdateSettingsInput) -> Result<(), PersistenceError
         || input.collector_max_concurrency == 0
         || input.collector_max_concurrency > 8
     {
-        return Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound));
+        return Err(PersistenceError::ConstraintViolation);
     }
     Ok(())
 }
@@ -468,7 +497,7 @@ fn validate_proxy_config(
     let normalized = normalize_proxy_mode(mode, allow_inherit);
     let proxy_url = normalize_proxy_url(url);
     if normalized == "manual" && proxy_url.is_none() {
-        return Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound));
+        return Err(PersistenceError::ConstraintViolation);
     }
     Ok(normalized)
 }
@@ -476,10 +505,25 @@ fn validate_proxy_config(
 fn validate_tray_behavior_setting(value: &str) -> Result<String, PersistenceError> {
     match value {
         "minimize_to_tray" | "close_to_tray" | "disabled" => Ok(value.to_string()),
-        _ => Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound)),
+        _ => Err(PersistenceError::ConstraintViolation),
     }
 }
 
+fn invalid_persisted_setting() -> PersistenceError {
+    PersistenceError::InvariantViolation("invalid persisted setting".to_string())
+}
+
+fn setting_serialization_failed() -> PersistenceError {
+    PersistenceError::InvariantViolation("setting serialization failed".to_string())
+}
+
+#[cfg_attr(
+    test,
+    allow(
+        dead_code,
+        reason = "upgrade integration targets include the settings store without every importer consumer"
+    )
+)]
 fn is_supported_setting_key(key: &str) -> bool {
     matches!(
         key,

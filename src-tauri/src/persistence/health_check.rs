@@ -1,4 +1,4 @@
-use sqlx::{Executor, SqlitePool};
+use sqlx::SqlitePool;
 
 use crate::persistence::{
     error::PersistenceError,
@@ -19,7 +19,7 @@ pub(crate) async fn record_runtime_open(
     if open_mode != OpenMode::Writable {
         return Ok(());
     }
-    pool.execute(
+    sqlx::query!(
         r#"
         UPDATE persistence_runtime_health
         SET write_probe_count = write_probe_count + 1,
@@ -28,6 +28,7 @@ pub(crate) async fn record_runtime_open(
         WHERE singleton_key = 1
         "#,
     )
+    .execute(pool)
     .await?;
     Ok(())
 }

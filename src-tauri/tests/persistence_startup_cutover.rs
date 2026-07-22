@@ -5,6 +5,38 @@
 //! durable config invariants executable without starting a GUI or SQLite
 //! runtime.
 
+mod persistence {
+    pub(crate) mod upgrade_journal {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub(crate) enum UpgradePhase {
+            Prepared,
+            BackupVerified,
+            V2Validated,
+            LegacyDeactivated,
+            GenerationCommitted,
+            V2Reopened,
+        }
+
+        impl UpgradePhase {
+            pub(crate) const ALL: [Self; 6] = [
+                Self::Prepared,
+                Self::BackupVerified,
+                Self::V2Validated,
+                Self::LegacyDeactivated,
+                Self::GenerationCommitted,
+                Self::V2Reopened,
+            ];
+        }
+    }
+
+    pub(crate) mod upgrade_fault {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/upgrade_fault.rs"
+        ));
+    }
+}
+
 mod config {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),

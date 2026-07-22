@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 pub fn generate_response_id(prefix: &str) -> String {
     format!(
         "{prefix}-{}",
-        crate::services::database::now_millis_for_services()
+        crate::services::time::now_millis_for_services()
     )
 }
 
@@ -28,7 +28,7 @@ pub fn wrap_chat_response_as_responses(value: Value, fallback_model: Option<&str
     let created = value
         .get("created")
         .and_then(Value::as_i64)
-        .unwrap_or_else(|| (crate::services::database::now_millis_for_services() / 1000) as i64);
+        .unwrap_or_else(|| (crate::services::time::now_millis_for_services() / 1000) as i64);
     let usage = value.get("usage").cloned().unwrap_or(Value::Null);
 
     json!({

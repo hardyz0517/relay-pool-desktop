@@ -43,7 +43,7 @@ CREATE TABLE request_logs (
     created_at TEXT NOT NULL
 );
 
-CREATE INDEX idx_request_logs_created ON request_logs(created_at DESC);
+CREATE INDEX idx_request_logs_created ON request_logs(created_at DESC, id DESC);
 
 CREATE TABLE request_attempts (
     request_id TEXT NOT NULL,

@@ -1,4 +1,6 @@
-use sqlx::{Row, SqliteConnection};
+use std::collections::HashSet;
+
+use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
 use crate::{
     models::{
@@ -7,13 +9,13 @@ use crate::{
             BalanceSnapshot, ModelBasePrice, PricingRule, UpsertBalanceSnapshotInput,
             UpsertModelBasePriceInput, UpsertPricingRuleInput,
         },
+        secrets::mask_secret,
         station_keys::StationKey,
         stations::Station,
     },
     persistence::{
         error::PersistenceError, read_session::ReadSession, write_session::WriteSession,
     },
-    services::secrets::mask::mask_secret,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -48,6 +50,49 @@ pub(crate) struct PricingComparisonRows {
     pub(crate) group_rates: Vec<GroupRateRecord>,
     pub(crate) pricing_rules: Vec<PricingRule>,
     pub(crate) developer_mode_enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SelectedPricingRuleRow {
+    pub(crate) id: String,
+    pub(crate) model: String,
+    pub(crate) input_price: Option<f64>,
+    pub(crate) output_price: Option<f64>,
+    pub(crate) fixed_price: Option<f64>,
+    pub(crate) currency: String,
+    pub(crate) source: String,
+    pub(crate) group_binding_id: Option<String>,
+    pub(crate) rate_multiplier: Option<f64>,
+    pub(crate) normalization_status: String,
+    pub(crate) confidence: f64,
+    pub(crate) collected_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SelectedModelBasePriceRow {
+    pub(crate) model: String,
+    pub(crate) input_price: Option<f64>,
+    pub(crate) output_price: Option<f64>,
+    pub(crate) currency: String,
+    pub(crate) source_checked_at: Option<String>,
+    pub(crate) built_in: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StationKeyPricingResolutionRow {
+    pub(crate) station_id: String,
+    pub(crate) group_binding_id: Option<String>,
+    pub(crate) group_rate_multiplier: Option<f64>,
+    pub(crate) group_confidence: Option<f64>,
+    pub(crate) group_collected_at: Option<String>,
+    pub(crate) pricing_rule: Option<SelectedPricingRuleRow>,
+    pub(crate) model_base_price: Option<SelectedModelBasePriceRow>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BuiltinConflictPolicy {
+    Replace,
+    PreserveExisting,
 }
 
 impl PricingStore {
@@ -85,20 +130,7 @@ impl PricingStore {
         read: &mut ReadSession,
         limit: u32,
     ) -> Result<Vec<ModelBasePrice>, PersistenceError> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, provider, model, input_price, output_price, currency, unit,
-                   source_url, source_label, source_checked_at, enabled, built_in,
-                   note, created_at, updated_at
-            FROM model_base_prices
-            ORDER BY enabled DESC, provider ASC, model ASC, updated_at DESC, id DESC
-            LIMIT ?1
-            "#,
-        )
-        .bind(i64::from(limit))
-        .fetch_all(read.connection())
-        .await?;
-        Ok(rows.into_iter().map(row_to_model_base_price).collect())
+        list_model_base_prices_from_connection(read.connection(), limit).await
     }
 
     pub(crate) async fn list_pricing_rules(
@@ -145,69 +177,98 @@ impl PricingStore {
         Ok(rows.into_iter().map(row_to_balance_snapshot).collect())
     }
 
-    pub(crate) async fn select_pricing_rule(
+    pub(crate) async fn resolve_station_key_pricing(
         &self,
         read: &mut ReadSession,
-        station_id: &str,
-        station_key_id: Option<&str>,
-        group_binding_id: Option<&str>,
-        model: &str,
+        station_key_id: &str,
+        requested_model: &str,
         at: &str,
-    ) -> Result<Option<PricingRule>, PersistenceError> {
+    ) -> Result<Option<StationKeyPricingResolutionRow>, PersistenceError> {
         let row = sqlx::query(
             r#"
-            SELECT id, station_id, station_key_id, group_binding_id, group_name,
-                   tier_label, model, input_price, output_price, fixed_price,
-                   rate_multiplier, currency, unit, price_type, base_price_source,
-                   normalization_status, source, confidence, enabled, note,
-                   collected_at, valid_from, valid_until, created_at, updated_at
-            FROM pricing_rules
-            WHERE station_id = ?1
-              AND model = ?2
-              AND enabled = 1
-              AND (valid_from IS NULL OR CAST(valid_from AS INTEGER) <= CAST(?5 AS INTEGER))
-              AND (valid_until IS NULL OR CAST(valid_until AS INTEGER) > CAST(?5 AS INTEGER))
-              AND (station_key_id IS NULL OR station_key_id = ?3)
-              AND (group_binding_id IS NULL OR group_binding_id = ?4)
-            ORDER BY
-                CASE WHEN station_key_id = ?3 THEN 1 ELSE 0 END DESC,
-                CASE WHEN group_binding_id = ?4 THEN 1 ELSE 0 END DESC,
-                updated_at DESC,
-                created_at DESC,
-                id DESC
+            WITH key_context AS (
+                SELECT k.station_id,
+                       COALESCE(k.group_binding_id, b.id) AS group_binding_id,
+                       COALESCE(k.rate_multiplier, b.effective_rate_multiplier) AS group_rate_multiplier,
+                       COALESCE(b.confidence, 0.8) AS group_confidence,
+                       COALESCE(k.rate_collected_at, b.last_checked_at) AS group_collected_at
+                FROM station_keys k
+                LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
+                WHERE k.id = ?1
+                LIMIT 1
+            ), selected_rule AS (
+                SELECT r.id, r.model, r.input_price, r.output_price, r.fixed_price,
+                       r.currency, r.source, r.group_binding_id, r.rate_multiplier,
+                       r.normalization_status, r.confidence, r.collected_at
+                FROM pricing_rules r
+                JOIN key_context k ON k.station_id = r.station_id
+                WHERE r.enabled = 1
+                  AND (r.valid_from IS NULL OR CAST(r.valid_from AS INTEGER) <= CAST(?3 AS INTEGER))
+                  AND (r.valid_until IS NULL OR CAST(r.valid_until AS INTEGER) > CAST(?3 AS INTEGER))
+                  AND (r.station_key_id IS NULL OR r.station_key_id = ?1)
+                  AND (
+                      lower(r.model) = lower(?2)
+                      OR (
+                          r.normalization_status = 'group_rate_only'
+                          AND r.input_price IS NULL
+                          AND r.output_price IS NULL
+                          AND r.fixed_price IS NULL
+                      )
+                  )
+                  AND (r.group_binding_id IS NULL OR r.group_binding_id = k.group_binding_id)
+                ORDER BY
+                    CASE WHEN lower(r.model) = lower(?2) THEN 0 ELSE 1 END,
+                    CASE WHEN r.station_key_id = ?1 THEN 0 ELSE 1 END,
+                    CASE WHEN r.group_binding_id = k.group_binding_id THEN 0 ELSE 1 END,
+                    CASE WHEN r.normalization_status = 'complete' THEN 0 ELSE 1 END,
+                    CASE WHEN r.input_price IS NOT NULL OR r.output_price IS NOT NULL OR r.fixed_price IS NOT NULL THEN 0 ELSE 1 END,
+                    r.updated_at DESC,
+                    r.created_at DESC,
+                    r.id DESC
+                LIMIT 1
+            ), selected_base_price AS (
+                SELECT p.model, p.input_price, p.output_price, p.currency,
+                       p.source_checked_at, p.built_in
+                FROM model_base_prices p
+                WHERE p.enabled = 1 AND lower(p.model) = lower(?2)
+                ORDER BY p.built_in DESC, p.updated_at DESC, p.created_at DESC, p.id DESC
+                LIMIT 1
+            )
+            SELECT k.station_id,
+                   k.group_binding_id,
+                   k.group_rate_multiplier,
+                   k.group_confidence,
+                   k.group_collected_at,
+                   r.id AS rule_id,
+                   r.model AS rule_model,
+                   r.input_price AS rule_input_price,
+                   r.output_price AS rule_output_price,
+                   r.fixed_price AS rule_fixed_price,
+                   r.currency AS rule_currency,
+                   r.source AS rule_source,
+                   r.group_binding_id AS rule_group_binding_id,
+                   r.rate_multiplier AS rule_rate_multiplier,
+                   r.normalization_status AS rule_normalization_status,
+                   r.confidence AS rule_confidence,
+                   r.collected_at AS rule_collected_at,
+                   p.model AS base_model,
+                   p.input_price AS base_input_price,
+                   p.output_price AS base_output_price,
+                   p.currency AS base_currency,
+                   p.source_checked_at AS base_source_checked_at,
+                   p.built_in AS base_built_in
+            FROM key_context k
+            LEFT JOIN selected_rule r ON 1 = 1
+            LEFT JOIN selected_base_price p ON 1 = 1
             LIMIT 1
             "#,
         )
-        .bind(station_id)
-        .bind(model.trim())
         .bind(station_key_id)
-        .bind(group_binding_id)
+        .bind(requested_model)
         .bind(at)
         .fetch_optional(read.connection())
         .await?;
-        Ok(row.map(row_to_pricing_rule))
-    }
-
-    pub(crate) async fn select_model_base_price(
-        &self,
-        read: &mut ReadSession,
-        model: &str,
-    ) -> Result<Option<ModelBasePrice>, PersistenceError> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, provider, model, input_price, output_price, currency, unit,
-                   source_url, source_label, source_checked_at, enabled, built_in,
-                   note, created_at, updated_at
-            FROM model_base_prices
-            WHERE model = ?1 AND enabled = 1
-            ORDER BY updated_at DESC, created_at DESC, id DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(model.trim())
-        .fetch_optional(read.connection())
-        .await?;
-        Ok(row.map(row_to_model_base_price))
+        row.map(row_to_station_key_pricing_resolution).transpose()
     }
 
     pub(crate) async fn upsert_pricing_rule(
@@ -305,7 +366,7 @@ impl PricingStore {
             .await?
             .rows_affected();
         if deleted == 0 {
-            return Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound));
+            return Err(PersistenceError::NotFound);
         }
         Ok(())
     }
@@ -357,6 +418,58 @@ impl PricingStore {
         .execute(write.connection())
         .await?;
         model_base_price_by_id(write.connection(), &row.id).await
+    }
+
+    pub(crate) async fn reset_model_base_prices_to_builtins(
+        &self,
+        write: &mut WriteSession,
+        rows: &[NewModelBasePriceRow],
+        limit: u32,
+    ) -> Result<Vec<ModelBasePrice>, PersistenceError> {
+        if limit == 0 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        validate_builtin_model_base_price_rows(rows)?;
+
+        sqlx::query("DELETE FROM model_base_prices WHERE built_in = 1")
+            .execute(write.connection())
+            .await?;
+        insert_builtin_model_base_price_rows(
+            write.connection(),
+            rows,
+            BuiltinConflictPolicy::Replace,
+        )
+        .await?;
+
+        list_model_base_prices_from_connection(write.connection(), limit).await
+    }
+
+    pub(crate) async fn ensure_builtin_model_base_prices(
+        &self,
+        write: &mut WriteSession,
+        rows: &[NewModelBasePriceRow],
+    ) -> Result<bool, PersistenceError> {
+        validate_builtin_model_base_price_rows(rows)?;
+        let exists = sqlx::query_scalar::<_, i64>(
+            "SELECT EXISTS(SELECT 1 FROM model_base_prices WHERE built_in = 1 LIMIT 1)",
+        )
+        .fetch_one(write.connection())
+        .await?
+            != 0;
+        if exists {
+            return Ok(false);
+        }
+
+        let inserted = insert_builtin_model_base_price_rows(
+            write.connection(),
+            rows,
+            BuiltinConflictPolicy::PreserveExisting,
+        )
+        .await?;
+        if inserted != rows.len() as u64 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        Ok(true)
     }
 
     pub(crate) async fn upsert_balance_snapshot(
@@ -451,6 +564,145 @@ impl PricingStore {
         .await?;
         balance_snapshot_by_id(write.connection(), &row.id).await
     }
+}
+
+fn validate_builtin_model_base_price_rows(
+    rows: &[NewModelBasePriceRow],
+) -> Result<(), PersistenceError> {
+    if rows.is_empty() {
+        return Err(PersistenceError::ConstraintViolation);
+    }
+    let mut ids = HashSet::with_capacity(rows.len());
+    for row in rows {
+        validate_model_base_price(&row.input)?;
+        if !row.input.built_in || row.id.trim().is_empty() || !ids.insert(row.id.as_str()) {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+    }
+    Ok(())
+}
+
+async fn insert_builtin_model_base_price_rows(
+    connection: &mut SqliteConnection,
+    rows: &[NewModelBasePriceRow],
+    conflict_policy: BuiltinConflictPolicy,
+) -> Result<u64, PersistenceError> {
+    let mut query = QueryBuilder::<Sqlite>::new(
+        r#"
+        INSERT INTO model_base_prices (
+            id, provider, model, input_price, output_price, currency, unit,
+            source_url, source_label, source_checked_at, enabled, built_in,
+            note, created_at, updated_at
+        )
+        "#,
+    );
+    query.push_values(rows, |mut values, row| {
+        values
+            .push_bind(&row.id)
+            .push_bind(row.input.provider.trim())
+            .push_bind(row.input.model.trim())
+            .push_bind(row.input.input_price)
+            .push_bind(row.input.output_price)
+            .push_bind(row.input.currency.trim().to_uppercase())
+            .push_bind(row.input.unit.trim())
+            .push_bind(row.input.source_url.trim())
+            .push_bind(row.input.source_label.trim())
+            .push_bind(normalize_optional(&row.input.source_checked_at))
+            .push_bind(bool_to_i64(row.input.enabled))
+            .push_bind(1_i64)
+            .push_bind(normalize_optional(&row.input.note))
+            .push_bind(&row.now)
+            .push_bind(&row.now);
+    });
+    match conflict_policy {
+        BuiltinConflictPolicy::Replace => query.push(
+            r#"
+            ON CONFLICT(id) DO UPDATE SET
+                provider = excluded.provider,
+                model = excluded.model,
+                input_price = excluded.input_price,
+                output_price = excluded.output_price,
+                currency = excluded.currency,
+                unit = excluded.unit,
+                source_url = excluded.source_url,
+                source_label = excluded.source_label,
+                source_checked_at = excluded.source_checked_at,
+                enabled = excluded.enabled,
+                built_in = 1,
+                note = excluded.note,
+                updated_at = excluded.updated_at
+            "#,
+        ),
+        BuiltinConflictPolicy::PreserveExisting => query.push(" ON CONFLICT(id) DO NOTHING"),
+    };
+    Ok(query.build().execute(connection).await?.rows_affected())
+}
+
+async fn list_model_base_prices_from_connection(
+    connection: &mut SqliteConnection,
+    limit: u32,
+) -> Result<Vec<ModelBasePrice>, PersistenceError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, provider, model, input_price, output_price, currency, unit,
+               source_url, source_label, source_checked_at, enabled, built_in,
+               note, created_at, updated_at
+        FROM model_base_prices
+        ORDER BY enabled DESC, provider ASC, model ASC, updated_at DESC, id DESC
+        LIMIT ?1
+        "#,
+    )
+    .bind(i64::from(limit))
+    .fetch_all(connection)
+    .await?;
+    Ok(rows.into_iter().map(row_to_model_base_price).collect())
+}
+
+fn row_to_station_key_pricing_resolution(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<StationKeyPricingResolutionRow, PersistenceError> {
+    let pricing_rule = row
+        .try_get::<Option<String>, _>("rule_id")?
+        .map(|id| {
+            Ok::<_, sqlx::Error>(SelectedPricingRuleRow {
+                id,
+                model: row.try_get("rule_model")?,
+                input_price: row.try_get("rule_input_price")?,
+                output_price: row.try_get("rule_output_price")?,
+                fixed_price: row.try_get("rule_fixed_price")?,
+                currency: row.try_get("rule_currency")?,
+                source: row.try_get("rule_source")?,
+                group_binding_id: row.try_get("rule_group_binding_id")?,
+                rate_multiplier: row.try_get("rule_rate_multiplier")?,
+                normalization_status: row.try_get("rule_normalization_status")?,
+                confidence: row.try_get("rule_confidence")?,
+                collected_at: row.try_get("rule_collected_at")?,
+            })
+        })
+        .transpose()?;
+    let model_base_price = row
+        .try_get::<Option<String>, _>("base_model")?
+        .map(|model| {
+            Ok::<_, sqlx::Error>(SelectedModelBasePriceRow {
+                model,
+                input_price: row.try_get("base_input_price")?,
+                output_price: row.try_get("base_output_price")?,
+                currency: row.try_get("base_currency")?,
+                source_checked_at: row.try_get("base_source_checked_at")?,
+                built_in: i64_to_bool(row.try_get("base_built_in")?),
+            })
+        })
+        .transpose()?;
+
+    Ok(StationKeyPricingResolutionRow {
+        station_id: row.try_get("station_id")?,
+        group_binding_id: row.try_get("group_binding_id")?,
+        group_rate_multiplier: row.try_get("group_rate_multiplier")?,
+        group_confidence: row.try_get("group_confidence")?,
+        group_collected_at: row.try_get("group_collected_at")?,
+        pricing_rule,
+        model_base_price,
+    })
 }
 
 async fn list_stations(
@@ -599,7 +851,7 @@ async fn pricing_rule_by_id(
     .fetch_optional(connection)
     .await?;
     row.map(row_to_pricing_rule)
-        .ok_or(PersistenceError::Sqlx(sqlx::Error::RowNotFound))
+        .ok_or(PersistenceError::NotFound)
 }
 
 async fn model_base_price_by_id(
@@ -618,7 +870,7 @@ async fn model_base_price_by_id(
     .fetch_optional(connection)
     .await?;
     row.map(row_to_model_base_price)
-        .ok_or(PersistenceError::Sqlx(sqlx::Error::RowNotFound))
+        .ok_or(PersistenceError::NotFound)
 }
 
 async fn balance_snapshot_by_id(
@@ -642,7 +894,7 @@ async fn balance_snapshot_by_id(
     .fetch_optional(connection)
     .await?;
     row.map(row_to_balance_snapshot)
-        .ok_or(PersistenceError::Sqlx(sqlx::Error::RowNotFound))
+        .ok_or(PersistenceError::NotFound)
 }
 
 async fn validate_optional_station_owners(
@@ -974,4 +1226,131 @@ fn bool_to_i64(value: bool) -> i64 {
 
 fn i64_to_bool(value: i64) -> bool {
     value != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::persistence::runtime::PersistenceRuntime;
+
+    fn builtin_row(id: &str) -> NewModelBasePriceRow {
+        NewModelBasePriceRow {
+            id: id.to_string(),
+            now: "100".to_string(),
+            input: UpsertModelBasePriceInput {
+                id: Some(id.to_string()),
+                provider: "openai".to_string(),
+                model: "gpt-test".to_string(),
+                input_price: Some(1.0),
+                output_price: Some(2.0),
+                currency: "USD".to_string(),
+                unit: "M".to_string(),
+                source_url: "https://example.test/catalog".to_string(),
+                source_label: "test catalog".to_string(),
+                source_checked_at: Some("100".to_string()),
+                enabled: true,
+                built_in: true,
+                note: None,
+            },
+        }
+    }
+
+    async fn insert_custom_price(runtime: &PersistenceRuntime, id: &str) {
+        let id = id.to_string();
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        r#"
+                        INSERT INTO model_base_prices (
+                            id, provider, model, currency, unit, source_url,
+                            source_label, enabled, built_in, created_at, updated_at
+                        ) VALUES (?1, 'custom', 'custom-model', 'USD', 'M', '',
+                                  'custom', 1, 0, '1', '1')
+                        "#,
+                    )
+                    .bind(id)
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("insert custom price");
+    }
+
+    #[tokio::test]
+    async fn ensure_builtin_prices_is_idempotent_and_never_overwrites_custom_rows() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("pricing.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&path)
+            .await
+            .expect("runtime");
+        insert_custom_price(&runtime, "custom-1").await;
+        let rows = vec![builtin_row("builtin-1")];
+        let store = PricingStore;
+
+        let first_rows = rows.clone();
+        let first = runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .ensure_builtin_model_base_prices(write, &first_rows)
+                        .await
+                })
+            })
+            .await
+            .expect("first ensure");
+        assert!(first);
+
+        let second = runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move { store.ensure_builtin_model_base_prices(write, &rows).await })
+            })
+            .await
+            .expect("second ensure");
+        assert!(!second);
+
+        let mut read = runtime.handle().begin_read().await.expect("read");
+        let custom_provider = sqlx::query_scalar::<_, String>(
+            "SELECT provider FROM model_base_prices WHERE id = 'custom-1'",
+        )
+        .fetch_one(read.connection())
+        .await
+        .expect("custom provider");
+        assert_eq!(custom_provider, "custom");
+        drop(read);
+
+        let conflict_temp = tempfile::tempdir().expect("conflict tempdir");
+        let conflict_path = conflict_temp.path().join("pricing.sqlite3");
+        let conflict_runtime = PersistenceRuntime::initialize_new(&conflict_path)
+            .await
+            .expect("conflict runtime");
+        insert_custom_price(&conflict_runtime, "builtin-1").await;
+        let conflict_rows = vec![builtin_row("builtin-1")];
+        let error = conflict_runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .ensure_builtin_model_base_prices(write, &conflict_rows)
+                        .await
+                })
+            })
+            .await
+            .expect_err("custom collision must fail closed");
+        assert!(matches!(error, PersistenceError::ConstraintViolation));
+
+        let mut read = conflict_runtime.handle().begin_read().await.expect("read");
+        let state = sqlx::query_as::<_, (String, i64)>(
+            "SELECT provider, built_in FROM model_base_prices WHERE id = 'builtin-1'",
+        )
+        .fetch_one(read.connection())
+        .await
+        .expect("collision row");
+        assert_eq!(state, ("custom".to_string(), 0));
+    }
 }

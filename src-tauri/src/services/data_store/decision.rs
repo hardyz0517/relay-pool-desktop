@@ -20,6 +20,7 @@ pub(crate) struct DecisionInput {
     pub default_data_dir: PathBuf,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StartupStep {
     Lease,
@@ -37,6 +38,7 @@ pub(crate) enum StartupStep {
     Monitors,
 }
 
+#[cfg(test)]
 pub(crate) const fn startup_order() -> &'static [StartupStep] {
     &[
         StartupStep::Lease,

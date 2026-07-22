@@ -1,16 +1,18 @@
 use sqlx::{Row, SqliteConnection};
 
 use crate::{
-    models::channel_monitors::{
-        ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun, ChannelMonitorRunCursor,
-        ChannelMonitorRunPage, CreateChannelMonitorInput, CreateChannelMonitorRunInput,
-        CreateChannelMonitorTemplateInput, UpdateChannelMonitorInput,
-        UpdateChannelMonitorTemplateInput,
+    models::{
+        channel_monitors::{
+            ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
+            ChannelMonitorRunCursor, ChannelMonitorRunPage, CreateChannelMonitorInput,
+            CreateChannelMonitorRunInput, CreateChannelMonitorTemplateInput,
+            UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
+        },
+        secrets::redact_text,
     },
     persistence::{
         error::PersistenceError, read_session::ReadSession, write_session::WriteSession,
     },
-    services::secrets::mask::redact_text,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -303,7 +305,7 @@ impl MonitoringStore {
         .await?
         .rows_affected();
         if changed == 0 {
-            return Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound));
+            return Err(PersistenceError::NotFound);
         }
         monitor_by_id(write.connection(), &patch.input.id).await
     }
@@ -319,7 +321,7 @@ impl MonitoringStore {
             .await?
             .rows_affected();
         if deleted == 0 {
-            return Err(PersistenceError::Sqlx(sqlx::Error::RowNotFound));
+            return Err(PersistenceError::NotFound);
         }
         Ok(())
     }
@@ -443,7 +445,7 @@ impl MonitoringStore {
         .bind(monitor_id)
         .fetch_optional(write.connection())
         .await?
-        .ok_or(PersistenceError::Sqlx(sqlx::Error::RowNotFound))?;
+        .ok_or(PersistenceError::NotFound)?;
         Ok((row.get("interval_seconds"), row.get("jitter_seconds")))
     }
 
@@ -550,6 +552,81 @@ impl MonitoringStore {
             .collect())
     }
 
+    pub(crate) async fn summary_runs(
+        &self,
+        read: &mut ReadSession,
+        run_since_ms: Option<i64>,
+        monitor_limit: u32,
+        run_limit: u32,
+    ) -> Result<Vec<ChannelStatusRunRow>, PersistenceError> {
+        let rows = if let Some(run_since_ms) = run_since_ms {
+            sqlx::query(
+                r#"
+                WITH bounded_monitors AS (
+                    SELECT id
+                    FROM channel_monitors INDEXED BY idx_channel_monitors_list
+                    ORDER BY enabled DESC, created_at ASC, id ASC
+                    LIMIT ?1
+                )
+                SELECT r.id, r.monitor_id, r.template_id, r.station_id, r.station_key_id,
+                       r.status, r.started_at, r.finished_at, r.duration_ms, r.http_status,
+                       r.latency_ms, r.response_model, r.fallback_model, r.error_message,
+                       r.created_at
+                FROM bounded_monitors m
+                JOIN channel_monitor_runs r ON r.id IN (
+                    SELECT recent.id
+                    FROM channel_monitor_runs recent INDEXED BY idx_channel_monitor_runs_monitor_started
+                    WHERE recent.monitor_id = m.id
+                      AND CAST(recent.started_at AS INTEGER) >= ?3
+                    ORDER BY CAST(recent.started_at AS INTEGER) DESC, recent.id DESC
+                    LIMIT ?2
+                )
+                ORDER BY r.monitor_id ASC, CAST(r.started_at AS INTEGER) DESC, r.id DESC
+                "#,
+            )
+            .bind(i64::from(monitor_limit))
+            .bind(i64::from(run_limit))
+            .bind(run_since_ms)
+            .fetch_all(read.connection())
+            .await?
+        } else {
+            sqlx::query(
+                r#"
+                WITH bounded_monitors AS (
+                    SELECT id
+                    FROM channel_monitors INDEXED BY idx_channel_monitors_list
+                    ORDER BY enabled DESC, created_at ASC, id ASC
+                    LIMIT ?1
+                )
+                SELECT r.id, r.monitor_id, r.template_id, r.station_id, r.station_key_id,
+                       r.status, r.started_at, r.finished_at, r.duration_ms, r.http_status,
+                       r.latency_ms, r.response_model, r.fallback_model, r.error_message,
+                       r.created_at
+                FROM bounded_monitors m
+                JOIN channel_monitor_runs r ON r.id IN (
+                    SELECT recent.id
+                    FROM channel_monitor_runs recent INDEXED BY idx_channel_monitor_runs_monitor_started
+                    WHERE recent.monitor_id = m.id
+                    ORDER BY CAST(recent.started_at AS INTEGER) DESC, recent.id DESC
+                    LIMIT ?2
+                )
+                ORDER BY r.monitor_id ASC, CAST(r.started_at AS INTEGER) DESC, r.id DESC
+                "#,
+            )
+            .bind(i64::from(monitor_limit))
+            .bind(i64::from(run_limit))
+            .fetch_all(read.connection())
+            .await?
+        };
+        Ok(rows
+            .into_iter()
+            .map(|row| ChannelStatusRunRow {
+                monitor_id: row.get("monitor_id"),
+                run: row_to_run(row),
+            })
+            .collect())
+    }
+
     pub(crate) async fn window_aggregates(
         &self,
         read: &mut ReadSession,
@@ -631,8 +708,7 @@ async fn template_by_id(
     .bind(id)
     .fetch_optional(connection)
     .await?;
-    row.map(row_to_template)
-        .ok_or(PersistenceError::Sqlx(sqlx::Error::RowNotFound))
+    row.map(row_to_template).ok_or(PersistenceError::NotFound)
 }
 
 async fn monitor_by_id(
@@ -653,7 +729,7 @@ async fn monitor_by_id(
     .await?;
     row.map(row_to_monitor)
         .transpose()?
-        .ok_or(PersistenceError::Sqlx(sqlx::Error::RowNotFound))
+        .ok_or(PersistenceError::NotFound)
 }
 
 async fn run_by_id(
@@ -671,8 +747,7 @@ async fn run_by_id(
     .bind(id)
     .fetch_optional(connection)
     .await?;
-    row.map(row_to_run)
-        .ok_or(PersistenceError::Sqlx(sqlx::Error::RowNotFound))
+    row.map(row_to_run).ok_or(PersistenceError::NotFound)
 }
 
 async fn validate_monitor_input(
@@ -796,7 +871,7 @@ async fn validate_run(
     .bind(&input.monitor_id)
     .fetch_optional(&mut *connection)
     .await?
-    .ok_or(PersistenceError::Sqlx(sqlx::Error::RowNotFound))?;
+    .ok_or(PersistenceError::NotFound)?;
     let station_id: String = monitor.get("station_id");
     let station_key_id: Option<String> = monitor.get("station_key_id");
     let template_id: String = monitor.get("template_id");

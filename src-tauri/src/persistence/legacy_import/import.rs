@@ -47,6 +47,36 @@ pub(crate) trait LegacySecretTransformer: Send + Sync {
     ) -> Result<ImportedEncryptedSecret, UpgradeError>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum ImportPhase {
+    SettingsAndInstallation,
+    StationsAndEndpointRevision,
+    SecretsAndCredentials,
+    KeysAndCapabilities,
+    RoutingGroupsAliasesRemoteKeys,
+    MonitorDefinitions,
+    Pricing,
+    HistoricalEvidence,
+    HealthAndChanges,
+    DerivedProjectionsAndIndexes,
+}
+
+impl ImportPhase {
+    #[cfg(test)]
+    const ALL: [Self; 10] = [
+        Self::SettingsAndInstallation,
+        Self::StationsAndEndpointRevision,
+        Self::SecretsAndCredentials,
+        Self::KeysAndCapabilities,
+        Self::RoutingGroupsAliasesRemoteKeys,
+        Self::MonitorDefinitions,
+        Self::Pricing,
+        Self::HistoricalEvidence,
+        Self::HealthAndChanges,
+        Self::DerivedProjectionsAndIndexes,
+    ];
+}
+
 #[derive(Clone)]
 enum LegacyValue {
     Null,
@@ -59,6 +89,11 @@ enum LegacyValue {
 #[derive(Clone)]
 struct ImportedRow(BTreeMap<String, LegacyValue>);
 
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "the released-schema integration target imports fixtures without a production secret transformer"
+)]
 pub(crate) async fn import_profile(
     profile: &DetectedLegacyProfile,
     source_path: &Path,
@@ -70,14 +105,22 @@ pub(crate) async fn import_profile(
     result
 }
 
-pub(crate) async fn import_profile_with_secrets(
+pub(crate) async fn import_profile_with_secrets_and_phase_hook(
     profile: &DetectedLegacyProfile,
     source_path: &Path,
     target: &PersistenceHandle,
     transformer: &dyn LegacySecretTransformer,
+    phase_hook: &mut (dyn FnMut(ImportPhase) -> Result<(), UpgradeError> + Send),
 ) -> Result<(), UpgradeError> {
     let mut source = verified_session(profile, source_path).await?;
-    let result = import_additive_v1(profile.id(), &mut source, target, Some(transformer)).await;
+    let result = import_additive_v1_with_phase_hook(
+        profile.id(),
+        &mut source,
+        target,
+        Some(transformer),
+        phase_hook,
+    )
+    .await;
     source.close().await?;
     result
 }
@@ -94,21 +137,292 @@ async fn verified_session(
     Ok(source)
 }
 
+#[cfg(test)]
 pub(super) async fn import_additive_v1(
     profile_id: &'static str,
     source: &mut LegacyReadSession,
     target: &PersistenceHandle,
     transformer: Option<&dyn LegacySecretTransformer>,
 ) -> Result<(), UpgradeError> {
+    let mut noop = |_| Ok(());
+    import_additive_v1_with_phase_hook(profile_id, source, target, transformer, &mut noop).await
+}
+
+async fn import_additive_v1_with_phase_hook(
+    profile_id: &'static str,
+    source: &mut LegacyReadSession,
+    target: &PersistenceHandle,
+    transformer: Option<&dyn LegacySecretTransformer>,
+    phase_hook: &mut (dyn FnMut(ImportPhase) -> Result<(), UpgradeError> + Send),
+) -> Result<(), UpgradeError> {
     let mut write = target.begin_write().await?;
     ensure_empty_target(&mut write).await?;
-    for plan in TABLE_PLANS {
-        copy_table(profile_id, source.connection(), &mut write, plan).await?;
-    }
-    for secret in load_secrets(profile_id, source.connection(), transformer).await? {
-        insert_secret(&mut write, secret).await?;
-    }
+
+    import_settings_and_installation(profile_id, source, &mut write).await?;
+    phase_hook(ImportPhase::SettingsAndInstallation)?;
+
+    import_stations_and_endpoint_revision(profile_id, source, &mut write).await?;
+    phase_hook(ImportPhase::StationsAndEndpointRevision)?;
+
+    import_secrets_and_credentials(profile_id, source, &mut write, transformer).await?;
+    phase_hook(ImportPhase::SecretsAndCredentials)?;
+
+    import_keys_and_capabilities(profile_id, source, &mut write).await?;
+    phase_hook(ImportPhase::KeysAndCapabilities)?;
+
+    import_routing_groups_aliases_remote_keys(profile_id, source, &mut write).await?;
+    phase_hook(ImportPhase::RoutingGroupsAliasesRemoteKeys)?;
+
+    import_monitor_definitions(profile_id, source, &mut write).await?;
+    phase_hook(ImportPhase::MonitorDefinitions)?;
+
+    import_pricing(profile_id, source, &mut write).await?;
+    phase_hook(ImportPhase::Pricing)?;
+
+    import_historical_evidence(profile_id, source, &mut write).await?;
+    phase_hook(ImportPhase::HistoricalEvidence)?;
+
+    import_health_and_changes(profile_id, source, &mut write).await?;
+    phase_hook(ImportPhase::HealthAndChanges)?;
+
+    rebuild_derived_projections_and_indexes(&mut write).await?;
+    phase_hook(ImportPhase::DerivedProjectionsAndIndexes)?;
+
     write.commit().await?;
+    Ok(())
+}
+
+async fn import_settings_and_installation(
+    profile_id: &str,
+    source: &mut LegacyReadSession,
+    write: &mut WriteSession,
+) -> Result<(), UpgradeError> {
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("settings")?,
+    )
+    .await
+}
+
+async fn import_stations_and_endpoint_revision(
+    profile_id: &str,
+    source: &mut LegacyReadSession,
+    write: &mut WriteSession,
+) -> Result<(), UpgradeError> {
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("stations")?,
+    )
+    .await
+}
+
+async fn import_secrets_and_credentials(
+    profile_id: &str,
+    source: &mut LegacyReadSession,
+    write: &mut WriteSession,
+    transformer: Option<&dyn LegacySecretTransformer>,
+) -> Result<(), UpgradeError> {
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("station_credentials")?,
+    )
+    .await?;
+    for secret in load_secrets(profile_id, source.connection(), transformer).await? {
+        insert_secret_record(write, &secret).await?;
+        if !(secret.scope == "station_key" && secret.kind == "api_key") {
+            attach_secret_reference(write, &secret).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn import_keys_and_capabilities(
+    profile_id: &str,
+    source: &mut LegacyReadSession,
+    write: &mut WriteSession,
+) -> Result<(), UpgradeError> {
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("station_keys")?,
+    )
+    .await?;
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("station_key_capabilities")?,
+    )
+    .await?;
+    attach_station_key_secret_references(write).await?;
+    Ok(())
+}
+
+async fn import_routing_groups_aliases_remote_keys(
+    profile_id: &str,
+    source: &mut LegacyReadSession,
+    write: &mut WriteSession,
+) -> Result<(), UpgradeError> {
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("remote_station_keys")?,
+    )
+    .await?;
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("station_group_bindings")?,
+    )
+    .await?;
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("model_aliases")?,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn import_monitor_definitions(
+    profile_id: &str,
+    source: &mut LegacyReadSession,
+    write: &mut WriteSession,
+) -> Result<(), UpgradeError> {
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("channel_monitor_request_templates")?,
+    )
+    .await?;
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("channel_monitors")?,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn import_pricing(
+    profile_id: &str,
+    source: &mut LegacyReadSession,
+    write: &mut WriteSession,
+) -> Result<(), UpgradeError> {
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("pricing_rules")?,
+    )
+    .await?;
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("model_base_prices")?,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn import_historical_evidence(
+    profile_id: &str,
+    source: &mut LegacyReadSession,
+    write: &mut WriteSession,
+) -> Result<(), UpgradeError> {
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("collector_runs")?,
+    )
+    .await?;
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("collector_snapshots")?,
+    )
+    .await?;
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("group_rate_records")?,
+    )
+    .await?;
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("balance_snapshots")?,
+    )
+    .await?;
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("channel_monitor_runs")?,
+    )
+    .await?;
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("request_logs")?,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn import_health_and_changes(
+    profile_id: &str,
+    source: &mut LegacyReadSession,
+    write: &mut WriteSession,
+) -> Result<(), UpgradeError> {
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("station_key_health")?,
+    )
+    .await?;
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("station_endpoint_health")?,
+    )
+    .await?;
+    copy_table(
+        profile_id,
+        source.connection(),
+        write,
+        table_plan("change_events")?,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn rebuild_derived_projections_and_indexes(
+    write: &mut WriteSession,
+) -> Result<(), UpgradeError> {
+    // Current projections are query-time views over canonical rows; only physical indexes need
+    // rebuilding after the bulk import.
+    sqlx::query("REINDEX").execute(write.connection()).await?;
     Ok(())
 }
 
@@ -457,9 +771,9 @@ async fn load_secrets(
         .collect()
 }
 
-async fn insert_secret(
+async fn insert_secret_record(
     write: &mut WriteSession,
-    secret: ImportedEncryptedSecret,
+    secret: &ImportedEncryptedSecret,
 ) -> Result<(), crate::persistence::error::PersistenceError> {
     sqlx::query(
         r#"
@@ -479,6 +793,13 @@ async fn insert_secret(
     .bind(&secret.updated_at)
     .execute(write.connection())
     .await?;
+    Ok(())
+}
+
+async fn attach_secret_reference(
+    write: &mut WriteSession,
+    secret: &ImportedEncryptedSecret,
+) -> Result<(), crate::persistence::error::PersistenceError> {
     let (table, id_column, reference_column) = match (secret.scope.as_str(), secret.kind.as_str()) {
         ("station", "api_key") => ("stations", "id", "api_key_secret_id"),
         ("station_key", "api_key") => ("station_keys", "id", "api_key_secret_id"),
@@ -510,8 +831,8 @@ async fn insert_secret(
     };
     let sql = format!("UPDATE {table} SET {reference_column} = ?1 WHERE {id_column} = ?2");
     let updated = sqlx::query(&sql)
-        .bind(secret.id)
-        .bind(secret.owner_id)
+        .bind(&secret.id)
+        .bind(&secret.owner_id)
         .execute(write.connection())
         .await?
         .rows_affected();
@@ -525,9 +846,49 @@ async fn insert_secret(
     Ok(())
 }
 
+async fn attach_station_key_secret_references(
+    write: &mut WriteSession,
+) -> Result<(), crate::persistence::error::PersistenceError> {
+    let references = sqlx::query(
+        r#"
+        SELECT id, owner_id
+        FROM secrets
+        WHERE scope = 'station_key' AND kind = 'api_key'
+        ORDER BY id
+        "#,
+    )
+    .fetch_all(write.connection())
+    .await?;
+    for reference in references {
+        let secret_id: String = reference.try_get("id")?;
+        let owner_id: String = reference.try_get("owner_id")?;
+        let updated = sqlx::query("UPDATE station_keys SET api_key_secret_id = ?1 WHERE id = ?2")
+            .bind(secret_id)
+            .bind(owner_id)
+            .execute(write.connection())
+            .await?
+            .rows_affected();
+        if updated != 1 {
+            return Err(
+                crate::persistence::error::PersistenceError::InvariantViolation(
+                    "imported station key secret owner is missing or ambiguous".to_string(),
+                ),
+            );
+        }
+    }
+    Ok(())
+}
+
 struct TablePlan {
     name: &'static str,
     columns: &'static [&'static str],
+}
+
+fn table_plan(name: &str) -> Result<&'static TablePlan, UpgradeError> {
+    TABLE_PLANS
+        .iter()
+        .find(|plan| plan.name == name)
+        .ok_or(UpgradeError::ValidationFailed)
 }
 
 const TABLE_PLANS: &[TablePlan] = &[
@@ -1018,3 +1379,77 @@ const SECRET_SOURCES: &[(&str, &str, &str, &str, &str)] = &[
         "login_password",
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::{ImportPhase, TABLE_PLANS};
+
+    const PHASE_TABLES: &[(ImportPhase, &[&str])] = &[
+        (ImportPhase::SettingsAndInstallation, &["settings"]),
+        (ImportPhase::StationsAndEndpointRevision, &["stations"]),
+        (ImportPhase::SecretsAndCredentials, &["station_credentials"]),
+        (
+            ImportPhase::KeysAndCapabilities,
+            &["station_keys", "station_key_capabilities"],
+        ),
+        (
+            ImportPhase::RoutingGroupsAliasesRemoteKeys,
+            &[
+                "remote_station_keys",
+                "station_group_bindings",
+                "model_aliases",
+            ],
+        ),
+        (
+            ImportPhase::MonitorDefinitions,
+            &["channel_monitor_request_templates", "channel_monitors"],
+        ),
+        (
+            ImportPhase::Pricing,
+            &["pricing_rules", "model_base_prices"],
+        ),
+        (
+            ImportPhase::HistoricalEvidence,
+            &[
+                "collector_runs",
+                "collector_snapshots",
+                "group_rate_records",
+                "balance_snapshots",
+                "channel_monitor_runs",
+                "request_logs",
+            ],
+        ),
+        (
+            ImportPhase::HealthAndChanges,
+            &[
+                "station_key_health",
+                "station_endpoint_health",
+                "change_events",
+            ],
+        ),
+        (ImportPhase::DerivedProjectionsAndIndexes, &[]),
+    ];
+
+    #[test]
+    fn import_phase_order_is_closed_and_matches_the_upgrade_contract() {
+        let phases: Vec<_> = PHASE_TABLES.iter().map(|(phase, _)| *phase).collect();
+        assert_eq!(phases.as_slice(), ImportPhase::ALL.as_slice());
+    }
+
+    #[test]
+    fn every_table_plan_belongs_to_exactly_one_explicit_phase() {
+        let planned: BTreeSet<_> = TABLE_PLANS.iter().map(|plan| plan.name).collect();
+        assert_eq!(planned.len(), TABLE_PLANS.len(), "duplicate table plan");
+
+        let grouped: Vec<_> = PHASE_TABLES
+            .iter()
+            .flat_map(|(_, tables)| tables.iter().copied())
+            .collect();
+        let unique_grouped: BTreeSet<_> = grouped.iter().copied().collect();
+
+        assert_eq!(unique_grouped.len(), grouped.len(), "table assigned twice");
+        assert_eq!(unique_grouped, planned, "table missing from phase grouping");
+    }
+}

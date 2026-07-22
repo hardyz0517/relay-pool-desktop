@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    io::{Read, Write},
+    io::Write,
     net::{Shutdown, TcpListener, TcpStream},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -11,30 +11,273 @@ use std::{
 };
 
 use crate::{
+    application::{app_services::AppServices, pagination::PageLimit},
     models::{
-        routing::{UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
-        station_keys::StationKey,
+        pricing::UpsertBalanceSnapshotInput,
+        proxy::RequestLog,
+        routing::{StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
+        station_keys::CreateStationKeyInput,
         stations::CreateStationInput,
     },
+    persistence::runtime::PersistenceRuntime,
     services::{
-        database::AppDatabase,
-        proxy::legacy_runtime::{read_http_request_for_tests, ProxyRuntimeState},
+        proxy::{http_request::parse_http_request, runtime::ProxyStartConfig},
         secrets::crypto::generate_data_key,
     },
 };
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum EndpointProbe {
-    Models,
-    Chat,
-    Responses,
-    Embeddings,
+pub(crate) struct V2ProxyTestFixture {
+    pub(crate) services: AppServices,
+    runtime: PersistenceRuntime,
+    pub(crate) data_key: [u8; 32],
+    _root: tempfile::TempDir,
+}
+
+impl V2ProxyTestFixture {
+    pub(crate) async fn new() -> Self {
+        let root = tempfile::tempdir().expect("tempdir");
+        let default_data_dir = root.path().join("default");
+        let active_data_dir = root.path().join("active");
+        std::fs::create_dir_all(&active_data_dir).expect("active data dir");
+        let database_path = active_data_dir.join("relay-pool-desktop-v2.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&database_path)
+            .await
+            .expect("initialize V2 persistence runtime");
+        let data_key = generate_data_key();
+        let services = crate::app_composition::compose_app_services(
+            runtime.handle(),
+            data_key,
+            active_data_dir.to_string_lossy().into_owned(),
+            None,
+            Arc::new(
+                crate::services::data_store::data_directory_port::FileDataDirectoryPort::new(
+                    default_data_dir.clone(),
+                    active_data_dir.clone(),
+                ),
+            ),
+        );
+        services
+            .settings
+            .update_local_access_key("relay-local-secret".to_string())
+            .await
+            .expect("persist V2 local access key");
+        Self {
+            services,
+            runtime,
+            data_key,
+            _root: root,
+        }
+    }
+
+    pub(crate) fn config(&self, port: u16) -> ProxyStartConfig {
+        let routing_repository: Arc<
+            dyn crate::services::proxy::routing_repository::RoutingRepository,
+        > = Arc::new(
+            crate::services::proxy::routing_repository::V2RoutingRepository::new(
+                self.services.routing.as_ref().clone(),
+                self.data_key,
+            ),
+        );
+        let lifecycle_store: Arc<
+            dyn crate::services::proxy::lifecycle::ports::RequestLifecycleStore,
+        > = self.services.request_finalization.clone();
+        ProxyStartConfig::new_v2(
+            routing_repository,
+            lifecycle_store,
+            "relay-local-secret".to_string(),
+            port,
+        )
+    }
+
+    pub(crate) fn runtime(&self) -> &PersistenceRuntime {
+        &self.runtime
+    }
+
+    pub(crate) async fn request_logs(&self) -> Vec<RequestLog> {
+        self.services
+            .request_logs
+            .list_recent(PageLimit::new(500).expect("bounded test limit"))
+            .await
+            .expect("request logs")
+    }
+
+    pub(crate) async fn upsert_model_alias(&self, client_model: &str, upstream_model: &str) {
+        self.services
+            .routing
+            .upsert_model_alias(UpsertModelAliasInput {
+                id: None,
+                client_model: client_model.to_string(),
+                upstream_model: upstream_model.to_string(),
+                enabled: true,
+                note: None,
+            })
+            .await
+            .expect("model alias");
+    }
+
+    pub(crate) async fn seed_candidate(&self, upstream_base_url: &str) -> SeededV2Candidate {
+        self.seed_candidate_named(upstream_base_url, "upstream", 0, "auto")
+            .await
+    }
+
+    pub(crate) async fn seed_candidate_named(
+        &self,
+        upstream_base_url: &str,
+        suffix: &str,
+        priority: i64,
+        upstream_api_format: &str,
+    ) -> SeededV2Candidate {
+        let station = self
+            .services
+            .stations
+            .create(CreateStationInput {
+                name: format!("V2 proxy station {suffix}"),
+                station_type: "openai-compatible".to_string(),
+                website_url: upstream_base_url.to_string(),
+                api_base_url: format!("{}/v1", upstream_base_url.trim_end_matches('/')),
+                api_key: String::new(),
+                collector_proxy_mode: "direct".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .await
+            .expect("station");
+        let key = self
+            .services
+            .credentials
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id.clone(),
+                name: format!("V2 proxy key {suffix}"),
+                api_key: format!("sk-v2-{suffix}"),
+                enabled: true,
+                priority: Some(priority),
+                max_concurrency: Some(8),
+                load_factor: None,
+                schedulable: Some(true),
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                manual_rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .await
+            .expect("station key");
+        let station_id = station.id.clone();
+        let station_key_id = key.id.clone();
+        let upstream_api_format = upstream_api_format.to_string();
+        self.runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query("UPDATE stations SET upstream_api_format = ?1 WHERE id = ?2")
+                        .bind(upstream_api_format)
+                        .bind(station_id)
+                        .execute(write.connection())
+                        .await?;
+                    sqlx::query(
+                        "UPDATE station_keys SET priority = ?1, routing_order = ?1 WHERE id = ?2",
+                    )
+                    .bind(priority)
+                    .bind(&station_key_id)
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("candidate routing fields");
+        self.services
+            .credentials
+            .update_station_key_capabilities(UpdateStationKeyCapabilitiesInput {
+                station_key_id: key.id.clone(),
+                supports_chat_completions: true,
+                supports_responses: true,
+                supports_embeddings: true,
+                supports_stream: true,
+                supports_tools: true,
+                supports_vision: true,
+                supports_reasoning: true,
+                model_allowlist: Vec::new(),
+                model_blocklist: Vec::new(),
+                preferred_models: Vec::new(),
+                only_use_as_backup: false,
+                routing_tags: Vec::new(),
+            })
+            .await
+            .expect("capabilities");
+        SeededV2Candidate {
+            station_id: station.id,
+            station_key_id: key.id,
+        }
+    }
+
+    pub(crate) async fn seed_balance(
+        &self,
+        station_id: &str,
+        id: &str,
+        value: f64,
+        status: &str,
+        collected_at: &str,
+    ) {
+        self.services
+            .pricing
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: Some(id.to_string()),
+                station_id: station_id.to_string(),
+                station_key_id: None,
+                scope: "station".to_string(),
+                value: Some(value),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_base_consumption: None,
+                total_base_consumption: None,
+                today_token_count: None,
+                total_token_count: None,
+                today_input_token_count: None,
+                today_output_token_count: None,
+                total_input_token_count: None,
+                total_output_token_count: None,
+                account_concurrency_limit: None,
+                low_balance_threshold: None,
+                status: status.to_string(),
+                source: "test".to_string(),
+                confidence: 1.0,
+                collected_at: Some(collected_at.to_string()),
+            })
+            .await
+            .expect("balance snapshot");
+    }
+
+    pub(crate) async fn station_key_health(&self, station_key_id: &str) -> StationKeyHealth {
+        self.services
+            .routing
+            .station_key_health_by_id(station_key_id)
+            .await
+            .expect("station key health")
+    }
+}
+
+pub(crate) struct SeededV2Candidate {
+    pub(crate) station_id: String,
+    pub(crate) station_key_id: String,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct CapturedRequest {
-    pub method: String,
-    pub path: String,
     pub path_and_query: String,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
@@ -58,8 +301,6 @@ pub(crate) enum ScriptedResponse {
     Redirect {
         location: String,
     },
-    ChunkedSse(Vec<u8>),
-    DisconnectAfterChunk(Vec<u8>),
     PausedSse {
         first_chunk: Vec<u8>,
         release: Arc<AtomicBool>,
@@ -156,552 +397,15 @@ impl Drop for LoopbackUpstream {
     }
 }
 
-pub(crate) struct LegacyGatewayCase {
-    database: AppDatabase,
-    proxy: ProxyRuntimeState,
-    local_key: String,
-    port: u16,
-    upstream: LoopbackUpstream,
-    station_keys: Vec<StationKey>,
-    upstream_key_labels: HashMap<String, String>,
-    paused_release: Option<Arc<AtomicBool>>,
-}
-
-impl LegacyGatewayCase {
-    pub(crate) fn new() -> Self {
-        Self::with_responses(vec![
-            ok_models(),
-            ok_chat(),
-            ok_responses(),
-            ok_embeddings(),
-        ])
-    }
-
-    pub(crate) fn with_statuses(statuses: [u16; 2]) -> Self {
-        Self::with_station_count(
-            vec![
-                ScriptedResponse::Status {
-                    status: statuses[0],
-                    reason: status_reason(statuses[0]),
-                },
-                ok_chat(),
-                ScriptedResponse::Status {
-                    status: statuses[1],
-                    reason: status_reason(statuses[1]),
-                },
-            ],
-            2,
-        )
-    }
-
-    pub(crate) fn stream_then_disconnect(chunk: &[u8]) -> Self {
-        Self::with_station_count(
-            vec![ScriptedResponse::DisconnectAfterChunk(chunk.to_vec())],
-            2,
-        )
-    }
-
-    pub(crate) fn paused_stream() -> Self {
-        let release = Arc::new(AtomicBool::new(false));
-        let mut case = Self::with_station_count(
-            vec![ScriptedResponse::PausedSse {
-                first_chunk: b"data: {\"choices\":[{\"delta\":{\"content\":\"hold\"}}]}\n\n"
-                    .to_vec(),
-                release: Arc::clone(&release),
-            }],
-            1,
-        );
-        case.paused_release = Some(release);
-        case
-    }
-
-    pub(crate) fn with_responses(responses: Vec<ScriptedResponse>) -> Self {
-        Self::with_station_count(responses, 1)
-    }
-
-    fn with_station_count(responses: Vec<ScriptedResponse>, station_count: usize) -> Self {
-        let upstream = LoopbackUpstream::script(responses);
-        let database = AppDatabase::new_in_memory_for_tests().expect("database");
-        let data_key = generate_data_key();
-        let local_key = database
-            .ensure_secure_local_access_key()
-            .expect("local key");
-        database
-            .upsert_model_alias(UpsertModelAliasInput {
-                id: None,
-                client_model: "alias-model".to_string(),
-                upstream_model: "mapped-model".to_string(),
-                enabled: true,
-                note: None,
-            })
-            .expect("model alias");
-        let station_keys = create_station_keys(
-            &database,
-            &data_key,
-            upstream.base_url.as_str(),
-            station_count,
-        );
-        let upstream_key_labels = station_keys
-            .iter()
-            .enumerate()
-            .map(|(index, _)| {
-                let label = if station_count == 1 {
-                    "key-a".to_string()
-                } else {
-                    format!("key-{}", (b'a' + index as u8) as char)
-                };
-                let credential = if station_count == 1 {
-                    "upstream-key".to_string()
-                } else {
-                    format!("upstream-key-{}", (b'a' + index as u8) as char)
-                };
-                (format!("Bearer {credential}"), label)
-            })
-            .collect();
-        let proxy = ProxyRuntimeState::default();
-        let status = proxy
-            .start_ephemeral_for_tests(database.clone(), data_key)
-            .expect("start proxy");
-
-        Self {
-            database,
-            proxy,
-            local_key,
-            port: status.port,
-            upstream,
-            station_keys,
-            upstream_key_labels,
-            paused_release: None,
-        }
-    }
-
-    pub(crate) fn local_key(&self) -> &str {
-        &self.local_key
-    }
-
-    pub(crate) fn request(&self, endpoint: EndpointProbe, token: Option<&str>) -> HttpResponse {
-        self.send_raw(
-            endpoint.method(),
-            endpoint.target(),
-            token,
-            endpoint.body(),
-            &[],
-        )
-    }
-
-    pub(crate) fn upstream_requests(&self) -> usize {
-        self.upstream.captured_count()
-    }
-
-    pub(crate) fn post_chat(
-        &self,
-        query: &str,
-        headers: &[(&str, &str)],
-        body: &[u8],
-    ) -> ObservedChatRequest {
-        let before = self.upstream.captured_count();
-        let target = format!("/v1/chat/completions{query}");
-        let downstream = self.send_raw("POST", &target, Some(&self.local_key), body, headers);
-        self.upstream.wait_for_requests(before + 1);
-        let upstream = self
-            .upstream
-            .captured_requests()
-            .into_iter()
-            .nth(before)
-            .expect("captured upstream request");
-        ObservedChatRequest {
-            downstream,
-            upstream,
-        }
-    }
-
-    pub(crate) fn post_buffered_chat(&self) -> ObservedBufferedChat {
-        let response = self.send_raw(
-            "POST",
-            "/v1/chat/completions",
-            Some(&self.local_key),
-            br#"{"model":"alias-model","messages":[{"role":"user","content":"ping"}],"stream":false}"#,
-            &[],
-        );
-        let captured = self.upstream.captured_requests();
-        let attempted_key_ids = captured
-            .iter()
-            .filter_map(|request| request.header("authorization"))
-            .filter_map(|authorization| self.upstream_key_labels.get(authorization))
-            .fold(Vec::<String>::new(), |mut keys, key| {
-                if keys.last() != Some(key) {
-                    keys.push(key.clone());
-                }
-                keys
-            });
-        let selected_key_id = attempted_key_ids
-            .last()
-            .cloned()
-            .unwrap_or_else(|| "<none>".to_string());
-        let logs = self
-            .database
-            .list_local_proxy_request_logs()
-            .expect("request logs");
-        let health = self.database.list_station_key_health().expect("health");
-        let health_updates = self
-            .station_keys
-            .iter()
-            .enumerate()
-            .filter_map(|(index, key)| {
-                let label = format!("key-{}", (b'a' + index as u8) as char);
-                health
-                    .iter()
-                    .find(|item| item.station_key_id == key.id)
-                    .map(|item| (label, item.success_count > 0 && item.failure_count == 0))
-                    .or_else(|| {
-                        health
-                            .iter()
-                            .find(|item| item.station_key_id == key.id)
-                            .map(|item| {
-                                (
-                                    format!("key-{}", (b'a' + index as u8) as char),
-                                    item.success_count > 0,
-                                )
-                            })
-                    })
-            })
-            .collect::<Vec<_>>();
-
-        ObservedBufferedChat {
-            downstream_status: response.status,
-            attempted_key_ids,
-            selected_key_id,
-            fallback_count: logs.first().map(|log| log.fallback_count).unwrap_or(0),
-            health_updates,
-            request_logs_len: logs.len(),
-        }
-    }
-
-    pub(crate) fn post_streaming_chat(&self) -> ObservedStreamChat {
-        let response = self.send_raw(
-            "POST",
-            "/v1/chat/completions",
-            Some(&self.local_key),
-            br#"{"model":"alias-model","messages":[{"role":"user","content":"ping"}],"stream":true}"#,
-            &[("accept", "text/event-stream")],
-        );
-        self.upstream.wait_for_requests(1);
-        let captured = self.upstream.captured_requests();
-        let attempted_key_ids = captured
-            .iter()
-            .filter_map(|request| request.header("authorization"))
-            .filter_map(|authorization| self.upstream_key_labels.get(authorization))
-            .fold(Vec::<String>::new(), |mut keys, key| {
-                if keys.last() != Some(key) {
-                    keys.push(key.clone());
-                }
-                keys
-            });
-        let logs = self
-            .database
-            .list_local_proxy_request_logs()
-            .expect("request logs");
-
-        ObservedStreamChat {
-            downstream_body: response.body,
-            attempted_key_ids,
-            second_upstream_requests: captured
-                .iter()
-                .filter_map(|request| request.header("authorization"))
-                .filter(|authorization| {
-                    self.upstream_key_labels
-                        .get(*authorization)
-                        .is_some_and(|label| label == "key-b")
-                })
-                .count(),
-            request_logs_len: logs.len(),
-        }
-    }
-
-    pub(crate) fn start_streaming_chat(&self) -> ActiveStream {
-        let release = self
-            .paused_release
-            .as_ref()
-            .cloned()
-            .expect("paused stream release");
-        let port = self.port;
-        let local_key = self.local_key.clone();
-        let handle = thread::spawn(move || {
-            let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect proxy");
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .expect("read timeout");
-            stream
-                .set_write_timeout(Some(Duration::from_secs(5)))
-                .expect("write timeout");
-            let body = br#"{"model":"alias-model","messages":[{"role":"user","content":"ping"}],"stream":true}"#;
-            let request = format!(
-                "POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {local_key}\r\nAccept: text/event-stream\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            );
-            stream.write_all(request.as_bytes()).expect("write headers");
-            stream.write_all(body).expect("write body");
-            let mut response = Vec::new();
-            let _ = stream.read_to_end(&mut response);
-            response
-        });
-        ActiveStream {
-            release,
-            handle: Some(handle),
-        }
-    }
-
-    pub(crate) fn wait_active_requests(&self, expected: u32) {
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while self.proxy.status(self.port).active_requests != expected {
-            assert!(
-                Instant::now() < deadline,
-                "active request count did not become {expected}"
-            );
-            thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    pub(crate) fn prepare_for_update(
-        &self,
-        timeout: Duration,
-    ) -> Result<crate::models::proxy::ProxyStatus, String> {
-        self.proxy.prepare_for_update(self.port, timeout)
-    }
-
-    pub(crate) fn request_logs(&self) -> Vec<crate::models::proxy::RequestLog> {
-        self.database
-            .list_local_proxy_request_logs()
-            .expect("request logs")
-    }
-
-    fn send_raw(
-        &self,
-        method: &str,
-        target: &str,
-        token: Option<&str>,
-        body: &[u8],
-        headers: &[(&str, &str)],
-    ) -> HttpResponse {
-        let mut stream = TcpStream::connect(("127.0.0.1", self.port)).expect("connect proxy");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(3)))
-            .expect("read timeout");
-        stream
-            .set_write_timeout(Some(Duration::from_secs(3)))
-            .expect("write timeout");
-        let mut request = format!(
-            "{method} {target} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n",
-            self.port
-        );
-        if let Some(token) = token {
-            request.push_str(&format!("Authorization: Bearer {token}\r\n"));
-        }
-        for (name, value) in headers {
-            request.push_str(&format!("{name}: {value}\r\n"));
-        }
-        if !body.is_empty() {
-            request.push_str("Content-Type: application/json\r\n");
-            request.push_str(&format!("Content-Length: {}\r\n", body.len()));
-        }
-        request.push_str("\r\n");
-        stream.write_all(request.as_bytes()).expect("write headers");
-        if !body.is_empty() {
-            stream.write_all(body).expect("write body");
-        }
-        let mut response = Vec::new();
-        stream
-            .read_to_end(&mut response)
-            .expect("read proxy response");
-        HttpResponse::parse(&response)
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct ObservedChatRequest {
-    pub(crate) downstream: HttpResponse,
-    pub(crate) upstream: CapturedRequest,
-}
-
-#[derive(Debug)]
-pub(crate) struct ObservedBufferedChat {
-    pub(crate) downstream_status: u16,
-    pub(crate) attempted_key_ids: Vec<String>,
-    pub(crate) selected_key_id: String,
-    pub(crate) fallback_count: i64,
-    pub(crate) health_updates: Vec<(String, bool)>,
-    pub(crate) request_logs_len: usize,
-}
-
-#[derive(Debug)]
-pub(crate) struct ObservedStreamChat {
-    pub(crate) downstream_body: Vec<u8>,
-    pub(crate) attempted_key_ids: Vec<String>,
-    pub(crate) second_upstream_requests: usize,
-    pub(crate) request_logs_len: usize,
-}
-
-pub(crate) struct ActiveStream {
-    release: Arc<AtomicBool>,
-    handle: Option<JoinHandle<Vec<u8>>>,
-}
-
-impl ActiveStream {
-    pub(crate) fn release_eof(mut self) -> Vec<u8> {
-        self.release.store(true, Ordering::Relaxed);
-        self.handle
-            .take()
-            .expect("stream handle")
-            .join()
-            .expect("stream client joins")
-    }
-}
-
-impl Drop for LegacyGatewayCase {
-    fn drop(&mut self) {
-        let _ = self.proxy.stop(self.port);
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct HttpResponse {
-    pub(crate) status: u16,
-    pub(crate) headers: HashMap<String, String>,
-    pub(crate) body: Vec<u8>,
-}
-
-impl HttpResponse {
-    fn parse(bytes: &[u8]) -> Self {
-        let split = bytes
-            .windows(4)
-            .position(|window| window == b"\r\n\r\n")
-            .expect("response header terminator");
-        let head = String::from_utf8_lossy(&bytes[..split]);
-        let mut lines = head.lines();
-        let status = lines
-            .next()
-            .and_then(|line| line.split_whitespace().nth(1))
-            .and_then(|value| value.parse::<u16>().ok())
-            .expect("response status");
-        let headers = lines
-            .filter_map(|line| line.split_once(':'))
-            .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
-            .collect();
-        Self {
-            status,
-            headers,
-            body: bytes[split + 4..].to_vec(),
-        }
-    }
-}
-
-impl EndpointProbe {
-    fn method(self) -> &'static str {
-        match self {
-            Self::Models => "GET",
-            Self::Chat | Self::Responses | Self::Embeddings => "POST",
-        }
-    }
-
-    fn target(self) -> &'static str {
-        match self {
-            Self::Models => "/v1/models",
-            Self::Chat => "/v1/chat/completions",
-            Self::Responses => "/v1/responses",
-            Self::Embeddings => "/v1/embeddings",
-        }
-    }
-
-    fn body(self) -> &'static [u8] {
-        match self {
-            Self::Models => b"",
-            Self::Chat => br#"{"model":"alias-model","messages":[{"role":"user","content":"ping"}],"stream":false}"#,
-            Self::Responses => br#"{"model":"alias-model","input":"ping","stream":false}"#,
-            Self::Embeddings => br#"{"model":"alias-model","input":"ping"}"#,
-        }
-    }
-}
-
-fn create_station_keys(
-    database: &AppDatabase,
-    data_key: &[u8; 32],
-    upstream_base_url: &str,
-    count: usize,
-) -> Vec<StationKey> {
-    let mut keys = Vec::new();
-    for index in 0..count {
-        let suffix = (b'a' + index as u8) as char;
-        let credential = if count == 1 {
-            "upstream-key".to_string()
-        } else {
-            format!("upstream-key-{suffix}")
-        };
-        let station = database
-            .create_station_with_data_key(
-                CreateStationInput {
-                    name: format!("Contract Station {suffix}"),
-                    station_type: "openai-compatible".to_string(),
-                    website_url: upstream_base_url.to_string(),
-                    api_base_url: format!("{}/v1", upstream_base_url.trim_end_matches('/')),
-                    api_key: credential,
-                    collector_proxy_mode: "direct".to_string(),
-                    collector_proxy_url: None,
-                    enabled: true,
-                    credit_per_cny: 1.0,
-                    low_balance_threshold_cny: None,
-                    collection_interval_minutes: 5,
-                    note: None,
-                },
-                Some(data_key),
-            )
-            .expect("station");
-        keys.extend(
-            database
-                .list_station_keys(station.id)
-                .expect("station keys"),
-        );
-        thread::sleep(Duration::from_millis(2));
-    }
-    for key in &keys {
-        database
-            .update_station_key_capabilities(UpdateStationKeyCapabilitiesInput {
-                station_key_id: key.id.clone(),
-                supports_chat_completions: true,
-                supports_responses: true,
-                supports_embeddings: true,
-                supports_stream: true,
-                supports_tools: true,
-                supports_vision: true,
-                supports_reasoning: true,
-                model_allowlist: Vec::new(),
-                model_blocklist: Vec::new(),
-                preferred_models: Vec::new(),
-                only_use_as_backup: false,
-                routing_tags: Vec::new(),
-            })
-            .expect("capabilities");
-    }
-    keys
-}
-
-fn status_reason(status: u16) -> &'static str {
-    match status {
-        200 => "OK",
-        404 => "Not Found",
-        429 => "Too Many Requests",
-        500 => "Internal Server Error",
-        _ => "Relay Pool Response",
-    }
-}
-
 fn read_captured_request(stream: &mut TcpStream) -> Result<CapturedRequest, String> {
-    let (method, path, path_and_query, headers, body) = read_http_request_for_tests(stream)?;
+    stream
+        .set_nonblocking(false)
+        .map_err(|error| format!("configure upstream request reader: {error}"))?;
+    let request = parse_http_request(stream, 2 * 1024 * 1024)?;
     Ok(CapturedRequest {
-        method,
-        path,
-        path_and_query,
-        headers,
-        body,
+        path_and_query: request.target,
+        headers: request.headers,
+        body: request.body,
     })
 }
 
@@ -718,15 +422,6 @@ fn write_scripted_response(stream: &mut TcpStream, response: ScriptedResponse) {
                 "HTTP/1.1 302 Found\r\nlocation: {location}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
             );
             let _ = stream.write_all(header.as_bytes());
-        }
-        ScriptedResponse::ChunkedSse(body) => {
-            write_response(stream, 200, "OK", "text/event-stream", &body)
-        }
-        ScriptedResponse::DisconnectAfterChunk(body) => {
-            let header =
-                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
-            let _ = stream.write_all(header.as_bytes());
-            let _ = stream.write_all(&body);
         }
         ScriptedResponse::PausedSse {
             first_chunk,
@@ -761,22 +456,4 @@ fn write_response(
     );
     let _ = stream.write_all(header.as_bytes());
     let _ = stream.write_all(body);
-}
-
-fn ok_models() -> ScriptedResponse {
-    ScriptedResponse::Json(
-        br#"{"object":"list","data":[{"id":"mapped-model","object":"model"}]}"#.to_vec(),
-    )
-}
-
-fn ok_chat() -> ScriptedResponse {
-    ScriptedResponse::Json(br#"{"id":"chatcmpl-contract","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#.to_vec())
-}
-
-fn ok_responses() -> ScriptedResponse {
-    ScriptedResponse::Json(br#"{"id":"resp_contract","output_text":"ok","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}"#.to_vec())
-}
-
-fn ok_embeddings() -> ScriptedResponse {
-    ScriptedResponse::Json(br#"{"object":"list","data":[{"embedding":[0.1],"index":0}],"usage":{"prompt_tokens":1,"total_tokens":1}}"#.to_vec())
 }

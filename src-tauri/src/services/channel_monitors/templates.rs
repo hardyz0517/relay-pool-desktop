@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     models::channel_monitors::ChannelMonitorRequestTemplate,
-    services::{database::now_millis_for_services, proxy::observability::RequestObservation},
+    services::{proxy::observability::RequestObservation, time::now_millis_for_services},
 };
 use serde_json::{Number, Value};
 

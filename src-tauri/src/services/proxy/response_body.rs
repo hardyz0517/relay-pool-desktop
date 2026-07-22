@@ -25,7 +25,7 @@ use super::{
     request::ByteStream,
 };
 
-use crate::services::database::now_millis_for_services;
+use crate::services::time::now_millis_for_services;
 
 const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -425,6 +425,10 @@ fn failure_source_label(source: FailureSource) -> &'static str {
     }
 }
 
+#[expect(
+    dead_code,
+    reason = "reserved by the downstream-disconnect failure contract"
+)]
 pub(crate) fn downstream_disconnected_failure() -> ProxyFailure {
     ProxyFailure::new(
         ProxyFailureCode::DownstreamDisconnected,
@@ -521,7 +525,7 @@ mod tests {
 
     #[tokio::test]
     async fn response_body_timing_uses_the_original_request_start() {
-        let now = crate::services::database::now_millis_for_services() as i64;
+        let now = crate::services::time::now_millis_for_services() as i64;
         let fixture = LifecycleBodyFixture::new_with_start(
             "response-body-request-start",
             "/v1/chat/completions",
@@ -954,7 +958,7 @@ mod tests {
             Self::new_with_start(
                 request_id,
                 local_path,
-                crate::services::database::now_millis_for_services() as i64,
+                crate::services::time::now_millis_for_services() as i64,
             )
             .await
         }
@@ -967,7 +971,7 @@ mod tests {
             Self::new_with_start_and_attempt(
                 request_id,
                 local_path,
-                crate::services::database::now_millis_for_services() as i64,
+                crate::services::time::now_millis_for_services() as i64,
                 true,
             )
             .await
@@ -986,19 +990,19 @@ mod tests {
                 endpoint: local_path.to_string(),
                 received_at_ms,
             };
-            let mut annotations = RequestLogAnnotations::default();
-            annotations.model = Some("gpt-test".to_string());
-            annotations.stream = true;
-            annotations.selected_station_key_id = Some("key-test".to_string());
-            annotations.selected_station_id = Some("station-test".to_string());
-            annotations.upstream_base_url = Some("https://example.test/v1".to_string());
-            annotations.route_policy = Some("priority_fallback".to_string());
-            annotations.route_reason = Some("selected test key".to_string());
-            annotations.rejected_candidates_json = Some("[]".to_string());
-            annotations.route_wait_ms = Some(0);
-            annotations.completion_source = Some("upstream".to_string());
-            annotations.attempts_json = None;
-            annotations.reasoning_effort = None;
+            let annotations = RequestLogAnnotations {
+                model: Some("gpt-test".to_string()),
+                stream: true,
+                selected_station_key_id: Some("key-test".to_string()),
+                selected_station_id: Some("station-test".to_string()),
+                upstream_base_url: Some("https://example.test/v1".to_string()),
+                route_policy: Some("priority_fallback".to_string()),
+                route_reason: Some("selected test key".to_string()),
+                rejected_candidates_json: Some("[]".to_string()),
+                route_wait_ms: Some(0),
+                completion_source: Some("upstream".to_string()),
+                ..RequestLogAnnotations::default()
+            };
 
             let store = Arc::new(RecordingStore::new());
             let (writer, worker) = LifecycleWriter::start(4, store.clone()).expect("writer");

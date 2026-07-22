@@ -4,8 +4,10 @@ use serde_json::{json, Value};
 
 use crate::models::{credentials::StationSessionCredentialKind, stations::Station};
 use crate::services::{
-    collectors::adapters::newapi::{auth, parsers},
-    database::AppDatabase,
+    collectors::{
+        adapters::newapi::{auth, parsers},
+        CollectorSourcePort,
+    },
     outbound::{credential_agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
     secrets::mask::redact_text,
     station_endpoints::build_management_url,
@@ -54,6 +56,7 @@ impl NewApiOperation {
     }
 }
 
+#[cfg(test)]
 pub(super) fn get_json_with_auth_context(
     base_url: &str,
     path: &str,
@@ -72,27 +75,8 @@ pub(super) fn get_json_with_auth_context(
     )
 }
 
-pub(super) fn post_json_with_auth_context(
-    base_url: &str,
-    path: &str,
-    auth: &auth::NewApiAuthContext,
-    operation: NewApiOperation,
-    body: Value,
-    timeout: Duration,
-) -> Result<NewApiResponse, NewApiRequestError> {
-    execute_json_with_auth_context(
-        ureq::AgentBuilder::new().timeout(timeout).build(),
-        base_url,
-        path,
-        auth,
-        operation,
-        Some(body),
-        timeout,
-    )
-}
-
 pub(super) fn get_authenticated_json(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
     path: &str,
@@ -102,7 +86,7 @@ pub(super) fn get_authenticated_json(
 }
 
 pub(super) fn post_authenticated_json(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
     path: &str,
@@ -113,7 +97,7 @@ pub(super) fn post_authenticated_json(
 }
 
 fn authenticated_json(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
     path: &str,
@@ -163,7 +147,7 @@ fn authenticated_json(
 }
 
 fn resolve_auth_context(
-    database: &AppDatabase,
+    database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,
 ) -> Result<auth::NewApiAuthContext, NewApiRequestError> {
@@ -171,7 +155,7 @@ fn resolve_auth_context(
         .resolve_station_session_with_data_key(
             station.id.clone(),
             data_key,
-            crate::services::database::now_millis_for_services() as i64,
+            crate::services::time::now_millis_for_services() as i64,
         )
         .map_err(permanent_error)?;
     let credentials = database
@@ -209,7 +193,7 @@ fn resolve_auth_context(
         .resolve_station_session_with_data_key(
             station.id.clone(),
             data_key,
-            crate::services::database::now_millis_for_services() as i64,
+            crate::services::time::now_millis_for_services() as i64,
         )
         .map_err(permanent_error)?;
     match (session.cookie, session.newapi_user_id) {
@@ -322,7 +306,7 @@ fn send_once(
     auth: &auth::NewApiAuthContext,
     body: Option<Value>,
     timeout: Duration,
-) -> Result<ureq::Response, ureq::Error> {
+) -> Result<ureq::Response, String> {
     let request = if body.is_some() {
         agent.post(url)
     } else {
@@ -338,10 +322,11 @@ fn send_once(
     } else {
         request
     };
-    match body {
+    let response = match body {
         Some(body) => request.send_json(body),
         None => request.call(),
-    }
+    };
+    response.map_err(|error| error.to_string())
 }
 
 fn is_auth_status(status: u16) -> bool {
@@ -469,13 +454,15 @@ mod tests {
         let server = TestHttpServer::sequence(vec![None]);
         let auth = NewApiAuthContext::cookie("session=abc", "42");
 
-        let error = post_json_with_auth_context(
+        let timeout = Duration::from_secs(2);
+        let error = execute_json_with_auth_context(
+            ureq::AgentBuilder::new().timeout(timeout).build(),
             &server.base_url,
             "/api/token/",
             &auth,
             NewApiOperation::CreateToken,
-            json!({"name": "relay"}),
-            Duration::from_secs(2),
+            Some(json!({"name": "relay"})),
+            timeout,
         )
         .unwrap_err();
         let requests = server.finish();

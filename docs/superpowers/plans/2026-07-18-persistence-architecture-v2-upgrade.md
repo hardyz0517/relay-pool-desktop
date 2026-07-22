@@ -24,6 +24,8 @@
 - A task may add a temporary adapter only when this plan names its owner and deletion task. Every temporary adapter is deleted in Task 16.
 - Push is not part of this plan. Each task creates a local, reviewable commit after its staged snapshot passes.
 
+**Checklist integrity note (2026-07-21):** Tasks 0-13 retain their original execution checkboxes. They are not retroactively marked complete without task-scoped RED/GREEN and commit evidence. Current implementation state is recorded only in the dated status notes for Tasks 14-17 and in the qualification audit; an unchecked historical step is not, by itself, evidence that its production behavior is absent.
+
 ## Target File Map
 
 | Path | Final responsibility |
@@ -126,7 +128,7 @@ codegraph query DataDirConfigV2 --json > $env:TEMP\persistence-v2-config.json
 codegraph query FinalizationDispatcher --json > $env:TEMP\persistence-v2-finalization.json
 ```
 
-The boundary manifest must list every current `AppDatabase` consumer grouped into `command`, `proxy`, `collector`, `monitor`, `query`, `settings`, and `test`; the field ledger must list every protected table/column with owner, writer, reader, sensitivity, retention, and V2 disposition; the released-schema manifest must map every public tag `v0.1.0` through `v0.3.1` to a schema profile and fixture hash. No entry may use `unknown owner`; unsupported fields use disposition `drop-with-evidence` and name the proof query. Existing user-visible history defaults to `retain-until-explicit-user-cleanup`; this upgrade adds no automatic deletion policy merely to reduce fixture size.
+The boundary manifest must list every current `AppDatabase` consumer grouped into `command`, `proxy`, `collector`, `monitor`, `query`, `settings`, and `test`; the field ledger must list every protected table/column with owner, writer, reader, sensitivity, retention, and V2 disposition; the released-schema manifest must map the supported `v0.3.1` schema to a profile and fixture hash and record earlier tags as explicitly unsupported. No entry may use `unknown owner`; unsupported fields use disposition `drop-with-evidence` and name the proof query. Existing user-visible history defaults to `retain-until-explicit-user-cleanup`; this upgrade adds no automatic deletion policy merely to reduce fixture size.
 
 Use this stable top-level boundary-manifest shape so later tests and staging commands consume the same names:
 
@@ -658,7 +660,7 @@ git commit -m "feat: add bounded persistence sessions"
 - Create: `src-tauri/src/application/settings.rs`
 - Create: `src-tauri/src/commands/stations.rs`
 - Create: `src-tauri/src/commands/settings.rs`
-- Create: `src-tauri/tests/persistence_differential.rs`
+- Create: `src-tauri/src/persistence/differential_tests.rs`
 - Modify: `src-tauri/src/commands/mod.rs`
 - Modify: `src-tauri/src/persistence/mod.rs`
 - Modify: `src-tauri/src/application/mod.rs`
@@ -697,8 +699,8 @@ async fn settings_are_typed_and_unknown_values_do_not_enter_v2() {
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential station_ -- --nocapture
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential settings_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests station_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests settings_ -- --nocapture
 ```
 
 Expected: compile failure for missing migrations, stores, and services.
@@ -731,13 +733,13 @@ Move the explicit station/settings SQL and private row mapping from these `AppDa
 - [ ] **Step 5: Run GREEN and commit**
 
 ```powershell
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential station_ -- --nocapture
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential settings_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests station_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests settings_ -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml --test persistence_runtime -- --nocapture
 powershell -ExecutionPolicy Bypass -File scripts/prepare-sqlx.ps1
 cargo test --manifest-path src-tauri/Cargo.toml persistence::stores::station_catalog -- --nocapture
 cargo check --manifest-path src-tauri/Cargo.toml
-git add -- src-tauri/src/persistence/migrations/0002_catalog_settings.sql src-tauri/src/persistence/stores/mod.rs src-tauri/src/persistence/stores/station_catalog.rs src-tauri/src/persistence/stores/settings_store.rs src-tauri/src/application/stations.rs src-tauri/src/application/settings.rs src-tauri/src/commands/stations.rs src-tauri/src/commands/settings.rs src-tauri/src/commands/mod.rs src-tauri/src/persistence/mod.rs src-tauri/src/application/mod.rs src-tauri/tests/persistence_differential.rs .sqlx
+git add -- src-tauri/src/persistence/migrations/0002_catalog_settings.sql src-tauri/src/persistence/stores/mod.rs src-tauri/src/persistence/stores/station_catalog.rs src-tauri/src/persistence/stores/settings_store.rs src-tauri/src/application/stations.rs src-tauri/src/application/settings.rs src-tauri/src/commands/stations.rs src-tauri/src/commands/settings.rs src-tauri/src/commands/mod.rs src-tauri/src/persistence/mod.rs src-tauri/src/application/mod.rs src-tauri/src/persistence/differential_tests.rs .sqlx
 git commit -m "feat: migrate station and settings persistence"
 ```
 
@@ -749,7 +751,7 @@ git commit -m "feat: migrate station and settings persistence"
 - Create: `src-tauri/src/application/credentials.rs`
 - Create: `src-tauri/src/commands/credentials.rs`
 - Modify: `src-tauri/src/persistence/stores/station_catalog.rs`
-- Modify: `src-tauri/tests/persistence_differential.rs`
+- Modify: `src-tauri/src/persistence/differential_tests.rs`
 - Modify: `src-tauri/src/services/secrets/**`
 - Modify: `src-tauri/Cargo.toml`
 - Modify: `src-tauri/Cargo.lock`
@@ -776,8 +778,8 @@ Also cover blank update preserving ciphertext, endpoint-revision stale session r
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential credential_ -- --nocapture
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential station_key_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests credential_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests station_key_ -- --nocapture
 ```
 
 - [ ] **Step 3: Implement the vault boundary and one transaction owner**
@@ -815,12 +817,12 @@ Move `get/update/clear_station_credentials`, session persistence/invalidation, S
 - [ ] **Step 5: Run security/differential gates and commit**
 
 ```powershell
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential credential_ -- --nocapture
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential station_key_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests credential_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests station_key_ -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml secrets:: -- --nocapture
 node scripts/data-store-diagnostic-redaction.test.mjs
 powershell -ExecutionPolicy Bypass -File scripts/prepare-sqlx.ps1
-git add -- src-tauri/src/persistence/migrations/0003_credentials_keys.sql src-tauri/src/persistence/stores/credential_store.rs src-tauri/src/persistence/stores/station_catalog.rs src-tauri/src/application/credentials.rs src-tauri/src/commands/credentials.rs src-tauri/tests/persistence_differential.rs src-tauri/Cargo.toml src-tauri/Cargo.lock .sqlx
+git add -- src-tauri/src/persistence/migrations/0003_credentials_keys.sql src-tauri/src/persistence/stores/credential_store.rs src-tauri/src/persistence/stores/station_catalog.rs src-tauri/src/application/credentials.rs src-tauri/src/commands/credentials.rs src-tauri/src/persistence/differential_tests.rs src-tauri/Cargo.toml src-tauri/Cargo.lock .sqlx
 git add -p -- src-tauri/src/services/secrets
 git commit -m "feat: migrate credential and key persistence"
 ```
@@ -835,7 +837,7 @@ git commit -m "feat: migrate credential and key persistence"
 - Create: `src-tauri/src/application/queries/station_detail.rs`
 - Create: `src-tauri/src/commands/routing.rs`
 - Modify: `src-tauri/src/services/proxy/routing_repository.rs`
-- Modify: `src-tauri/tests/persistence_differential.rs`
+- Modify: `src-tauri/src/persistence/differential_tests.rs`
 
 - [ ] **Step 1: Write failing canonical routing differential tests**
 
@@ -857,7 +859,7 @@ Cover group binding identity, category aliases, endpoint revision, missing/disab
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential routing_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests routing_ -- --nocapture
 ```
 
 - [ ] **Step 3: Implement purpose-built routing reads**
@@ -888,13 +890,13 @@ Keep the `RoutingRepository` trait owned by `services/proxy`. Add a V2 adapter t
 - [ ] **Step 5: Run routing gates and commit**
 
 ```powershell
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential routing_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests routing_ -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml services::proxy::scheduler -- --nocapture
 node scripts/local-routing-query-service.test.mjs
 node scripts/routing-query-service.test.mjs
 powershell -ExecutionPolicy Bypass -File scripts/prepare-sqlx.ps1
 cargo check --manifest-path src-tauri/Cargo.toml
-git add -- src-tauri/src/persistence/migrations/0004_routing.sql src-tauri/src/persistence/stores/routing_store.rs src-tauri/src/application/routing.rs src-tauri/src/application/queries/station_assets.rs src-tauri/src/application/queries/station_detail.rs src-tauri/src/commands/routing.rs src-tauri/src/services/proxy/routing_repository.rs src-tauri/tests/persistence_differential.rs .sqlx
+git add -- src-tauri/src/persistence/migrations/0004_routing.sql src-tauri/src/persistence/stores/routing_store.rs src-tauri/src/application/routing.rs src-tauri/src/application/queries/station_assets.rs src-tauri/src/application/queries/station_detail.rs src-tauri/src/commands/routing.rs src-tauri/src/services/proxy/routing_repository.rs src-tauri/src/persistence/differential_tests.rs .sqlx
 git commit -m "feat: migrate routing persistence"
 ```
 
@@ -907,7 +909,7 @@ git commit -m "feat: migrate routing persistence"
 - Modify: `src-tauri/src/services/proxy/response_body.rs`
 - Modify: `src-tauri/src/services/proxy/runtime.rs`
 - Modify: `src-tauri/src/services/proxy/routing_repository.rs`
-- Modify: `src-tauri/tests/persistence_differential.rs`
+- Modify: `src-tauri/src/persistence/differential_tests.rs`
 
 - [ ] **Step 1: Write failing bounded finalization tests**
 
@@ -975,11 +977,11 @@ Expose bounded finalization metrics: admission saturation, queue depth, retry co
 ```powershell
 cargo test --manifest-path src-tauri/Cargo.toml services::proxy::response_body -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml services::proxy::runtime -- --nocapture
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential request_finalization_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests request_finalization_ -- --nocapture
 node scripts/proxy-lifecycle-contract.test.mjs
 node scripts/local-proxy-v2-boundary.test.mjs
 powershell -ExecutionPolicy Bypass -File scripts/prepare-sqlx.ps1
-git add -- src-tauri/src/persistence/migrations/0005_request_logs.sql src-tauri/src/persistence/stores/request_log_store.rs src-tauri/src/application/request_finalization.rs src-tauri/src/services/proxy/response_body.rs src-tauri/src/services/proxy/runtime.rs src-tauri/src/services/proxy/routing_repository.rs src-tauri/tests/persistence_differential.rs .sqlx
+git add -- src-tauri/src/persistence/migrations/0005_request_logs.sql src-tauri/src/persistence/stores/request_log_store.rs src-tauri/src/application/request_finalization.rs src-tauri/src/services/proxy/response_body.rs src-tauri/src/services/proxy/runtime.rs src-tauri/src/services/proxy/routing_repository.rs src-tauri/src/persistence/differential_tests.rs .sqlx
 git commit -m "feat: harden proxy finalization persistence"
 ```
 
@@ -993,7 +995,7 @@ git commit -m "feat: harden proxy finalization persistence"
 - Create: `src-tauri/src/commands/collectors.rs`
 - Modify: `src-tauri/src/services/collectors/apply.rs`
 - Modify: `src-tauri/src/services/station_collectors.rs`
-- Modify: `src-tauri/tests/persistence_differential.rs`
+- Modify: `src-tauri/src/persistence/differential_tests.rs`
 
 - [ ] **Step 1: Write failing all-or-nothing collector tests**
 
@@ -1016,7 +1018,7 @@ Cover parent/child run completion, station/task-scoped failure and recovery, rea
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential collector_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests collector_ -- --nocapture
 ```
 
 - [ ] **Step 3: Implement one application-owned transaction**
@@ -1026,13 +1028,13 @@ cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential 
 - [ ] **Step 4: Run collector gates and commit**
 
 ```powershell
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential collector_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests collector_ -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml services::collectors -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml services::station_collectors -- --nocapture
 node scripts/change-center-collector-task-label.test.mjs
 node scripts/newapi-collector-contract.test.mjs
 powershell -ExecutionPolicy Bypass -File scripts/prepare-sqlx.ps1
-git add -- src-tauri/src/persistence/migrations/0006_collectors_changes.sql src-tauri/src/persistence/stores/collector_store.rs src-tauri/src/persistence/stores/change_store.rs src-tauri/src/application/collectors.rs src-tauri/src/commands/collectors.rs src-tauri/src/services/collectors/apply.rs src-tauri/src/services/station_collectors.rs src-tauri/tests/persistence_differential.rs .sqlx
+git add -- src-tauri/src/persistence/migrations/0006_collectors_changes.sql src-tauri/src/persistence/stores/collector_store.rs src-tauri/src/persistence/stores/change_store.rs src-tauri/src/application/collectors.rs src-tauri/src/commands/collectors.rs src-tauri/src/services/collectors/apply.rs src-tauri/src/services/station_collectors.rs src-tauri/src/persistence/differential_tests.rs .sqlx
 git commit -m "feat: migrate collector persistence"
 ```
 
@@ -1050,7 +1052,7 @@ git commit -m "feat: migrate collector persistence"
 - Create: `src-tauri/src/commands/pricing.rs`
 - Create: `src-tauri/src/commands/monitoring.rs`
 - Modify: `src-tauri/src/services/channel_monitors/mod.rs`
-- Modify: `src-tauri/tests/persistence_differential.rs`
+- Modify: `src-tauri/src/persistence/differential_tests.rs`
 
 - [ ] **Step 1: Write failing projection and lifecycle tests**
 
@@ -1070,8 +1072,8 @@ Cover latest station-scope balance, group-rate identity, model price/rule select
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential pricing_ -- --nocapture
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential monitoring_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests pricing_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests monitoring_ -- --nocapture
 ```
 
 - [ ] **Step 3: Implement purpose-built stores and queries**
@@ -1097,8 +1099,8 @@ Growth tables expose only cursor/page-limited reads. Stable high-frequency works
 Run `EXPLAIN QUERY PLAN` assertions for request log, pricing comparison, channel status, change center, and latest balance indexes, then:
 
 ```powershell
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential pricing_ -- --nocapture
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential monitoring_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests pricing_ -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests monitoring_ -- --nocapture
 node scripts/pricing-facts-projection.test.mjs
 node scripts/channel-status-backend-rollup-contract.test.mjs
 node scripts/change-query-service.test.mjs
@@ -1109,7 +1111,7 @@ powershell -ExecutionPolicy Bypass -File scripts/prepare-sqlx.ps1
 - [ ] **Step 5: Commit the final business slice**
 
 ```powershell
-git add -- src-tauri/src/persistence/migrations/0007_pricing_monitoring.sql src-tauri/src/persistence/stores/pricing_store.rs src-tauri/src/persistence/stores/monitoring_store.rs src-tauri/src/application/pricing.rs src-tauri/src/application/monitoring.rs src-tauri/src/application/queries/station_assets.rs src-tauri/src/application/queries/station_detail.rs src-tauri/src/application/queries/pricing_comparison.rs src-tauri/src/application/queries/channel_status.rs src-tauri/src/application/queries/change_center.rs src-tauri/src/commands/pricing.rs src-tauri/src/commands/monitoring.rs src-tauri/src/services/channel_monitors/mod.rs src-tauri/tests/persistence_differential.rs .sqlx
+git add -- src-tauri/src/persistence/migrations/0007_pricing_monitoring.sql src-tauri/src/persistence/stores/pricing_store.rs src-tauri/src/persistence/stores/monitoring_store.rs src-tauri/src/application/pricing.rs src-tauri/src/application/monitoring.rs src-tauri/src/application/queries/station_assets.rs src-tauri/src/application/queries/station_detail.rs src-tauri/src/application/queries/pricing_comparison.rs src-tauri/src/application/queries/channel_status.rs src-tauri/src/application/queries/change_center.rs src-tauri/src/commands/pricing.rs src-tauri/src/commands/monitoring.rs src-tauri/src/services/channel_monitors/mod.rs src-tauri/src/persistence/differential_tests.rs .sqlx
 git commit -m "feat: migrate pricing and monitoring persistence"
 ```
 
@@ -1170,7 +1172,7 @@ Use the boundary manifest as a checklist. Every remaining `AppDatabase` consumer
 
 ```powershell
 cargo test --manifest-path src-tauri/Cargo.toml --test persistence_architecture -- --nocapture
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests -- --nocapture
 pnpm.cmd test:contracts
 cargo check --manifest-path src-tauri/Cargo.toml
 git add -- src-tauri/src/application/app_services.rs src-tauri/src/application/mod.rs src-tauri/src/commands src-tauri/src/lib.rs docs/superpowers/audits/persistence-v2-boundary-manifest.json src-tauri/tests/persistence_architecture.rs
@@ -1199,12 +1201,11 @@ The PowerShell script checks out each tag into a temporary worktree outside `src
 Run:
 
 ```powershell
-$tags = @(git tag --list 'v*' --sort=version:refname)
-powershell -ExecutionPolicy Bypass -File scripts/build-persistence-v2-fixtures.ps1 -Tags $tags
+powershell -ExecutionPolicy Bypass -File scripts/build-persistence-v2-fixtures.ps1 -Tags @('v0.3.1')
 git diff -- src-tauri/tests/persistence_upgrade/fixtures docs/superpowers/audits/persistence-v2-released-schema-manifest.json
 ```
 
-Expected: all 13 current public tags (`v0.1.0`, `v0.1.1`, `v0.2.0` through `v0.2.8`, `v0.3.0`, `v0.3.1`) map to exactly one profile; future tags returned by the command must also be classified. Fixtures contain no key/cookie/token/password or absolute user path.
+Expected: `v0.3.1` maps to exactly one profile; earlier tags are recorded as unsupported and do not generate importer profiles. Fixtures contain no key/cookie/token/password or absolute user path.
 
 - [ ] **Step 2: Write failing detect/import/manifest tests**
 
@@ -1263,7 +1264,7 @@ Import settings/install metadata, stations/revisions, encrypted secrets/referenc
 
 ```powershell
 cargo test --manifest-path src-tauri/Cargo.toml --test persistence_upgrade -- --nocapture
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests -- --nocapture
 node scripts/data-store-upgrade-matrix.test.mjs
 git add -- scripts/build-persistence-v2-fixtures.ps1 src-tauri/src/persistence/legacy_import src-tauri/tests/persistence_upgrade.rs src-tauri/tests/persistence_upgrade/fixtures docs/superpowers/audits/persistence-v2-released-schema-manifest.json
 git commit -m "feat: import released databases into persistence v2"
@@ -1366,6 +1367,8 @@ git commit -m "feat: add deterministic persistence upgrade recovery"
 
 ### Task 14: Cut startup, config, commands, and recovery UI to generation 2
 
+**Implementation status (2026-07-21):** Production startup, commands, consumer ports, config V3, generation-2 reopen, recovery planner/executor, relocation exclusion, and runtime registration have been cut over. Focused startup/recovery/architecture tests pass. Signed installer behavior remains Task 17.
+
 **Files:**
 - Modify: `src-tauri/src/services/data_store/config.rs`
 - Modify: `src-tauri/src/services/data_store/mod.rs`
@@ -1390,7 +1393,7 @@ git commit -m "feat: add deterministic persistence upgrade recovery"
 - Modify: `src-tauri/tests/persistence_architecture.rs`
 - Create: `src-tauri/tests/persistence_startup_cutover.rs`
 
-- [ ] **Step 1: Write failing config V2-to-V3 and startup tests**
+- [x] **Step 1: Write failing config V2-to-V3 and startup tests**
 
 ```rust
 #[test]
@@ -1413,14 +1416,14 @@ async fn business_runtimes_register_only_after_v2_reopen_and_health() {
 
 Also cover lock contention, inspection-only schema compatibility, pending relocation/upgrade mutual exclusion, config commit crash window, generation-2 reopen failure, and updater restart.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 cargo test --manifest-path src-tauri/Cargo.toml --test persistence_startup_cutover -- --nocapture
 pnpm.cmd exec vitest run src/features/data-recovery/DataStoreBootstrap.test.tsx src/features/data-recovery/recoveryViewModel.test.ts
 ```
 
-- [ ] **Step 3: Implement DataDirConfigV3 and startup order**
+- [x] **Step 3: Implement DataDirConfigV3 and startup order**
 
 ```rust
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1439,7 +1442,7 @@ pub(crate) struct DataDirConfigV3 {
 
 Startup order is lease, config/relocation inspection, recovery planning, read-only legacy detection, backup/import/validation, tombstone, generation commit, V2 reopen/health/compatibility, AppServices registration, then Proxy/Collector/Monitor registration. A V2 config without generation maps deterministically to generation 1; invalid/unknown config never defaults to an empty DB.
 
-- [ ] **Step 4: Switch commands and consumer ports in one commit**
+- [x] **Step 4: Switch commands and consumer ports in one commit**
 
 Register `AppServices`, stop registering `AppDatabase`, route every command module and Proxy/Collector/Monitor port to its application owner, and preserve public camelCase DTO/error payloads. Set `temporary_legacy_consumers` to an empty array and make the architecture test reject any production `AppDatabase` consumer; V1 remains reachable only from differential fixture code. Inspection-only mode exposes only backup, diagnostic, updater, and explicit recovery actions; the normal React app is not mounted.
 
@@ -1462,9 +1465,12 @@ git commit -m "feat: cut startup over to persistence v2"
 
 ### Task 15: Run differential, fault, security, and performance qualification
 
+**Implementation status (2026-07-22):** Production recovery fault injection, the atomic edge matrix, lifecycle drain, lease release, bounded write-queue observability, and real production-path performance/differential modules are implemented and have focused evidence. Proxy startup now injects `services.request_finalization` as `Arc<dyn RequestLifecycleStore>`; the runtime does not construct a concrete finalization service. The formal controlled-machine V1/V2 paired performance qualification is green and retained at `D:\Dev\Build\relay-pool-persistence-v2-qualification\paired-v0.3.1-v2.json`: hot-request-log p95 is 1.15 ms versus a reconstructed V1 p95 of 2.6345 ms, within the 10% gate; the other paired workloads also pass. Final contracts, frontend tests/build, SQLx offline metadata, and tracked artifact checks are green. Candidate-bundle evidence and signed-installer evidence belong to the remaining release gates, especially Task 17.
+
 **Files:**
 - Create: `src-tauri/tests/persistence_fault_matrix.rs`
-- Create: `src-tauri/tests/persistence_performance.rs`
+- Create: `src-tauri/src/persistence/performance_tests.rs`
+- Create: `src-tauri/src/persistence/differential_tests.rs`
 - Create: `docs/superpowers/audits/2026-07-18-persistence-v2-qualification.md`
 - Modify: `scripts/release-verification-entrypoint.test.mjs`
 - Modify: `scripts/run-contract-tests.mjs`
@@ -1477,12 +1483,14 @@ The table-driven test injects failure at lease acquire/transfer, source open, in
 
 Generate 100 stations, 1,000 Station Keys, 10,000 request logs, and 100,000 evidence rows. Measure routing candidate load, hot read models, write transaction, pool acquire, startup without migration, finalization under concurrent reads, and task/queue/memory bounds. Store raw machine/environment metadata and medians/p95 in the qualification audit.
 
+The standard fixture, absolute release-profile measurements, bounded reader task fan-out, production write-queue snapshot, frozen V1 relative baseline, and complete controlled-machine raw metadata are captured. The retained paired record is `D:\Dev\Build\relay-pool-persistence-v2-qualification\paired-v0.3.1-v2.json`; its relative gates are green.
+
 - [ ] **Step 3: Run all qualification gates**
 
 ```powershell
 cargo test --manifest-path src-tauri/Cargo.toml --test persistence_fault_matrix -- --nocapture
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_performance -- --nocapture
-cargo test --manifest-path src-tauri/Cargo.toml --test persistence_differential -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::performance_tests -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib persistence::differential_tests -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml --test persistence_upgrade -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml --test persistence_upgrade_recovery -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml services::proxy::soak_tests -- --nocapture
@@ -1494,16 +1502,20 @@ Expected: hot read p95 is no more than 10% slower than baseline, routing p95 < 5
 
 - [ ] **Step 4: Scan secrets and artifacts**
 
-Scan every V2 text/blob column, logs, diagnostic JSON, upgrade reports, fixture files, Git index, and release bundle for seeded key/cookie/token/password/plaintext canaries. Assert no database, WAL, SHM, backup, absolute user path, or generated target directory is tracked.
+Scan every V2 text/blob column, logs, diagnostic JSON, upgrade reports, fixture files, Git index, and release bundle for seeded key/cookie/token/password/plaintext canaries. Assert no database, WAL, SHM, journal, backup, absolute user path, log, or generated target directory is tracked. The only tracked-database exception is an exact path in `scripts/persistence-v2-artifact-policy.json`; every exception must bind a tracked manifest SHA-256 and pass read-only SQLite integrity plus per-table/per-column text/blob scanning. Directory, glob, and extension-wide fixture exceptions are forbidden.
+
+The unified scanner, fixture policy, negative Node contract, pre-release index gate, and post-Tauri final-bundle gate are implemented. `pnpm verify:persistence-artifacts` has passed for the tracked worktree. This step remains open until the final candidate bundle is generated and the post-build scan evidence is captured; a pre-build source scan alone is not completion evidence.
 
 - [ ] **Step 5: Commit qualification evidence**
 
 ```powershell
-git add -- src-tauri/tests/persistence_fault_matrix.rs src-tauri/tests/persistence_performance.rs docs/superpowers/audits/2026-07-18-persistence-v2-qualification.md scripts/release-verification-entrypoint.test.mjs scripts/run-contract-tests.mjs
+git add -- src-tauri/tests/persistence_fault_matrix.rs src-tauri/src/persistence/performance_tests.rs src-tauri/src/persistence/differential_tests.rs docs/superpowers/audits/2026-07-18-persistence-v2-qualification.md scripts/release-verification-entrypoint.test.mjs scripts/run-contract-tests.mjs
 git commit -m "test: qualify persistence v2 cutover"
 ```
 
 ### Task 16: Delete AppDatabase, rusqlite, and every temporary adapter
+
+**Implementation status (2026-07-22):** `AppDatabase`, `services/database.rs`, production `rusqlite`, legacy proxy runtime, and temporary adapters have been deleted from the working tree. The Rust architecture gate passes (35 / 35) and the boundary manifest reflects the V2 adapters. `cargo fmt --check`, strict Clippy (`-D warnings`), Rust `--all-targets`, and `scripts/prepare-sqlx.ps1 -Check` have passed. This implementation moved ahead of the Task 15 prerequisite; final frontend/contract/build reruns, formal paired performance evidence, staged review, and commit remain pending.
 
 **Files:**
 - Delete: `src-tauri/src/services/database.rs`
@@ -1513,12 +1525,12 @@ git commit -m "test: qualify persistence v2 cutover"
 - Modify: `src-tauri/Cargo.toml`
 - Modify: `src-tauri/Cargo.lock`
 - Modify/Delete: Node source-string tests that inspect `database.rs`
-- Modify: `src-tauri/tests/persistence_differential.rs`
+- Modify: `src-tauri/src/persistence/differential_tests.rs`
 - Modify: `src-tauri/tests/persistence_upgrade/fixtures/profile_NNN/expected_manifest.json`
 - Modify: `src-tauri/tests/persistence_architecture.rs`
 - Modify: `docs/superpowers/audits/persistence-v2-boundary-manifest.json`
 
-- [ ] **Step 1: Make deletion gates fail before deletion**
+- [x] **Step 1: Make deletion gates fail before deletion**
 
 ```rust
 #[test]
@@ -1543,6 +1555,8 @@ Run and observe FAIL while the old file/dependency still exists.
 
 Delete `database.rs`, legacy inline tests, old manual migration helpers, production `rusqlite`, compatibility facades, test-only production helpers, legacy Proxy persistence adapters, and every source-inspection Node test whose only contract is old implementation text. Freeze the already-green sanitized V1 outputs into each profile's `expected_manifest.json`, then remove executable V1 differential calls so final tests compare V2/import output against manifests without compiling `AppDatabase`. Keep released SQLite fixtures and read-only profile importer code.
 
+The deletion itself is present and Task 15's paired performance prerequisite is now green. Keep this step reviewable until the exact-path staged snapshot and local commit are complete.
+
 - [ ] **Step 3: Regenerate lockfile/offline metadata and run architecture gate**
 
 ```powershell
@@ -1555,6 +1569,8 @@ codegraph query AppDatabase
 
 Expected: `AppDatabase` query has no production symbol; boundary manifest contains no temporary legacy exception; `rusqlite` is absent from production dependency tree.
 
+The lockfile/Cargo build, fresh SQLx offline metadata check, and Rust architecture gate are green. The worktree still has no initialized CodeGraph index, and the final staged snapshot has not been committed, so the combined release step remains open.
+
 - [ ] **Step 4: Run full local gate and commit deletion**
 
 ```powershell
@@ -1566,7 +1582,7 @@ pnpm.cmd build
 cargo check --manifest-path src-tauri/Cargo.toml
 $manifest = Get-Content -Raw docs/superpowers/audits/persistence-v2-boundary-manifest.json | ConvertFrom-Json
 $released = Get-Content -Raw docs/superpowers/audits/persistence-v2-released-schema-manifest.json | ConvertFrom-Json
-git add -- src-tauri/src/services/database.rs src-tauri/src/services/mod.rs src-tauri/src/lib.rs src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tests/persistence_architecture.rs src-tauri/tests/persistence_differential.rs docs/superpowers/audits/persistence-v2-boundary-manifest.json .sqlx
+git add -- src-tauri/src/services/database.rs src-tauri/src/services/mod.rs src-tauri/src/lib.rs src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tests/persistence_architecture.rs src-tauri/src/persistence/differential_tests.rs docs/superpowers/audits/persistence-v2-boundary-manifest.json .sqlx
 foreach ($path in $manifest.temporary_legacy_paths) { git add -- $path }
 foreach ($profile in $released.profiles) { git add -- $profile.expected_manifest_path }
 git diff --cached --name-only
@@ -1577,6 +1593,8 @@ git commit -m "refactor: remove legacy persistence architecture"
 Review the staged path list manually before commit. The manifest-driven loop stages only previously registered temporary legacy paths; unrelated mainline hunks must still be excluded with patch staging.
 
 ### Task 17: Verify signed Windows upgrade and release readiness
+
+**Implementation status (2026-07-21):** Not complete. Local source/build gates do not substitute for a signed v0.3.1 updater/fresh-install/downgrade matrix on isolated Windows profiles.
 
 **Files:**
 - Create: `docs/superpowers/audits/2026-07-18-persistence-v2-release-evidence.md`
@@ -1592,9 +1610,9 @@ Expected: frontend and Tauri release build exit 0; generated bundles contain no 
 
 - [ ] **Step 2: Run the signed upgrade matrix**
 
-On isolated Windows user profiles, test fresh install plus upgrades from `v0.1.0`, `v0.2.0`, and `v0.3.1`; default and custom data dirs; WAL source; pending relocation; disk full; killed process at every activation phase; old/new launch order; owner crash lock release; updater restart; incompatible schema inspection-only mode; downgrade instructions; real local Proxy streaming; Collector; Monitor; data recovery UI.
+On isolated Windows user profiles, test fresh install plus upgrade from `v0.3.1`; default and custom data dirs; WAL source; pending relocation; disk full; killed process at every activation phase; old/new launch order; owner crash lock release; updater restart; incompatible schema inspection-only mode; downgrade instructions; real local Proxy streaming; Collector; Monitor; data recovery UI.
 
-For `v0.1.0/v0.2.0`, the harness must fully exit the old process before launching V2. After tombstone, launching any supported generation-1 binary must hard fail without creating SQLite/WAL/SHM state.
+The harness must fully exit `v0.3.1` before launching V2. After tombstone, launching the supported generation-1 binary must hard fail without creating SQLite/WAL/SHM state. Earlier versions are outside the compatibility contract and must be rejected before mutation.
 
 - [ ] **Step 3: Run the final staged snapshot gate**
 

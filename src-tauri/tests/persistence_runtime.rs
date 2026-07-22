@@ -34,6 +34,13 @@ mod persistence {
         ));
     }
 
+    pub(crate) mod runtime_lifecycle {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/runtime_lifecycle.rs"
+        ));
+    }
+
     pub(crate) mod runtime {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -63,6 +70,7 @@ mod persistence {
     }
 }
 
+use std::time::Duration;
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
@@ -140,21 +148,27 @@ async fn generation_mismatch_fails_before_health_write() {
 #[tokio::test]
 async fn readable_but_not_writable_opens_in_inspection_only_mode() {
     let db = V2Fixture::create().await;
+    let binary = binary_031();
+    let current_schema = *binary
+        .writable_schema
+        .iter()
+        .next_back()
+        .expect("current writable schema");
     db.set_compatibility(SchemaCompatibility {
         database_generation: 2,
-        schema_version: 4,
+        schema_version: current_schema,
         min_reader_app_version: Version::new(0, 3, 1),
         min_writer_app_version: Version::new(0, 4, 0),
-        updated_by_migration: 4,
+        updated_by_migration: current_schema,
     })
     .await;
 
-    let runtime = PersistenceRuntime::open(db.path(), binary_031())
+    let runtime = PersistenceRuntime::open(db.path(), binary)
         .await
         .expect("inspection runtime");
 
     assert_eq!(runtime.open_mode(), OpenMode::InspectionOnly);
-    assert_eq!(runtime.compatibility().schema_version, 4);
+    assert_eq!(runtime.compatibility().schema_version, current_schema);
     assert_eq!(
         runtime.health().await.expect("health").open_mode,
         "inspection_only"
@@ -230,10 +244,74 @@ async fn valid_writable_open_records_health_without_exposing_pool() {
         "writable"
     );
     assert_eq!(db.write_probe_count().await, 1);
+
+    let mut read = runtime.begin_read().await.expect("tracked read session");
+    let schema_version = sqlx::query("SELECT MAX(version) AS version FROM _sqlx_migrations")
+        .fetch_one(read.connection())
+        .await
+        .expect("read schema version")
+        .get::<i64, _>("version");
+    assert_eq!(
+        schema_version,
+        persistence::migrations::current_schema_version()
+    );
+}
+
+#[tokio::test]
+async fn path_backup_rejects_a_missing_source_without_creating_output() {
+    let source = temp_db_path("missing-backup-source");
+    let target = temp_db_path("missing-backup-target");
+
+    let error = persistence::backup::create_verified_backup_from_path(&source, &target)
+        .await
+        .expect_err("missing source must fail closed");
+
+    assert!(matches!(error, PersistenceError::MissingDatabase));
+    assert!(!target.exists());
+}
+
+#[tokio::test]
+async fn write_queue_metrics_are_bounded_and_return_to_zero() {
+    let db = V2Fixture::create().await;
+    let runtime = PersistenceRuntime::open(db.path(), binary_031())
+        .await
+        .expect("writable runtime");
+    let handle = runtime.handle();
+    let first = handle.begin_write().await.expect("first writer");
+
+    let queued_handle = handle.clone();
+    let queued = tokio::spawn(async move {
+        let mut writer = queued_handle.begin_write().await.expect("queued writer");
+        sqlx::query("SELECT 1")
+            .execute(writer.connection())
+            .await
+            .expect("queued write probe");
+        writer.commit().await.expect("queued writer commit");
+    });
+
+    for _ in 0..100 {
+        if handle.write_metrics().current_queue_depth == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let queued_snapshot = handle.write_metrics();
+    assert_eq!(queued_snapshot.current_queue_depth, 1);
+    assert_eq!(queued_snapshot.peak_queue_depth, 1);
+
+    drop(first);
+    queued.await.expect("queued writer task");
+    let completed = handle.write_metrics();
+    assert_eq!(completed.current_queue_depth, 0);
+    assert_eq!(completed.peak_queue_depth, 1);
+    assert_eq!(completed.acquired_writes, 2);
+    assert_eq!(completed.committed_writes, 1);
+    assert_eq!(completed.rolled_back_writes, 1);
+    assert!(completed.total_queue_wait_micros > 0);
 }
 
 fn binary_031() -> BinaryCompatibility {
-    binary_for_schema(5)
+    persistence::migrations::current_binary_compatibility()
 }
 
 fn binary_for_schema(schema: i64) -> BinaryCompatibility {

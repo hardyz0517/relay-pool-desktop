@@ -6,7 +6,18 @@ const settingsApiSource = await readFile("src/lib/api/settings.ts", "utf8");
 const settingsTypesSource = await readFile("src/lib/types/settings.ts", "utf8");
 const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
 const tauriLibSource = await readFile("src-tauri/src/lib.rs", "utf8");
-const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
+const dataDirectoryServiceSource = await readFile(
+  "src-tauri/src/application/data_directory.rs",
+  "utf8",
+);
+const dataDirectoryPortSource = await readFile(
+  "src-tauri/src/services/data_store/data_directory_port.rs",
+  "utf8",
+);
+const settingsStoreSource = await readFile(
+  "src-tauri/src/persistence/stores/settings_store.rs",
+  "utf8",
+);
 const relocationSource = await readFile("src-tauri/src/services/data_store/relocation.rs", "utf8");
 const cargoTomlSource = await readFile("src-tauri/Cargo.toml", "utf8");
 
@@ -55,11 +66,12 @@ assert.ok(
 );
 
 assert.ok(
-  tauriCommandsSource.includes("pub fn choose_data_dir") &&
-    tauriCommandsSource.includes("pub fn reset_data_dir") &&
+  tauriCommandsSource.includes("pub async fn choose_data_dir") &&
+    tauriCommandsSource.includes("pub async fn reset_data_dir") &&
     tauriCommandsSource.includes("rfd::FileDialog::new()") &&
-    tauriCommandsSource.includes("database.set_pending_data_dir") &&
-    tauriCommandsSource.includes("database.reset_data_dir_to_default"),
+    tauriCommandsSource.includes(".data_directory") &&
+    tauriCommandsSource.includes(".select_pending(data_dir)") &&
+    tauriCommandsSource.includes(".reset_to_default()"),
   "Tauri commands should choose a folder or reset to the default data directory",
 );
 
@@ -70,18 +82,18 @@ assert.ok(
 );
 
 assert.ok(
-  databaseSource.includes("relay-pool-data-dir.json") &&
-    databaseSource.includes("set_pending_data_dir") &&
-    databaseSource.includes("reset_data_dir_to_default") &&
-    databaseSource.includes("data_dir_change_requires_restart"),
-  "database service should expose pending data-dir settings and report pending restart state",
+  dataDirectoryServiceSource.includes("pub(crate) trait DataDirectoryPort") &&
+    dataDirectoryServiceSource.includes("set_data_directory_projection") &&
+    dataDirectoryPortSource.includes("write_relocation_intent") &&
+    settingsStoreSource.includes("data_dir_change_requires_restart"),
+  "data-directory application and persistence owners should expose pending selection and restart state",
 );
 
 assert.ok(
-  relocationSource.includes("write_relocation_intent") &&
+    relocationSource.includes("write_relocation_intent") &&
     relocationSource.includes("apply_trusted_relocation") &&
-    relocationSource.includes("Backup::new") &&
-    !databaseSource.includes("fs::copy(&source_db_path, &db_path)"),
+    relocationSource.includes("create_verified_backup_from_path") &&
+    !relocationSource.includes("fs::copy(&source_db_path, &db_path)"),
   "data-directory changes should use v2 relocation intent plus SQLite backup and must not use raw fs::copy activation",
 );
 

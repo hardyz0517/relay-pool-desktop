@@ -81,25 +81,6 @@ pub struct UpsertStationGroupBindingInput {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct InsertGroupRateRecordInput {
-    pub station_id: String,
-    pub station_key_id: Option<String>,
-    pub group_binding_id: Option<String>,
-    pub binding_kind: String,
-    pub group_key_hash: String,
-    pub group_name: String,
-    pub default_rate_multiplier: Option<f64>,
-    pub user_rate_multiplier: Option<f64>,
-    pub effective_rate_multiplier: Option<f64>,
-    pub inferred_group_category: Option<String>,
-    pub source: String,
-    pub confidence: f64,
-    pub raw_json_redacted: Option<serde_json::Value>,
-    pub checked_at: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct UpdateStationKeyGroupBindingInput {
     pub station_key_id: String,
     pub group_binding_id: String,

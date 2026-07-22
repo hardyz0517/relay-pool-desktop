@@ -28,7 +28,6 @@ hyper-util = { version = "0.1", features = ["service", "tokio"] }
 rand = "0.8"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json", "socks"] }
 rfd = "0.15"
-rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 semver = "1"
@@ -56,5 +55,5 @@ syn = { version = "2", features = ["full", "visit"] }
 tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 winreg = "0.55"

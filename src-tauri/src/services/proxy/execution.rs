@@ -27,8 +27,9 @@ use super::{
     protocol::DownstreamTransform,
     request::{ByteStream, CanonicalProxyRequest},
     responses_chat_stream::chat_sse_to_responses_stream,
-    router::{self, RichRouteCandidate, RouteRequest},
+    router,
     routing_repository::{RoutingExecutionSettings, RoutingRepository},
+    routing_types::{RichRouteCandidate, RouteRequest},
     scheduler::SchedulerRuntimeState,
     upstream::{UpstreamAttempt, UpstreamClientPool},
 };
@@ -38,7 +39,7 @@ use crate::{
         pricing::BalanceSnapshot,
         routing::{RouteEndpointKind, RoutingPolicy},
     },
-    services::database::now_millis_for_services,
+    services::time::now_millis_for_services,
 };
 
 #[derive(Clone)]
@@ -90,6 +91,13 @@ pub(crate) struct ExecutionLifecycleEvidence {
     pub fallback_count: u16,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct AttemptTimings {
+    request_started_at_ms: i64,
+    upstream_headers_ms: i64,
+    first_token_ms: i64,
+}
+
 pub(crate) enum ProxyExecutionBody {
     Buffered(Bytes),
     Stream(ByteStream),
@@ -121,6 +129,8 @@ impl Default for RetryPolicy {
 }
 
 impl ExecutionEngine {
+    // Unit tests intentionally omit the production lifecycle writer.
+    #[cfg(test)]
     pub(crate) fn new(
         repository: Arc<dyn RoutingRepository>,
         attempts: Arc<dyn AttemptExecutor>,
@@ -129,20 +139,6 @@ impl ExecutionEngine {
             repository,
             attempts,
             retry_policy: RetryPolicy::default(),
-            scheduler: Arc::new(SchedulerRuntimeState::default()),
-            lifecycle_writer: None,
-        }
-    }
-
-    pub(crate) fn new_with_limits(
-        repository: Arc<dyn RoutingRepository>,
-        attempts: Arc<dyn AttemptExecutor>,
-        limits: &ProxyServerLimits,
-    ) -> Self {
-        Self {
-            repository,
-            attempts,
-            retry_policy: RetryPolicy::from_limits(limits),
             scheduler: Arc::new(SchedulerRuntimeState::default()),
             lifecycle_writer: None,
         }
@@ -211,7 +207,7 @@ impl ExecutionEngine {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "no eligible route candidate",
             );
-            failure.route_policy =
+            failure.context_mut().route_policy =
                 Some(routing_policy_label(&execution_settings.policy).to_string());
             return Err(failure);
         }
@@ -259,9 +255,11 @@ impl ExecutionEngine {
                         attempt_index as i64,
                         &request,
                         &execution_settings.policy,
-                        request_started_at_ms,
-                        upstream_headers_ms,
-                        first_token_ms,
+                        AttemptTimings {
+                            request_started_at_ms,
+                            upstream_headers_ms,
+                            first_token_ms,
+                        },
                     ));
                 }
                 Err(mut failure) => {
@@ -294,8 +292,9 @@ impl ExecutionEngine {
                 "all route candidates failed",
             )
         });
-        failure.attempt_count = Some(attempted_count);
-        failure.route_policy = Some(routing_policy_label(&execution_settings.policy).to_string());
+        failure.context_mut().attempt_count = Some(attempted_count);
+        failure.context_mut().route_policy =
+            Some(routing_policy_label(&execution_settings.policy).to_string());
         Err(failure)
     }
 
@@ -608,7 +607,7 @@ fn health_effect(failure: &ProxyFailure) -> HealthEffect {
         return HealthEffect::Neutral;
     }
     match failure.http_status.as_u16() {
-        401 | 402 | 403 => HealthEffect::HardFail,
+        401..=403 => HealthEffect::HardFail,
         429 => HealthEffect::Cooldown {
             retry_after_ms: None,
         },
@@ -666,9 +665,7 @@ impl ProxyExecutionResponse {
         fallback_count: i64,
         request: &CanonicalProxyRequest,
         routing_policy: &RoutingPolicy,
-        request_started_at_ms: i64,
-        upstream_headers_ms: i64,
-        first_token_ms: i64,
+        timings: AttemptTimings,
     ) -> Self {
         let (status, headers, body) = prepared.into_parts();
         let body_bytes = match &body {
@@ -680,7 +677,7 @@ impl ProxyExecutionResponse {
             station_id: candidate.candidate.station_id.clone(),
             station_key_id: candidate.candidate.station_key_id.clone(),
             endpoint_revision: candidate.candidate.station_endpoint_revision,
-            started_at_ms: request_started_at_ms,
+            started_at_ms: timings.request_started_at_ms,
         };
         Self {
             status,
@@ -705,7 +702,7 @@ impl ProxyExecutionResponse {
                     rejected_candidates_json: Some("[]".to_string()),
                     body_bytes,
                     route_wait_ms: Some(0),
-                    upstream_headers_ms: Some(upstream_headers_ms.max(0)),
+                    upstream_headers_ms: Some(timings.upstream_headers_ms.max(0)),
                     failure_source: None,
                     attempts_json: None,
                     completion_source: Some("upstream".to_string()),
@@ -715,7 +712,7 @@ impl ProxyExecutionResponse {
                     cache_creation_tokens: None,
                     cache_read_tokens: None,
                     reasoning_effort: request.reasoning_effort.clone(),
-                    first_token_ms: Some(first_token_ms.max(0)),
+                    first_token_ms: Some(timings.first_token_ms.max(0)),
                 },
                 selected_attempt: Some(selected_attempt),
                 attempt_count: (fallback_count + 1).max(1) as u16,
@@ -724,14 +721,13 @@ impl ProxyExecutionResponse {
         }
     }
 
+    // Test assertions inspect the compatibility projection directly.
+    #[cfg(test)]
     pub(crate) fn selected_station_key_id(&self) -> Option<&str> {
         self.selected_station_key_id.as_deref()
     }
 
-    pub(crate) fn selected_station_id(&self) -> Option<&str> {
-        self.selected_station_id.as_deref()
-    }
-
+    #[cfg(test)]
     pub(crate) fn fallback_count(&self) -> i64 {
         self.fallback_count
     }
@@ -938,10 +934,13 @@ impl RetryPolicy {
         eligible_candidates.min(self.max_candidate_attempts)
     }
 
+    // Exposed only for retry-budget unit assertions.
+    #[cfg(test)]
     pub(crate) fn precommit_budget(&self) -> Duration {
         self.precommit_budget
     }
 
+    #[cfg(test)]
     pub(crate) fn buffered_budget(&self) -> Duration {
         self.buffered_budget
     }
@@ -1026,10 +1025,10 @@ fn route_request(
 }
 
 fn attach_failure_candidate(failure: &mut ProxyFailure, candidate: &RichRouteCandidate) {
-    failure.candidate_id = Some(candidate.candidate.station_key_id.clone());
-    failure.candidate_station_id = Some(candidate.candidate.station_id.clone());
-    failure.candidate_endpoint_revision = Some(candidate.candidate.station_endpoint_revision);
-    failure.candidate_upstream_base_url = Some(candidate.candidate.upstream_base_url.clone());
+    let context = failure.context_mut();
+    context.candidate_id = Some(candidate.candidate.station_key_id.clone());
+    context.candidate_station_id = Some(candidate.candidate.station_id.clone());
+    context.candidate_upstream_base_url = Some(candidate.candidate.upstream_base_url.clone());
 }
 
 fn routing_policy_label(policy: &RoutingPolicy) -> &'static str {
@@ -1218,9 +1217,8 @@ mod tests {
             error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
             limits::{BodyBudget, RequestLease},
             request::{CanonicalProxyRequest, RequestRequirements},
-            router::RichRouteCandidate,
             routing_repository::RoutingRepository,
-            RouteCandidate,
+            routing_types::{RichRouteCandidate, RouteCandidate},
         },
     };
 
@@ -1493,7 +1491,7 @@ mod tests {
 
         while let Some(chunk) = bridged.next().await {
             let chunk = chunk.expect("bridged chunk");
-            output.push_str(&String::from_utf8(chunk.to_vec()).expect("utf8"));
+            output.push_str(std::str::from_utf8(&chunk).expect("utf8"));
         }
 
         assert!(output.contains("response.created"));

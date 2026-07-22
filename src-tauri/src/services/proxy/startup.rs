@@ -1,43 +1,75 @@
-use crate::{models::proxy::ProxyStatus, services::database::AppDatabase};
+use std::sync::Arc;
+
+use crate::{
+    application::app_services::AppServices,
+    models::proxy::ProxyStatus,
+    services::proxy::{
+        lifecycle::ports::RequestLifecycleStore,
+        routing_repository::{RoutingRepository, V2RoutingRepository},
+    },
+};
 
 use super::runtime::{ProxyRuntimeState, ProxyStartConfig};
 
-pub async fn start_from_persisted_settings(
-    database: &AppDatabase,
+pub(crate) async fn start_from_v2_persisted_settings(
+    services: &AppServices,
     data_key: [u8; 32],
     proxy: &ProxyRuntimeState,
 ) -> Result<ProxyStatus, String> {
-    let settings = database.get_settings()?;
-    database.migrate_plaintext_secrets(&data_key)?;
+    let settings = services
+        .settings
+        .load()
+        .await
+        .map_err(|error| error.to_string())?;
+    let local_access_key = services
+        .settings
+        .ensure_local_access_key()
+        .await
+        .map_err(|error| error.to_string())?;
     proxy
-        .start(ProxyStartConfig::new(
-            database.clone(),
+        .start(config_from_v2_services(
+            services,
             data_key,
+            local_access_key,
             settings.local_proxy_port,
         ))
         .await
+}
+
+pub(crate) fn config_from_v2_services(
+    services: &AppServices,
+    data_key: [u8; 32],
+    local_access_key: String,
+    port: u16,
+) -> ProxyStartConfig {
+    let routing_repository: Arc<dyn RoutingRepository> = Arc::new(V2RoutingRepository::new(
+        services.routing.as_ref().clone(),
+        data_key,
+    ));
+    let lifecycle_store: Arc<dyn RequestLifecycleStore> = services.request_finalization.clone();
+    ProxyStartConfig::new_v2(routing_repository, lifecycle_store, local_access_key, port)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         models::settings::UpdateSettingsInput,
-        services::{database::AppDatabase, proxy::runtime::ProxyRuntimeState},
+        services::proxy::{runtime::ProxyRuntimeState, test_support::V2ProxyTestFixture},
     };
 
     use super::*;
 
     #[tokio::test]
     async fn persisted_settings_start_uses_configured_proxy_port() {
-        let database = AppDatabase::new_temp_file_for_tests("startup").expect("database");
-        let data_key = crate::services::secrets::crypto::generate_data_key();
+        let fixture = V2ProxyTestFixture::new().await;
         let port = next_free_port().await;
-        update_proxy_port(&database, port);
+        update_proxy_port(&fixture.services, port).await;
         let runtime = ProxyRuntimeState::for_tests();
 
-        let status = start_from_persisted_settings(&database, data_key, &runtime)
-            .await
-            .expect("start proxy");
+        let status =
+            start_from_v2_persisted_settings(&fixture.services, fixture.data_key, &runtime)
+                .await
+                .expect("start proxy");
 
         assert!(status.running);
         assert_eq!(status.port, port);
@@ -51,10 +83,11 @@ mod tests {
         listener.local_addr().expect("local address").port()
     }
 
-    fn update_proxy_port(database: &AppDatabase, port: u16) {
-        let settings = database.get_settings().expect("settings");
-        database
-            .update_settings(UpdateSettingsInput {
+    async fn update_proxy_port(services: &AppServices, port: u16) {
+        let settings = services.settings.load().await.expect("settings");
+        services
+            .settings
+            .update(UpdateSettingsInput {
                 local_proxy_port: port,
                 default_routing_strategy: settings.default_routing_strategy,
                 collector_proxy_mode: settings.collector_proxy_mode,
@@ -74,6 +107,7 @@ mod tests {
                 developer_mode_enabled: settings.developer_mode_enabled,
                 tray_behavior: Some(settings.tray_behavior),
             })
+            .await
             .expect("update proxy port");
     }
 }

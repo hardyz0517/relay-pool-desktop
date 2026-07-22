@@ -202,6 +202,23 @@ pub(crate) async fn detect_profile(
     profile.ok_or(UpgradeError::UnsupportedLegacySchema)
 }
 
+pub(crate) fn source_candidate_identity(source_path: &Path) -> Result<String, UpgradeError> {
+    let evidence = source_file_set_evidence(source_path)?;
+    let mut digest = Sha256::new();
+    digest.update((evidence.len() as u64).to_le_bytes());
+    for (index, file) in evidence.iter().enumerate() {
+        digest.update((index as u64).to_le_bytes());
+        digest.update(file.len.to_le_bytes());
+        digest.update((file.sha256.len() as u64).to_le_bytes());
+        digest.update(&file.sha256);
+    }
+    Ok(digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
 async fn canonical_schema_hash(connection: &mut SqliteConnection) -> Result<String, UpgradeError> {
     let rows = sqlx::query(
         r#"

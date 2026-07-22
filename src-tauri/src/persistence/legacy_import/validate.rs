@@ -7,11 +7,19 @@ use crate::persistence::runtime::PersistenceHandle;
 use super::UpgradeError;
 
 #[derive(Debug, Deserialize)]
+#[allow(
+    dead_code,
+    reason = "the released-schema integration target deserializes and validates this fixture manifest"
+)]
 pub(crate) struct ExpectedImportManifest {
     pub(crate) profile: String,
     pub(crate) table_counts: BTreeMap<String, i64>,
 }
 
+#[allow(
+    dead_code,
+    reason = "the released-schema integration target validates imported fixture projections"
+)]
 pub(crate) async fn validate_import(
     target: &PersistenceHandle,
     expected: &ExpectedImportManifest,
@@ -35,6 +43,10 @@ pub(crate) async fn validate_import(
     Ok(())
 }
 
+#[allow(
+    dead_code,
+    reason = "the released-schema integration target constrains fixture manifest table names"
+)]
 const VALIDATED_TABLES: &[&str] = &[
     "settings",
     "secrets",

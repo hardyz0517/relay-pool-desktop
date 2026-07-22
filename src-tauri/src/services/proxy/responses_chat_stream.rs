@@ -198,7 +198,7 @@ impl ResponsesChatStreamDecoder {
                 "response": {
                     "id": self.response_id,
                     "object": "response",
-                    "created": crate::services::database::now_millis_for_services() / 1000,
+                    "created": crate::services::time::now_millis_for_services() / 1000,
                     "model": self.model,
                     "status": "in_progress",
                 }
@@ -219,7 +219,7 @@ impl ResponsesChatStreamDecoder {
                 "response": {
                     "id": self.response_id,
                     "object": "response",
-                    "created": crate::services::database::now_millis_for_services() / 1000,
+                    "created": crate::services::time::now_millis_for_services() / 1000,
                     "model": self.model,
                     "status": "completed",
                     "output": [{

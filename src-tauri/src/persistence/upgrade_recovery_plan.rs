@@ -8,6 +8,11 @@ pub(crate) enum JournalState {
 }
 
 impl JournalState {
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "the recovery matrix integration target enumerates the complete journal state space"
+    )]
     const ALL: [Self; 8] = [
         Self::Missing,
         Self::Invalid,
@@ -28,6 +33,11 @@ pub(crate) enum ConfigGeneration {
 }
 
 impl ConfigGeneration {
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "the recovery matrix integration target enumerates the complete generation state space"
+    )]
     const ALL: [Self; 3] = [Self::Generation1, Self::Generation2, Self::Unknown];
 }
 
@@ -40,6 +50,11 @@ pub(crate) enum LegacySourceState {
 }
 
 impl LegacySourceState {
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "the recovery matrix integration target enumerates the complete source state space"
+    )]
     const ALL: [Self; 4] = [
         Self::Generation1,
         Self::ValidTombstone,
@@ -56,6 +71,11 @@ pub(crate) enum BackupState {
 }
 
 impl BackupState {
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "the recovery matrix integration target enumerates the complete backup state space"
+    )]
     const ALL: [Self; 3] = [Self::Missing, Self::Verified, Self::Invalid];
 }
 
@@ -69,6 +89,11 @@ pub(crate) enum V2CandidateState {
 }
 
 impl V2CandidateState {
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "the recovery matrix integration target enumerates the complete candidate state space"
+    )]
     const ALL: [Self; 5] = [
         Self::Missing,
         Self::InactiveTemporary,
@@ -87,6 +112,11 @@ pub(crate) enum CompatibilityState {
 }
 
 impl CompatibilityState {
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "the recovery matrix integration target enumerates the complete compatibility state space"
+    )]
     const ALL: [Self; 4] = [
         Self::NotApplicable,
         Self::Writable,
@@ -103,6 +133,11 @@ pub(crate) enum LegacySidecarState {
 }
 
 impl LegacySidecarState {
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "the recovery matrix integration target enumerates the complete sidecar state space"
+    )]
     const ALL: [Self; 3] = [Self::Absent, Self::Present, Self::Unknown];
 }
 
@@ -121,6 +156,10 @@ pub(crate) struct ObservedUpgradeState {
 
 impl ObservedUpgradeState {
     #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "the recovery matrix integration target verifies every finite observation combination"
+    )]
     pub(crate) fn finite_test_matrix() -> Vec<Self> {
         let mut states = Vec::with_capacity(69_120);
         for journal in JournalState::ALL {
@@ -162,6 +201,10 @@ pub(crate) enum RecoveryPlan {
     RebuildV2FromVerifiedBackup,
     ActivateValidatedV2,
     RecordLegacyDeactivated,
+    #[allow(
+        dead_code,
+        reason = "the recovery executor contract retains the explicit user-directed generation-one restore action"
+    )]
     RestoreGeneration1,
     CommitGeneration2,
     ReopenGeneration2,
@@ -170,22 +213,13 @@ pub(crate) enum RecoveryPlan {
 }
 
 impl RecoveryPlan {
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "the recovery matrix integration target classifies executable and halt plans"
+    )]
     pub(crate) fn is_executable(self) -> bool {
         !matches!(self, Self::Halt(_))
-    }
-
-    pub(crate) fn kind_code(self) -> &'static str {
-        match self {
-            Self::RestartFromSource => "restart_from_source",
-            Self::RebuildV2FromVerifiedBackup => "rebuild_v2_from_verified_backup",
-            Self::ActivateValidatedV2 => "activate_validated_v2",
-            Self::RecordLegacyDeactivated => "record_legacy_deactivated",
-            Self::RestoreGeneration1 => "restore_generation_1",
-            Self::CommitGeneration2 => "commit_generation_2",
-            Self::ReopenGeneration2 => "reopen_generation_2",
-            Self::CleanupCompletedJournal => "cleanup_completed_journal",
-            Self::Halt(_) => "halt",
-        }
     }
 }
 
@@ -203,25 +237,6 @@ pub(crate) enum RecoveryHaltReason {
     V2NotWritable,
     UserDecisionRequired,
     InvalidPhaseObservation,
-}
-
-impl RecoveryHaltReason {
-    pub(crate) fn as_code(self) -> &'static str {
-        match self {
-            Self::NoUpgradeInProgress => "no_upgrade_in_progress",
-            Self::InvalidJournal => "invalid_journal",
-            Self::RelocationConflict => "relocation_conflict",
-            Self::OrphanArtifacts => "orphan_artifacts",
-            Self::ConfigGenerationNotRecognized => "config_generation_not_recognized",
-            Self::SourceNotRecognized => "source_not_recognized",
-            Self::BackupNotVerified => "backup_not_verified",
-            Self::CandidateNotValidated => "candidate_not_validated",
-            Self::SidecarStateNotRecognized => "sidecar_state_not_recognized",
-            Self::V2NotWritable => "v2_not_writable",
-            Self::UserDecisionRequired => "user_decision_required",
-            Self::InvalidPhaseObservation => "invalid_phase_observation",
-        }
-    }
 }
 
 pub(crate) struct RecoveryPlanner;

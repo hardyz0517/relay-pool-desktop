@@ -1,9 +1,13 @@
 use std::{
     fs::{self, OpenOptions},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
-use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Connection, Row, SqlitePool};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    ConnectOptions, Connection, Row, SqlitePool,
+};
 
 use crate::persistence::error::PersistenceError;
 
@@ -18,6 +22,30 @@ pub(crate) fn temporary_backup_path(final_path: &Path) -> PathBuf {
         .and_then(|name| name.to_str())
         .unwrap_or("relay-pool-backup.sqlite3");
     final_path.with_file_name(format!("{file_name}.tmp"))
+}
+
+pub(crate) async fn create_verified_backup_from_path(
+    source_path: &Path,
+    final_path: &Path,
+) -> Result<VerifiedBackup, PersistenceError> {
+    if !source_path.is_file() {
+        return Err(PersistenceError::MissingDatabase);
+    }
+
+    let options = SqliteConnectOptions::new()
+        .filename(source_path)
+        .read_only(true)
+        .create_if_missing(false)
+        .foreign_keys(true)
+        .busy_timeout(Duration::from_secs(5));
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect_with(options)
+        .await?;
+    let result = create_verified_backup(&pool, final_path).await;
+    pool.close().await;
+    result
 }
 
 pub(super) async fn create_verified_backup(
@@ -57,28 +85,38 @@ pub(super) async fn create_verified_backup(
     })
 }
 
-pub(super) async fn validate_read_only_sqlite(path: &Path) -> Result<(), PersistenceError> {
+pub(crate) async fn validate_read_only_sqlite(path: &Path) -> Result<(), PersistenceError> {
     let mut connection = SqliteConnectOptions::new()
         .filename(path)
         .read_only(true)
         .create_if_missing(false)
         .connect()
         .await?;
-    let row = sqlx::query("PRAGMA quick_check")
-        .fetch_one(&mut connection)
-        .await?;
-    let quick_check: String = row.get(0);
-    if quick_check != "ok" {
-        return Err(PersistenceError::BackupVerificationFailed);
+    let validation = async {
+        let row = sqlx::query("PRAGMA quick_check")
+            .fetch_one(&mut connection)
+            .await?;
+        let quick_check: String = row.get(0);
+        if quick_check != "ok" {
+            return Err(PersistenceError::BackupVerificationFailed);
+        }
+        let foreign_key_violation = sqlx::query("PRAGMA foreign_key_check")
+            .fetch_optional(&mut connection)
+            .await?;
+        if foreign_key_violation.is_some() {
+            return Err(PersistenceError::BackupVerificationFailed);
+        }
+        Ok(())
     }
-    let foreign_key_violation = sqlx::query("PRAGMA foreign_key_check")
-        .fetch_optional(&mut connection)
-        .await?;
-    if foreign_key_violation.is_some() {
-        return Err(PersistenceError::BackupVerificationFailed);
+    .await;
+    let close = connection.close().await;
+    match validation {
+        Ok(()) => close.map_err(Into::into),
+        Err(error) => {
+            let _ = close;
+            Err(error)
+        }
     }
-    connection.close().await?;
-    Ok(())
 }
 
 fn sqlite_path_literal(path: &Path) -> Result<String, PersistenceError> {

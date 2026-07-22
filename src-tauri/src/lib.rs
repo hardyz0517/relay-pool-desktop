@@ -1,39 +1,65 @@
+mod app_composition;
 mod application;
 mod commands;
 mod models;
 mod persistence;
+mod runtime_composition;
 mod services;
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{
+    atomic::{AtomicU8, Ordering},
+    Arc, Mutex,
+};
+use std::time::Duration;
 
 pub use services::data_store::installation_lease::{InstallationLease, LeaseError};
 
 use services::data_store::{
-    config::{
-        create_installation_marker, installation_marker_exists, read_config, write_config,
-        DataDirConfigV2,
-    },
     inspect_startup,
     relocation::apply_trusted_relocation,
     types::{DataStoreStartupState, RecoveryReason, StartupDecision},
 };
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::Manager;
-use tauri::WindowEvent;
-
-const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
+use tauri::{Manager, RunEvent, WindowEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TrayBehavior {
+pub(crate) enum TrayBehavior {
     MinimizeToTray,
     CloseToTray,
     Disabled,
 }
 
+pub(crate) struct TrayBehaviorState(AtomicU8);
+
+impl Default for TrayBehaviorState {
+    fn default() -> Self {
+        Self(AtomicU8::new(1))
+    }
+}
+
+impl TrayBehaviorState {
+    pub(crate) fn get(&self) -> TrayBehavior {
+        match self.0.load(Ordering::Relaxed) {
+            0 => TrayBehavior::MinimizeToTray,
+            2 => TrayBehavior::Disabled,
+            _ => TrayBehavior::CloseToTray,
+        }
+    }
+
+    pub(crate) fn set(&self, behavior: TrayBehavior) {
+        let value = match behavior {
+            TrayBehavior::MinimizeToTray => 0,
+            TrayBehavior::CloseToTray => 1,
+            TrayBehavior::Disabled => 2,
+        };
+        self.0.store(value, Ordering::Relaxed);
+    }
+}
+
 impl TrayBehavior {
-    fn from_setting(value: &str) -> Self {
+    pub(crate) fn from_setting(value: &str) -> Self {
         match value {
             "minimize_to_tray" => Self::MinimizeToTray,
             "disabled" => Self::Disabled,
@@ -51,12 +77,9 @@ impl TrayBehavior {
 }
 
 fn current_tray_behavior<R: tauri::Runtime>(window: &tauri::Window<R>) -> TrayBehavior {
-    let Some(database) = window.try_state::<services::database::AppDatabase>() else {
-        return TrayBehavior::CloseToTray;
-    };
-    database
-        .get_settings()
-        .map(|settings| TrayBehavior::from_setting(&settings.tray_behavior))
+    window
+        .try_state::<TrayBehaviorState>()
+        .map(|state| state.get())
         .unwrap_or(TrayBehavior::CloseToTray)
 }
 
@@ -69,8 +92,8 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
-    let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let show_item = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
     let mut tray = TrayIconBuilder::with_id("main-tray")
@@ -108,11 +131,74 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 enum PreparedDataStore {
-    Ready(services::database::AppDatabase, DataStoreStartupState),
+    Ready {
+        runtime: Arc<persistence::runtime::PersistenceRuntime>,
+        database_path: PathBuf,
+        startup_state: DataStoreStartupState,
+    },
     Recovery(DataStoreStartupState),
 }
 
-fn prepare_data_store(default_data_dir: PathBuf) -> Result<PreparedDataStore, String> {
+struct DataStoreRuntimeOwner {
+    runtime: Option<Arc<persistence::runtime::PersistenceRuntime>>,
+    installation_lease: Mutex<Option<InstallationLease>>,
+}
+
+impl DataStoreRuntimeOwner {
+    fn new(
+        runtime: Option<Arc<persistence::runtime::PersistenceRuntime>>,
+        installation_lease: InstallationLease,
+    ) -> Self {
+        Self {
+            runtime,
+            installation_lease: Mutex::new(Some(installation_lease)),
+        }
+    }
+
+    async fn shutdown(&self) -> Result<(), DataStoreShutdownError> {
+        let runtime_result = match &self.runtime {
+            Some(runtime) => runtime.close().await,
+            None => Ok(()),
+        };
+        let lease = self
+            .installation_lease
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        let lease_result = match lease {
+            Some(lease) => lease.release(),
+            None => Ok(()),
+        };
+
+        match (runtime_result, lease_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(runtime), Ok(())) => Err(DataStoreShutdownError::Runtime(runtime)),
+            (Ok(()), Err(lease)) => Err(DataStoreShutdownError::Lease(lease)),
+            (Err(runtime), Err(lease)) => {
+                Err(DataStoreShutdownError::RuntimeAndLease { runtime, lease })
+            }
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum DataStoreShutdownError {
+    #[error("persistence runtime shutdown failed")]
+    Runtime(#[source] persistence::runtime::RuntimeTransitionError),
+    #[error("installation lease release failed")]
+    Lease(#[source] LeaseError),
+    #[error("persistence runtime shutdown and installation lease release failed")]
+    RuntimeAndLease {
+        #[source]
+        runtime: persistence::runtime::RuntimeTransitionError,
+        lease: LeaseError,
+    },
+}
+
+fn prepare_data_store(
+    default_data_dir: PathBuf,
+    data_key: [u8; 32],
+) -> Result<PreparedDataStore, String> {
     let mut startup_state = inspect_startup(&default_data_dir)?;
     if let Some(intent) = startup_state.relocation_intent.clone() {
         match apply_trusted_relocation(&default_data_dir, &intent) {
@@ -131,7 +217,7 @@ fn prepare_data_store(default_data_dir: PathBuf) -> Result<PreparedDataStore, St
         }
     }
     let startup_default_data_dir = startup_state.default_data_dir().to_path_buf();
-    let database = match startup_state.decision.clone() {
+    let persistence = match startup_state.decision.clone() {
         StartupDecision::Ready { candidate_id } => {
             let Some(candidate) = startup_state
                 .candidates
@@ -150,38 +236,37 @@ fn prepare_data_store(default_data_dir: PathBuf) -> Result<PreparedDataStore, St
                 };
                 return Ok(PreparedDataStore::Recovery(startup_state));
             };
-            services::database::AppDatabase::initialize_existing_at(
-                default_data_dir.clone(),
-                active_data_dir.clone(),
-                None,
+            services::data_store::generation_upgrade::prepare_generation_two(
+                &default_data_dir,
+                &active_data_dir,
+                Some(&db_path),
+                data_key,
             )
-            .and_then(|database| {
-                commit_active_selection_after_success(&default_data_dir, &active_data_dir)?;
-                Ok(database)
-            })
         }
         StartupDecision::FirstRun { default_data_dir } => {
-            services::database::AppDatabase::initialize_new_at(
-                default_data_dir.clone(),
-                default_data_dir.clone(),
+            services::data_store::generation_upgrade::prepare_generation_two(
+                &default_data_dir,
+                &default_data_dir,
+                None,
+                data_key,
             )
-            .and_then(|database| {
-                commit_active_selection_after_success(&default_data_dir, &default_data_dir)?;
-                Ok(database)
-            })
         }
         StartupDecision::NeedsRecovery { .. } | StartupDecision::Conflict { .. } => {
             return Ok(PreparedDataStore::Recovery(startup_state));
         }
     };
 
-    match database {
-        Ok(database) => {
+    match persistence {
+        Ok((runtime, database_path)) => {
             let mut ready_state = inspect_startup(&startup_default_data_dir).map_err(|error| {
                 format!("failed to verify data store startup after database open: {error}")
             })?;
             if matches!(ready_state.decision, StartupDecision::Ready { .. }) {
-                Ok(PreparedDataStore::Ready(database, ready_state))
+                Ok(PreparedDataStore::Ready {
+                    runtime: Arc::new(runtime),
+                    database_path,
+                    startup_state: ready_state,
+                })
             } else {
                 ready_state.decision = StartupDecision::NeedsRecovery {
                     reason: RecoveryReason::OpenOrMigrationFailed,
@@ -199,90 +284,141 @@ fn prepare_data_store(default_data_dir: PathBuf) -> Result<PreparedDataStore, St
     }
 }
 
-fn commit_active_selection_after_success(
-    default_data_dir: &Path,
-    active_data_dir: &Path,
-) -> Result<(), String> {
-    let config_path = default_data_dir.join(DATA_DIR_CONFIG_FILE);
-    let config = read_config(&config_path)?;
-    if config
-        .as_ref()
-        .and_then(|config| config.active_data_dir.as_deref())
-        == Some(active_data_dir)
-        && installation_marker_exists(default_data_dir)
-    {
-        return Ok(());
+fn shutdown_application(app: &tauri::AppHandle) {
+    if let Some(runner) = app.try_state::<services::channel_monitors::ChannelMonitorRunnerState>() {
+        runner.stop();
     }
-    write_config(
-        &config_path,
-        &DataDirConfigV2 {
-            version: 2,
-            active_data_dir: Some(active_data_dir.to_path_buf()),
-            pending_data_dir: None,
-            source_data_dir: None,
-            updated_at: data_store_updated_at(),
-        },
-    )?;
-    create_installation_marker(default_data_dir)
-}
-
-fn data_store_updated_at() -> String {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs().to_string())
-        .unwrap_or_else(|_| "0".to_string())
+    if let Some(runner) =
+        app.try_state::<services::station_collectors::StationCollectorRunnerState>()
+    {
+        runner.stop();
+    }
+    if let Some(proxy) = app.try_state::<services::proxy::runtime::ProxyRuntimeState>() {
+        let drain = runtime_composition::drain_finalization(
+            &persistence::upgrade_fault::NoUpgradeFaults,
+            async {
+                proxy
+                    .prepare_for_update(Duration::from_secs(30))
+                    .await
+                    .map(|_| ())
+                    .map_err(|_| ())
+            },
+        );
+        if let Err(error) = tauri::async_runtime::block_on(drain) {
+            eprintln!("application shutdown stopped before persistence close: {error}");
+            return;
+        }
+    }
+    if let Some(owner) = app.try_state::<DataStoreRuntimeOwner>() {
+        if let Err(error) = tauri::async_runtime::block_on(owner.shutdown()) {
+            eprintln!("data store shutdown failed: {error}");
+        }
+    }
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main_window(app);
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            app.manage(TrayBehaviorState::default());
             setup_tray(app)?;
             let secret_manager = services::secrets::SecretManager::initialize()?;
-            let app_config_dir = app
-                .path()
-                .app_config_dir()
-                .map_err(|error| format!("无法解析应用配置目录: {error}"))?;
+            let app_config_dir = app.path().app_config_dir().map_err(|error| {
+                format!("failed to resolve application config directory: {error}")
+            })?;
             let installation_lease = InstallationLease::try_acquire(&app_config_dir)
                 .map_err(|error| format!("failed to acquire installation lease: {error}"))?;
-            let default_data_dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|error| format!("无法解析应用数据目录: {error}"))?;
-            app.manage(installation_lease);
-            let prepared_data_store = prepare_data_store(default_data_dir)?;
+            let default_data_dir = app.path().app_data_dir().map_err(|error| {
+                format!("failed to resolve application data directory: {error}")
+            })?;
+            let prepared_data_store =
+                prepare_data_store(default_data_dir, *secret_manager.data_key())?;
             app.manage(secret_manager);
-            match prepared_data_store {
-                PreparedDataStore::Ready(database, startup_state) => {
+            let runtime_owner = match prepared_data_store {
+                PreparedDataStore::Ready {
+                    runtime,
+                    database_path,
+                    startup_state,
+                } => {
                     let data_key = *app.state::<services::secrets::SecretManager>().data_key();
+                    let active_data_dir = database_path
+                        .parent()
+                        .ok_or_else(|| {
+                            format!(
+                                "generation 2 database has no parent directory: {}",
+                                database_path.display()
+                            )
+                        })?
+                        .to_path_buf();
+                    let data_directory_port = Arc::new(
+                        services::data_store::data_directory_port::FileDataDirectoryPort::new(
+                            startup_state.default_data_dir().to_path_buf(),
+                            active_data_dir.clone(),
+                        ),
+                    );
+                    let app_services = app_composition::compose_app_services(
+                        runtime.handle(),
+                        data_key,
+                        active_data_dir.display().to_string(),
+                        None,
+                        data_directory_port,
+                    );
+                    tauri::async_runtime::block_on(app_services.settings.ensure_local_access_key())
+                        .map_err(|error| {
+                            format!("failed to initialize the local proxy access key: {error}")
+                        })?;
+                    tauri::async_runtime::block_on(
+                        app_services.pricing.ensure_builtin_model_base_prices(),
+                    )
+                    .map_err(|error| {
+                        format!("failed to initialize built-in model prices: {error}")
+                    })?;
+                    let settings = tauri::async_runtime::block_on(app_services.settings.load())
+                        .map_err(|error| format!("failed to load application settings: {error}"))?;
+                    app.state::<TrayBehaviorState>()
+                        .set(TrayBehavior::from_setting(&settings.tray_behavior));
                     let channel_monitor_runner =
-                        services::channel_monitors::ChannelMonitorRunnerState::start(
-                            database.clone(),
-                            data_key,
+                        services::channel_monitors::ChannelMonitorRunnerState::start_v2(
+                            services::channel_monitors::v2_runner_port(&app_services),
                         );
                     let station_collector_runner =
-                        services::station_collectors::StationCollectorRunnerState::start(
-                            database.clone(),
-                            data_key,
+                        services::station_collectors::StationCollectorRunnerState::start_v2(
+                            services::station_collectors::v2_runner_port(&app_services, data_key),
                         );
                     println!(
                         "Relay Pool Desktop database initialized at {}",
-                        database.db_path().display()
+                        database_path.display()
                     );
-                    app.manage(startup_state);
-                    app.manage(database);
-                    app.manage(channel_monitor_runner);
-                    app.manage(station_collector_runner);
+                    let runtime_owner =
+                        DataStoreRuntimeOwner::new(Some(Arc::clone(&runtime)), installation_lease);
+                    runtime_composition::register_ready_services(
+                        &persistence::upgrade_fault::NoUpgradeFaults,
+                        app,
+                        runtime_composition::ReadyServiceBundle::new(
+                            startup_state,
+                            runtime,
+                            app_services,
+                            channel_monitor_runner,
+                            station_collector_runner,
+                        ),
+                    )
+                    .map_err(|error| {
+                        format!("failed to register ready runtime services: {error}")
+                    })?;
+                    runtime_owner
                 }
                 PreparedDataStore::Recovery(startup_state) => {
                     println!("Relay Pool Desktop started in data recovery mode");
                     app.manage(startup_state);
+                    DataStoreRuntimeOwner::new(None, installation_lease)
                 }
-            }
+            };
+            app.manage(runtime_owner);
+            app.manage(commands::LocatedDataStoreCandidates::default());
             app.manage(services::capture::session::CaptureSessionStore::default());
             app.manage(services::proxy::runtime::ProxyRuntimeState::default());
             services::proxy::startup_auto_start::schedule(app.handle().clone());
@@ -303,10 +439,10 @@ pub fn run() {
                     api.prevent_close();
                     window.app_handle().exit(0);
                 }
-                WindowEvent::Resized(_) if behavior.hides_on_minimize() => {
-                    if window.is_minimized().unwrap_or(false) {
-                        let _ = window.hide();
-                    }
+                WindowEvent::Resized(_)
+                    if behavior.hides_on_minimize() && window.is_minimized().unwrap_or(false) =>
+                {
+                    let _ = window.hide();
                 }
                 _ => {}
             }
@@ -345,8 +481,6 @@ pub fn run() {
             commands::restart_local_proxy,
             commands::list_request_logs,
             commands::clear_request_logs,
-            commands::get_secret_migration_status,
-            commands::run_secret_safety_scan,
             commands::list_station_keys,
             commands::create_station_key,
             commands::update_station_key,
@@ -434,13 +568,23 @@ pub fn run() {
             commands::clear_capture_session,
             commands::close_capture_session,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Relay Pool Desktop");
+        .build(tauri::generate_context!())
+        .expect("failed to build Relay Pool Desktop");
+    app.run(|app, event| {
+        if matches!(event, RunEvent::Exit) {
+            shutdown_application(app);
+        }
+    });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::TrayBehavior;
+    use std::{sync::Arc, time::Duration};
+
+    use super::{
+        persistence::runtime::{PersistenceRuntime, RuntimeState},
+        DataStoreRuntimeOwner, InstallationLease, LeaseError, TrayBehavior,
+    };
 
     #[test]
     fn tray_behavior_maps_window_lifecycle_modes() {
@@ -452,5 +596,48 @@ mod tests {
 
         assert!(!TrayBehavior::Disabled.hides_on_close());
         assert!(!TrayBehavior::Disabled.hides_on_minimize());
+    }
+
+    #[tokio::test]
+    async fn data_store_owner_releases_lease_only_after_runtime_drain() {
+        let root = tempfile::tempdir().expect("temp directory");
+        let config_dir = root.path().join("config");
+        let database_path = root.path().join("runtime.sqlite3");
+        let lease = InstallationLease::try_acquire(&config_dir).expect("acquire lease");
+        let runtime = Arc::new(
+            PersistenceRuntime::initialize_new(&database_path)
+                .await
+                .expect("initialize runtime"),
+        );
+        let read = runtime.begin_read().await.expect("begin read");
+        let owner = Arc::new(DataStoreRuntimeOwner::new(
+            Some(Arc::clone(&runtime)),
+            lease,
+        ));
+        let closing_owner = Arc::clone(&owner);
+        let closing = tokio::spawn(async move { closing_owner.shutdown().await });
+
+        for _ in 0..100 {
+            if runtime.state() == RuntimeState::Draining {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(runtime.state(), RuntimeState::Draining);
+        assert!(matches!(
+            InstallationLease::try_acquire(&config_dir),
+            Err(LeaseError::AlreadyRunning)
+        ));
+
+        drop(read);
+        closing
+            .await
+            .expect("shutdown task")
+            .expect("shutdown owner");
+        assert_eq!(runtime.state(), RuntimeState::Closed);
+        InstallationLease::try_acquire(&config_dir)
+            .expect("lease released after pool close")
+            .release()
+            .expect("release verification lease");
     }
 }

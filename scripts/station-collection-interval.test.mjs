@@ -6,7 +6,14 @@ const stationsPageSource = await readFile("src/features/stations/StationsPage.ts
 const stationTypesSource = await readFile("src/lib/types/stations.ts", "utf8");
 const stationApiSource = await readFile("src/lib/api/stations.ts", "utf8");
 const rustStationModelSource = await readFile("src-tauri/src/models/stations.rs", "utf8");
-const rustDatabaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
+const stationCatalogSource = await readFile(
+  "src-tauri/src/persistence/stores/station_catalog.rs",
+  "utf8",
+);
+const catalogMigrationSource = await readFile(
+  "src-tauri/src/persistence/migrations/0002_catalog_settings.sql",
+  "utf8",
+);
 
 [
   ["AddProviderPage form state", addProviderSource],
@@ -56,11 +63,13 @@ assert.ok(
 );
 
 assert.ok(
-  rustDatabaseSource.includes("collection_interval_minutes INTEGER NOT NULL DEFAULT 5"),
-  "SQLite stations table should default collection interval to 5 minutes",
+  catalogMigrationSource.includes("collection_interval_minutes INTEGER NOT NULL") &&
+    catalogMigrationSource.includes("CHECK (collection_interval_minutes > 0)"),
+  "V2 SQLite schema should require a positive station collection interval",
 );
 
 assert.ok(
-  rustDatabaseSource.includes("ALTER TABLE stations ADD COLUMN collection_interval_minutes INTEGER NOT NULL DEFAULT 5"),
-  "database migration should add the station collection interval column for existing data",
+  stationCatalogSource.includes("collection_interval_minutes = ?13") &&
+    stationCatalogSource.includes("collection_interval_minutes == 0"),
+  "station catalog writes should persist and validate the collection interval",
 );

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE persistence_runtime_health\n        SET write_probe_count = write_probe_count + 1,\n            last_open_mode = 'writable',\n            last_checked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')\n        WHERE singleton_key = 1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "f4df90079e674f7d91f40c09dbb0c75619f2665f4e4b7eb90d524bfad8ffc5c0"
+}

@@ -1,16 +1,28 @@
 mod detect;
 mod import;
 mod profiles;
+#[cfg(test)]
 mod validate;
 
 use std::fmt;
 
-pub(crate) use detect::{detect_profile, LegacyReadSession};
+pub(crate) use detect::{detect_profile, source_candidate_identity, LegacyReadSession};
+#[cfg(test)]
+#[allow(
+    unused_imports,
+    reason = "integration tests include the persistence tree independently and only the released-fixture target imports this facade"
+)]
+pub(crate) use import::import_profile;
 pub(crate) use import::{
-    import_profile, import_profile_with_secrets, ImportedEncryptedSecret, LegacySecretMaterial,
-    LegacySecretTransformer,
+    import_profile_with_secrets_and_phase_hook, ImportPhase, ImportedEncryptedSecret,
+    LegacySecretMaterial, LegacySecretTransformer,
 };
-pub(crate) use profiles::{DetectedLegacyProfile, LegacyProfileDescriptor};
+pub(crate) use profiles::DetectedLegacyProfile;
+#[cfg(test)]
+#[allow(
+    unused_imports,
+    reason = "integration tests include the persistence tree independently and only the released-fixture target imports this facade"
+)]
 pub(crate) use validate::{validate_import, ExpectedImportManifest};
 
 #[derive(Debug, thiserror::Error)]

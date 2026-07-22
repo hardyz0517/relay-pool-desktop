@@ -43,6 +43,10 @@ pub(crate) struct ChangeCursor {
 #[derive(Debug, Clone)]
 pub(crate) struct ChangeEventPage {
     pub items: Vec<ChangeEvent>,
+    #[allow(
+        dead_code,
+        reason = "the store retains its keyset pagination cursor contract while the current application projection requests only the first page"
+    )]
     pub next_cursor: Option<ChangeCursor>,
 }
 
@@ -50,6 +54,92 @@ pub(crate) struct ChangeEventPage {
 pub(crate) struct ChangeStore;
 
 impl ChangeStore {
+    pub(crate) async fn clear(&self, session: &mut WriteSession) -> Result<(), PersistenceError> {
+        sqlx::query("DELETE FROM change_events")
+            .execute(session.connection())
+            .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn get_by_id(
+        &self,
+        connection: &mut sqlx::SqliteConnection,
+        id: &str,
+    ) -> Result<ChangeEvent, PersistenceError> {
+        let row = sqlx::query(
+            "SELECT e.id, e.severity, e.event_type, e.status, e.title, e.message,
+                    e.object_type, e.object_id, e.station_id, s.name AS station_name,
+                    e.station_key_id, e.pricing_rule_id, e.request_log_id,
+                    e.old_value_json, e.new_value_json, e.impact_json, e.dedupe_key,
+                    e.source, e.detected_at, e.resolved_at, e.created_at, e.updated_at
+             FROM change_events e
+             LEFT JOIN stations s ON s.id = e.station_id
+             WHERE e.id = ?1",
+        )
+        .bind(id)
+        .fetch_optional(connection)
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)?;
+        Ok(row_to_change_event(&row))
+    }
+
+    pub(crate) async fn set_status(
+        &self,
+        session: &mut WriteSession,
+        id: &str,
+        status: &str,
+        now: &str,
+    ) -> Result<ChangeEvent, PersistenceError> {
+        let affected = if status == "resolved" {
+            sqlx::query(
+                "UPDATE change_events
+                 SET status = ?2, resolved_at = ?3, updated_at = ?3
+                 WHERE id = ?1",
+            )
+            .bind(id)
+            .bind(status)
+            .bind(now)
+            .execute(session.connection())
+            .await?
+            .rows_affected()
+        } else {
+            sqlx::query("UPDATE change_events SET status = ?2, updated_at = ?3 WHERE id = ?1")
+                .bind(id)
+                .bind(status)
+                .bind(now)
+                .execute(session.connection())
+                .await?
+                .rows_affected()
+        };
+        if affected == 0 {
+            return Err(PersistenceError::NotFound);
+        }
+        self.get_by_id(session.connection(), id).await
+    }
+
+    pub(crate) async fn mark_many_read(
+        &self,
+        session: &mut WriteSession,
+        ids: &[String],
+        now: &str,
+    ) -> Result<Vec<ChangeEvent>, PersistenceError> {
+        for id in ids {
+            sqlx::query(
+                "UPDATE change_events SET status = 'read', updated_at = ?2
+                 WHERE id = ?1 AND status = 'unread'",
+            )
+            .bind(id)
+            .bind(now)
+            .execute(session.connection())
+            .await?;
+        }
+        let mut events = Vec::with_capacity(ids.len());
+        for id in ids {
+            events.push(self.get_by_id(session.connection(), id).await?);
+        }
+        Ok(events)
+    }
+
     pub(crate) async fn upsert(
         &self,
         session: &mut WriteSession,

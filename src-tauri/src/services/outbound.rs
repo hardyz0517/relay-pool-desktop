@@ -1,3 +1,5 @@
+pub use crate::models::proxy::{normalize_proxy_mode, normalize_proxy_url};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProxyConfig {
     pub mode: String,
@@ -11,23 +13,6 @@ impl ProxyConfig {
             url: None,
         }
     }
-}
-
-pub fn normalize_proxy_mode(value: &str, allow_inherit: bool) -> String {
-    match value.trim() {
-        "direct" => "direct".to_string(),
-        "system" => "system".to_string(),
-        "manual" => "manual".to_string(),
-        "inherit" if allow_inherit => "inherit".to_string(),
-        _ if allow_inherit => "inherit".to_string(),
-        _ => "direct".to_string(),
-    }
-}
-
-pub fn normalize_proxy_url(value: Option<String>) -> Option<String> {
-    value
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
 }
 
 pub fn resolve_proxy_config(

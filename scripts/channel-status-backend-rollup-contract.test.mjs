@@ -6,7 +6,18 @@ const tsTypes = await readFile("src/lib/types/channelMonitors.ts", "utf8");
 const apiSource = await readFile("src/lib/api/channelMonitors.ts", "utf8");
 const querySource = await readFile("src/lib/queries/channelQueries.ts", "utf8");
 const statusSource = await readFile("src/features/channels/ChannelStatusTab.tsx", "utf8");
-const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
+const statusQuerySource = await readFile(
+  "src-tauri/src/application/queries/channel_status.rs",
+  "utf8",
+);
+const monitoringStoreSource = await readFile(
+  "src-tauri/src/persistence/stores/monitoring_store.rs",
+  "utf8",
+);
+const monitoringMigrationSource = await readFile(
+  "src-tauri/src/persistence/migrations/0007_pricing_monitoring.sql",
+  "utf8",
+);
 
 assert.ok(
   rustModels.includes("pub struct ChannelStatusWindowSummary") &&
@@ -41,10 +52,12 @@ assert.ok(
 );
 
 assert.ok(
-  databaseSource.includes("CHANNEL_STATUS_TIMELINE_LIMIT") &&
-    databaseSource.includes(".clamp(1, CHANNEL_STATUS_TIMELINE_LIMIT)") &&
-    databaseSource.includes("idx_channel_monitor_runs_monitor_started_at") &&
-    databaseSource.includes("WITH latest_runs AS"),
+  statusQuerySource.includes("const RECENT_RUN_LIMIT: u32 = 60") &&
+    statusQuerySource.includes(".recent_status_runs(read, monitor_limit.get(), RECENT_RUN_LIMIT)") &&
+    monitoringStoreSource.includes("WITH bounded_monitors AS") &&
+    monitoringStoreSource.includes("LIMIT ?2") &&
+    monitoringStoreSource.includes("idx_channel_monitor_runs_monitor_started") &&
+    monitoringMigrationSource.includes("CREATE INDEX idx_channel_monitor_runs_monitor_started"),
   "channel status backend summaries should be bounded and indexed",
 );
 

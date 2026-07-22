@@ -1,8 +1,15 @@
+#[cfg(test)]
 use bytes::Bytes;
+#[cfg(test)]
 use http::{HeaderMap, StatusCode};
+#[cfg(test)]
 use serde_json::Value;
 
+// These protocol machines are exercised as contract fixtures; production streaming
+// completion is owned by the response-body finalization path.
+#[cfg(test)]
 pub(crate) mod chat_sse;
+#[cfg(test)]
 pub(crate) mod responses_sse;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +26,7 @@ pub(crate) enum UpstreamProtocol {
     ChatCompletionsSse,
     EmbeddingsJson,
     ModelsJson,
+    #[expect(dead_code, reason = "reserved by the local-response protocol contract")]
     LocalJson,
 }
 
@@ -33,6 +41,7 @@ pub(crate) enum CompletionPolicy {
     ValidatedJsonBody,
     ResponsesTerminalEvent,
     ChatDoneSentinel,
+    #[expect(dead_code, reason = "reserved by the local-response protocol contract")]
     LocalConstruction,
 }
 
@@ -44,6 +53,8 @@ pub(crate) struct ResponsePlan {
     pub completion_policy: CompletionPolicy,
 }
 
+// Shared types for the contract-only protocol machines above.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProtocolTerminal {
     Completed,
@@ -51,18 +62,21 @@ pub(crate) enum ProtocolTerminal {
     Incomplete,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProtocolProgress {
     Observed,
     Terminal(ProtocolTerminal),
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProtocolFailure {
     pub code: &'static str,
     pub detail: String,
 }
 
+#[cfg(test)]
 pub(crate) trait ProtocolMachine: Send {
     fn observe_headers(
         &mut self,
@@ -75,6 +89,7 @@ pub(crate) trait ProtocolMachine: Send {
     fn finish_eof(&mut self) -> Result<ProtocolTerminal, ProtocolFailure>;
 }
 
+#[cfg(test)]
 fn event_data(event: &[u8]) -> String {
     String::from_utf8_lossy(event)
         .lines()
@@ -84,6 +99,7 @@ fn event_data(event: &[u8]) -> String {
         .join("\n")
 }
 
+#[cfg(test)]
 fn terminal_from_json(value: &Value) -> Option<ProtocolTerminal> {
     match value.get("type").and_then(Value::as_str) {
         Some("response.completed") => Some(ProtocolTerminal::Completed),
@@ -93,6 +109,7 @@ fn terminal_from_json(value: &Value) -> Option<ProtocolTerminal> {
     }
 }
 
+#[cfg(test)]
 fn split_sse_events(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
     let mut events = Vec::new();
     loop {
@@ -118,6 +135,7 @@ fn split_sse_events(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
     events
 }
 
+#[cfg(test)]
 pub(crate) fn decode_response_event(
     event: &[u8],
 ) -> Result<Option<ProtocolTerminal>, ProtocolFailure> {
@@ -132,6 +150,7 @@ pub(crate) fn decode_response_event(
     Ok(terminal_from_json(&value))
 }
 
+#[cfg(test)]
 pub(crate) fn split_events(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
     split_sse_events(pending)
 }

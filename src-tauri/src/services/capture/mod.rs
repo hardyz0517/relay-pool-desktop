@@ -40,7 +40,7 @@ pub fn sanitize_event(input: CapturedHttpEventInput) -> CapturedHttpEvent {
     CapturedHttpEvent {
         id: format!(
             "capture-{}",
-            crate::services::database::now_millis_for_services()
+            crate::services::time::now_millis_for_services()
         ),
         station_id: input.station_id,
         source_window_id: input.source_window_id,

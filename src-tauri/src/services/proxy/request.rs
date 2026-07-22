@@ -12,23 +12,12 @@ use super::{
 pub type ByteStream =
     BoxStream<'static, Result<Bytes, crate::services::proxy::error::ProxyFailure>>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RequestRequirements {
     pub uses_tools: bool,
     pub uses_vision: bool,
     pub uses_reasoning: bool,
     pub routing_group_filter: RoutingGroupFilter,
-}
-
-impl Default for RequestRequirements {
-    fn default() -> Self {
-        Self {
-            uses_tools: false,
-            uses_vision: false,
-            uses_reasoning: false,
-            routing_group_filter: RoutingGroupFilter::default(),
-        }
-    }
 }
 
 pub struct CanonicalProxyRequest {
@@ -102,6 +91,8 @@ impl CanonicalProxyRequest {
 }
 
 pub enum ProxyResponsePayload {
+    // Test executors use buffered payloads; the production executor always finalizes a stream.
+    #[cfg(test)]
     Buffered(Bytes),
     Stream(ByteStream),
 }

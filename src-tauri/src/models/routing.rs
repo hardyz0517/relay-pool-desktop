@@ -1,8 +1,6 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use crate::models::pricing::BalanceSnapshot;
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RoutingPolicy {
@@ -33,8 +31,9 @@ pub enum PricingGroupType {
     ImageGeneration,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum RoutingGroupFilter {
+    #[default]
     AllGroups,
     UngroupedOnly,
     GroupBindingId(String),
@@ -42,9 +41,24 @@ pub enum RoutingGroupFilter {
     GroupType(PricingGroupType),
 }
 
-impl Default for RoutingGroupFilter {
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeRoutingSettings {
+    pub policy: RoutingPolicy,
+    pub max_rate_multiplier: Option<f64>,
+    pub routing_group_filter: RoutingGroupFilter,
+    pub scheduler_advanced_settings: SchedulerAdvancedSettings,
+    pub allow_depleted_fallback: bool,
+}
+
+impl Default for RuntimeRoutingSettings {
     fn default() -> Self {
-        Self::AllGroups
+        Self {
+            policy: RoutingPolicy::PriorityFallback,
+            max_rate_multiplier: None,
+            routing_group_filter: RoutingGroupFilter::default(),
+            scheduler_advanced_settings: SchedulerAdvancedSettings::default(),
+            allow_depleted_fallback: false,
+        }
     }
 }
 
@@ -126,6 +140,7 @@ impl<'de> Deserialize<'de> for RoutingGroupFilter {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[cfg(test)]
 pub struct AutomaticSchedulerSettings {
     pub max_rate_multiplier: Option<f64>,
     pub default_routing_group_filter: RoutingGroupFilter,
@@ -188,11 +203,14 @@ impl Default for SchedulerAdvancedSettings {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SchedulerConfigError {
+    #[cfg(test)]
     MultiplierLimitNotConfigured,
+    #[cfg(test)]
     InvalidMultiplierLimit,
     InvalidAdvancedSetting(&'static str),
 }
 
+#[cfg(test)]
 impl AutomaticSchedulerSettings {
     pub fn validate_for_routing(&self) -> Result<(), SchedulerConfigError> {
         let Some(max_rate_multiplier) = self.max_rate_multiplier else {
@@ -377,6 +395,17 @@ pub struct RuntimeRoutingSecret {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RuntimeRoutingBalance {
+    pub scope: String,
+    pub value: Option<f64>,
+    pub currency: String,
+    pub low_balance_threshold: Option<f64>,
+    pub status: String,
+    pub collected_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeRoutingCandidate {
     pub station_key_id: String,
     pub station_id: String,
@@ -394,7 +423,7 @@ pub struct RuntimeRoutingCandidate {
     pub key_name: String,
     pub capabilities: StationKeyCapabilities,
     pub health: Option<StationKeyHealth>,
-    pub balance_snapshot: Option<BalanceSnapshot>,
+    pub balance_snapshot: Option<RuntimeRoutingBalance>,
     pub api_key: Option<String>,
     pub api_key_secret: Option<RuntimeRoutingSecret>,
 }

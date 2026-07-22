@@ -3,13 +3,17 @@ use std::sync::Arc;
 use sqlx::{Sqlite, SqliteConnection, Transaction};
 use tokio::sync::OwnedSemaphorePermit;
 
-use crate::persistence::{error::PersistenceError, write_coordinator::WriteCoordinator};
+use crate::persistence::{
+    error::PersistenceError, runtime_lifecycle::RuntimeWorkPermit,
+    write_coordinator::WriteCoordinator,
+};
 
 pub(crate) struct WriteSession {
     transaction: Option<Transaction<'static, Sqlite>>,
     permit: Option<OwnedSemaphorePermit>,
     coordinator: Arc<WriteCoordinator>,
-    committed: bool,
+    _runtime_permit: RuntimeWorkPermit,
+    completed: bool,
 }
 
 impl WriteSession {
@@ -17,12 +21,14 @@ impl WriteSession {
         transaction: Transaction<'static, Sqlite>,
         permit: OwnedSemaphorePermit,
         coordinator: Arc<WriteCoordinator>,
+        runtime_permit: RuntimeWorkPermit,
     ) -> Self {
         Self {
             transaction: Some(transaction),
             permit: Some(permit),
             coordinator,
-            committed: false,
+            _runtime_permit: runtime_permit,
+            completed: false,
         }
     }
 
@@ -39,9 +45,14 @@ impl WriteSession {
             .transaction
             .take()
             .ok_or(PersistenceError::SessionClosed)?;
-        transaction.commit().await?;
-        self.committed = true;
+        if let Err(error) = transaction.commit().await {
+            self.coordinator.record_commit_outcome_unknown();
+            self.completed = true;
+            self.permit.take();
+            return Err(error.into());
+        }
         self.coordinator.record_commit();
+        self.completed = true;
         self.permit.take();
         Ok(())
     }
@@ -49,8 +60,9 @@ impl WriteSession {
 
 impl Drop for WriteSession {
     fn drop(&mut self) {
-        if !self.committed && self.transaction.is_some() {
+        if !self.completed {
             self.coordinator.record_rollback();
+            self.completed = true;
         }
     }
 }

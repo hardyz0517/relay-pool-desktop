@@ -6,6 +6,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::persistence::upgrade_fault::{AtomicStep, UpgradeFailpoint, UpgradeFaultInjector};
+
 const INSTALLATION_MARKER_FILE: &str = "installation.marker";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -22,29 +24,7 @@ pub fn read_config(config_path: &Path) -> Result<Option<DataDirConfigV2>, String
     read_config_strict(config_path)
 }
 
-#[allow(dead_code)]
-fn read_config_legacy_unstrict(config_path: &Path) -> Result<Option<DataDirConfigV2>, String> {
-    if !config_path.exists() {
-        return Ok(None);
-    }
-    let raw = fs::read_to_string(config_path)
-        .map_err(|error| format!("读取数据目录配置 {} 失败: {error}", config_path.display()))?;
-    let value: Value = serde_json::from_str(&raw)
-        .map_err(|error| format!("解析数据目录配置 {} 失败: {error}", config_path.display()))?;
-    if value.get("version").and_then(Value::as_u64) == Some(2) {
-        return serde_json::from_value(value)
-            .map(Some)
-            .map_err(|error| format!("解析数据目录配置 {} 失败: {error}", config_path.display()));
-    }
-    Ok(Some(DataDirConfigV2 {
-        version: 1,
-        active_data_dir: None,
-        pending_data_dir: read_optional_path(&value, "pendingDataDir"),
-        source_data_dir: read_optional_path(&value, "sourceDataDir"),
-        updated_at: String::new(),
-    }))
-}
-
+#[cfg(test)]
 pub fn write_config(config_path: &Path, config: &DataDirConfigV2) -> Result<(), String> {
     write_config_inner(config_path, config, false)
 }
@@ -73,8 +53,7 @@ pub fn create_installation_marker(default_data_dir: &Path) -> Result<(), String>
         .map_err(|error| format!("无法创建安装标记 {}: {error}", marker_path.display()))?;
     file.sync_all()
         .map_err(|error| format!("无法同步安装标记 {}: {error}", marker_path.display()))?;
-    sync_parent_dir(default_data_dir);
-    Ok(())
+    sync_parent_dir(default_data_dir)
 }
 
 fn read_optional_path(value: &Value, field: &str) -> Option<PathBuf> {
@@ -86,6 +65,7 @@ fn read_optional_path(value: &Value, field: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+#[cfg(test)]
 fn write_config_inner(
     config_path: &Path,
     config: &DataDirConfigV2,
@@ -112,14 +92,13 @@ fn write_config_inner(
         return Err("injected replace failure".to_string());
     }
     replace_config_file(&temp_path, config_path)?;
-    sync_parent_dir(parent);
-    Ok(())
+    sync_parent_dir(parent)
 }
 
 fn write_config_v3_inner(
     config_path: &Path,
     config: &DataDirConfigV3,
-    fail_before_replace: bool,
+    mut check: impl FnMut(AtomicStep) -> Result<(), String>,
 ) -> Result<(), String> {
     let parent = config_path
         .parent()
@@ -133,6 +112,7 @@ fn write_config_v3_inner(
     let temp_path = temp_config_path(config_path);
     let raw = serde_json::to_vec_pretty(config)
         .map_err(|error| format!("failed to serialize V3 config: {error}"))?;
+    check(AtomicStep::BeforeWrite)?;
     {
         let mut file = File::create(&temp_path).map_err(|error| {
             format!(
@@ -147,6 +127,7 @@ fn write_config_v3_inner(
                 temp_path.display()
             )
         })?;
+        check(AtomicStep::BeforeFileSync)?;
         file.sync_all().map_err(|error| {
             format!(
                 "failed to sync temporary config {}: {error}",
@@ -154,12 +135,11 @@ fn write_config_v3_inner(
             )
         })?;
     }
-    if fail_before_replace {
-        return Err("injected replace failure".to_string());
-    }
+    check(AtomicStep::BeforeReplace)?;
     replace_config_file(&temp_path, config_path)?;
-    sync_parent_dir(parent);
-    Ok(())
+    check(AtomicStep::AfterReplaceBeforeParentSync)?;
+    sync_parent_dir(parent)?;
+    check(AtomicStep::AfterDurableSync)
 }
 
 fn read_config_strict(config_path: &Path) -> Result<Option<DataDirConfigV2>, String> {
@@ -254,8 +234,23 @@ fn replace_existing_file(temp_path: &Path, config_path: &Path) -> Result<(), Str
         .map_err(|error| format!("无法替换数据目录配置 {}: {error}", config_path.display()))
 }
 
-fn sync_parent_dir(parent: &Path) {
-    let _ = File::open(parent).and_then(|file| file.sync_all());
+#[cfg(not(windows))]
+fn sync_parent_dir(parent: &Path) -> Result<(), String> {
+    File::open(parent)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| {
+            format!(
+                "failed to sync config directory {}: {error}",
+                parent.display()
+            )
+        })
+}
+
+#[cfg(windows)]
+fn sync_parent_dir(_parent: &Path) -> Result<(), String> {
+    // Windows has no supported directory fsync. ReplaceFileW is used when replacing an
+    // existing config, and every temporary file is flushed before publication.
+    Ok(())
 }
 
 /// The only database generations understood by this binary.
@@ -302,7 +297,7 @@ impl TryFrom<DataDirConfigV2> for DataDirConfigV3 {
             database_generation: DatabaseGeneration::One,
             updated_at: value.updated_at,
         };
-        validate_paths(&config)?;
+        validate_path_locations(&config)?;
         Ok(config)
     }
 }
@@ -327,9 +322,10 @@ impl TryFrom<DataDirConfigV3> for DataDirConfigV2 {
 
 /// Read and normalize every supported on-disk config shape.
 ///
-/// V1/legacy and V2 configs are treated as generation 1. Unknown versions,
-/// malformed JSON, unknown generation values, and invalid relocation pairs are
-/// rejected so startup can enter recovery without guessing a default store.
+/// V1/legacy and V2 configs are treated as generation 1. Historical configs
+/// may contain only one relocation endpoint; startup must inspect that evidence
+/// instead of rejecting a shape accepted by the released V2 reader. New V3
+/// configs retain the stricter paired-endpoint invariant.
 pub(crate) fn read_config_v3(config_path: &Path) -> Result<Option<DataDirConfigV3>, String> {
     if !config_path.exists() {
         return Ok(None);
@@ -348,15 +344,18 @@ pub(crate) fn read_config_v3(config_path: &Path) -> Result<Option<DataDirConfigV
     })?;
     let version = value.get("version").and_then(Value::as_u64);
     let config = match version {
-        Some(3) => serde_json::from_value::<DataDirConfigV3>(value)
-            .map_err(|error| format!("failed to decode V3 data directory config: {error}"))?,
+        Some(3) => {
+            let config = serde_json::from_value::<DataDirConfigV3>(value)
+                .map_err(|error| format!("failed to decode V3 data directory config: {error}"))?;
+            validate_paths(&config)?;
+            config
+        }
         Some(2) | Some(1) | None => {
             let legacy = decode_v2_value(&value)?;
             DataDirConfigV3::try_from(legacy)?
         }
         Some(other) => return Err(format!("unsupported data directory config version {other}")),
     };
-    validate_paths(&config)?;
     Ok(Some(config))
 }
 
@@ -365,7 +364,23 @@ pub(crate) fn write_config_v3(config_path: &Path, config: &DataDirConfigV3) -> R
         return Err("V3 data directory config must have version 3".to_string());
     }
     validate_paths(config)?;
-    write_config_v3_inner(config_path, config, false)
+    write_config_v3_inner(config_path, config, |_| Ok(()))
+}
+
+pub(crate) fn write_config_v3_with_faults(
+    config_path: &Path,
+    config: &DataDirConfigV3,
+    faults: &dyn UpgradeFaultInjector,
+) -> Result<(), String> {
+    if config.version != 3 {
+        return Err("V3 data directory config must have version 3".to_string());
+    }
+    validate_paths(config)?;
+    write_config_v3_inner(config_path, config, |edge| {
+        faults
+            .check(UpgradeFailpoint::ConfigCommit(edge))
+            .map_err(|error| error.to_string())
+    })
 }
 
 fn decode_v2_value(value: &Value) -> Result<DataDirConfigV2, String> {
@@ -383,6 +398,14 @@ fn decode_v2_value(value: &Value) -> Result<DataDirConfigV2, String> {
 }
 
 fn validate_paths(config: &DataDirConfigV3) -> Result<(), String> {
+    validate_path_locations(config)?;
+    if config.pending_data_dir.is_some() != config.source_data_dir.is_some() {
+        return Err("pendingDataDir and sourceDataDir must be provided together".to_string());
+    }
+    Ok(())
+}
+
+fn validate_path_locations(config: &DataDirConfigV3) -> Result<(), String> {
     for (name, path) in [
         ("activeDataDir", config.active_data_dir.as_ref()),
         ("pendingDataDir", config.pending_data_dir.as_ref()),
@@ -394,9 +417,6 @@ fn validate_paths(config: &DataDirConfigV3) -> Result<(), String> {
             }
         }
     }
-    if config.pending_data_dir.is_some() != config.source_data_dir.is_some() {
-        return Err("pendingDataDir and sourceDataDir must be provided together".to_string());
-    }
     Ok(())
 }
 
@@ -404,10 +424,18 @@ fn validate_paths(config: &DataDirConfigV3) -> Result<(), String> {
 mod tests {
     use super::{
         create_installation_marker, installation_marker_exists, read_config, read_config_v3,
-        write_config, write_config_v3, write_config_with_replace_failure_for_test, DataDirConfigV2,
-        DataDirConfigV3, DatabaseGeneration,
+        write_config, write_config_v3, write_config_v3_with_faults,
+        write_config_with_replace_failure_for_test, DataDirConfigV2, DataDirConfigV3,
+        DatabaseGeneration,
     };
-    use std::{fs, path::PathBuf};
+    use crate::persistence::upgrade_fault::{
+        AtomicStep, UpgradeFailpoint, UpgradeFaultInjector, UpgradeInjectedFailure,
+        UPGRADE_INJECTED_FAILURE_CODE,
+    };
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     #[test]
     fn reads_legacy_v1_pending_and_source_without_rewriting() {
@@ -476,6 +504,22 @@ mod tests {
     }
 
     #[test]
+    fn v2_source_only_evidence_remains_readable_for_startup_recovery() {
+        let (root, config_path) = config_path("v2-source-only");
+        let source = root.join("source");
+        write_config(&config_path, &v2_config(None, None, Some(source.clone())))
+            .expect("write historical V2 config");
+
+        let config = read_config_v3(&config_path)
+            .expect("read historical V2 config")
+            .expect("config present");
+
+        assert_eq!(config.database_generation, DatabaseGeneration::One);
+        assert_eq!(config.source_data_dir, Some(source));
+        assert_eq!(config.pending_data_dir, None);
+    }
+
+    #[test]
     fn unknown_config_version_fails_closed() {
         let (_root, config_path) = config_path("unknown-version");
         fs::write(
@@ -504,6 +548,64 @@ mod tests {
                 .expect("present"),
             config
         );
+    }
+
+    #[test]
+    fn v3_fault_aware_writer_exposes_every_atomic_edge() {
+        for (index, edge) in AtomicStep::ALL.into_iter().enumerate() {
+            let (root, config_path) = config_path(&format!("v3-fault-edge-{index}"));
+            let old_config = DataDirConfigV3 {
+                version: 3,
+                active_data_dir: Some(root.join("old-active")),
+                pending_data_dir: None,
+                source_data_dir: None,
+                database_generation: DatabaseGeneration::One,
+                updated_at: "2026-07-20T00:00:00Z".to_string(),
+            };
+            let new_config = DataDirConfigV3 {
+                active_data_dir: Some(root.join("new-active")),
+                database_generation: DatabaseGeneration::Two,
+                updated_at: "2026-07-21T00:00:00Z".to_string(),
+                ..old_config.clone()
+            };
+            write_config_v3(&config_path, &old_config).expect("write old config");
+
+            let error =
+                write_config_v3_with_faults(&config_path, &new_config, &FaultAtAtomicEdge(edge))
+                    .expect_err("inject atomic config failure");
+
+            assert!(error.contains(UPGRADE_INJECTED_FAILURE_CODE));
+            let observed = read_config_v3(&config_path)
+                .expect("read config after injected failure")
+                .expect("config remains present");
+            let expected = match edge {
+                AtomicStep::BeforeWrite
+                | AtomicStep::BeforeFileSync
+                | AtomicStep::BeforeReplace => &old_config,
+                AtomicStep::AfterReplaceBeforeParentSync | AtomicStep::AfterDurableSync => {
+                    &new_config
+                }
+            };
+            assert_eq!(&observed, expected);
+        }
+    }
+
+    #[test]
+    fn v3_writer_rejects_unpaired_relocation_endpoints() {
+        let (root, config_path) = config_path("v3-unpaired-relocation");
+        let config = DataDirConfigV3 {
+            version: 3,
+            active_data_dir: None,
+            pending_data_dir: None,
+            source_data_dir: Some(root.join("source")),
+            database_generation: DatabaseGeneration::Two,
+            updated_at: "2026-07-20T00:00:00Z".to_string(),
+        };
+
+        let error = write_config_v3(&config_path, &config).expect_err("reject unpaired config");
+
+        assert!(error.contains("must be provided together"));
+        assert!(!config_path.exists());
     }
 
     #[test]
@@ -549,7 +651,7 @@ mod tests {
         (root, config_path)
     }
 
-    fn read_present(config_path: &PathBuf) -> DataDirConfigV2 {
+    fn read_present(config_path: &Path) -> DataDirConfigV2 {
         read_config(config_path)
             .expect("read config")
             .expect("config present")
@@ -575,5 +677,16 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("relay-pool-data-store-{name}-{unique}"))
+    }
+
+    struct FaultAtAtomicEdge(AtomicStep);
+
+    impl UpgradeFaultInjector for FaultAtAtomicEdge {
+        fn check(&self, failpoint: UpgradeFailpoint) -> Result<(), UpgradeInjectedFailure> {
+            if failpoint == UpgradeFailpoint::ConfigCommit(self.0) {
+                return Err(UpgradeInjectedFailure::new(failpoint));
+            }
+            Ok(())
+        }
     }
 }

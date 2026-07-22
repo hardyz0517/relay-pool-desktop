@@ -5,11 +5,15 @@ const dashboardSource = await readFile("src/features/dashboard/DashboardPage.tsx
 const stationsSource = await readFile("src/features/stations/StationsPage.tsx", "utf8");
 const querySource = await readFile("src/lib/query/resourceQueries.ts", "utf8");
 const economicsSource = await readFile("src/lib/api/economics.ts", "utf8");
-const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
+const pricingServiceSource = await readFile("src-tauri/src/application/pricing.rs", "utf8");
+const pricingStoreSource = await readFile(
+  "src-tauri/src/persistence/stores/pricing_store.rs",
+  "utf8",
+);
 const commandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
 const tauriLibSource = await readFile("src-tauri/src/lib.rs", "utf8");
-const currentBalanceQuerySource = databaseSource.match(
-  /fn list_current_station_balance_snapshots_from_connection[\s\S]*?fn list_balance_snapshots_for_station_from_connection/,
+const currentBalanceQuerySource = pricingStoreSource.match(
+  /pub\(crate\) async fn latest_station_balances[\s\S]*?pub\(crate\) async fn resolve_station_key_pricing/,
 )?.[0] ?? "";
 
 assert.ok(
@@ -33,12 +37,14 @@ assert.ok(
 );
 
 assert.ok(
-  databaseSource.includes("list_current_station_balance_snapshots") &&
+  pricingServiceSource.includes("pub(crate) async fn latest_station_balances") &&
+    pricingServiceSource.includes(".latest_station_balances(&mut read, limit.get())") &&
     currentBalanceQuerySource.includes(
-      "FROM balance_snapshots latest INDEXED BY idx_balance_snapshots_station_scope_updated",
+      "FROM balance_snapshots b INDEXED BY idx_balance_snapshots_latest_station_scope",
     ) &&
-    currentBalanceQuerySource.includes("SELECT latest.id") &&
-    commandsSource.includes("pub fn list_current_station_balance_snapshots") &&
+    currentBalanceQuerySource.includes("ROW_NUMBER() OVER") &&
+    currentBalanceQuerySource.includes("WHERE row_number = 1") &&
+    commandsSource.includes("pub async fn list_current_station_balance_snapshots") &&
     tauriLibSource.includes("commands::list_current_station_balance_snapshots"),
   "the backend should project one indexed latest station-scope row per station",
 );

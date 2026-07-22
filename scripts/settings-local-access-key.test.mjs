@@ -5,7 +5,11 @@ const settingsPageSource = await readFile("src/features/settings/SettingsPage.ts
 const settingsApiSource = await readFile("src/lib/api/settings.ts", "utf8");
 const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
 const tauriLibSource = await readFile("src-tauri/src/lib.rs", "utf8");
-const databaseSource = await readFile("src-tauri/src/services/database.rs", "utf8");
+const settingsServiceSource = await readFile("src-tauri/src/application/settings.rs", "utf8");
+const settingsStoreSource = await readFile(
+  "src-tauri/src/persistence/stores/settings_store.rs",
+  "utf8",
+);
 
 assert.ok(
   settingsPageSource.includes("随机生成") &&
@@ -35,8 +39,9 @@ assert.ok(
 );
 
 assert.ok(
-  tauriCommandsSource.includes("pub fn update_local_access_key") &&
-    tauriCommandsSource.includes("database.update_local_access_key"),
+  tauriCommandsSource.includes("pub async fn update_local_access_key") &&
+    tauriCommandsSource.includes(".settings") &&
+    tauriCommandsSource.includes(".update_local_access_key(value)"),
   "Tauri commands should expose update_local_access_key",
 );
 
@@ -46,8 +51,8 @@ assert.ok(
 );
 
 assert.ok(
-  databaseSource.includes("pub fn update_local_access_key") &&
-    databaseSource.includes('upsert_setting(&connection, "local_key"') &&
-    databaseSource.includes("本地访问密钥不能为空"),
-  "database service should validate and persist the local access key setting",
+  settingsServiceSource.includes("pub(crate) async fn update_local_access_key") &&
+    settingsStoreSource.includes("if local_key.is_empty()") &&
+    settingsStoreSource.includes('upsert_setting(write.connection(), "local_key"'),
+  "settings application and store should validate and persist the local access key setting",
 );

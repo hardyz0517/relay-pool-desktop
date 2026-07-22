@@ -3,15 +3,12 @@ use std::{collections::BTreeSet, path::Path, time::Duration};
 use semver::Version;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-    Executor, Row, Sqlite,
+    Executor, Sqlite,
 };
 
 use crate::persistence::{
-    backup::{create_verified_backup, validate_read_only_sqlite},
     error::PersistenceError,
-    schema_compatibility::{
-        decide_open_mode, load_schema_compatibility, BinaryCompatibility, SchemaCompatibility,
-    },
+    schema_compatibility::{decide_open_mode, load_schema_compatibility, BinaryCompatibility},
 };
 
 pub(crate) fn migrator() -> &'static sqlx::migrate::Migrator {
@@ -23,9 +20,9 @@ pub(crate) async fn applied_schema_version<'e, E>(executor: E) -> Result<i64, Pe
 where
     E: Executor<'e, Database = Sqlite>,
 {
-    let row = sqlx::query(
+    let row = sqlx::query!(
         r#"
-        SELECT version
+        SELECT version AS "version!: i64"
         FROM _sqlx_migrations
         WHERE success = 1
         ORDER BY version DESC
@@ -34,26 +31,21 @@ where
     )
     .fetch_optional(executor)
     .await?;
-    row.map(|row| row.get("version"))
+    row.map(|row| row.version)
         .ok_or(PersistenceError::MissingMigrationMetadata)
 }
 
-pub(crate) async fn run_pending_v2_migrations_after_verified_backup(
-    database_path: &Path,
-    backup_path: &Path,
-    binary: BinaryCompatibility,
-) -> Result<SchemaCompatibility, PersistenceError> {
-    if !database_path.is_file() {
-        return Err(PersistenceError::MissingDatabase);
+pub(crate) async fn initialize_v2_database(path: &Path) -> Result<(), PersistenceError> {
+    if path.exists() {
+        return Err(PersistenceError::InvariantViolation(
+            "generation 2 database already exists".to_string(),
+        ));
     }
-    let pool = migration_pool(database_path).await?;
-    let compatibility = load_schema_compatibility(&pool).await?;
-    let schema_version = applied_schema_version(&pool).await?;
-    decide_open_mode(&binary, &compatibility, schema_version)?;
-
-    create_verified_backup(&pool, backup_path).await?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let pool = migration_pool_create(path).await?;
     migrator().run(&pool).await?;
-
     let compatibility = load_schema_compatibility(&pool).await?;
     let schema_version = applied_schema_version(&pool).await?;
     decide_open_mode(
@@ -62,8 +54,7 @@ pub(crate) async fn run_pending_v2_migrations_after_verified_backup(
         schema_version,
     )?;
     pool.close().await;
-    validate_read_only_sqlite(database_path).await?;
-    Ok(compatibility)
+    Ok(())
 }
 
 pub(crate) fn current_binary_compatibility() -> BinaryCompatibility {
@@ -75,10 +66,18 @@ pub(crate) fn current_binary_compatibility() -> BinaryCompatibility {
     }
 }
 
-async fn migration_pool(database_path: &Path) -> Result<sqlx::SqlitePool, PersistenceError> {
+pub(crate) fn current_schema_version() -> i64 {
+    migrator()
+        .iter()
+        .map(|migration| migration.version)
+        .max()
+        .unwrap_or_default()
+}
+
+async fn migration_pool_create(database_path: &Path) -> Result<sqlx::SqlitePool, PersistenceError> {
     let options = SqliteConnectOptions::new()
         .filename(database_path)
-        .create_if_missing(false)
+        .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Full)
         .foreign_keys(true)

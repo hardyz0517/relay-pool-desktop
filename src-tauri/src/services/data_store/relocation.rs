@@ -1,18 +1,22 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{backup::Backup, Connection, OpenFlags};
+use crate::persistence::{
+    create_verified_backup_from_path, upgrade_recovery_executor::UPGRADE_JOURNAL_FILE,
+};
 
 use super::{
-    config::{create_installation_marker, write_config, DataDirConfigV2},
+    config::{
+        create_installation_marker, read_config_v3, write_config_v3, DataDirConfigV3,
+        DatabaseGeneration,
+    },
     inspect::inspect_candidate,
     types::{CandidateHealth, CandidateRole, DataStoreRelocationIntent},
 };
 
-const DATABASE_FILE: &str = "relay-pool-desktop.sqlite3";
 const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
 
 pub(crate) fn write_relocation_intent(
@@ -20,13 +24,16 @@ pub(crate) fn write_relocation_intent(
     active_data_dir: &Path,
     pending_data_dir: &Path,
 ) -> Result<(), String> {
-    write_config(
+    ensure_no_upgrade_journal(default_data_dir)?;
+    let database_generation = configured_generation(default_data_dir)?;
+    write_config_v3(
         &default_data_dir.join(DATA_DIR_CONFIG_FILE),
-        &DataDirConfigV2 {
-            version: 2,
+        &DataDirConfigV3 {
+            version: 3,
             active_data_dir: Some(active_data_dir.to_path_buf()),
             pending_data_dir: Some(pending_data_dir.to_path_buf()),
             source_data_dir: Some(active_data_dir.to_path_buf()),
+            database_generation,
             updated_at: updated_at(),
         },
     )
@@ -36,13 +43,15 @@ pub(crate) fn write_active_data_dir_selection(
     default_data_dir: &Path,
     active_data_dir: &Path,
 ) -> Result<(), String> {
-    write_config(
+    let database_generation = configured_generation(default_data_dir)?;
+    write_config_v3(
         &default_data_dir.join(DATA_DIR_CONFIG_FILE),
-        &DataDirConfigV2 {
-            version: 2,
+        &DataDirConfigV3 {
+            version: 3,
             active_data_dir: Some(active_data_dir.to_path_buf()),
             pending_data_dir: None,
             source_data_dir: None,
+            database_generation,
             updated_at: updated_at(),
         },
     )
@@ -52,8 +61,10 @@ pub(crate) fn apply_trusted_relocation(
     default_data_dir: &Path,
     intent: &DataStoreRelocationIntent,
 ) -> Result<PathBuf, String> {
-    let source_db_path = intent.source_data_dir.join(DATABASE_FILE);
-    let target_db_path = intent.target_data_dir.join(DATABASE_FILE);
+    ensure_no_upgrade_journal(default_data_dir)?;
+    let database_file = configured_generation(default_data_dir)?.database_file();
+    let source_db_path = intent.source_data_dir.join(database_file);
+    let target_db_path = intent.target_data_dir.join(database_file);
     if !source_db_path.is_file() {
         return Err(format!(
             "source database does not exist: {}",
@@ -74,7 +85,7 @@ pub(crate) fn apply_trusted_relocation(
         )
     })?;
     let temp_db_path = intent.target_data_dir.join(format!(
-        "{DATABASE_FILE}.relocating-{}-{}",
+        "{database_file}.relocating-{}-{}",
         std::process::id(),
         unique_suffix()
     ));
@@ -93,17 +104,30 @@ pub(crate) fn apply_trusted_relocation(
     Ok(intent.target_data_dir.clone())
 }
 
-fn copy_sqlite_database(source_db_path: &Path, temp_db_path: &Path) -> Result<(), String> {
-    let source = Connection::open_with_flags(source_db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|error| format!("failed to open relocation source database: {error}"))?;
-    let mut target = Connection::open(temp_db_path)
-        .map_err(|error| format!("failed to open relocation target database: {error}"))?;
-    let backup = Backup::new(&source, &mut target)
-        .map_err(|error| format!("failed to start relocation backup: {error}"))?;
-    backup
-        .run_to_completion(5, Duration::from_millis(250), None)
-        .map_err(|error| format!("failed to copy relocation database: {error}"))?;
+fn configured_generation(default_data_dir: &Path) -> Result<DatabaseGeneration, String> {
+    Ok(
+        read_config_v3(&default_data_dir.join(DATA_DIR_CONFIG_FILE))?
+            .map(|config| config.database_generation)
+            .unwrap_or(DatabaseGeneration::One),
+    )
+}
+
+fn ensure_no_upgrade_journal(default_data_dir: &Path) -> Result<(), String> {
+    if default_data_dir.join(UPGRADE_JOURNAL_FILE).exists() {
+        return Err(
+            "data relocation is unavailable while a persistence upgrade is in progress".to_string(),
+        );
+    }
     Ok(())
+}
+
+fn copy_sqlite_database(source_db_path: &Path, temp_db_path: &Path) -> Result<(), String> {
+    tauri::async_runtime::block_on(create_verified_backup_from_path(
+        source_db_path,
+        temp_db_path,
+    ))
+    .map(|_| ())
+    .map_err(|error| format!("failed to create verified relocation database: {error}"))
 }
 
 fn verify_relocated_database(path: &Path) -> Result<(), String> {
@@ -151,12 +175,14 @@ fn unique_suffix() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use crate::services::data_store::config::{read_config, DataDirConfigV2};
+    use crate::services::data_store::config::{
+        read_config, read_config_v3, write_config_v3, DataDirConfigV3, DatabaseGeneration,
+    };
     use crate::services::data_store::relocation::{
         apply_trusted_relocation, write_relocation_intent,
     };
     use crate::services::data_store::types::DataStoreRelocationIntent;
-    use rusqlite::Connection;
+    use sqlx::SqliteConnection;
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -164,6 +190,7 @@ mod tests {
     };
 
     const DATABASE_FILE: &str = "relay-pool-desktop.sqlite3";
+    const DATABASE_FILE_V2: &str = "relay-pool-desktop-v2.sqlite3";
     const CONFIG_FILE: &str = "relay-pool-data-dir.json";
 
     #[test]
@@ -194,6 +221,45 @@ mod tests {
         assert_eq!(config.active_data_dir, Some(target));
         assert_eq!(config.pending_data_dir, None);
         assert_eq!(config.source_data_dir, None);
+    }
+
+    #[test]
+    fn generation_two_relocation_preserves_authoritative_generation() {
+        let root = temp_root("v2-generation-relocation");
+        let default_data_dir = root.join("default");
+        let source = root.join("source");
+        let target = root.join("target");
+        create_station_db_file(&source.join(DATABASE_FILE_V2), "v2-station");
+        write_config_v3(
+            &default_data_dir.join(CONFIG_FILE),
+            &DataDirConfigV3 {
+                version: 3,
+                active_data_dir: Some(source.clone()),
+                pending_data_dir: None,
+                source_data_dir: None,
+                database_generation: DatabaseGeneration::Two,
+                updated_at: "2026-07-21T00:00:00Z".to_string(),
+            },
+        )
+        .expect("generation-two config");
+        write_relocation_intent(&default_data_dir, &source, &target).expect("intent");
+
+        apply_trusted_relocation(
+            &default_data_dir,
+            &DataStoreRelocationIntent {
+                source_data_dir: source.clone(),
+                target_data_dir: target.clone(),
+            },
+        )
+        .expect("relocate generation two");
+
+        assert_eq!(station_count(&target.join(DATABASE_FILE_V2)), 1);
+        assert!(!target.join(DATABASE_FILE).exists());
+        let config = read_config_v3(&default_data_dir.join(CONFIG_FILE))
+            .expect("read V3 config")
+            .expect("config");
+        assert_eq!(config.database_generation, DatabaseGeneration::Two);
+        assert_eq!(config.active_data_dir, Some(target));
     }
 
     #[test]
@@ -281,33 +347,103 @@ mod tests {
         assert!(!target.join(DATABASE_FILE).exists());
     }
 
+    #[test]
+    fn upgrade_journal_blocks_new_relocation_intent_before_config_write() {
+        let root = temp_root("journal-blocks-intent");
+        let default_data_dir = root.join("default");
+        let source = root.join("source");
+        let target = root.join("target");
+        fs::create_dir_all(&default_data_dir).expect("default");
+        let journal = default_data_dir
+            .join(crate::persistence::upgrade_recovery_executor::UPGRADE_JOURNAL_FILE);
+        fs::write(&journal, b"protected-upgrade-journal").expect("journal");
+
+        let error = write_relocation_intent(&default_data_dir, &source, &target)
+            .expect_err("journal must block relocation intent");
+
+        assert!(error.contains("upgrade is in progress"));
+        assert!(!default_data_dir.join(CONFIG_FILE).exists());
+        assert_eq!(
+            fs::read(&journal).expect("journal unchanged"),
+            b"protected-upgrade-journal"
+        );
+    }
+
+    #[test]
+    fn upgrade_journal_blocks_relocation_before_source_target_or_config_changes() {
+        let root = temp_root("journal-blocks-apply");
+        let default_data_dir = root.join("default");
+        let source = root.join("source");
+        let target = root.join("target");
+        create_station_db(&source, "source-station");
+        write_relocation_intent(&default_data_dir, &source, &target).expect("intent");
+        let config = default_data_dir.join(CONFIG_FILE);
+        let journal = default_data_dir
+            .join(crate::persistence::upgrade_recovery_executor::UPGRADE_JOURNAL_FILE);
+        fs::write(&journal, b"protected-upgrade-journal").expect("journal");
+        let before_source = fs::read(source.join(DATABASE_FILE)).expect("source bytes");
+        let before_config = fs::read(&config).expect("config bytes");
+
+        let error = apply_trusted_relocation(
+            &default_data_dir,
+            &DataStoreRelocationIntent {
+                source_data_dir: source.clone(),
+                target_data_dir: target.clone(),
+            },
+        )
+        .expect_err("journal must block relocation");
+
+        assert!(error.contains("upgrade is in progress"));
+        assert_eq!(
+            fs::read(source.join(DATABASE_FILE)).expect("source"),
+            before_source
+        );
+        assert_eq!(fs::read(&config).expect("config"), before_config);
+        assert_eq!(
+            fs::read(&journal).expect("journal unchanged"),
+            b"protected-upgrade-journal"
+        );
+        assert!(!target.exists());
+    }
+
     fn create_station_db(data_dir: &Path, station: &str) {
         fs::create_dir_all(data_dir).expect("data dir");
-        let db = Connection::open(data_dir.join(DATABASE_FILE)).expect("db");
-        db.execute_batch("CREATE TABLE stations(name TEXT); CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT);").expect("schema");
-        db.execute("INSERT INTO stations VALUES (?)", [station])
-            .expect("station");
+        create_station_db_file(&data_dir.join(DATABASE_FILE), station);
+    }
+
+    fn create_station_db_file(path: &Path, station: &str) {
+        fs::create_dir_all(path.parent().expect("database parent")).expect("data dir");
+        let mut db = open(path);
+        execute_batch(&mut db, "CREATE TABLE stations(name TEXT); CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT);");
+        execute_with_text(&mut db, "INSERT INTO stations VALUES (?1)", station);
     }
 
     fn create_schema_only_db(data_dir: &Path) {
         fs::create_dir_all(data_dir).expect("data dir");
-        let db = Connection::open(data_dir.join(DATABASE_FILE)).expect("db");
-        db.execute_batch("CREATE TABLE stations(name TEXT); CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT);").expect("schema");
+        let mut db = open(&data_dir.join(DATABASE_FILE));
+        execute_batch(&mut db, "CREATE TABLE stations(name TEXT); CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT);");
     }
 
     fn enable_wal_and_insert(path: &Path, station: &str) {
-        let db = Connection::open(path).expect("db");
-        db.pragma_update(None, "journal_mode", "WAL").expect("wal");
-        db.execute("INSERT INTO stations VALUES (?)", [station])
-            .expect("station");
+        let mut db = open(path);
+        execute_with_text(&mut db, "INSERT INTO stations VALUES (?1)", station);
         assert!(path.with_extension("sqlite3-wal").exists());
     }
 
     fn station_count(path: &Path) -> i64 {
-        Connection::open(path)
-            .expect("db")
-            .query_row("SELECT COUNT(*) FROM stations", [], |row| row.get(0))
-            .expect("count")
+        crate::services::data_store::test_support::query_i64(path, "SELECT COUNT(*) FROM stations")
+    }
+
+    fn open(path: &Path) -> SqliteConnection {
+        crate::services::data_store::test_support::open_database(path)
+    }
+
+    fn execute_batch(connection: &mut SqliteConnection, statements: &str) {
+        crate::services::data_store::test_support::execute_batch(connection, statements);
+    }
+
+    fn execute_with_text(connection: &mut SqliteConnection, statement: &str, value: &str) {
+        crate::services::data_store::test_support::execute_with_text(connection, statement, value);
     }
 
     fn temp_root(name: &str) -> PathBuf {
@@ -320,20 +456,5 @@ mod tests {
 
     fn slash(path: &Path) -> String {
         path.to_string_lossy().replace('\\', "/")
-    }
-
-    #[allow(dead_code)]
-    fn v2(
-        active_data_dir: Option<PathBuf>,
-        pending_data_dir: Option<PathBuf>,
-        source_data_dir: Option<PathBuf>,
-    ) -> DataDirConfigV2 {
-        DataDirConfigV2 {
-            version: 2,
-            active_data_dir,
-            pending_data_dir,
-            source_data_dir,
-            updated_at: "2026-07-17T00:00:00Z".to_string(),
-        }
     }
 }

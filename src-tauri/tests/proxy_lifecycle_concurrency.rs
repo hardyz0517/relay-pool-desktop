@@ -5,6 +5,11 @@ use std::{
 
 use futures_util::future::{join_all, BoxFuture};
 
+mod application {
+    #[path = "../../src/application/request_lifecycle/mod.rs"]
+    pub(crate) mod request_lifecycle;
+}
+
 mod services {
     pub(crate) mod proxy {
         #[path = "../../../src/services/proxy/lifecycle/mod.rs"]
@@ -129,6 +134,14 @@ async fn lifecycle_writer_preserves_per_request_order_under_concurrency() {
     for result in join_all(tasks).await {
         result.expect("request task");
     }
+    let snapshot = writer.snapshot();
+    assert_eq!(snapshot.capacity, 128);
+    assert_eq!(snapshot.current_outstanding, 0);
+    assert!(snapshot.peak_outstanding <= snapshot.capacity);
+    assert_eq!(snapshot.submitted, 32 * 3);
+    assert_eq!(snapshot.completed, 32 * 3);
+    assert_eq!(snapshot.failed, 0);
+    assert_eq!(snapshot.cancelled_before_submission, 0);
     drop(writer);
     worker.join().await.expect("worker join");
 

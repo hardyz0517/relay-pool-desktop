@@ -105,6 +105,8 @@ impl SseUsageObserver {
         self.usage.as_ref()
     }
 
+    // Response IDs are parsed to verify SSE compatibility but are not persisted here.
+    #[cfg(test)]
     pub fn response_id(&self) -> Option<&str> {
         self.response_id.as_deref()
     }

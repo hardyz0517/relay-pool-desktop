@@ -1,9 +1,9 @@
 mod lifecycle {
-    #[path = "../../src/services/proxy/lifecycle/attempt.rs"]
+    #[path = "../../src/application/request_lifecycle/attempt.rs"]
     pub mod attempt;
-    #[path = "../../src/services/proxy/lifecycle/delivery.rs"]
+    #[path = "../../src/application/request_lifecycle/delivery.rs"]
     pub mod delivery;
-    #[path = "../../src/services/proxy/lifecycle/request.rs"]
+    #[path = "../../src/application/request_lifecycle/request.rs"]
     pub mod request;
 }
 

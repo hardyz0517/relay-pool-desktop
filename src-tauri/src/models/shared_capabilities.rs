@@ -32,7 +32,15 @@ pub enum StationKeyGroupSelectionKind {
 pub struct StationKeyGroupSelection {
     pub kind: StationKeyGroupSelectionKind,
     pub group_binding_id: Option<String>,
+    #[allow(
+        dead_code,
+        reason = "retained for the existing station-key input payload contract"
+    )]
     pub group_id_hash: Option<String>,
+    #[allow(
+        dead_code,
+        reason = "retained for the existing station-key input payload contract"
+    )]
     pub group_name: Option<String>,
 }
 
