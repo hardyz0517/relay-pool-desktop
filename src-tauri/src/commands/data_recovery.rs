@@ -80,7 +80,11 @@ pub(crate) struct DataStoreCandidateView {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum StartupDecisionView {
     Ready {
         candidate_id: String,
@@ -210,7 +214,9 @@ fn decision_view(decision: &StartupDecision) -> StartupDecisionView {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_action_allowed, startup_view, RecoveryAction, RecoveryRuntimeMode};
+    use super::{
+        is_action_allowed, startup_view, RecoveryAction, RecoveryRuntimeMode, StartupDecisionView,
+    };
     use crate::services::data_store::{
         config::DatabaseGeneration,
         types::{
@@ -278,11 +284,33 @@ mod tests {
         assert_eq!(value["databaseGeneration"], "two");
         assert_eq!(value["compatibility"]["decisionCode"], "writable");
         assert_eq!(value["decision"]["kind"], "ready");
+        assert_eq!(value["decision"]["candidateId"], "candidate-v2");
+        assert!(value["decision"].get("candidate_id").is_none());
         assert_eq!(value["candidates"][0]["databaseGeneration"], "two");
         assert_eq!(
             value["candidates"][0]["compatibility"]["decisionCode"],
             "writable"
         );
         assert_eq!(value["capabilities"]["canActivateCandidate"], false);
+    }
+
+    #[test]
+    fn startup_decision_fields_are_camel_case_for_every_frontend_variant() {
+        let first_run = serde_json::to_value(StartupDecisionView::FirstRun {
+            default_data_dir: "data".to_string(),
+        })
+        .expect("serialize first-run decision");
+        let conflict = serde_json::to_value(StartupDecisionView::Conflict {
+            candidate_ids: vec!["candidate-v1".to_string(), "candidate-v2".to_string()],
+        })
+        .expect("serialize conflict decision");
+
+        assert_eq!(first_run["defaultDataDir"], "data");
+        assert!(first_run.get("default_data_dir").is_none());
+        assert_eq!(
+            conflict["candidateIds"],
+            serde_json::json!(["candidate-v1", "candidate-v2"])
+        );
+        assert!(conflict.get("candidate_ids").is_none());
     }
 }
