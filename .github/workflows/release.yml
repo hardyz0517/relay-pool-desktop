@@ -32,7 +32,7 @@ jobs:
       - name: Verify release tag and source version
         env:
           RELAY_POOL_RELEASE_TAG: ${{ github.ref_name }}
-        run: pnpm verify:release-version -- --require-tag
+        run: node scripts/verify-release-version.mjs --require-tag
       - name: Load release notes
         id: release_notes
         shell: pwsh
