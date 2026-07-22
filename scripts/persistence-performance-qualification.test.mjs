@@ -127,6 +127,16 @@ try {
     /\[System\.IO\.File\]::ReadAllText\(\$resolvedBaseline, \[System\.Text\.Encoding\]::UTF8\)/,
     "release qualification must decode the baseline JSON explicitly on Windows PowerShell",
   );
+  assert.doesNotMatch(
+    qualificationWrapperSource,
+    /Get-FileHash/,
+    "release qualification must not depend on optional PowerShell hashing cmdlets",
+  );
+  assert.match(
+    qualificationWrapperSource,
+    /\[System\.Security\.Cryptography\.SHA256\]::Create\(\)/,
+    "release qualification must hash files through the .NET runtime",
+  );
   assert.match(
     qualificationWrapperSource,
     /if \(\$captured\.exitCode -ne 0\)[\s\S]+throw "V2 performance qualification failed/,

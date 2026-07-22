@@ -33,6 +33,16 @@ assert.match(
   /\[System\.IO\.File\]::ReadAllText\(\$probeOutput, \[System\.Text\.Encoding\]::UTF8\)/,
   "the baseline must decode the UTF-8 probe report explicitly on Windows PowerShell",
 );
+assert.doesNotMatch(
+  script,
+  /Get-FileHash/,
+  "the baseline must not depend on optional PowerShell hashing cmdlets",
+);
+assert.match(
+  script,
+  /\[System\.Security\.Cryptography\.SHA256\]::Create\(\)/,
+  "the baseline must hash files through the .NET runtime available on every runner",
+);
 
 const result = spawnSync(
   "powershell",
