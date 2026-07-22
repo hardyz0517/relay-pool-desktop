@@ -5,6 +5,7 @@ description = "Local desktop AI relay pool manager"
 authors = ["Relay Pool Desktop contributors"]
 edition = "2021"
 rust-version = "1.89"
+publish = false
 
 [lib]
 name = "relay_pool_desktop_lib"

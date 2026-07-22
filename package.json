@@ -6,12 +6,22 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "pnpm theme:audit && tsc --noEmit && vite build",
+    "lint": "eslint \"src/**/*.{ts,tsx}\" \"scripts/architecture/**/*.mjs\"",
     "test": "vitest run",
     "test:contracts": "node scripts/run-contract-tests.mjs",
     "verify:release-version": "node scripts/verify-release-version.mjs",
     "verify:persistence-artifacts": "node scripts/verify-persistence-v2-artifacts.mjs --tracked",
     "verify:release-bundle": "node scripts/verify-persistence-v2-artifacts.mjs --artifact src-tauri/target/x86_64-pc-windows-msvc/release/bundle",
-    "verify:release": "pnpm verify:release-version && pnpm verify:persistence-artifacts && pnpm test:contracts && pnpm test && pnpm build && cargo test --manifest-path src-tauri/Cargo.toml services::updater -- --nocapture && cargo test --manifest-path src-tauri/Cargo.toml prepare_for_update -- --nocapture && cargo check --manifest-path src-tauri/Cargo.toml",
+    "architecture:fixtures": "node scripts/architecture/check-fixtures.mjs",
+    "architecture:typescript": "node scripts/architecture/check-typescript-boundaries.mjs",
+    "architecture:commands": "node scripts/architecture/check-command-registry.mjs",
+    "architecture:security": "node scripts/architecture/check-tauri-security.mjs && node scripts/architecture/check-build-entries.mjs",
+    "architecture:artifacts": "node scripts/architecture/check-artifact-policy.mjs",
+    "architecture:dependencies": "node scripts/architecture/check-dependency-lifecycle.mjs",
+    "architecture:scale-baseline": "node scripts/architecture/scale-baseline/run.mjs",
+    "verify:fast": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Profile fast",
+    "verify:full": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Profile full",
+    "verify:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Profile release",
     "theme:audit": "node scripts/theme-audit.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",
@@ -35,18 +45,22 @@
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@tauri-apps/cli": "^2.9.0",
     "@types/node": "^24.13.3",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "eslint": "10.7.0",
     "jsdom": "^26.1.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",
+    "typescript-eslint": "8.65.0",
     "vite": "^6.0.3",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "yaml": "2.9.0"
   },
   "packageManager": "pnpm@11.7.0"
 }

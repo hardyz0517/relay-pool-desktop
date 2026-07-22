@@ -1,0 +1,1 @@
+{"build":{"beforeBuildCommand":"pnpm build","frontendDist":"../dist"}}

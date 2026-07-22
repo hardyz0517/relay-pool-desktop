@@ -1,0 +1,1 @@
+{"schema_version":1,"production_config":{"path":"src-tauri/tauri.conf.json"},"window_patterns":["main","capture-*"],"command_permissions":{},"application_exact_origin_validator":{"owner":"fixture","symbol":"fixture::exact_origin"},"demo_entry_reachability":"unreachable","temporary_entries":[]}

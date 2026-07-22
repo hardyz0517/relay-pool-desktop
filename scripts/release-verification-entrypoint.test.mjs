@@ -1,48 +1,43 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { parse as parseYaml } from "yaml";
 
 const pkg = JSON.parse(await readFile("package.json", "utf8"));
-const release = await readFile(".github/workflows/release.yml", "utf8");
+const workflow = parseYaml(await readFile(".github/workflows/release.yml", "utf8"));
+const verifier = await readFile("scripts/verify.ps1", "utf8");
+const steps = workflow.jobs.release.steps;
+const actionIndex = steps.findIndex((step) => String(step.uses ?? "").startsWith("tauri-apps/tauri-action@"));
+const prebundleIndex = steps.findIndex((step) => String(step.run ?? "").includes("-Profile release -ReleasePhase prebundle"));
+const postbundleIndex = steps.findIndex((step) => String(step.run ?? "").includes("-Profile release -ReleasePhase postbundle"));
+const tagCheckIndex = steps.findIndex((step) => String(step.run ?? "").includes("verify:release-version -- --require-tag"));
 
 assert.equal(pkg.scripts["test:contracts"], "node scripts/run-contract-tests.mjs");
-assert.equal(
-  pkg.scripts["verify:release-version"],
-  "node scripts/verify-release-version.mjs",
-);
-assert.equal(
-  pkg.scripts["verify:persistence-artifacts"],
-  "node scripts/verify-persistence-v2-artifacts.mjs --tracked",
-);
+assert.equal(pkg.scripts["verify:release-version"], "node scripts/verify-release-version.mjs");
+assert.equal(pkg.scripts["verify:persistence-artifacts"], "node scripts/verify-persistence-v2-artifacts.mjs --tracked");
 assert.match(pkg.scripts["verify:release-bundle"], /verify-persistence-v2-artifacts\.mjs --artifact/);
-assert.match(pkg.scripts["verify:release"], /pnpm verify:persistence-artifacts/);
-assert.ok(
-  pkg.scripts["verify:release"].startsWith("pnpm verify:release-version &&"),
-  "release metadata must fail before the expensive verification suite",
-);
-assert.match(pkg.scripts["verify:release"], /pnpm test:contracts/);
-assert.match(pkg.scripts["verify:release"], /pnpm test/);
-assert.match(pkg.scripts["verify:release"], /pnpm build/);
-assert.match(pkg.scripts["verify:release"], /cargo check/);
-assert.match(release, /run: pnpm verify:release/);
-assert.match(release, /RELAY_POOL_RELEASE_TAG: \$\{\{ github\.ref_name \}\}/);
-assert.match(release, /run: pnpm verify:release-version -- --require-tag/);
-assert.match(release, /actions\/setup-python@[0-9a-f]{40}/);
-assert.match(release, /run: pnpm verify:release-bundle/);
-assert.match(release, /tagName: \$\{\{ github\.ref_name \}\}/);
-assert.match(release, /releaseName: Relay Pool Desktop \$\{\{ github\.ref_name \}\}/);
-assert.match(release, /releaseBody: \$\{\{ steps\.release_notes\.outputs\.body \}\}/);
-assert.ok(
-  release.indexOf("run: pnpm verify:release-version -- --require-tag") <
-    release.indexOf("uses: tauri-apps/tauri-action@"),
-  "tag and source versions must match before packaging or signing",
-);
-assert.ok(
-  release.indexOf("id: release_notes") < release.indexOf("uses: tauri-apps/tauri-action@"),
-  "release notes must be loaded before the draft release is created",
-);
-assert.ok(
-  release.indexOf("uses: tauri-apps/tauri-action@") <
-    release.indexOf("run: pnpm verify:release-bundle"),
-  "the final bundle scan must run after Tauri creates the release artifacts",
-);
-assert.doesNotMatch(release, /run: node scripts\/updater-/);
+assert.equal(pkg.scripts["verify:release"], "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Profile release");
+
+for (const required of [
+  "verify:persistence-artifacts",
+  "architecture:scale-baseline",
+  "test:contracts",
+  "Frontend unit tests",
+  "Frontend production build",
+  "cargo",
+  "--locked",
+  "verify:release-bundle",
+]) {
+  assert.ok(verifier.includes(required), `shared verifier is missing ${required}`);
+}
+
+assert.ok(tagCheckIndex >= 0 && prebundleIndex > tagCheckIndex, "tag/source mismatch must fail before full prebundle verification");
+assert.ok(actionIndex > prebundleIndex, "signed packaging must run only after shared prebundle verification");
+assert.ok(postbundleIndex > actionIndex, "final artifact scan must run after Tauri packaging");
+assert.equal(steps[actionIndex].with.tagName, "${{ github.ref_name }}");
+assert.equal(steps[actionIndex].with.releaseName, "Relay Pool Desktop ${{ github.ref_name }}");
+assert.equal(steps[actionIndex].with.releaseBody, "${{ steps.release_notes.outputs.body }}");
+assert.equal(steps[actionIndex].with.releaseDraft, true);
+assert.ok(steps.some((step) => String(step.uses ?? "").startsWith("actions/setup-python@")));
+assert.ok(!steps.some((step) => String(step.run ?? "").includes("node scripts/updater-")));
+
+console.log("release verification entrypoint contract checks passed");

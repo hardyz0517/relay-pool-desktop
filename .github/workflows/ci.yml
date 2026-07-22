@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ["master"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 11.7.0
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: 1.95.0-x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          workspaces: . -> output/cargo/ci
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install pinned cargo-deny
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Verify cargo-deny identity
+        shell: pwsh
+        run: |
+          $actual = cargo deny --version
+          if ($actual -notmatch '^cargo-deny 0\.20\.2\b') { throw "unexpected cargo-deny: $actual" }
+      - name: Full verification
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}\output\cargo\ci
+        run: ./scripts/verify.ps1 -Profile full
+
+  msrv:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: 1.89.0-x86_64-pc-windows-msvc
+      - name: Check declared MSRV
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}\output\cargo\msrv
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml

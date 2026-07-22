@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { parse as parseYaml } from "yaml";
 
 const updaterApiSource = await readFile("src/lib/api/updater.ts", "utf8");
-const workflowSource = await readFile(".github/workflows/release.yml", "utf8");
+const workflow = parseYaml(await readFile(".github/workflows/release.yml", "utf8"));
 const contractRunnerSource = await readFile("scripts/run-contract-tests.mjs", "utf8");
 
 assert.match(
@@ -17,9 +18,8 @@ assert.match(
   "a detached native check must close a late update resource instead of leaking it into a later install",
 );
 
-assert.match(
-  workflowSource,
-  /run: pnpm verify:release/,
+assert.ok(
+  workflow.jobs.release.steps.some((step) => String(step.run ?? "").includes("-Profile release -ReleasePhase prebundle")),
   "release builds must run the shared release verification gate",
 );
 
