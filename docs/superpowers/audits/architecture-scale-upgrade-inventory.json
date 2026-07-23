@@ -21,11 +21,11 @@
         "callers": ["src/lib/api", "src/lib/queries"],
         "migration_task": 3,
         "delete_task": 23,
-        "exception_reason": "121 compiled ACL command identities and a handwritten generate_handler list remain authoritative until generated registry cutover.",
-        "evidence_command": "rg -n \"#\\[tauri::command\\]|generate_handler!\" src-tauri/src/commands/mod.rs src-tauri/src/lib.rs",
-        "count": 121,
+        "exception_reason": "The compiled Rust IPC registry is authoritative for 119 registered Tauri command identities; Task 5/6 migrate the remaining schemas and transports by command group.",
+        "evidence_command": "pnpm generate:bindings --check && pnpm architecture:commands",
+        "count": 119,
         "groups": {
-          "data_store": ["app_status", "get_data_store_startup_state", "refresh_data_store_candidates", "locate_data_store_candidate", "activate_data_store_candidate", "create_new_data_store", "open_data_store_backup_dir", "export_data_store_diagnostic", "get_secret_migration_status", "run_secret_safety_scan"],
+          "data_store": ["app_status", "get_data_store_startup_state", "refresh_data_store_candidates", "locate_data_store_candidate", "activate_data_store_candidate", "create_new_data_store", "open_data_store_backup_dir", "export_data_store_diagnostic"],
           "stations_settings": ["list_stations", "create_station", "update_station", "delete_station", "reorder_stations", "get_settings", "get_local_access_key", "update_local_access_key", "import_relay_pool_to_ccswitch", "open_external_url", "updater_network_config", "inspect_latest_update_manifest", "update_settings", "choose_data_dir", "reset_data_dir"],
           "proxy_logs": ["get_proxy_status", "load_local_routing_workspace", "reorder_local_routing_keys", "start_local_proxy", "stop_local_proxy", "cleanup_before_update", "prepare_local_proxy_for_update", "restart_local_proxy", "list_request_logs", "clear_request_logs"],
           "keys_routing": ["list_station_keys", "create_station_key", "update_station_key", "save_station_key_with_defaults", "update_station_key_group_binding", "delete_station_key", "reorder_station_keys", "get_remote_key_capability", "list_remote_station_keys", "scan_remote_station_keys", "create_remote_station_key", "create_local_station_key_from_remote", "bind_remote_station_key", "unbind_remote_station_key", "list_key_pool_items", "reorder_key_pool", "get_station_key_capabilities", "update_station_key_capabilities", "list_model_aliases", "upsert_model_alias", "delete_model_alias", "list_station_key_health", "list_station_endpoint_health", "get_station_key_health", "ping_station_endpoint", "test_station_key_connectivity", "simulate_route"],
@@ -37,11 +37,11 @@
     ],
     "command_serialization_fixtures": [
       {
-        "path": "docs/superpowers/audits/architecture-scale-command-serialization-fixture.json",
-        "owner": "Task 3",
+        "path": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json",
+        "owner": "Rust compiled IPC registry",
         "migration_task": 3,
-        "delete_task": 3,
-        "exception_reason": "Stage 0 freezes representative redacted current envelopes. Task 3 replaces this characterization with compiled registry serde goldens for every public DTO and error variant."
+        "delete_task": 5,
+        "exception_reason": "Task 3 compiled serde golden for the settings/stations read-only pilot; Task 5 expands this by ordinary command group."
       }
     ],
     "public_errors": [
@@ -311,9 +311,7 @@
     {"id":"legacy-browser-preview-fallback","paths":["src/lib/api","src/lib/queries"],"introduced_shard":"legacy-baseline","delete_shard":"S2-T8-9-backend-cutover","owner":"Task 8","expiry_stage":2,"reason":"Preview behavior is currently mixed with production transport."},
     {"id":"legacy-sync-provider-adapters","paths":["src-tauri/src/services/collectors","src-tauri/src/services/outbound.rs"],"introduced_shard":"legacy-baseline","delete_shard":"S5-T19-22-provider-capabilities","owner":"Task 22","expiry_stage":5,"reason":"Provider operations remain synchronous until outbound and capability cutover."}
   ],
-  "temporary_architecture_allowlist": [
-    {"id":"compiled-command-registry-pending","source_symbol":"src-tauri/src/lib.rs::run::tauri::generate_handler","target_symbol":"src-tauri/src/commands/mod.rs::#[tauri::command]","introduced_shard":"Task 0/Task 2","delete_shard":"S1-T3-bindings-registry","owner":"Task 3","expiry_stage":1,"reason":"Stage 0 has no repository-owned compiled registry yet; evidence is compiled ACL plus command inventory plus serialization fixtures. Task 3 must delete this entry."}
-  ],
+  "temporary_architecture_allowlist": [],
   "behavior_baselines": [
     {"id":"desktop-data-store","samples":["read startup state","activate candidate","create store","typed/redacted error"],"owner":"Task 4/8","status":"covered by contract and Rust tests"},
     {"id":"station-key-crud","samples":["station CRUD","key CRUD/reorder","group binding preservation","secret masking"],"owner":"Task 5/11","status":"covered by contract and Rust tests"},

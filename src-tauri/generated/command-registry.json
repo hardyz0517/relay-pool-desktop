@@ -1,0 +1,853 @@
+{
+  "schema_version": 1,
+  "generator_version": 1,
+  "ipc_contract_version": 1,
+  "contract_hash": "fbefbe971617d8e5cd8d853eec785c42f2f1a911fb06c3dd2fdb02cd920e82f6",
+  "commands": [
+    {
+      "name": "activate_data_store_candidate",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "app_status",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "bind_remote_station_key",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "choose_data_dir",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "cleanup_before_update",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "clear_capture_session",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "clear_change_events",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "clear_request_logs",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "clear_station_credentials",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "close_capture_session",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "collect_station_info",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "collect_station_task",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "collect_sub2api_station",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "create_channel_monitor",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "create_channel_monitor_template",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "create_local_station_key_from_remote",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "create_new_data_store",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "create_remote_station_key",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "create_station",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "create_station_key",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "delete_channel_monitor",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "delete_channel_monitor_template",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "delete_model_alias",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "delete_pricing_rule",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "delete_station",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "delete_station_key",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "detect_station_info",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "detect_sub2api_station",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "dismiss_change_event",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "duplicate_channel_monitor_template",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "export_data_store_diagnostic",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "finish_capture_session",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "finish_web_authorization_session",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "get_capture_session_status",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "get_data_store_startup_state",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "get_latest_collector_snapshot",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "get_local_access_key",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "get_proxy_status",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "get_remote_key_capability",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "get_settings",
+      "transport": "ordinary",
+      "input_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "output_schema_hash": "188562d545305afeaa4b61f5d2aa5fe777d60efcbd50d6d7b23107e5db7023d5",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "get_station_credentials",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "get_station_key_capabilities",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "get_station_key_health",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "import_relay_pool_to_ccswitch",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "inspect_latest_update_manifest",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_balance_snapshots",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_balance_snapshots_for_station",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_change_events",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_change_events_for_station",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_channel_monitor_runs",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_channel_monitor_summaries",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_channel_monitor_templates",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_channel_monitors",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_channel_status_summaries",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_collector_runs",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_collector_snapshots",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_current_station_balance_snapshots",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_group_rate_records",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_key_pool_items",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_model_aliases",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_model_base_prices",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_pricing_rules",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_remote_station_keys",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_request_logs",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_station_endpoint_health",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_station_group_bindings",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_station_group_options",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_station_key_health",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_station_keys",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "list_stations",
+      "transport": "ordinary",
+      "input_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "output_schema_hash": "cd4168ce13096eb221659627167a34584637fa29f47e05e1ac53cff915a9be57",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "load_channel_status_workspace",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "load_local_routing_workspace",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "load_pricing_comparison_workspace",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "locate_data_store_candidate",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "mark_change_event_read",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "mark_change_events_read",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "open_data_store_backup_dir",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "open_external_url",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "ping_station_endpoint",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "prepare_local_proxy_for_update",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "record_capture_event",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "refresh_data_store_candidates",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "reorder_key_pool",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "reorder_local_routing_keys",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "reorder_station_keys",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "reorder_stations",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "reset_data_dir",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "reset_model_base_prices_to_builtins",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "resolve_change_event",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "resolve_station_key_pricing_context",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "restart_local_proxy",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "run_channel_monitor_now",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "save_station_key_with_defaults",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "scan_remote_station_keys",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "simulate_route",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "start_capture_session",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "start_local_proxy",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "stop_local_proxy",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "test_station_key_connectivity",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "test_station_login",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "test_station_login_input",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "unbind_remote_station_key",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "update_channel_monitor",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "update_channel_monitor_template",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "update_local_access_key",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "update_settings",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "update_station",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "update_station_credentials",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "update_station_key",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "update_station_key_capabilities",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "update_station_key_group_binding",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "update_station_session",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "updater_network_config",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "upsert_balance_snapshot",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "upsert_change_event",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "upsert_model_alias",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "upsert_model_base_price",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "upsert_pricing_rule",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    },
+    {
+      "name": "upsert_station_group_binding",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+    }
+  ],
+  "streaming_surfaces": [
+    {
+      "command": "test_station_key_connectivity",
+      "event": "StationKeyConnectivityTestEvent",
+      "event_schema_version": 1,
+      "transport": "channel"
+    }
+  ],
+  "evidence": {
+    "kind": "compiled-rust-registry",
+    "serialization_fixture_hash": "f88d3bcc5c64a0d67edd476d11ddcbf7e8fd083bdf22eb388dff0658e32e5e22"
+  }
+}

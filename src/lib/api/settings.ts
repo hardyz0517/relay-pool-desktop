@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getSettings as getSettingsBinding } from "@/lib/bridge/generated";
+import type { SettingsDto } from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import {
   DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
@@ -37,12 +39,7 @@ let memorySettings: AppSettings = {
 };
 
 export function getSettings() {
-  return invoke<AppSettings>("get_settings").then(normalizeSettings).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return normalizeSettings(memorySettings);
-    }
-    throw error;
-  });
+  return getSettingsBinding().then(normalizeSettings);
 }
 
 export function getLocalAccessKey() {
@@ -102,8 +99,8 @@ export function resetDataDir() {
   });
 }
 
-function normalizeSettings(settings: AppSettings): AppSettings {
-  const maybeSettings = settings as AppSettings & Partial<Record<keyof AppSettings, unknown>>;
+function normalizeSettings(settings: SettingsDto | AppSettings): AppSettings {
+  const maybeSettings = settings as SettingsDto & Partial<Record<keyof AppSettings, unknown>>;
   return {
     ...settings,
     pendingDataDir: typeof maybeSettings.pendingDataDir === "string" ? maybeSettings.pendingDataDir : null,

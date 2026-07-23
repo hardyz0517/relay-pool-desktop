@@ -35,8 +35,6 @@ commands.allow = [
   "restart_local_proxy",
   "list_request_logs",
   "clear_request_logs",
-  "get_secret_migration_status",
-  "run_secret_safety_scan",
   "list_station_keys",
   "create_station_key",
   "update_station_key",

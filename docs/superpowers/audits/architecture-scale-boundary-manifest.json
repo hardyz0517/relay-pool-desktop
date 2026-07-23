@@ -1,21 +1,11 @@
 {
   "schema_version": 1,
   "source_revision": "6a204908e2b3697e4c80951771950e29872942d9",
-  "current_stage": 0,
+  "current_stage": 1,
   "allowed_exports": [],
   "allowed_edges": [],
   "forbidden_edges": [],
   "temporary_edges": [
-    {
-      "id": "compiled-command-registry-pending",
-      "source_symbol": "src-tauri/src/lib.rs::run::tauri::generate_handler",
-      "target_symbol": "src-tauri/src/commands/mod.rs::tauri_command_set",
-      "owner": "Task 3",
-      "introduced_shard": "Task 0",
-      "delete_shard": "Task 3",
-      "expiry_stage": 1,
-      "reason": "Stage 0 has no repository-owned compiled command registry. The temporary proof is compiled ACL parity with the complete command inventory plus the registered redacted serialization characterization."
-    },
     {
       "id": "legacy-composition-imports-feature-descendants",
       "ecosystem": "typescript",

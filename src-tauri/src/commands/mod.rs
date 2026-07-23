@@ -16,6 +16,7 @@ pub(crate) mod data_recovery;
 
 use crate::{
     application::{app_services::AppServices, error::ApplicationError, pagination::PageLimit},
+    ipc::dto::{SettingsDto, StationDto},
     models::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
         change_events::{ChangeEvent, UpsertChangeEventInput},
@@ -391,11 +392,12 @@ fn data_store_updated_at() -> String {
 }
 
 #[tauri::command]
-pub async fn list_stations(services: State<'_, AppServices>) -> Result<Vec<Station>, String> {
+pub async fn list_stations(services: State<'_, AppServices>) -> Result<Vec<StationDto>, String> {
     services
         .stations
         .list()
         .await
+        .map(|stations| stations.into_iter().map(StationDto::from).collect())
         .map_err(command_application_error)
 }
 
@@ -451,11 +453,12 @@ pub async fn reorder_stations(
 }
 
 #[tauri::command]
-pub async fn get_settings(services: State<'_, AppServices>) -> Result<AppSettings, String> {
+pub async fn get_settings(services: State<'_, AppServices>) -> Result<SettingsDto, String> {
     services
         .settings
         .load()
         .await
+        .map(SettingsDto::from)
         .map_err(command_application_error)
 }
 

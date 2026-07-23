@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listStations as listStationsBinding } from "@/lib/bridge/generated";
+import type { StationDto } from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import { mockStations } from "@/lib/mock";
 import type { EndpointPingResult, Station, StationEndpointHealth, StationInput, StationUpdateInput } from "@/lib/types/stations";
@@ -48,12 +50,32 @@ function updateMemoryStations(mutator: (stations: Station[]) => Station[]) {
 }
 
 export function listStations() {
-  return invoke<Station[]>("list_stations").catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return ensureMemoryStations();
-    }
-    throw error;
-  });
+  return listStationsBinding().then((stations) => stations.map(normalizeStation));
+}
+
+function normalizeStation(station: StationDto): Station {
+  return {
+    ...station,
+    stationType:
+      station.stationType === "sub2api" ||
+      station.stationType === "newapi" ||
+      station.stationType === "openai-compatible"
+        ? station.stationType
+        : "custom",
+    collectorProxyMode:
+      station.collectorProxyMode === "direct" ||
+      station.collectorProxyMode === "system" ||
+      station.collectorProxyMode === "manual"
+        ? station.collectorProxyMode
+        : "inherit",
+    status:
+      station.status === "healthy" ||
+      station.status === "warning" ||
+      station.status === "error" ||
+      station.status === "disabled"
+        ? station.status
+        : "unchecked",
+  };
 }
 
 export function createStation(input: StationInput) {
