@@ -383,12 +383,12 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 - Create: `scripts/generate-bindings.mjs`（固定的 repository-owned generator wrapper）
 - Modify: `package.json`
 
-- [ ] 以 settings/stations 的只读 command 建立 RED generation/serialization fixture。
-- [ ] Rust registry 同时驱动普通 command binding、Tauri registration ledger 和 ACL consistency manifest；禁止维护三份手写名字。
-- [ ] generated 文件头包含 generator version、IPC contract version 和 canonical hash。
-- [ ] ADR/registry 定义 additive/breaking contract change policy：command/input/output/error/event schema 的 breaking change 必须新增 versioned command/event 或提升 IPC contract version；只改 doc/comment 不得改变 canonical hash。删除旧 version 只能在调用者/ACL/asset inventory 为零后执行。
-- [ ] `pnpm generate:bindings` 只生成确定性内容；`pnpm generate:bindings --check` 在生成后要求零 diff。
-- [ ] Channel 暂不能生成时，只登记一个 typed streaming adapter surface，不能因此放弃普通 command 生成。
+- [x] 以 settings/stations 的只读 command 建立 RED generation/serialization fixture。
+- [x] Rust registry 同时驱动普通 command binding、Tauri registration ledger 和 ACL consistency manifest；禁止维护三份手写名字。
+- [x] generated 文件头包含 generator version、IPC contract version 和 canonical hash。
+- [x] ADR/registry 定义 additive/breaking contract change policy：command/input/output/error/event schema 的 breaking change 必须新增 versioned command/event 或提升 IPC contract version；只改 doc/comment 不得改变 canonical hash。删除旧 version 只能在调用者/ACL/asset inventory 为零后执行。
+- [x] `pnpm generate:bindings` 只生成确定性内容；`pnpm generate:bindings --check` 在生成后要求零 diff。
+- [x] Channel 暂不能生成时，只登记一个 typed streaming adapter surface，不能因此放弃普通 command 生成。
 
 **Cutover：** 只有试点 command 的 frontend 调用切到 generated binding；其他 command 仍保持旧 transport，但不得 fallback 到试点旧路径。
 
