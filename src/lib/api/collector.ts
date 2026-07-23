@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/bridge/transport";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
   CaptureSessionStatus,

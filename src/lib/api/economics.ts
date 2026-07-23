@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { isTauriCommandNotFound, isTauriInvokeUnavailable } from "@/lib/tauriErrors";
+import { invoke } from "@/lib/bridge/transport";
+import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import { mockPricingRows } from "@/lib/mock/pricing";
 import { latestStationBalanceSnapshots } from "@/lib/projections/balanceFacts";
 import type {
@@ -103,9 +103,6 @@ export function listBalanceSnapshots() {
 
 export function listCurrentStationBalanceSnapshots() {
   return invoke<BalanceSnapshot[]>("list_current_station_balance_snapshots").catch((error) => {
-    if (isTauriCommandNotFound(error)) {
-      return listBalanceSnapshots().then(latestStationBalanceSnapshots);
-    }
     if (isTauriInvokeUnavailable(error)) {
       return latestStationBalanceSnapshots(ensureMemoryBalanceSnapshots());
     }
@@ -115,11 +112,6 @@ export function listCurrentStationBalanceSnapshots() {
 
 export function listBalanceSnapshotsForStation(stationId: string) {
   return invoke<BalanceSnapshot[]>("list_balance_snapshots_for_station", { stationId }).catch((error) => {
-    if (isTauriCommandNotFound(error)) {
-      return listBalanceSnapshots().then((snapshots) =>
-        snapshots.filter((snapshot) => snapshot.stationId === stationId),
-      );
-    }
     if (isTauriInvokeUnavailable(error)) {
       return ensureMemoryBalanceSnapshots().filter((snapshot) => snapshot.stationId === stationId);
     }

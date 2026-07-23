@@ -1,6 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
-import { getSettings as getSettingsBinding } from "@/lib/bridge/generated";
-import type { SettingsDto } from "@/lib/bridge/generated";
+import { invoke } from "@/lib/bridge/transport";
+import {
+  getSettings as getSettingsBinding,
+  updateSettings as updateSettingsBinding,
+} from "@/lib/bridge/generated";
+import type { SettingsDto, UpdateSettingsInputDto } from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import {
   DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
@@ -72,13 +75,35 @@ export function importRelayPoolToCCSwitch() {
 }
 
 export function updateSettings(input: UpdateSettingsInput) {
-  return invoke<AppSettings>("update_settings", { input }).then(normalizeSettings).catch((error) => {
+  return updateSettingsBinding(toUpdateSettingsDto(input)).then(normalizeSettings).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       memorySettings = { ...memorySettings, ...input };
       return normalizeSettings(memorySettings);
     }
     throw error;
   });
+}
+
+function toUpdateSettingsDto(input: UpdateSettingsInput): UpdateSettingsInputDto {
+  return {
+    localProxyPort: input.localProxyPort,
+    defaultRoutingStrategy: input.defaultRoutingStrategy,
+    collectorProxyMode: input.collectorProxyMode,
+    collectorProxyUrl: input.collectorProxyUrl,
+    maxRateMultiplier: input.maxRateMultiplier,
+    defaultRoutingGroupFilter: input.defaultRoutingGroupFilter,
+    schedulerAdvancedSettings: input.schedulerAdvancedSettings,
+    lowBalanceThresholdCny: input.lowBalanceThresholdCny,
+    collectorIntervalMinutes: input.collectorIntervalMinutes,
+    balanceIntervalMinutes: input.balanceIntervalMinutes,
+    groupRateIntervalMinutes: input.groupRateIntervalMinutes,
+    modelListIntervalMinutes: input.modelListIntervalMinutes,
+    pricingRefreshIntervalMinutes: input.pricingRefreshIntervalMinutes,
+    collectorTimeoutSeconds: input.collectorTimeoutSeconds,
+    collectorMaxConcurrency: input.collectorMaxConcurrency,
+    allowDepletedFallback: input.allowDepletedFallback,
+    developerModeEnabled: input.developerModeEnabled,
+  };
 }
 
 export function chooseDataDir() {

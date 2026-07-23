@@ -1,6 +1,16 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listStations as listStationsBinding } from "@/lib/bridge/generated";
-import type { StationDto } from "@/lib/bridge/generated";
+import { invoke } from "@/lib/bridge/transport";
+import {
+  createStation as createStationBinding,
+  deleteStation as deleteStationBinding,
+  listStations as listStationsBinding,
+  reorderStations as reorderStationsBinding,
+  updateStation as updateStationBinding,
+} from "@/lib/bridge/generated";
+import type {
+  CreateStationInputDto,
+  StationDto,
+  UpdateStationInputDto,
+} from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import { mockStations } from "@/lib/mock";
 import type { EndpointPingResult, Station, StationEndpointHealth, StationInput, StationUpdateInput } from "@/lib/types/stations";
@@ -79,7 +89,7 @@ function normalizeStation(station: StationDto): Station {
 }
 
 export function createStation(input: StationInput) {
-  return invoke<Station>("create_station", { input }).catch((error) => {
+  return createStationBinding(toCreateStationDto(input)).then(normalizeStation).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const nextStation: Station = {
@@ -118,7 +128,7 @@ export function createStation(input: StationInput) {
 }
 
 export function updateStation(input: StationUpdateInput) {
-  return invoke<Station>("update_station", { input }).catch((error) => {
+  return updateStationBinding(toUpdateStationDto(input)).then(normalizeStation).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const nextStations = updateMemoryStations((stations) =>
@@ -162,7 +172,7 @@ export function updateStation(input: StationUpdateInput) {
 }
 
 export function deleteStation(id: string) {
-  return invoke<void>("delete_station", { id }).catch((error) => {
+  return deleteStationBinding({ id }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       updateMemoryStations((stations) => stations.filter((station) => station.id !== id));
       return;
@@ -186,7 +196,9 @@ function endpointRevisionKey(value: string) {
 }
 
 export function reorderStations(stationIds: string[]) {
-  return invoke<Station[]>("reorder_stations", { stationIds }).catch((error) => {
+  return reorderStationsBinding({ stationIds })
+    .then((stations) => stations.map(normalizeStation))
+    .catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const byId = new Map(ensureMemoryStations().map((station) => [station.id, station] as const));
       const nextStations = stationIds
@@ -199,7 +211,32 @@ export function reorderStations(stationIds: string[]) {
       return nextStations;
     }
     throw error;
-  });
+    });
+}
+
+function toCreateStationDto(input: StationInput): CreateStationInputDto {
+  return {
+    name: input.name,
+    stationType: input.stationType,
+    websiteUrl: input.websiteUrl,
+    apiBaseUrl: input.apiBaseUrl,
+    apiKey: input.apiKey,
+    collectorProxyMode: input.collectorProxyMode,
+    collectorProxyUrl: input.collectorProxyUrl,
+    enabled: input.enabled,
+    creditPerCny: input.creditPerCny,
+    lowBalanceThresholdCny: input.lowBalanceThresholdCny,
+    collectionIntervalMinutes: input.collectionIntervalMinutes,
+    note: input.note,
+  };
+}
+
+function toUpdateStationDto(input: StationUpdateInput): UpdateStationInputDto {
+  return {
+    ...toCreateStationDto({ ...input, apiKey: input.apiKey ?? "" }),
+    id: input.id,
+    apiKey: input.apiKey,
+  };
 }
 
 export function listStationEndpointHealth() {

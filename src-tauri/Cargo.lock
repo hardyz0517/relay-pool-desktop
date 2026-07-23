@@ -3554,6 +3554,7 @@ dependencies = [
  "tokio-util",
  "tower",
  "tower-http",
+ "tracing",
  "ureq",
  "url",
  "uuid",

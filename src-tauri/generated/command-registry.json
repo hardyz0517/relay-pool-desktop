@@ -2,840 +2,1327 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "fbefbe971617d8e5cd8d853eec785c42f2f1a911fb06c3dd2fdb02cd920e82f6",
+  "contract_hash": "64adfdee45bed2d91f5801ecf3e052f31170a4344dbdad32cbcb4f2a4f15bbfe",
   "commands": [
     {
       "name": "activate_data_store_candidate",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "app_status",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "bind_remote_station_key",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "choose_data_dir",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "input_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "output_schema_hash": "72ffb4fcea5c727a855fedeecd2fd4a5e70448fde0b59ef077815401083d2bdd",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "cleanup_before_update",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "clear_capture_session",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "clear_change_events",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "clear_request_logs",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "clear_station_credentials",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "close_capture_session",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "collect_station_info",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "collect_station_task",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "collect_sub2api_station",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "create_channel_monitor",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "create_channel_monitor_template",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "create_local_station_key_from_remote",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "create_new_data_store",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "create_remote_station_key",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "create_station",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "input_schema_hash": "4c1c6bbabc956415d8f45381597cf3b783075118c833ca3f9908bd500e8e155f",
+      "output_schema_hash": "af8c76579fe949f562e6e4afea71c49f6d694990bea74e869e486baf4a103aed",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "non_idempotent",
+      "transport_retry": false,
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "create_station_key",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "delete_channel_monitor",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "delete_channel_monitor_template",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "delete_model_alias",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "delete_pricing_rule",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "delete_station",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "input_schema_hash": "324e3cd1893fbcff67cc9a7e800a1f6d8b26f2b5d4c011540b84b418072a19b8",
+      "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "delete_station_key",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "detect_station_info",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "detect_sub2api_station",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "dismiss_change_event",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "duplicate_channel_monitor_template",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "export_data_store_diagnostic",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "finish_capture_session",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "finish_web_authorization_session",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "get_capture_session_status",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "get_data_store_startup_state",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "get_latest_collector_snapshot",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "get_local_access_key",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "input_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "output_schema_hash": "b2ef230e7f4f315a28cdcc863028da31f7110f3209feb76e76fed0f37b3d8580",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "get_proxy_status",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "get_remote_key_capability",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
+    },
+    {
+      "name": "get_runtime_contract_info",
+      "transport": "ordinary",
+      "input_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "output_schema_hash": "abcbf5b415bc38777015aa98b0c6e0ec3e827062935f0b71c1d9765c918f06e3",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "get_settings",
       "transport": "ordinary",
-      "input_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "188562d545305afeaa4b61f5d2aa5fe777d60efcbd50d6d7b23107e5db7023d5",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "get_station_credentials",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "get_station_key_capabilities",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "get_station_key_health",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "import_relay_pool_to_ccswitch",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "inspect_latest_update_manifest",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_balance_snapshots",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_balance_snapshots_for_station",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_change_events",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_change_events_for_station",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_channel_monitor_runs",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_channel_monitor_summaries",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_channel_monitor_templates",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_channel_monitors",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_channel_status_summaries",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_collector_runs",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_collector_snapshots",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_current_station_balance_snapshots",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_group_rate_records",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_key_pool_items",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_model_aliases",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_model_base_prices",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_pricing_rules",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_remote_station_keys",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_request_logs",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_station_endpoint_health",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_station_group_bindings",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_station_group_options",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_station_key_health",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_station_keys",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "list_stations",
       "transport": "ordinary",
-      "input_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "cd4168ce13096eb221659627167a34584637fa29f47e05e1ac53cff915a9be57",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "load_channel_status_workspace",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "load_local_routing_workspace",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "load_pricing_comparison_workspace",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "locate_data_store_candidate",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "mark_change_event_read",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "mark_change_events_read",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "open_data_store_backup_dir",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "open_external_url",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "ping_station_endpoint",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "prepare_local_proxy_for_update",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "record_capture_event",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "refresh_data_store_candidates",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "reorder_key_pool",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "reorder_local_routing_keys",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "reorder_station_keys",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "reorder_stations",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "input_schema_hash": "9fe757d5b0cd9e081062f2b79370b15ccab58b40614da80eeeb050dc21fc09d8",
+      "output_schema_hash": "cd4168ce13096eb221659627167a34584637fa29f47e05e1ac53cff915a9be57",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "reset_data_dir",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "input_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "output_schema_hash": "72ffb4fcea5c727a855fedeecd2fd4a5e70448fde0b59ef077815401083d2bdd",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "reset_model_base_prices_to_builtins",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "resolve_change_event",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "resolve_station_key_pricing_context",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "restart_local_proxy",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "run_channel_monitor_now",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "save_station_key_with_defaults",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "scan_remote_station_keys",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "simulate_route",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "start_capture_session",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "start_local_proxy",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "stop_local_proxy",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "test_station_key_connectivity",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "test_station_login",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "test_station_login_input",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "unbind_remote_station_key",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "update_channel_monitor",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "update_channel_monitor_template",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "update_local_access_key",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "input_schema_hash": "be47ecbd57748b75fc7201cccf339a210c3ccf5c2825ae8f3ecf9a425ec9b610",
+      "output_schema_hash": "72ffb4fcea5c727a855fedeecd2fd4a5e70448fde0b59ef077815401083d2bdd",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "update_settings",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "input_schema_hash": "7cad326960162916868e3d1e7cd4e8d71ebc4b98296cf5f3966c9614127f7643",
+      "output_schema_hash": "188562d545305afeaa4b61f5d2aa5fe777d60efcbd50d6d7b23107e5db7023d5",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "update_station",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "input_schema_hash": "ee4e1d686621ab62d5ebe472413cd2361df3181f25cad6a6c04c87d7a77283e5",
+      "output_schema_hash": "af8c76579fe949f562e6e4afea71c49f6d694990bea74e869e486baf4a103aed",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "update_station_credentials",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "update_station_key",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "update_station_key_capabilities",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "update_station_key_group_binding",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "update_station_session",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "updater_network_config",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "upsert_balance_snapshot",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "upsert_change_event",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "upsert_model_alias",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "upsert_model_base_price",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "upsert_pricing_rule",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "upsert_station_group_binding",
       "transport": "ordinary",
       "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
       "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
-      "error_schema_hash": "1f96e87be1313524ed955dba4d440a7dd50253c87411e1059a18a377c3111e74"
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     }
   ],
   "streaming_surfaces": [
@@ -848,6 +1335,6 @@
   ],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "f88d3bcc5c64a0d67edd476d11ddcbf7e8fd083bdf22eb388dff0658e32e5e22"
+    "serialization_fixture_hash": "d7521974ce814a94bccba79d9750f18193bd99b0b52be9196762aaf4731b1ba7"
   }
 }

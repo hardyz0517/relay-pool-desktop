@@ -3,6 +3,7 @@ mod application;
 mod commands;
 mod ipc;
 mod models;
+mod observability;
 mod persistence;
 mod runtime_composition;
 mod services;
@@ -458,6 +459,9 @@ pub fn run() {
                 _ => {}
             }
         })
+        // commands::cleanup_before_update, commands::prepare_local_proxy_for_update,
+        // commands::restart_local_proxy, commands::updater_network_config, and
+        // commands::inspect_latest_update_manifest stay registered through the generated IPC registry.
         .invoke_handler(crate::ipc_command_registry!(tauri_handler_from_registry))
         .build(tauri::generate_context!())
         .expect("failed to build Relay Pool Desktop");

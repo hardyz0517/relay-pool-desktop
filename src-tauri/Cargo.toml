@@ -36,6 +36,7 @@ sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-toki
 httparse = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 thiserror = "2"
+tracing = "0.1"
 uuid = { version = "1", features = ["v7", "rng"] }
 sha2 = "0.10"
 subtle = "2"

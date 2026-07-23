@@ -2,18 +2,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
+  isTauri: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: mocks.invoke,
+  isTauri: mocks.isTauri,
 }));
 
 describe("data recovery API", () => {
   beforeEach(() => {
     mocks.invoke.mockReset();
+    mocks.isTauri.mockReset();
+    mocks.isTauri.mockReturnValue(true);
   });
 
   it("returns the documented browser preview state only when Tauri invoke is unavailable", async () => {
+    mocks.isTauri.mockReturnValue(false);
     mocks.invoke.mockRejectedValue(new Error("window.__TAURI_INTERNALS__ is undefined"));
     const { getDataStoreStartupState } = await import("./dataRecovery");
 
@@ -53,10 +58,16 @@ describe("data recovery API", () => {
     const { getDataStoreStartupState } = await import("./dataRecovery");
 
     mocks.invoke.mockRejectedValue(new Error("Command get_data_store_startup_state not allowed by ACL"));
-    await expect(getDataStoreStartupState()).rejects.toThrow(/not allowed by ACL/i);
+    await expect(getDataStoreStartupState()).rejects.toMatchObject({
+      code: "internal",
+      message: "The desktop operation failed.",
+    });
 
     mocks.invoke.mockRejectedValue(new Error("Command get_data_store_startup_state not found"));
-    await expect(getDataStoreStartupState()).rejects.toThrow(/not found/i);
+    await expect(getDataStoreStartupState()).rejects.toMatchObject({
+      code: "internal",
+      message: "The desktop operation failed.",
+    });
   });
 
   it("fails closed when a stale or malformed startup DTO is returned", async () => {

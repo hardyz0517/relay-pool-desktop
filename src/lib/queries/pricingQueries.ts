@@ -1,10 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/bridge/transport";
 import { listPricingRules } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getSettings } from "@/lib/api/settings";
 import { listStationKeys } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
-import { isTauriCommandNotFound, isTauriInvokeUnavailable } from "@/lib/tauriErrors";
+import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type { PricingRule } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationKey } from "@/lib/types/stationKeys";
@@ -23,7 +23,7 @@ export async function loadPricingComparisonWorkspace(): Promise<PricingCompariso
   try {
     return await invoke<PricingComparisonWorkspace>("load_pricing_comparison_workspace");
   } catch (error) {
-    if (!isTauriInvokeUnavailable(error) && !isTauriCommandNotFound(error)) {
+    if (!isTauriInvokeUnavailable(error)) {
       throw error;
     }
     const [pricingRules, stations, settings] = await Promise.all([

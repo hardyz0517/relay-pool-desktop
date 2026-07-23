@@ -9,6 +9,9 @@ use super::dto::REGISTERED_TYPES;
 pub const GENERATOR_VERSION: u32 = 1;
 #[cfg_attr(not(test), allow(dead_code))]
 pub const IPC_CONTRACT_VERSION: u32 = 1;
+// Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
+pub const IPC_BINDING_HASH: &str =
+    "64adfdee45bed2d91f5801ecf3e052f31170a4344dbdad32cbcb4f2a4f15bbfe";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -46,6 +49,7 @@ macro_rules! ipc_command_registry {
     ($consumer:ident) => {
         $consumer! {
             app_status => $crate::commands::app_status,
+            get_runtime_contract_info => $crate::commands::get_runtime_contract_info,
             get_data_store_startup_state => $crate::commands::get_data_store_startup_state,
             refresh_data_store_candidates => $crate::commands::refresh_data_store_candidates,
             locate_data_store_candidate => $crate::commands::locate_data_store_candidate,
@@ -199,6 +203,10 @@ struct RegistryCommand<'a> {
     input_schema_hash: String,
     output_schema_hash: String,
     error_schema_hash: String,
+    mutation_kind: &'static str,
+    transport_retry: bool,
+    result_unknown: bool,
+    runtime_validation: &'static str,
 }
 
 #[cfg(test)]
@@ -209,15 +217,90 @@ struct RegistryEvidence<'a> {
 }
 
 #[cfg(test)]
-fn command_schema(name: &str) -> (&'static str, &'static str, &'static str) {
+#[derive(Debug, Clone, Copy)]
+struct CommandContract {
+    input: &'static str,
+    output: &'static str,
+    error: &'static str,
+    mutation_kind: &'static str,
+    transport_retry: bool,
+    result_unknown: bool,
+    runtime_validation: &'static str,
+}
+
+#[cfg(test)]
+fn command_contract(name: &str) -> CommandContract {
     match name {
-        "get_settings" => ("unit", "SettingsDto", "legacy_string_error_v0"),
-        "list_stations" => ("unit", "Vec<StationDto>", "legacy_string_error_v0"),
-        _ => (
-            "legacy_unmigrated_input",
-            "legacy_unmigrated_output",
-            "legacy_string_error_v0",
+        "get_settings" => migrated_read("EmptyInputDto", "SettingsDto"),
+        "list_stations" => migrated_read("EmptyInputDto", "Vec<StationDto>"),
+        "update_settings" => {
+            migrated_mutation("UpdateSettingsInputDto", "SettingsDto", "idempotent", false)
+        }
+        "create_station" => migrated_mutation(
+            "CreateStationInputDto",
+            "StationDto",
+            "non_idempotent",
+            true,
         ),
+        "update_station" => {
+            migrated_mutation("UpdateStationInputDto", "StationDto", "idempotent", false)
+        }
+        "delete_station" => migrated_mutation("DeleteStationInputDto", "unit", "idempotent", false),
+        "reorder_stations" => migrated_mutation(
+            "ReorderStationsInputDto",
+            "Vec<StationDto>",
+            "idempotent",
+            false,
+        ),
+        "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
+        "get_local_access_key" => legacy_declared("unit", "String"),
+        "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
+        "choose_data_dir" | "reset_data_dir" => legacy_declared("unit", "AppSettings"),
+        _ => legacy_declared("legacy_unmigrated_input", "legacy_unmigrated_output"),
+    }
+}
+
+#[cfg(test)]
+const fn migrated_read(input: &'static str, output: &'static str) -> CommandContract {
+    CommandContract {
+        input,
+        output,
+        error: "CommandError",
+        mutation_kind: "read",
+        transport_retry: false,
+        result_unknown: false,
+        runtime_validation: "rust_dto_pre_application",
+    }
+}
+
+#[cfg(test)]
+const fn migrated_mutation(
+    input: &'static str,
+    output: &'static str,
+    mutation_kind: &'static str,
+    result_unknown: bool,
+) -> CommandContract {
+    CommandContract {
+        input,
+        output,
+        error: "CommandError",
+        mutation_kind,
+        transport_retry: false,
+        result_unknown,
+        runtime_validation: "rust_dto_pre_application",
+    }
+}
+
+#[cfg(test)]
+const fn legacy_declared(input: &'static str, output: &'static str) -> CommandContract {
+    CommandContract {
+        input,
+        output,
+        error: "CommandError",
+        mutation_kind: "legacy_unclassified",
+        transport_retry: false,
+        result_unknown: false,
+        runtime_validation: "legacy_unmigrated",
     }
 }
 
@@ -241,8 +324,8 @@ fn canonical_contract() -> String {
         "generator_version": GENERATOR_VERSION,
         "ipc_contract_version": IPC_CONTRACT_VERSION,
         "commands": commands.iter().map(|name| {
-            let (input, output, error) = command_schema(name);
-            serde_json::json!({"name": name, "input": input, "output": output, "error": error})
+            let contract = command_contract(name);
+            serde_json::json!({"name": name, "input": contract.input, "output": contract.output, "error": contract.error, "mutation_kind": contract.mutation_kind, "transport_retry": contract.transport_retry, "result_unknown": contract.result_unknown, "runtime_validation": contract.runtime_validation})
         }).collect::<Vec<_>>(),
         "types": types,
         "streaming_surfaces": STREAMING_SURFACES,
@@ -252,7 +335,7 @@ fn canonical_contract() -> String {
 
 #[cfg(test)]
 fn pilot_serialization_fixture() -> String {
-    let settings = crate::models::settings::AppSettings {
+    let settings = super::dto::SettingsDto::from(crate::models::settings::AppSettings {
         local_proxy_port: 8787,
         local_proxy_start_on_launch: false,
         local_key_masked: "sk-fixture-...redacted".into(),
@@ -276,12 +359,52 @@ fn pilot_serialization_fixture() -> String {
         data_dir: "fixture-data-dir-redacted".into(),
         pending_data_dir: None,
         data_dir_change_requires_restart: false,
-    };
+    });
+    let update_settings = super::dto::settings::UpdateSettingsInputDto::parse(serde_json::json!({
+        "localProxyPort": 8787, "defaultRoutingStrategy": "automatic_balanced",
+        "collectorProxyMode": "direct", "collectorProxyUrl": null,
+        "maxRateMultiplier": null, "defaultRoutingGroupFilter": "all_groups",
+        "schedulerAdvancedSettings": null, "lowBalanceThresholdCny": 15.0,
+        "collectorIntervalMinutes": 30, "balanceIntervalMinutes": 5,
+        "groupRateIntervalMinutes": 20, "modelListIntervalMinutes": 60,
+        "pricingRefreshIntervalMinutes": 60, "collectorTimeoutSeconds": 15,
+        "collectorMaxConcurrency": 3, "allowDepletedFallback": false,
+        "developerModeEnabled": false
+    }))
+    .expect("settings fixture input");
+    let create_station = super::dto::stations::CreateStationInputDto::parse(serde_json::json!({
+        "name": "Fixture Station", "stationType": "newapi",
+        "websiteUrl": "https://provider.invalid", "apiBaseUrl": "https://provider.invalid/v1",
+        "apiKey": "", "collectorProxyMode": "inherit", "collectorProxyUrl": null,
+        "enabled": true, "creditPerCny": 1.0, "lowBalanceThresholdCny": 15.0,
+        "collectionIntervalMinutes": 5, "note": null
+    }))
+    .expect("create fixture input");
+    let mut update_station =
+        serde_json::to_value(&create_station).expect("create fixture serialization");
+    update_station["id"] = serde_json::json!("station-fixture");
+    update_station["apiKey"] = serde_json::Value::Null;
+    let update_station = super::dto::stations::UpdateStationInputDto::parse(update_station)
+        .expect("update fixture input");
+    let delete_station = super::dto::stations::DeleteStationInputDto::parse(
+        serde_json::json!({"id": "station-fixture"}),
+    )
+    .expect("delete fixture input");
+    let reorder_stations = super::dto::stations::ReorderStationsInputDto::parse(
+        serde_json::json!({"stationIds": ["station-fixture"]}),
+    )
+    .expect("reorder fixture input");
+    let station = super::dto::stations::fixture();
     let value = serde_json::json!({
         "schemaVersion": 1,
         "commands": [
-            {"command": "get_settings", "input": {}, "output": super::dto::SettingsDto::from(settings)},
-            {"command": "list_stations", "input": {}, "output": [super::dto::stations::fixture()]},
+            {"command": "get_settings", "input": {}, "output": settings.clone()},
+            {"command": "list_stations", "input": {}, "output": [station.clone()]},
+            {"command": "update_settings", "input": update_settings, "output": settings},
+            {"command": "create_station", "input": create_station, "output": station.clone()},
+            {"command": "update_station", "input": update_station, "output": station.clone()},
+            {"command": "delete_station", "input": delete_station, "output": null},
+            {"command": "reorder_stations", "input": reorder_stations, "output": [station]},
         ]
     });
     format!(
@@ -297,9 +420,28 @@ fn render_typescript(contract_hash: &str) -> String {
         .map(|descriptor| descriptor.typescript)
         .collect::<Vec<_>>()
         .join("\n\n");
-    format!(
-        "// @generated by repository IPC generator. Do not edit.\n// generator version: {GENERATOR_VERSION}\n// IPC contract version: {IPC_CONTRACT_VERSION}\n// canonical hash: {contract_hash}\n\nimport {{ invoke }} from \"@tauri-apps/api/core\";\n\n{types}\n\nexport const IPC_CONTRACT_VERSION = {IPC_CONTRACT_VERSION} as const;\nexport const IPC_BINDING_HASH = \"{contract_hash}\" as const;\n\nexport function getSettings(): Promise<SettingsDto> {{\n  return invoke<SettingsDto>(\"get_settings\");\n}}\n\nexport function listStations(): Promise<StationDto[]> {{\n  return invoke<StationDto[]>(\"list_stations\");\n}}\n\nexport type StreamingSubscription = {{ close(): void }};\n\nexport interface TypedStreamingAdapter<Event> {{\n  readonly eventSchemaVersion: number;\n  open(onEvent: (event: Event) => void): StreamingSubscription;\n}}\n"
-    )
+    let mut command_names = COMMANDS
+        .iter()
+        .map(|command| command.name)
+        .collect::<Vec<_>>();
+    command_names.sort_unstable();
+    let command_union = command_names
+        .iter()
+        .map(|name| format!("  | \"{name}\""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let source = format!(
+        "// @generated by repository IPC generator. Do not edit.\n// generator version: {GENERATOR_VERSION}\n// IPC contract version: {IPC_CONTRACT_VERSION}\n// canonical hash: {contract_hash}\n\nimport {{ invoke }} from \"@/lib/bridge/transport\";\n\n{types}\n\nexport type IpcCommand =\n{command_union};\n\nexport const IPC_CONTRACT_VERSION = {IPC_CONTRACT_VERSION} as const;\nexport const IPC_BINDING_HASH = \"{contract_hash}\" as const;\n\nexport function invokeCommand<T>(command: IpcCommand, args?: Record<string, unknown>): Promise<T> {{\n  return invoke<T>(command, args);\n}}\n\nexport function getSettings(input: EmptyInputDto = {{}}): Promise<SettingsDto> {{\n  return invokeCommand<SettingsDto>(\"get_settings\", {{ input }});\n}}\n\nexport function listStations(input: EmptyInputDto = {{}}): Promise<StationDto[]> {{\n  return invokeCommand<StationDto[]>(\"list_stations\", {{ input }});\n}}\n\nexport function updateSettings(input: UpdateSettingsInputDto): Promise<SettingsDto> {{\n  return invokeCommand<SettingsDto>(\"update_settings\", {{ input }});\n}}\n\nexport function createStation(input: CreateStationInputDto): Promise<StationDto> {{\n  return invokeCommand<StationDto>(\"create_station\", {{ input }});\n}}\n\nexport function updateStation(input: UpdateStationInputDto): Promise<StationDto> {{\n  return invokeCommand<StationDto>(\"update_station\", {{ input }});\n}}\n\nexport function deleteStation(input: DeleteStationInputDto): Promise<void> {{\n  return invokeCommand<void>(\"delete_station\", {{ input }});\n}}\n\nexport function reorderStations(input: ReorderStationsInputDto): Promise<StationDto[]> {{\n  return invokeCommand<StationDto[]>(\"reorder_stations\", {{ input }});\n}}\n\nexport function getRuntimeContractInfo(): Promise<RuntimeContractInfo> {{\n  return invokeCommand<RuntimeContractInfo>(\"get_runtime_contract_info\");\n}}\n\nexport type StreamingSubscription = {{ close(): void }};\n\nexport interface TypedStreamingAdapter<Event> {{\n  readonly eventSchemaVersion: number;\n  open(onEvent: (event: Event) => void): StreamingSubscription;\n}}\n"
+    );
+    source
+        .replace(
+            r#"import { invoke } from "@/lib/bridge/transport";"#,
+            r#"import { invoke, invokeNonIdempotent } from "@/lib/bridge/transport";"#,
+        )
+        .replace(
+            r#"return invokeCommand<StationDto>("create_station", { input });"#,
+            r#"return invokeNonIdempotent<StationDto>("create_station", { input });"#,
+        )
 }
 
 #[cfg(test)]
@@ -307,13 +449,17 @@ fn render_registry(contract_hash: &str, fixture_hash: &str) -> String {
     let mut commands = COMMANDS
         .iter()
         .map(|command| {
-            let (input, output, error) = command_schema(command.name);
+            let contract = command_contract(command.name);
             RegistryCommand {
                 name: command.name,
                 transport: TransportKind::Ordinary,
-                input_schema_hash: sha256(input),
-                output_schema_hash: sha256(output),
-                error_schema_hash: sha256(error),
+                input_schema_hash: sha256(contract.input),
+                output_schema_hash: sha256(contract.output),
+                error_schema_hash: sha256(contract.error),
+                mutation_kind: contract.mutation_kind,
+                transport_retry: contract.transport_retry,
+                result_unknown: contract.result_unknown,
+                runtime_validation: contract.runtime_validation,
             }
         })
         .collect::<Vec<_>>();
@@ -362,14 +508,63 @@ mod tests {
         assert_eq!(names.len(), original_len);
         assert!(names.contains(&"get_settings"));
         assert!(names.contains(&"list_stations"));
+        assert!(names.contains(&"get_runtime_contract_info"));
+    }
+
+    #[test]
+    fn runtime_binding_hash_matches_the_compiled_contract() {
+        assert_eq!(sha256(canonical_contract()), IPC_BINDING_HASH);
+    }
+
+    #[test]
+    fn migrated_settings_station_commands_have_closed_schemas_and_no_transport_retry() {
+        for name in [
+            "get_settings",
+            "list_stations",
+            "update_settings",
+            "create_station",
+            "update_station",
+            "delete_station",
+            "reorder_stations",
+        ] {
+            let contract = command_contract(name);
+            assert!(!contract.input.starts_with("legacy_"), "{name}");
+            assert!(!contract.output.starts_with("legacy_"), "{name}");
+            assert_eq!(
+                contract.runtime_validation, "rust_dto_pre_application",
+                "{name}"
+            );
+            assert!(!contract.transport_retry, "{name}");
+        }
+        assert!(command_contract("create_station").result_unknown);
+    }
+
+    #[test]
+    fn generated_bindings_use_the_common_transport_and_dedicated_wrappers() {
+        let source = render_typescript("fixture-hash");
+        assert!(source.contains("@/lib/bridge/transport"));
+        assert!(!source.contains("@tauri-apps/api/core"));
+        assert!(source.contains(r#"invokeNonIdempotent<StationDto>("create_station""#));
+        for wrapper in [
+            "updateSettings",
+            "createStation",
+            "updateStation",
+            "deleteStation",
+            "reorderStations",
+        ] {
+            assert!(
+                source.contains(&format!("function {wrapper}(")),
+                "{wrapper}"
+            );
+        }
     }
 
     #[test]
     fn emit_repository_bindings() {
-        let output_dir = PathBuf::from(
-            std::env::var_os("RELAY_POOL_BINDINGS_OUT")
-                .expect("RELAY_POOL_BINDINGS_OUT is required for generator invocation"),
-        );
+        let Some(output_dir) = std::env::var_os("RELAY_POOL_BINDINGS_OUT") else {
+            return;
+        };
+        let output_dir = PathBuf::from(output_dir);
         fs::create_dir_all(&output_dir).expect("generator output directory must be created");
         let canonical = canonical_contract();
         let contract_hash = sha256(canonical);

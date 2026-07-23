@@ -4,6 +4,57 @@ pub(crate) mod stations;
 pub use settings::SettingsDto;
 pub use stations::StationDto;
 
+use crate::commands::error::{
+    CommandError, CommandErrorCode, PublicErrorDetails, PublicFieldError,
+};
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmptyInputDto {}
+
+impl EmptyInputDto {
+    pub fn parse(value: serde_json::Value) -> Result<Self, CommandError> {
+        serde_json::from_value(value).map_err(|_| {
+            invalid_input(
+                "input",
+                "invalid_shape",
+                "The command does not accept input fields.",
+            )
+        })
+    }
+}
+
+fn invalid_input(field: &'static str, code: &'static str, message: &'static str) -> CommandError {
+    CommandError::try_new(
+        CommandErrorCode::InvalidInput,
+        "The command input is invalid.",
+        false,
+        Some(PublicErrorDetails::Validation {
+            fields: vec![PublicFieldError {
+                field: field.into(),
+                code: code.into(),
+                message: message.into(),
+            }],
+        }),
+        None,
+    )
+    .expect("transport validation errors use bounded static text")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_input_rejects_unknown_fields() {
+        EmptyInputDto::parse(serde_json::json!({})).expect("empty input");
+        let error = EmptyInputDto::parse(serde_json::json!({ "unexpected": true }))
+            .expect_err("unknown field");
+        assert_eq!(error.code, CommandErrorCode::InvalidInput);
+    }
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
 pub struct TypeDescriptor {
@@ -12,4 +63,15 @@ pub struct TypeDescriptor {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-pub const REGISTERED_TYPES: &[TypeDescriptor] = &[settings::SETTINGS_TYPE, stations::STATION_TYPE];
+pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
+    settings::SETTINGS_TYPE,
+    stations::STATION_TYPE,
+    TypeDescriptor {
+        name: "RuntimeContractInfo",
+        typescript: crate::ipc::runtime_contract::RUNTIME_CONTRACT_TYPESCRIPT,
+    },
+    TypeDescriptor {
+        name: "CommandError",
+        typescript: crate::commands::error::COMMAND_ERROR_TYPESCRIPT,
+    },
+];
