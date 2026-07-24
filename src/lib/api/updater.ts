@@ -1,12 +1,13 @@
 ﻿import { getVersion } from "@tauri-apps/api/app";
 import { isTauri } from "@tauri-apps/api/core";
-import { invoke } from "@/lib/bridge/transport";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
+import { coordinateUpdateCheck } from "@/lib/api/updaterCheckCoordinator";
 import {
-  coordinateUpdateCheck,
-  type PublishedUpdateInspection,
-} from "@/lib/api/updaterCheckCoordinator";
+  inspectLatestUpdateManifest,
+  updaterNetworkConfig,
+  type UpdaterNetworkConfigDto,
+} from "@/lib/bridge/generated";
 
 export type AvailableAppUpdate = {
   currentVersion: string;
@@ -24,10 +25,6 @@ export type DownloadProgress = {
   totalBytes: number | null;
 };
 
-type UpdaterNetworkConfig = {
-  proxyUrl: string | null;
-};
-
 let pendingUpdate: Update | null = null;
 let nativeUpdateCheckInFlight: Promise<Update | null> | null = null;
 
@@ -40,7 +37,7 @@ export async function checkForAppUpdate(): Promise<AppUpdateCheckResult> {
   if (!isTauri()) return { kind: "unsupported", currentVersion };
 
   await closePendingUpdateBeforeCheck();
-  const network = await invoke<UpdaterNetworkConfig>("updater_network_config")
+  const network: UpdaterNetworkConfigDto = await updaterNetworkConfig()
     .catch(() => ({ proxyUrl: null }));
   const result = await coordinateUpdateCheck({
     currentVersion,
@@ -57,10 +54,7 @@ export async function checkForAppUpdate(): Promise<AppUpdateCheckResult> {
         throw error;
       }
     },
-    inspectPublished: (version) =>
-      invoke<PublishedUpdateInspection>("inspect_latest_update_manifest", {
-        currentVersion: version,
-      }),
+    inspectPublished: (version) => inspectLatestUpdateManifest({ currentVersion: version }),
   });
   if (result.kind === "current") return result;
 
@@ -117,8 +111,7 @@ async function closePendingUpdateBeforeCheck() {
 
 function startNativeUpdateCheck(proxyUrl: string | null) {
   if (!nativeUpdateCheckInFlight) {
-    let trackedUpdateCheck: Promise<Update | null>;
-    trackedUpdateCheck = check(
+    const trackedUpdateCheck = check(
       proxyUrl ? { timeout: 10_000, proxy: proxyUrl } : { timeout: 10_000 },
     ).finally(() => {
       if (nativeUpdateCheckInFlight === trackedUpdateCheck) {

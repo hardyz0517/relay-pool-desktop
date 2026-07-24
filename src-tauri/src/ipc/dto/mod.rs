@@ -12,6 +12,7 @@ pub(crate) mod settings;
 pub(crate) mod station_collector_operations;
 pub(crate) mod station_keys;
 pub(crate) mod stations;
+pub(crate) mod updater_data_recovery;
 
 pub use settings::SettingsDto;
 pub use stations::StationDto;
@@ -90,6 +91,7 @@ pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     station_collector_operations::STATION_COLLECTOR_OPERATIONS_TYPE,
     station_keys::STATION_KEY_TYPE,
     stations::STATION_TYPE,
+    updater_data_recovery::UPDATER_DATA_RECOVERY_TYPE,
     TypeDescriptor {
         name: "RuntimeContractInfo",
         typescript: crate::ipc::runtime_contract::RUNTIME_CONTRACT_TYPESCRIPT,

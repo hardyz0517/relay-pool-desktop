@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "source_revision": "dfaf8ae0682dd1b473124f9d839d1e4952665e72",
+  "source_revision": "32936a0c4d9031d7b581fbbe70b10ffb24c80db7",
   "generated_at_date": "2026-07-24",
-  "source_snapshot": "formal codex/architecture-scale-upgrade worktree at the S1-T5-proxy-restart qualification checkpoint, based on dfaf8ae",
+  "source_snapshot": "formal codex/architecture-scale-upgrade worktree at the S1-T5-updater-backend-reads qualification checkpoint, based on 32936a0",
   "source_authority": {
     "compiled_registry": "src-tauri/src/ipc/registry.rs",
     "rust_signatures": "src-tauri/src/commands/mod.rs",
@@ -22,14 +22,14 @@
   ],
   "classification_notes": [
     "Runtime/bootstrap -> settings_stations; Channel connectivity -> station_keys; update/data-directory -> updater_data_recovery.",
-    "S1-T5 settings/stations, station-key ordinary, changes/logs, collector ordinary groups, routing/health reads, pricing reads, proxy workspace reads, routing capability/model-alias mutations, pricing mutations, local-routing reorder, endpoint ping, proxy start, proxy stop, and proxy restart fully migrate 93 commands; five earlier pilot schemas remain partial and 22 commands remain legacy placeholders.",
+    "S1-T5 settings/stations, station-key ordinary, changes/logs, collector ordinary groups, routing/health reads, pricing reads, proxy workspace reads, routing capability/model-alias mutations, pricing mutations, local-routing reorder, endpoint ping, proxy start, proxy stop, proxy restart, and updater backend reads fully migrate 95 commands; five earlier pilot schemas remain partial and 20 commands remain legacy placeholders.",
     "test_station_key_connectivity remains the single Channel command and is intentionally partial/legacy until Task 6.",
     "No command proves an application-owned operation key; idempotent_with_key count is zero.",
     "scan_remote_station_keys is an idempotent mutation because it atomically replaces the local remote-key snapshot and matching key metadata; transport retry remains disabled.",
     "create_station is NonIdempotent: transport retry is disabled and ambiguous post-dispatch rejection becomes typed ResultUnknownError.",
     "record_capture_event is intentionally capture-only, not missing from ACL; it must not be granted to main-window.",
     "Empty frontend_callers means no literal caller in requested API/query directories.",
-    "Audit artifact only: the proxy-restart child shard may close while the Stage 1 Gate remains blocked on remaining Task 5 updater/data recovery commands and Task 6."
+    "Audit artifact only: the updater-backend-reads child shard may close while the Stage 1 Gate remains blocked on remaining Task 5 data-recovery/data-directory commands and Task 6."
   ],
   "statistics": {
     "commands": 120,
@@ -51,13 +51,13 @@
       "read": 46
     },
     "explicit_pilot_schema_partial": 5,
-    "legacy_unmigrated_placeholder": 22,
+    "legacy_unmigrated_placeholder": 20,
     "acl_allowed_main_window": 119,
     "commands_with_frontend_callers": 116,
     "commands_without_frontend_callers": 4,
     "public_command_error": 117,
     "public_non_command_error": 3,
-    "fully_migrated": 93,
+    "fully_migrated": 95,
     "acl_capture_only": 1,
     "acl_unallowlisted": 0
   },
@@ -4903,9 +4903,9 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "current_version: String"
+        "input: Value"
       ],
-      "rust_output": "PublishedUpdateInspection",
+      "rust_output": "PublishedUpdateInspectionDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -4921,21 +4921,22 @@
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "bound string; freeze trim/empty policy and secret-safe diagnostics"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented: command correlation scope established before bounded manifest-version validation and blocking manifest inspection",
+      "migration_status": "fully_migrated_s1_t5_updater_backend_reads",
       "delete_owner": "Task 5 updater_data_recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "PublishedUpdateInspectionInputDto",
+        "output": "PublishedUpdateInspectionDto",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:71",
-        "rust_signature": "src-tauri/src/commands/mod.rs:602"
+        "rust_signature": "src-tauri/src/commands/mod.rs:646",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:722",
+        "legacy_wrapper_cutover_test": "src/lib/api/updater.test.ts"
       }
     },
     {
@@ -5147,9 +5148,11 @@
       "group": "updater_data_recovery",
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
-      "rust_input": [],
-      "rust_output": "UpdaterNetworkConfig",
-      "public_error": "none",
+      "rust_input": [
+        "input: Value"
+      ],
+      "rust_output": "UpdaterNetworkConfigDto",
+      "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
         "permission": "main-window",
@@ -5164,21 +5167,22 @@
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented: command correlation scope established before empty-input validation and network config lookup",
+      "migration_status": "fully_migrated_s1_t5_updater_backend_reads",
       "delete_owner": "Task 5 updater_data_recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "UpdaterNetworkConfigDto",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:70",
-        "rust_signature": "src-tauri/src/commands/mod.rs:597"
+        "rust_signature": "src-tauri/src/commands/mod.rs:635",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:722",
+        "legacy_wrapper_cutover_test": "src/lib/api/updater.test.ts"
       }
     }
   ]

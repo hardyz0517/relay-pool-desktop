@@ -1,0 +1,15 @@
+export type UpdaterNetworkConfigDto = {
+  proxyUrl: string | null;
+};
+
+export type PublishedVersionRelationDto = "current_or_older" | "newer";
+
+export type PublishedUpdateInspectionInputDto = {
+  currentVersion: string;
+};
+
+export type PublishedUpdateInspectionDto = {
+  relation: PublishedVersionRelationDto;
+  version: string;
+  notes: string | null;
+};

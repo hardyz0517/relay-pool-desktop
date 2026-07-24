@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "6c3cc1b8559782a162a021bb278e63206cf3f6d50867e57b731db0cb88b6d2a9",
+  "contract_hash": "091b4a5c942a2fd8c8a503bc894f71986fe9a84619f3aac43fd5282d0c4b5c96",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -502,13 +502,13 @@
     {
       "name": "inspect_latest_update_manifest",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "8267cf7458db6dadefe642aef8cb8aafc2df2cf2656b3e6d268bd89e0f371755",
+      "output_schema_hash": "bfe0c7f73af9df9084576caa7ccddd55f84e2b3bc50211e0647d2a0ecdeb0fb7",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "list_balance_snapshots",
@@ -1250,13 +1250,13 @@
     {
       "name": "updater_network_config",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "e5838780d3b1f853370aecae59a5850859da79ee977aeda0ba59f67ff1d667cf",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "upsert_balance_snapshot",

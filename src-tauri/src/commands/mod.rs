@@ -75,6 +75,10 @@ use crate::{
             CreateStationInputDto, DeleteStationInputDto, ReorderStationsInputDto,
             UpdateStationInputDto,
         },
+        updater_data_recovery::{
+            PublishedUpdateInspectionDto, PublishedUpdateInspectionInputDto,
+            UpdaterNetworkConfigDto,
+        },
         EmptyInputDto, SettingsDto, StationDto,
     },
     ipc::runtime_contract::{current_runtime_contract, RuntimeContractInfo},
@@ -111,7 +115,7 @@ use crate::{
         secrets::{validation::validate_database_secrets, SecretManager},
         station_endpoints::{build_api_url, url_belongs_to_base},
         time::now_millis_for_services,
-        updater::{self, PublishedUpdateInspection, UpdaterNetworkConfig},
+        updater,
     },
     TrayBehavior,
 };
@@ -628,19 +632,29 @@ pub fn open_external_url(url: String) -> Result<(), error::CommandError> {
 }
 
 #[tauri::command]
-pub fn updater_network_config() -> UpdaterNetworkConfig {
-    updater::network_config()
+pub async fn updater_network_config(
+    input: Value,
+) -> Result<UpdaterNetworkConfigDto, error::CommandError> {
+    correlation::in_command_scope("updater_network_config", async {
+        EmptyInputDto::parse(input)?;
+        Ok(updater::network_config())
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn inspect_latest_update_manifest(
-    current_version: String,
-) -> Result<PublishedUpdateInspection, error::CommandError> {
-    Ok(tauri::async_runtime::spawn_blocking(move || {
-        updater::inspect_latest_update_manifest(&current_version)
+    input: Value,
+) -> Result<PublishedUpdateInspectionDto, error::CommandError> {
+    correlation::in_command_scope("inspect_latest_update_manifest", async {
+        let input = PublishedUpdateInspectionInputDto::parse(input)?;
+        Ok(tauri::async_runtime::spawn_blocking(move || {
+            updater::inspect_latest_update_manifest(&input.current_version)
+        })
+        .await
+        .map_err(|error| format!("Updater manifest task failed: {error}"))??)
     })
     .await
-    .map_err(|error| format!("Updater manifest task failed: {error}"))??)
 }
 
 #[tauri::command]

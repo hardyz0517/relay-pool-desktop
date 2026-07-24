@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "6c3cc1b8559782a162a021bb278e63206cf3f6d50867e57b731db0cb88b6d2a9";
+    "091b4a5c942a2fd8c8a503bc894f71986fe9a84619f3aac43fd5282d0c4b5c96";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -574,6 +574,11 @@ fn command_contract(name: &str) -> CommandContract {
         "restart_local_proxy" => {
             migrated_mutation("EmptyInputDto", "ProxyStatusDto", "non_idempotent", true)
         }
+        "updater_network_config" => migrated_read("EmptyInputDto", "UpdaterNetworkConfigDto"),
+        "inspect_latest_update_manifest" => migrated_read(
+            "PublishedUpdateInspectionInputDto",
+            "PublishedUpdateInspectionDto",
+        ),
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         "get_local_access_key" => legacy_declared("unit", "String"),
         "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
@@ -1038,6 +1043,14 @@ export function stopLocalProxy(input: EmptyInputDto = {}): Promise<ProxyStatusDt
 
 export function restartLocalProxy(input: EmptyInputDto = {}): Promise<ProxyStatusDto> {
   return invokeNonIdempotent<ProxyStatusDto>("restart_local_proxy", { input });
+}
+
+export function updaterNetworkConfig(input: EmptyInputDto = {}): Promise<UpdaterNetworkConfigDto> {
+  return invokeCommand<UpdaterNetworkConfigDto>("updater_network_config", { input });
+}
+
+export function inspectLatestUpdateManifest(input: PublishedUpdateInspectionInputDto): Promise<PublishedUpdateInspectionDto> {
+  return invokeCommand<PublishedUpdateInspectionDto>("inspect_latest_update_manifest", { input });
 }
 
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
@@ -1571,6 +1584,25 @@ mod tests {
         assert_eq!(contract.runtime_validation, "rust_dto_pre_application");
         assert!(!contract.transport_retry);
         assert!(contract.result_unknown);
+    }
+
+    #[test]
+    fn updater_backend_reads_have_closed_schemas() {
+        let network = command_contract("updater_network_config");
+        assert_eq!(network.input, "EmptyInputDto");
+        assert_eq!(network.output, "UpdaterNetworkConfigDto");
+        assert_eq!(network.mutation_kind, "read");
+        assert_eq!(network.runtime_validation, "rust_dto_pre_application");
+        assert!(!network.transport_retry);
+        assert!(!network.result_unknown);
+
+        let manifest = command_contract("inspect_latest_update_manifest");
+        assert_eq!(manifest.input, "PublishedUpdateInspectionInputDto");
+        assert_eq!(manifest.output, "PublishedUpdateInspectionDto");
+        assert_eq!(manifest.mutation_kind, "read");
+        assert_eq!(manifest.runtime_validation, "rust_dto_pre_application");
+        assert!(!manifest.transport_retry);
+        assert!(!manifest.result_unknown);
     }
 
     #[test]

@@ -38,6 +38,7 @@ import {
   getStationKeyCapabilities,
   getStationCredentials,
   getStationKeyHealth,
+  inspectLatestUpdateManifest,
   listKeyPoolItems,
   listModelBasePrices,
   listChangeEvents,
@@ -100,6 +101,7 @@ import {
   upsertModelAlias,
   upsertModelBasePrice,
   upsertPricingRule,
+  updaterNetworkConfig,
   upsertStationGroupBinding,
   type CreateStationInputDto,
   type UpdateSettingsInputDto,
@@ -715,5 +717,16 @@ describe("generated settings/stations transport envelopes", () => {
       ["restart_local_proxy", { input: {} }],
     ]);
     expect(transport.invoke).not.toHaveBeenCalled();
+  });
+
+  it("sends updater backend reads through generated envelopes", async () => {
+    const input = { currentVersion: "0.3.2" };
+    await updaterNetworkConfig();
+    await inspectLatestUpdateManifest(input);
+
+    expect(transport.invoke.mock.calls).toEqual([
+      ["updater_network_config", { input: {} }],
+      ["inspect_latest_update_manifest", { input }],
+    ]);
   });
 });

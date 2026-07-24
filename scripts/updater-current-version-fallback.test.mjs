@@ -8,8 +8,8 @@ const mainWindowPermissions = await readFile("src-tauri/permissions/main-window.
 
 assert.ok(
   updaterApiSource.includes("coordinateUpdateCheck") &&
-    updaterApiSource.includes('invoke<UpdaterNetworkConfig>("updater_network_config")') &&
-    updaterApiSource.includes('invoke<PublishedUpdateInspection>("inspect_latest_update_manifest"') &&
+    updaterApiSource.includes("updaterNetworkConfig()") &&
+    updaterApiSource.includes("inspectLatestUpdateManifest({ currentVersion: version })") &&
     updaterApiSource.includes("withTimeout") &&
     updaterApiSource.includes("更新检查超时") &&
     updaterApiSource.includes("nativeUpdateCheckInFlight") &&
@@ -29,7 +29,8 @@ assert.ok(
 );
 
 assert.ok(
-  tauriCommandsSource.includes("pub fn updater_network_config") &&
+  tauriCommandsSource.includes("pub async fn updater_network_config") &&
+    tauriCommandsSource.includes("input: Value") &&
     tauriCommandsSource.includes("pub async fn inspect_latest_update_manifest") &&
     tauriLibSource.includes("commands::updater_network_config") &&
     tauriLibSource.includes("commands::inspect_latest_update_manifest"),
