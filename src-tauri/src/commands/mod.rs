@@ -885,34 +885,39 @@ pub async fn restart_local_proxy(
     secrets: State<'_, SecretManager>,
     services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
-) -> Result<ProxyStatus, error::CommandError> {
-    let settings = services
-        .settings
-        .load()
-        .await
-        .map_err(command_application_error)?;
-    let local_key = services
-        .settings
-        .ensure_local_access_key()
-        .await
-        .map_err(command_application_error)?;
-    let status = proxy
-        .restart(crate::services::proxy::startup::config_from_v2_services(
-            services.inner(),
-            *secrets.data_key(),
-            local_key,
-            settings.local_proxy_port,
-        ))
-        .await?;
-    if let Err(error) = services
-        .settings
-        .set_local_proxy_start_on_launch(true)
-        .await
-    {
-        let _ = proxy.stop(status.port).await;
-        return Err(command_application_error(error));
-    }
-    Ok(status)
+    input: Value,
+) -> Result<ProxyStatusDto, error::CommandError> {
+    correlation::in_command_scope("restart_local_proxy", async {
+        EmptyInputDto::parse(input)?;
+        let settings = services
+            .settings
+            .load()
+            .await
+            .map_err(public_command_application_error)?;
+        let local_key = services
+            .settings
+            .ensure_local_access_key()
+            .await
+            .map_err(public_command_application_error)?;
+        let status = proxy
+            .restart(crate::services::proxy::startup::config_from_v2_services(
+                services.inner(),
+                *secrets.data_key(),
+                local_key,
+                settings.local_proxy_port,
+            ))
+            .await?;
+        if let Err(error) = services
+            .settings
+            .set_local_proxy_start_on_launch(true)
+            .await
+        {
+            let _ = proxy.stop(status.port).await;
+            return Err(public_command_application_error(error));
+        }
+        Ok(status)
+    })
+    .await
 }
 
 #[tauri::command]

@@ -76,6 +76,7 @@ import {
   resetModelBasePricesToBuiltins,
   resolveChangeEvent,
   resolveStationKeyPricingContext,
+  restartLocalProxy,
   runChannelMonitorNow,
   saveStationKeyWithDefaults,
   scanRemoteStationKeys,
@@ -706,5 +707,13 @@ describe("generated settings/stations transport envelopes", () => {
     expect(transport.invoke.mock.calls).toEqual([
       ["stop_local_proxy", { input: {} }],
     ]);
+  });
+
+  it("sends proxy restart through a non-idempotent generated envelope", async () => {
+    await restartLocalProxy();
+    expect(transport.invokeNonIdempotent.mock.calls).toEqual([
+      ["restart_local_proxy", { input: {} }],
+    ]);
+    expect(transport.invoke).not.toHaveBeenCalled();
   });
 });

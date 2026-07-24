@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "40c427ca78620f81bd2e8964db0d45148b94193d05bd98da670f9207eda67dda",
+  "contract_hash": "6c3cc1b8559782a162a021bb278e63206cf3f6d50867e57b731db0cb88b6d2a9",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -1008,13 +1008,13 @@
     {
       "name": "restart_local_proxy",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "fca495968a68fe3f60ade05a9678e990bf77f61dc09f63fbbf10b1280db2b44f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "non_idempotent",
       "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "run_channel_monitor_now",
