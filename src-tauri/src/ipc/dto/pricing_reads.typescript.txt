@@ -1,0 +1,43 @@
+export type RequestKindDto = "text" | "image" | "video" | "any";
+export type PricingStatusDto = "priced" | "base_price_only" | "missing_rate" | "missing_model_price" | "unpriced" | "unsupported_billing_mode" | "legacy_estimate";
+
+export type PricingContextInputDto = {
+  stationKeyId: string;
+  requestedModel: string;
+  requestKind: RequestKindDto;
+};
+
+export type PricingRuleDto = {
+  id: string; stationId: string; stationKeyId: string | null; groupBindingId: string | null;
+  groupName: string | null; tierLabel: string | null; model: string; inputPrice: number | null;
+  outputPrice: number | null; fixedPrice: number | null; rateMultiplier: number | null;
+  currency: string; unit: string; priceType: string; basePriceSource: string | null;
+  normalizationStatus: string; source: string; confidence: number; enabled: boolean;
+  note: string | null; collectedAt: string | null; validFrom: string | null; validUntil: string | null;
+  createdAt: string; updatedAt: string;
+};
+
+export type ModelBasePriceDto = {
+  id: string; provider: string; model: string; inputPrice: number | null; outputPrice: number | null;
+  currency: string; unit: string; sourceUrl: string; sourceLabel: string; sourceCheckedAt: string | null;
+  enabled: boolean; builtIn: boolean; note: string | null; createdAt: string; updatedAt: string;
+};
+
+export type ResolvedPricingContextDto = {
+  stationKeyId: string; stationId: string; requestedModel: string; resolvedModel: string;
+  requestKind: RequestKindDto; groupBindingId: string | null; baseInputPrice: number | null;
+  baseOutputPrice: number | null; baseFixedPrice: number | null; currency: string; unit: string;
+  basePriceSource: string | null; effectiveRateMultiplier: number | null; rateSource: string | null;
+  rateCollectedAt: string | null; estimatedInputPrice: number | null; estimatedOutputPrice: number | null;
+  estimatedFixedPrice: number | null; pricingStatus: PricingStatusDto; confidence: number;
+  sourceChain: string[]; reason: string | null; resolvedAt: string;
+};
+
+export type PricingComparisonWorkspaceDto = {
+  stations: StationDto[];
+  stationKeys: StationKeyDto[];
+  groupBindings: StationGroupBindingDto[];
+  groupRates: GroupRateRecordDto[];
+  pricingRules: PricingRuleDto[];
+  developerModeEnabled: boolean;
+};

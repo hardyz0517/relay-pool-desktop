@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "source_revision": "e8c8165c46ff044b17520c7eb5bfb07ef48d08a7",
+  "source_revision": "b68395ecf5850d2d22771c4768fca6863920087c",
   "generated_at_date": "2026-07-24",
-  "source_snapshot": "formal codex/architecture-scale-upgrade worktree at the S1-T5-routing-health-reads qualification checkpoint, based on e8c8165",
+  "source_snapshot": "formal codex/architecture-scale-upgrade worktree at the S1-T5-pricing-reads qualification checkpoint, based on b68395e",
   "source_authority": {
     "compiled_registry": "src-tauri/src/ipc/registry.rs",
     "rust_signatures": "src-tauri/src/commands/mod.rs",
@@ -22,14 +22,14 @@
   ],
   "classification_notes": [
     "Runtime/bootstrap -> settings_stations; Channel connectivity -> station_keys; update/data-directory -> updater_data_recovery.",
-    "S1-T5 settings/stations, station-key ordinary, changes/logs, collector ordinary groups, and routing/health reads child shards fully migrate 75 commands; five earlier pilot schemas remain partial and 40 commands remain legacy placeholders.",
+    "S1-T5 settings/stations, station-key ordinary, changes/logs, collector ordinary groups, routing/health reads, and pricing reads child shards fully migrate 79 commands; five earlier pilot schemas remain partial and 36 commands remain legacy placeholders.",
     "test_station_key_connectivity remains the single Channel command and is intentionally partial/legacy until Task 6.",
     "No command proves an application-owned operation key; idempotent_with_key count is zero.",
     "scan_remote_station_keys is an idempotent mutation because it atomically replaces the local remote-key snapshot and matching key metadata; transport retry remains disabled.",
     "create_station is NonIdempotent: transport retry is disabled and ambiguous post-dispatch rejection becomes typed ResultUnknownError.",
     "record_capture_event is intentionally capture-only, not missing from ACL; it must not be granted to main-window.",
     "Empty frontend_callers means no literal caller in requested API/query directories.",
-    "Audit artifact only: the routing/health reads child shard may close while the Stage 1 Gate remains blocked on remaining Task 5 routing/proxy reads and mutations, updater/data recovery, and Task 6."
+    "Audit artifact only: the pricing reads child shard may close while the Stage 1 Gate remains blocked on remaining Task 5 routing/proxy mutations, updater/data recovery, and Task 6."
   ],
   "statistics": {
     "commands": 120,
@@ -51,13 +51,13 @@
       "read": 46
     },
     "explicit_pilot_schema_partial": 5,
-    "legacy_unmigrated_placeholder": 40,
+    "legacy_unmigrated_placeholder": 36,
     "acl_allowed_main_window": 119,
     "commands_with_frontend_callers": 116,
     "commands_without_frontend_callers": 4,
     "public_command_error": 117,
     "public_non_command_error": 3,
-    "fully_migrated": 75,
+    "fully_migrated": 79,
     "acl_capture_only": 1,
     "acl_unallowlisted": 0
   },
@@ -3880,9 +3880,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value"
       ],
-      "rust_output": "Vec<ModelBasePrice>",
+      "rust_output": "Vec<ModelBasePriceDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3892,27 +3893,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/economics.ts",
-          "line": 63
+          "line": 71
         }
       ],
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "generated EmptyInputDto is parsed before application dispatch",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 routing_proxy shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 routing/proxy pricing read shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "Vec<ModelBasePriceDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:128",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1553"
+        "registry": "src-tauri/src/ipc/registry.rs:509",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1792",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:538"
       }
     },
     {
@@ -3921,9 +3923,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value"
       ],
-      "rust_output": "Vec<PricingRule>",
+      "rust_output": "Vec<PricingRuleDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3933,27 +3936,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/economics.ts",
-          "line": 18
+          "line": 26
         }
       ],
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "generated EmptyInputDto is parsed before application dispatch",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 routing_proxy shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 routing/proxy pricing read shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "Vec<PricingRuleDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:127",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1542"
+        "registry": "src-tauri/src/ipc/registry.rs:508",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1776",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:538"
       }
     },
     {
@@ -4090,9 +4094,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value"
       ],
-      "rust_output": "PricingComparisonWorkspace",
+      "rust_output": "PricingComparisonWorkspaceDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -4102,27 +4107,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/queries/pricingQueries.ts",
-          "line": 24
+          "line": 25
         }
       ],
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "generated EmptyInputDto is parsed before application dispatch",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 routing_proxy shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 routing/proxy pricing read shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "PricingComparisonWorkspaceDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:112",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1206"
+        "registry": "src-tauri/src/ipc/registry.rs:513",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1381",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:538"
       }
     },
     {
@@ -4258,11 +4264,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_key_id: String",
-        "requested_model: String",
-        "request_kind: Option<RequestKind>"
+        "input: Value"
       ],
-      "rust_output": "ResolvedPricingContext",
+      "rust_output": "ResolvedPricingContextDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -4272,29 +4276,29 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/economics.ts",
-          "line": 55
+          "line": 59
         }
       ],
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "generated PricingContextInputDto is parsed before application dispatch",
         "reject unknown top-level fields before application use case",
-        "bound non-empty ID(s) with frozen grammar",
-        "bound string; freeze trim/empty policy and secret-safe diagnostics",
-        "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
+        "bound non-empty station key ID and requested model with frozen grammar and byte limits",
+        "accept only the closed text/image/video/any request-kind enum"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 routing_proxy shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 routing/proxy pricing read shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "PricingContextInputDto",
+        "output": "ResolvedPricingContextDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:133",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1611"
+        "registry": "src-tauri/src/ipc/registry.rs:510",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1855",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:538"
       }
     },
     {

@@ -36,6 +36,7 @@ import {
   getStationCredentials,
   getStationKeyHealth,
   listKeyPoolItems,
+  listModelBasePrices,
   listChangeEvents,
   listChangeEventsForStation,
   listChannelMonitorRuns,
@@ -50,9 +51,11 @@ import {
   listCurrentStationBalanceSnapshots,
   listGroupRateRecords,
   loadChannelStatusWorkspace,
+  loadPricingComparisonWorkspace,
   listRemoteStationKeys,
   listRequestLogs,
   listModelAliases,
+  listPricingRules,
   listStationEndpointHealth,
   listStationKeyHealth,
   listStationKeys,
@@ -65,6 +68,7 @@ import {
   reorderStationKeys,
   reorderStations,
   resolveChangeEvent,
+  resolveStationKeyPricingContext,
   runChannelMonitorNow,
   saveStationKeyWithDefaults,
   scanRemoteStationKeys,
@@ -528,6 +532,33 @@ describe("generated settings/stations transport envelopes", () => {
           },
         },
       ],
+    ]);
+  });
+
+  it("sends pricing reads through generated envelopes", async () => {
+    await listPricingRules();
+    await listModelBasePrices();
+    await resolveStationKeyPricingContext({
+      stationKeyId: "key-1",
+      requestedModel: "fixture-model",
+      requestKind: "text",
+    });
+    await loadPricingComparisonWorkspace();
+
+    expect(transport.invoke.mock.calls).toEqual([
+      ["list_pricing_rules", { input: {} }],
+      ["list_model_base_prices", { input: {} }],
+      [
+        "resolve_station_key_pricing_context",
+        {
+          input: {
+            stationKeyId: "key-1",
+            requestedModel: "fixture-model",
+            requestKind: "text",
+          },
+        },
+      ],
+      ["load_pricing_comparison_workspace", { input: {} }],
     ]);
   });
 });

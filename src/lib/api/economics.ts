@@ -1,8 +1,11 @@
 import { invoke } from "@/lib/bridge/transport";
 import {
+  listModelBasePrices as listModelBasePricesGenerated,
+  listPricingRules as listPricingRulesGenerated,
   listBalanceSnapshots as listBalanceSnapshotsGenerated,
   listBalanceSnapshotsForStation as listBalanceSnapshotsForStationGenerated,
   listCurrentStationBalanceSnapshots as listCurrentStationBalanceSnapshotsGenerated,
+  resolveStationKeyPricingContext as resolveStationKeyPricingContextGenerated,
   upsertBalanceSnapshot as upsertBalanceSnapshotGenerated,
   type UpsertBalanceSnapshotInputDto,
 } from "@/lib/bridge/generated";
@@ -14,7 +17,6 @@ import type {
   ModelBasePrice,
   PricingRule,
   RequestKind,
-  ResolvedPricingContext,
 } from "@/lib/types/economics";
 
 let memoryPricingRules: PricingRule[] | null = null;
@@ -22,7 +24,7 @@ let memoryBalanceSnapshots: BalanceSnapshot[] | null = null;
 let memoryModelBasePrices: ModelBasePrice[] | null = null;
 
 export function listPricingRules() {
-  return invoke<PricingRule[]>("list_pricing_rules").catch((error) => {
+  return listPricingRulesGenerated().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return ensureMemoryPricingRules();
     }
@@ -59,7 +61,7 @@ export function resolveStationKeyPricingContext(
   requestedModel: string,
   requestKind: RequestKind = "text",
 ) {
-  return invoke<ResolvedPricingContext>("resolve_station_key_pricing_context", {
+  return resolveStationKeyPricingContextGenerated({
     stationKeyId,
     requestedModel,
     requestKind,
@@ -67,7 +69,7 @@ export function resolveStationKeyPricingContext(
 }
 
 export function listModelBasePrices() {
-  return invoke<ModelBasePrice[]>("list_model_base_prices").catch((error) => {
+  return listModelBasePricesGenerated().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return ensureMemoryModelBasePrices();
     }

@@ -38,6 +38,10 @@ use crate::{
             GroupRateRecordDto, StationGroupBindingDto, StationGroupOptionDto,
             UpsertBalanceSnapshotInputDto, UpsertStationGroupBindingInputDto,
         },
+        pricing_reads::{
+            ModelBasePriceDto, PricingComparisonWorkspaceDto, PricingContextInputDto,
+            PricingRuleDto, ResolvedPricingContextDto,
+        },
         routing_health_reads::{
             ModelAliasDto, RouteSimulationInputDto, RouteSimulationResultDto,
             RoutingStationKeyIdInputDto, StationEndpointHealthDto, StationKeyCapabilitiesDto,
@@ -70,17 +74,13 @@ use crate::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
         collector::CollectorRunResult,
         credentials::PersistStationSessionInput,
-        pricing::{
-            ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
-            UpsertModelBasePriceInput, UpsertPricingRuleInput,
-        },
+        pricing::{ModelBasePrice, PricingRule, UpsertModelBasePriceInput, UpsertPricingRuleInput},
         proxy::{ProxyStatus, UpstreamApiFormat},
         routing::{
             ModelAlias, StationKeyCapabilities, UpdateStationKeyCapabilitiesInput,
             UpsertModelAliasInput,
         },
         settings::AppSettings,
-        shared_capabilities::PricingComparisonWorkspace,
         station_keys::KeyPoolItem,
         stations::EndpointPingResult,
         AppStatus,
@@ -1380,12 +1380,18 @@ pub async fn load_channel_status_workspace(
 #[tauri::command]
 pub async fn load_pricing_comparison_workspace(
     services: State<'_, AppServices>,
-) -> Result<PricingComparisonWorkspace, error::CommandError> {
-    services
-        .pricing_comparison
-        .load(PageLimit::new(500).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<PricingComparisonWorkspaceDto, error::CommandError> {
+    correlation::in_command_scope("load_pricing_comparison_workspace", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .pricing_comparison
+            .load(PageLimit::new(500).expect("bounded limit"))
+            .await
+            .map(PricingComparisonWorkspaceDto::from)
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1769,23 +1775,33 @@ pub async fn simulate_route(
 #[tauri::command]
 pub async fn list_pricing_rules(
     services: State<'_, AppServices>,
-) -> Result<Vec<PricingRule>, error::CommandError> {
-    services
-        .pricing
-        .list_pricing_rules(PageLimit::new(200).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<PricingRuleDto>, error::CommandError> {
+    correlation::in_command_scope("list_pricing_rules", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .pricing
+            .list_pricing_rules(PageLimit::new(200).expect("bounded limit"))
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_model_base_prices(
     services: State<'_, AppServices>,
-) -> Result<Vec<ModelBasePrice>, error::CommandError> {
-    services
-        .pricing
-        .list_model_base_prices(PageLimit::new(200).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<ModelBasePriceDto>, error::CommandError> {
+    correlation::in_command_scope("list_model_base_prices", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .pricing
+            .list_model_base_prices(PageLimit::new(200).expect("bounded limit"))
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1838,15 +1854,22 @@ pub async fn delete_pricing_rule(
 #[tauri::command]
 pub async fn resolve_station_key_pricing_context(
     services: State<'_, AppServices>,
-    station_key_id: String,
-    requested_model: String,
-    request_kind: Option<RequestKind>,
-) -> Result<ResolvedPricingContext, error::CommandError> {
-    services
-        .pricing
-        .resolve_station_key_pricing_context(&station_key_id, &requested_model, request_kind)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<ResolvedPricingContextDto, error::CommandError> {
+    correlation::in_command_scope("resolve_station_key_pricing_context", async {
+        let (station_key_id, requested_model, request_kind) =
+            PricingContextInputDto::parse(input)?.into_parts();
+        services
+            .pricing
+            .resolve_station_key_pricing_context(
+                &station_key_id,
+                &requested_model,
+                Some(request_kind),
+            )
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]

@@ -2478,6 +2478,137 @@
         "selectedStationId": "station-1",
         "selectedStationKeyId": "key-1"
       }
+    },
+    {
+      "command": "list_pricing_rules",
+      "input": {},
+      "output": [
+        {
+          "basePriceSource": "fixture",
+          "collectedAt": "1700000000000",
+          "confidence": 1.0,
+          "createdAt": "1700000000000",
+          "currency": "USD",
+          "enabled": true,
+          "fixedPrice": null,
+          "groupBindingId": null,
+          "groupName": null,
+          "id": "pricing-rule-1",
+          "inputPrice": 1.0,
+          "model": "fixture-model",
+          "normalizationStatus": "complete",
+          "note": null,
+          "outputPrice": 2.0,
+          "priceType": "token",
+          "rateMultiplier": 0.8,
+          "source": "fixture",
+          "stationId": "station-1",
+          "stationKeyId": "key-1",
+          "tierLabel": null,
+          "unit": "M",
+          "updatedAt": "1700000000000",
+          "validFrom": null,
+          "validUntil": null
+        }
+      ]
+    },
+    {
+      "command": "list_model_base_prices",
+      "input": {},
+      "output": [
+        {
+          "builtIn": false,
+          "createdAt": "1700000000000",
+          "currency": "USD",
+          "enabled": true,
+          "id": "base-price-1",
+          "inputPrice": 1.0,
+          "model": "fixture-model",
+          "note": null,
+          "outputPrice": 2.0,
+          "provider": "fixture",
+          "sourceCheckedAt": "2026-07-24",
+          "sourceLabel": "Fixture pricing",
+          "sourceUrl": "https://provider.invalid/pricing",
+          "unit": "M",
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "resolve_station_key_pricing_context",
+      "input": {
+        "requestKind": "text",
+        "requestedModel": "fixture-model",
+        "stationKeyId": "key-1"
+      },
+      "output": {
+        "baseFixedPrice": null,
+        "baseInputPrice": 1.0,
+        "baseOutputPrice": 2.0,
+        "basePriceSource": "fixture",
+        "confidence": 1.0,
+        "currency": "USD",
+        "effectiveRateMultiplier": 0.8,
+        "estimatedFixedPrice": null,
+        "estimatedInputPrice": 0.8,
+        "estimatedOutputPrice": 1.6,
+        "groupBindingId": null,
+        "pricingStatus": "priced",
+        "rateCollectedAt": "1700000000000",
+        "rateSource": "fixture",
+        "reason": null,
+        "requestKind": "text",
+        "requestedModel": "fixture-model",
+        "resolvedAt": "1700000000000",
+        "resolvedModel": "fixture-model",
+        "sourceChain": [
+          "fixture"
+        ],
+        "stationId": "station-1",
+        "stationKeyId": "key-1",
+        "unit": "M"
+      }
+    },
+    {
+      "command": "load_pricing_comparison_workspace",
+      "input": {},
+      "output": {
+        "developerModeEnabled": false,
+        "groupBindings": [],
+        "groupRates": [],
+        "pricingRules": [
+          {
+            "basePriceSource": "fixture",
+            "collectedAt": "1700000000000",
+            "confidence": 1.0,
+            "createdAt": "1700000000000",
+            "currency": "USD",
+            "enabled": true,
+            "fixedPrice": null,
+            "groupBindingId": null,
+            "groupName": null,
+            "id": "pricing-rule-1",
+            "inputPrice": 1.0,
+            "model": "fixture-model",
+            "normalizationStatus": "complete",
+            "note": null,
+            "outputPrice": 2.0,
+            "priceType": "token",
+            "rateMultiplier": 0.8,
+            "source": "fixture",
+            "stationId": "station-1",
+            "stationKeyId": "key-1",
+            "tierLabel": null,
+            "unit": "M",
+            "updatedAt": "1700000000000",
+            "validFrom": null,
+            "validUntil": null
+          }
+        ],
+        "stationKeys": [],
+        "stations": []
+      }
     }
   ],
   "schemaVersion": 1

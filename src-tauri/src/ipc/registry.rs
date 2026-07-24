@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "e63524477c45b6cd1b2d425b5f78591cf62b20ba540b41919bf8a8795b23a0f4";
+    "c71c9f5ba080ab0e66435426db5c0a6454d3126738400b89ff07619b96076cca";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -505,6 +505,14 @@ fn command_contract(name: &str) -> CommandContract {
             migrated_read("RoutingStationKeyIdInputDto", "StationKeyHealthDto")
         }
         "simulate_route" => migrated_read("RouteSimulationInputDto", "RouteSimulationResultDto"),
+        "list_pricing_rules" => migrated_read("EmptyInputDto", "Vec<PricingRuleDto>"),
+        "list_model_base_prices" => migrated_read("EmptyInputDto", "Vec<ModelBasePriceDto>"),
+        "resolve_station_key_pricing_context" => {
+            migrated_read("PricingContextInputDto", "ResolvedPricingContextDto")
+        }
+        "load_pricing_comparison_workspace" => {
+            migrated_read("EmptyInputDto", "PricingComparisonWorkspaceDto")
+        }
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         "get_local_access_key" => legacy_declared("unit", "String"),
         "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
@@ -665,6 +673,7 @@ fn pilot_serialization_fixture() -> String {
     commands.extend(super::dto::channel_monitor_operations::serialization_fixtures());
     commands.extend(super::dto::station_collector_operations::serialization_fixtures());
     commands.extend(super::dto::routing_health_reads::serialization_fixtures());
+    commands.extend(super::dto::pricing_reads::serialization_fixtures());
     let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
     format!(
         "{}\n",
@@ -893,6 +902,22 @@ export function getStationKeyHealth(input: RoutingStationKeyIdInputDto): Promise
 
 export function simulateRoute(input: RouteSimulationInputDto): Promise<RouteSimulationResultDto> {
   return invokeCommand<RouteSimulationResultDto>("simulate_route", { input });
+}
+
+export function listPricingRules(input: EmptyInputDto = {}): Promise<PricingRuleDto[]> {
+  return invokeCommand<PricingRuleDto[]>("list_pricing_rules", { input });
+}
+
+export function listModelBasePrices(input: EmptyInputDto = {}): Promise<ModelBasePriceDto[]> {
+  return invokeCommand<ModelBasePriceDto[]>("list_model_base_prices", { input });
+}
+
+export function resolveStationKeyPricingContext(input: PricingContextInputDto): Promise<ResolvedPricingContextDto> {
+  return invokeCommand<ResolvedPricingContextDto>("resolve_station_key_pricing_context", { input });
+}
+
+export function loadPricingComparisonWorkspace(input: EmptyInputDto = {}): Promise<PricingComparisonWorkspaceDto> {
+  return invokeCommand<PricingComparisonWorkspaceDto>("load_pricing_comparison_workspace", { input });
 }
 
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
@@ -1245,6 +1270,39 @@ mod tests {
                 "simulate_route",
                 "RouteSimulationInputDto",
                 "RouteSimulationResultDto",
+            ),
+        ] {
+            let contract = command_contract(name);
+            assert_eq!(contract.input, input, "{name}");
+            assert_eq!(contract.output, output, "{name}");
+            assert_eq!(contract.mutation_kind, "read", "{name}");
+            assert_eq!(
+                contract.runtime_validation, "rust_dto_pre_application",
+                "{name}"
+            );
+            assert!(!contract.transport_retry, "{name}");
+            assert!(!contract.result_unknown, "{name}");
+        }
+    }
+
+    #[test]
+    fn pricing_reads_have_closed_schemas_and_read_semantics() {
+        for (name, input, output) in [
+            ("list_pricing_rules", "EmptyInputDto", "Vec<PricingRuleDto>"),
+            (
+                "list_model_base_prices",
+                "EmptyInputDto",
+                "Vec<ModelBasePriceDto>",
+            ),
+            (
+                "resolve_station_key_pricing_context",
+                "PricingContextInputDto",
+                "ResolvedPricingContextDto",
+            ),
+            (
+                "load_pricing_comparison_workspace",
+                "EmptyInputDto",
+                "PricingComparisonWorkspaceDto",
             ),
         ] {
             let contract = command_contract(name);

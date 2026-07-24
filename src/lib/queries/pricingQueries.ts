@@ -1,4 +1,7 @@
-import { invoke } from "@/lib/bridge/transport";
+import {
+  loadPricingComparisonWorkspace as loadPricingComparisonWorkspaceGenerated,
+  type PricingComparisonWorkspaceDto,
+} from "@/lib/bridge/generated";
 import { listPricingRules } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getSettings } from "@/lib/api/settings";
@@ -21,7 +24,8 @@ export type PricingComparisonWorkspace = {
 
 export async function loadPricingComparisonWorkspace(): Promise<PricingComparisonWorkspace> {
   try {
-    return await invoke<PricingComparisonWorkspace>("load_pricing_comparison_workspace");
+    const workspace: PricingComparisonWorkspaceDto = await loadPricingComparisonWorkspaceGenerated();
+    return workspace as PricingComparisonWorkspace;
   } catch (error) {
     if (!isTauriInvokeUnavailable(error)) {
       throw error;
