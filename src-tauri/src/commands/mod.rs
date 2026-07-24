@@ -22,6 +22,11 @@ use crate::{
             ChangeEventDto, ChangeEventIdInputDto, ChangeEventIdsInputDto, RequestLogDto,
             StationIdInputDto as ChangeLogStationIdInputDto, UpsertChangeEventInputDto,
         },
+        collector_facts::{
+            BalanceSnapshotDto, CollectorRunDto, CollectorSnapshotDto, CollectorStationIdInputDto,
+            GroupRateRecordDto, StationGroupBindingDto, StationGroupOptionDto,
+            UpsertBalanceSnapshotInputDto, UpsertStationGroupBindingInputDto,
+        },
         settings::UpdateSettingsInputDto,
         station_keys::{
             BindRemoteStationKeyInputDto, CreateLocalStationKeyFromRemoteResultDto,
@@ -48,15 +53,11 @@ use crate::{
             CreateChannelMonitorInput, CreateChannelMonitorTemplateInput,
             UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
         },
-        collector::{
-            CollectorRunResult, CollectorSnapshot, StationLoginTestInput, StationLoginTestResult,
-        },
-        collector_runs::CollectorRun,
+        collector::{CollectorRunResult, StationLoginTestInput, StationLoginTestResult},
         credentials::PersistStationSessionInput,
-        group_facts::{GroupRateRecord, StationGroupBinding, UpsertStationGroupBindingInput},
         pricing::{
-            BalanceSnapshot, ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
-            UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
+            ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
+            UpsertModelBasePriceInput, UpsertPricingRuleInput,
         },
         proxy::{ProxyStatus, UpstreamApiFormat},
         routing::{
@@ -66,7 +67,7 @@ use crate::{
         settings::AppSettings,
         shared_capabilities::{
             ChannelMonitorSummary, ChannelStatusSummary, ChannelStatusWorkspace,
-            PricingComparisonWorkspace, StationGroupOption,
+            PricingComparisonWorkspace,
         },
         station_keys::KeyPoolItem,
         stations::{EndpointPingResult, StationEndpointHealth},
@@ -1748,107 +1749,154 @@ pub async fn resolve_station_key_pricing_context(
 #[tauri::command]
 pub async fn list_balance_snapshots(
     services: State<'_, AppServices>,
-) -> Result<Vec<BalanceSnapshot>, error::CommandError> {
-    services
-        .pricing
-        .latest_station_balances(PageLimit::new(200).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<BalanceSnapshotDto>, error::CommandError> {
+    correlation::in_command_scope("list_balance_snapshots", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .pricing
+            .latest_station_balances(PageLimit::new(200).expect("bounded limit"))
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_current_station_balance_snapshots(
     services: State<'_, AppServices>,
-) -> Result<Vec<BalanceSnapshot>, error::CommandError> {
-    services
-        .pricing
-        .latest_station_balances(PageLimit::new(200).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<BalanceSnapshotDto>, error::CommandError> {
+    correlation::in_command_scope("list_current_station_balance_snapshots", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .pricing
+            .latest_station_balances(PageLimit::new(200).expect("bounded limit"))
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_balance_snapshots_for_station(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<Vec<BalanceSnapshot>, error::CommandError> {
-    services
-        .routing
-        .list_balance_snapshots_for_station(&station_id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<BalanceSnapshotDto>, error::CommandError> {
+    correlation::in_command_scope("list_balance_snapshots_for_station", async {
+        let input = CollectorStationIdInputDto::parse(input)?;
+        services
+            .routing
+            .list_balance_snapshots_for_station(&input.station_id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn upsert_balance_snapshot(
     services: State<'_, AppServices>,
-    input: UpsertBalanceSnapshotInput,
-) -> Result<BalanceSnapshot, error::CommandError> {
-    services
-        .pricing
-        .upsert_balance_snapshot(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<BalanceSnapshotDto, error::CommandError> {
+    correlation::in_command_scope("upsert_balance_snapshot", async {
+        let input = UpsertBalanceSnapshotInputDto::parse(input)?.into_domain();
+        services
+            .pricing
+            .upsert_balance_snapshot(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_station_group_bindings(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<Vec<StationGroupBinding>, error::CommandError> {
-    services
-        .collectors
-        .list_station_group_bindings(&station_id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<StationGroupBindingDto>, error::CommandError> {
+    correlation::in_command_scope("list_station_group_bindings", async {
+        let input = CollectorStationIdInputDto::parse(input)?;
+        services
+            .collectors
+            .list_station_group_bindings(&input.station_id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_station_group_options(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<Vec<StationGroupOption>, error::CommandError> {
-    services
-        .collectors
-        .list_station_group_options(&station_id, PageLimit::new(500).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<StationGroupOptionDto>, error::CommandError> {
+    correlation::in_command_scope("list_station_group_options", async {
+        let input = CollectorStationIdInputDto::parse(input)?;
+        services
+            .collectors
+            .list_station_group_options(
+                &input.station_id,
+                PageLimit::new(500).expect("bounded limit"),
+            )
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn upsert_station_group_binding(
     services: State<'_, AppServices>,
-    input: UpsertStationGroupBindingInput,
-) -> Result<StationGroupBinding, error::CommandError> {
-    services
-        .collectors
-        .upsert_station_group_binding(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<StationGroupBindingDto, error::CommandError> {
+    correlation::in_command_scope("upsert_station_group_binding", async {
+        let input = UpsertStationGroupBindingInputDto::parse(input)?.into_domain();
+        services
+            .collectors
+            .upsert_station_group_binding(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_group_rate_records(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<Vec<GroupRateRecord>, error::CommandError> {
-    services
-        .collectors
-        .list_group_rate_records(&station_id, PageLimit::new(500).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<GroupRateRecordDto>, error::CommandError> {
+    correlation::in_command_scope("list_group_rate_records", async {
+        let input = CollectorStationIdInputDto::parse(input)?;
+        services
+            .collectors
+            .list_group_rate_records(
+                &input.station_id,
+                PageLimit::new(500).expect("bounded limit"),
+            )
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_collector_runs(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<Vec<CollectorRun>, error::CommandError> {
-    services
-        .collectors
-        .list_collector_runs(&station_id, PageLimit::new(500).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<CollectorRunDto>, error::CommandError> {
+    correlation::in_command_scope("list_collector_runs", async {
+        let input = CollectorStationIdInputDto::parse(input)?;
+        services
+            .collectors
+            .list_collector_runs(
+                &input.station_id,
+                PageLimit::new(500).expect("bounded limit"),
+            )
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -2189,26 +2237,34 @@ async fn apply_prepared_collection_v2(
 #[tauri::command]
 pub async fn list_collector_snapshots(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<Vec<CollectorSnapshot>, error::CommandError> {
-    let limit = PageLimit::new(100).map_err(command_application_error)?;
-    services
-        .collectors
-        .list_station_snapshots(&station_id, limit)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<CollectorSnapshotDto>, error::CommandError> {
+    correlation::in_command_scope("list_collector_snapshots", async {
+        let input = CollectorStationIdInputDto::parse(input)?;
+        let limit = PageLimit::new(100).map_err(public_command_application_error)?;
+        services
+            .collectors
+            .list_station_snapshots(&input.station_id, limit)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn get_latest_collector_snapshot(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<Option<CollectorSnapshot>, error::CommandError> {
-    services
-        .collectors
-        .latest_station_snapshot(&station_id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Option<CollectorSnapshotDto>, error::CommandError> {
+    correlation::in_command_scope("get_latest_collector_snapshot", async {
+        let input = CollectorStationIdInputDto::parse(input)?;
+        services
+            .collectors
+            .latest_station_snapshot(&input.station_id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]

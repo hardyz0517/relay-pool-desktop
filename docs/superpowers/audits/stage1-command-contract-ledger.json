@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "source_revision": "b572dc65304800a14ed5c07a31f46dbe9cc2dc45",
+  "source_revision": "ea91151e0d61a6a1c2b7e734b05d15050cd3d0b7",
   "generated_at_date": "2026-07-24",
-  "source_snapshot": "formal codex/architecture-scale-upgrade worktree at the S1-T5-changes-logs-ordinary qualification checkpoint, based on b572dc6",
+  "source_snapshot": "formal codex/architecture-scale-upgrade worktree at the S1-T5-collectors-facts-snapshots-ordinary qualification checkpoint, based on ea91151",
   "source_authority": {
     "compiled_registry": "src-tauri/src/ipc/registry.rs",
     "rust_signatures": "src-tauri/src/commands/mod.rs",
@@ -22,14 +22,14 @@
   ],
   "classification_notes": [
     "Runtime/bootstrap -> settings_stations; Channel connectivity -> station_keys; update/data-directory -> updater_data_recovery.",
-    "S1-T5 settings/stations, station-key ordinary, and changes/logs child shards fully migrate 37 commands; five earlier pilot schemas remain partial and 78 commands remain legacy placeholders.",
+    "S1-T5 settings/stations, station-key ordinary, changes/logs, and collector facts/snapshots child shards fully migrate 48 commands; five earlier pilot schemas remain partial and 67 commands remain legacy placeholders.",
     "test_station_key_connectivity remains the single Channel command and is intentionally partial/legacy until Task 6.",
     "No command proves an application-owned operation key; idempotent_with_key count is zero.",
     "scan_remote_station_keys is an idempotent mutation because it atomically replaces the local remote-key snapshot and matching key metadata; transport retry remains disabled.",
     "create_station is NonIdempotent: transport retry is disabled and ambiguous post-dispatch rejection becomes typed ResultUnknownError.",
     "record_capture_event is intentionally capture-only, not missing from ACL; it must not be granted to main-window.",
     "Empty frontend_callers means no literal caller in requested API/query directories.",
-    "Audit artifact only: the changes/logs child shard may close while the Stage 1 Gate remains blocked on later Task 5 groups and Task 6."
+    "Audit artifact only: the collector facts/snapshots child shard may close while the Stage 1 Gate remains blocked on later Task 5 collector groups, routing/proxy, updater/data recovery, and Task 6."
   ],
   "statistics": {
     "commands": 120,
@@ -51,13 +51,13 @@
       "read": 48
     },
     "explicit_pilot_schema_partial": 5,
-    "legacy_unmigrated_placeholder": 78,
+    "legacy_unmigrated_placeholder": 67,
     "acl_allowed_main_window": 119,
     "commands_with_frontend_callers": 112,
     "commands_without_frontend_callers": 8,
     "public_command_error": 117,
     "public_non_command_error": 3,
-    "fully_migrated": 37,
+    "fully_migrated": 48,
     "acl_capture_only": 1,
     "acl_unallowlisted": 0
   },
@@ -2604,9 +2604,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "Option<CollectorSnapshot>",
+      "rust_output": "Option<CollectorSnapshotDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -2626,17 +2626,17 @@
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 collectors facts/snapshots shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CollectorStationIdInputDto",
+        "output": "Option<CollectorSnapshotDto>",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:163",
-        "rust_signature": "src-tauri/src/commands/mod.rs:2029"
+        "rust_signature": "src-tauri/src/commands/mod.rs:2255"
       }
     },
     {
@@ -2645,9 +2645,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value"
       ],
-      "rust_output": "Vec<BalanceSnapshot>",
+      "rust_output": "Vec<BalanceSnapshotDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -2667,17 +2668,17 @@
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 collectors facts/snapshots shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "Vec<BalanceSnapshotDto>",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:134",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1625"
+        "rust_signature": "src-tauri/src/commands/mod.rs:1750"
       }
     },
     {
@@ -2687,9 +2688,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "Vec<BalanceSnapshot>",
+      "rust_output": "Vec<BalanceSnapshotDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -2709,17 +2710,17 @@
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 collectors facts/snapshots shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CollectorStationIdInputDto",
+        "output": "Vec<BalanceSnapshotDto>",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:136",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1647"
+        "rust_signature": "src-tauri/src/commands/mod.rs:1782"
       }
     },
     {
@@ -2938,9 +2939,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "Vec<CollectorRun>",
+      "rust_output": "Vec<CollectorRunDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -2960,17 +2961,17 @@
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 collectors facts/snapshots shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CollectorStationIdInputDto",
+        "output": "Vec<CollectorRunDto>",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:142",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1719"
+        "rust_signature": "src-tauri/src/commands/mod.rs:1884"
       }
     },
     {
@@ -2980,9 +2981,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "Vec<CollectorSnapshot>",
+      "rust_output": "Vec<CollectorSnapshotDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3002,17 +3003,17 @@
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 collectors facts/snapshots shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CollectorStationIdInputDto",
+        "output": "Vec<CollectorSnapshotDto>",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:162",
-        "rust_signature": "src-tauri/src/commands/mod.rs:2016"
+        "rust_signature": "src-tauri/src/commands/mod.rs:2238"
       }
     },
     {
@@ -3021,9 +3022,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value"
       ],
-      "rust_output": "Vec<BalanceSnapshot>",
+      "rust_output": "Vec<BalanceSnapshotDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3043,17 +3045,17 @@
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 collectors facts/snapshots shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "Vec<BalanceSnapshotDto>",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:135",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1636"
+        "rust_signature": "src-tauri/src/commands/mod.rs:1766"
       }
     },
     {
@@ -3063,9 +3065,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "Vec<GroupRateRecord>",
+      "rust_output": "Vec<GroupRateRecordDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3085,17 +3087,17 @@
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 collectors facts/snapshots shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CollectorStationIdInputDto",
+        "output": "Vec<GroupRateRecordDto>",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:141",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1707"
+        "rust_signature": "src-tauri/src/commands/mod.rs:1865"
       }
     },
     {
@@ -3105,9 +3107,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "Vec<StationGroupBinding>",
+      "rust_output": "Vec<StationGroupBindingDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3127,17 +3129,17 @@
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 collectors facts/snapshots shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CollectorStationIdInputDto",
+        "output": "Vec<StationGroupBindingDto>",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:138",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1671"
+        "rust_signature": "src-tauri/src/commands/mod.rs:1814"
       }
     },
     {
@@ -3147,9 +3149,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "Vec<StationGroupOption>",
+      "rust_output": "Vec<StationGroupOptionDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3169,17 +3171,17 @@
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 collectors facts/snapshots shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CollectorStationIdInputDto",
+        "output": "Vec<StationGroupOptionDto>",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:139",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1683"
+        "rust_signature": "src-tauri/src/commands/mod.rs:1830"
       }
     },
     {
@@ -3522,9 +3524,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "input: UpsertBalanceSnapshotInput"
+        "input: Value"
       ],
-      "rust_output": "BalanceSnapshot",
+      "rust_output": "BalanceSnapshotDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3544,17 +3546,17 @@
         "reject unknown top-level fields before application use case",
         "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 collectors facts/snapshots shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "UpsertBalanceSnapshotInputDto",
+        "output": "BalanceSnapshotDto",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:137",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1659"
+        "rust_signature": "src-tauri/src/commands/mod.rs:1798"
       }
     },
     {
@@ -3564,9 +3566,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "input: UpsertStationGroupBindingInput"
+        "input: Value"
       ],
-      "rust_output": "StationGroupBinding",
+      "rust_output": "StationGroupBindingDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3586,17 +3588,17 @@
         "reject unknown top-level fields before application use case",
         "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 collectors facts/snapshots shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "UpsertStationGroupBindingInputDto",
+        "output": "StationGroupBindingDto",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:140",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1695"
+        "rust_signature": "src-tauri/src/commands/mod.rs:1849"
       }
     },
     {

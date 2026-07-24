@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "8440b0141d7775ffd4d99c86bc42f5b95762e7d8b5604b4d3209c863722c45d8";
+    "f024bd70326ec0f5c2bae6c45d204b1257a247660b8854714766d3b2aa45f8bd";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -373,6 +373,42 @@ fn command_contract(name: &str) -> CommandContract {
             "idempotent",
             false,
         ),
+        "list_balance_snapshots" | "list_current_station_balance_snapshots" => {
+            migrated_read("EmptyInputDto", "Vec<BalanceSnapshotDto>")
+        }
+        "list_balance_snapshots_for_station" => {
+            migrated_read("CollectorStationIdInputDto", "Vec<BalanceSnapshotDto>")
+        }
+        "upsert_balance_snapshot" => migrated_mutation(
+            "UpsertBalanceSnapshotInputDto",
+            "BalanceSnapshotDto",
+            "idempotent",
+            false,
+        ),
+        "list_station_group_bindings" => {
+            migrated_read("CollectorStationIdInputDto", "Vec<StationGroupBindingDto>")
+        }
+        "list_station_group_options" => {
+            migrated_read("CollectorStationIdInputDto", "Vec<StationGroupOptionDto>")
+        }
+        "upsert_station_group_binding" => migrated_mutation(
+            "UpsertStationGroupBindingInputDto",
+            "StationGroupBindingDto",
+            "idempotent",
+            false,
+        ),
+        "list_group_rate_records" => {
+            migrated_read("CollectorStationIdInputDto", "Vec<GroupRateRecordDto>")
+        }
+        "list_collector_runs" => {
+            migrated_read("CollectorStationIdInputDto", "Vec<CollectorRunDto>")
+        }
+        "list_collector_snapshots" => {
+            migrated_read("CollectorStationIdInputDto", "Vec<CollectorSnapshotDto>")
+        }
+        "get_latest_collector_snapshot" => {
+            migrated_read("CollectorStationIdInputDto", "Option<CollectorSnapshotDto>")
+        }
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         "get_local_access_key" => legacy_declared("unit", "String"),
         "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
@@ -527,6 +563,7 @@ fn pilot_serialization_fixture() -> String {
     ];
     commands.extend(super::dto::station_keys::serialization_fixtures());
     commands.extend(super::dto::change_logs::serialization_fixtures());
+    commands.extend(super::dto::collector_facts::serialization_fixtures());
     let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
     format!(
         "{}\n",
@@ -603,6 +640,50 @@ export function dismissChangeEvent(input: ChangeEventIdInputDto): Promise<Change
 
 export function resolveChangeEvent(input: ChangeEventIdInputDto): Promise<ChangeEventDto> {
   return invokeCommand<ChangeEventDto>("resolve_change_event", { input });
+}
+
+export function listBalanceSnapshots(input: EmptyInputDto = {}): Promise<BalanceSnapshotDto[]> {
+  return invokeCommand<BalanceSnapshotDto[]>("list_balance_snapshots", { input });
+}
+
+export function listCurrentStationBalanceSnapshots(input: EmptyInputDto = {}): Promise<BalanceSnapshotDto[]> {
+  return invokeCommand<BalanceSnapshotDto[]>("list_current_station_balance_snapshots", { input });
+}
+
+export function listBalanceSnapshotsForStation(input: CollectorStationIdInputDto): Promise<BalanceSnapshotDto[]> {
+  return invokeCommand<BalanceSnapshotDto[]>("list_balance_snapshots_for_station", { input });
+}
+
+export function upsertBalanceSnapshot(input: UpsertBalanceSnapshotInputDto): Promise<BalanceSnapshotDto> {
+  return invokeCommand<BalanceSnapshotDto>("upsert_balance_snapshot", { input });
+}
+
+export function listStationGroupBindings(input: CollectorStationIdInputDto): Promise<StationGroupBindingDto[]> {
+  return invokeCommand<StationGroupBindingDto[]>("list_station_group_bindings", { input });
+}
+
+export function listStationGroupOptions(input: CollectorStationIdInputDto): Promise<StationGroupOptionDto[]> {
+  return invokeCommand<StationGroupOptionDto[]>("list_station_group_options", { input });
+}
+
+export function upsertStationGroupBinding(input: UpsertStationGroupBindingInputDto): Promise<StationGroupBindingDto> {
+  return invokeCommand<StationGroupBindingDto>("upsert_station_group_binding", { input });
+}
+
+export function listGroupRateRecords(input: CollectorStationIdInputDto): Promise<GroupRateRecordDto[]> {
+  return invokeCommand<GroupRateRecordDto[]>("list_group_rate_records", { input });
+}
+
+export function listCollectorRuns(input: CollectorStationIdInputDto): Promise<CollectorRunDto[]> {
+  return invokeCommand<CollectorRunDto[]>("list_collector_runs", { input });
+}
+
+export function listCollectorSnapshots(input: CollectorStationIdInputDto): Promise<CollectorSnapshotDto[]> {
+  return invokeCommand<CollectorSnapshotDto[]>("list_collector_snapshots", { input });
+}
+
+export function getLatestCollectorSnapshot(input: CollectorStationIdInputDto): Promise<CollectorSnapshotDto | null> {
+  return invokeCommand<CollectorSnapshotDto | null>("get_latest_collector_snapshot", { input });
 }
 
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
@@ -785,6 +866,36 @@ mod tests {
     }
 
     #[test]
+    fn collector_facts_snapshot_commands_have_closed_schemas_and_frozen_mutation_semantics() {
+        for name in [
+            "get_latest_collector_snapshot",
+            "list_balance_snapshots",
+            "list_balance_snapshots_for_station",
+            "list_collector_runs",
+            "list_collector_snapshots",
+            "list_current_station_balance_snapshots",
+            "list_group_rate_records",
+            "list_station_group_bindings",
+            "list_station_group_options",
+            "upsert_balance_snapshot",
+            "upsert_station_group_binding",
+        ] {
+            let contract = command_contract(name);
+            assert!(!contract.input.starts_with("legacy_"), "{name}");
+            assert!(!contract.output.starts_with("legacy_"), "{name}");
+            assert_eq!(
+                contract.runtime_validation, "rust_dto_pre_application",
+                "{name}"
+            );
+            assert!(!contract.transport_retry, "{name}");
+            assert!(!contract.result_unknown, "{name}");
+        }
+        for name in ["upsert_balance_snapshot", "upsert_station_group_binding"] {
+            assert_eq!(command_contract(name).mutation_kind, "idempotent", "{name}");
+        }
+    }
+
+    #[test]
     fn generated_bindings_use_the_common_transport_and_dedicated_wrappers() {
         let source = render_typescript("fixture-hash");
         assert!(source.contains("@/lib/bridge/transport"));
@@ -823,6 +934,24 @@ mod tests {
             "updateStationKey",
             "updateStationKeyGroupBinding",
             "updateStationSession",
+        ] {
+            assert!(
+                source.contains(&format!("function {wrapper}(")),
+                "{wrapper}"
+            );
+        }
+        for wrapper in [
+            "getLatestCollectorSnapshot",
+            "listBalanceSnapshots",
+            "listBalanceSnapshotsForStation",
+            "listCollectorRuns",
+            "listCollectorSnapshots",
+            "listCurrentStationBalanceSnapshots",
+            "listGroupRateRecords",
+            "listStationGroupBindings",
+            "listStationGroupOptions",
+            "upsertBalanceSnapshot",
+            "upsertStationGroupBinding",
         ] {
             assert!(
                 source.contains(&format!("function {wrapper}(")),

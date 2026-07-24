@@ -1,4 +1,10 @@
-import { invoke } from "@/lib/bridge/transport";
+import {
+  listGroupRateRecords as listGroupRateRecordsGenerated,
+  listStationGroupBindings as listStationGroupBindingsGenerated,
+  listStationGroupOptions as listStationGroupOptionsGenerated,
+  upsertStationGroupBinding as upsertStationGroupBindingGenerated,
+} from "@/lib/bridge/generated";
+import { normalizeGroupCategory } from "@/lib/groupCategories";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
   GroupRateRecord,
@@ -12,7 +18,7 @@ const memoryBindings = new Map<string, StationGroupBinding[]>();
 const memoryRates = new Map<string, GroupRateRecord[]>();
 
 export function listStationGroupBindings(stationId: string) {
-  return invoke<StationGroupBinding[]>("list_station_group_bindings", { stationId }).catch((error) => {
+  return listStationGroupBindingsGenerated({ stationId }).then((bindings) => bindings.map(normalizeBinding)).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return memoryBindings.get(stationId) ?? [];
     }
@@ -21,7 +27,7 @@ export function listStationGroupBindings(stationId: string) {
 }
 
 export function listStationGroupOptions(stationId: string) {
-  return invoke<StationGroupOption[]>("list_station_group_options", { stationId }).catch(async (error) => {
+  return listStationGroupOptionsGenerated({ stationId }).then((options) => options.map(normalizeOption)).catch(async (error) => {
     if (isTauriInvokeUnavailable(error)) {
       const bindings = await listStationGroupBindings(stationId);
       return bindings.filter(isCollectedStationGroupBinding).map(stationGroupOptionFromBinding);
@@ -31,7 +37,7 @@ export function listStationGroupOptions(stationId: string) {
 }
 
 export function listGroupRateRecords(stationId: string) {
-  return invoke<GroupRateRecord[]>("list_group_rate_records", { stationId }).catch((error) => {
+  return listGroupRateRecordsGenerated({ stationId }).then((records) => records.map(normalizeRateRecord)).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return memoryRates.get(stationId) ?? [];
     }
@@ -40,7 +46,7 @@ export function listGroupRateRecords(stationId: string) {
 }
 
 export function upsertStationGroupBinding(input: UpsertStationGroupBindingInput) {
-  return invoke<StationGroupBinding>("upsert_station_group_binding", { input }).catch((error) => {
+  return upsertStationGroupBindingGenerated(input).then(normalizeBinding).catch((error) => {
     if (!isTauriInvokeUnavailable(error)) {
       throw error;
     }
@@ -99,5 +105,33 @@ function stationGroupOptionFromBinding(binding: StationGroupBinding): StationGro
     effectiveGroupCategory: binding.groupCategoryOverride ?? binding.inferredGroupCategory ?? "unknown",
     rateSource: binding.rateSource,
     selectableForRemoteKey: Boolean(binding.groupIdHash),
+  };
+}
+
+function normalizeBinding(binding: Awaited<ReturnType<typeof upsertStationGroupBindingGenerated>>): StationGroupBinding {
+  return {
+    ...binding,
+    inferredGroupCategory: normalizeGroupCategory(binding.inferredGroupCategory),
+    groupCategoryOverride: normalizeGroupCategory(binding.groupCategoryOverride),
+  };
+}
+
+function normalizeOption(
+  option: Awaited<ReturnType<typeof listStationGroupOptionsGenerated>>[number],
+): StationGroupOption {
+  return {
+    ...option,
+    inferredGroupCategory: normalizeGroupCategory(option.inferredGroupCategory),
+    groupCategoryOverride: normalizeGroupCategory(option.groupCategoryOverride),
+    effectiveGroupCategory: normalizeGroupCategory(option.effectiveGroupCategory) ?? "unknown",
+  };
+}
+
+function normalizeRateRecord(
+  record: Awaited<ReturnType<typeof listGroupRateRecordsGenerated>>[number],
+): GroupRateRecord {
+  return {
+    ...record,
+    inferredGroupCategory: normalizeGroupCategory(record.inferredGroupCategory),
   };
 }

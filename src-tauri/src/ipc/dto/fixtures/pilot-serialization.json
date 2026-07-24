@@ -1356,6 +1356,378 @@
         "title": "Fixture change",
         "updatedAt": "1700000000000"
       }
+    },
+    {
+      "command": "list_balance_snapshots",
+      "input": {},
+      "output": [
+        {
+          "accountConcurrencyLimit": null,
+          "collectedAt": "1700000000000",
+          "confidence": 0.9,
+          "createdAt": "1700000000000",
+          "creditUnit": null,
+          "currency": "CNY",
+          "id": "balance-1",
+          "lowBalanceThreshold": 5.0,
+          "scope": "station",
+          "source": "fixture",
+          "stationId": "station-1",
+          "stationKeyId": null,
+          "status": "normal",
+          "todayBaseConsumption": null,
+          "todayConsumption": null,
+          "todayInputTokenCount": null,
+          "todayOutputTokenCount": null,
+          "todayRequestCount": null,
+          "todayTokenCount": null,
+          "totalBaseConsumption": null,
+          "totalConsumption": null,
+          "totalInputTokenCount": null,
+          "totalOutputTokenCount": null,
+          "totalRequestCount": null,
+          "totalTokenCount": null,
+          "totalValue": null,
+          "updatedAt": "1700000000000",
+          "usedValue": null,
+          "value": 12.5
+        }
+      ]
+    },
+    {
+      "command": "list_current_station_balance_snapshots",
+      "input": {},
+      "output": [
+        {
+          "accountConcurrencyLimit": null,
+          "collectedAt": "1700000000000",
+          "confidence": 0.9,
+          "createdAt": "1700000000000",
+          "creditUnit": null,
+          "currency": "CNY",
+          "id": "balance-1",
+          "lowBalanceThreshold": 5.0,
+          "scope": "station",
+          "source": "fixture",
+          "stationId": "station-1",
+          "stationKeyId": null,
+          "status": "normal",
+          "todayBaseConsumption": null,
+          "todayConsumption": null,
+          "todayInputTokenCount": null,
+          "todayOutputTokenCount": null,
+          "todayRequestCount": null,
+          "todayTokenCount": null,
+          "totalBaseConsumption": null,
+          "totalConsumption": null,
+          "totalInputTokenCount": null,
+          "totalOutputTokenCount": null,
+          "totalRequestCount": null,
+          "totalTokenCount": null,
+          "totalValue": null,
+          "updatedAt": "1700000000000",
+          "usedValue": null,
+          "value": 12.5
+        }
+      ]
+    },
+    {
+      "command": "list_balance_snapshots_for_station",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": [
+        {
+          "accountConcurrencyLimit": null,
+          "collectedAt": "1700000000000",
+          "confidence": 0.9,
+          "createdAt": "1700000000000",
+          "creditUnit": null,
+          "currency": "CNY",
+          "id": "balance-1",
+          "lowBalanceThreshold": 5.0,
+          "scope": "station",
+          "source": "fixture",
+          "stationId": "station-1",
+          "stationKeyId": null,
+          "status": "normal",
+          "todayBaseConsumption": null,
+          "todayConsumption": null,
+          "todayInputTokenCount": null,
+          "todayOutputTokenCount": null,
+          "todayRequestCount": null,
+          "todayTokenCount": null,
+          "totalBaseConsumption": null,
+          "totalConsumption": null,
+          "totalInputTokenCount": null,
+          "totalOutputTokenCount": null,
+          "totalRequestCount": null,
+          "totalTokenCount": null,
+          "totalValue": null,
+          "updatedAt": "1700000000000",
+          "usedValue": null,
+          "value": 12.5
+        }
+      ]
+    },
+    {
+      "command": "upsert_balance_snapshot",
+      "input": {
+        "accountConcurrencyLimit": null,
+        "collectedAt": "1700000000000",
+        "confidence": 0.9,
+        "creditUnit": null,
+        "currency": "CNY",
+        "id": null,
+        "lowBalanceThreshold": 5.0,
+        "scope": "station",
+        "source": "fixture",
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "status": "normal",
+        "todayBaseConsumption": null,
+        "todayConsumption": null,
+        "todayInputTokenCount": null,
+        "todayOutputTokenCount": null,
+        "todayRequestCount": null,
+        "todayTokenCount": null,
+        "totalBaseConsumption": null,
+        "totalConsumption": null,
+        "totalInputTokenCount": null,
+        "totalOutputTokenCount": null,
+        "totalRequestCount": null,
+        "totalTokenCount": null,
+        "totalValue": null,
+        "usedValue": null,
+        "value": 12.5
+      },
+      "output": {
+        "accountConcurrencyLimit": null,
+        "collectedAt": "1700000000000",
+        "confidence": 0.9,
+        "createdAt": "1700000000000",
+        "creditUnit": null,
+        "currency": "CNY",
+        "id": "balance-1",
+        "lowBalanceThreshold": 5.0,
+        "scope": "station",
+        "source": "fixture",
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "status": "normal",
+        "todayBaseConsumption": null,
+        "todayConsumption": null,
+        "todayInputTokenCount": null,
+        "todayOutputTokenCount": null,
+        "todayRequestCount": null,
+        "todayTokenCount": null,
+        "totalBaseConsumption": null,
+        "totalConsumption": null,
+        "totalInputTokenCount": null,
+        "totalOutputTokenCount": null,
+        "totalRequestCount": null,
+        "totalTokenCount": null,
+        "totalValue": null,
+        "updatedAt": "1700000000000",
+        "usedValue": null,
+        "value": 12.5
+      }
+    },
+    {
+      "command": "list_station_group_bindings",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": [
+        {
+          "bindingKind": "station_group",
+          "bindingStatus": "available",
+          "confidence": 0.9,
+          "createdAt": "1700000000000",
+          "defaultRateMultiplier": 1.0,
+          "effectiveRateMultiplier": 1.0,
+          "groupCategoryOverride": null,
+          "groupIdHash": "group-id-hash-1",
+          "groupKeyHash": "group-hash-1",
+          "groupName": "default",
+          "id": "binding-1",
+          "inferredGroupCategory": "gpt",
+          "lastCheckedAt": "1700000000000",
+          "lastRateChangedAt": null,
+          "lastSeenAt": "1700000000000",
+          "parentGroupBindingId": null,
+          "rateSource": "fixture",
+          "rawJsonRedacted": null,
+          "stationId": "station-1",
+          "stationKeyId": null,
+          "updatedAt": "1700000000000",
+          "userRateMultiplier": null
+        }
+      ]
+    },
+    {
+      "command": "list_station_group_options",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": [
+        {
+          "effectiveGroupCategory": "gpt",
+          "groupBindingId": "binding-1",
+          "groupCategoryOverride": null,
+          "groupIdHash": "group-id-hash-1",
+          "groupName": "default",
+          "inferredGroupCategory": "gpt",
+          "rateMultiplier": 1.0,
+          "rateSource": "fixture",
+          "selectableForRemoteKey": true,
+          "value": "binding:binding-1"
+        }
+      ]
+    },
+    {
+      "command": "upsert_station_group_binding",
+      "input": {
+        "bindingKind": "station_group",
+        "bindingStatus": "available",
+        "confidence": 0.9,
+        "defaultRateMultiplier": 1.0,
+        "effectiveRateMultiplier": 1.0,
+        "groupCategoryOverride": null,
+        "groupIdHash": "group-id-hash-1",
+        "groupKeyHash": "group-hash-1",
+        "groupName": "default",
+        "inferredGroupCategory": "gpt",
+        "lastSeenAt": "1700000000000",
+        "parentGroupBindingId": null,
+        "rateSource": "fixture",
+        "rawJsonRedacted": null,
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "userRateMultiplier": null
+      },
+      "output": {
+        "bindingKind": "station_group",
+        "bindingStatus": "available",
+        "confidence": 0.9,
+        "createdAt": "1700000000000",
+        "defaultRateMultiplier": 1.0,
+        "effectiveRateMultiplier": 1.0,
+        "groupCategoryOverride": null,
+        "groupIdHash": "group-id-hash-1",
+        "groupKeyHash": "group-hash-1",
+        "groupName": "default",
+        "id": "binding-1",
+        "inferredGroupCategory": "gpt",
+        "lastCheckedAt": "1700000000000",
+        "lastRateChangedAt": null,
+        "lastSeenAt": "1700000000000",
+        "parentGroupBindingId": null,
+        "rateSource": "fixture",
+        "rawJsonRedacted": null,
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "updatedAt": "1700000000000",
+        "userRateMultiplier": null
+      }
+    },
+    {
+      "command": "list_group_rate_records",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": [
+        {
+          "bindingKind": "station_group",
+          "checkedAt": "1700000000000",
+          "confidence": 0.9,
+          "createdAt": "1700000000000",
+          "defaultRateMultiplier": 1.0,
+          "effectiveRateMultiplier": 1.0,
+          "groupBindingId": "binding-1",
+          "groupKeyHash": "group-hash-1",
+          "groupName": "default",
+          "id": "rate-1",
+          "inferredGroupCategory": "gpt",
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "stationKeyId": null,
+          "userRateMultiplier": null
+        }
+      ]
+    },
+    {
+      "command": "list_collector_runs",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": [
+        {
+          "adapter": "fixture",
+          "createdAt": "1700000000000",
+          "durationMs": 100,
+          "endpointCount": 1,
+          "endpointRevision": 1,
+          "errorCode": null,
+          "errorMessage": null,
+          "failureCount": 0,
+          "finishedAt": "1700000000100",
+          "id": "run-1",
+          "manualActionRequired": false,
+          "parentRunId": null,
+          "snapshotId": "snapshot-1",
+          "startedAt": "1700000000000",
+          "stationId": "station-1",
+          "status": "success",
+          "successCount": 1,
+          "taskType": "full"
+        }
+      ]
+    },
+    {
+      "command": "list_collector_snapshots",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": [
+        {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "success",
+          "summaryJson": {
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "command": "get_latest_collector_snapshot",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "createdAt": "1700000000000",
+        "endpointRevision": 1,
+        "errorMessage": null,
+        "fetchedAt": "1700000000000",
+        "id": "snapshot-1",
+        "normalizedJson": {},
+        "rawJsonRedacted": null,
+        "source": "fixture",
+        "stationId": "station-1",
+        "status": "success",
+        "summaryJson": {
+          "status": "success"
+        }
+      }
     }
   ],
   "schemaVersion": 1

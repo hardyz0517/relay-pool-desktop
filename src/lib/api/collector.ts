@@ -1,4 +1,8 @@
 import { invoke } from "@/lib/bridge/transport";
+import {
+  getLatestCollectorSnapshot as getLatestCollectorSnapshotGenerated,
+  listCollectorSnapshots as listCollectorSnapshotsGenerated,
+} from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
   CaptureSessionStatus,
@@ -70,7 +74,7 @@ export function testStationLoginInput(input: StationLoginTestInput) {
 }
 
 export function listCollectorSnapshots(stationId: string) {
-  return invoke<CollectorSnapshot[]>("list_collector_snapshots", { stationId }).catch((error) => {
+  return listCollectorSnapshotsGenerated({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return memorySnapshots.get(stationId) ? [memorySnapshots.get(stationId)!] : [];
     }
@@ -79,7 +83,7 @@ export function listCollectorSnapshots(stationId: string) {
 }
 
 export function getLatestCollectorSnapshot(stationId: string) {
-  return invoke<CollectorSnapshot | null>("get_latest_collector_snapshot", { stationId }).catch((error) => {
+  return getLatestCollectorSnapshotGenerated({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return memorySnapshots.get(stationId) ?? null;
     }

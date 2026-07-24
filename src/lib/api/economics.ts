@@ -1,4 +1,11 @@
 import { invoke } from "@/lib/bridge/transport";
+import {
+  listBalanceSnapshots as listBalanceSnapshotsGenerated,
+  listBalanceSnapshotsForStation as listBalanceSnapshotsForStationGenerated,
+  listCurrentStationBalanceSnapshots as listCurrentStationBalanceSnapshotsGenerated,
+  upsertBalanceSnapshot as upsertBalanceSnapshotGenerated,
+  type UpsertBalanceSnapshotInputDto,
+} from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import { mockPricingRows } from "@/lib/mock/pricing";
 import { latestStationBalanceSnapshots } from "@/lib/projections/balanceFacts";
@@ -93,7 +100,7 @@ export function resetModelBasePricesToBuiltins() {
 }
 
 export function listBalanceSnapshots() {
-  return invoke<BalanceSnapshot[]>("list_balance_snapshots").catch((error) => {
+  return listBalanceSnapshotsGenerated().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return ensureMemoryBalanceSnapshots();
     }
@@ -102,7 +109,7 @@ export function listBalanceSnapshots() {
 }
 
 export function listCurrentStationBalanceSnapshots() {
-  return invoke<BalanceSnapshot[]>("list_current_station_balance_snapshots").catch((error) => {
+  return listCurrentStationBalanceSnapshotsGenerated().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return latestStationBalanceSnapshots(ensureMemoryBalanceSnapshots());
     }
@@ -111,7 +118,7 @@ export function listCurrentStationBalanceSnapshots() {
 }
 
 export function listBalanceSnapshotsForStation(stationId: string) {
-  return invoke<BalanceSnapshot[]>("list_balance_snapshots_for_station", { stationId }).catch((error) => {
+  return listBalanceSnapshotsForStationGenerated({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return ensureMemoryBalanceSnapshots().filter((snapshot) => snapshot.stationId === stationId);
     }
@@ -119,8 +126,8 @@ export function listBalanceSnapshotsForStation(stationId: string) {
   });
 }
 
-export function upsertBalanceSnapshot(input: unknown) {
-  return invoke<BalanceSnapshot>("upsert_balance_snapshot", { input }).catch((error) => {
+export function upsertBalanceSnapshot(input: UpsertBalanceSnapshotInputDto) {
+  return upsertBalanceSnapshotGenerated(input).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const nextSnapshot = coerceBalanceSnapshot(input);
       memoryBalanceSnapshots = [

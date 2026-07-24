@@ -20,15 +20,24 @@ import {
   deleteStation,
   dismissChangeEvent,
   getRemoteKeyCapability,
+  getLatestCollectorSnapshot,
   getSettings,
   getStationCredentials,
   listKeyPoolItems,
   listChangeEvents,
   listChangeEventsForStation,
+  listBalanceSnapshots,
+  listBalanceSnapshotsForStation,
+  listCollectorRuns,
+  listCollectorSnapshots,
+  listCurrentStationBalanceSnapshots,
+  listGroupRateRecords,
   listRemoteStationKeys,
   listRequestLogs,
   listStationKeys,
   listStations,
+  listStationGroupBindings,
+  listStationGroupOptions,
   markChangeEventRead,
   markChangeEventsRead,
   reorderKeyPool,
@@ -44,7 +53,9 @@ import {
   updateStationSession,
   updateSettings,
   updateStation,
+  upsertBalanceSnapshot,
   upsertChangeEvent,
+  upsertStationGroupBinding,
   type CreateStationInputDto,
   type UpdateSettingsInputDto,
 } from "./generated";
@@ -252,6 +263,84 @@ describe("generated settings/stations transport envelopes", () => {
       ["mark_change_events_read", { input: { ids: ["change-1", "change-2"] } }],
       ["dismiss_change_event", { input: { id: "change-1" } }],
       ["resolve_change_event", { input: { id: "change-1" } }],
+    ]);
+  });
+
+  it("sends every collector facts/snapshots command through generated envelopes", async () => {
+    const stationId = "station-1";
+    const balanceInput = {
+      id: null,
+      stationId,
+      stationKeyId: null,
+      scope: "station" as const,
+      value: 12.5,
+      currency: "CNY",
+      creditUnit: null,
+      usedValue: null,
+      totalValue: null,
+      todayRequestCount: null,
+      totalRequestCount: null,
+      todayConsumption: null,
+      totalConsumption: null,
+      todayBaseConsumption: null,
+      totalBaseConsumption: null,
+      todayTokenCount: null,
+      totalTokenCount: null,
+      todayInputTokenCount: null,
+      todayOutputTokenCount: null,
+      totalInputTokenCount: null,
+      totalOutputTokenCount: null,
+      accountConcurrencyLimit: null,
+      lowBalanceThreshold: 5,
+      status: "normal" as const,
+      source: "fixture",
+      confidence: 0.9,
+      collectedAt: "1700000000000",
+    };
+    const bindingInput = {
+      stationId,
+      stationKeyId: null,
+      bindingKind: "station_group" as const,
+      parentGroupBindingId: null,
+      groupKeyHash: "group-hash-1",
+      groupIdHash: "group-id-hash-1",
+      groupName: "default",
+      bindingStatus: "available" as const,
+      defaultRateMultiplier: 1,
+      userRateMultiplier: null,
+      effectiveRateMultiplier: 1,
+      inferredGroupCategory: "gpt" as const,
+      groupCategoryOverride: null,
+      rateSource: "fixture",
+      confidence: 0.9,
+      lastSeenAt: "1700000000000",
+      rawJsonRedacted: null,
+    };
+
+    await listBalanceSnapshots();
+    await listCurrentStationBalanceSnapshots();
+    await listBalanceSnapshotsForStation({ stationId });
+    await upsertBalanceSnapshot(balanceInput);
+    await listStationGroupBindings({ stationId });
+    await listStationGroupOptions({ stationId });
+    await upsertStationGroupBinding(bindingInput);
+    await listGroupRateRecords({ stationId });
+    await listCollectorRuns({ stationId });
+    await listCollectorSnapshots({ stationId });
+    await getLatestCollectorSnapshot({ stationId });
+
+    expect(transport.invoke.mock.calls.slice(-11)).toEqual([
+      ["list_balance_snapshots", { input: {} }],
+      ["list_current_station_balance_snapshots", { input: {} }],
+      ["list_balance_snapshots_for_station", { input: { stationId } }],
+      ["upsert_balance_snapshot", { input: balanceInput }],
+      ["list_station_group_bindings", { input: { stationId } }],
+      ["list_station_group_options", { input: { stationId } }],
+      ["upsert_station_group_binding", { input: bindingInput }],
+      ["list_group_rate_records", { input: { stationId } }],
+      ["list_collector_runs", { input: { stationId } }],
+      ["list_collector_snapshots", { input: { stationId } }],
+      ["get_latest_collector_snapshot", { input: { stationId } }],
     ]);
   });
 });
