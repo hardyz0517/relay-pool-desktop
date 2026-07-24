@@ -13,7 +13,9 @@ tokio::task_local! {
 
 impl CorrelationId {
     pub(crate) fn new() -> Self {
-        Self(uuid::Uuid::now_v7().simple().to_string())
+        let value = uuid::Uuid::now_v7().simple().to_string();
+        debug_assert_eq!(value.len(), CORRELATION_ID_BYTES);
+        Self(value)
     }
 
     pub(crate) fn as_str(&self) -> &str {

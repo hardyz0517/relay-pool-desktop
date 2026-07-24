@@ -268,6 +268,10 @@ impl CommandError {
             .unwrap_or_else(|_| Self::internal(None))
     }
 
+    #[allow(
+        dead_code,
+        reason = "Task 4 freezes this mapping before Task 14 connects the shared outbound client"
+    )]
     pub(crate) fn from_outbound(error: OutboundFailure) -> Self {
         let (code, message, details) = match error {
             OutboundFailure::Timeout { retry_after_ms } => (
@@ -297,6 +301,10 @@ impl CommandError {
             .unwrap_or_else(|_| Self::internal(None))
     }
 
+    #[allow(
+        dead_code,
+        reason = "Task 4 freezes this mapping before Tasks 14-15 connect work lifecycle errors"
+    )]
     pub(crate) fn from_work(error: WorkFailure) -> Self {
         let (code, message, retryable) = match error {
             WorkFailure::Timeout => (CommandErrorCode::Timeout, "The operation timed out.", true),
