@@ -4,6 +4,7 @@ import {
   deleteStation as deleteStationBinding,
   listStationEndpointHealth as listStationEndpointHealthBinding,
   listStations as listStationsBinding,
+  pingStationEndpoint as pingStationEndpointBinding,
   reorderStations as reorderStationsBinding,
   updateStation as updateStationBinding,
 } from "@/lib/bridge/generated";
@@ -250,7 +251,7 @@ export function listStationEndpointHealth() {
 }
 
 export function pingStationEndpoint(stationId: string) {
-  return invoke<EndpointPingResult>("ping_station_endpoint", { stationId }).catch((error) => {
+  return pingStationEndpointBinding({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const result: EndpointPingResult = {

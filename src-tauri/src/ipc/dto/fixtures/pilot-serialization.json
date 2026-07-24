@@ -2480,6 +2480,20 @@
       }
     },
     {
+      "command": "ping_station_endpoint",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "checkedAt": "1700000000000",
+        "errorSummary": null,
+        "latencyMs": 20,
+        "ok": true,
+        "stationId": "station-1",
+        "status": "success"
+      }
+    },
+    {
       "command": "reorder_local_routing_keys",
       "input": {
         "stationKeyIds": [

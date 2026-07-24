@@ -1,3 +1,14 @@
+export type EndpointPingStatusDto = "success" | "failed";
+
+export type EndpointPingResultDto = {
+  stationId: string;
+  ok: boolean;
+  status: EndpointPingStatusDto;
+  latencyMs: number | null;
+  checkedAt: string;
+  errorSummary: string | null;
+};
+
 export type ReorderLocalRoutingKeysInputDto = { stationKeyIds: string[] };
 
 export type UpdateStationKeyCapabilitiesInputDto = {

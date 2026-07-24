@@ -5,7 +5,10 @@ use serde_json::Value;
 
 #[cfg(test)]
 use crate::models::routing::{ModelAlias, StationKeyCapabilities};
-use crate::models::routing::{UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput};
+use crate::models::{
+    routing::{UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
+    stations::EndpointPingResult,
+};
 
 use super::{invalid_input, TypeDescriptor};
 
@@ -16,6 +19,44 @@ const MAX_NOTE_BYTES: usize = 4_096;
 const MAX_MODEL_LIST_ITEMS: usize = 256;
 const MAX_ROUTING_TAGS: usize = 64;
 const MAX_ROUTING_KEY_IDS: usize = 2_000;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EndpointPingStatusDto {
+    Success,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EndpointPingResultDto {
+    pub station_id: String,
+    pub ok: bool,
+    pub status: EndpointPingStatusDto,
+    pub latency_ms: Option<i64>,
+    pub checked_at: String,
+    pub error_summary: Option<String>,
+}
+
+impl TryFrom<EndpointPingResult> for EndpointPingResultDto {
+    type Error = crate::commands::error::CommandError;
+
+    fn try_from(value: EndpointPingResult) -> Result<Self, Self::Error> {
+        let status = match (value.status.as_str(), value.ok) {
+            ("success", true) => EndpointPingStatusDto::Success,
+            ("failed", false) => EndpointPingStatusDto::Failed,
+            _ => return Err(crate::commands::error::CommandError::internal(None)),
+        };
+        Ok(Self {
+            station_id: value.station_id,
+            ok: value.ok,
+            status,
+            latency_ms: value.latency_ms,
+            checked_at: value.checked_at,
+            error_summary: value.error_summary,
+        })
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -255,6 +296,10 @@ pub const ROUTING_MUTATIONS_TYPE: TypeDescriptor = TypeDescriptor {
 
 #[cfg(test)]
 pub(crate) fn serialization_fixtures() -> Vec<Value> {
+    let ping_input = super::station_keys::StationIdInputDto::parse(serde_json::json!({
+        "stationId":"station-1"
+    }))
+    .expect("endpoint ping fixture input");
     let reorder_input = ReorderLocalRoutingKeysInputDto::parse(serde_json::json!({
         "stationKeyIds":["key-1","key-2"]
     }))
@@ -287,6 +332,18 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
         .expect("delete alias fixture input");
 
     vec![
+        serde_json::json!({
+            "command":"ping_station_endpoint",
+            "input":ping_input,
+            "output":EndpointPingResultDto {
+                station_id:"station-1".into(),
+                ok:true,
+                status:EndpointPingStatusDto::Success,
+                latency_ms:Some(20),
+                checked_at:"1700000000000".into(),
+                error_summary:None,
+            }
+        }),
         serde_json::json!({
             "command":"reorder_local_routing_keys",
             "input":reorder_input,
@@ -365,6 +422,22 @@ mod tests {
         }))
         .expect("empty order is valid");
         assert!(parsed.station_key_ids.is_empty());
+    }
+
+    #[test]
+    fn endpoint_ping_output_rejects_open_status_values() {
+        for (status, ok) in [("unknown", false), ("success", false), ("failed", true)] {
+            let error = EndpointPingResultDto::try_from(EndpointPingResult {
+                station_id: "station-1".into(),
+                ok,
+                status: status.into(),
+                latency_ms: None,
+                checked_at: "1700000000000".into(),
+                error_summary: None,
+            })
+            .expect_err("open or inconsistent output status must fail closed");
+            assert_eq!(error.code, CommandErrorCode::Internal);
+        }
     }
 
     #[test]

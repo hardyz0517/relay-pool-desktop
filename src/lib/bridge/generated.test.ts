@@ -68,6 +68,7 @@ import {
   listStationGroupOptions,
   markChangeEventRead,
   markChangeEventsRead,
+  pingStationEndpoint,
   reorderKeyPool,
   reorderLocalRoutingKeys,
   reorderStationKeys,
@@ -679,5 +680,15 @@ describe("generated settings/stations transport envelopes", () => {
     expect(transport.invoke.mock.calls).toEqual([
       ["reorder_local_routing_keys", { input }],
     ]);
+  });
+
+  it("sends endpoint ping through a non-idempotent generated envelope", async () => {
+    const input = { stationId: "station-1" };
+    await pingStationEndpoint(input);
+
+    expect(transport.invokeNonIdempotent.mock.calls).toEqual([
+      ["ping_station_endpoint", { input }],
+    ]);
+    expect(transport.invoke).not.toHaveBeenCalled();
   });
 });

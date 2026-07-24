@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "9f4d1e2800808b110d3dd3c0e49d8a978c3790be64c4e5aaaeec5aa74f926667";
+    "555605997d2647820e0b4ae5ec2257ab8102d1dd32f46caa95f09158eb1e75c1";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -519,6 +519,12 @@ fn command_contract(name: &str) -> CommandContract {
         "get_station_key_health" => {
             migrated_read("RoutingStationKeyIdInputDto", "StationKeyHealthDto")
         }
+        "ping_station_endpoint" => migrated_mutation(
+            "StationIdInputDto",
+            "EndpointPingResultDto",
+            "non_idempotent",
+            true,
+        ),
         "simulate_route" => migrated_read("RouteSimulationInputDto", "RouteSimulationResultDto"),
         "list_pricing_rules" => migrated_read("EmptyInputDto", "Vec<PricingRuleDto>"),
         "list_model_base_prices" => migrated_read("EmptyInputDto", "Vec<ModelBasePriceDto>"),
@@ -1009,6 +1015,10 @@ export function reorderLocalRoutingKeys(input: ReorderLocalRoutingKeysInputDto):
   return invokeCommand<LocalRoutingWorkspaceDto>("reorder_local_routing_keys", { input });
 }
 
+export function pingStationEndpoint(input: StationIdInputDto): Promise<EndpointPingResultDto> {
+  return invokeNonIdempotent<EndpointPingResultDto>("ping_station_endpoint", { input });
+}
+
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
         )
 }
@@ -1496,6 +1506,17 @@ mod tests {
         assert_eq!(contract.runtime_validation, "rust_dto_pre_application");
         assert!(!contract.transport_retry);
         assert!(!contract.result_unknown);
+    }
+
+    #[test]
+    fn endpoint_ping_has_closed_schemas_and_non_idempotent_semantics() {
+        let contract = command_contract("ping_station_endpoint");
+        assert_eq!(contract.input, "StationIdInputDto");
+        assert_eq!(contract.output, "EndpointPingResultDto");
+        assert_eq!(contract.mutation_kind, "non_idempotent");
+        assert_eq!(contract.runtime_validation, "rust_dto_pre_application");
+        assert!(!contract.transport_retry);
+        assert!(contract.result_unknown);
     }
 
     #[test]
