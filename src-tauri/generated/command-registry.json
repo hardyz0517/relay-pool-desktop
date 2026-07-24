@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "c71c9f5ba080ab0e66435426db5c0a6454d3126738400b89ff07619b96076cca",
+  "contract_hash": "f9e0da52e0cd3f9f303aecea260710651e1149acca7d07f6e636200dc9720d98",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -414,13 +414,13 @@
     {
       "name": "get_proxy_status",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "fca495968a68fe3f60ade05a9678e990bf77f61dc09f63fbbf10b1280db2b44f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "get_remote_key_capability",
@@ -799,13 +799,13 @@
     {
       "name": "load_local_routing_workspace",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "a533eb0925fc8c487e1f8bbe15432402d8e9b5452759713cbf75c171a31c1b92",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "load_pricing_comparison_workspace",
@@ -1335,6 +1335,6 @@
   ],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "e01c5199282e18136d7531a7651d87cb66861348fb1834b1aea61f5751a9b7e9"
+    "serialization_fixture_hash": "9559a31dfd1dde2748150b20b986ffd47ee98cf9c939db9421835224d2462e94"
   }
 }

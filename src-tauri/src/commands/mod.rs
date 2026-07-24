@@ -42,6 +42,7 @@ use crate::{
             ModelBasePriceDto, PricingComparisonWorkspaceDto, PricingContextInputDto,
             PricingRuleDto, ResolvedPricingContextDto,
         },
+        proxy_workspace_reads::{LocalRoutingWorkspaceDto, ProxyStatusDto},
         routing_health_reads::{
             ModelAliasDto, RouteSimulationInputDto, RouteSimulationResultDto,
             RoutingStationKeyIdInputDto, StationEndpointHealthDto, StationKeyCapabilitiesDto,
@@ -723,21 +724,31 @@ pub async fn reset_data_dir(
 pub async fn get_proxy_status(
     services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
-) -> Result<ProxyStatus, error::CommandError> {
-    let settings = services
-        .settings
-        .load()
-        .await
-        .map_err(command_application_error)?;
-    Ok(proxy.status(settings.local_proxy_port))
+    input: Value,
+) -> Result<ProxyStatusDto, error::CommandError> {
+    correlation::in_command_scope("get_proxy_status", async {
+        EmptyInputDto::parse(input)?;
+        let settings = services
+            .settings
+            .load()
+            .await
+            .map_err(public_command_application_error)?;
+        Ok(proxy.status(settings.local_proxy_port))
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn load_local_routing_workspace(
     services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
-) -> Result<crate::services::proxy::routing_types::LocalRoutingWorkspace, error::CommandError> {
-    load_local_routing_workspace_v2(services.inner(), proxy.inner()).await
+    input: Value,
+) -> Result<LocalRoutingWorkspaceDto, error::CommandError> {
+    correlation::in_command_scope("load_local_routing_workspace", async {
+        EmptyInputDto::parse(input)?;
+        load_local_routing_workspace_v2(services.inner(), proxy.inner()).await
+    })
+    .await
 }
 
 #[derive(Debug, Deserialize)]

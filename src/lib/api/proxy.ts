@@ -1,6 +1,7 @@
 import { invoke } from "@/lib/bridge/transport";
 import {
   clearRequestLogs as ipcClearRequestLogs,
+  getProxyStatus as ipcGetProxyStatus,
   listRequestLogs as ipcListRequestLogs,
 } from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
@@ -21,7 +22,7 @@ let memoryProxyStatus: ProxyStatus = {
 let memoryRequestLogs: RequestLog[] = [];
 
 export function getProxyStatus() {
-  return invoke<ProxyStatus>("get_proxy_status").catch((error) => {
+  return ipcGetProxyStatus().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return memoryProxyStatus;
     }

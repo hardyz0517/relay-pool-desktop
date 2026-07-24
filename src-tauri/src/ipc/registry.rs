@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "c71c9f5ba080ab0e66435426db5c0a6454d3126738400b89ff07619b96076cca";
+    "f9e0da52e0cd3f9f303aecea260710651e1149acca7d07f6e636200dc9720d98";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -513,6 +513,10 @@ fn command_contract(name: &str) -> CommandContract {
         "load_pricing_comparison_workspace" => {
             migrated_read("EmptyInputDto", "PricingComparisonWorkspaceDto")
         }
+        "get_proxy_status" => migrated_read("EmptyInputDto", "ProxyStatusDto"),
+        "load_local_routing_workspace" => {
+            migrated_read("EmptyInputDto", "LocalRoutingWorkspaceDto")
+        }
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         "get_local_access_key" => legacy_declared("unit", "String"),
         "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
@@ -674,6 +678,7 @@ fn pilot_serialization_fixture() -> String {
     commands.extend(super::dto::station_collector_operations::serialization_fixtures());
     commands.extend(super::dto::routing_health_reads::serialization_fixtures());
     commands.extend(super::dto::pricing_reads::serialization_fixtures());
+    commands.extend(super::dto::proxy_workspace_reads::serialization_fixtures());
     let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
     format!(
         "{}\n",
@@ -918,6 +923,14 @@ export function resolveStationKeyPricingContext(input: PricingContextInputDto): 
 
 export function loadPricingComparisonWorkspace(input: EmptyInputDto = {}): Promise<PricingComparisonWorkspaceDto> {
   return invokeCommand<PricingComparisonWorkspaceDto>("load_pricing_comparison_workspace", { input });
+}
+
+export function getProxyStatus(input: EmptyInputDto = {}): Promise<ProxyStatusDto> {
+  return invokeCommand<ProxyStatusDto>("get_proxy_status", { input });
+}
+
+export function loadLocalRoutingWorkspace(input: EmptyInputDto = {}): Promise<LocalRoutingWorkspaceDto> {
+  return invokeCommand<LocalRoutingWorkspaceDto>("load_local_routing_workspace", { input });
 }
 
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
@@ -1307,6 +1320,25 @@ mod tests {
         ] {
             let contract = command_contract(name);
             assert_eq!(contract.input, input, "{name}");
+            assert_eq!(contract.output, output, "{name}");
+            assert_eq!(contract.mutation_kind, "read", "{name}");
+            assert_eq!(
+                contract.runtime_validation, "rust_dto_pre_application",
+                "{name}"
+            );
+            assert!(!contract.transport_retry, "{name}");
+            assert!(!contract.result_unknown, "{name}");
+        }
+    }
+
+    #[test]
+    fn proxy_workspace_reads_have_closed_schemas_and_read_semantics() {
+        for (name, output) in [
+            ("get_proxy_status", "ProxyStatusDto"),
+            ("load_local_routing_workspace", "LocalRoutingWorkspaceDto"),
+        ] {
+            let contract = command_contract(name);
+            assert_eq!(contract.input, "EmptyInputDto", "{name}");
             assert_eq!(contract.output, output, "{name}");
             assert_eq!(contract.mutation_kind, "read", "{name}");
             assert_eq!(

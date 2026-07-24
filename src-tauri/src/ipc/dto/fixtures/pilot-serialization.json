@@ -2609,6 +2609,57 @@
         "stationKeys": [],
         "stations": []
       }
+    },
+    {
+      "command": "get_proxy_status",
+      "input": {},
+      "output": {
+        "activeRequests": 1,
+        "bindAddr": "127.0.0.1",
+        "lastError": null,
+        "lifecycle": "running",
+        "port": 8787,
+        "requestCount": 2,
+        "running": true,
+        "startedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "load_local_routing_workspace",
+      "input": {},
+      "output": {
+        "candidates": [],
+        "latestDecision": null,
+        "proxyStatus": {
+          "activeRequests": 1,
+          "bindAddr": "127.0.0.1",
+          "lastError": null,
+          "lifecycle": "running",
+          "port": 8787,
+          "requestCount": 2,
+          "running": true,
+          "startedAt": "1700000000000"
+        },
+        "recentEvents": [],
+        "settings": {
+          "bindAddr": "127.0.0.1",
+          "enabled": true,
+          "endpoint": "chat_completions",
+          "fallbackEnabled": true,
+          "maxRateMultiplier": 2.0,
+          "policy": "automatic_balanced",
+          "port": 8787,
+          "previewKind": "baseline_eligibility",
+          "routingGroupFilter": "all_groups"
+        },
+        "summary": {
+          "candidateCount": 0,
+          "cooldownCandidateCount": 0,
+          "lastDecisionAt": null,
+          "previewEligibleCandidateCount": 0,
+          "previewExcludedCandidateCount": 0
+        }
+      }
     }
   ],
   "schemaVersion": 1

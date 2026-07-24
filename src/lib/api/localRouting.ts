@@ -1,11 +1,12 @@
 import { invoke } from "@/lib/bridge/transport";
+import { loadLocalRoutingWorkspace } from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import { getSettings } from "@/lib/api/settings";
 import type { LocalRoutingWorkspace, ReorderLocalRoutingKeysInput } from "@/lib/types/localRouting";
 import type { AppSettings } from "@/lib/types/settings";
 
 export function loadLocalRoutingWorkspaceApi() {
-  return invoke<LocalRoutingWorkspace>("load_local_routing_workspace").catch(async (error) => {
+  return loadLocalRoutingWorkspace().catch(async (error) => {
     if (isTauriInvokeUnavailable(error)) {
       return previewWorkspace(await getSettings());
     }

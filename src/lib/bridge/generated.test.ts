@@ -31,6 +31,7 @@ import {
   duplicateChannelMonitorTemplate,
   getRemoteKeyCapability,
   getLatestCollectorSnapshot,
+  getProxyStatus,
   getSettings,
   getStationKeyCapabilities,
   getStationCredentials,
@@ -52,6 +53,7 @@ import {
   listGroupRateRecords,
   loadChannelStatusWorkspace,
   loadPricingComparisonWorkspace,
+  loadLocalRoutingWorkspace,
   listRemoteStationKeys,
   listRequestLogs,
   listModelAliases,
@@ -559,6 +561,16 @@ describe("generated settings/stations transport envelopes", () => {
         },
       ],
       ["load_pricing_comparison_workspace", { input: {} }],
+    ]);
+  });
+
+  it("sends proxy workspace reads through generated envelopes", async () => {
+    await getProxyStatus();
+    await loadLocalRoutingWorkspace();
+
+    expect(transport.invoke.mock.calls).toEqual([
+      ["get_proxy_status", { input: {} }],
+      ["load_local_routing_workspace", { input: {} }],
     ]);
   });
 });
