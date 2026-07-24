@@ -838,19 +838,24 @@ pub async fn start_local_proxy(
 pub async fn stop_local_proxy(
     services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
-) -> Result<ProxyStatus, error::CommandError> {
-    let settings = services
-        .settings
-        .load()
-        .await
-        .map_err(command_application_error)?;
-    let status = proxy.stop(settings.local_proxy_port).await?;
-    services
-        .settings
-        .set_local_proxy_start_on_launch(false)
-        .await
-        .map_err(command_application_error)?;
-    Ok(status)
+    input: Value,
+) -> Result<ProxyStatusDto, error::CommandError> {
+    correlation::in_command_scope("stop_local_proxy", async {
+        EmptyInputDto::parse(input)?;
+        let settings = services
+            .settings
+            .load()
+            .await
+            .map_err(public_command_application_error)?;
+        let status = proxy.stop(settings.local_proxy_port).await?;
+        services
+            .settings
+            .set_local_proxy_start_on_launch(false)
+            .await
+            .map_err(public_command_application_error)?;
+        Ok(status)
+    })
+    .await
 }
 
 #[tauri::command]

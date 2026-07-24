@@ -81,6 +81,7 @@ import {
   scanRemoteStationKeys,
   simulateRoute,
   startLocalProxy,
+  stopLocalProxy,
   testStationLogin,
   testStationLoginInput,
   unbindRemoteStationKey,
@@ -697,6 +698,13 @@ describe("generated settings/stations transport envelopes", () => {
     await startLocalProxy();
     expect(transport.invoke.mock.calls).toEqual([
       ["start_local_proxy", { input: {} }],
+    ]);
+  });
+
+  it("sends proxy stop through a generated envelope", async () => {
+    await stopLocalProxy();
+    expect(transport.invoke.mock.calls).toEqual([
+      ["stop_local_proxy", { input: {} }],
     ]);
   });
 });
