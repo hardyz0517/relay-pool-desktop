@@ -1,4 +1,3 @@
-import { invoke } from "@/lib/bridge/transport";
 import {
   createChannelMonitor as createChannelMonitorGenerated,
   createChannelMonitorTemplate as createChannelMonitorTemplateGenerated,
@@ -10,6 +9,7 @@ import {
   listChannelMonitorTemplates as listChannelMonitorTemplatesGenerated,
   listChannelMonitors as listChannelMonitorsGenerated,
   listChannelStatusSummaries as listChannelStatusSummariesGenerated,
+  runChannelMonitorNow as runChannelMonitorNowGenerated,
   updateChannelMonitor as updateChannelMonitorGenerated,
   updateChannelMonitorTemplate as updateChannelMonitorTemplateGenerated,
 } from "@/lib/bridge/generated";
@@ -131,7 +131,7 @@ export function deleteChannelMonitor(id: string) {
 }
 
 export function runChannelMonitorNow(monitorId: string) {
-  return invoke<ChannelMonitorRun[]>("run_channel_monitor_now", { monitorId }).catch((error) => {
+  return runChannelMonitorNowGenerated({ monitorId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const monitor = memoryMonitors.find((item) => item.id === monitorId);
       if (!monitor) {

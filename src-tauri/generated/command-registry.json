@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "b917603a1f3da79d5c21535c917146de17d8cdc456323d0254e35653301c76e1",
+  "contract_hash": "137b464c50e08f1bd357b3bd3d00b03d4c9ce1ae35d47819bcfbca8214977ff8",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -788,13 +788,13 @@
     {
       "name": "load_channel_status_workspace",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "553bba9bd20b4d96349f937e607e43d71bac5f50c644f9a7bb4bd5594652b390",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "load_local_routing_workspace",
@@ -1019,13 +1019,13 @@
     {
       "name": "run_channel_monitor_now",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "ecef33555558aeb1c48b3da54446548ebf222f597eec6901365eb27b491c4e3b",
+      "output_schema_hash": "7b20a579468f726c8771048591df2a8957b25f674c410ed10d633683b349a96f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "non_idempotent",
       "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "save_station_key_with_defaults",
@@ -1335,6 +1335,6 @@
   ],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "979eb80f18dc77682f0832bd414a969ddab3e343d9eb0e2d4ea15667f3fbb408"
+    "serialization_fixture_hash": "05b89bd84d649fa9c2a74ced3304b82f95fdb96f64e1edef7cff0c380c77907a"
   }
 }

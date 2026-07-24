@@ -1,4 +1,4 @@
-import { invoke } from "@/lib/bridge/transport";
+import { loadChannelStatusWorkspace as loadChannelStatusWorkspaceGenerated } from "@/lib/bridge/generated";
 import {
   listChannelMonitorSummaries,
   listChannelMonitorTemplates,
@@ -51,7 +51,7 @@ export async function loadChannelMonitoringWorkspace(): Promise<ChannelMonitorin
 
 export async function loadChannelStatusWorkspace(): Promise<ChannelStatusWorkspace> {
   try {
-    return await invoke<ChannelStatusWorkspace>("load_channel_status_workspace");
+    return await loadChannelStatusWorkspaceGenerated();
   } catch (error) {
     if (!isTauriInvokeUnavailable(error)) {
       throw error;

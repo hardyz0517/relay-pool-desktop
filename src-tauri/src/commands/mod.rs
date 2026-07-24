@@ -27,6 +27,7 @@ use crate::{
             CreateChannelMonitorTemplateInputDto, UpdateChannelMonitorInputDto,
             UpdateChannelMonitorTemplateInputDto,
         },
+        channel_monitor_operations::ChannelStatusWorkspaceDto,
         channel_monitor_reads::{
             ChannelMonitorDto, ChannelMonitorIdInputDto, ChannelMonitorRequestTemplateDto,
             ChannelMonitorRunDto, ChannelMonitorSummaryDto, ChannelMonitorSummaryInputDto,
@@ -58,7 +59,6 @@ use crate::{
     ipc::runtime_contract::{current_runtime_contract, RuntimeContractInfo},
     models::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
-        channel_monitors::ChannelMonitorRun,
         collector::{CollectorRunResult, StationLoginTestInput, StationLoginTestResult},
         credentials::PersistStationSessionInput,
         pricing::{
@@ -71,7 +71,7 @@ use crate::{
             StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
         },
         settings::AppSettings,
-        shared_capabilities::{ChannelStatusWorkspace, PricingComparisonWorkspace},
+        shared_capabilities::PricingComparisonWorkspace,
         station_keys::KeyPoolItem,
         stations::{EndpointPingResult, StationEndpointHealth},
         AppStatus,
@@ -1335,12 +1335,18 @@ pub async fn list_channel_status_summaries(
 #[tauri::command]
 pub async fn load_channel_status_workspace(
     services: State<'_, AppServices>,
-) -> Result<ChannelStatusWorkspace, error::CommandError> {
-    services
-        .channel_status
-        .load_workspace(PageLimit::new(200).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<ChannelStatusWorkspaceDto, error::CommandError> {
+    correlation::in_command_scope("load_channel_status_workspace", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .channel_status
+            .load_workspace(PageLimit::new(200).expect("bounded limit"))
+            .await
+            .map(ChannelStatusWorkspaceDto::from)
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1506,12 +1512,20 @@ pub async fn delete_channel_monitor_template(
 #[tauri::command]
 pub async fn run_channel_monitor_now(
     services: State<'_, AppServices>,
-    monitor_id: String,
-) -> Result<Vec<ChannelMonitorRun>, error::CommandError> {
-    crate::services::channel_monitors::v2_runner_port(services.inner())
-        .run_monitor(monitor_id)
-        .await
-        .map_err(Into::into)
+    input: Value,
+) -> Result<Vec<ChannelMonitorRunDto>, error::CommandError> {
+    correlation::in_command_scope("run_channel_monitor_now", async {
+        let input = ChannelMonitorIdInputDto::parse(input)?;
+        crate::services::channel_monitors::v2_runner_port(services.inner())
+            .run_monitor(input.monitor_id)
+            .await
+            .map_err(public_channel_monitor_run_error)
+    })
+    .await
+}
+
+fn public_channel_monitor_run_error(_: String) -> error::CommandError {
+    error::CommandError::from_work(error::WorkFailure::ResultUnknown)
 }
 
 #[tauri::command]
@@ -3861,6 +3875,22 @@ fn truncate_connectivity_reply(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn channel_monitor_runner_errors_are_result_unknown_and_redacted() {
+        let error = public_channel_monitor_run_error(
+            "provider failed with api_key=sk-secret at C:/private/data.db".into(),
+        );
+
+        assert_eq!(error.code, error::CommandErrorCode::Conflict);
+        assert_eq!(
+            error.message,
+            "The operation outcome could not be confirmed."
+        );
+        assert!(!error.retryable);
+        assert!(!error.message.contains("sk-secret"));
+        assert!(!error.message.contains("data.db"));
+    }
 
     #[test]
     fn remote_key_failures_keep_public_machine_classification() {

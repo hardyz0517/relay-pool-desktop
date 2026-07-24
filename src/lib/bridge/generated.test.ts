@@ -42,6 +42,7 @@ import {
   listCollectorSnapshots,
   listCurrentStationBalanceSnapshots,
   listGroupRateRecords,
+  loadChannelStatusWorkspace,
   listRemoteStationKeys,
   listRequestLogs,
   listStationKeys,
@@ -54,6 +55,7 @@ import {
   reorderStationKeys,
   reorderStations,
   resolveChangeEvent,
+  runChannelMonitorNow,
   saveStationKeyWithDefaults,
   scanRemoteStationKeys,
   unbindRemoteStationKey,
@@ -416,6 +418,18 @@ describe("generated settings/stations transport envelopes", () => {
       ["create_channel_monitor", { input: monitorInput }],
       ["create_channel_monitor_template", { input: templateInput }],
       ["duplicate_channel_monitor_template", { input: { id: "template-1" } }],
+    ]);
+  });
+
+  it("sends channel-monitor operations through generated envelopes", async () => {
+    await loadChannelStatusWorkspace();
+    await runChannelMonitorNow({ monitorId: "monitor-1" });
+
+    expect(transport.invoke.mock.calls.slice(-1)).toEqual([
+      ["load_channel_status_workspace", { input: {} }],
+    ]);
+    expect(transport.invokeNonIdempotent.mock.calls).toEqual([
+      ["run_channel_monitor_now", { input: { monitorId: "monitor-1" } }],
     ]);
   });
 });

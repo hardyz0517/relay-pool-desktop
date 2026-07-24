@@ -1,0 +1,13 @@
+export type StationKeyHealthDto = {
+  stationKeyId: string; lastSuccessAt: string | null; lastFailureAt: string | null;
+  consecutiveFailures: number; successCount: number; failureCount: number;
+  avgLatencyMs: number | null; lastErrorSummary: string | null; cooldownUntil: string | null;
+  updatedAt: string;
+};
+
+export type ChannelStatusWorkspaceDto = {
+  keyPoolItems: KeyPoolItemDto[];
+  requestLogs: RequestLogDto[];
+  stationKeyHealth: StationKeyHealthDto[];
+  channelStatusSummaries: ChannelStatusSummaryDto[];
+};

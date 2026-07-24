@@ -1,5 +1,6 @@
 pub(crate) mod change_logs;
 pub(crate) mod channel_monitor_mutations;
+pub(crate) mod channel_monitor_operations;
 pub(crate) mod channel_monitor_reads;
 pub(crate) mod collector_facts;
 pub(crate) mod settings;
@@ -71,6 +72,7 @@ pub struct TypeDescriptor {
 pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     change_logs::CHANGE_LOGS_TYPE,
     channel_monitor_mutations::CHANNEL_MONITOR_MUTATIONS_TYPE,
+    channel_monitor_operations::CHANNEL_MONITOR_OPERATIONS_TYPE,
     channel_monitor_reads::CHANNEL_MONITOR_READS_TYPE,
     collector_facts::COLLECTOR_FACTS_TYPE,
     settings::SETTINGS_TYPE,

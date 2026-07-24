@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "b917603a1f3da79d5c21535c917146de17d8cdc456323d0254e35653301c76e1";
+    "137b464c50e08f1bd357b3bd3d00b03d4c9ce1ae35d47819bcfbca8214977ff8";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -465,6 +465,15 @@ fn command_contract(name: &str) -> CommandContract {
             "idempotent",
             false,
         ),
+        "load_channel_status_workspace" => {
+            migrated_read("EmptyInputDto", "ChannelStatusWorkspaceDto")
+        }
+        "run_channel_monitor_now" => migrated_mutation(
+            "ChannelMonitorIdInputDto",
+            "Vec<ChannelMonitorRunDto>",
+            "non_idempotent",
+            true,
+        ),
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         "get_local_access_key" => legacy_declared("unit", "String"),
         "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
@@ -622,6 +631,7 @@ fn pilot_serialization_fixture() -> String {
     commands.extend(super::dto::collector_facts::serialization_fixtures());
     commands.extend(super::dto::channel_monitor_reads::serialization_fixtures());
     commands.extend(super::dto::channel_monitor_mutations::serialization_fixtures());
+    commands.extend(super::dto::channel_monitor_operations::serialization_fixtures());
     let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
     format!(
         "{}\n",
@@ -790,6 +800,14 @@ export function duplicateChannelMonitorTemplate(input: ChannelMonitorMutationIdI
 
 export function deleteChannelMonitorTemplate(input: ChannelMonitorMutationIdInputDto): Promise<void> {
   return invokeCommand<void>("delete_channel_monitor_template", { input });
+}
+
+export function loadChannelStatusWorkspace(input: EmptyInputDto = {}): Promise<ChannelStatusWorkspaceDto> {
+  return invokeCommand<ChannelStatusWorkspaceDto>("load_channel_status_workspace", { input });
+}
+
+export function runChannelMonitorNow(input: ChannelMonitorIdInputDto): Promise<ChannelMonitorRunDto[]> {
+  return invokeNonIdempotent<ChannelMonitorRunDto[]>("run_channel_monitor_now", { input });
 }
 
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
@@ -1065,6 +1083,25 @@ mod tests {
     }
 
     #[test]
+    fn channel_monitor_operations_have_closed_schemas_and_frozen_semantics() {
+        let workspace = command_contract("load_channel_status_workspace");
+        assert_eq!(workspace.input, "EmptyInputDto");
+        assert_eq!(workspace.output, "ChannelStatusWorkspaceDto");
+        assert_eq!(workspace.mutation_kind, "read");
+        assert_eq!(workspace.runtime_validation, "rust_dto_pre_application");
+        assert!(!workspace.transport_retry);
+        assert!(!workspace.result_unknown);
+
+        let run_now = command_contract("run_channel_monitor_now");
+        assert_eq!(run_now.input, "ChannelMonitorIdInputDto");
+        assert_eq!(run_now.output, "Vec<ChannelMonitorRunDto>");
+        assert_eq!(run_now.mutation_kind, "non_idempotent");
+        assert_eq!(run_now.runtime_validation, "rust_dto_pre_application");
+        assert!(!run_now.transport_retry);
+        assert!(run_now.result_unknown);
+    }
+
+    #[test]
     fn generated_bindings_use_the_common_transport_and_dedicated_wrappers() {
         let source = render_typescript("fixture-hash");
         assert!(source.contains("@/lib/bridge/transport"));
@@ -1156,12 +1193,14 @@ mod tests {
                 "duplicate_channel_monitor_template",
                 "ChannelMonitorRequestTemplateDto",
             ),
+            ("run_channel_monitor_now", "ChannelMonitorRunDto[]"),
         ] {
             assert!(
                 source.contains(&format!("invokeNonIdempotent<{output}>(\"{command}\"")),
                 "{command}"
             );
         }
+        assert!(source.contains("function loadChannelStatusWorkspace("));
     }
 
     #[test]
