@@ -38,6 +38,11 @@ use crate::{
             GroupRateRecordDto, StationGroupBindingDto, StationGroupOptionDto,
             UpsertBalanceSnapshotInputDto, UpsertStationGroupBindingInputDto,
         },
+        routing_health_reads::{
+            ModelAliasDto, RouteSimulationInputDto, RouteSimulationResultDto,
+            RoutingStationKeyIdInputDto, StationEndpointHealthDto, StationKeyCapabilitiesDto,
+            StationKeyHealthDto,
+        },
         settings::UpdateSettingsInputDto,
         station_collector_operations::{
             CollectorRunResultDto, StationCollectorTaskInputDto, StationCollectorTaskTypeDto,
@@ -71,13 +76,13 @@ use crate::{
         },
         proxy::{ProxyStatus, UpstreamApiFormat},
         routing::{
-            ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyCapabilities,
-            StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
+            ModelAlias, StationKeyCapabilities, UpdateStationKeyCapabilitiesInput,
+            UpsertModelAliasInput,
         },
         settings::AppSettings,
         shared_capabilities::PricingComparisonWorkspace,
         station_keys::KeyPoolItem,
-        stations::{EndpointPingResult, StationEndpointHealth},
+        stations::EndpointPingResult,
         AppStatus,
     },
     observability::correlation,
@@ -1210,13 +1215,17 @@ pub async fn reorder_key_pool(
 #[tauri::command]
 pub async fn get_station_key_capabilities(
     services: State<'_, AppServices>,
-    station_key_id: String,
-) -> Result<StationKeyCapabilities, error::CommandError> {
-    services
-        .credentials
-        .get_station_key_capabilities(station_key_id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<StationKeyCapabilitiesDto, error::CommandError> {
+    correlation::in_command_scope("get_station_key_capabilities", async {
+        let input = RoutingStationKeyIdInputDto::parse(input)?;
+        services
+            .credentials
+            .get_station_key_capabilities(input.station_key_id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1234,12 +1243,17 @@ pub async fn update_station_key_capabilities(
 #[tauri::command]
 pub async fn list_model_aliases(
     services: State<'_, AppServices>,
-) -> Result<Vec<ModelAlias>, error::CommandError> {
-    services
-        .routing
-        .list_model_aliases()
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<ModelAliasDto>, error::CommandError> {
+    correlation::in_command_scope("list_model_aliases", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .routing
+            .list_model_aliases()
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1269,23 +1283,33 @@ pub async fn delete_model_alias(
 #[tauri::command]
 pub async fn list_station_key_health(
     services: State<'_, AppServices>,
-) -> Result<Vec<StationKeyHealth>, error::CommandError> {
-    services
-        .routing
-        .list_station_key_health()
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<StationKeyHealthDto>, error::CommandError> {
+    correlation::in_command_scope("list_station_key_health", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .routing
+            .list_station_key_health()
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_station_endpoint_health(
     services: State<'_, AppServices>,
-) -> Result<Vec<StationEndpointHealth>, error::CommandError> {
-    services
-        .routing
-        .list_station_endpoint_health()
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<StationEndpointHealthDto>, error::CommandError> {
+    correlation::in_command_scope("list_station_endpoint_health", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .routing
+            .list_station_endpoint_health()
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1535,13 +1559,17 @@ fn public_channel_monitor_run_error(_: String) -> error::CommandError {
 #[tauri::command]
 pub async fn get_station_key_health(
     services: State<'_, AppServices>,
-    station_key_id: String,
-) -> Result<StationKeyHealth, error::CommandError> {
-    services
-        .routing
-        .station_key_health_by_id(&station_key_id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<StationKeyHealthDto, error::CommandError> {
+    correlation::in_command_scope("get_station_key_health", async {
+        let input = RoutingStationKeyIdInputDto::parse(input)?;
+        services
+            .routing
+            .station_key_health_by_id(&input.station_key_id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1725,13 +1753,17 @@ pub async fn test_station_key_connectivity(
 #[tauri::command]
 pub async fn simulate_route(
     services: State<'_, AppServices>,
-    input: RouteSimulationInput,
-) -> Result<RouteSimulationResult, error::CommandError> {
-    services
-        .routing
-        .simulate_route(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<RouteSimulationResultDto, error::CommandError> {
+    correlation::in_command_scope("simulate_route", async {
+        let input = RouteSimulationInputDto::parse(input)?.into_domain();
+        services
+            .routing
+            .simulate_route(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]

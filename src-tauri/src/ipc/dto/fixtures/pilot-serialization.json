@@ -2353,6 +2353,131 @@
         "status": "missing_credentials",
         "tokenPresent": false
       }
+    },
+    {
+      "command": "get_station_key_capabilities",
+      "input": {
+        "stationKeyId": "key-1"
+      },
+      "output": {
+        "modelAllowlist": [
+          "fixture-model"
+        ],
+        "modelBlocklist": [],
+        "onlyUseAsBackup": false,
+        "preferredModels": [
+          "fixture-model"
+        ],
+        "routingTags": [
+          "fixture"
+        ],
+        "stationKeyId": "key-1",
+        "supportsChatCompletions": true,
+        "supportsEmbeddings": false,
+        "supportsReasoning": false,
+        "supportsResponses": true,
+        "supportsStream": true,
+        "supportsTools": false,
+        "supportsVision": false,
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "list_model_aliases",
+      "input": {},
+      "output": [
+        {
+          "clientModel": "fixture-model",
+          "createdAt": "1700000000000",
+          "enabled": true,
+          "id": "alias-1",
+          "note": null,
+          "updatedAt": "1700000000000",
+          "upstreamModel": "fixture-upstream-model"
+        }
+      ]
+    },
+    {
+      "command": "list_station_key_health",
+      "input": {},
+      "output": [
+        {
+          "avgLatencyMs": 120,
+          "consecutiveFailures": 0,
+          "cooldownUntil": null,
+          "failureCount": 0,
+          "lastErrorSummary": null,
+          "lastFailureAt": null,
+          "lastSuccessAt": "1700000000000",
+          "stationKeyId": "key-1",
+          "successCount": 1,
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "list_station_endpoint_health",
+      "input": {},
+      "output": [
+        {
+          "checkedAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorSummary": null,
+          "latencyMs": 120,
+          "stationId": "station-1",
+          "status": "success",
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "get_station_key_health",
+      "input": {
+        "stationKeyId": "key-1"
+      },
+      "output": {
+        "avgLatencyMs": 120,
+        "consecutiveFailures": 0,
+        "cooldownUntil": null,
+        "failureCount": 0,
+        "lastErrorSummary": null,
+        "lastFailureAt": null,
+        "lastSuccessAt": "1700000000000",
+        "stationKeyId": "key-1",
+        "successCount": 1,
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "simulate_route",
+      "input": {
+        "endpoint": "chat_completions",
+        "maxRateMultiplier": 2.0,
+        "model": "fixture-model",
+        "policy": "cost_stable_first",
+        "previousResponseId": null,
+        "routingGroupFilter": {
+          "group_type": "gpt"
+        },
+        "sessionHash": "session-1",
+        "stream": true,
+        "usesReasoning": false,
+        "usesTools": false,
+        "usesVision": false
+      },
+      "output": {
+        "candidates": [],
+        "mappedModel": "fixture-model",
+        "maxRateMultiplier": 2.0,
+        "message": "Route simulation completed.",
+        "policy": "cost_stable_first",
+        "routingGroupFilter": {
+          "group_type": "gpt"
+        },
+        "schedulerErrorCode": null,
+        "selectedStationId": "station-1",
+        "selectedStationKeyId": "key-1"
+      }
     }
   ],
   "schemaVersion": 1

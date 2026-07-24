@@ -1,9 +1,15 @@
 import { invoke } from "@/lib/bridge/transport";
+import {
+  getStationKeyCapabilities as getStationKeyCapabilitiesGenerated,
+  getStationKeyHealth as getStationKeyHealthGenerated,
+  listModelAliases as listModelAliasesGenerated,
+  listStationKeyHealth as listStationKeyHealthGenerated,
+  simulateRoute as simulateRouteGenerated,
+} from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
   ModelAlias,
   RouteSimulationInput,
-  RouteSimulationResult,
   StationKeyCapabilities,
   StationKeyHealth,
   UpdateStationKeyCapabilitiesInput,
@@ -15,7 +21,7 @@ const memoryCapabilities = new Map<string, StationKeyCapabilities>();
 const memoryHealth = new Map<string, StationKeyHealth>();
 
 export function getStationKeyCapabilities(stationKeyId: string) {
-  return invoke<StationKeyCapabilities>("get_station_key_capabilities", { stationKeyId }).catch((error) => {
+  return getStationKeyCapabilitiesGenerated({ stationKeyId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return memoryCapabilities.get(stationKeyId) ?? defaultCapabilities(stationKeyId);
     }
@@ -35,7 +41,7 @@ export function updateStationKeyCapabilities(input: UpdateStationKeyCapabilities
 }
 
 export function listModelAliases() {
-  return invoke<ModelAlias[]>("list_model_aliases").catch((error) => {
+  return listModelAliasesGenerated().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return memoryAliases;
     }
@@ -74,7 +80,7 @@ export function deleteModelAlias(id: string) {
 }
 
 export function listStationKeyHealth() {
-  return invoke<StationKeyHealth[]>("list_station_key_health").catch((error) => {
+  return listStationKeyHealthGenerated().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return Array.from(memoryHealth.values());
     }
@@ -83,7 +89,7 @@ export function listStationKeyHealth() {
 }
 
 export function getStationKeyHealth(stationKeyId: string) {
-  return invoke<StationKeyHealth>("get_station_key_health", { stationKeyId }).catch((error) => {
+  return getStationKeyHealthGenerated({ stationKeyId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return memoryHealth.get(stationKeyId) ?? defaultHealth(stationKeyId);
     }
@@ -92,7 +98,19 @@ export function getStationKeyHealth(stationKeyId: string) {
 }
 
 export function simulateRoute(input: RouteSimulationInput) {
-  return invoke<RouteSimulationResult>("simulate_route", { input }).catch((error) => {
+  return simulateRouteGenerated({
+    endpoint: input.endpoint,
+    model: input.model,
+    stream: input.stream,
+    usesTools: input.usesTools,
+    usesVision: input.usesVision,
+    usesReasoning: input.usesReasoning,
+    policy: input.policy,
+    maxRateMultiplier: input.maxRateMultiplier ?? null,
+    routingGroupFilter: input.routingGroupFilter ?? null,
+    sessionHash: input.sessionHash ?? null,
+    previousResponseId: input.previousResponseId ?? null,
+  }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return {
         selectedStationKeyId: null,

@@ -3,6 +3,7 @@ pub(crate) mod channel_monitor_mutations;
 pub(crate) mod channel_monitor_operations;
 pub(crate) mod channel_monitor_reads;
 pub(crate) mod collector_facts;
+pub(crate) mod routing_health_reads;
 pub(crate) mod settings;
 pub(crate) mod station_collector_operations;
 pub(crate) mod station_keys;
@@ -76,6 +77,7 @@ pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     channel_monitor_operations::CHANNEL_MONITOR_OPERATIONS_TYPE,
     channel_monitor_reads::CHANNEL_MONITOR_READS_TYPE,
     collector_facts::COLLECTOR_FACTS_TYPE,
+    routing_health_reads::ROUTING_HEALTH_READS_TYPE,
     settings::SETTINGS_TYPE,
     station_collector_operations::STATION_COLLECTOR_OPERATIONS_TYPE,
     station_keys::STATION_KEY_TYPE,

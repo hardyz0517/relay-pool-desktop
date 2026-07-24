@@ -1,0 +1,104 @@
+export type RoutingPolicyDto = "automatic_balanced" | "priority_fallback" | "stable_first" | "backup_only" | "cheap_first" | "cost_stable_first";
+export type RouteEndpointKindDto = "models" | "chat_completions" | "responses" | "embeddings";
+export type PricingGroupTypeDto = "gpt" | "claude" | "gemini" | "grok" | "image_generation";
+export type RoutingGroupFilterDto = "all_groups" | "ungrouped_only" | { group_binding_id: string } | { group_id_hash: string } | { group_type: PricingGroupTypeDto };
+export type RoutingStationKeyIdInputDto = { stationKeyId: string };
+
+export type StationKeyCapabilitiesDto = {
+  stationKeyId: string;
+  supportsChatCompletions: boolean;
+  supportsResponses: boolean;
+  supportsEmbeddings: boolean;
+  supportsStream: boolean;
+  supportsTools: boolean;
+  supportsVision: boolean;
+  supportsReasoning: boolean;
+  modelAllowlist: string[];
+  modelBlocklist: string[];
+  preferredModels: string[];
+  onlyUseAsBackup: boolean;
+  routingTags: string[];
+  updatedAt: string;
+};
+
+export type ModelAliasDto = {
+  id: string;
+  clientModel: string;
+  upstreamModel: string;
+  enabled: boolean;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type StationEndpointHealthDto = {
+  stationId: string;
+  endpointRevision: number;
+  status: string;
+  latencyMs: number | null;
+  checkedAt: string | null;
+  errorSummary: string | null;
+  updatedAt: string;
+};
+
+export type RouteSimulationInputDto = {
+  endpoint: RouteEndpointKindDto;
+  model: string | null;
+  stream: boolean;
+  usesTools: boolean;
+  usesVision: boolean;
+  usesReasoning: boolean;
+  policy: RoutingPolicyDto | null;
+  maxRateMultiplier: number | null;
+  routingGroupFilter: RoutingGroupFilterDto | null;
+  sessionHash: string | null;
+  previousResponseId: string | null;
+};
+
+export type RouteCandidateExplanationDto = {
+  stationKeyId: string;
+  stationId: string;
+  stationName: string;
+  keyName: string;
+  accepted: boolean;
+  score: number;
+  reasons: string[];
+  rejectionReasons: string[];
+  mappedModel: string | null;
+  pricingRuleId: string | null;
+  groupBindingId: string | null;
+  rateMultiplier: number | null;
+  normalizationStatus: string | null;
+  priceConfidence: number | null;
+  estimatedInputPrice: number | null;
+  estimatedOutputPrice: number | null;
+  priceCurrency: string | null;
+  balanceStatus: string | null;
+  balanceValue: number | null;
+  balanceScope: string | null;
+  balanceCollectedAt: string | null;
+  economicFreshness: string | null;
+  economicReasons: string[];
+  routingGroupScope: RoutingGroupFilterDto | null;
+  routingGroupMatch: boolean;
+  groupIdHash: string | null;
+  groupType: PricingGroupTypeDto | null;
+  effectiveMultiplierSource: string | null;
+  effectiveMultiplierConfidence: number | null;
+  schedulerScore: number | null;
+  schedulerFactors: string[];
+  topKRank: number | null;
+  slotResult: string | null;
+};
+
+export type RouteSimulationResultDto = {
+  selectedStationKeyId: string | null;
+  selectedStationId: string | null;
+  mappedModel: string | null;
+  policy: RoutingPolicyDto;
+  maxRateMultiplier: number | null;
+  routingGroupFilter: RoutingGroupFilterDto;
+  schedulerErrorCode: string | null;
+  candidates: RouteCandidateExplanationDto[];
+  message: string;
+};

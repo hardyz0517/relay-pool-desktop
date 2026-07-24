@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "b30803d67bc42dde4e9ad4091a8062283f0c8d5b589ea781d570c4fe2acea56a";
+    "e63524477c45b6cd1b2d425b5f78591cf62b20ba540b41919bf8a8795b23a0f4";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -493,6 +493,18 @@ fn command_contract(name: &str) -> CommandContract {
         "test_station_login_input" => {
             migrated_read("StationLoginTestInputDto", "StationLoginTestResultDto")
         }
+        "get_station_key_capabilities" => {
+            migrated_read("RoutingStationKeyIdInputDto", "StationKeyCapabilitiesDto")
+        }
+        "list_model_aliases" => migrated_read("EmptyInputDto", "Vec<ModelAliasDto>"),
+        "list_station_key_health" => migrated_read("EmptyInputDto", "Vec<StationKeyHealthDto>"),
+        "list_station_endpoint_health" => {
+            migrated_read("EmptyInputDto", "Vec<StationEndpointHealthDto>")
+        }
+        "get_station_key_health" => {
+            migrated_read("RoutingStationKeyIdInputDto", "StationKeyHealthDto")
+        }
+        "simulate_route" => migrated_read("RouteSimulationInputDto", "RouteSimulationResultDto"),
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         "get_local_access_key" => legacy_declared("unit", "String"),
         "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
@@ -652,6 +664,7 @@ fn pilot_serialization_fixture() -> String {
     commands.extend(super::dto::channel_monitor_mutations::serialization_fixtures());
     commands.extend(super::dto::channel_monitor_operations::serialization_fixtures());
     commands.extend(super::dto::station_collector_operations::serialization_fixtures());
+    commands.extend(super::dto::routing_health_reads::serialization_fixtures());
     let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
     format!(
         "{}\n",
@@ -856,6 +869,30 @@ export function testStationLogin(input: CollectorStationIdInputDto): Promise<Col
 
 export function testStationLoginInput(input: StationLoginTestInputDto): Promise<StationLoginTestResultDto> {
   return invokeCommand<StationLoginTestResultDto>("test_station_login_input", { input });
+}
+
+export function getStationKeyCapabilities(input: RoutingStationKeyIdInputDto): Promise<StationKeyCapabilitiesDto> {
+  return invokeCommand<StationKeyCapabilitiesDto>("get_station_key_capabilities", { input });
+}
+
+export function listModelAliases(input: EmptyInputDto = {}): Promise<ModelAliasDto[]> {
+  return invokeCommand<ModelAliasDto[]>("list_model_aliases", { input });
+}
+
+export function listStationKeyHealth(input: EmptyInputDto = {}): Promise<StationKeyHealthDto[]> {
+  return invokeCommand<StationKeyHealthDto[]>("list_station_key_health", { input });
+}
+
+export function listStationEndpointHealth(input: EmptyInputDto = {}): Promise<StationEndpointHealthDto[]> {
+  return invokeCommand<StationEndpointHealthDto[]>("list_station_endpoint_health", { input });
+}
+
+export function getStationKeyHealth(input: RoutingStationKeyIdInputDto): Promise<StationKeyHealthDto> {
+  return invokeCommand<StationKeyHealthDto>("get_station_key_health", { input });
+}
+
+export function simulateRoute(input: RouteSimulationInputDto): Promise<RouteSimulationResultDto> {
+  return invokeCommand<RouteSimulationResultDto>("simulate_route", { input });
 }
 
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
@@ -1181,6 +1218,49 @@ mod tests {
     }
 
     #[test]
+    fn routing_health_reads_have_closed_schemas_and_read_semantics() {
+        for (name, input, output) in [
+            (
+                "get_station_key_capabilities",
+                "RoutingStationKeyIdInputDto",
+                "StationKeyCapabilitiesDto",
+            ),
+            ("list_model_aliases", "EmptyInputDto", "Vec<ModelAliasDto>"),
+            (
+                "list_station_key_health",
+                "EmptyInputDto",
+                "Vec<StationKeyHealthDto>",
+            ),
+            (
+                "list_station_endpoint_health",
+                "EmptyInputDto",
+                "Vec<StationEndpointHealthDto>",
+            ),
+            (
+                "get_station_key_health",
+                "RoutingStationKeyIdInputDto",
+                "StationKeyHealthDto",
+            ),
+            (
+                "simulate_route",
+                "RouteSimulationInputDto",
+                "RouteSimulationResultDto",
+            ),
+        ] {
+            let contract = command_contract(name);
+            assert_eq!(contract.input, input, "{name}");
+            assert_eq!(contract.output, output, "{name}");
+            assert_eq!(contract.mutation_kind, "read", "{name}");
+            assert_eq!(
+                contract.runtime_validation, "rust_dto_pre_application",
+                "{name}"
+            );
+            assert!(!contract.transport_retry, "{name}");
+            assert!(!contract.result_unknown, "{name}");
+        }
+    }
+
+    #[test]
     fn generated_bindings_use_the_common_transport_and_dedicated_wrappers() {
         let source = render_typescript("fixture-hash");
         assert!(source.contains("@/lib/bridge/transport"));
@@ -1287,6 +1367,19 @@ mod tests {
         }
         assert!(source.contains("function loadChannelStatusWorkspace("));
         assert!(source.contains("function testStationLoginInput("));
+        for function in [
+            "getStationKeyCapabilities",
+            "listModelAliases",
+            "listStationKeyHealth",
+            "listStationEndpointHealth",
+            "getStationKeyHealth",
+            "simulateRoute",
+        ] {
+            assert!(
+                source.contains(&format!("function {function}(")),
+                "{function}"
+            );
+        }
     }
 
     #[test]

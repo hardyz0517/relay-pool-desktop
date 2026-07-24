@@ -32,7 +32,9 @@ import {
   getRemoteKeyCapability,
   getLatestCollectorSnapshot,
   getSettings,
+  getStationKeyCapabilities,
   getStationCredentials,
+  getStationKeyHealth,
   listKeyPoolItems,
   listChangeEvents,
   listChangeEventsForStation,
@@ -50,6 +52,9 @@ import {
   loadChannelStatusWorkspace,
   listRemoteStationKeys,
   listRequestLogs,
+  listModelAliases,
+  listStationEndpointHealth,
+  listStationKeyHealth,
   listStationKeys,
   listStations,
   listStationGroupBindings,
@@ -63,6 +68,7 @@ import {
   runChannelMonitorNow,
   saveStationKeyWithDefaults,
   scanRemoteStationKeys,
+  simulateRoute,
   testStationLogin,
   testStationLoginInput,
   unbindRemoteStationKey,
@@ -472,6 +478,53 @@ describe("generated settings/stations transport envelopes", () => {
             websiteUrl: "https://example.test",
             loginUsername: "fixture-user",
             loginPassword: "not-a-real-secret",
+          },
+        },
+      ],
+    ]);
+  });
+
+  it("sends routing and health reads through generated envelopes", async () => {
+    await getStationKeyCapabilities({ stationKeyId: "key-1" });
+    await listModelAliases();
+    await listStationKeyHealth();
+    await listStationEndpointHealth();
+    await getStationKeyHealth({ stationKeyId: "key-1" });
+    await simulateRoute({
+      endpoint: "chat_completions",
+      model: "fixture-model",
+      stream: true,
+      usesTools: false,
+      usesVision: false,
+      usesReasoning: false,
+      policy: "cost_stable_first",
+      maxRateMultiplier: 2,
+      routingGroupFilter: { group_type: "gpt" },
+      sessionHash: "session-1",
+      previousResponseId: null,
+    });
+
+    expect(transport.invoke.mock.calls).toEqual([
+      ["get_station_key_capabilities", { input: { stationKeyId: "key-1" } }],
+      ["list_model_aliases", { input: {} }],
+      ["list_station_key_health", { input: {} }],
+      ["list_station_endpoint_health", { input: {} }],
+      ["get_station_key_health", { input: { stationKeyId: "key-1" } }],
+      [
+        "simulate_route",
+        {
+          input: {
+            endpoint: "chat_completions",
+            model: "fixture-model",
+            stream: true,
+            usesTools: false,
+            usesVision: false,
+            usesReasoning: false,
+            policy: "cost_stable_first",
+            maxRateMultiplier: 2,
+            routingGroupFilter: { group_type: "gpt" },
+            sessionHash: "session-1",
+            previousResponseId: null,
           },
         },
       ],

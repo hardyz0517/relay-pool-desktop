@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "source_revision": "a1c68095e61ec8a01f1fd4726d4e29666bfa46de",
+  "source_revision": "e8c8165c46ff044b17520c7eb5bfb07ef48d08a7",
   "generated_at_date": "2026-07-24",
-  "source_snapshot": "formal codex/architecture-scale-upgrade worktree at the S1-T5-collectors-station-operations qualification checkpoint, based on a1c6809",
+  "source_snapshot": "formal codex/architecture-scale-upgrade worktree at the S1-T5-routing-health-reads qualification checkpoint, based on e8c8165",
   "source_authority": {
     "compiled_registry": "src-tauri/src/ipc/registry.rs",
     "rust_signatures": "src-tauri/src/commands/mod.rs",
@@ -22,14 +22,14 @@
   ],
   "classification_notes": [
     "Runtime/bootstrap -> settings_stations; Channel connectivity -> station_keys; update/data-directory -> updater_data_recovery.",
-    "S1-T5 settings/stations, station-key ordinary, changes/logs, collector facts/snapshots, channel-monitor reads, channel-monitor mutations, channel-monitor operations, and station collector operations child shards fully migrate 69 commands; five earlier pilot schemas remain partial and 46 commands remain legacy placeholders.",
+    "S1-T5 settings/stations, station-key ordinary, changes/logs, collector ordinary groups, and routing/health reads child shards fully migrate 75 commands; five earlier pilot schemas remain partial and 40 commands remain legacy placeholders.",
     "test_station_key_connectivity remains the single Channel command and is intentionally partial/legacy until Task 6.",
     "No command proves an application-owned operation key; idempotent_with_key count is zero.",
     "scan_remote_station_keys is an idempotent mutation because it atomically replaces the local remote-key snapshot and matching key metadata; transport retry remains disabled.",
     "create_station is NonIdempotent: transport retry is disabled and ambiguous post-dispatch rejection becomes typed ResultUnknownError.",
     "record_capture_event is intentionally capture-only, not missing from ACL; it must not be granted to main-window.",
     "Empty frontend_callers means no literal caller in requested API/query directories.",
-    "Audit artifact only: the station collector operations child shard may close while the Stage 1 Gate remains blocked on Task 5 routing/proxy, updater/data recovery, and Task 6."
+    "Audit artifact only: the routing/health reads child shard may close while the Stage 1 Gate remains blocked on remaining Task 5 routing/proxy reads and mutations, updater/data recovery, and Task 6."
   ],
   "statistics": {
     "commands": 120,
@@ -51,13 +51,13 @@
       "read": 46
     },
     "explicit_pilot_schema_partial": 5,
-    "legacy_unmigrated_placeholder": 46,
+    "legacy_unmigrated_placeholder": 40,
     "acl_allowed_main_window": 119,
     "commands_with_frontend_callers": 116,
     "commands_without_frontend_callers": 4,
     "public_command_error": 117,
     "public_non_command_error": 3,
-    "fully_migrated": 69,
+    "fully_migrated": 75,
     "acl_capture_only": 1,
     "acl_unallowlisted": 0
   },
@@ -3752,9 +3752,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_key_id: String"
+        "input: Value"
       ],
-      "rust_output": "StationKeyCapabilities",
+      "rust_output": "StationKeyCapabilitiesDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3764,27 +3764,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/routing.ts",
-          "line": 18
+          "line": 23
         }
       ],
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "generated RoutingStationKeyIdInputDto is parsed before application dispatch",
         "reject unknown top-level fields before application use case",
-        "bound non-empty ID(s) with frozen grammar"
+        "bound non-empty station key ID with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 routing_proxy shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 routing/proxy health read shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "RoutingStationKeyIdInputDto",
+        "output": "StationKeyCapabilitiesDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:101",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1079"
+        "registry": "src-tauri/src/ipc/registry.rs:496",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1216",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:487"
       }
     },
     {
@@ -3794,9 +3795,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_key_id: String"
+        "input: Value"
       ],
-      "rust_output": "StationKeyHealth",
+      "rust_output": "StationKeyHealthDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3806,27 +3807,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/routing.ts",
-          "line": 86
+          "line": 91
         }
       ],
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "generated RoutingStationKeyIdInputDto is parsed before application dispatch",
         "reject unknown top-level fields before application use case",
-        "bound non-empty ID(s) with frozen grammar"
+        "bound non-empty station key ID with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 routing_proxy shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 routing/proxy health read shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "RoutingStationKeyIdInputDto",
+        "output": "StationKeyHealthDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:123",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1340"
+        "registry": "src-tauri/src/ipc/registry.rs:504",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1560",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:487"
       }
     },
     {
@@ -3835,9 +3837,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value"
       ],
-      "rust_output": "Vec<ModelAlias>",
+      "rust_output": "Vec<ModelAliasDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3847,27 +3850,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/routing.ts",
-          "line": 38
+          "line": 43
         }
       ],
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "generated EmptyInputDto is parsed before application dispatch",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 routing_proxy shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 routing/proxy health read shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "Vec<ModelAliasDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:103",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1103"
+        "registry": "src-tauri/src/ipc/registry.rs:499",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1244",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:487"
       }
     },
     {
@@ -3958,9 +3962,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value"
       ],
-      "rust_output": "Vec<StationEndpointHealth>",
+      "rust_output": "Vec<StationEndpointHealthDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3970,27 +3975,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stations.ts",
-          "line": 206
+          "line": 243
         }
       ],
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "generated EmptyInputDto is parsed before application dispatch",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 routing_proxy shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 routing/proxy health read shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "Vec<StationEndpointHealthDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:107",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1149"
+        "registry": "src-tauri/src/ipc/registry.rs:501",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1300",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:487"
       }
     },
     {
@@ -3999,9 +4005,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value"
       ],
-      "rust_output": "Vec<StationKeyHealth>",
+      "rust_output": "Vec<StationKeyHealthDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -4011,27 +4018,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/routing.ts",
-          "line": 77
+          "line": 82
         }
       ],
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "generated EmptyInputDto is parsed before application dispatch",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 routing_proxy shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 routing/proxy health read shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "Vec<StationKeyHealthDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:106",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1138"
+        "registry": "src-tauri/src/ipc/registry.rs:500",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1284",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:487"
       }
     },
     {
@@ -4339,9 +4347,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "input: RouteSimulationInput"
+        "input: Value"
       ],
-      "rust_output": "RouteSimulationResult",
+      "rust_output": "RouteSimulationResultDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -4351,27 +4359,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/routing.ts",
-          "line": 95
+          "line": 100
         }
       ],
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
-        "reject unknown top-level fields before application use case",
-        "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
+        "generated RouteSimulationInputDto is parsed before application dispatch",
+        "reject unknown top-level and routing-group filter fields before application use case",
+        "bound closed enums, multiplier range, group IDs, model, session hash, and previous response ID"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 routing_proxy shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and application dispatch",
+      "migration_status": "fully_migrated",
+      "delete_owner": "Task 5 routing/proxy health read shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "RouteSimulationInputDto",
+        "output": "RouteSimulationResultDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:126",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1530"
+        "registry": "src-tauri/src/ipc/registry.rs:507",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1754",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:487"
       }
     },
     {

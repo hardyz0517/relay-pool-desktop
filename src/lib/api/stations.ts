@@ -2,6 +2,7 @@ import { invoke } from "@/lib/bridge/transport";
 import {
   createStation as createStationBinding,
   deleteStation as deleteStationBinding,
+  listStationEndpointHealth as listStationEndpointHealthBinding,
   listStations as listStationsBinding,
   reorderStations as reorderStationsBinding,
   updateStation as updateStationBinding,
@@ -240,7 +241,7 @@ function toUpdateStationDto(input: StationUpdateInput): UpdateStationInputDto {
 }
 
 export function listStationEndpointHealth() {
-  return invoke<StationEndpointHealth[]>("list_station_endpoint_health").catch((error) => {
+  return listStationEndpointHealthBinding().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return Array.from(memoryEndpointHealth.values());
     }
