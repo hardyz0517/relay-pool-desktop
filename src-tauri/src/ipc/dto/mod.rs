@@ -4,6 +4,7 @@ pub(crate) mod channel_monitor_operations;
 pub(crate) mod channel_monitor_reads;
 pub(crate) mod collector_facts;
 pub(crate) mod settings;
+pub(crate) mod station_collector_operations;
 pub(crate) mod station_keys;
 pub(crate) mod stations;
 
@@ -76,6 +77,7 @@ pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     channel_monitor_reads::CHANNEL_MONITOR_READS_TYPE,
     collector_facts::COLLECTOR_FACTS_TYPE,
     settings::SETTINGS_TYPE,
+    station_collector_operations::STATION_COLLECTOR_OPERATIONS_TYPE,
     station_keys::STATION_KEY_TYPE,
     stations::STATION_TYPE,
     TypeDescriptor {

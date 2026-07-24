@@ -2157,6 +2157,202 @@
           "templateId": "template-1"
         }
       ]
+    },
+    {
+      "command": "detect_sub2api_station",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "events": [
+          {
+            "eventType": "fixture",
+            "message": "Collection completed.",
+            "status": "checked"
+          }
+        ],
+        "snapshot": {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "collector-snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "checked",
+          "summaryJson": {
+            "mode": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "command": "collect_sub2api_station",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "events": [
+          {
+            "eventType": "fixture",
+            "message": "Collection completed.",
+            "status": "checked"
+          }
+        ],
+        "snapshot": {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "collector-snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "checked",
+          "summaryJson": {
+            "mode": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "command": "detect_station_info",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "events": [
+          {
+            "eventType": "fixture",
+            "message": "Collection completed.",
+            "status": "checked"
+          }
+        ],
+        "snapshot": {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "collector-snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "checked",
+          "summaryJson": {
+            "mode": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "command": "collect_station_info",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "events": [
+          {
+            "eventType": "fixture",
+            "message": "Collection completed.",
+            "status": "checked"
+          }
+        ],
+        "snapshot": {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "collector-snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "checked",
+          "summaryJson": {
+            "mode": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "command": "collect_station_task",
+      "input": {
+        "stationId": "station-1",
+        "taskType": "groups"
+      },
+      "output": {
+        "events": [
+          {
+            "eventType": "fixture",
+            "message": "Collection completed.",
+            "status": "checked"
+          }
+        ],
+        "snapshot": {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "collector-snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "checked",
+          "summaryJson": {
+            "mode": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "command": "test_station_login",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "events": [
+          {
+            "eventType": "fixture",
+            "message": "Collection completed.",
+            "status": "checked"
+          }
+        ],
+        "snapshot": {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "collector-snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "checked",
+          "summaryJson": {
+            "mode": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "command": "test_station_login_input",
+      "input": {
+        "loginPassword": "",
+        "loginUsername": "",
+        "stationType": "newapi",
+        "websiteUrl": "https://example.test"
+      },
+      "output": {
+        "diagnosis": null,
+        "message": "Credentials are required.",
+        "status": "missing_credentials",
+        "tokenPresent": false
+      }
     }
   ],
   "schemaVersion": 1

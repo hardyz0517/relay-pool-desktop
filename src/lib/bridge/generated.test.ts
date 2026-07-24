@@ -12,6 +12,9 @@ import {
   clearChangeEvents,
   clearRequestLogs,
   clearStationCredentials,
+  collectStationInfo,
+  collectStationTask,
+  collectSub2apiStation,
   createChannelMonitor,
   createChannelMonitorTemplate,
   createLocalStationKeyFromRemote,
@@ -22,6 +25,8 @@ import {
   deleteChannelMonitorTemplate,
   deleteStationKey,
   deleteStation,
+  detectStationInfo,
+  detectSub2apiStation,
   dismissChangeEvent,
   duplicateChannelMonitorTemplate,
   getRemoteKeyCapability,
@@ -58,6 +63,8 @@ import {
   runChannelMonitorNow,
   saveStationKeyWithDefaults,
   scanRemoteStationKeys,
+  testStationLogin,
+  testStationLoginInput,
   unbindRemoteStationKey,
   updateChannelMonitor,
   updateChannelMonitorTemplate,
@@ -430,6 +437,44 @@ describe("generated settings/stations transport envelopes", () => {
     ]);
     expect(transport.invokeNonIdempotent.mock.calls).toEqual([
       ["run_channel_monitor_now", { input: { monitorId: "monitor-1" } }],
+    ]);
+  });
+
+  it("sends station collector operations through their frozen transport policies", async () => {
+    const stationId = "station-1";
+    await detectSub2apiStation({ stationId });
+    await collectSub2apiStation({ stationId });
+    await detectStationInfo({ stationId });
+    await collectStationInfo({ stationId });
+    await collectStationTask({ stationId, taskType: "groups" });
+    await testStationLogin({ stationId });
+    await testStationLoginInput({
+      stationType: "newapi",
+      websiteUrl: "https://example.test",
+      loginUsername: "fixture-user",
+      loginPassword: "not-a-real-secret",
+    });
+
+    expect(transport.invokeNonIdempotent.mock.calls).toEqual([
+      ["detect_sub2api_station", { input: { stationId } }],
+      ["collect_sub2api_station", { input: { stationId } }],
+      ["detect_station_info", { input: { stationId } }],
+      ["collect_station_info", { input: { stationId } }],
+      ["collect_station_task", { input: { stationId, taskType: "groups" } }],
+      ["test_station_login", { input: { stationId } }],
+    ]);
+    expect(transport.invoke.mock.calls.slice(-1)).toEqual([
+      [
+        "test_station_login_input",
+        {
+          input: {
+            stationType: "newapi",
+            websiteUrl: "https://example.test",
+            loginUsername: "fixture-user",
+            loginPassword: "not-a-real-secret",
+          },
+        },
+      ],
     ]);
   });
 });

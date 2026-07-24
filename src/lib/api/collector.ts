@@ -1,7 +1,14 @@
 import { invoke } from "@/lib/bridge/transport";
 import {
+  collectStationInfo as collectStationInfoGenerated,
+  collectStationTask as collectStationTaskGenerated,
+  collectSub2apiStation as collectSub2apiStationGenerated,
+  detectStationInfo as detectStationInfoGenerated,
+  detectSub2apiStation as detectSub2apiStationGenerated,
   getLatestCollectorSnapshot as getLatestCollectorSnapshotGenerated,
   listCollectorSnapshots as listCollectorSnapshotsGenerated,
+  testStationLogin as testStationLoginGenerated,
+  testStationLoginInput as testStationLoginInputGenerated,
 } from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
@@ -10,21 +17,30 @@ import type {
   CollectorSnapshot,
   CollectorTaskType,
   StationLoginTestInput,
-  StationLoginTestResult,
 } from "@/lib/types/collector";
 
 const memorySnapshots = new Map<string, CollectorSnapshot>();
 
 export function detectSub2apiStation(stationId: string) {
-  return detectStationInfo(stationId);
+  return detectSub2apiStationGenerated({ stationId }).catch((error) => {
+    if (isTauriInvokeUnavailable(error)) {
+      return createMemoryRun(stationId, "station-info-detect", "checked");
+    }
+    throw error;
+  });
 }
 
 export function collectSub2apiStation(stationId: string) {
-  return collectStationInfo(stationId);
+  return collectSub2apiStationGenerated({ stationId }).catch((error) => {
+    if (isTauriInvokeUnavailable(error)) {
+      return createMemoryRun(stationId, "station-info-collect", "checked");
+    }
+    throw error;
+  });
 }
 
 export function detectStationInfo(stationId: string) {
-  return invoke<CollectorRunResult>("detect_station_info", { stationId }).catch((error) => {
+  return detectStationInfoGenerated({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return createMemoryRun(stationId, "station-info-detect", "checked");
     }
@@ -33,7 +49,7 @@ export function detectStationInfo(stationId: string) {
 }
 
 export function collectStationInfo(stationId: string) {
-  return invoke<CollectorRunResult>("collect_station_info", { stationId }).catch((error) => {
+  return collectStationInfoGenerated({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return createMemoryRun(stationId, "station-info-collect", "checked");
     }
@@ -42,7 +58,7 @@ export function collectStationInfo(stationId: string) {
 }
 
 export function collectStationTask(stationId: string, taskType: CollectorTaskType) {
-  return invoke<CollectorRunResult>("collect_station_task", { stationId, taskType }).catch((error) => {
+  return collectStationTaskGenerated({ stationId, taskType }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return createMemoryRun(stationId, `station-${taskType}`, "checked");
     }
@@ -51,7 +67,7 @@ export function collectStationTask(stationId: string, taskType: CollectorTaskTyp
 }
 
 export function testStationLogin(stationId: string) {
-  return invoke<CollectorRunResult>("test_station_login", { stationId }).catch((error) => {
+  return testStationLoginGenerated({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return createMemoryRun(stationId, "login-state-test", "manual_required");
     }
@@ -60,7 +76,12 @@ export function testStationLogin(stationId: string) {
 }
 
 export function testStationLoginInput(input: StationLoginTestInput) {
-  return invoke<StationLoginTestResult>("test_station_login_input", { input }).catch((error) => {
+  return testStationLoginInputGenerated({
+    stationType: input.stationType === "newapi" ? "newapi" : "sub2api",
+    websiteUrl: input.websiteUrl,
+    loginUsername: input.loginUsername,
+    loginPassword: input.loginPassword,
+  }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return {
         status: "manual_required",

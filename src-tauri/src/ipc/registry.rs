@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "137b464c50e08f1bd357b3bd3d00b03d4c9ce1ae35d47819bcfbca8214977ff8";
+    "b30803d67bc42dde4e9ad4091a8062283f0c8d5b589ea781d570c4fe2acea56a";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -474,6 +474,25 @@ fn command_contract(name: &str) -> CommandContract {
             "non_idempotent",
             true,
         ),
+        "detect_sub2api_station"
+        | "collect_sub2api_station"
+        | "detect_station_info"
+        | "collect_station_info"
+        | "test_station_login" => migrated_mutation(
+            "CollectorStationIdInputDto",
+            "CollectorRunResultDto",
+            "non_idempotent",
+            true,
+        ),
+        "collect_station_task" => migrated_mutation(
+            "StationCollectorTaskInputDto",
+            "CollectorRunResultDto",
+            "non_idempotent",
+            true,
+        ),
+        "test_station_login_input" => {
+            migrated_read("StationLoginTestInputDto", "StationLoginTestResultDto")
+        }
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         "get_local_access_key" => legacy_declared("unit", "String"),
         "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
@@ -632,6 +651,7 @@ fn pilot_serialization_fixture() -> String {
     commands.extend(super::dto::channel_monitor_reads::serialization_fixtures());
     commands.extend(super::dto::channel_monitor_mutations::serialization_fixtures());
     commands.extend(super::dto::channel_monitor_operations::serialization_fixtures());
+    commands.extend(super::dto::station_collector_operations::serialization_fixtures());
     let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
     format!(
         "{}\n",
@@ -808,6 +828,34 @@ export function loadChannelStatusWorkspace(input: EmptyInputDto = {}): Promise<C
 
 export function runChannelMonitorNow(input: ChannelMonitorIdInputDto): Promise<ChannelMonitorRunDto[]> {
   return invokeNonIdempotent<ChannelMonitorRunDto[]>("run_channel_monitor_now", { input });
+}
+
+export function detectSub2apiStation(input: CollectorStationIdInputDto): Promise<CollectorRunResultDto> {
+  return invokeNonIdempotent<CollectorRunResultDto>("detect_sub2api_station", { input });
+}
+
+export function collectSub2apiStation(input: CollectorStationIdInputDto): Promise<CollectorRunResultDto> {
+  return invokeNonIdempotent<CollectorRunResultDto>("collect_sub2api_station", { input });
+}
+
+export function detectStationInfo(input: CollectorStationIdInputDto): Promise<CollectorRunResultDto> {
+  return invokeNonIdempotent<CollectorRunResultDto>("detect_station_info", { input });
+}
+
+export function collectStationInfo(input: CollectorStationIdInputDto): Promise<CollectorRunResultDto> {
+  return invokeNonIdempotent<CollectorRunResultDto>("collect_station_info", { input });
+}
+
+export function collectStationTask(input: StationCollectorTaskInputDto): Promise<CollectorRunResultDto> {
+  return invokeNonIdempotent<CollectorRunResultDto>("collect_station_task", { input });
+}
+
+export function testStationLogin(input: CollectorStationIdInputDto): Promise<CollectorRunResultDto> {
+  return invokeNonIdempotent<CollectorRunResultDto>("test_station_login", { input });
+}
+
+export function testStationLoginInput(input: StationLoginTestInputDto): Promise<StationLoginTestResultDto> {
+  return invokeCommand<StationLoginTestResultDto>("test_station_login_input", { input });
 }
 
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
@@ -1102,6 +1150,37 @@ mod tests {
     }
 
     #[test]
+    fn station_collector_operations_have_closed_schemas_and_frozen_semantics() {
+        for name in [
+            "detect_sub2api_station",
+            "collect_sub2api_station",
+            "detect_station_info",
+            "collect_station_info",
+            "collect_station_task",
+            "test_station_login",
+        ] {
+            let contract = command_contract(name);
+            assert!(!contract.input.starts_with("legacy_"), "{name}");
+            assert_eq!(contract.output, "CollectorRunResultDto", "{name}");
+            assert_eq!(contract.mutation_kind, "non_idempotent", "{name}");
+            assert_eq!(
+                contract.runtime_validation, "rust_dto_pre_application",
+                "{name}"
+            );
+            assert!(!contract.transport_retry, "{name}");
+            assert!(contract.result_unknown, "{name}");
+        }
+
+        let login_input = command_contract("test_station_login_input");
+        assert_eq!(login_input.input, "StationLoginTestInputDto");
+        assert_eq!(login_input.output, "StationLoginTestResultDto");
+        assert_eq!(login_input.mutation_kind, "read");
+        assert_eq!(login_input.runtime_validation, "rust_dto_pre_application");
+        assert!(!login_input.transport_retry);
+        assert!(!login_input.result_unknown);
+    }
+
+    #[test]
     fn generated_bindings_use_the_common_transport_and_dedicated_wrappers() {
         let source = render_typescript("fixture-hash");
         assert!(source.contains("@/lib/bridge/transport"));
@@ -1194,6 +1273,12 @@ mod tests {
                 "ChannelMonitorRequestTemplateDto",
             ),
             ("run_channel_monitor_now", "ChannelMonitorRunDto[]"),
+            ("detect_sub2api_station", "CollectorRunResultDto"),
+            ("collect_sub2api_station", "CollectorRunResultDto"),
+            ("detect_station_info", "CollectorRunResultDto"),
+            ("collect_station_info", "CollectorRunResultDto"),
+            ("collect_station_task", "CollectorRunResultDto"),
+            ("test_station_login", "CollectorRunResultDto"),
         ] {
             assert!(
                 source.contains(&format!("invokeNonIdempotent<{output}>(\"{command}\"")),
@@ -1201,6 +1286,7 @@ mod tests {
             );
         }
         assert!(source.contains("function loadChannelStatusWorkspace("));
+        assert!(source.contains("function testStationLoginInput("));
     }
 
     #[test]

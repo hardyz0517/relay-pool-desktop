@@ -39,6 +39,10 @@ use crate::{
             UpsertBalanceSnapshotInputDto, UpsertStationGroupBindingInputDto,
         },
         settings::UpdateSettingsInputDto,
+        station_collector_operations::{
+            CollectorRunResultDto, StationCollectorTaskInputDto, StationCollectorTaskTypeDto,
+            StationLoginTestInputDto, StationLoginTestResultDto,
+        },
         station_keys::{
             BindRemoteStationKeyInputDto, CreateLocalStationKeyFromRemoteResultDto,
             CreateRemoteStationKeyInputDto, CreateRemoteStationKeyResultDto,
@@ -59,7 +63,7 @@ use crate::{
     ipc::runtime_contract::{current_runtime_contract, RuntimeContractInfo},
     models::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
-        collector::{CollectorRunResult, StationLoginTestInput, StationLoginTestResult},
+        collector::CollectorRunResult,
         credentials::PersistStationSessionInput,
         pricing::{
             ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
@@ -2165,14 +2169,18 @@ pub async fn clear_station_credentials(
 pub async fn detect_sub2api_station(
     services: State<'_, AppServices>,
     secrets: State<'_, SecretManager>,
-    station_id: String,
-) -> Result<CollectorRunResult, error::CommandError> {
-    run_station_collection_v2(
-        services.inner(),
-        *secrets.data_key(),
-        station_id,
-        collectors::adapters::CollectorTask::Detect,
-    )
+    input: Value,
+) -> Result<CollectorRunResultDto, error::CommandError> {
+    correlation::in_command_scope("detect_sub2api_station", async {
+        let input = CollectorStationIdInputDto::parse(input)?;
+        run_station_collection_v2(
+            services.inner(),
+            *secrets.data_key(),
+            input.station_id,
+            collectors::adapters::CollectorTask::Detect,
+        )
+        .await
+    })
     .await
 }
 
@@ -2180,14 +2188,18 @@ pub async fn detect_sub2api_station(
 pub async fn collect_sub2api_station(
     services: State<'_, AppServices>,
     secrets: State<'_, SecretManager>,
-    station_id: String,
-) -> Result<CollectorRunResult, error::CommandError> {
-    run_station_collection_v2(
-        services.inner(),
-        *secrets.data_key(),
-        station_id,
-        collectors::adapters::CollectorTask::Full,
-    )
+    input: Value,
+) -> Result<CollectorRunResultDto, error::CommandError> {
+    correlation::in_command_scope("collect_sub2api_station", async {
+        let input = CollectorStationIdInputDto::parse(input)?;
+        run_station_collection_v2(
+            services.inner(),
+            *secrets.data_key(),
+            input.station_id,
+            collectors::adapters::CollectorTask::Full,
+        )
+        .await
+    })
     .await
 }
 
@@ -2195,14 +2207,18 @@ pub async fn collect_sub2api_station(
 pub async fn detect_station_info(
     services: State<'_, AppServices>,
     secrets: State<'_, SecretManager>,
-    station_id: String,
-) -> Result<CollectorRunResult, error::CommandError> {
-    run_station_collection_v2(
-        services.inner(),
-        *secrets.data_key(),
-        station_id,
-        collectors::adapters::CollectorTask::Detect,
-    )
+    input: Value,
+) -> Result<CollectorRunResultDto, error::CommandError> {
+    correlation::in_command_scope("detect_station_info", async {
+        let input = CollectorStationIdInputDto::parse(input)?;
+        run_station_collection_v2(
+            services.inner(),
+            *secrets.data_key(),
+            input.station_id,
+            collectors::adapters::CollectorTask::Detect,
+        )
+        .await
+    })
     .await
 }
 
@@ -2210,14 +2226,18 @@ pub async fn detect_station_info(
 pub async fn collect_station_info(
     services: State<'_, AppServices>,
     secrets: State<'_, SecretManager>,
-    station_id: String,
-) -> Result<CollectorRunResult, error::CommandError> {
-    run_station_collection_v2(
-        services.inner(),
-        *secrets.data_key(),
-        station_id,
-        collectors::adapters::CollectorTask::Full,
-    )
+    input: Value,
+) -> Result<CollectorRunResultDto, error::CommandError> {
+    correlation::in_command_scope("collect_station_info", async {
+        let input = CollectorStationIdInputDto::parse(input)?;
+        run_station_collection_v2(
+            services.inner(),
+            *secrets.data_key(),
+            input.station_id,
+            collectors::adapters::CollectorTask::Full,
+        )
+        .await
+    })
     .await
 }
 
@@ -2225,50 +2245,72 @@ pub async fn collect_station_info(
 pub async fn collect_station_task(
     services: State<'_, AppServices>,
     secrets: State<'_, SecretManager>,
-    station_id: String,
-    task_type: String,
-) -> Result<CollectorRunResult, error::CommandError> {
-    let task = match task_type.as_str() {
-        "detect" => collectors::adapters::CollectorTask::Detect,
-        "balance" => collectors::adapters::CollectorTask::Balance,
-        "groups" => collectors::adapters::CollectorTask::Groups,
-        "models" => collectors::adapters::CollectorTask::Models,
-        "full" => collectors::adapters::CollectorTask::Full,
-        _ => return Err("未知采集任务类型".to_string().into()),
-    };
-    run_station_collection_v2(services.inner(), *secrets.data_key(), station_id, task).await
+    input: Value,
+) -> Result<CollectorRunResultDto, error::CommandError> {
+    correlation::in_command_scope("collect_station_task", async {
+        let input = StationCollectorTaskInputDto::parse(input)?;
+        let task = match input.task_type {
+            StationCollectorTaskTypeDto::Detect => collectors::adapters::CollectorTask::Detect,
+            StationCollectorTaskTypeDto::Balance => collectors::adapters::CollectorTask::Balance,
+            StationCollectorTaskTypeDto::Groups => collectors::adapters::CollectorTask::Groups,
+            StationCollectorTaskTypeDto::Models => collectors::adapters::CollectorTask::Models,
+            StationCollectorTaskTypeDto::Full => collectors::adapters::CollectorTask::Full,
+        };
+        run_station_collection_v2(
+            services.inner(),
+            *secrets.data_key(),
+            input.station_id,
+            task,
+        )
+        .await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn test_station_login(
     services: State<'_, AppServices>,
     secrets: State<'_, SecretManager>,
-    station_id: String,
-) -> Result<CollectorRunResult, error::CommandError> {
-    let data_key = *secrets.data_key();
-    let source = collectors::V2CollectorSourceAdapter::new(
-        services.collectors.clone(),
-        services.credentials.clone(),
-        services.settings.clone(),
-    );
-    let prepared = tauri::async_runtime::spawn_blocking(move || {
-        collectors::prepare_station_login_test_v2(&source, &data_key, station_id)
+    input: Value,
+) -> Result<CollectorRunResultDto, error::CommandError> {
+    correlation::in_command_scope("test_station_login", async {
+        let input = CollectorStationIdInputDto::parse(input)?;
+        let data_key = *secrets.data_key();
+        let source = collectors::V2CollectorSourceAdapter::new(
+            services.collectors.clone(),
+            services.credentials.clone(),
+            services.settings.clone(),
+        );
+        let prepared = tauri::async_runtime::spawn_blocking(move || {
+            collectors::prepare_station_login_test_v2(&source, &data_key, input.station_id)
+        })
+        .await
+        .map_err(|_| error::CommandError::internal(None))?
+        .map_err(public_command_application_error)?;
+        apply_prepared_collection_v2(services.inner(), prepared).await
     })
     .await
-    .map_err(|error| format!("登录测试执行失败: {error}"))?
-    .map_err(command_application_error)?;
-    apply_prepared_collection_v2(services.inner(), prepared).await
 }
 
 #[tauri::command]
 pub async fn test_station_login_input(
-    input: StationLoginTestInput,
-) -> Result<StationLoginTestResult, error::CommandError> {
-    Ok(
+    input: Value,
+) -> Result<StationLoginTestResultDto, error::CommandError> {
+    correlation::in_command_scope("test_station_login_input", async {
+        let input = StationLoginTestInputDto::parse(input)?.into_domain();
         tauri::async_runtime::spawn_blocking(move || collectors::test_station_login_input(input))
             .await
-            .map_err(|error| format!("连通性测试执行失败: {error}"))??,
-    )
+            .map_err(|_| error::CommandError::internal(None))?
+            .map_err(public_station_login_probe_error)
+    })
+    .await
+}
+
+fn public_station_login_probe_error(_: String) -> error::CommandError {
+    error::CommandError::from_driver(error::DriverFailure::ExternalUnavailable {
+        provider: None,
+        upstream_status: None,
+    })
 }
 
 async fn run_station_collection_v2(
@@ -2276,7 +2318,7 @@ async fn run_station_collection_v2(
     data_key: [u8; 32],
     station_id: String,
     task: collectors::adapters::CollectorTask,
-) -> Result<CollectorRunResult, error::CommandError> {
+) -> Result<CollectorRunResultDto, error::CommandError> {
     let source = collectors::V2CollectorSourceAdapter::new(
         services.collectors.clone(),
         services.credentials.clone(),
@@ -2286,15 +2328,15 @@ async fn run_station_collection_v2(
         collectors::prepare_station_collection_v2(&source, &data_key, station_id, task)
     })
     .await
-    .map_err(|error| format!("采集任务执行失败: {error}"))?
-    .map_err(command_application_error)?;
+    .map_err(|_| error::CommandError::internal(None))?
+    .map_err(public_command_application_error)?;
     apply_prepared_collection_v2(services, prepared).await
 }
 
 async fn apply_prepared_collection_v2(
     services: &AppServices,
     prepared: collectors::PreparedStationCollection,
-) -> Result<CollectorRunResult, error::CommandError> {
+) -> Result<CollectorRunResultDto, error::CommandError> {
     let apply = collectors::apply::V2CollectorApplyAdapter::new((*services.collectors).clone());
     collectors::apply_prepared_station_collection_v2(&services.collectors, &apply, prepared)
         .await

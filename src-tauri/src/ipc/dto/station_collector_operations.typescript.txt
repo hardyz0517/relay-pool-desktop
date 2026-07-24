@@ -1,0 +1,22 @@
+export type StationCollectorTaskTypeDto = "detect" | "balance" | "groups" | "models" | "full";
+export type StationCollectorTaskInputDto = { stationId: string; taskType: StationCollectorTaskTypeDto };
+export type StationLoginProviderDto = "sub2api" | "newapi";
+
+export type CollectorEventDto = {
+  eventType: string; message: string; status: string;
+};
+
+export type CollectorRunResultDto = {
+  snapshot: CollectorSnapshotDto; events: CollectorEventDto[];
+};
+
+export type StationLoginTestInputDto = {
+  stationType: StationLoginProviderDto | null;
+  websiteUrl: string;
+  loginUsername: string;
+  loginPassword: string;
+};
+
+export type StationLoginTestResultDto = {
+  status: string; message: string; diagnosis: string | null; tokenPresent: boolean;
+};
