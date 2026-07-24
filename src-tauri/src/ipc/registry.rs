@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "64adfdee45bed2d91f5801ecf3e052f31170a4344dbdad32cbcb4f2a4f15bbfe";
+    "8440b0141d7775ffd4d99c86bc42f5b95762e7d8b5604b4d3209c863722c45d8";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -252,6 +252,100 @@ fn command_contract(name: &str) -> CommandContract {
             "idempotent",
             false,
         ),
+        "list_station_keys" => migrated_read("StationIdInputDto", "Vec<StationKeyDto>"),
+        "get_remote_key_capability" => migrated_read("StationIdInputDto", "RemoteKeyCapabilityDto"),
+        "list_remote_station_keys" => {
+            migrated_read("StationIdInputDto", "Vec<RemoteStationKeyDto>")
+        }
+        "scan_remote_station_keys" => migrated_mutation(
+            "StationIdInputDto",
+            "RemoteKeyScanResultDto",
+            "idempotent",
+            false,
+        ),
+        "list_key_pool_items" => migrated_read("EmptyInputDto", "Vec<KeyPoolItemDto>"),
+        "get_station_credentials" => migrated_read("StationIdInputDto", "StationCredentialsDto"),
+        "create_station_key" => migrated_mutation(
+            "CreateStationKeyInputDto",
+            "StationKeyDto",
+            "non_idempotent",
+            true,
+        ),
+        "update_station_key" => migrated_mutation(
+            "UpdateStationKeyInputDto",
+            "StationKeyDto",
+            "idempotent",
+            false,
+        ),
+        "save_station_key_with_defaults" => migrated_mutation(
+            "SaveStationKeyWithDefaultsInputDto",
+            "SaveStationKeyWithDefaultsResultDto",
+            "non_idempotent",
+            true,
+        ),
+        "update_station_key_group_binding" => migrated_mutation(
+            "UpdateStationKeyGroupBindingInputDto",
+            "StationKeyDto",
+            "idempotent",
+            false,
+        ),
+        "delete_station_key" => {
+            migrated_mutation("StationKeyIdInputDto", "unit", "idempotent", false)
+        }
+        "reorder_station_keys" => migrated_mutation(
+            "ReorderStationKeysInputDto",
+            "Vec<StationKeyDto>",
+            "idempotent",
+            false,
+        ),
+        "create_remote_station_key" => migrated_mutation(
+            "CreateRemoteStationKeyInputDto",
+            "CreateRemoteStationKeyResultDto",
+            "non_idempotent",
+            true,
+        ),
+        "create_local_station_key_from_remote" => migrated_mutation(
+            "RemoteStationKeyInputDto",
+            "CreateLocalStationKeyFromRemoteResultDto",
+            "non_idempotent",
+            true,
+        ),
+        "bind_remote_station_key" => migrated_mutation(
+            "BindRemoteStationKeyInputDto",
+            "Vec<RemoteStationKeyDto>",
+            "idempotent",
+            false,
+        ),
+        "unbind_remote_station_key" => migrated_mutation(
+            "RemoteStationKeyInputDto",
+            "Vec<RemoteStationKeyDto>",
+            "idempotent",
+            false,
+        ),
+        "reorder_key_pool" => migrated_mutation(
+            "ReorderKeyPoolInputDto",
+            "Vec<KeyPoolItemDto>",
+            "idempotent",
+            false,
+        ),
+        "update_station_credentials" => migrated_mutation(
+            "UpdateStationCredentialsInputDto",
+            "StationCredentialsDto",
+            "idempotent",
+            false,
+        ),
+        "update_station_session" => migrated_mutation(
+            "UpdateStationSessionInputDto",
+            "StationCredentialsDto",
+            "idempotent",
+            false,
+        ),
+        "clear_station_credentials" => migrated_mutation(
+            "StationIdInputDto",
+            "StationCredentialsDto",
+            "idempotent",
+            false,
+        ),
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         "get_local_access_key" => legacy_declared("unit", "String"),
         "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
@@ -395,18 +489,17 @@ fn pilot_serialization_fixture() -> String {
     )
     .expect("reorder fixture input");
     let station = super::dto::stations::fixture();
-    let value = serde_json::json!({
-        "schemaVersion": 1,
-        "commands": [
-            {"command": "get_settings", "input": {}, "output": settings.clone()},
-            {"command": "list_stations", "input": {}, "output": [station.clone()]},
-            {"command": "update_settings", "input": update_settings, "output": settings},
-            {"command": "create_station", "input": create_station, "output": station.clone()},
-            {"command": "update_station", "input": update_station, "output": station.clone()},
-            {"command": "delete_station", "input": delete_station, "output": null},
-            {"command": "reorder_stations", "input": reorder_stations, "output": [station]},
-        ]
-    });
+    let mut commands = vec![
+        serde_json::json!({"command": "get_settings", "input": {}, "output": settings.clone()}),
+        serde_json::json!({"command": "list_stations", "input": {}, "output": [station.clone()]}),
+        serde_json::json!({"command": "update_settings", "input": update_settings, "output": settings}),
+        serde_json::json!({"command": "create_station", "input": create_station, "output": station.clone()}),
+        serde_json::json!({"command": "update_station", "input": update_station, "output": station.clone()}),
+        serde_json::json!({"command": "delete_station", "input": delete_station, "output": null}),
+        serde_json::json!({"command": "reorder_stations", "input": reorder_stations, "output": [station]}),
+    ];
+    commands.extend(super::dto::station_keys::serialization_fixtures());
+    let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
     format!(
         "{}\n",
         serde_json::to_string_pretty(&value).expect("fixture must serialize")
@@ -431,7 +524,7 @@ fn render_typescript(contract_hash: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     let source = format!(
-        "// @generated by repository IPC generator. Do not edit.\n// generator version: {GENERATOR_VERSION}\n// IPC contract version: {IPC_CONTRACT_VERSION}\n// canonical hash: {contract_hash}\n\nimport {{ invoke }} from \"@/lib/bridge/transport\";\n\n{types}\n\nexport type IpcCommand =\n{command_union};\n\nexport const IPC_CONTRACT_VERSION = {IPC_CONTRACT_VERSION} as const;\nexport const IPC_BINDING_HASH = \"{contract_hash}\" as const;\n\nexport function invokeCommand<T>(command: IpcCommand, args?: Record<string, unknown>): Promise<T> {{\n  return invoke<T>(command, args);\n}}\n\nexport function getSettings(input: EmptyInputDto = {{}}): Promise<SettingsDto> {{\n  return invokeCommand<SettingsDto>(\"get_settings\", {{ input }});\n}}\n\nexport function listStations(input: EmptyInputDto = {{}}): Promise<StationDto[]> {{\n  return invokeCommand<StationDto[]>(\"list_stations\", {{ input }});\n}}\n\nexport function updateSettings(input: UpdateSettingsInputDto): Promise<SettingsDto> {{\n  return invokeCommand<SettingsDto>(\"update_settings\", {{ input }});\n}}\n\nexport function createStation(input: CreateStationInputDto): Promise<StationDto> {{\n  return invokeCommand<StationDto>(\"create_station\", {{ input }});\n}}\n\nexport function updateStation(input: UpdateStationInputDto): Promise<StationDto> {{\n  return invokeCommand<StationDto>(\"update_station\", {{ input }});\n}}\n\nexport function deleteStation(input: DeleteStationInputDto): Promise<void> {{\n  return invokeCommand<void>(\"delete_station\", {{ input }});\n}}\n\nexport function reorderStations(input: ReorderStationsInputDto): Promise<StationDto[]> {{\n  return invokeCommand<StationDto[]>(\"reorder_stations\", {{ input }});\n}}\n\nexport function getRuntimeContractInfo(): Promise<RuntimeContractInfo> {{\n  return invokeCommand<RuntimeContractInfo>(\"get_runtime_contract_info\");\n}}\n\nexport type StreamingSubscription = {{ close(): void }};\n\nexport interface TypedStreamingAdapter<Event> {{\n  readonly eventSchemaVersion: number;\n  open(onEvent: (event: Event) => void): StreamingSubscription;\n}}\n"
+        "// @generated by repository IPC generator. Do not edit.\n// generator version: {GENERATOR_VERSION}\n// IPC contract version: {IPC_CONTRACT_VERSION}\n// canonical hash: {contract_hash}\n\nimport {{ invoke }} from \"@/lib/bridge/transport\";\n\n{types}\n\nexport type IpcCommand =\n{command_union};\n\nexport const IPC_CONTRACT_VERSION = {IPC_CONTRACT_VERSION} as const;\nexport const IPC_BINDING_HASH = \"{contract_hash}\" as const;\n\nexport function invokeCommand<T>(command: IpcCommand, args?: Record<string, unknown>): Promise<T> {{\n  return invoke<T>(command, args);\n}}\n\nexport function getSettings(input: EmptyInputDto = {{}}): Promise<SettingsDto> {{\n  return invokeCommand<SettingsDto>(\"get_settings\", {{ input }});\n}}\n\nexport function listStations(input: EmptyInputDto = {{}}): Promise<StationDto[]> {{\n  return invokeCommand<StationDto[]>(\"list_stations\", {{ input }});\n}}\n\nexport function updateSettings(input: UpdateSettingsInputDto): Promise<SettingsDto> {{\n  return invokeCommand<SettingsDto>(\"update_settings\", {{ input }});\n}}\n\nexport function createStation(input: CreateStationInputDto): Promise<StationDto> {{\n  return invokeCommand<StationDto>(\"create_station\", {{ input }});\n}}\n\nexport function updateStation(input: UpdateStationInputDto): Promise<StationDto> {{\n  return invokeCommand<StationDto>(\"update_station\", {{ input }});\n}}\n\nexport function deleteStation(input: DeleteStationInputDto): Promise<void> {{\n  return invokeCommand<void>(\"delete_station\", {{ input }});\n}}\n\nexport function reorderStations(input: ReorderStationsInputDto): Promise<StationDto[]> {{\n  return invokeCommand<StationDto[]>(\"reorder_stations\", {{ input }});\n}}\n\nexport function listStationKeys(input: StationIdInputDto): Promise<StationKeyDto[]> {{\n  return invokeCommand<StationKeyDto[]>(\"list_station_keys\", {{ input }});\n}}\n\nexport function createStationKey(input: CreateStationKeyInputDto): Promise<StationKeyDto> {{\n  return invokeNonIdempotent<StationKeyDto>(\"create_station_key\", {{ input }});\n}}\n\nexport function updateStationKey(input: UpdateStationKeyInputDto): Promise<StationKeyDto> {{\n  return invokeCommand<StationKeyDto>(\"update_station_key\", {{ input }});\n}}\n\nexport function saveStationKeyWithDefaults(input: SaveStationKeyWithDefaultsInputDto): Promise<SaveStationKeyWithDefaultsResultDto> {{\n  return invokeNonIdempotent<SaveStationKeyWithDefaultsResultDto>(\"save_station_key_with_defaults\", {{ input }});\n}}\n\nexport function updateStationKeyGroupBinding(input: UpdateStationKeyGroupBindingInputDto): Promise<StationKeyDto> {{\n  return invokeCommand<StationKeyDto>(\"update_station_key_group_binding\", {{ input }});\n}}\n\nexport function deleteStationKey(input: StationKeyIdInputDto): Promise<void> {{\n  return invokeCommand<void>(\"delete_station_key\", {{ input }});\n}}\n\nexport function reorderStationKeys(input: ReorderStationKeysInputDto): Promise<StationKeyDto[]> {{\n  return invokeCommand<StationKeyDto[]>(\"reorder_station_keys\", {{ input }});\n}}\n\nexport function getRemoteKeyCapability(input: StationIdInputDto): Promise<RemoteKeyCapabilityDto> {{\n  return invokeCommand<RemoteKeyCapabilityDto>(\"get_remote_key_capability\", {{ input }});\n}}\n\nexport function listRemoteStationKeys(input: StationIdInputDto): Promise<RemoteStationKeyDto[]> {{\n  return invokeCommand<RemoteStationKeyDto[]>(\"list_remote_station_keys\", {{ input }});\n}}\n\nexport function scanRemoteStationKeys(input: StationIdInputDto): Promise<RemoteKeyScanResultDto> {{\n  return invokeCommand<RemoteKeyScanResultDto>(\"scan_remote_station_keys\", {{ input }});\n}}\n\nexport function createRemoteStationKey(input: CreateRemoteStationKeyInputDto): Promise<CreateRemoteStationKeyResultDto> {{\n  return invokeNonIdempotent<CreateRemoteStationKeyResultDto>(\"create_remote_station_key\", {{ input }});\n}}\n\nexport function createLocalStationKeyFromRemote(input: RemoteStationKeyInputDto): Promise<CreateLocalStationKeyFromRemoteResultDto> {{\n  return invokeNonIdempotent<CreateLocalStationKeyFromRemoteResultDto>(\"create_local_station_key_from_remote\", {{ input }});\n}}\n\nexport function bindRemoteStationKey(input: BindRemoteStationKeyInputDto): Promise<RemoteStationKeyDto[]> {{\n  return invokeCommand<RemoteStationKeyDto[]>(\"bind_remote_station_key\", {{ input }});\n}}\n\nexport function unbindRemoteStationKey(input: RemoteStationKeyInputDto): Promise<RemoteStationKeyDto[]> {{\n  return invokeCommand<RemoteStationKeyDto[]>(\"unbind_remote_station_key\", {{ input }});\n}}\n\nexport function listKeyPoolItems(input: EmptyInputDto = {{}}): Promise<KeyPoolItemDto[]> {{\n  return invokeCommand<KeyPoolItemDto[]>(\"list_key_pool_items\", {{ input }});\n}}\n\nexport function reorderKeyPool(input: ReorderKeyPoolInputDto): Promise<KeyPoolItemDto[]> {{\n  return invokeCommand<KeyPoolItemDto[]>(\"reorder_key_pool\", {{ input }});\n}}\n\nexport function getStationCredentials(input: StationIdInputDto): Promise<StationCredentialsDto> {{\n  return invokeCommand<StationCredentialsDto>(\"get_station_credentials\", {{ input }});\n}}\n\nexport function updateStationCredentials(input: UpdateStationCredentialsInputDto): Promise<StationCredentialsDto> {{\n  return invokeCommand<StationCredentialsDto>(\"update_station_credentials\", {{ input }});\n}}\n\nexport function updateStationSession(input: UpdateStationSessionInputDto): Promise<StationCredentialsDto> {{\n  return invokeCommand<StationCredentialsDto>(\"update_station_session\", {{ input }});\n}}\n\nexport function clearStationCredentials(input: StationIdInputDto): Promise<StationCredentialsDto> {{\n  return invokeCommand<StationCredentialsDto>(\"clear_station_credentials\", {{ input }});\n}}\n\nexport function getRuntimeContractInfo(): Promise<RuntimeContractInfo> {{\n  return invokeCommand<RuntimeContractInfo>(\"get_runtime_contract_info\");\n}}\n\nexport type StreamingSubscription = {{ close(): void }};\n\nexport interface TypedStreamingAdapter<Event> {{\n  readonly eventSchemaVersion: number;\n  open(onEvent: (event: Event) => void): StreamingSubscription;\n}}\n"
     );
     source
         .replace(
@@ -540,6 +633,56 @@ mod tests {
     }
 
     #[test]
+    fn station_key_ordinary_commands_have_closed_schemas_and_frozen_mutation_semantics() {
+        let non_idempotent = [
+            "create_local_station_key_from_remote",
+            "create_remote_station_key",
+            "create_station_key",
+            "save_station_key_with_defaults",
+        ];
+        for name in [
+            "bind_remote_station_key",
+            "clear_station_credentials",
+            "create_local_station_key_from_remote",
+            "create_remote_station_key",
+            "create_station_key",
+            "delete_station_key",
+            "get_remote_key_capability",
+            "get_station_credentials",
+            "list_key_pool_items",
+            "list_remote_station_keys",
+            "list_station_keys",
+            "reorder_key_pool",
+            "reorder_station_keys",
+            "save_station_key_with_defaults",
+            "scan_remote_station_keys",
+            "unbind_remote_station_key",
+            "update_station_credentials",
+            "update_station_key",
+            "update_station_key_group_binding",
+            "update_station_session",
+        ] {
+            let contract = command_contract(name);
+            assert!(!contract.input.starts_with("legacy_"), "{name}");
+            assert!(!contract.output.starts_with("legacy_"), "{name}");
+            assert_eq!(
+                contract.runtime_validation, "rust_dto_pre_application",
+                "{name}"
+            );
+            assert!(!contract.transport_retry, "{name}");
+            assert_eq!(
+                contract.result_unknown,
+                non_idempotent.contains(&name),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            command_contract("scan_remote_station_keys").mutation_kind,
+            "idempotent"
+        );
+    }
+
+    #[test]
     fn generated_bindings_use_the_common_transport_and_dedicated_wrappers() {
         let source = render_typescript("fixture-hash");
         assert!(source.contains("@/lib/bridge/transport"));
@@ -551,6 +694,33 @@ mod tests {
             "updateStation",
             "deleteStation",
             "reorderStations",
+        ] {
+            assert!(
+                source.contains(&format!("function {wrapper}(")),
+                "{wrapper}"
+            );
+        }
+        for wrapper in [
+            "bindRemoteStationKey",
+            "clearStationCredentials",
+            "createLocalStationKeyFromRemote",
+            "createRemoteStationKey",
+            "createStationKey",
+            "deleteStationKey",
+            "getRemoteKeyCapability",
+            "getStationCredentials",
+            "listKeyPoolItems",
+            "listRemoteStationKeys",
+            "listStationKeys",
+            "reorderKeyPool",
+            "reorderStationKeys",
+            "saveStationKeyWithDefaults",
+            "scanRemoteStationKeys",
+            "unbindRemoteStationKey",
+            "updateStationCredentials",
+            "updateStationKey",
+            "updateStationKeyGroupBinding",
+            "updateStationSession",
         ] {
             assert!(
                 source.contains(&format!("function {wrapper}(")),

@@ -286,6 +286,778 @@
           "websiteUrl": "https://provider.invalid"
         }
       ]
+    },
+    {
+      "command": "list_station_keys",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": [
+        {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "balanceScope": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "name": "Fixture key",
+          "note": null,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationId": "station-fixture",
+          "status": "unchecked",
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "command": "create_station_key",
+      "input": {
+        "apiKey": "fixture-not-a-real-api-key",
+        "balanceScope": null,
+        "enabled": true,
+        "groupBindingId": null,
+        "groupIdHash": null,
+        "groupName": null,
+        "loadFactor": null,
+        "manualRateMultiplier": null,
+        "maxConcurrency": 3,
+        "name": "Fixture key",
+        "note": null,
+        "priority": null,
+        "rateMultiplier": null,
+        "rateSource": null,
+        "schedulable": true,
+        "stationId": "station-fixture",
+        "tierLabel": null
+      },
+      "output": {
+        "apiKeyMasked": "fixture-...redacted",
+        "apiKeyPresent": true,
+        "balanceScope": null,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "enabled": true,
+        "groupBindingId": null,
+        "groupIdHash": null,
+        "groupName": null,
+        "id": "station-key-fixture",
+        "lastCheckedAt": null,
+        "lastUsedAt": null,
+        "loadFactor": null,
+        "manualRateMultiplier": null,
+        "manualRateUpdatedAt": null,
+        "maxConcurrency": 3,
+        "name": "Fixture key",
+        "note": null,
+        "priority": 0,
+        "rateCollectedAt": null,
+        "rateMultiplier": null,
+        "rateSource": null,
+        "schedulable": true,
+        "stationId": "station-fixture",
+        "status": "unchecked",
+        "tierLabel": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "update_station_key",
+      "input": {
+        "apiKey": null,
+        "balanceScope": null,
+        "enabled": true,
+        "groupBindingId": null,
+        "groupIdHash": null,
+        "groupName": null,
+        "id": "station-key-fixture",
+        "loadFactor": null,
+        "manualRateMultiplier": null,
+        "maxConcurrency": 3,
+        "name": "Fixture key",
+        "note": null,
+        "priority": 0,
+        "rateMultiplier": null,
+        "rateSource": null,
+        "schedulable": true,
+        "stationId": "station-fixture",
+        "status": "unchecked",
+        "tierLabel": null
+      },
+      "output": {
+        "apiKeyMasked": "fixture-...redacted",
+        "apiKeyPresent": true,
+        "balanceScope": null,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "enabled": true,
+        "groupBindingId": null,
+        "groupIdHash": null,
+        "groupName": null,
+        "id": "station-key-fixture",
+        "lastCheckedAt": null,
+        "lastUsedAt": null,
+        "loadFactor": null,
+        "manualRateMultiplier": null,
+        "manualRateUpdatedAt": null,
+        "maxConcurrency": 3,
+        "name": "Fixture key",
+        "note": null,
+        "priority": 0,
+        "rateCollectedAt": null,
+        "rateMultiplier": null,
+        "rateSource": null,
+        "schedulable": true,
+        "stationId": "station-fixture",
+        "status": "unchecked",
+        "tierLabel": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "save_station_key_with_defaults",
+      "input": {
+        "apiKey": "fixture-not-a-real-api-key",
+        "balanceScope": null,
+        "capabilities": null,
+        "enabled": true,
+        "groupSelection": {
+          "kind": "clear"
+        },
+        "id": null,
+        "mode": "create",
+        "name": "Fixture default key",
+        "note": null,
+        "priority": null,
+        "schedulable": true,
+        "stationId": "station-fixture",
+        "status": "unchecked",
+        "tierLabel": null
+      },
+      "output": {
+        "capabilities": {
+          "modelAllowlist": [],
+          "modelBlocklist": [],
+          "onlyUseAsBackup": false,
+          "preferredModels": [],
+          "routingTags": [
+            "fixture"
+          ],
+          "stationKeyId": "station-key-fixture",
+          "supportsChatCompletions": true,
+          "supportsEmbeddings": true,
+          "supportsReasoning": true,
+          "supportsResponses": true,
+          "supportsStream": true,
+          "supportsTools": true,
+          "supportsVision": true,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        },
+        "message": "Fixture station key saved.",
+        "stationKey": {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "balanceScope": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "name": "Fixture key",
+          "note": null,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationId": "station-fixture",
+          "status": "unchecked",
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "command": "update_station_key_group_binding",
+      "input": {
+        "groupBindingId": "group-fixture",
+        "stationKeyId": "station-key-fixture"
+      },
+      "output": {
+        "apiKeyMasked": "fixture-...redacted",
+        "apiKeyPresent": true,
+        "balanceScope": null,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "enabled": true,
+        "groupBindingId": null,
+        "groupIdHash": null,
+        "groupName": null,
+        "id": "station-key-fixture",
+        "lastCheckedAt": null,
+        "lastUsedAt": null,
+        "loadFactor": null,
+        "manualRateMultiplier": null,
+        "manualRateUpdatedAt": null,
+        "maxConcurrency": 3,
+        "name": "Fixture key",
+        "note": null,
+        "priority": 0,
+        "rateCollectedAt": null,
+        "rateMultiplier": null,
+        "rateSource": null,
+        "schedulable": true,
+        "stationId": "station-fixture",
+        "status": "unchecked",
+        "tierLabel": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "delete_station_key",
+      "input": {
+        "id": "station-key-fixture"
+      },
+      "output": null
+    },
+    {
+      "command": "reorder_station_keys",
+      "input": {
+        "keyIds": [
+          "station-key-fixture"
+        ],
+        "stationId": "station-fixture"
+      },
+      "output": [
+        {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "balanceScope": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "name": "Fixture key",
+          "note": null,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationId": "station-fixture",
+          "status": "unchecked",
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "command": "get_remote_key_capability",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "canCreateRemoteKey": true,
+        "canListRemoteKeys": true,
+        "canReadGroups": true,
+        "requiresManualSession": false,
+        "stationId": "station-fixture",
+        "stationType": "newapi",
+        "unsupportedReason": null
+      }
+    },
+    {
+      "command": "list_remote_station_keys",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": [
+        {
+          "apiKeyFingerprint": "fixture-fingerprint",
+          "apiKeyMasked": "fixture-...redacted",
+          "collectedAt": "2026-01-01T00:00:00Z",
+          "createdAt": "2026-01-01T00:00:00Z",
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "remote-key-fixture",
+          "lastUsedAt": null,
+          "matchConfidence": 1.0,
+          "matchStatus": "matched",
+          "matchedStationKeyId": "station-key-fixture",
+          "rateMultiplier": null,
+          "rateSource": null,
+          "rawSource": "fixture_sanitized",
+          "remoteKeyIdHash": "fixture-id-hash",
+          "remoteKeyName": "Fixture remote key",
+          "stationId": "station-fixture",
+          "tierLabel": null
+        }
+      ]
+    },
+    {
+      "command": "scan_remote_station_keys",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "capability": {
+          "canCreateRemoteKey": true,
+          "canListRemoteKeys": true,
+          "canReadGroups": true,
+          "requiresManualSession": false,
+          "stationId": "station-fixture",
+          "stationType": "newapi",
+          "unsupportedReason": null
+        },
+        "keys": [
+          {
+            "apiKeyFingerprint": "fixture-fingerprint",
+            "apiKeyMasked": "fixture-...redacted",
+            "collectedAt": "2026-01-01T00:00:00Z",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "groupIdHash": null,
+            "groupName": null,
+            "id": "remote-key-fixture",
+            "lastUsedAt": null,
+            "matchConfidence": 1.0,
+            "matchStatus": "matched",
+            "matchedStationKeyId": "station-key-fixture",
+            "rateMultiplier": null,
+            "rateSource": null,
+            "rawSource": "fixture_sanitized",
+            "remoteKeyIdHash": "fixture-id-hash",
+            "remoteKeyName": "Fixture remote key",
+            "stationId": "station-fixture",
+            "tierLabel": null
+          }
+        ],
+        "message": "Fixture scan completed.",
+        "stationId": "station-fixture",
+        "syncedStationKeyIds": [
+          "station-key-fixture"
+        ]
+      }
+    },
+    {
+      "command": "create_remote_station_key",
+      "input": {
+        "groupBindingId": null,
+        "groupIdHash": null,
+        "groupName": null,
+        "name": "Fixture remote key",
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "fullKeyOnce": "fixture-not-a-real-key-one-time",
+        "message": "Fixture remote key created.",
+        "remoteKey": {
+          "apiKeyFingerprint": "fixture-fingerprint",
+          "apiKeyMasked": "fixture-...redacted",
+          "collectedAt": "2026-01-01T00:00:00Z",
+          "createdAt": "2026-01-01T00:00:00Z",
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "remote-key-fixture",
+          "lastUsedAt": null,
+          "matchConfidence": 1.0,
+          "matchStatus": "matched",
+          "matchedStationKeyId": "station-key-fixture",
+          "rateMultiplier": null,
+          "rateSource": null,
+          "rawSource": "fixture_sanitized",
+          "remoteKeyIdHash": "fixture-id-hash",
+          "remoteKeyName": "Fixture remote key",
+          "stationId": "station-fixture",
+          "tierLabel": null
+        },
+        "stationKey": {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "balanceScope": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "name": "Fixture key",
+          "note": null,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationId": "station-fixture",
+          "status": "unchecked",
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "command": "create_local_station_key_from_remote",
+      "input": {
+        "remoteKeyId": "remote-key-fixture",
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "message": "Fixture local key created.",
+        "remoteKey": {
+          "apiKeyFingerprint": "fixture-fingerprint",
+          "apiKeyMasked": "fixture-...redacted",
+          "collectedAt": "2026-01-01T00:00:00Z",
+          "createdAt": "2026-01-01T00:00:00Z",
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "remote-key-fixture",
+          "lastUsedAt": null,
+          "matchConfidence": 1.0,
+          "matchStatus": "matched",
+          "matchedStationKeyId": "station-key-fixture",
+          "rateMultiplier": null,
+          "rateSource": null,
+          "rawSource": "fixture_sanitized",
+          "remoteKeyIdHash": "fixture-id-hash",
+          "remoteKeyName": "Fixture remote key",
+          "stationId": "station-fixture",
+          "tierLabel": null
+        },
+        "stationKey": {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "balanceScope": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "name": "Fixture key",
+          "note": null,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationId": "station-fixture",
+          "status": "unchecked",
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "command": "bind_remote_station_key",
+      "input": {
+        "remoteKeyId": "remote-key-fixture",
+        "stationKeyId": "station-key-fixture"
+      },
+      "output": [
+        {
+          "apiKeyFingerprint": "fixture-fingerprint",
+          "apiKeyMasked": "fixture-...redacted",
+          "collectedAt": "2026-01-01T00:00:00Z",
+          "createdAt": "2026-01-01T00:00:00Z",
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "remote-key-fixture",
+          "lastUsedAt": null,
+          "matchConfidence": 1.0,
+          "matchStatus": "matched",
+          "matchedStationKeyId": "station-key-fixture",
+          "rateMultiplier": null,
+          "rateSource": null,
+          "rawSource": "fixture_sanitized",
+          "remoteKeyIdHash": "fixture-id-hash",
+          "remoteKeyName": "Fixture remote key",
+          "stationId": "station-fixture",
+          "tierLabel": null
+        }
+      ]
+    },
+    {
+      "command": "unbind_remote_station_key",
+      "input": {
+        "remoteKeyId": "remote-key-fixture",
+        "stationId": "station-fixture"
+      },
+      "output": [
+        {
+          "apiKeyFingerprint": "fixture-fingerprint",
+          "apiKeyMasked": "fixture-...redacted",
+          "collectedAt": "2026-01-01T00:00:00Z",
+          "createdAt": "2026-01-01T00:00:00Z",
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "remote-key-fixture",
+          "lastUsedAt": null,
+          "matchConfidence": 1.0,
+          "matchStatus": "matched",
+          "matchedStationKeyId": "station-key-fixture",
+          "rateMultiplier": null,
+          "rateSource": null,
+          "rawSource": "fixture_sanitized",
+          "remoteKeyIdHash": "fixture-id-hash",
+          "remoteKeyName": "Fixture remote key",
+          "stationId": "station-fixture",
+          "tierLabel": null
+        }
+      ]
+    },
+    {
+      "command": "list_key_pool_items",
+      "input": {},
+      "output": [
+        {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "avgLatencyMs": null,
+          "balanceScope": null,
+          "capabilitySummary": [
+            "chat_completions"
+          ],
+          "consecutiveFailures": 0,
+          "cooldownUntil": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "endpointPingCheckedAt": null,
+          "endpointPingError": null,
+          "endpointPingMs": null,
+          "endpointPingStatus": "unchecked",
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastErrorSummary": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "modelScopeSummary": "all models",
+          "name": "Fixture key",
+          "note": null,
+          "onlyUseAsBackup": false,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationApiBaseUrl": "https://provider.invalid/v1",
+          "stationEndpointRevision": 1,
+          "stationId": "station-fixture",
+          "stationName": "Fixture Station",
+          "stationType": "newapi",
+          "stationUpstreamApiFormat": "auto",
+          "status": "unchecked",
+          "successRate": null,
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "command": "reorder_key_pool",
+      "input": {
+        "keyIds": [
+          "station-key-fixture"
+        ]
+      },
+      "output": [
+        {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "avgLatencyMs": null,
+          "balanceScope": null,
+          "capabilitySummary": [
+            "chat_completions"
+          ],
+          "consecutiveFailures": 0,
+          "cooldownUntil": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "endpointPingCheckedAt": null,
+          "endpointPingError": null,
+          "endpointPingMs": null,
+          "endpointPingStatus": "unchecked",
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastErrorSummary": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "modelScopeSummary": "all models",
+          "name": "Fixture key",
+          "note": null,
+          "onlyUseAsBackup": false,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationApiBaseUrl": "https://provider.invalid/v1",
+          "stationEndpointRevision": 1,
+          "stationId": "station-fixture",
+          "stationName": "Fixture Station",
+          "stationType": "newapi",
+          "stationUpstreamApiFormat": "auto",
+          "status": "unchecked",
+          "successRate": null,
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "command": "get_station_credentials",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "accessTokenPresent": true,
+        "cookiePresent": false,
+        "lastLoginAt": null,
+        "loginError": null,
+        "loginStatus": "saved",
+        "loginUsername": "fixture-user",
+        "newapiUserId": null,
+        "passwordPresent": true,
+        "refreshTokenPresent": false,
+        "rememberPassword": false,
+        "sessionExpiresAt": null,
+        "sessionSource": "fixture",
+        "sessionStatus": "valid",
+        "stationId": "station-fixture",
+        "tokenExpiresAt": null,
+        "tokenRefreshedAt": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "update_station_credentials",
+      "input": {
+        "loginPassword": "fixture-not-a-real-password",
+        "loginUsername": "fixture-user",
+        "rememberPassword": false,
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "accessTokenPresent": true,
+        "cookiePresent": false,
+        "lastLoginAt": null,
+        "loginError": null,
+        "loginStatus": "saved",
+        "loginUsername": "fixture-user",
+        "newapiUserId": null,
+        "passwordPresent": true,
+        "refreshTokenPresent": false,
+        "rememberPassword": false,
+        "sessionExpiresAt": null,
+        "sessionSource": "fixture",
+        "sessionStatus": "valid",
+        "stationId": "station-fixture",
+        "tokenExpiresAt": null,
+        "tokenRefreshedAt": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "update_station_session",
+      "input": {
+        "accessToken": "fixture-not-a-real-access-token",
+        "cookie": null,
+        "newapiUserId": null,
+        "refreshToken": null,
+        "stationId": "station-fixture",
+        "tokenExpiresAt": null
+      },
+      "output": {
+        "accessTokenPresent": true,
+        "cookiePresent": false,
+        "lastLoginAt": null,
+        "loginError": null,
+        "loginStatus": "saved",
+        "loginUsername": "fixture-user",
+        "newapiUserId": null,
+        "passwordPresent": true,
+        "refreshTokenPresent": false,
+        "rememberPassword": false,
+        "sessionExpiresAt": null,
+        "sessionSource": "fixture",
+        "sessionStatus": "valid",
+        "stationId": "station-fixture",
+        "tokenExpiresAt": null,
+        "tokenRefreshedAt": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "clear_station_credentials",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "accessTokenPresent": true,
+        "cookiePresent": false,
+        "lastLoginAt": null,
+        "loginError": null,
+        "loginStatus": "saved",
+        "loginUsername": "fixture-user",
+        "newapiUserId": null,
+        "passwordPresent": true,
+        "refreshTokenPresent": false,
+        "rememberPassword": false,
+        "sessionExpiresAt": null,
+        "sessionSource": "fixture",
+        "sessionStatus": "valid",
+        "stationId": "station-fixture",
+        "tokenExpiresAt": null,
+        "tokenRefreshedAt": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
     }
   ],
   "schemaVersion": 1

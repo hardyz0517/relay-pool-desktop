@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "source_revision": "9dadad315622c2b590f453e6ab278189441345a3",
+  "source_revision": "0c979b18dec89749178d8265cd2c650177f3ed94",
   "generated_at_date": "2026-07-23",
-  "source_snapshot": "current codex/architecture-scale-upgrade worktree at the S1-T5-settings-stations checkpoint",
+  "source_snapshot": "writable isolated fork at the S1-T5-station-keys-ordinary child-shard qualification checkpoint, based on 0c979b1",
   "source_authority": {
     "compiled_registry": "src-tauri/src/ipc/registry.rs",
     "rust_signatures": "src-tauri/src/commands/mod.rs",
@@ -22,12 +22,14 @@
   ],
   "classification_notes": [
     "Runtime/bootstrap -> settings_stations; Channel connectivity -> station_keys; update/data-directory -> updater_data_recovery.",
-    "S1-T5-settings-stations fully migrates seven commands; five earlier pilot schemas remain partial and 108 commands remain legacy placeholders.",
+    "S1-T5 settings/stations plus station-key ordinary child shards fully migrate 27 commands; five earlier pilot schemas remain partial and 88 commands remain legacy placeholders.",
+    "test_station_key_connectivity remains the single Channel command and is intentionally partial/legacy until Task 6.",
     "No command proves an application-owned operation key; idempotent_with_key count is zero.",
+    "scan_remote_station_keys is an idempotent mutation because it atomically replaces the local remote-key snapshot and matching key metadata; transport retry remains disabled.",
     "create_station is NonIdempotent: transport retry is disabled and ambiguous post-dispatch rejection becomes typed ResultUnknownError.",
     "record_capture_event is intentionally capture-only, not missing from ACL; it must not be granted to main-window.",
     "Empty frontend_callers means no literal caller in requested API/query directories.",
-    "Audit artifact only: this child shard may close while the Stage 1 Gate remains blocked on later Task 5 groups and Task 6."
+    "Audit artifact only: the station-key ordinary child shard may close while the Stage 1 Gate remains blocked on the Channel command, later Task 5 groups, and Task 6."
   ],
   "statistics": {
     "commands": 120,
@@ -44,18 +46,18 @@
       "ordinary": 119
     },
     "by_mutation_kind": {
-      "idempotent": 42,
+      "idempotent": 43,
       "non_idempotent": 29,
-      "read": 49
+      "read": 48
     },
     "explicit_pilot_schema_partial": 5,
-    "legacy_unmigrated_placeholder": 108,
+    "legacy_unmigrated_placeholder": 88,
     "acl_allowed_main_window": 119,
     "commands_with_frontend_callers": 112,
     "commands_without_frontend_callers": 8,
     "public_command_error": 117,
     "public_non_command_error": 3,
-    "fully_migrated": 7,
+    "fully_migrated": 27,
     "acl_capture_only": 1,
     "acl_unallowlisted": 0
   },
@@ -605,9 +607,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "input: BindRemoteStationKeyInput"
+        "input: Value -> BindRemoteStationKeyInputDto"
       ],
-      "rust_output": "Vec<RemoteStationKey>",
+      "rust_output": "Vec<RemoteStationKeyDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -617,27 +619,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 149
+          "line": 167
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "BindRemoteStationKeyInputDto",
+        "output": "Vec<RemoteStationKeyDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:97",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1031"
+        "registry": "src-tauri/src/ipc/registry.rs:308",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1105",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -647,9 +652,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value -> StationIdInputDto"
       ],
-      "rust_output": "StationCredentials",
+      "rust_output": "StationCredentialsDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -659,27 +664,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 410
+          "line": 421
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "StationIdInputDto",
+        "output": "StationCredentialsDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:154",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1864"
+        "registry": "src-tauri/src/ipc/registry.rs:338",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1966",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -689,10 +697,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "remote_key_id: String",
-        "station_id: String"
+        "input: Value -> RemoteStationKeyInputDto"
       ],
-      "rust_output": "CreateLocalStationKeyFromRemoteResult",
+      "rust_output": "CreateLocalStationKeyFromRemoteResultDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -702,27 +709,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 137
+          "line": 155
         }
       ],
       "mutation_kind": "non_idempotent",
-      "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
+      "retry_policy": "transport retry forbidden; ambiguous post-dispatch rejection returns typed ResultUnknownError; a new user action is a new intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope; dedicated blocking/outbound child-span continuity is not claimed by this child shard",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "RemoteStationKeyInputDto",
+        "output": "CreateLocalStationKeyFromRemoteResultDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:96",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1009"
+        "registry": "src-tauri/src/ipc/registry.rs:302",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1076",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -732,9 +742,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "input: CreateRemoteStationKeyInput"
+        "input: Value -> CreateRemoteStationKeyInputDto"
       ],
-      "rust_output": "CreateRemoteStationKeyResult",
+      "rust_output": "CreateRemoteStationKeyResultDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -744,27 +754,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 100
+          "line": 121
         }
       ],
       "mutation_kind": "non_idempotent",
-      "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
+      "retry_policy": "transport retry forbidden; ambiguous post-dispatch rejection returns typed ResultUnknownError; a new user action is a new intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope; dedicated blocking/outbound child-span continuity is not claimed by this child shard",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CreateRemoteStationKeyInputDto",
+        "output": "CreateRemoteStationKeyResultDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:95",
-        "rust_signature": "src-tauri/src/commands/mod.rs:991"
+        "registry": "src-tauri/src/ipc/registry.rs:296",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1051",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -774,9 +787,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "input: CreateStationKeyInput"
+        "input: Value -> CreateStationKeyInputDto"
       ],
-      "rust_output": "StationKey",
+      "rust_output": "StationKeyDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -786,27 +799,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 211
+          "line": 227
         }
       ],
       "mutation_kind": "non_idempotent",
-      "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
+      "retry_policy": "transport retry forbidden; ambiguous post-dispatch rejection returns typed ResultUnknownError; a new user action is a new intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CreateStationKeyInputDto",
+        "output": "StationKeyDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:86",
-        "rust_signature": "src-tauri/src/commands/mod.rs:876"
+        "registry": "src-tauri/src/ipc/registry.rs:263",
+        "rust_signature": "src-tauri/src/commands/mod.rs:898",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -816,9 +832,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "id: String"
+        "input: Value -> StationKeyIdInputDto"
       ],
-      "rust_output": "()",
+      "rust_output": "unit",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -828,27 +844,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 299
+          "line": 313
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "StationKeyIdInputDto",
+        "output": "unit",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:90",
-        "rust_signature": "src-tauri/src/commands/mod.rs:924"
+        "registry": "src-tauri/src/ipc/registry.rs:287",
+        "rust_signature": "src-tauri/src/commands/mod.rs:962",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -858,9 +877,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value -> StationIdInputDto"
       ],
-      "rust_output": "RemoteKeyCapability",
+      "rust_output": "RemoteKeyCapabilityDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -870,27 +889,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 66
+          "line": 87
         }
       ],
       "mutation_kind": "read",
-      "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "StationIdInputDto",
+        "output": "RemoteKeyCapabilityDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:92",
-        "rust_signature": "src-tauri/src/commands/mod.rs:949"
+        "registry": "src-tauri/src/ipc/registry.rs:256",
+        "rust_signature": "src-tauri/src/commands/mod.rs:994",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -900,9 +922,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value -> StationIdInputDto"
       ],
-      "rust_output": "StationCredentials",
+      "rust_output": "StationCredentialsDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -912,27 +934,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 376
+          "line": 387
         }
       ],
       "mutation_kind": "read",
-      "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "StationIdInputDto",
+        "output": "StationCredentialsDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:151",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1828"
+        "registry": "src-tauri/src/ipc/registry.rs:262",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1918",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -941,9 +966,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value -> EmptyInputDto"
       ],
-      "rust_output": "Vec<KeyPoolItem>",
+      "rust_output": "Vec<KeyPoolItemDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -953,27 +979,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 326
+          "line": 340
         }
       ],
       "mutation_kind": "read",
-      "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "Vec<KeyPoolItemDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:99",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1056"
+        "registry": "src-tauri/src/ipc/registry.rs:261",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1137",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -983,9 +1012,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value -> StationIdInputDto"
       ],
-      "rust_output": "Vec<RemoteStationKey>",
+      "rust_output": "Vec<RemoteStationKeyDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -995,27 +1024,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 75
+          "line": 96
         }
       ],
       "mutation_kind": "read",
-      "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "StationIdInputDto",
+        "output": "Vec<RemoteStationKeyDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:93",
-        "rust_signature": "src-tauri/src/commands/mod.rs:961"
+        "registry": "src-tauri/src/ipc/registry.rs:257",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1010",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -1025,9 +1057,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value -> StationIdInputDto"
       ],
-      "rust_output": "Vec<StationKey>",
+      "rust_output": "Vec<StationKeyDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1037,27 +1069,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 57
+          "line": 78
         }
       ],
       "mutation_kind": "read",
-      "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "StationIdInputDto",
+        "output": "Vec<StationKeyDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:85",
-        "rust_signature": "src-tauri/src/commands/mod.rs:864"
+        "registry": "src-tauri/src/ipc/registry.rs:255",
+        "rust_signature": "src-tauri/src/commands/mod.rs:882",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -1067,9 +1102,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "key_ids: Vec<String>"
+        "input: Value -> ReorderKeyPoolInputDto"
       ],
-      "rust_output": "Vec<KeyPoolItem>",
+      "rust_output": "Vec<KeyPoolItemDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1079,27 +1114,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 335
+          "line": 349
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "cap collection length; validate every element and duplicate policy"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "ReorderKeyPoolInputDto",
+        "output": "Vec<KeyPoolItemDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:100",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1067"
+        "registry": "src-tauri/src/ipc/registry.rs:320",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1153",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -1109,10 +1147,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String",
-        "key_ids: Vec<String>"
+        "input: Value -> ReorderStationKeysInputDto"
       ],
-      "rust_output": "Vec<StationKey>",
+      "rust_output": "Vec<StationKeyDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1122,28 +1159,31 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 311
+          "line": 325
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar",
         "cap collection length; validate every element and duplicate policy"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "ReorderStationKeysInputDto",
+        "output": "Vec<StationKeyDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:91",
-        "rust_signature": "src-tauri/src/commands/mod.rs:936"
+        "registry": "src-tauri/src/ipc/registry.rs:290",
+        "rust_signature": "src-tauri/src/commands/mod.rs:978",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -1153,9 +1193,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "input: SaveStationKeyWithDefaultsInput"
+        "input: Value -> SaveStationKeyWithDefaultsInputDto"
       ],
-      "rust_output": "SaveStationKeyWithDefaultsResult",
+      "rust_output": "SaveStationKeyWithDefaultsResultDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1165,27 +1205,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 257
+          "line": 271
         }
       ],
       "mutation_kind": "non_idempotent",
-      "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
+      "retry_policy": "transport retry forbidden; ambiguous post-dispatch rejection returns typed ResultUnknownError; a new user action is a new intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "SaveStationKeyWithDefaultsInputDto",
+        "output": "SaveStationKeyWithDefaultsResultDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:88",
-        "rust_signature": "src-tauri/src/commands/mod.rs:900"
+        "registry": "src-tauri/src/ipc/registry.rs:275",
+        "rust_signature": "src-tauri/src/commands/mod.rs:930",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -1195,9 +1238,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value -> StationIdInputDto"
       ],
-      "rust_output": "RemoteKeyScanResult",
+      "rust_output": "RemoteKeyScanResultDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1207,27 +1250,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 84
+          "line": 105
         }
       ],
-      "mutation_kind": "read",
-      "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
+      "mutation_kind": "idempotent",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope; dedicated blocking/outbound child-span continuity is not claimed by this child shard",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "StationIdInputDto",
+        "output": "RemoteKeyScanResultDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:94",
-        "rust_signature": "src-tauri/src/commands/mod.rs:973"
+        "registry": "src-tauri/src/ipc/registry.rs:260",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1026",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -1282,10 +1328,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "remote_key_id: String",
-        "station_id: String"
+        "input: Value -> RemoteStationKeyInputDto"
       ],
-      "rust_output": "Vec<RemoteStationKey>",
+      "rust_output": "Vec<RemoteStationKeyDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1295,27 +1340,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 188
+          "line": 204
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "RemoteStationKeyInputDto",
+        "output": "Vec<RemoteStationKeyDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:98",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1043"
+        "registry": "src-tauri/src/ipc/registry.rs:314",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1121",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -1325,9 +1373,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "input: UpdateStationCredentialsInput"
+        "input: Value -> UpdateStationCredentialsInputDto"
       ],
-      "rust_output": "StationCredentials",
+      "rust_output": "StationCredentialsDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1337,27 +1385,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 390
+          "line": 396
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "UpdateStationCredentialsInputDto",
+        "output": "StationCredentialsDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:152",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1840"
+        "registry": "src-tauri/src/ipc/registry.rs:326",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1934",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -1367,9 +1418,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "input: UpdateStationKeyInput"
+        "input: Value -> UpdateStationKeyInputDto"
       ],
-      "rust_output": "StationKey",
+      "rust_output": "StationKeyDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1379,27 +1430,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 228
+          "line": 243
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "UpdateStationKeyInputDto",
+        "output": "StationKeyDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:87",
-        "rust_signature": "src-tauri/src/commands/mod.rs:888"
+        "registry": "src-tauri/src/ipc/registry.rs:269",
+        "rust_signature": "src-tauri/src/commands/mod.rs:914",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -1409,9 +1463,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "input: UpdateStationKeyGroupBindingInput"
+        "input: Value -> UpdateStationKeyGroupBindingInputDto"
       ],
-      "rust_output": "StationKey",
+      "rust_output": "StationKeyDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1421,27 +1475,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 266
+          "line": 282
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "UpdateStationKeyGroupBindingInputDto",
+        "output": "StationKeyDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:89",
-        "rust_signature": "src-tauri/src/commands/mod.rs:912"
+        "registry": "src-tauri/src/ipc/registry.rs:281",
+        "rust_signature": "src-tauri/src/commands/mod.rs:946",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {
@@ -1451,9 +1508,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "input: UpdateStationSessionInput"
+        "input: Value -> UpdateStationSessionInputDto"
       ],
-      "rust_output": "StationCredentials",
+      "rust_output": "StationCredentialsDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1463,27 +1520,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/stationKeys.ts",
-          "line": 421
+          "line": 432
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "no automatic transport retry in the generated wrapper",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented at the command boundary with a safe public correlation id; application calls inherit the command scope",
+      "migration_status": "fully_migrated_s1_t5_station_keys_ordinary",
       "delete_owner": "Task 5 station_keys shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "UpdateStationSessionInputDto",
+        "output": "StationCredentialsDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:153",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1852"
+        "registry": "src-tauri/src/ipc/registry.rs:332",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1950",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "transport_envelope_test": "src/lib/bridge/generated.test.ts",
+        "legacy_wrapper_cutover_test": "src/lib/api/stationKeys.test.ts",
+        "serialization_fixture": "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"
       }
     },
     {

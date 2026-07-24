@@ -19,6 +19,17 @@ use crate::{
     application::{app_services::AppServices, error::ApplicationError, pagination::PageLimit},
     ipc::dto::{
         settings::UpdateSettingsInputDto,
+        station_keys::{
+            BindRemoteStationKeyInputDto, CreateLocalStationKeyFromRemoteResultDto,
+            CreateRemoteStationKeyInputDto, CreateRemoteStationKeyResultDto,
+            CreateStationKeyInputDto, KeyPoolItemDto, RemoteKeyCapabilityDto,
+            RemoteKeyScanResultDto, RemoteStationKeyDto, RemoteStationKeyInputDto,
+            ReorderKeyPoolInputDto, ReorderStationKeysInputDto, SaveStationKeyWithDefaultsInputDto,
+            SaveStationKeyWithDefaultsResultDto, StationCredentialsDto, StationIdInputDto,
+            StationKeyDto, StationKeyIdInputDto, UpdateStationCredentialsInputDto,
+            UpdateStationKeyGroupBindingInputDto, UpdateStationKeyInputDto,
+            UpdateStationSessionInputDto,
+        },
         stations::{
             CreateStationInputDto, DeleteStationInputDto, ReorderStationsInputDto,
             UpdateStationInputDto,
@@ -38,24 +49,13 @@ use crate::{
             CollectorRunResult, CollectorSnapshot, StationLoginTestInput, StationLoginTestResult,
         },
         collector_runs::CollectorRun,
-        credentials::{
-            PersistStationSessionInput, StationCredentials, UpdateStationCredentialsInput,
-            UpdateStationSessionInput,
-        },
-        group_facts::{
-            GroupRateRecord, StationGroupBinding, UpdateStationKeyGroupBindingInput,
-            UpsertStationGroupBindingInput,
-        },
+        credentials::PersistStationSessionInput,
+        group_facts::{GroupRateRecord, StationGroupBinding, UpsertStationGroupBindingInput},
         pricing::{
             BalanceSnapshot, ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
             UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
         },
         proxy::{ProxyStatus, RequestLog, UpstreamApiFormat},
-        remote_keys::{
-            BindRemoteStationKeyInput, CreateLocalStationKeyFromRemoteResult,
-            CreateRemoteStationKeyInput, CreateRemoteStationKeyResult, RemoteKeyCapability,
-            RemoteKeyScanResult, RemoteStationKey,
-        },
         routing::{
             ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyCapabilities,
             StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
@@ -63,11 +63,9 @@ use crate::{
         settings::AppSettings,
         shared_capabilities::{
             ChannelMonitorSummary, ChannelStatusSummary, ChannelStatusWorkspace,
-            PricingComparisonWorkspace, SaveStationKeyWithDefaultsInput,
-            SaveStationKeyWithDefaultsResult, StationGroupOption,
+            PricingComparisonWorkspace, StationGroupOption,
         },
         station_keys::KeyPoolItem,
-        station_keys::{CreateStationKeyInput, StationKey, UpdateStationKeyInput},
         stations::{EndpointPingResult, StationEndpointHealth},
         AppStatus,
     },
@@ -652,6 +650,27 @@ fn public_command_application_error(error: ApplicationError) -> error::CommandEr
     command_application_error(error)
 }
 
+fn public_remote_key_error(error: remote_keys::RemoteKeyOperationError) -> error::CommandError {
+    match error {
+        remote_keys::RemoteKeyOperationError::Application(error) => {
+            public_command_application_error(error)
+        }
+        remote_keys::RemoteKeyOperationError::Unsupported => {
+            error::CommandError::from_driver(error::DriverFailure::Unsupported)
+        }
+        remote_keys::RemoteKeyOperationError::ExternalUnavailable => {
+            error::CommandError::from_driver(error::DriverFailure::ExternalUnavailable {
+                provider: None,
+                upstream_status: None,
+            })
+        }
+        remote_keys::RemoteKeyOperationError::Conflict => {
+            public_command_application_error(ApplicationError::StaleRevision)
+        }
+        remote_keys::RemoteKeyOperationError::Internal => error::CommandError::internal(None),
+    }
+}
+
 #[tauri::command]
 pub async fn choose_data_dir(
     services: State<'_, AppServices>,
@@ -883,216 +902,288 @@ pub async fn clear_request_logs(
 #[tauri::command]
 pub async fn list_station_keys(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<Vec<StationKey>, error::CommandError> {
-    services
-        .credentials
-        .list_station_keys(station_id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<StationKeyDto>, error::CommandError> {
+    correlation::in_command_scope("list_station_keys", async {
+        let input = StationIdInputDto::parse(input)?;
+        services
+            .credentials
+            .list_station_keys(input.station_id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn create_station_key(
     services: State<'_, AppServices>,
-    input: CreateStationKeyInput,
-) -> Result<StationKey, error::CommandError> {
-    services
-        .credentials
-        .create_station_key(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<StationKeyDto, error::CommandError> {
+    correlation::in_command_scope("create_station_key", async {
+        let input = CreateStationKeyInputDto::parse(input)?;
+        services
+            .credentials
+            .create_station_key(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn update_station_key(
     services: State<'_, AppServices>,
-    input: UpdateStationKeyInput,
-) -> Result<StationKey, error::CommandError> {
-    services
-        .credentials
-        .update_station_key(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<StationKeyDto, error::CommandError> {
+    correlation::in_command_scope("update_station_key", async {
+        let input = UpdateStationKeyInputDto::parse(input)?;
+        services
+            .credentials
+            .update_station_key(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn save_station_key_with_defaults(
     services: State<'_, AppServices>,
-    input: SaveStationKeyWithDefaultsInput,
-) -> Result<SaveStationKeyWithDefaultsResult, error::CommandError> {
-    services
-        .credentials
-        .save_station_key_with_defaults(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<SaveStationKeyWithDefaultsResultDto, error::CommandError> {
+    correlation::in_command_scope("save_station_key_with_defaults", async {
+        let input = SaveStationKeyWithDefaultsInputDto::parse(input)?;
+        services
+            .credentials
+            .save_station_key_with_defaults(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn update_station_key_group_binding(
     services: State<'_, AppServices>,
-    input: UpdateStationKeyGroupBindingInput,
-) -> Result<StationKey, error::CommandError> {
-    services
-        .credentials
-        .update_station_key_group_binding(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<StationKeyDto, error::CommandError> {
+    correlation::in_command_scope("update_station_key_group_binding", async {
+        let input = UpdateStationKeyGroupBindingInputDto::parse(input)?;
+        services
+            .credentials
+            .update_station_key_group_binding(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn delete_station_key(
     services: State<'_, AppServices>,
-    id: String,
+    input: Value,
 ) -> Result<(), error::CommandError> {
-    services
-        .credentials
-        .delete_station_key(id)
-        .await
-        .map_err(command_application_error)
+    correlation::in_command_scope("delete_station_key", async {
+        let input = StationKeyIdInputDto::parse(input)?;
+        services
+            .credentials
+            .delete_station_key(input.id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn reorder_station_keys(
     services: State<'_, AppServices>,
-    station_id: String,
-    key_ids: Vec<String>,
-) -> Result<Vec<StationKey>, error::CommandError> {
-    services
-        .credentials
-        .reorder_station_keys(station_id, key_ids)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<StationKeyDto>, error::CommandError> {
+    correlation::in_command_scope("reorder_station_keys", async {
+        let input = ReorderStationKeysInputDto::parse(input)?;
+        services
+            .credentials
+            .reorder_station_keys(input.station_id, input.key_ids)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn get_remote_key_capability(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<RemoteKeyCapability, error::CommandError> {
-    services
-        .credentials
-        .get_remote_key_capability(station_id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<RemoteKeyCapabilityDto, error::CommandError> {
+    correlation::in_command_scope("get_remote_key_capability", async {
+        let input = StationIdInputDto::parse(input)?;
+        services
+            .credentials
+            .get_remote_key_capability(input.station_id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_remote_station_keys(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<Vec<RemoteStationKey>, error::CommandError> {
-    services
-        .credentials
-        .list_remote_station_keys(station_id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<RemoteStationKeyDto>, error::CommandError> {
+    correlation::in_command_scope("list_remote_station_keys", async {
+        let input = StationIdInputDto::parse(input)?;
+        services
+            .credentials
+            .list_remote_station_keys(input.station_id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn scan_remote_station_keys(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<RemoteKeyScanResult, error::CommandError> {
-    let source = collectors::V2CollectorSourceAdapter::new(
-        services.collectors.clone(),
-        services.credentials.clone(),
-        services.settings.clone(),
-    );
-    let prepared = tauri::async_runtime::spawn_blocking(move || {
-        remote_keys::prepare_remote_key_scan_v2(&source, station_id)
+    input: Value,
+) -> Result<RemoteKeyScanResultDto, error::CommandError> {
+    correlation::in_command_scope("scan_remote_station_keys", async {
+        let input = StationIdInputDto::parse(input)?;
+        let source = collectors::V2CollectorSourceAdapter::new(
+            services.collectors.clone(),
+            services.credentials.clone(),
+            services.settings.clone(),
+        );
+        let prepared = tauri::async_runtime::spawn_blocking(move || {
+            remote_keys::prepare_remote_key_scan_v2(&source, input.station_id)
+        })
+        .await
+        .map_err(|_| error::CommandError::internal(None))?
+        .map_err(public_remote_key_error)?;
+        remote_keys::finish_remote_key_scan_v2(services.credentials.as_ref(), prepared)
+            .await
+            .map_err(public_remote_key_error)
     })
     .await
-    .map_err(|error| format!("远端 Key 扫描任务执行失败: {error}"))??;
-    Ok(remote_keys::finish_remote_key_scan_v2(services.credentials.as_ref(), prepared).await?)
 }
 
 #[tauri::command]
 pub async fn create_remote_station_key(
     services: State<'_, AppServices>,
-    input: CreateRemoteStationKeyInput,
-) -> Result<CreateRemoteStationKeyResult, error::CommandError> {
-    let source = collectors::V2CollectorSourceAdapter::new(
-        services.collectors.clone(),
-        services.credentials.clone(),
-        services.settings.clone(),
-    );
-    let prepared = tauri::async_runtime::spawn_blocking(move || {
-        remote_keys::prepare_remote_key_creation_v2(&source, input)
+    input: Value,
+) -> Result<CreateRemoteStationKeyResultDto, error::CommandError> {
+    correlation::in_command_scope("create_remote_station_key", async {
+        let input = CreateRemoteStationKeyInputDto::parse(input)?;
+        let source = collectors::V2CollectorSourceAdapter::new(
+            services.collectors.clone(),
+            services.credentials.clone(),
+            services.settings.clone(),
+        );
+        let prepared = tauri::async_runtime::spawn_blocking(move || {
+            remote_keys::prepare_remote_key_creation_v2(&source, input)
+        })
+        .await
+        .map_err(|_| error::CommandError::internal(None))?
+        .map_err(public_remote_key_error)?;
+        remote_keys::finish_remote_key_creation_v2(services.credentials.as_ref(), prepared)
+            .await
+            .map_err(public_remote_key_error)
     })
     .await
-    .map_err(|error| format!("远端 Key 创建任务执行失败: {error}"))??;
-    Ok(remote_keys::finish_remote_key_creation_v2(services.credentials.as_ref(), prepared).await?)
 }
 
 #[tauri::command]
 pub async fn create_local_station_key_from_remote(
     services: State<'_, AppServices>,
-    remote_key_id: String,
-    station_id: String,
-) -> Result<CreateLocalStationKeyFromRemoteResult, error::CommandError> {
-    let source = collectors::V2CollectorSourceAdapter::new(
-        services.collectors.clone(),
-        services.credentials.clone(),
-        services.settings.clone(),
-    );
-    let prepared = tauri::async_runtime::spawn_blocking(move || {
-        remote_keys::prepare_local_key_from_remote_v2(&source, station_id, remote_key_id)
+    input: Value,
+) -> Result<CreateLocalStationKeyFromRemoteResultDto, error::CommandError> {
+    correlation::in_command_scope("create_local_station_key_from_remote", async {
+        let input = RemoteStationKeyInputDto::parse(input)?;
+        let source = collectors::V2CollectorSourceAdapter::new(
+            services.collectors.clone(),
+            services.credentials.clone(),
+            services.settings.clone(),
+        );
+        let prepared = tauri::async_runtime::spawn_blocking(move || {
+            remote_keys::prepare_local_key_from_remote_v2(
+                &source,
+                input.station_id,
+                input.remote_key_id,
+            )
+        })
+        .await
+        .map_err(|_| error::CommandError::internal(None))?
+        .map_err(public_remote_key_error)?;
+        remote_keys::finish_local_key_from_remote_v2(services.credentials.as_ref(), prepared)
+            .await
+            .map_err(public_remote_key_error)
     })
     .await
-    .map_err(|error| format!("远端 Key 同步本地任务执行失败: {error}"))??;
-    Ok(
-        remote_keys::finish_local_key_from_remote_v2(services.credentials.as_ref(), prepared)
-            .await?,
-    )
 }
 
 #[tauri::command]
 pub async fn bind_remote_station_key(
     services: State<'_, AppServices>,
-    input: BindRemoteStationKeyInput,
-) -> Result<Vec<RemoteStationKey>, error::CommandError> {
-    services
-        .credentials
-        .bind_remote_station_key(input.remote_key_id, input.station_key_id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<RemoteStationKeyDto>, error::CommandError> {
+    correlation::in_command_scope("bind_remote_station_key", async {
+        let input = BindRemoteStationKeyInputDto::parse(input)?;
+        services
+            .credentials
+            .bind_remote_station_key(input.remote_key_id, input.station_key_id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn unbind_remote_station_key(
     services: State<'_, AppServices>,
-    remote_key_id: String,
-    station_id: String,
-) -> Result<Vec<RemoteStationKey>, error::CommandError> {
-    services
-        .credentials
-        .unbind_remote_station_key(remote_key_id, station_id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<RemoteStationKeyDto>, error::CommandError> {
+    correlation::in_command_scope("unbind_remote_station_key", async {
+        let input = RemoteStationKeyInputDto::parse(input)?;
+        services
+            .credentials
+            .unbind_remote_station_key(input.remote_key_id, input.station_id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_key_pool_items(
     services: State<'_, AppServices>,
-) -> Result<Vec<KeyPoolItem>, error::CommandError> {
-    services
-        .credentials
-        .list_key_pool_items()
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<KeyPoolItemDto>, error::CommandError> {
+    correlation::in_command_scope("list_key_pool_items", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .credentials
+            .list_key_pool_items()
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn reorder_key_pool(
     services: State<'_, AppServices>,
-    key_ids: Vec<String>,
-) -> Result<Vec<KeyPoolItem>, error::CommandError> {
-    services
-        .credentials
-        .reorder_key_pool(key_ids)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<KeyPoolItemDto>, error::CommandError> {
+    correlation::in_command_scope("reorder_key_pool", async {
+        let input = ReorderKeyPoolInputDto::parse(input)?;
+        services
+            .credentials
+            .reorder_key_pool(input.key_ids)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1847,49 +1938,65 @@ pub async fn resolve_change_event(
 #[tauri::command]
 pub async fn get_station_credentials(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<StationCredentials, error::CommandError> {
-    services
-        .credentials
-        .get_station_credentials(station_id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<StationCredentialsDto, error::CommandError> {
+    correlation::in_command_scope("get_station_credentials", async {
+        let input = StationIdInputDto::parse(input)?;
+        services
+            .credentials
+            .get_station_credentials(input.station_id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn update_station_credentials(
     services: State<'_, AppServices>,
-    input: UpdateStationCredentialsInput,
-) -> Result<StationCredentials, error::CommandError> {
-    services
-        .credentials
-        .update_station_credentials(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<StationCredentialsDto, error::CommandError> {
+    correlation::in_command_scope("update_station_credentials", async {
+        let input = UpdateStationCredentialsInputDto::parse(input)?;
+        services
+            .credentials
+            .update_station_credentials(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn update_station_session(
     services: State<'_, AppServices>,
-    input: UpdateStationSessionInput,
-) -> Result<StationCredentials, error::CommandError> {
-    services
-        .credentials
-        .update_station_session(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<StationCredentialsDto, error::CommandError> {
+    correlation::in_command_scope("update_station_session", async {
+        let input = UpdateStationSessionInputDto::parse(input)?;
+        services
+            .credentials
+            .update_station_session(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn clear_station_credentials(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<StationCredentials, error::CommandError> {
-    services
-        .credentials
-        .clear_station_credentials(station_id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<StationCredentialsDto, error::CommandError> {
+    correlation::in_command_scope("clear_station_credentials", async {
+        let input = StationIdInputDto::parse(input)?;
+        services
+            .credentials
+            .clear_station_credentials(input.station_id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3598,6 +3705,28 @@ fn truncate_connectivity_reply(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_key_failures_keep_public_machine_classification() {
+        let unsupported =
+            public_remote_key_error(remote_keys::RemoteKeyOperationError::Unsupported);
+        assert_eq!(unsupported.code, error::CommandErrorCode::Unsupported);
+        assert!(!unsupported.retryable);
+
+        let external =
+            public_remote_key_error(remote_keys::RemoteKeyOperationError::ExternalUnavailable);
+        assert_eq!(external.code, error::CommandErrorCode::ExternalUnavailable);
+        assert!(external.retryable);
+
+        let conflict = public_remote_key_error(remote_keys::RemoteKeyOperationError::Conflict);
+        assert_eq!(conflict.code, error::CommandErrorCode::Conflict);
+        assert!(!conflict.retryable);
+
+        let not_found = public_remote_key_error(remote_keys::RemoteKeyOperationError::Application(
+            ApplicationError::NotFound,
+        ));
+        assert_eq!(not_found.code, error::CommandErrorCode::NotFound);
+    }
 
     #[test]
     fn capture_request_belongs_to_management_base_when_station_url_uses_v1() {

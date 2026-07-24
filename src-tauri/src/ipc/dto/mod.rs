@@ -1,4 +1,5 @@
 pub(crate) mod settings;
+pub(crate) mod station_keys;
 pub(crate) mod stations;
 
 pub use settings::SettingsDto;
@@ -65,6 +66,7 @@ pub struct TypeDescriptor {
 #[cfg_attr(not(test), allow(dead_code))]
 pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     settings::SETTINGS_TYPE,
+    station_keys::STATION_KEY_TYPE,
     stations::STATION_TYPE,
     TypeDescriptor {
         name: "RuntimeContractInfo",

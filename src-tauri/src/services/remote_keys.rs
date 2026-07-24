@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    application::credentials::CredentialService,
+    application::{credentials::CredentialService, error::ApplicationError},
     models::{
         group_facts::{GroupRateRecord, StationGroupBinding},
         remote_keys::{
@@ -22,6 +22,21 @@ use crate::{
 // V2CollectorSourceAdapter resolves secrets through CredentialService; provider
 // adapters retain this argument only for the temporary legacy port implementation.
 const V2_UNUSED_DATA_KEY: [u8; 32] = [0; 32];
+
+#[derive(Debug)]
+pub(crate) enum RemoteKeyOperationError {
+    Application(ApplicationError),
+    Unsupported,
+    ExternalUnavailable,
+    Conflict,
+    Internal,
+}
+
+impl From<ApplicationError> for RemoteKeyOperationError {
+    fn from(error: ApplicationError) -> Self {
+        Self::Application(error)
+    }
+}
 
 pub(crate) enum PreparedRemoteKeyScan {
     Unsupported {
@@ -50,7 +65,7 @@ pub(crate) struct PreparedRemoteKeySave {
 pub(crate) fn prepare_remote_key_scan_v2(
     source: &dyn CollectorSourcePort,
     station_id: String,
-) -> Result<PreparedRemoteKeyScan, String> {
+) -> Result<PreparedRemoteKeyScan, RemoteKeyOperationError> {
     let (capability, expected_endpoint_revision) =
         remote_key_capability_from_source(source, station_id.clone())?;
     if !capability.can_list_remote_keys {
@@ -59,9 +74,11 @@ pub(crate) fn prepare_remote_key_scan_v2(
             capability,
         });
     }
-    let discovered = scan_remote_keys_with_source(source, &station_id, &capability.station_type)?;
+    let discovered = scan_remote_keys_with_source(source, &station_id, &capability.station_type)
+        .map_err(|_| RemoteKeyOperationError::ExternalUnavailable)?;
     let (keys, station_key_updates) =
-        enrich_remote_key_discoveries_from_source(source, &station_id, discovered)?;
+        enrich_remote_key_discoveries_from_source(source, &station_id, discovered)
+            .map_err(|_| RemoteKeyOperationError::Internal)?;
     ensure_source_endpoint_revision(source, &station_id, expected_endpoint_revision)?;
     Ok(PreparedRemoteKeyScan::Discovered {
         station_id,
@@ -75,7 +92,7 @@ pub(crate) fn prepare_remote_key_scan_v2(
 pub(crate) async fn finish_remote_key_scan_v2(
     credentials: &CredentialService,
     prepared: PreparedRemoteKeyScan,
-) -> Result<RemoteKeyScanResult, String> {
+) -> Result<RemoteKeyScanResult, RemoteKeyOperationError> {
     match prepared {
         PreparedRemoteKeyScan::Unsupported {
             station_id,
@@ -84,7 +101,7 @@ pub(crate) async fn finish_remote_key_scan_v2(
             let keys = credentials
                 .list_remote_station_keys(station_id.clone())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(RemoteKeyOperationError::Application)?;
             Ok(RemoteKeyScanResult {
                 station_id,
                 capability: capability.clone(),
@@ -111,7 +128,7 @@ pub(crate) async fn finish_remote_key_scan_v2(
                     station_key_updates,
                 )
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(RemoteKeyOperationError::Application)?;
             let synced_station_key_ids = keys
                 .iter()
                 .filter_map(|key| key.matched_station_key_id.clone())
@@ -130,22 +147,21 @@ pub(crate) async fn finish_remote_key_scan_v2(
 pub(crate) fn prepare_remote_key_creation_v2(
     source: &dyn CollectorSourcePort,
     input: CreateRemoteStationKeyInput,
-) -> Result<PreparedRemoteKeySave, String> {
+) -> Result<PreparedRemoteKeySave, RemoteKeyOperationError> {
     let (capability, expected_endpoint_revision) =
         remote_key_capability_from_source(source, input.station_id.clone())?;
     if !capability.can_create_remote_key {
-        return Err(capability
-            .unsupported_reason
-            .unwrap_or_else(|| "该中转站暂不支持创建远端 Key。".to_string()));
+        return Err(RemoteKeyOperationError::Unsupported);
     }
     let CreatedRemoteKey {
         remote_key,
         full_key_once,
         message,
-    } = create_remote_key_with_source(source, input, &capability.station_type)?;
+    } = create_remote_key_with_source(source, input, &capability.station_type)
+        .map_err(|_| RemoteKeyOperationError::ExternalUnavailable)?;
     let full_key = full_key_once
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "远端站点未返回完整 Key，无法保存到本地 Station Key。".to_string())?;
+        .ok_or(RemoteKeyOperationError::ExternalUnavailable)?;
     prepare_remote_key_save_from_source(
         source,
         remote_key,
@@ -160,20 +176,19 @@ pub(crate) fn prepare_local_key_from_remote_v2(
     source: &dyn CollectorSourcePort,
     station_id: String,
     remote_key_id: String,
-) -> Result<PreparedRemoteKeySave, String> {
+) -> Result<PreparedRemoteKeySave, RemoteKeyOperationError> {
     let (capability, expected_endpoint_revision) =
         remote_key_capability_from_source(source, station_id.clone())?;
     if !capability.can_list_remote_keys {
-        return Err(capability
-            .unsupported_reason
-            .unwrap_or_else(|| "该中转站暂不支持远端 Key 扫描。".to_string()));
+        return Err(RemoteKeyOperationError::Unsupported);
     }
     let (remote_key, full_key) = remote_key_full_secret_with_source(
         source,
         &station_id,
         &remote_key_id,
         &capability.station_type,
-    )?;
+    )
+    .map_err(|_| RemoteKeyOperationError::ExternalUnavailable)?;
     prepare_remote_key_save_from_source(
         source,
         remote_key,
@@ -187,7 +202,7 @@ pub(crate) fn prepare_local_key_from_remote_v2(
 pub(crate) async fn finish_remote_key_creation_v2(
     credentials: &CredentialService,
     prepared: PreparedRemoteKeySave,
-) -> Result<CreateRemoteStationKeyResult, String> {
+) -> Result<CreateRemoteStationKeyResult, RemoteKeyOperationError> {
     let PreparedRemoteKeySave {
         remote_key,
         expected_endpoint_revision,
@@ -208,7 +223,7 @@ pub(crate) async fn finish_remote_key_creation_v2(
             full_key,
         )
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(RemoteKeyOperationError::Application)?;
     Ok(CreateRemoteStationKeyResult {
         remote_key,
         station_key,
@@ -220,7 +235,7 @@ pub(crate) async fn finish_remote_key_creation_v2(
 pub(crate) async fn finish_local_key_from_remote_v2(
     credentials: &CredentialService,
     prepared: PreparedRemoteKeySave,
-) -> Result<CreateLocalStationKeyFromRemoteResult, String> {
+) -> Result<CreateLocalStationKeyFromRemoteResult, RemoteKeyOperationError> {
     let result = finish_remote_key_creation_v2(credentials, prepared).await?;
     Ok(CreateLocalStationKeyFromRemoteResult {
         remote_key: result.remote_key,
@@ -232,8 +247,10 @@ pub(crate) async fn finish_local_key_from_remote_v2(
 fn remote_key_capability_from_source(
     source: &dyn CollectorSourcePort,
     station_id: String,
-) -> Result<(RemoteKeyCapability, i64), String> {
-    let station = source.station_for_collector(&station_id)?;
+) -> Result<(RemoteKeyCapability, i64), RemoteKeyOperationError> {
+    let station = source
+        .station_for_collector(&station_id)
+        .map_err(|_| RemoteKeyOperationError::Internal)?;
     let endpoint_revision = station.endpoint_revision;
     let station_type = station.station_type.trim().to_string();
     let capability = match station_type.as_str() {
@@ -250,7 +267,8 @@ fn remote_key_capability_from_source(
                 "暂不支持 {station_type} 类型中转站的远端 Key 管理。"
             )),
         }),
-    }?;
+    }
+    .map_err(|_| RemoteKeyOperationError::Internal)?;
     Ok((capability, endpoint_revision))
 }
 
@@ -258,10 +276,12 @@ fn ensure_source_endpoint_revision(
     source: &dyn CollectorSourcePort,
     station_id: &str,
     expected_endpoint_revision: i64,
-) -> Result<(), String> {
-    let current = source.station_for_collector(station_id)?;
+) -> Result<(), RemoteKeyOperationError> {
+    let current = source
+        .station_for_collector(station_id)
+        .map_err(|_| RemoteKeyOperationError::Internal)?;
     if current.endpoint_revision != expected_endpoint_revision {
-        return Err("station endpoint changed while remote key operation was running".to_string());
+        return Err(RemoteKeyOperationError::Conflict);
     }
     Ok(())
 }
@@ -326,17 +346,20 @@ fn prepare_remote_key_save_from_source(
     adapter_message: String,
     expose_full_key_once: bool,
     expected_endpoint_revision: i64,
-) -> Result<PreparedRemoteKeySave, String> {
+) -> Result<PreparedRemoteKeySave, RemoteKeyOperationError> {
     if full_key.trim().is_empty() {
-        return Err("远端站点未返回完整 Key，无法保存到本地 Station Key。".to_string());
+        return Err(RemoteKeyOperationError::ExternalUnavailable);
     }
     let station_id = remote_key.station_id.clone();
-    let bindings = source.list_station_group_bindings(station_id.clone())?;
+    let bindings = source
+        .list_station_group_bindings(station_id.clone())
+        .map_err(|_| RemoteKeyOperationError::Internal)?;
     let (mut remote_keys, mut station_key_updates) =
-        enrich_remote_key_discoveries_from_parts(source, &station_id, &bindings, vec![remote_key])?;
+        enrich_remote_key_discoveries_from_parts(source, &station_id, &bindings, vec![remote_key])
+            .map_err(|_| RemoteKeyOperationError::Internal)?;
     let remote_key = remote_keys
         .pop()
-        .ok_or_else(|| "远端 Key 创建结果为空，无法同步。".to_string())?;
+        .ok_or(RemoteKeyOperationError::ExternalUnavailable)?;
     let matched_station_key_update = station_key_updates.pop();
     let matched_existing = matched_station_key_update.is_some();
     let new_group_binding_id = (!matched_existing)
