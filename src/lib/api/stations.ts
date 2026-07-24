@@ -1,9 +1,9 @@
-import { invoke } from "@/lib/bridge/transport";
 import {
   createStation as createStationBinding,
   deleteStation as deleteStationBinding,
   listStationEndpointHealth as listStationEndpointHealthBinding,
   listStations as listStationsBinding,
+  openExternalUrl as openExternalUrlBinding,
   pingStationEndpoint as pingStationEndpointBinding,
   reorderStations as reorderStationsBinding,
   updateStation as updateStationBinding,
@@ -184,7 +184,7 @@ export function deleteStation(id: string) {
 }
 
 export function openStationWebsite(url: string) {
-  return invoke<void>("open_external_url", { url }).catch((error) => {
+  return openExternalUrlBinding({ url }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       window.open(url, "_blank", "noopener,noreferrer");
       return;

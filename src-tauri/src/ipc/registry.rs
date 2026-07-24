@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "091b4a5c942a2fd8c8a503bc894f71986fe9a84619f3aac43fd5282d0c4b5c96";
+    "a487532662185c8e111a4c254662e12ed290230d7d35834879cfd767c504c729";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -231,7 +231,24 @@ struct CommandContract {
 #[cfg(test)]
 fn command_contract(name: &str) -> CommandContract {
     match name {
+        "app_status" => migrated_read("EmptyInputDto", "AppStatusDto"),
         "get_settings" => migrated_read("EmptyInputDto", "SettingsDto"),
+        "get_local_access_key" => migrated_read("EmptyInputDto", "String"),
+        "update_local_access_key" => migrated_mutation(
+            "UpdateLocalAccessKeyInputDto",
+            "SettingsDto",
+            "idempotent",
+            false,
+        ),
+        "import_relay_pool_to_ccswitch" => migrated_mutation(
+            "EmptyInputDto",
+            "CcswitchImportResultDto",
+            "non_idempotent",
+            true,
+        ),
+        "open_external_url" => {
+            migrated_mutation("OpenExternalUrlInputDto", "unit", "non_idempotent", true)
+        }
         "list_stations" => migrated_read("EmptyInputDto", "Vec<StationDto>"),
         "update_settings" => {
             migrated_mutation("UpdateSettingsInputDto", "SettingsDto", "idempotent", false)
@@ -580,8 +597,6 @@ fn command_contract(name: &str) -> CommandContract {
             "PublishedUpdateInspectionDto",
         ),
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
-        "get_local_access_key" => legacy_declared("unit", "String"),
-        "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
         "choose_data_dir" | "reset_data_dir" => legacy_declared("unit", "AppSettings"),
         _ => legacy_declared("legacy_unmigrated_input", "legacy_unmigrated_output"),
     }
@@ -778,6 +793,34 @@ fn render_typescript(contract_hash: &str) -> String {
         .replace(
             r#"return invokeCommand<StationDto>("create_station", { input });"#,
             r#"return invokeNonIdempotent<StationDto>("create_station", { input });"#,
+        )
+        .replace(
+            r#"export function getSettings(input: EmptyInputDto = {}): Promise<SettingsDto> {
+  return invokeCommand<SettingsDto>("get_settings", { input });
+}"#,
+            r#"export function appStatus(input: EmptyInputDto = {}): Promise<AppStatusDto> {
+  return invokeCommand<AppStatusDto>("app_status", { input });
+}
+
+export function getSettings(input: EmptyInputDto = {}): Promise<SettingsDto> {
+  return invokeCommand<SettingsDto>("get_settings", { input });
+}
+
+export function getLocalAccessKey(input: EmptyInputDto = {}): Promise<string> {
+  return invokeCommand<string>("get_local_access_key", { input });
+}
+
+export function updateLocalAccessKey(input: UpdateLocalAccessKeyInputDto): Promise<SettingsDto> {
+  return invokeCommand<SettingsDto>("update_local_access_key", { input });
+}
+
+export function importRelayPoolToCcswitch(input: EmptyInputDto = {}): Promise<CcswitchImportResultDto> {
+  return invokeNonIdempotent<CcswitchImportResultDto>("import_relay_pool_to_ccswitch", { input });
+}
+
+export function openExternalUrl(input: OpenExternalUrlInputDto): Promise<void> {
+  return invokeNonIdempotent<void>("open_external_url", { input });
+}"#,
         )
         .replace(
             "export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>",

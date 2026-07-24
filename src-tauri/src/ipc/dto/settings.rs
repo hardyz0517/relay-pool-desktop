@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::models::{
     routing::{RoutingGroupFilter, SchedulerAdvancedSettings},
     settings::{AppSettings, UpdateSettingsInput},
+    AppStatus,
 };
 
 use super::{invalid_input, TypeDescriptor};
@@ -12,6 +13,98 @@ const MAX_RATE_MULTIPLIER: f64 = 1_000.0;
 const MAX_BALANCE_THRESHOLD_CNY: f64 = 1_000_000_000.0;
 const MAX_INTERVAL_MINUTES: u16 = 10_080;
 const MAX_TIMEOUT_SECONDS: u16 = 300;
+const MAX_LOCAL_ACCESS_KEY_BYTES: usize = 4_096;
+const MAX_EXTERNAL_URL_BYTES: usize = 2_048;
+
+pub type AppStatusDto = AppStatus;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CcswitchImportResultDto {
+    pub app: String,
+    pub provider_name: String,
+    pub endpoint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateLocalAccessKeyInputDto {
+    pub value: String,
+}
+
+impl UpdateLocalAccessKeyInputDto {
+    pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = serde_json::from_value(value).map_err(|_| {
+            invalid_input(
+                "input",
+                "invalid_shape",
+                "The local access key payload is invalid.",
+            )
+        })?;
+        if input.value.trim().is_empty() {
+            return Err(invalid_input(
+                "value",
+                "required",
+                "A local access key is required.",
+            ));
+        }
+        if input.value.len() > MAX_LOCAL_ACCESS_KEY_BYTES {
+            return Err(invalid_input(
+                "value",
+                "too_long",
+                "The local access key is too long.",
+            ));
+        }
+        if input.value.chars().any(char::is_control) {
+            return Err(invalid_input(
+                "value",
+                "invalid_value",
+                "The local access key is invalid.",
+            ));
+        }
+        Ok(input)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OpenExternalUrlInputDto {
+    pub url: String,
+}
+
+impl OpenExternalUrlInputDto {
+    pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = serde_json::from_value(value).map_err(|_| {
+            invalid_input(
+                "input",
+                "invalid_shape",
+                "The external URL payload is invalid.",
+            )
+        })?;
+        if input.url.trim().is_empty() {
+            return Err(invalid_input(
+                "url",
+                "required",
+                "An external URL is required.",
+            ));
+        }
+        if input.url.len() > MAX_EXTERNAL_URL_BYTES {
+            return Err(invalid_input(
+                "url",
+                "too_long",
+                "The external URL is too long.",
+            ));
+        }
+        if input.url.chars().any(char::is_control) {
+            return Err(invalid_input(
+                "url",
+                "invalid_value",
+                "The external URL is invalid.",
+            ));
+        }
+        Ok(input)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -360,6 +453,11 @@ pub const SETTINGS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "SettingsDto",
     typescript: r#"export type EmptyInputDto = Record<string, never>;
 
+export type AppStatusDto = {
+  proxyRunning: boolean;
+  localBaseUrl: string;
+};
+
 export type RoutingGroupFilter =
   | "all_groups"
   | "ungrouped_only"
@@ -422,6 +520,14 @@ export type UpdateSettingsInputDto = {
   trayBehavior?: "close_to_tray" | "minimize_to_tray" | "disabled";
 };
 
+export type UpdateLocalAccessKeyInputDto = {
+  value: string;
+};
+
+export type OpenExternalUrlInputDto = {
+  url: string;
+};
+
 export type SettingsDto = {
   localProxyPort: number;
   localProxyStartOnLaunch: boolean;
@@ -446,6 +552,12 @@ export type SettingsDto = {
   dataDir: string;
   pendingDataDir: string | null;
   dataDirChangeRequiresRestart: boolean;
+};
+
+export type CcswitchImportResultDto = {
+  app: string;
+  providerName: string;
+  endpoint: string;
 };"#,
 };
 
@@ -515,5 +627,39 @@ mod input_contract_tests {
             .expect("object")
             .remove("maxRateMultiplier");
         assert!(UpdateSettingsInputDto::parse(missing).is_err());
+    }
+
+    #[test]
+    fn bootstrap_inputs_reject_unknown_empty_long_and_control_values() {
+        assert!(UpdateLocalAccessKeyInputDto::parse(serde_json::json!({
+            "value": "sk-local-fixture"
+        }))
+        .is_ok());
+        assert!(OpenExternalUrlInputDto::parse(serde_json::json!({
+            "url": "https://example.test"
+        }))
+        .is_ok());
+
+        for value in [
+            serde_json::json!({ "value": "" }),
+            serde_json::json!({ "value": "   " }),
+            serde_json::json!({ "value": "abc\n123" }),
+            serde_json::json!({ "value": "a".repeat(MAX_LOCAL_ACCESS_KEY_BYTES + 1) }),
+            serde_json::json!({ "value": "sk-local-fixture", "unexpected": true }),
+        ] {
+            let error = UpdateLocalAccessKeyInputDto::parse(value).expect_err("invalid key");
+            assert_eq!(error.code, CommandErrorCode::InvalidInput);
+        }
+
+        for value in [
+            serde_json::json!({ "url": "" }),
+            serde_json::json!({ "url": "   " }),
+            serde_json::json!({ "url": "https://example.test/\nnext" }),
+            serde_json::json!({ "url": "h".repeat(MAX_EXTERNAL_URL_BYTES + 1) }),
+            serde_json::json!({ "url": "https://example.test", "unexpected": true }),
+        ] {
+            let error = OpenExternalUrlInputDto::parse(value).expect_err("invalid url input");
+            assert_eq!(error.code, CommandErrorCode::InvalidInput);
+        }
     }
 }

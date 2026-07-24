@@ -14,6 +14,7 @@ pub(crate) mod station_keys;
 pub(crate) mod stations;
 pub(crate) mod updater_data_recovery;
 
+#[cfg(test)]
 pub use settings::SettingsDto;
 pub use stations::StationDto;
 

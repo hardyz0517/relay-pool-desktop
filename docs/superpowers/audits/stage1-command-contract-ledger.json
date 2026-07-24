@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "source_revision": "32936a0c4d9031d7b581fbbe70b10ffb24c80db7",
+  "source_revision": "63f94f1aaa404fa5f32e1550b2b2ef4f392db97a",
   "generated_at_date": "2026-07-24",
-  "source_snapshot": "formal codex/architecture-scale-upgrade worktree at the S1-T5-updater-backend-reads qualification checkpoint, based on 32936a0",
+  "source_snapshot": "S1-T5-settings-bootstrap",
   "source_authority": {
     "compiled_registry": "src-tauri/src/ipc/registry.rs",
     "rust_signatures": "src-tauri/src/commands/mod.rs",
@@ -50,14 +50,14 @@
       "non_idempotent": 30,
       "read": 46
     },
-    "explicit_pilot_schema_partial": 5,
-    "legacy_unmigrated_placeholder": 20,
+    "explicit_pilot_schema_partial": 3,
+    "legacy_unmigrated_placeholder": 17,
     "acl_allowed_main_window": 119,
     "commands_with_frontend_callers": 116,
     "commands_without_frontend_callers": 4,
-    "public_command_error": 117,
-    "public_non_command_error": 3,
-    "fully_migrated": 95,
+    "public_command_error": 118,
+    "public_non_command_error": 2,
+    "fully_migrated": 100,
     "acl_capture_only": 1,
     "acl_unallowlisted": 0
   },
@@ -67,9 +67,11 @@
       "group": "settings_stations",
       "group_assignment_reason": "Runtime/bootstrap read assigned to the first settings_stations shard.",
       "transport": "ordinary",
-      "rust_input": [],
-      "rust_output": "AppStatus",
-      "public_error": "none",
+      "rust_input": [
+        "input: Value"
+      ],
+      "rust_output": "AppStatusDto",
+      "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
         "permission": "main-window",
@@ -79,21 +81,21 @@
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps transport validation and command execution",
+      "migration_status": "fully_migrated_s1_t5_settings_bootstrap",
       "delete_owner": "Task 5 settings_stations shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "AppStatusDto",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:51",
-        "rust_signature": "src-tauri/src/commands/mod.rs:204"
+        "rust_signature": "src-tauri/src/commands/mod.rs:234",
+        "frontend": "src/lib/bridge/generated.ts:1157"
       }
     },
     {
@@ -188,7 +190,8 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value"
       ],
       "rust_output": "String",
       "public_error": "error::CommandError",
@@ -200,7 +203,7 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/settings.ts",
-          "line": 46
+          "line": 51
         }
       ],
       "mutation_kind": "read",
@@ -209,17 +212,18 @@
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "pilot_schema_declared_partial; generated group cutover and runtime validation incomplete",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps transport validation and command execution",
+      "migration_status": "fully_migrated_s1_t5_settings_bootstrap",
       "delete_owner": "Task 5 settings_stations shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "unit",
+        "input": "EmptyInputDto",
         "output": "String",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:66",
-        "rust_signature": "src-tauri/src/commands/mod.rs:505"
+        "rust_signature": "src-tauri/src/commands/mod.rs:550",
+        "frontend": "src/lib/api/settings.ts:51"
       }
     },
     {
@@ -306,9 +310,10 @@
       "rust_input": [
         "secrets: State<'_, SecretManager>",
         "services: State<'_, AppServices>",
-        "proxy: State<'_, ProxyRuntimeState>"
+        "proxy: State<'_, ProxyRuntimeState>",
+        "input: Value"
       ],
-      "rust_output": "CcswitchImportResult",
+      "rust_output": "CcswitchImportResultDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -318,27 +323,27 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/settings.ts",
-          "line": 66
+          "line": 71
         }
       ],
       "mutation_kind": "non_idempotent",
       "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps transport validation and command execution",
+      "migration_status": "fully_migrated_s1_t5_settings_bootstrap",
       "delete_owner": "Task 5 settings_stations shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "CcswitchImportResultDto",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:68",
-        "rust_signature": "src-tauri/src/commands/mod.rs:536"
+        "rust_signature": "src-tauri/src/commands/mod.rs:583",
+        "frontend": "src/lib/api/settings.ts:71"
       }
     },
     {
@@ -390,7 +395,7 @@
       "group_assignment_reason": "Shared shell command called by station/settings wrappers; assigned to settings_stations.",
       "transport": "ordinary",
       "rust_input": [
-        "url: String"
+        "input: Value"
       ],
       "rust_output": "()",
       "public_error": "error::CommandError",
@@ -402,31 +407,31 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/external.ts",
-          "line": 5
+          "line": 4
         },
         {
           "path": "src/lib/api/stations.ts",
-          "line": 175
+          "line": 185
         }
       ],
       "mutation_kind": "non_idempotent",
       "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "bound URL; enforce allowed scheme and exact-origin policy"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps transport validation and command execution",
+      "migration_status": "fully_migrated_s1_t5_settings_bootstrap",
       "delete_owner": "Task 5 settings_stations shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "OpenExternalUrlInputDto",
+        "output": "unit",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:69",
-        "rust_signature": "src-tauri/src/commands/mod.rs:591"
+        "rust_signature": "src-tauri/src/commands/mod.rs:643",
+        "frontend": "src/lib/api/external.ts:4"
       }
     },
     {
@@ -479,9 +484,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "value: String"
+        "input: Value"
       ],
-      "rust_output": "AppSettings",
+      "rust_output": "SettingsDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -491,7 +496,7 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/settings.ts",
-          "line": 55
+          "line": 60
         }
       ],
       "mutation_kind": "idempotent",
@@ -500,17 +505,18 @@
         "reject unknown top-level fields before application use case",
         "bound string; freeze trim/empty policy and secret-safe diagnostics"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "pilot_schema_declared_partial; generated group cutover and runtime validation incomplete",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps transport validation and command execution",
+      "migration_status": "fully_migrated_s1_t5_settings_bootstrap",
       "delete_owner": "Task 5 settings_stations shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "UpdateLocalAccessKeyInput",
-        "output": "AppSettings",
+        "input": "UpdateLocalAccessKeyInputDto",
+        "output": "SettingsDto",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:67",
-        "rust_signature": "src-tauri/src/commands/mod.rs:516"
+        "rust_signature": "src-tauri/src/commands/mod.rs:566",
+        "frontend": "src/lib/api/settings.ts:60"
       }
     },
     {

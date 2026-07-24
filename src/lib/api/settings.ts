@@ -1,6 +1,9 @@
 import { invoke } from "@/lib/bridge/transport";
 import {
+  getLocalAccessKey as getLocalAccessKeyBinding,
   getSettings as getSettingsBinding,
+  importRelayPoolToCcswitch as importRelayPoolToCcswitchBinding,
+  updateLocalAccessKey as updateLocalAccessKeyBinding,
   updateSettings as updateSettingsBinding,
 } from "@/lib/bridge/generated";
 import type { SettingsDto, UpdateSettingsInputDto } from "@/lib/bridge/generated";
@@ -9,7 +12,6 @@ import {
   DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   SCHEDULER_ADVANCED_FIELD_KINDS,
   type AppSettings,
-  type CcswitchImportResult,
   type UpdateSettingsInput,
 } from "@/lib/types/settings";
 import type { SchedulerAdvancedSettings } from "@/lib/types/routing";
@@ -46,7 +48,7 @@ export function getSettings() {
 }
 
 export function getLocalAccessKey() {
-  return invoke<string>("get_local_access_key").catch((error) => {
+  return getLocalAccessKeyBinding().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       throw new Error("只有桌面端可以复制真实本地访问密钥");
     }
@@ -55,7 +57,7 @@ export function getLocalAccessKey() {
 }
 
 export function updateLocalAccessKey(value: string) {
-  return invoke<AppSettings>("update_local_access_key", { value }).then(normalizeSettings).catch((error) => {
+  return updateLocalAccessKeyBinding({ value }).then(normalizeSettings).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const localKeyMasked = maskSecret(value);
       memorySettings = { ...memorySettings, localKeyMasked };
@@ -66,7 +68,7 @@ export function updateLocalAccessKey(value: string) {
 }
 
 export function importRelayPoolToCCSwitch() {
-  return invoke<CcswitchImportResult>("import_relay_pool_to_ccswitch").catch((error) => {
+  return importRelayPoolToCcswitchBinding().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       throw new Error("只有桌面端可以导入 CCSwitch");
     }

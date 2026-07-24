@@ -55,7 +55,10 @@ use crate::{
             DeleteModelAliasInputDto, EndpointPingResultDto, ReorderLocalRoutingKeysInputDto,
             UpdateStationKeyCapabilitiesInputDto, UpsertModelAliasInputDto,
         },
-        settings::UpdateSettingsInputDto,
+        settings::{
+            AppStatusDto, CcswitchImportResultDto, OpenExternalUrlInputDto, SettingsDto,
+            UpdateLocalAccessKeyInputDto, UpdateSettingsInputDto,
+        },
         station_collector_operations::{
             CollectorRunResultDto, StationCollectorTaskInputDto, StationCollectorTaskTypeDto,
             StationLoginTestInputDto, StationLoginTestResultDto,
@@ -79,7 +82,7 @@ use crate::{
             PublishedUpdateInspectionDto, PublishedUpdateInspectionInputDto,
             UpdaterNetworkConfigDto,
         },
-        EmptyInputDto, SettingsDto, StationDto,
+        EmptyInputDto, StationDto,
     },
     ipc::runtime_contract::{current_runtime_contract, RuntimeContractInfo},
     models::{
@@ -228,8 +231,12 @@ mod located_candidate_tests {
 }
 
 #[tauri::command]
-pub fn app_status() -> AppStatus {
-    AppStatus::default()
+pub async fn app_status(input: Value) -> Result<AppStatusDto, error::CommandError> {
+    correlation::in_command_scope("app_status", async {
+        EmptyInputDto::parse(input)?;
+        Ok(AppStatus::default())
+    })
+    .await
 }
 
 /// Returns only the immutable build/IPC identity needed before normal app queries.
@@ -542,32 +549,34 @@ pub async fn get_settings(
 #[tauri::command]
 pub async fn get_local_access_key(
     services: State<'_, AppServices>,
+    input: Value,
 ) -> Result<String, error::CommandError> {
-    services
-        .settings
-        .ensure_local_access_key()
-        .await
-        .map_err(public_command_application_error)
+    correlation::in_command_scope("get_local_access_key", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .settings
+            .ensure_local_access_key()
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn update_local_access_key(
     services: State<'_, AppServices>,
-    value: String,
-) -> Result<AppSettings, error::CommandError> {
-    services
-        .settings
-        .update_local_access_key(value)
-        .await
-        .map_err(public_command_application_error)
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CcswitchImportResult {
-    app: String,
-    provider_name: String,
-    endpoint: String,
+    input: Value,
+) -> Result<SettingsDto, error::CommandError> {
+    correlation::in_command_scope("update_local_access_key", async {
+        let input = UpdateLocalAccessKeyInputDto::parse(input)?;
+        services
+            .settings
+            .update_local_access_key(input.value)
+            .await
+            .map(SettingsDto::from)
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -575,36 +584,41 @@ pub async fn import_relay_pool_to_ccswitch(
     secrets: State<'_, SecretManager>,
     services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
-) -> Result<CcswitchImportResult, error::CommandError> {
-    let settings = services
-        .settings
-        .load()
-        .await
-        .map_err(command_application_error)?;
-    let local_access_key = services
-        .settings
-        .ensure_local_access_key()
-        .await
-        .map_err(command_application_error)?;
-    let proxy_status = proxy
-        .start(crate::services::proxy::startup::config_from_v2_services(
-            services.inner(),
-            *secrets.data_key(),
-            local_access_key.clone(),
-            settings.local_proxy_port,
-        ))
-        .await?;
-    let (result, deeplink) = prepare_ccswitch_import(&local_access_key, &proxy_status);
+    input: Value,
+) -> Result<CcswitchImportResultDto, error::CommandError> {
+    correlation::in_command_scope("import_relay_pool_to_ccswitch", async {
+        EmptyInputDto::parse(input)?;
+        let settings = services
+            .settings
+            .load()
+            .await
+            .map_err(command_application_error)?;
+        let local_access_key = services
+            .settings
+            .ensure_local_access_key()
+            .await
+            .map_err(command_application_error)?;
+        let proxy_status = proxy
+            .start(crate::services::proxy::startup::config_from_v2_services(
+                services.inner(),
+                *secrets.data_key(),
+                local_access_key.clone(),
+                settings.local_proxy_port,
+            ))
+            .await?;
+        let (result, deeplink) = prepare_ccswitch_import(&local_access_key, &proxy_status);
 
-    open_url_with_system(&deeplink)?;
+        open_url_with_system(&deeplink)?;
 
-    Ok(result)
+        Ok(result)
+    })
+    .await
 }
 
 fn prepare_ccswitch_import(
     local_access_key: &str,
     status: &ProxyStatus,
-) -> (CcswitchImportResult, String) {
+) -> (CcswitchImportResultDto, String) {
     let endpoint = format!("http://{}:{}/v1", status.bind_addr, status.port);
     let homepage = format!("http://{}:{}", status.bind_addr, status.port);
     let provider_name = "Relay Pool Desktop".to_string();
@@ -616,7 +630,7 @@ fn prepare_ccswitch_import(
         local_access_key,
     );
     (
-        CcswitchImportResult {
+        CcswitchImportResultDto {
             app: "codex".to_string(),
             provider_name,
             endpoint,
@@ -626,9 +640,13 @@ fn prepare_ccswitch_import(
 }
 
 #[tauri::command]
-pub fn open_external_url(url: String) -> Result<(), error::CommandError> {
-    let url = validate_external_http_url(&url)?;
-    Ok(open_url_with_system(url)?)
+pub async fn open_external_url(input: Value) -> Result<(), error::CommandError> {
+    correlation::in_command_scope("open_external_url", async {
+        let input = OpenExternalUrlInputDto::parse(input)?;
+        let url = validate_external_http_url(&input.url)?;
+        Ok(open_url_with_system(url)?)
+    })
+    .await
 }
 
 #[tauri::command]

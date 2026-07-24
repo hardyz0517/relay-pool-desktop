@@ -1,8 +1,8 @@
-import { invoke } from "@/lib/bridge/transport";
+import { openExternalUrl as openExternalUrlBinding } from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 
 export function openExternalUrl(url: string) {
-  return invoke<void>("open_external_url", { url }).catch((error) => {
+  return openExternalUrlBinding({ url }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       window.open(url, "_blank", "noopener,noreferrer");
       return;

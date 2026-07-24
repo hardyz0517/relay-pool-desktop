@@ -8,6 +8,7 @@ const transport = vi.hoisted(() => ({
 vi.mock("@/lib/bridge/transport", () => transport);
 
 import {
+  appStatus,
   bindRemoteStationKey,
   clearChangeEvents,
   clearRequestLogs,
@@ -33,11 +34,13 @@ import {
   duplicateChannelMonitorTemplate,
   getRemoteKeyCapability,
   getLatestCollectorSnapshot,
+  getLocalAccessKey,
   getProxyStatus,
   getSettings,
   getStationKeyCapabilities,
   getStationCredentials,
   getStationKeyHealth,
+  importRelayPoolToCcswitch,
   inspectLatestUpdateManifest,
   listKeyPoolItems,
   listModelBasePrices,
@@ -69,6 +72,7 @@ import {
   listStationGroupOptions,
   markChangeEventRead,
   markChangeEventsRead,
+  openExternalUrl,
   pingStationEndpoint,
   reorderKeyPool,
   reorderLocalRoutingKeys,
@@ -95,6 +99,7 @@ import {
   updateStationSession,
   updateStationKeyCapabilities,
   updateSettings,
+  updateLocalAccessKey,
   updateStation,
   upsertBalanceSnapshot,
   upsertChangeEvent,
@@ -144,6 +149,24 @@ describe("generated settings/stations transport envelopes", () => {
   beforeEach(() => {
     transport.invoke.mockReset().mockResolvedValue(undefined);
     transport.invokeNonIdempotent.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("sends settings/bootstrap commands through generated envelopes", async () => {
+    await appStatus();
+    await getLocalAccessKey();
+    await updateLocalAccessKey({ value: "sk-local-fixture" });
+    await importRelayPoolToCcswitch();
+    await openExternalUrl({ url: "https://example.test" });
+
+    expect(transport.invoke.mock.calls).toEqual([
+      ["app_status", { input: {} }],
+      ["get_local_access_key", { input: {} }],
+      ["update_local_access_key", { input: { value: "sk-local-fixture" } }],
+    ]);
+    expect(transport.invokeNonIdempotent.mock.calls).toEqual([
+      ["import_relay_pool_to_ccswitch", { input: {} }],
+      ["open_external_url", { input: { url: "https://example.test" } }],
+    ]);
   });
 
   it("sends every migrated command with the Tauri { input } envelope", async () => {
