@@ -26,6 +26,11 @@ import {
   listKeyPoolItems,
   listChangeEvents,
   listChangeEventsForStation,
+  listChannelMonitorRuns,
+  listChannelMonitorSummaries,
+  listChannelMonitorTemplates,
+  listChannelMonitors,
+  listChannelStatusSummaries,
   listBalanceSnapshots,
   listBalanceSnapshotsForStation,
   listCollectorRuns,
@@ -341,6 +346,22 @@ describe("generated settings/stations transport envelopes", () => {
       ["list_collector_runs", { input: { stationId } }],
       ["list_collector_snapshots", { input: { stationId } }],
       ["get_latest_collector_snapshot", { input: { stationId } }],
+    ]);
+  });
+
+  it("sends every channel-monitor read through generated envelopes", async () => {
+    await listChannelMonitors();
+    await listChannelMonitorSummaries({ runSince: "1700000000000", runLimit: 60 });
+    await listChannelStatusSummaries();
+    await listChannelMonitorRuns({ monitorId: "monitor-1" });
+    await listChannelMonitorTemplates();
+
+    expect(transport.invoke.mock.calls.slice(-5)).toEqual([
+      ["list_channel_monitors", { input: {} }],
+      ["list_channel_monitor_summaries", { input: { runSince: "1700000000000", runLimit: 60 } }],
+      ["list_channel_status_summaries", { input: {} }],
+      ["list_channel_monitor_runs", { input: { monitorId: "monitor-1" } }],
+      ["list_channel_monitor_templates", { input: {} }],
     ]);
   });
 });

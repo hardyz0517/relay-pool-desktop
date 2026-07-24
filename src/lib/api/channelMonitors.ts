@@ -1,11 +1,16 @@
 import { invoke } from "@/lib/bridge/transport";
+import {
+  listChannelMonitorRuns as listChannelMonitorRunsGenerated,
+  listChannelMonitorSummaries as listChannelMonitorSummariesGenerated,
+  listChannelMonitorTemplates as listChannelMonitorTemplatesGenerated,
+  listChannelMonitors as listChannelMonitorsGenerated,
+  listChannelStatusSummaries as listChannelStatusSummariesGenerated,
+} from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
   ChannelMonitor,
   ChannelMonitorRequestTemplate,
   ChannelMonitorRun,
-  ChannelMonitorSummary,
-  ChannelStatusSummary,
   ChannelStatusWindowSummary,
   CreateChannelMonitorInput,
   CreateChannelMonitorTemplateInput,
@@ -23,7 +28,7 @@ export type ChannelMonitorSummaryOptions = {
 };
 
 export function listChannelMonitors() {
-  return invoke<ChannelMonitor[]>("list_channel_monitors").catch((error) => {
+  return listChannelMonitorsGenerated().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return memoryMonitors.map(copyMonitor);
     }
@@ -32,9 +37,9 @@ export function listChannelMonitors() {
 }
 
 export function listChannelMonitorSummaries(options: ChannelMonitorSummaryOptions = {}) {
-  return invoke<ChannelMonitorSummary[]>("list_channel_monitor_summaries", {
-    runLimit: options.runLimit ?? null,
+  return listChannelMonitorSummariesGenerated({
     runSince: options.runSince ?? null,
+    runLimit: options.runLimit ?? null,
   }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const runSince = options.runSince ? toTime(options.runSince) : null;
@@ -57,7 +62,7 @@ export function listChannelMonitorSummaries(options: ChannelMonitorSummaryOption
 }
 
 export function listChannelStatusSummaries() {
-  return invoke<ChannelStatusSummary[]>("list_channel_status_summaries").catch((error) => {
+  return listChannelStatusSummariesGenerated().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return memoryMonitors.map((monitor) => ({
         monitor: copyMonitor(monitor),
@@ -151,7 +156,7 @@ export function runChannelMonitorNow(monitorId: string) {
 }
 
 export function listChannelMonitorRuns(monitorId: string) {
-  return invoke<ChannelMonitorRun[]>("list_channel_monitor_runs", { monitorId }).catch((error) => {
+  return listChannelMonitorRunsGenerated({ monitorId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return (memoryRuns.get(monitorId) ?? []).map(copyRun);
     }
@@ -160,7 +165,7 @@ export function listChannelMonitorRuns(monitorId: string) {
 }
 
 export function listChannelMonitorTemplates() {
-  return invoke<ChannelMonitorRequestTemplate[]>("list_channel_monitor_templates").catch((error) => {
+  return listChannelMonitorTemplatesGenerated().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return ensureMemoryTemplates().map(copyTemplate);
     }

@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "f024bd70326ec0f5c2bae6c45d204b1257a247660b8854714766d3b2aa45f8bd";
+    "39085213adea2bed878e2fdb976cc9f0c75c02b07edd6a6176908eebb2ad7cd4";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -409,6 +409,20 @@ fn command_contract(name: &str) -> CommandContract {
         "get_latest_collector_snapshot" => {
             migrated_read("CollectorStationIdInputDto", "Option<CollectorSnapshotDto>")
         }
+        "list_channel_monitors" => migrated_read("EmptyInputDto", "Vec<ChannelMonitorDto>"),
+        "list_channel_monitor_summaries" => migrated_read(
+            "ChannelMonitorSummaryInputDto",
+            "Vec<ChannelMonitorSummaryDto>",
+        ),
+        "list_channel_status_summaries" => {
+            migrated_read("EmptyInputDto", "Vec<ChannelStatusSummaryDto>")
+        }
+        "list_channel_monitor_runs" => {
+            migrated_read("ChannelMonitorIdInputDto", "Vec<ChannelMonitorRunDto>")
+        }
+        "list_channel_monitor_templates" => {
+            migrated_read("EmptyInputDto", "Vec<ChannelMonitorRequestTemplateDto>")
+        }
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         "get_local_access_key" => legacy_declared("unit", "String"),
         "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
@@ -564,6 +578,7 @@ fn pilot_serialization_fixture() -> String {
     commands.extend(super::dto::station_keys::serialization_fixtures());
     commands.extend(super::dto::change_logs::serialization_fixtures());
     commands.extend(super::dto::collector_facts::serialization_fixtures());
+    commands.extend(super::dto::channel_monitor_reads::serialization_fixtures());
     let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
     format!(
         "{}\n",
@@ -684,6 +699,26 @@ export function listCollectorSnapshots(input: CollectorStationIdInputDto): Promi
 
 export function getLatestCollectorSnapshot(input: CollectorStationIdInputDto): Promise<CollectorSnapshotDto | null> {
   return invokeCommand<CollectorSnapshotDto | null>("get_latest_collector_snapshot", { input });
+}
+
+export function listChannelMonitors(input: EmptyInputDto = {}): Promise<ChannelMonitorDto[]> {
+  return invokeCommand<ChannelMonitorDto[]>("list_channel_monitors", { input });
+}
+
+export function listChannelMonitorSummaries(input: ChannelMonitorSummaryInputDto): Promise<ChannelMonitorSummaryDto[]> {
+  return invokeCommand<ChannelMonitorSummaryDto[]>("list_channel_monitor_summaries", { input });
+}
+
+export function listChannelStatusSummaries(input: EmptyInputDto = {}): Promise<ChannelStatusSummaryDto[]> {
+  return invokeCommand<ChannelStatusSummaryDto[]>("list_channel_status_summaries", { input });
+}
+
+export function listChannelMonitorRuns(input: ChannelMonitorIdInputDto): Promise<ChannelMonitorRunDto[]> {
+  return invokeCommand<ChannelMonitorRunDto[]>("list_channel_monitor_runs", { input });
+}
+
+export function listChannelMonitorTemplates(input: EmptyInputDto = {}): Promise<ChannelMonitorRequestTemplateDto[]> {
+  return invokeCommand<ChannelMonitorRequestTemplateDto[]>("list_channel_monitor_templates", { input });
 }
 
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
@@ -896,6 +931,28 @@ mod tests {
     }
 
     #[test]
+    fn channel_monitor_read_commands_have_closed_schemas() {
+        for name in [
+            "list_channel_monitor_runs",
+            "list_channel_monitor_summaries",
+            "list_channel_monitor_templates",
+            "list_channel_monitors",
+            "list_channel_status_summaries",
+        ] {
+            let contract = command_contract(name);
+            assert!(!contract.input.starts_with("legacy_"), "{name}");
+            assert!(!contract.output.starts_with("legacy_"), "{name}");
+            assert_eq!(contract.mutation_kind, "read", "{name}");
+            assert_eq!(
+                contract.runtime_validation, "rust_dto_pre_application",
+                "{name}"
+            );
+            assert!(!contract.transport_retry, "{name}");
+            assert!(!contract.result_unknown, "{name}");
+        }
+    }
+
+    #[test]
     fn generated_bindings_use_the_common_transport_and_dedicated_wrappers() {
         let source = render_typescript("fixture-hash");
         assert!(source.contains("@/lib/bridge/transport"));
@@ -952,6 +1009,18 @@ mod tests {
             "listStationGroupOptions",
             "upsertBalanceSnapshot",
             "upsertStationGroupBinding",
+        ] {
+            assert!(
+                source.contains(&format!("function {wrapper}(")),
+                "{wrapper}"
+            );
+        }
+        for wrapper in [
+            "listChannelMonitorRuns",
+            "listChannelMonitorSummaries",
+            "listChannelMonitorTemplates",
+            "listChannelMonitors",
+            "listChannelStatusSummaries",
         ] {
             assert!(
                 source.contains(&format!("function {wrapper}(")),

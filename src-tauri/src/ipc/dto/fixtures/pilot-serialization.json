@@ -1728,6 +1728,235 @@
           "status": "success"
         }
       }
+    },
+    {
+      "command": "list_channel_monitors",
+      "input": {},
+      "output": [
+        {
+          "consecutiveFailureThreshold": 3,
+          "createdAt": "1700000000000",
+          "enabled": true,
+          "fallbackModels": [
+            "fixture-model"
+          ],
+          "id": "monitor-1",
+          "intervalSeconds": 60,
+          "jitterSeconds": 5,
+          "maxConcurrency": 1,
+          "name": "Fixture monitor",
+          "note": null,
+          "stationId": "station-1",
+          "stationKeyId": "key-1",
+          "targetType": "station_key",
+          "templateId": "template-1",
+          "timeoutSeconds": 15,
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "list_channel_monitor_summaries",
+      "input": {
+        "runLimit": 60,
+        "runSince": "1700000000000"
+      },
+      "output": [
+        {
+          "latestRun": {
+            "createdAt": "1700000000000",
+            "durationMs": 100,
+            "errorMessage": null,
+            "fallbackModel": null,
+            "finishedAt": "1700000000100",
+            "httpStatus": 200,
+            "id": "monitor-run-1",
+            "latencyMs": 80,
+            "monitorId": "monitor-1",
+            "responseModel": "fixture-model",
+            "startedAt": "1700000000000",
+            "stationId": "station-1",
+            "stationKeyId": "key-1",
+            "status": "success",
+            "templateId": "template-1"
+          },
+          "monitor": {
+            "consecutiveFailureThreshold": 3,
+            "createdAt": "1700000000000",
+            "enabled": true,
+            "fallbackModels": [
+              "fixture-model"
+            ],
+            "id": "monitor-1",
+            "intervalSeconds": 60,
+            "jitterSeconds": 5,
+            "maxConcurrency": 1,
+            "name": "Fixture monitor",
+            "note": null,
+            "stationId": "station-1",
+            "stationKeyId": "key-1",
+            "targetType": "station_key",
+            "templateId": "template-1",
+            "timeoutSeconds": 15,
+            "updatedAt": "1700000000000"
+          },
+          "recentRuns": [
+            {
+              "createdAt": "1700000000000",
+              "durationMs": 100,
+              "errorMessage": null,
+              "fallbackModel": null,
+              "finishedAt": "1700000000100",
+              "httpStatus": 200,
+              "id": "monitor-run-1",
+              "latencyMs": 80,
+              "monitorId": "monitor-1",
+              "responseModel": "fixture-model",
+              "startedAt": "1700000000000",
+              "stationId": "station-1",
+              "stationKeyId": "key-1",
+              "status": "success",
+              "templateId": "template-1"
+            }
+          ],
+          "runsLoadStatus": "ok"
+        }
+      ]
+    },
+    {
+      "command": "list_channel_status_summaries",
+      "input": {},
+      "output": [
+        {
+          "last24h": {
+            "availabilityPercent": 100.0,
+            "avgEndpointPingMs": 20,
+            "avgLatencyMs": 80,
+            "failureCount": 0,
+            "lastCheckedAt": "1700000000100",
+            "latestErrorMessage": null,
+            "latestStatus": "success",
+            "successCount": 1,
+            "timeline": [
+              {
+                "checkedAt": "1700000000100",
+                "endpointPingMs": 20,
+                "latencyMs": 80,
+                "status": "success"
+              }
+            ],
+            "totalCount": 1,
+            "warningCount": 0,
+            "window": "24h"
+          },
+          "last7d": {
+            "availabilityPercent": 100.0,
+            "avgEndpointPingMs": 20,
+            "avgLatencyMs": 80,
+            "failureCount": 0,
+            "lastCheckedAt": "1700000000100",
+            "latestErrorMessage": null,
+            "latestStatus": "success",
+            "successCount": 1,
+            "timeline": [
+              {
+                "checkedAt": "1700000000100",
+                "endpointPingMs": 20,
+                "latencyMs": 80,
+                "status": "success"
+              }
+            ],
+            "totalCount": 1,
+            "warningCount": 0,
+            "window": "7d"
+          },
+          "monitor": {
+            "consecutiveFailureThreshold": 3,
+            "createdAt": "1700000000000",
+            "enabled": true,
+            "fallbackModels": [
+              "fixture-model"
+            ],
+            "id": "monitor-1",
+            "intervalSeconds": 60,
+            "jitterSeconds": 5,
+            "maxConcurrency": 1,
+            "name": "Fixture monitor",
+            "note": null,
+            "stationId": "station-1",
+            "stationKeyId": "key-1",
+            "targetType": "station_key",
+            "templateId": "template-1",
+            "timeoutSeconds": 15,
+            "updatedAt": "1700000000000"
+          },
+          "recent": {
+            "availabilityPercent": 100.0,
+            "avgEndpointPingMs": 20,
+            "avgLatencyMs": 80,
+            "failureCount": 0,
+            "lastCheckedAt": "1700000000100",
+            "latestErrorMessage": null,
+            "latestStatus": "success",
+            "successCount": 1,
+            "timeline": [
+              {
+                "checkedAt": "1700000000100",
+                "endpointPingMs": 20,
+                "latencyMs": 80,
+                "status": "success"
+              }
+            ],
+            "totalCount": 1,
+            "warningCount": 0,
+            "window": "recent"
+          }
+        }
+      ]
+    },
+    {
+      "command": "list_channel_monitor_runs",
+      "input": {
+        "monitorId": "monitor-1"
+      },
+      "output": [
+        {
+          "createdAt": "1700000000000",
+          "durationMs": 100,
+          "errorMessage": null,
+          "fallbackModel": null,
+          "finishedAt": "1700000000100",
+          "httpStatus": 200,
+          "id": "monitor-run-1",
+          "latencyMs": 80,
+          "monitorId": "monitor-1",
+          "responseModel": "fixture-model",
+          "startedAt": "1700000000000",
+          "stationId": "station-1",
+          "stationKeyId": "key-1",
+          "status": "success",
+          "templateId": "template-1"
+        }
+      ]
+    },
+    {
+      "command": "list_channel_monitor_templates",
+      "input": {},
+      "output": [
+        {
+          "builtIn": false,
+          "createdAt": "1700000000000",
+          "enabled": true,
+          "endpointKind": "chat_completions",
+          "id": "template-1",
+          "method": "POST",
+          "name": "Fixture template",
+          "note": null,
+          "path": "/v1/chat/completions",
+          "requestBodyJson": "{}",
+          "updatedAt": "1700000000000"
+        }
+      ]
     }
   ],
   "schemaVersion": 1

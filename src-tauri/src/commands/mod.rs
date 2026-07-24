@@ -22,6 +22,11 @@ use crate::{
             ChangeEventDto, ChangeEventIdInputDto, ChangeEventIdsInputDto, RequestLogDto,
             StationIdInputDto as ChangeLogStationIdInputDto, UpsertChangeEventInputDto,
         },
+        channel_monitor_reads::{
+            ChannelMonitorDto, ChannelMonitorIdInputDto, ChannelMonitorRequestTemplateDto,
+            ChannelMonitorRunDto, ChannelMonitorSummaryDto, ChannelMonitorSummaryInputDto,
+            ChannelStatusSummaryDto,
+        },
         collector_facts::{
             BalanceSnapshotDto, CollectorRunDto, CollectorSnapshotDto, CollectorStationIdInputDto,
             GroupRateRecordDto, StationGroupBindingDto, StationGroupOptionDto,
@@ -65,10 +70,7 @@ use crate::{
             StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
         },
         settings::AppSettings,
-        shared_capabilities::{
-            ChannelMonitorSummary, ChannelStatusSummary, ChannelStatusWorkspace,
-            PricingComparisonWorkspace,
-        },
+        shared_capabilities::{ChannelStatusWorkspace, PricingComparisonWorkspace},
         station_keys::KeyPoolItem,
         stations::{EndpointPingResult, StationEndpointHealth},
         AppStatus,
@@ -1284,36 +1286,49 @@ pub async fn list_station_endpoint_health(
 #[tauri::command]
 pub async fn list_channel_monitors(
     services: State<'_, AppServices>,
-) -> Result<Vec<ChannelMonitor>, error::CommandError> {
-    services
-        .monitoring
-        .list_monitors(PageLimit::new(200).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<ChannelMonitorDto>, error::CommandError> {
+    correlation::in_command_scope("list_channel_monitors", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .monitoring
+            .list_monitors(PageLimit::new(200).expect("bounded limit"))
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_channel_monitor_summaries(
     services: State<'_, AppServices>,
-    run_since: Option<String>,
-    run_limit: Option<usize>,
-) -> Result<Vec<ChannelMonitorSummary>, error::CommandError> {
-    services
-        .monitoring
-        .list_channel_monitor_summaries(run_since.as_deref(), run_limit)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<ChannelMonitorSummaryDto>, error::CommandError> {
+    correlation::in_command_scope("list_channel_monitor_summaries", async {
+        let input = ChannelMonitorSummaryInputDto::parse(input)?;
+        services
+            .monitoring
+            .list_channel_monitor_summaries(input.run_since.as_deref(), input.run_limit)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_channel_status_summaries(
     services: State<'_, AppServices>,
-) -> Result<Vec<ChannelStatusSummary>, error::CommandError> {
-    services
-        .channel_status
-        .load(PageLimit::new(200).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<ChannelStatusSummaryDto>, error::CommandError> {
+    correlation::in_command_scope("list_channel_status_summaries", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .channel_status
+            .load(PageLimit::new(200).expect("bounded limit"))
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1377,29 +1392,38 @@ pub async fn delete_channel_monitor(
 #[tauri::command]
 pub async fn list_channel_monitor_runs(
     services: State<'_, AppServices>,
-    monitor_id: String,
-) -> Result<Vec<ChannelMonitorRun>, error::CommandError> {
-    services
-        .monitoring
-        .list_run_page(
-            &monitor_id,
-            None,
-            PageLimit::new(500).expect("bounded limit"),
-        )
-        .await
-        .map(|page| page.items)
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<ChannelMonitorRunDto>, error::CommandError> {
+    correlation::in_command_scope("list_channel_monitor_runs", async {
+        let input = ChannelMonitorIdInputDto::parse(input)?;
+        services
+            .monitoring
+            .list_run_page(
+                &input.monitor_id,
+                None,
+                PageLimit::new(500).expect("bounded limit"),
+            )
+            .await
+            .map(|page| page.items)
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_channel_monitor_templates(
     services: State<'_, AppServices>,
-) -> Result<Vec<ChannelMonitorRequestTemplate>, error::CommandError> {
-    services
-        .monitoring
-        .list_templates(PageLimit::new(200).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<ChannelMonitorRequestTemplateDto>, error::CommandError> {
+    correlation::in_command_scope("list_channel_monitor_templates", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .monitoring
+            .list_templates(PageLimit::new(200).expect("bounded limit"))
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
