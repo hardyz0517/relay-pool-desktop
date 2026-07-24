@@ -2908,6 +2908,20 @@
           "previewExcludedCandidateCount": 0
         }
       }
+    },
+    {
+      "command": "start_local_proxy",
+      "input": {},
+      "output": {
+        "activeRequests": 1,
+        "bindAddr": "127.0.0.1",
+        "lastError": null,
+        "lifecycle": "running",
+        "port": 8787,
+        "requestCount": 2,
+        "running": true,
+        "startedAt": "1700000000000"
+      }
     }
   ],
   "schemaVersion": 1

@@ -3,6 +3,7 @@ import {
   clearRequestLogs as ipcClearRequestLogs,
   getProxyStatus as ipcGetProxyStatus,
   listRequestLogs as ipcListRequestLogs,
+  startLocalProxy as ipcStartLocalProxy,
 } from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
@@ -31,7 +32,7 @@ export function getProxyStatus() {
 }
 
 export function startLocalProxy() {
-  return invoke<ProxyStatus>("start_local_proxy")
+  return ipcStartLocalProxy()
     .catch((error) => {
       if (isTauriInvokeUnavailable(error)) {
         memoryProxyStatus = {

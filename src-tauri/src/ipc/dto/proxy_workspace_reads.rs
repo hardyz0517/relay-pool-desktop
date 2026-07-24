@@ -21,6 +21,7 @@ pub(crate) fn serialization_fixtures() -> Vec<serde_json::Value> {
     vec![
         serde_json::json!({"command":"get_proxy_status","input":{},"output":status}),
         serde_json::json!({"command":"load_local_routing_workspace","input":{},"output":workspace}),
+        serde_json::json!({"command":"start_local_proxy","input":{},"output":fixture_status()}),
     ]
 }
 

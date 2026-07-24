@@ -80,6 +80,7 @@ import {
   saveStationKeyWithDefaults,
   scanRemoteStationKeys,
   simulateRoute,
+  startLocalProxy,
   testStationLogin,
   testStationLoginInput,
   unbindRemoteStationKey,
@@ -690,5 +691,12 @@ describe("generated settings/stations transport envelopes", () => {
       ["ping_station_endpoint", { input }],
     ]);
     expect(transport.invoke).not.toHaveBeenCalled();
+  });
+
+  it("sends proxy start through a generated envelope", async () => {
+    await startLocalProxy();
+    expect(transport.invoke.mock.calls).toEqual([
+      ["start_local_proxy", { input: {} }],
+    ]);
   });
 });

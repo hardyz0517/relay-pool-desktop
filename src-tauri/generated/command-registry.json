@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "555605997d2647820e0b4ae5ec2257ab8102d1dd32f46caa95f09158eb1e75c1",
+  "contract_hash": "09cee74c09bb8336a7b8128a62dc8c9221dd0beb25e6ad072fc36ca875015da0",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -1074,13 +1074,13 @@
     {
       "name": "start_local_proxy",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "fca495968a68fe3f60ade05a9678e990bf77f61dc09f63fbbf10b1280db2b44f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "stop_local_proxy",
@@ -1335,6 +1335,6 @@
   ],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "5423a5b555cd81be3944f7c287f0992fc38ffc287dbbd758a25cd631444155a6"
+    "serialization_fixture_hash": "5e66f6fb6f20f9c307c760d4179e4e862a04b936adeb6cd6c7198a634ada4220"
   }
 }

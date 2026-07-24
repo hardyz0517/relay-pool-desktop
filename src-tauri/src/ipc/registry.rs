@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "555605997d2647820e0b4ae5ec2257ab8102d1dd32f46caa95f09158eb1e75c1";
+    "09cee74c09bb8336a7b8128a62dc8c9221dd0beb25e6ad072fc36ca875015da0";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -565,6 +565,9 @@ fn command_contract(name: &str) -> CommandContract {
             "idempotent",
             false,
         ),
+        "start_local_proxy" => {
+            migrated_mutation("EmptyInputDto", "ProxyStatusDto", "idempotent", false)
+        }
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         "get_local_access_key" => legacy_declared("unit", "String"),
         "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
@@ -1017,6 +1020,10 @@ export function reorderLocalRoutingKeys(input: ReorderLocalRoutingKeysInputDto):
 
 export function pingStationEndpoint(input: StationIdInputDto): Promise<EndpointPingResultDto> {
   return invokeNonIdempotent<EndpointPingResultDto>("ping_station_endpoint", { input });
+}
+
+export function startLocalProxy(input: EmptyInputDto = {}): Promise<ProxyStatusDto> {
+  return invokeCommand<ProxyStatusDto>("start_local_proxy", { input });
 }
 
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
@@ -1517,6 +1524,17 @@ mod tests {
         assert_eq!(contract.runtime_validation, "rust_dto_pre_application");
         assert!(!contract.transport_retry);
         assert!(contract.result_unknown);
+    }
+
+    #[test]
+    fn proxy_start_has_a_closed_schema_and_idempotent_semantics() {
+        let contract = command_contract("start_local_proxy");
+        assert_eq!(contract.input, "EmptyInputDto");
+        assert_eq!(contract.output, "ProxyStatusDto");
+        assert_eq!(contract.mutation_kind, "idempotent");
+        assert_eq!(contract.runtime_validation, "rust_dto_pre_application");
+        assert!(!contract.transport_retry);
+        assert!(!contract.result_unknown);
     }
 
     #[test]
