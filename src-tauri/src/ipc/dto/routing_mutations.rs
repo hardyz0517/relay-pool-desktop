@@ -15,6 +15,38 @@ const MAX_TAG_BYTES: usize = 128;
 const MAX_NOTE_BYTES: usize = 4_096;
 const MAX_MODEL_LIST_ITEMS: usize = 256;
 const MAX_ROUTING_TAGS: usize = 64;
+const MAX_ROUTING_KEY_IDS: usize = 2_000;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReorderLocalRoutingKeysInputDto {
+    pub station_key_ids: Vec<String>,
+}
+
+impl ReorderLocalRoutingKeysInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value)?;
+        if input.station_key_ids.len() > MAX_ROUTING_KEY_IDS {
+            return Err(invalid_input(
+                "stationKeyIds",
+                "too_many_items",
+                "The routing key order contains too many items.",
+            ));
+        }
+        let mut seen = HashSet::with_capacity(input.station_key_ids.len());
+        for id in &input.station_key_ids {
+            validate_id("stationKeyIds", id)?;
+            if !seen.insert(id.as_str()) {
+                return Err(invalid_input(
+                    "stationKeyIds",
+                    "duplicate_item",
+                    "The routing key order contains duplicate items.",
+                ));
+            }
+        }
+        Ok(input)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -223,6 +255,10 @@ pub const ROUTING_MUTATIONS_TYPE: TypeDescriptor = TypeDescriptor {
 
 #[cfg(test)]
 pub(crate) fn serialization_fixtures() -> Vec<Value> {
+    let reorder_input = ReorderLocalRoutingKeysInputDto::parse(serde_json::json!({
+        "stationKeyIds":["key-1","key-2"]
+    }))
+    .expect("routing reorder fixture input");
     let capabilities_input = UpdateStationKeyCapabilitiesInputDto::parse(serde_json::json!({
         "stationKeyId":"key-1",
         "supportsChatCompletions":true,
@@ -251,6 +287,11 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
         .expect("delete alias fixture input");
 
     vec![
+        serde_json::json!({
+            "command":"reorder_local_routing_keys",
+            "input":reorder_input,
+            "output":super::proxy_workspace_reads::fixture_workspace()
+        }),
         serde_json::json!({
             "command":"update_station_key_capabilities",
             "input":capabilities_input,
@@ -302,6 +343,29 @@ fn fixture_alias() -> ModelAlias {
 mod tests {
     use super::*;
     use crate::commands::error::CommandErrorCode;
+
+    #[test]
+    fn routing_key_reorder_rejects_unknown_duplicate_invalid_and_oversized_ids() {
+        let oversized = (0..=MAX_ROUTING_KEY_IDS)
+            .map(|index| format!("key-{index}"))
+            .collect::<Vec<_>>();
+        for value in [
+            serde_json::json!({"stationKeyIds":["key-1"],"unexpected":true}),
+            serde_json::json!({"stationKeyIds":["key-1","key-1"]}),
+            serde_json::json!({"stationKeyIds":["bad id"]}),
+            serde_json::json!({"stationKeyIds":oversized}),
+        ] {
+            let error = ReorderLocalRoutingKeysInputDto::parse(value)
+                .expect_err("invalid routing key order");
+            assert_eq!(error.code, CommandErrorCode::InvalidInput);
+        }
+
+        let parsed = ReorderLocalRoutingKeysInputDto::parse(serde_json::json!({
+            "stationKeyIds":[]
+        }))
+        .expect("empty order is valid");
+        assert!(parsed.station_key_ids.is_empty());
+    }
 
     #[test]
     fn rejects_unknown_fields_invalid_ids_and_malformed_alias_text() {

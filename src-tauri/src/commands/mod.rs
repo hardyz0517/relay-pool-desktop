@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose, Engine as _};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -52,8 +52,8 @@ use crate::{
             StationKeyHealthDto,
         },
         routing_mutations::{
-            DeleteModelAliasInputDto, UpdateStationKeyCapabilitiesInputDto,
-            UpsertModelAliasInputDto,
+            DeleteModelAliasInputDto, ReorderLocalRoutingKeysInputDto,
+            UpdateStationKeyCapabilitiesInputDto, UpsertModelAliasInputDto,
         },
         settings::UpdateSettingsInputDto,
         station_collector_operations::{
@@ -754,24 +754,22 @@ pub async fn load_local_routing_workspace(
     .await
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReorderLocalRoutingKeysInput {
-    pub station_key_ids: Vec<String>,
-}
-
 #[tauri::command]
 pub async fn reorder_local_routing_keys(
     services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
-    input: ReorderLocalRoutingKeysInput,
-) -> Result<crate::services::proxy::routing_types::LocalRoutingWorkspace, error::CommandError> {
-    services
-        .routing
-        .reorder_local_routing_keys(input.station_key_ids)
-        .await
-        .map_err(command_application_error)?;
-    load_local_routing_workspace_v2(services.inner(), proxy.inner()).await
+    input: Value,
+) -> Result<LocalRoutingWorkspaceDto, error::CommandError> {
+    correlation::in_command_scope("reorder_local_routing_keys", async {
+        let input = ReorderLocalRoutingKeysInputDto::parse(input)?;
+        services
+            .routing
+            .reorder_local_routing_keys(input.station_key_ids)
+            .await
+            .map_err(public_command_application_error)?;
+        load_local_routing_workspace_v2(services.inner(), proxy.inner()).await
+    })
+    .await
 }
 
 async fn load_local_routing_workspace_v2(

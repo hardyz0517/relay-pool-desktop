@@ -16,17 +16,18 @@ pub const PROXY_WORKSPACE_READS_TYPE: TypeDescriptor = TypeDescriptor {
 
 #[cfg(test)]
 pub(crate) fn serialization_fixtures() -> Vec<serde_json::Value> {
-    let status = ProxyStatus {
-        running: true,
-        lifecycle: ProxyLifecycle::Running,
-        bind_addr: "127.0.0.1".into(),
-        port: 8787,
-        started_at: Some("1700000000000".into()),
-        last_error: None,
-        active_requests: 1,
-        request_count: 2,
-    };
-    let workspace = serde_json::json!({
+    let status = fixture_status();
+    let workspace = fixture_workspace();
+    vec![
+        serde_json::json!({"command":"get_proxy_status","input":{},"output":status}),
+        serde_json::json!({"command":"load_local_routing_workspace","input":{},"output":workspace}),
+    ]
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_workspace() -> serde_json::Value {
+    let status = fixture_status();
+    serde_json::json!({
         "proxyStatus": status.clone(),
         "settings": {
             "enabled": true,
@@ -49,11 +50,21 @@ pub(crate) fn serialization_fixtures() -> Vec<serde_json::Value> {
         "candidates": [],
         "latestDecision": null,
         "recentEvents": []
-    });
-    vec![
-        serde_json::json!({"command":"get_proxy_status","input":{},"output":status}),
-        serde_json::json!({"command":"load_local_routing_workspace","input":{},"output":workspace}),
-    ]
+    })
+}
+
+#[cfg(test)]
+fn fixture_status() -> ProxyStatus {
+    ProxyStatus {
+        running: true,
+        lifecycle: ProxyLifecycle::Running,
+        bind_addr: "127.0.0.1".into(),
+        port: 8787,
+        started_at: Some("1700000000000".into()),
+        last_error: None,
+        active_requests: 1,
+        request_count: 2,
+    }
 }
 
 #[cfg(test)]

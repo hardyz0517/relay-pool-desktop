@@ -69,6 +69,7 @@ import {
   markChangeEventRead,
   markChangeEventsRead,
   reorderKeyPool,
+  reorderLocalRoutingKeys,
   reorderStationKeys,
   reorderStations,
   resetModelBasePricesToBuiltins,
@@ -668,6 +669,15 @@ describe("generated settings/stations transport envelopes", () => {
     expect(transport.invoke.mock.calls).toEqual([
       ["get_proxy_status", { input: {} }],
       ["load_local_routing_workspace", { input: {} }],
+    ]);
+  });
+
+  it("sends local routing reorder through a generated envelope", async () => {
+    const input = { stationKeyIds: ["key-1", "key-2"] };
+    await reorderLocalRoutingKeys(input);
+
+    expect(transport.invoke.mock.calls).toEqual([
+      ["reorder_local_routing_keys", { input }],
     ]);
   });
 });

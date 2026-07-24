@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "bc58e46d8fdb6a983ba05e2a06031294fd1532f686c102611d1964679898ba43";
+    "9f4d1e2800808b110d3dd3c0e49d8a978c3790be64c4e5aaaeec5aa74f926667";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -553,6 +553,12 @@ fn command_contract(name: &str) -> CommandContract {
         "load_local_routing_workspace" => {
             migrated_read("EmptyInputDto", "LocalRoutingWorkspaceDto")
         }
+        "reorder_local_routing_keys" => migrated_mutation(
+            "ReorderLocalRoutingKeysInputDto",
+            "LocalRoutingWorkspaceDto",
+            "idempotent",
+            false,
+        ),
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         "get_local_access_key" => legacy_declared("unit", "String"),
         "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
@@ -997,6 +1003,10 @@ export function getProxyStatus(input: EmptyInputDto = {}): Promise<ProxyStatusDt
 
 export function loadLocalRoutingWorkspace(input: EmptyInputDto = {}): Promise<LocalRoutingWorkspaceDto> {
   return invokeCommand<LocalRoutingWorkspaceDto>("load_local_routing_workspace", { input });
+}
+
+export function reorderLocalRoutingKeys(input: ReorderLocalRoutingKeysInputDto): Promise<LocalRoutingWorkspaceDto> {
+  return invokeCommand<LocalRoutingWorkspaceDto>("reorder_local_routing_keys", { input });
 }
 
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
@@ -1475,6 +1485,17 @@ mod tests {
             assert!(!contract.transport_retry, "{name}");
             assert!(!contract.result_unknown, "{name}");
         }
+    }
+
+    #[test]
+    fn local_routing_reorder_has_a_closed_schema_and_idempotent_semantics() {
+        let contract = command_contract("reorder_local_routing_keys");
+        assert_eq!(contract.input, "ReorderLocalRoutingKeysInputDto");
+        assert_eq!(contract.output, "LocalRoutingWorkspaceDto");
+        assert_eq!(contract.mutation_kind, "idempotent");
+        assert_eq!(contract.runtime_validation, "rust_dto_pre_application");
+        assert!(!contract.transport_retry);
+        assert!(!contract.result_unknown);
     }
 
     #[test]

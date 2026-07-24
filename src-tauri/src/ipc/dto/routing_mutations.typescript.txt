@@ -1,3 +1,5 @@
+export type ReorderLocalRoutingKeysInputDto = { stationKeyIds: string[] };
+
 export type UpdateStationKeyCapabilitiesInputDto = {
   stationKeyId: string;
   supportsChatCompletions: boolean;
