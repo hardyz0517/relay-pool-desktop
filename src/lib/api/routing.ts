@@ -1,10 +1,12 @@
-import { invoke } from "@/lib/bridge/transport";
 import {
+  deleteModelAlias as deleteModelAliasGenerated,
   getStationKeyCapabilities as getStationKeyCapabilitiesGenerated,
   getStationKeyHealth as getStationKeyHealthGenerated,
   listModelAliases as listModelAliasesGenerated,
   listStationKeyHealth as listStationKeyHealthGenerated,
   simulateRoute as simulateRouteGenerated,
+  updateStationKeyCapabilities as updateStationKeyCapabilitiesGenerated,
+  upsertModelAlias as upsertModelAliasGenerated,
 } from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
@@ -30,7 +32,7 @@ export function getStationKeyCapabilities(stationKeyId: string) {
 }
 
 export function updateStationKeyCapabilities(input: UpdateStationKeyCapabilitiesInput) {
-  return invoke<StationKeyCapabilities>("update_station_key_capabilities", { input }).catch((error) => {
+  return updateStationKeyCapabilitiesGenerated(input).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const next = { ...input, updatedAt: new Date().toISOString() };
       memoryCapabilities.set(input.stationKeyId, next);
@@ -50,7 +52,7 @@ export function listModelAliases() {
 }
 
 export function upsertModelAlias(input: UpsertModelAliasInput) {
-  return invoke<ModelAlias>("upsert_model_alias", { input }).catch((error) => {
+  return upsertModelAliasGenerated(input).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const next: ModelAlias = {
@@ -70,7 +72,7 @@ export function upsertModelAlias(input: UpsertModelAliasInput) {
 }
 
 export function deleteModelAlias(id: string) {
-  return invoke<void>("delete_model_alias", { id }).catch((error) => {
+  return deleteModelAliasGenerated({ id }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       memoryAliases = memoryAliases.filter((alias) => alias.id !== id);
       return;

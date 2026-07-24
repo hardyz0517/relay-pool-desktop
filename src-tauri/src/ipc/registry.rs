@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "f9e0da52e0cd3f9f303aecea260710651e1149acca7d07f6e636200dc9720d98";
+    "d6f4a9970e124c30743ee076d1da30c09105d27be040867f50d19aeec19e2ebd";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -497,6 +497,21 @@ fn command_contract(name: &str) -> CommandContract {
             migrated_read("RoutingStationKeyIdInputDto", "StationKeyCapabilitiesDto")
         }
         "list_model_aliases" => migrated_read("EmptyInputDto", "Vec<ModelAliasDto>"),
+        "update_station_key_capabilities" => migrated_mutation(
+            "UpdateStationKeyCapabilitiesInputDto",
+            "StationKeyCapabilitiesDto",
+            "idempotent",
+            false,
+        ),
+        "upsert_model_alias" => migrated_mutation(
+            "UpsertModelAliasInputDto",
+            "ModelAliasDto",
+            "idempotent",
+            false,
+        ),
+        "delete_model_alias" => {
+            migrated_mutation("DeleteModelAliasInputDto", "unit", "idempotent", false)
+        }
         "list_station_key_health" => migrated_read("EmptyInputDto", "Vec<StationKeyHealthDto>"),
         "list_station_endpoint_health" => {
             migrated_read("EmptyInputDto", "Vec<StationEndpointHealthDto>")
@@ -677,6 +692,7 @@ fn pilot_serialization_fixture() -> String {
     commands.extend(super::dto::channel_monitor_operations::serialization_fixtures());
     commands.extend(super::dto::station_collector_operations::serialization_fixtures());
     commands.extend(super::dto::routing_health_reads::serialization_fixtures());
+    commands.extend(super::dto::routing_mutations::serialization_fixtures());
     commands.extend(super::dto::pricing_reads::serialization_fixtures());
     commands.extend(super::dto::proxy_workspace_reads::serialization_fixtures());
     let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
@@ -891,6 +907,18 @@ export function getStationKeyCapabilities(input: RoutingStationKeyIdInputDto): P
 
 export function listModelAliases(input: EmptyInputDto = {}): Promise<ModelAliasDto[]> {
   return invokeCommand<ModelAliasDto[]>("list_model_aliases", { input });
+}
+
+export function updateStationKeyCapabilities(input: UpdateStationKeyCapabilitiesInputDto): Promise<StationKeyCapabilitiesDto> {
+  return invokeCommand<StationKeyCapabilitiesDto>("update_station_key_capabilities", { input });
+}
+
+export function upsertModelAlias(input: UpsertModelAliasInputDto): Promise<ModelAliasDto> {
+  return invokeCommand<ModelAliasDto>("upsert_model_alias", { input });
+}
+
+export function deleteModelAlias(input: DeleteModelAliasInputDto): Promise<void> {
+  return invokeCommand<void>("delete_model_alias", { input });
 }
 
 export function listStationKeyHealth(input: EmptyInputDto = {}): Promise<StationKeyHealthDto[]> {
@@ -1299,6 +1327,34 @@ mod tests {
     }
 
     #[test]
+    fn routing_mutations_have_closed_schemas_and_idempotent_semantics() {
+        for (name, input, output) in [
+            (
+                "update_station_key_capabilities",
+                "UpdateStationKeyCapabilitiesInputDto",
+                "StationKeyCapabilitiesDto",
+            ),
+            (
+                "upsert_model_alias",
+                "UpsertModelAliasInputDto",
+                "ModelAliasDto",
+            ),
+            ("delete_model_alias", "DeleteModelAliasInputDto", "unit"),
+        ] {
+            let contract = command_contract(name);
+            assert_eq!(contract.input, input, "{name}");
+            assert_eq!(contract.output, output, "{name}");
+            assert_eq!(contract.mutation_kind, "idempotent", "{name}");
+            assert_eq!(
+                contract.runtime_validation, "rust_dto_pre_application",
+                "{name}"
+            );
+            assert!(!contract.transport_retry, "{name}");
+            assert!(!contract.result_unknown, "{name}");
+        }
+    }
+
+    #[test]
     fn pricing_reads_have_closed_schemas_and_read_semantics() {
         for (name, input, output) in [
             ("list_pricing_rules", "EmptyInputDto", "Vec<PricingRuleDto>"),
@@ -1464,6 +1520,16 @@ mod tests {
             "listStationEndpointHealth",
             "getStationKeyHealth",
             "simulateRoute",
+        ] {
+            assert!(
+                source.contains(&format!("function {function}(")),
+                "{function}"
+            );
+        }
+        for function in [
+            "updateStationKeyCapabilities",
+            "upsertModelAlias",
+            "deleteModelAlias",
         ] {
             assert!(
                 source.contains(&format!("function {function}(")),

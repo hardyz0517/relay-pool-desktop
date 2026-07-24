@@ -23,6 +23,7 @@ import {
   createStationKey,
   deleteChannelMonitor,
   deleteChannelMonitorTemplate,
+  deleteModelAlias,
   deleteStationKey,
   deleteStation,
   detectStationInfo,
@@ -84,10 +85,12 @@ import {
   updateStationKey,
   updateStationKeyGroupBinding,
   updateStationSession,
+  updateStationKeyCapabilities,
   updateSettings,
   updateStation,
   upsertBalanceSnapshot,
   upsertChangeEvent,
+  upsertModelAlias,
   upsertStationGroupBinding,
   type CreateStationInputDto,
   type UpdateSettingsInputDto,
@@ -534,6 +537,41 @@ describe("generated settings/stations transport envelopes", () => {
           },
         },
       ],
+    ]);
+  });
+
+  it("sends routing mutations through generated envelopes", async () => {
+    const capabilities = {
+      stationKeyId: "key-1",
+      supportsChatCompletions: true,
+      supportsResponses: true,
+      supportsEmbeddings: false,
+      supportsStream: true,
+      supportsTools: false,
+      supportsVision: false,
+      supportsReasoning: false,
+      modelAllowlist: ["fixture-model"],
+      modelBlocklist: [],
+      preferredModels: ["fixture-model"],
+      onlyUseAsBackup: false,
+      routingTags: ["fixture"],
+    };
+    const alias = {
+      id: null,
+      clientModel: "client-model",
+      upstreamModel: "upstream-model",
+      enabled: true,
+      note: null,
+    };
+
+    await updateStationKeyCapabilities(capabilities);
+    await upsertModelAlias(alias);
+    await deleteModelAlias({ id: "alias-1" });
+
+    expect(transport.invoke.mock.calls).toEqual([
+      ["update_station_key_capabilities", { input: capabilities }],
+      ["upsert_model_alias", { input: alias }],
+      ["delete_model_alias", { input: { id: "alias-1" } }],
     ]);
   });
 

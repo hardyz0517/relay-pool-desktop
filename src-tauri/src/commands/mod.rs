@@ -48,6 +48,10 @@ use crate::{
             RoutingStationKeyIdInputDto, StationEndpointHealthDto, StationKeyCapabilitiesDto,
             StationKeyHealthDto,
         },
+        routing_mutations::{
+            DeleteModelAliasInputDto, UpdateStationKeyCapabilitiesInputDto,
+            UpsertModelAliasInputDto,
+        },
         settings::UpdateSettingsInputDto,
         station_collector_operations::{
             CollectorRunResultDto, StationCollectorTaskInputDto, StationCollectorTaskTypeDto,
@@ -77,10 +81,7 @@ use crate::{
         credentials::PersistStationSessionInput,
         pricing::{ModelBasePrice, PricingRule, UpsertModelBasePriceInput, UpsertPricingRuleInput},
         proxy::{ProxyStatus, UpstreamApiFormat},
-        routing::{
-            ModelAlias, StationKeyCapabilities, UpdateStationKeyCapabilitiesInput,
-            UpsertModelAliasInput,
-        },
+        routing::StationKeyCapabilities,
         settings::AppSettings,
         station_keys::KeyPoolItem,
         stations::EndpointPingResult,
@@ -1242,13 +1243,17 @@ pub async fn get_station_key_capabilities(
 #[tauri::command]
 pub async fn update_station_key_capabilities(
     services: State<'_, AppServices>,
-    input: UpdateStationKeyCapabilitiesInput,
-) -> Result<StationKeyCapabilities, error::CommandError> {
-    services
-        .credentials
-        .update_station_key_capabilities(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<StationKeyCapabilitiesDto, error::CommandError> {
+    correlation::in_command_scope("update_station_key_capabilities", async {
+        let input = UpdateStationKeyCapabilitiesInputDto::parse(input)?.into_domain();
+        services
+            .credentials
+            .update_station_key_capabilities(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1270,25 +1275,33 @@ pub async fn list_model_aliases(
 #[tauri::command]
 pub async fn upsert_model_alias(
     services: State<'_, AppServices>,
-    input: UpsertModelAliasInput,
-) -> Result<ModelAlias, error::CommandError> {
-    services
-        .routing
-        .upsert_model_alias(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<ModelAliasDto, error::CommandError> {
+    correlation::in_command_scope("upsert_model_alias", async {
+        let input = UpsertModelAliasInputDto::parse(input)?.into_domain();
+        services
+            .routing
+            .upsert_model_alias(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn delete_model_alias(
     services: State<'_, AppServices>,
-    id: String,
+    input: Value,
 ) -> Result<(), error::CommandError> {
-    services
-        .routing
-        .delete_model_alias(id)
-        .await
-        .map_err(command_application_error)
+    correlation::in_command_scope("delete_model_alias", async {
+        let input = DeleteModelAliasInputDto::parse(input)?;
+        services
+            .routing
+            .delete_model_alias(input.id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]

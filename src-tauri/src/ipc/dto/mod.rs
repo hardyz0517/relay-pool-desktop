@@ -6,6 +6,7 @@ pub(crate) mod collector_facts;
 pub(crate) mod pricing_reads;
 pub(crate) mod proxy_workspace_reads;
 pub(crate) mod routing_health_reads;
+pub(crate) mod routing_mutations;
 pub(crate) mod settings;
 pub(crate) mod station_collector_operations;
 pub(crate) mod station_keys;
@@ -82,6 +83,7 @@ pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     pricing_reads::PRICING_READS_TYPE,
     proxy_workspace_reads::PROXY_WORKSPACE_READS_TYPE,
     routing_health_reads::ROUTING_HEALTH_READS_TYPE,
+    routing_mutations::ROUTING_MUTATIONS_TYPE,
     settings::SETTINGS_TYPE,
     station_collector_operations::STATION_COLLECTOR_OPERATIONS_TYPE,
     station_keys::STATION_KEY_TYPE,

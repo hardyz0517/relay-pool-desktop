@@ -60,22 +60,6 @@ export type UpdateStationSessionInputDto = {
   tokenExpiresAt: string | null;
 };
 
-export type UpdateStationKeyCapabilitiesInputDto = {
-  stationKeyId: string;
-  supportsChatCompletions: boolean;
-  supportsResponses: boolean;
-  supportsEmbeddings: boolean;
-  supportsStream: boolean;
-  supportsTools: boolean;
-  supportsVision: boolean;
-  supportsReasoning: boolean;
-  modelAllowlist: string[];
-  modelBlocklist: string[];
-  preferredModels: string[];
-  onlyUseAsBackup: boolean;
-  routingTags: string[];
-};
-
 export type SaveStationKeyGroupSelectionDto =
   | { kind: "keep"; groupBindingId?: null; groupIdHash?: null; groupName?: null }
   | { kind: "clear"; groupBindingId?: null; groupIdHash?: null; groupName?: null }
