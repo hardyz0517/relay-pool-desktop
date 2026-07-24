@@ -346,6 +346,33 @@ fn command_contract(name: &str) -> CommandContract {
             "idempotent",
             false,
         ),
+        "list_request_logs" => migrated_read("EmptyInputDto", "Vec<RequestLogDto>"),
+        "clear_request_logs" => migrated_mutation("EmptyInputDto", "unit", "idempotent", false),
+        "list_change_events" => migrated_read("EmptyInputDto", "Vec<ChangeEventDto>"),
+        "clear_change_events" => migrated_mutation("EmptyInputDto", "unit", "idempotent", false),
+        "list_change_events_for_station" => {
+            migrated_read("ChangeLogStationIdInputDto", "Vec<ChangeEventDto>")
+        }
+        "upsert_change_event" => migrated_mutation(
+            "UpsertChangeEventInputDto",
+            "ChangeEventDto",
+            "idempotent",
+            false,
+        ),
+        "mark_change_event_read" | "dismiss_change_event" | "resolve_change_event" => {
+            migrated_mutation(
+                "ChangeEventIdInputDto",
+                "ChangeEventDto",
+                "idempotent",
+                false,
+            )
+        }
+        "mark_change_events_read" => migrated_mutation(
+            "ChangeEventIdsInputDto",
+            "Vec<ChangeEventDto>",
+            "idempotent",
+            false,
+        ),
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         "get_local_access_key" => legacy_declared("unit", "String"),
         "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
@@ -499,6 +526,7 @@ fn pilot_serialization_fixture() -> String {
         serde_json::json!({"command": "reorder_stations", "input": reorder_stations, "output": [station]}),
     ];
     commands.extend(super::dto::station_keys::serialization_fixtures());
+    commands.extend(super::dto::change_logs::serialization_fixtures());
     let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
     format!(
         "{}\n",
@@ -534,6 +562,50 @@ fn render_typescript(contract_hash: &str) -> String {
         .replace(
             r#"return invokeCommand<StationDto>("create_station", { input });"#,
             r#"return invokeNonIdempotent<StationDto>("create_station", { input });"#,
+        )
+        .replace(
+            "export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>",
+            r#"export function listRequestLogs(input: EmptyInputDto = {}): Promise<RequestLogDto[]> {
+  return invokeCommand<RequestLogDto[]>("list_request_logs", { input });
+}
+
+export function clearRequestLogs(input: EmptyInputDto = {}): Promise<void> {
+  return invokeCommand<void>("clear_request_logs", { input });
+}
+
+export function listChangeEvents(input: EmptyInputDto = {}): Promise<ChangeEventDto[]> {
+  return invokeCommand<ChangeEventDto[]>("list_change_events", { input });
+}
+
+export function clearChangeEvents(input: EmptyInputDto = {}): Promise<void> {
+  return invokeCommand<void>("clear_change_events", { input });
+}
+
+export function listChangeEventsForStation(input: ChangeLogStationIdInputDto): Promise<ChangeEventDto[]> {
+  return invokeCommand<ChangeEventDto[]>("list_change_events_for_station", { input });
+}
+
+export function upsertChangeEvent(input: UpsertChangeEventInputDto): Promise<ChangeEventDto> {
+  return invokeCommand<ChangeEventDto>("upsert_change_event", { input });
+}
+
+export function markChangeEventRead(input: ChangeEventIdInputDto): Promise<ChangeEventDto> {
+  return invokeCommand<ChangeEventDto>("mark_change_event_read", { input });
+}
+
+export function markChangeEventsRead(input: ChangeEventIdsInputDto): Promise<ChangeEventDto[]> {
+  return invokeCommand<ChangeEventDto[]>("mark_change_events_read", { input });
+}
+
+export function dismissChangeEvent(input: ChangeEventIdInputDto): Promise<ChangeEventDto> {
+  return invokeCommand<ChangeEventDto>("dismiss_change_event", { input });
+}
+
+export function resolveChangeEvent(input: ChangeEventIdInputDto): Promise<ChangeEventDto> {
+  return invokeCommand<ChangeEventDto>("resolve_change_event", { input });
+}
+
+export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
         )
 }
 
@@ -678,6 +750,36 @@ mod tests {
         }
         assert_eq!(
             command_contract("scan_remote_station_keys").mutation_kind,
+            "idempotent"
+        );
+    }
+
+    #[test]
+    fn changes_logs_commands_have_closed_schemas_and_frozen_mutation_semantics() {
+        for name in [
+            "clear_change_events",
+            "clear_request_logs",
+            "dismiss_change_event",
+            "list_change_events",
+            "list_change_events_for_station",
+            "list_request_logs",
+            "mark_change_event_read",
+            "mark_change_events_read",
+            "resolve_change_event",
+            "upsert_change_event",
+        ] {
+            let contract = command_contract(name);
+            assert!(!contract.input.starts_with("legacy_"), "{name}");
+            assert!(!contract.output.starts_with("legacy_"), "{name}");
+            assert_eq!(
+                contract.runtime_validation, "rust_dto_pre_application",
+                "{name}"
+            );
+            assert!(!contract.transport_retry, "{name}");
+            assert!(!contract.result_unknown, "{name}");
+        }
+        assert_eq!(
+            command_contract("upsert_change_event").mutation_kind,
             "idempotent"
         );
     }

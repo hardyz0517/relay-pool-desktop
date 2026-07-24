@@ -9,6 +9,8 @@ vi.mock("@/lib/bridge/transport", () => transport);
 
 import {
   bindRemoteStationKey,
+  clearChangeEvents,
+  clearRequestLogs,
   clearStationCredentials,
   createLocalStationKeyFromRemote,
   createRemoteStationKey,
@@ -16,16 +18,23 @@ import {
   createStationKey,
   deleteStationKey,
   deleteStation,
+  dismissChangeEvent,
   getRemoteKeyCapability,
   getSettings,
   getStationCredentials,
   listKeyPoolItems,
+  listChangeEvents,
+  listChangeEventsForStation,
   listRemoteStationKeys,
+  listRequestLogs,
   listStationKeys,
   listStations,
+  markChangeEventRead,
+  markChangeEventsRead,
   reorderKeyPool,
   reorderStationKeys,
   reorderStations,
+  resolveChangeEvent,
   saveStationKeyWithDefaults,
   scanRemoteStationKeys,
   unbindRemoteStationKey,
@@ -35,6 +44,7 @@ import {
   updateStationSession,
   updateSettings,
   updateStation,
+  upsertChangeEvent,
   type CreateStationInputDto,
   type UpdateSettingsInputDto,
 } from "./generated";
@@ -198,6 +208,50 @@ describe("generated settings/stations transport envelopes", () => {
       ["save_station_key_with_defaults", { input: saveInput }],
       ["create_remote_station_key", { input: createRemoteInput }],
       ["create_local_station_key_from_remote", { input: { remoteKeyId, stationId } }],
+    ]);
+  });
+
+  it("sends every changes/logs command through generated envelopes", async () => {
+    const input = {
+      severity: "warning" as const,
+      eventType: "fixture.changed",
+      title: "Fixture change",
+      message: "Fixture message",
+      objectType: "station",
+      objectId: "station-1",
+      stationId: "station-1",
+      stationKeyId: null,
+      pricingRuleId: null,
+      requestLogId: null,
+      oldValueJson: null,
+      newValueJson: "{}",
+      impactJson: null,
+      dedupeKey: "fixture-change-1",
+      source: "fixture",
+    };
+
+    await listRequestLogs();
+    await clearRequestLogs();
+    await listChangeEvents();
+    await clearChangeEvents();
+    await listChangeEventsForStation({ stationId: "station-1" });
+    await upsertChangeEvent(input);
+    await markChangeEventRead({ id: "change-1" });
+    await markChangeEventsRead({ ids: ["change-1", "change-2"] });
+    await dismissChangeEvent({ id: "change-1" });
+    await resolveChangeEvent({ id: "change-1" });
+
+    expect(transport.invoke.mock.calls.slice(-10)).toEqual([
+      ["list_request_logs", { input: {} }],
+      ["clear_request_logs", { input: {} }],
+      ["list_change_events", { input: {} }],
+      ["clear_change_events", { input: {} }],
+      ["list_change_events_for_station", { input: { stationId: "station-1" } }],
+      ["upsert_change_event", { input }],
+      ["mark_change_event_read", { input: { id: "change-1" } }],
+      ["mark_change_events_read", { input: { ids: ["change-1", "change-2"] } }],
+      ["dismiss_change_event", { input: { id: "change-1" } }],
+      ["resolve_change_event", { input: { id: "change-1" } }],
     ]);
   });
 });

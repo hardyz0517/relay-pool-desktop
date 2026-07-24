@@ -1,4 +1,8 @@
 import { invoke } from "@/lib/bridge/transport";
+import {
+  clearRequestLogs as ipcClearRequestLogs,
+  listRequestLogs as ipcListRequestLogs,
+} from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 
@@ -96,7 +100,7 @@ export function restartLocalProxy() {
 }
 
 export function listRequestLogs() {
-  return invoke<RequestLog[]>("list_request_logs").catch((error) => {
+  return ipcListRequestLogs().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return memoryRequestLogs;
     }
@@ -105,7 +109,7 @@ export function listRequestLogs() {
 }
 
 export function clearRequestLogs() {
-  return invoke<void>("clear_request_logs").catch((error) => {
+  return ipcClearRequestLogs().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       memoryRequestLogs = [];
       return;

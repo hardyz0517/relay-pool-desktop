@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "d58235e49a1b6bade476f129c601d9221d29be51c92e2515bc5239fe0efc0733",
+  "contract_hash": "db3fd91e19ec135a5f44b83ed16e707803a0b4c249c43fb07f299ddee07e4bf1",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -73,24 +73,24 @@
     {
       "name": "clear_change_events",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "clear_request_logs",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "clear_station_credentials",
@@ -315,13 +315,13 @@
     {
       "name": "dismiss_change_event",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "1641929dd9fa6c2f24b91288c5130098496d123f9d163fa52211035920f72fdf",
+      "output_schema_hash": "f0bbbeae937cfb6c469a512ccda6d218e391aef0bc089cd8c0286d02a92dbecd",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "duplicate_channel_monitor_template",
@@ -535,24 +535,24 @@
     {
       "name": "list_change_events",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "e01bea0b1328ae8adc4cce77f001f2880537a61060ea975a823d2dd9b8523459",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "list_change_events_for_station",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "7d34d31ebc4dc0c02505f0f2bf3942fb3b929775e28da9552c280c1490217055",
+      "output_schema_hash": "e01bea0b1328ae8adc4cce77f001f2880537a61060ea975a823d2dd9b8523459",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "list_channel_monitor_runs",
@@ -711,13 +711,13 @@
     {
       "name": "list_request_logs",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "e4fb1d7c07cdbeddc26823d38e2345caff8fe898a75261cf2fcf792f9daf515c",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "list_station_endpoint_health",
@@ -832,24 +832,24 @@
     {
       "name": "mark_change_event_read",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "1641929dd9fa6c2f24b91288c5130098496d123f9d163fa52211035920f72fdf",
+      "output_schema_hash": "f0bbbeae937cfb6c469a512ccda6d218e391aef0bc089cd8c0286d02a92dbecd",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "mark_change_events_read",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "b59a5b2383bcf5e2f43eeff94b25c6249b4fd18211053f9244eeff627d315942",
+      "output_schema_hash": "e01bea0b1328ae8adc4cce77f001f2880537a61060ea975a823d2dd9b8523459",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "open_data_store_backup_dir",
@@ -986,13 +986,13 @@
     {
       "name": "resolve_change_event",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "1641929dd9fa6c2f24b91288c5130098496d123f9d163fa52211035920f72fdf",
+      "output_schema_hash": "f0bbbeae937cfb6c469a512ccda6d218e391aef0bc089cd8c0286d02a92dbecd",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "resolve_station_key_pricing_context",
@@ -1272,13 +1272,13 @@
     {
       "name": "upsert_change_event",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "ab8d8e77f35563ae01d7d192cb0835264770630ca1645cc26e756341b48b76fe",
+      "output_schema_hash": "f0bbbeae937cfb6c469a512ccda6d218e391aef0bc089cd8c0286d02a92dbecd",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "upsert_model_alias",
@@ -1335,6 +1335,6 @@
   ],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "0653d6f59c9542125d4b5f9a1ec91bc222e664b0a944ce59d8fc435bde83f15b"
+    "serialization_fixture_hash": "abcc97370d5e1bd1cee145ad42d6709ad8b48f51c0f4db27050649e0a6b6b651"
   }
 }

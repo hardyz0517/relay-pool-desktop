@@ -18,6 +18,10 @@ pub(crate) mod error;
 use crate::{
     application::{app_services::AppServices, error::ApplicationError, pagination::PageLimit},
     ipc::dto::{
+        change_logs::{
+            ChangeEventDto, ChangeEventIdInputDto, ChangeEventIdsInputDto, RequestLogDto,
+            StationIdInputDto as ChangeLogStationIdInputDto, UpsertChangeEventInputDto,
+        },
         settings::UpdateSettingsInputDto,
         station_keys::{
             BindRemoteStationKeyInputDto, CreateLocalStationKeyFromRemoteResultDto,
@@ -39,7 +43,6 @@ use crate::{
     ipc::runtime_contract::{current_runtime_contract, RuntimeContractInfo},
     models::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
-        change_events::{ChangeEvent, UpsertChangeEventInput},
         channel_monitors::{
             ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
             CreateChannelMonitorInput, CreateChannelMonitorTemplateInput,
@@ -55,7 +58,7 @@ use crate::{
             BalanceSnapshot, ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
             UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
         },
-        proxy::{ProxyStatus, RequestLog, UpstreamApiFormat},
+        proxy::{ProxyStatus, UpstreamApiFormat},
         routing::{
             ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyCapabilities,
             StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
@@ -880,23 +883,33 @@ pub async fn restart_local_proxy(
 #[tauri::command]
 pub async fn list_request_logs(
     services: State<'_, AppServices>,
-) -> Result<Vec<RequestLog>, error::CommandError> {
-    services
-        .request_logs
-        .list_recent(PageLimit::new(500).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<RequestLogDto>, error::CommandError> {
+    correlation::in_command_scope("list_request_logs", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .request_logs
+            .list_recent(PageLimit::new(500).expect("bounded limit"))
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn clear_request_logs(
     services: State<'_, AppServices>,
+    input: Value,
 ) -> Result<(), error::CommandError> {
-    services
-        .request_logs
-        .clear()
-        .await
-        .map_err(command_application_error)
+    correlation::in_command_scope("clear_request_logs", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .request_logs
+            .clear()
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1841,98 +1854,132 @@ pub async fn list_collector_runs(
 #[tauri::command]
 pub async fn list_change_events(
     services: State<'_, AppServices>,
-) -> Result<Vec<ChangeEvent>, error::CommandError> {
-    services
-        .changes
-        .list(None, PageLimit::new(200).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<ChangeEventDto>, error::CommandError> {
+    correlation::in_command_scope("list_change_events", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .changes
+            .list(None, PageLimit::new(200).expect("bounded limit"))
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn clear_change_events(
     services: State<'_, AppServices>,
+    input: Value,
 ) -> Result<(), error::CommandError> {
-    services
-        .changes
-        .clear()
-        .await
-        .map_err(command_application_error)
+    correlation::in_command_scope("clear_change_events", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .changes
+            .clear()
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_change_events_for_station(
     services: State<'_, AppServices>,
-    station_id: String,
-) -> Result<Vec<ChangeEvent>, error::CommandError> {
-    services
-        .changes
-        .list(
-            Some(&station_id),
-            PageLimit::new(200).expect("bounded limit"),
-        )
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<ChangeEventDto>, error::CommandError> {
+    correlation::in_command_scope("list_change_events_for_station", async {
+        let input = ChangeLogStationIdInputDto::parse(input)?;
+        services
+            .changes
+            .list(
+                Some(&input.station_id),
+                PageLimit::new(200).expect("bounded limit"),
+            )
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn upsert_change_event(
     services: State<'_, AppServices>,
-    input: UpsertChangeEventInput,
-) -> Result<ChangeEvent, error::CommandError> {
-    services
-        .changes
-        .upsert(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<ChangeEventDto, error::CommandError> {
+    correlation::in_command_scope("upsert_change_event", async {
+        let input = UpsertChangeEventInputDto::parse(input)?.into_domain();
+        services
+            .changes
+            .upsert(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn mark_change_event_read(
     services: State<'_, AppServices>,
-    id: String,
-) -> Result<ChangeEvent, error::CommandError> {
-    services
-        .changes
-        .mark_read(id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<ChangeEventDto, error::CommandError> {
+    correlation::in_command_scope("mark_change_event_read", async {
+        let input = ChangeEventIdInputDto::parse(input)?;
+        services
+            .changes
+            .mark_read(input.id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn mark_change_events_read(
     services: State<'_, AppServices>,
-    ids: Vec<String>,
-) -> Result<Vec<ChangeEvent>, error::CommandError> {
-    services
-        .changes
-        .mark_many_read(ids)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<ChangeEventDto>, error::CommandError> {
+    correlation::in_command_scope("mark_change_events_read", async {
+        let input = ChangeEventIdsInputDto::parse(input)?;
+        services
+            .changes
+            .mark_many_read(input.ids)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn dismiss_change_event(
     services: State<'_, AppServices>,
-    id: String,
-) -> Result<ChangeEvent, error::CommandError> {
-    services
-        .changes
-        .dismiss(id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<ChangeEventDto, error::CommandError> {
+    correlation::in_command_scope("dismiss_change_event", async {
+        let input = ChangeEventIdInputDto::parse(input)?;
+        services
+            .changes
+            .dismiss(input.id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn resolve_change_event(
     services: State<'_, AppServices>,
-    id: String,
-) -> Result<ChangeEvent, error::CommandError> {
-    services
-        .changes
-        .resolve(id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<ChangeEventDto, error::CommandError> {
+    correlation::in_command_scope("resolve_change_event", async {
+        let input = ChangeEventIdInputDto::parse(input)?;
+        services
+            .changes
+            .resolve(input.id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]

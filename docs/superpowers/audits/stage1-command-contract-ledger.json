@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "source_revision": "0c979b18dec89749178d8265cd2c650177f3ed94",
-  "generated_at_date": "2026-07-23",
-  "source_snapshot": "writable isolated fork at the S1-T5-station-keys-ordinary child-shard qualification checkpoint, based on 0c979b1",
+  "source_revision": "b572dc65304800a14ed5c07a31f46dbe9cc2dc45",
+  "generated_at_date": "2026-07-24",
+  "source_snapshot": "formal codex/architecture-scale-upgrade worktree at the S1-T5-changes-logs-ordinary qualification checkpoint, based on b572dc6",
   "source_authority": {
     "compiled_registry": "src-tauri/src/ipc/registry.rs",
     "rust_signatures": "src-tauri/src/commands/mod.rs",
@@ -22,14 +22,14 @@
   ],
   "classification_notes": [
     "Runtime/bootstrap -> settings_stations; Channel connectivity -> station_keys; update/data-directory -> updater_data_recovery.",
-    "S1-T5 settings/stations plus station-key ordinary child shards fully migrate 27 commands; five earlier pilot schemas remain partial and 88 commands remain legacy placeholders.",
+    "S1-T5 settings/stations, station-key ordinary, and changes/logs child shards fully migrate 37 commands; five earlier pilot schemas remain partial and 78 commands remain legacy placeholders.",
     "test_station_key_connectivity remains the single Channel command and is intentionally partial/legacy until Task 6.",
     "No command proves an application-owned operation key; idempotent_with_key count is zero.",
     "scan_remote_station_keys is an idempotent mutation because it atomically replaces the local remote-key snapshot and matching key metadata; transport retry remains disabled.",
     "create_station is NonIdempotent: transport retry is disabled and ambiguous post-dispatch rejection becomes typed ResultUnknownError.",
     "record_capture_event is intentionally capture-only, not missing from ACL; it must not be granted to main-window.",
     "Empty frontend_callers means no literal caller in requested API/query directories.",
-    "Audit artifact only: the station-key ordinary child shard may close while the Stage 1 Gate remains blocked on the Channel command, later Task 5 groups, and Task 6."
+    "Audit artifact only: the changes/logs child shard may close while the Stage 1 Gate remains blocked on later Task 5 groups and Task 6."
   ],
   "statistics": {
     "commands": 120,
@@ -51,13 +51,13 @@
       "read": 48
     },
     "explicit_pilot_schema_partial": 5,
-    "legacy_unmigrated_placeholder": 88,
+    "legacy_unmigrated_placeholder": 78,
     "acl_allowed_main_window": 119,
     "commands_with_frontend_callers": 112,
     "commands_without_frontend_callers": 8,
     "public_command_error": 117,
     "public_non_command_error": 3,
-    "fully_migrated": 27,
+    "fully_migrated": 37,
     "acl_capture_only": 1,
     "acl_unallowlisted": 0
   },
@@ -1552,9 +1552,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value"
       ],
-      "rust_output": "()",
+      "rust_output": "unit",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1564,27 +1565,27 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/changeEvents.ts",
-          "line": 30
+          "line": 38
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "transport retry disabled; application retry is allowed only for the same validated idempotent intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "closed generated input schema",
         "reject unknown top-level fields before application use case",
-        "accept only empty arguments"
+        "accept only an empty input object"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 changes_logs shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps validation and application dispatch",
+      "migration_status": "fully_migrated_generated_binding",
+      "delete_owner": "Task 9 deletes the preserved browser-preview wrapper after domain backend cutover",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "unit",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:144",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1742"
+        "registry": "src-tauri/src/ipc/registry.rs:352",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1871"
       }
     },
     {
@@ -1593,9 +1594,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value"
       ],
-      "rust_output": "()",
+      "rust_output": "unit",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1605,27 +1607,27 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/proxy.ts",
-          "line": 108
+          "line": 111
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "transport retry disabled; application retry is allowed only for the same validated idempotent intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "closed generated input schema",
         "reject unknown top-level fields before application use case",
-        "accept only empty arguments"
+        "accept only an empty input object"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 changes_logs shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps validation and application dispatch",
+      "migration_status": "fully_migrated_generated_binding",
+      "delete_owner": "Task 9 deletes the preserved browser-preview wrapper after domain backend cutover",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "unit",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:84",
-        "rust_signature": "src-tauri/src/commands/mod.rs:853"
+        "registry": "src-tauri/src/ipc/registry.rs:350",
+        "rust_signature": "src-tauri/src/commands/mod.rs:900"
       }
     },
     {
@@ -1635,9 +1637,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "id: String"
+        "input: Value"
       ],
-      "rust_output": "ChangeEvent",
+      "rust_output": "ChangeEventDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1647,27 +1649,27 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/changeEvents.ts",
-          "line": 80
+          "line": 88
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "transport retry disabled; application retry is allowed only for the same validated idempotent intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "closed generated input schema",
         "reject unknown top-level fields before application use case",
-        "bound non-empty ID(s) with frozen grammar"
+        "enforce bounded IDs, arrays, enums, text, and JSON before application use"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 changes_logs shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps validation and application dispatch",
+      "migration_status": "fully_migrated_generated_binding",
+      "delete_owner": "Task 9 deletes the preserved browser-preview wrapper after domain backend cutover",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "ChangeEventIdInputDto",
+        "output": "ChangeEventDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:149",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1804"
+        "registry": "src-tauri/src/ipc/registry.rs:362",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1954"
       }
     },
     {
@@ -1676,9 +1678,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value"
       ],
-      "rust_output": "Vec<ChangeEvent>",
+      "rust_output": "Vec<ChangeEventDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1688,27 +1691,27 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/changeEvents.ts",
-          "line": 21
+          "line": 29
         }
       ],
       "mutation_kind": "read",
-      "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
+      "retry_policy": "transport retry disabled; application retry is allowed only for the same validated idempotent intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "closed generated input schema",
         "reject unknown top-level fields before application use case",
-        "accept only empty arguments"
+        "accept only an empty input object"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 changes_logs shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps validation and application dispatch",
+      "migration_status": "fully_migrated_generated_binding",
+      "delete_owner": "Task 9 deletes the preserved browser-preview wrapper after domain backend cutover",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "Vec<ChangeEventDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:143",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1731"
+        "registry": "src-tauri/src/ipc/registry.rs:351",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1855"
       }
     },
     {
@@ -1718,9 +1721,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "Vec<ChangeEvent>",
+      "rust_output": "Vec<ChangeEventDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1730,27 +1733,27 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/changeEvents.ts",
-          "line": 39
+          "line": 47
         }
       ],
       "mutation_kind": "read",
-      "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
+      "retry_policy": "transport retry disabled; application retry is allowed only for the same validated idempotent intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "closed generated input schema",
         "reject unknown top-level fields before application use case",
-        "bound non-empty ID(s) with frozen grammar"
+        "enforce bounded IDs, arrays, enums, text, and JSON before application use"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 changes_logs shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps validation and application dispatch",
+      "migration_status": "fully_migrated_generated_binding",
+      "delete_owner": "Task 9 deletes the preserved browser-preview wrapper after domain backend cutover",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "ChangeLogStationIdInputDto",
+        "output": "Vec<ChangeEventDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:145",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1753"
+        "registry": "src-tauri/src/ipc/registry.rs:353",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1887"
       }
     },
     {
@@ -1759,9 +1762,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value"
       ],
-      "rust_output": "Vec<RequestLog>",
+      "rust_output": "Vec<RequestLogDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1771,27 +1775,27 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/proxy.ts",
-          "line": 99
+          "line": 102
         }
       ],
       "mutation_kind": "read",
-      "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
+      "retry_policy": "transport retry disabled; application retry is allowed only for the same validated idempotent intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "closed generated input schema",
         "reject unknown top-level fields before application use case",
-        "accept only empty arguments"
+        "accept only an empty input object"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 changes_logs shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps validation and application dispatch",
+      "migration_status": "fully_migrated_generated_binding",
+      "delete_owner": "Task 9 deletes the preserved browser-preview wrapper after domain backend cutover",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "Vec<RequestLogDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:83",
-        "rust_signature": "src-tauri/src/commands/mod.rs:842"
+        "registry": "src-tauri/src/ipc/registry.rs:349",
+        "rust_signature": "src-tauri/src/commands/mod.rs:884"
       }
     },
     {
@@ -1801,9 +1805,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "id: String"
+        "input: Value"
       ],
-      "rust_output": "ChangeEvent",
+      "rust_output": "ChangeEventDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1813,27 +1817,27 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/changeEvents.ts",
-          "line": 57
+          "line": 65
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "transport retry disabled; application retry is allowed only for the same validated idempotent intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "closed generated input schema",
         "reject unknown top-level fields before application use case",
-        "bound non-empty ID(s) with frozen grammar"
+        "enforce bounded IDs, arrays, enums, text, and JSON before application use"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 changes_logs shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps validation and application dispatch",
+      "migration_status": "fully_migrated_generated_binding",
+      "delete_owner": "Task 9 deletes the preserved browser-preview wrapper after domain backend cutover",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "ChangeEventIdInputDto",
+        "output": "ChangeEventDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:147",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1780"
+        "registry": "src-tauri/src/ipc/registry.rs:362",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1922"
       }
     },
     {
@@ -1843,9 +1847,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "ids: Vec<String>"
+        "input: Value"
       ],
-      "rust_output": "Vec<ChangeEvent>",
+      "rust_output": "Vec<ChangeEventDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1855,27 +1859,27 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/changeEvents.ts",
-          "line": 71
+          "line": 74
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "transport retry disabled; application retry is allowed only for the same validated idempotent intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "closed generated input schema",
         "reject unknown top-level fields before application use case",
-        "cap collection length; validate every element and duplicate policy"
+        "enforce bounded IDs, arrays, enums, text, and JSON before application use"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 changes_logs shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps validation and application dispatch",
+      "migration_status": "fully_migrated_generated_binding",
+      "delete_owner": "Task 9 deletes the preserved browser-preview wrapper after domain backend cutover",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "ChangeEventIdsInputDto",
+        "output": "Vec<ChangeEventDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:148",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1792"
+        "registry": "src-tauri/src/ipc/registry.rs:370",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1938"
       }
     },
     {
@@ -1885,9 +1889,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "id: String"
+        "input: Value"
       ],
-      "rust_output": "ChangeEvent",
+      "rust_output": "ChangeEventDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1897,27 +1901,27 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/changeEvents.ts",
-          "line": 89
+          "line": 97
         }
       ],
-      "mutation_kind": "read",
-      "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
+      "mutation_kind": "idempotent",
+      "retry_policy": "transport retry disabled; application retry is allowed only for the same validated idempotent intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "closed generated input schema",
         "reject unknown top-level fields before application use case",
-        "bound non-empty ID(s) with frozen grammar"
+        "enforce bounded IDs, arrays, enums, text, and JSON before application use"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 changes_logs shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps validation and application dispatch",
+      "migration_status": "fully_migrated_generated_binding",
+      "delete_owner": "Task 9 deletes the preserved browser-preview wrapper after domain backend cutover",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "ChangeEventIdInputDto",
+        "output": "ChangeEventDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:150",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1816"
+        "registry": "src-tauri/src/ipc/registry.rs:362",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1970"
       }
     },
     {
@@ -1927,9 +1931,9 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "input: UpsertChangeEventInput"
+        "input: Value"
       ],
-      "rust_output": "ChangeEvent",
+      "rust_output": "ChangeEventDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1939,27 +1943,27 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/changeEvents.ts",
-          "line": 48
+          "line": 56
         }
       ],
       "mutation_kind": "idempotent",
-      "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
+      "retry_policy": "transport retry disabled; application retry is allowed only for the same validated idempotent intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "closed generated input schema",
         "reject unknown top-level fields before application use case",
-        "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
+        "enforce bounded IDs, arrays, enums, text, and JSON before application use"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 changes_logs shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: correlation::in_command_scope wraps validation and application dispatch",
+      "migration_status": "fully_migrated_generated_binding",
+      "delete_owner": "Task 9 deletes the preserved browser-preview wrapper after domain backend cutover",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "UpsertChangeEventInputDto",
+        "output": "ChangeEventDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:146",
-        "rust_signature": "src-tauri/src/commands/mod.rs:1768"
+        "registry": "src-tauri/src/ipc/registry.rs:356",
+        "rust_signature": "src-tauri/src/commands/mod.rs:1906"
       }
     },
     {

@@ -1,4 +1,13 @@
-import { invoke } from "@/lib/bridge/transport";
+import {
+  clearChangeEvents as ipcClearChangeEvents,
+  dismissChangeEvent as ipcDismissChangeEvent,
+  listChangeEvents as ipcListChangeEvents,
+  listChangeEventsForStation as ipcListChangeEventsForStation,
+  markChangeEventRead as ipcMarkChangeEventRead,
+  markChangeEventsRead as ipcMarkChangeEventsRead,
+  resolveChangeEvent as ipcResolveChangeEvent,
+  upsertChangeEvent as ipcUpsertChangeEvent,
+} from "@/lib/bridge/generated";
 import {
   clearMockChangeEvents,
   listMockChangeEvents,
@@ -18,7 +27,7 @@ export function notifyChangeEventsUpdated() {
 }
 
 export function listChangeEvents() {
-  return invoke<ChangeEvent[]>("list_change_events").catch((error) => {
+  return ipcListChangeEvents().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return listMockChangeEvents();
     }
@@ -27,7 +36,7 @@ export function listChangeEvents() {
 }
 
 export function clearChangeEvents() {
-  return invoke<void>("clear_change_events").catch((error) => {
+  return ipcClearChangeEvents().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return clearMockChangeEvents();
     }
@@ -36,7 +45,7 @@ export function clearChangeEvents() {
 }
 
 export function listChangeEventsForStation(stationId: string) {
-  return invoke<ChangeEvent[]>("list_change_events_for_station", { stationId }).catch((error) => {
+  return ipcListChangeEventsForStation({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return listMockChangeEvents().then((events) => events.filter((event) => event.stationId === stationId));
     }
@@ -45,7 +54,7 @@ export function listChangeEventsForStation(stationId: string) {
 }
 
 export function upsertChangeEvent(input: UpsertChangeEventInput) {
-  return invoke<ChangeEvent>("upsert_change_event", { input }).catch((error) => {
+  return ipcUpsertChangeEvent(input).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return upsertMockChangeEvent(input);
     }
@@ -54,7 +63,7 @@ export function upsertChangeEvent(input: UpsertChangeEventInput) {
 }
 
 export function markChangeEventRead(id: string) {
-  return invoke<ChangeEvent>("mark_change_event_read", { id }).catch((error) => {
+  return ipcMarkChangeEventRead({ id }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return updateMockChangeEventStatus(id, "read");
     }
@@ -68,7 +77,7 @@ export function markChangeEventsRead(ids: string[]) {
     return Promise.resolve([]);
   }
 
-  return invoke<ChangeEvent[]>("mark_change_events_read", { ids: uniqueIds }).catch((error) => {
+  return ipcMarkChangeEventsRead({ ids: uniqueIds }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return Promise.all(uniqueIds.map((id) => updateMockChangeEventStatus(id, "read")));
     }
@@ -77,7 +86,7 @@ export function markChangeEventsRead(ids: string[]) {
 }
 
 export function dismissChangeEvent(id: string) {
-  return invoke<ChangeEvent>("dismiss_change_event", { id }).catch((error) => {
+  return ipcDismissChangeEvent({ id }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return updateMockChangeEventStatus(id, "dismissed");
     }
@@ -86,7 +95,7 @@ export function dismissChangeEvent(id: string) {
 }
 
 export function resolveChangeEvent(id: string) {
-  return invoke<ChangeEvent>("resolve_change_event", { id }).catch((error) => {
+  return ipcResolveChangeEvent({ id }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return updateMockChangeEventStatus(id, "resolved");
     }
