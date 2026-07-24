@@ -1,4 +1,5 @@
 pub(crate) mod change_logs;
+pub(crate) mod channel_monitor_mutations;
 pub(crate) mod channel_monitor_reads;
 pub(crate) mod collector_facts;
 pub(crate) mod settings;
@@ -69,6 +70,7 @@ pub struct TypeDescriptor {
 #[cfg_attr(not(test), allow(dead_code))]
 pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     change_logs::CHANGE_LOGS_TYPE,
+    channel_monitor_mutations::CHANNEL_MONITOR_MUTATIONS_TYPE,
     channel_monitor_reads::CHANNEL_MONITOR_READS_TYPE,
     collector_facts::COLLECTOR_FACTS_TYPE,
     settings::SETTINGS_TYPE,

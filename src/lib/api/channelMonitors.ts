@@ -1,10 +1,17 @@
 import { invoke } from "@/lib/bridge/transport";
 import {
+  createChannelMonitor as createChannelMonitorGenerated,
+  createChannelMonitorTemplate as createChannelMonitorTemplateGenerated,
+  deleteChannelMonitor as deleteChannelMonitorGenerated,
+  deleteChannelMonitorTemplate as deleteChannelMonitorTemplateGenerated,
+  duplicateChannelMonitorTemplate as duplicateChannelMonitorTemplateGenerated,
   listChannelMonitorRuns as listChannelMonitorRunsGenerated,
   listChannelMonitorSummaries as listChannelMonitorSummariesGenerated,
   listChannelMonitorTemplates as listChannelMonitorTemplatesGenerated,
   listChannelMonitors as listChannelMonitorsGenerated,
   listChannelStatusSummaries as listChannelStatusSummariesGenerated,
+  updateChannelMonitor as updateChannelMonitorGenerated,
+  updateChannelMonitorTemplate as updateChannelMonitorTemplateGenerated,
 } from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
@@ -76,7 +83,7 @@ export function listChannelStatusSummaries() {
 }
 
 export function createChannelMonitor(input: CreateChannelMonitorInput) {
-  return invoke<ChannelMonitor>("create_channel_monitor", { input }).catch((error) => {
+  return createChannelMonitorGenerated(input).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const monitor: ChannelMonitor = {
@@ -93,7 +100,7 @@ export function createChannelMonitor(input: CreateChannelMonitorInput) {
 }
 
 export function updateChannelMonitor(input: UpdateChannelMonitorInput) {
-  return invoke<ChannelMonitor>("update_channel_monitor", { input }).catch((error) => {
+  return updateChannelMonitorGenerated(input).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const existing = memoryMonitors.find((monitor) => monitor.id === input.id);
@@ -113,7 +120,7 @@ export function updateChannelMonitor(input: UpdateChannelMonitorInput) {
 }
 
 export function deleteChannelMonitor(id: string) {
-  return invoke<void>("delete_channel_monitor", { id }).catch((error) => {
+  return deleteChannelMonitorGenerated({ id }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       memoryMonitors = memoryMonitors.filter((monitor) => monitor.id !== id);
       memoryRuns.delete(id);
@@ -174,7 +181,7 @@ export function listChannelMonitorTemplates() {
 }
 
 export function createChannelMonitorTemplate(input: CreateChannelMonitorTemplateInput) {
-  return invoke<ChannelMonitorRequestTemplate>("create_channel_monitor_template", { input }).catch((error) => {
+  return createChannelMonitorTemplateGenerated(input).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const template: ChannelMonitorRequestTemplate = {
@@ -192,7 +199,7 @@ export function createChannelMonitorTemplate(input: CreateChannelMonitorTemplate
 }
 
 export function updateChannelMonitorTemplate(input: UpdateChannelMonitorTemplateInput) {
-  return invoke<ChannelMonitorRequestTemplate>("update_channel_monitor_template", { input }).catch((error) => {
+  return updateChannelMonitorTemplateGenerated(input).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const now = new Date().toISOString();
       const existing = ensureMemoryTemplates().find((template) => template.id === input.id);
@@ -215,7 +222,7 @@ export function updateChannelMonitorTemplate(input: UpdateChannelMonitorTemplate
 }
 
 export function duplicateChannelMonitorTemplate(id: string) {
-  return invoke<ChannelMonitorRequestTemplate>("duplicate_channel_monitor_template", { id }).catch((error) => {
+  return duplicateChannelMonitorTemplateGenerated({ id }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const source = ensureMemoryTemplates().find((template) => template.id === id);
       if (!source) {
@@ -238,7 +245,7 @@ export function duplicateChannelMonitorTemplate(id: string) {
 }
 
 export function deleteChannelMonitorTemplate(id: string) {
-  return invoke<void>("delete_channel_monitor_template", { id }).catch((error) => {
+  return deleteChannelMonitorTemplateGenerated({ id }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       memoryTemplates = ensureMemoryTemplates().filter((template) => template.id !== id || template.builtIn);
       return;

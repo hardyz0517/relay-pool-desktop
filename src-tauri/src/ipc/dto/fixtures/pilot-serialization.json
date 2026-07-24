@@ -1957,6 +1957,171 @@
           "updatedAt": "1700000000000"
         }
       ]
+    },
+    {
+      "command": "create_channel_monitor",
+      "input": {
+        "consecutiveFailureThreshold": 3,
+        "enabled": true,
+        "fallbackModels": [
+          "fixture-model"
+        ],
+        "intervalSeconds": 60,
+        "jitterSeconds": 5,
+        "maxConcurrency": 1,
+        "name": "Fixture monitor",
+        "note": null,
+        "stationId": "station-1",
+        "stationKeyId": "key-1",
+        "targetType": "station_key",
+        "templateId": "template-1",
+        "timeoutSeconds": 15
+      },
+      "output": {
+        "consecutiveFailureThreshold": 3,
+        "createdAt": "1700000000000",
+        "enabled": true,
+        "fallbackModels": [
+          "fixture-model"
+        ],
+        "id": "monitor-1",
+        "intervalSeconds": 60,
+        "jitterSeconds": 5,
+        "maxConcurrency": 1,
+        "name": "Fixture monitor",
+        "note": null,
+        "stationId": "station-1",
+        "stationKeyId": "key-1",
+        "targetType": "station_key",
+        "templateId": "template-1",
+        "timeoutSeconds": 15,
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "update_channel_monitor",
+      "input": {
+        "consecutiveFailureThreshold": 3,
+        "enabled": true,
+        "fallbackModels": [
+          "fixture-model"
+        ],
+        "id": "monitor-1",
+        "intervalSeconds": 60,
+        "jitterSeconds": 5,
+        "maxConcurrency": 1,
+        "name": "Fixture monitor",
+        "note": null,
+        "stationId": "station-1",
+        "stationKeyId": "key-1",
+        "targetType": "station_key",
+        "templateId": "template-1",
+        "timeoutSeconds": 15
+      },
+      "output": {
+        "consecutiveFailureThreshold": 3,
+        "createdAt": "1700000000000",
+        "enabled": true,
+        "fallbackModels": [
+          "fixture-model"
+        ],
+        "id": "monitor-1",
+        "intervalSeconds": 60,
+        "jitterSeconds": 5,
+        "maxConcurrency": 1,
+        "name": "Fixture monitor",
+        "note": null,
+        "stationId": "station-1",
+        "stationKeyId": "key-1",
+        "targetType": "station_key",
+        "templateId": "template-1",
+        "timeoutSeconds": 15,
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "delete_channel_monitor",
+      "input": {
+        "id": "monitor-1"
+      },
+      "output": null
+    },
+    {
+      "command": "create_channel_monitor_template",
+      "input": {
+        "enabled": true,
+        "endpointKind": "chat_completions",
+        "method": "POST",
+        "name": "Fixture template",
+        "note": null,
+        "path": "/v1/chat/completions",
+        "requestBodyJson": "{}"
+      },
+      "output": {
+        "builtIn": false,
+        "createdAt": "1700000000000",
+        "enabled": true,
+        "endpointKind": "chat_completions",
+        "id": "template-1",
+        "method": "POST",
+        "name": "Fixture template",
+        "note": null,
+        "path": "/v1/chat/completions",
+        "requestBodyJson": "{}",
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "update_channel_monitor_template",
+      "input": {
+        "enabled": true,
+        "endpointKind": "chat_completions",
+        "id": "template-1",
+        "method": "POST",
+        "name": "Fixture template",
+        "note": null,
+        "path": "/v1/chat/completions",
+        "requestBodyJson": "{}"
+      },
+      "output": {
+        "builtIn": false,
+        "createdAt": "1700000000000",
+        "enabled": true,
+        "endpointKind": "chat_completions",
+        "id": "template-1",
+        "method": "POST",
+        "name": "Fixture template",
+        "note": null,
+        "path": "/v1/chat/completions",
+        "requestBodyJson": "{}",
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "duplicate_channel_monitor_template",
+      "input": {
+        "id": "template-1"
+      },
+      "output": {
+        "builtIn": false,
+        "createdAt": "1700000000000",
+        "enabled": true,
+        "endpointKind": "chat_completions",
+        "id": "template-1",
+        "method": "POST",
+        "name": "Fixture template",
+        "note": null,
+        "path": "/v1/chat/completions",
+        "requestBodyJson": "{}",
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "delete_channel_monitor_template",
+      "input": {
+        "id": "template-1"
+      },
+      "output": null
     }
   ],
   "schemaVersion": 1

@@ -22,6 +22,11 @@ use crate::{
             ChangeEventDto, ChangeEventIdInputDto, ChangeEventIdsInputDto, RequestLogDto,
             StationIdInputDto as ChangeLogStationIdInputDto, UpsertChangeEventInputDto,
         },
+        channel_monitor_mutations::{
+            ChannelMonitorMutationIdInputDto, CreateChannelMonitorInputDto,
+            CreateChannelMonitorTemplateInputDto, UpdateChannelMonitorInputDto,
+            UpdateChannelMonitorTemplateInputDto,
+        },
         channel_monitor_reads::{
             ChannelMonitorDto, ChannelMonitorIdInputDto, ChannelMonitorRequestTemplateDto,
             ChannelMonitorRunDto, ChannelMonitorSummaryDto, ChannelMonitorSummaryInputDto,
@@ -53,11 +58,7 @@ use crate::{
     ipc::runtime_contract::{current_runtime_contract, RuntimeContractInfo},
     models::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
-        channel_monitors::{
-            ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
-            CreateChannelMonitorInput, CreateChannelMonitorTemplateInput,
-            UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
-        },
+        channel_monitors::ChannelMonitorRun,
         collector::{CollectorRunResult, StationLoginTestInput, StationLoginTestResult},
         credentials::PersistStationSessionInput,
         pricing::{
@@ -1356,37 +1357,49 @@ pub async fn load_pricing_comparison_workspace(
 #[tauri::command]
 pub async fn create_channel_monitor(
     services: State<'_, AppServices>,
-    input: CreateChannelMonitorInput,
-) -> Result<ChannelMonitor, error::CommandError> {
-    services
-        .monitoring
-        .create_monitor(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<ChannelMonitorDto, error::CommandError> {
+    correlation::in_command_scope("create_channel_monitor", async {
+        let input = CreateChannelMonitorInputDto::parse(input)?.into_domain();
+        services
+            .monitoring
+            .create_monitor(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn update_channel_monitor(
     services: State<'_, AppServices>,
-    input: UpdateChannelMonitorInput,
-) -> Result<ChannelMonitor, error::CommandError> {
-    services
-        .monitoring
-        .update_monitor(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<ChannelMonitorDto, error::CommandError> {
+    correlation::in_command_scope("update_channel_monitor", async {
+        let input = UpdateChannelMonitorInputDto::parse(input)?.into_domain();
+        services
+            .monitoring
+            .update_monitor(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn delete_channel_monitor(
     services: State<'_, AppServices>,
-    id: String,
+    input: Value,
 ) -> Result<(), error::CommandError> {
-    services
-        .monitoring
-        .delete_monitor(id)
-        .await
-        .map_err(command_application_error)
+    correlation::in_command_scope("delete_channel_monitor", async {
+        let input = ChannelMonitorMutationIdInputDto::parse(input)?;
+        services
+            .monitoring
+            .delete_monitor(input.id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1429,49 +1442,65 @@ pub async fn list_channel_monitor_templates(
 #[tauri::command]
 pub async fn create_channel_monitor_template(
     services: State<'_, AppServices>,
-    input: CreateChannelMonitorTemplateInput,
-) -> Result<ChannelMonitorRequestTemplate, error::CommandError> {
-    services
-        .monitoring
-        .create_template(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<ChannelMonitorRequestTemplateDto, error::CommandError> {
+    correlation::in_command_scope("create_channel_monitor_template", async {
+        let input = CreateChannelMonitorTemplateInputDto::parse(input)?.into_domain();
+        services
+            .monitoring
+            .create_template(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn update_channel_monitor_template(
     services: State<'_, AppServices>,
-    input: UpdateChannelMonitorTemplateInput,
-) -> Result<ChannelMonitorRequestTemplate, error::CommandError> {
-    services
-        .monitoring
-        .update_template(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<ChannelMonitorRequestTemplateDto, error::CommandError> {
+    correlation::in_command_scope("update_channel_monitor_template", async {
+        let input = UpdateChannelMonitorTemplateInputDto::parse(input)?.into_domain();
+        services
+            .monitoring
+            .update_template(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn duplicate_channel_monitor_template(
     services: State<'_, AppServices>,
-    id: String,
-) -> Result<ChannelMonitorRequestTemplate, error::CommandError> {
-    services
-        .monitoring
-        .duplicate_template(id)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<ChannelMonitorRequestTemplateDto, error::CommandError> {
+    correlation::in_command_scope("duplicate_channel_monitor_template", async {
+        let input = ChannelMonitorMutationIdInputDto::parse(input)?;
+        services
+            .monitoring
+            .duplicate_template(input.id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn delete_channel_monitor_template(
     services: State<'_, AppServices>,
-    id: String,
+    input: Value,
 ) -> Result<(), error::CommandError> {
-    services
-        .monitoring
-        .delete_template(id)
-        .await
-        .map_err(command_application_error)
+    correlation::in_command_scope("delete_channel_monitor_template", async {
+        let input = ChannelMonitorMutationIdInputDto::parse(input)?;
+        services
+            .monitoring
+            .delete_template(input.id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]

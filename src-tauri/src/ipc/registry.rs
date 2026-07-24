@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "39085213adea2bed878e2fdb976cc9f0c75c02b07edd6a6176908eebb2ad7cd4";
+    "b917603a1f3da79d5c21535c917146de17d8cdc456323d0254e35653301c76e1";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -423,6 +423,48 @@ fn command_contract(name: &str) -> CommandContract {
         "list_channel_monitor_templates" => {
             migrated_read("EmptyInputDto", "Vec<ChannelMonitorRequestTemplateDto>")
         }
+        "create_channel_monitor" => migrated_mutation(
+            "CreateChannelMonitorInputDto",
+            "ChannelMonitorDto",
+            "non_idempotent",
+            true,
+        ),
+        "update_channel_monitor" => migrated_mutation(
+            "UpdateChannelMonitorInputDto",
+            "ChannelMonitorDto",
+            "idempotent",
+            false,
+        ),
+        "delete_channel_monitor" => migrated_mutation(
+            "ChannelMonitorMutationIdInputDto",
+            "unit",
+            "idempotent",
+            false,
+        ),
+        "create_channel_monitor_template" => migrated_mutation(
+            "CreateChannelMonitorTemplateInputDto",
+            "ChannelMonitorRequestTemplateDto",
+            "non_idempotent",
+            true,
+        ),
+        "update_channel_monitor_template" => migrated_mutation(
+            "UpdateChannelMonitorTemplateInputDto",
+            "ChannelMonitorRequestTemplateDto",
+            "idempotent",
+            false,
+        ),
+        "duplicate_channel_monitor_template" => migrated_mutation(
+            "ChannelMonitorMutationIdInputDto",
+            "ChannelMonitorRequestTemplateDto",
+            "non_idempotent",
+            true,
+        ),
+        "delete_channel_monitor_template" => migrated_mutation(
+            "ChannelMonitorMutationIdInputDto",
+            "unit",
+            "idempotent",
+            false,
+        ),
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         "get_local_access_key" => legacy_declared("unit", "String"),
         "update_local_access_key" => legacy_declared("UpdateLocalAccessKeyInput", "AppSettings"),
@@ -579,6 +621,7 @@ fn pilot_serialization_fixture() -> String {
     commands.extend(super::dto::change_logs::serialization_fixtures());
     commands.extend(super::dto::collector_facts::serialization_fixtures());
     commands.extend(super::dto::channel_monitor_reads::serialization_fixtures());
+    commands.extend(super::dto::channel_monitor_mutations::serialization_fixtures());
     let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
     format!(
         "{}\n",
@@ -719,6 +762,34 @@ export function listChannelMonitorRuns(input: ChannelMonitorIdInputDto): Promise
 
 export function listChannelMonitorTemplates(input: EmptyInputDto = {}): Promise<ChannelMonitorRequestTemplateDto[]> {
   return invokeCommand<ChannelMonitorRequestTemplateDto[]>("list_channel_monitor_templates", { input });
+}
+
+export function createChannelMonitor(input: CreateChannelMonitorInputDto): Promise<ChannelMonitorDto> {
+  return invokeNonIdempotent<ChannelMonitorDto>("create_channel_monitor", { input });
+}
+
+export function updateChannelMonitor(input: UpdateChannelMonitorInputDto): Promise<ChannelMonitorDto> {
+  return invokeCommand<ChannelMonitorDto>("update_channel_monitor", { input });
+}
+
+export function deleteChannelMonitor(input: ChannelMonitorMutationIdInputDto): Promise<void> {
+  return invokeCommand<void>("delete_channel_monitor", { input });
+}
+
+export function createChannelMonitorTemplate(input: CreateChannelMonitorTemplateInputDto): Promise<ChannelMonitorRequestTemplateDto> {
+  return invokeNonIdempotent<ChannelMonitorRequestTemplateDto>("create_channel_monitor_template", { input });
+}
+
+export function updateChannelMonitorTemplate(input: UpdateChannelMonitorTemplateInputDto): Promise<ChannelMonitorRequestTemplateDto> {
+  return invokeCommand<ChannelMonitorRequestTemplateDto>("update_channel_monitor_template", { input });
+}
+
+export function duplicateChannelMonitorTemplate(input: ChannelMonitorMutationIdInputDto): Promise<ChannelMonitorRequestTemplateDto> {
+  return invokeNonIdempotent<ChannelMonitorRequestTemplateDto>("duplicate_channel_monitor_template", { input });
+}
+
+export function deleteChannelMonitorTemplate(input: ChannelMonitorMutationIdInputDto): Promise<void> {
+  return invokeCommand<void>("delete_channel_monitor_template", { input });
 }
 
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
@@ -953,6 +1024,47 @@ mod tests {
     }
 
     #[test]
+    fn channel_monitor_mutations_have_closed_schemas_and_frozen_semantics() {
+        let non_idempotent = [
+            "create_channel_monitor",
+            "create_channel_monitor_template",
+            "duplicate_channel_monitor_template",
+        ];
+        for name in [
+            "create_channel_monitor",
+            "update_channel_monitor",
+            "delete_channel_monitor",
+            "create_channel_monitor_template",
+            "update_channel_monitor_template",
+            "duplicate_channel_monitor_template",
+            "delete_channel_monitor_template",
+        ] {
+            let contract = command_contract(name);
+            assert!(!contract.input.starts_with("legacy_"), "{name}");
+            assert!(!contract.output.starts_with("legacy_"), "{name}");
+            assert_eq!(
+                contract.runtime_validation, "rust_dto_pre_application",
+                "{name}"
+            );
+            assert!(!contract.transport_retry, "{name}");
+            assert_eq!(
+                contract.result_unknown,
+                non_idempotent.contains(&name),
+                "{name}"
+            );
+            assert_eq!(
+                contract.mutation_kind,
+                if non_idempotent.contains(&name) {
+                    "non_idempotent"
+                } else {
+                    "idempotent"
+                },
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn generated_bindings_use_the_common_transport_and_dedicated_wrappers() {
         let source = render_typescript("fixture-hash");
         assert!(source.contains("@/lib/bridge/transport"));
@@ -1021,10 +1133,33 @@ mod tests {
             "listChannelMonitorTemplates",
             "listChannelMonitors",
             "listChannelStatusSummaries",
+            "createChannelMonitor",
+            "updateChannelMonitor",
+            "deleteChannelMonitor",
+            "createChannelMonitorTemplate",
+            "updateChannelMonitorTemplate",
+            "duplicateChannelMonitorTemplate",
+            "deleteChannelMonitorTemplate",
         ] {
             assert!(
                 source.contains(&format!("function {wrapper}(")),
                 "{wrapper}"
+            );
+        }
+        for (command, output) in [
+            ("create_channel_monitor", "ChannelMonitorDto"),
+            (
+                "create_channel_monitor_template",
+                "ChannelMonitorRequestTemplateDto",
+            ),
+            (
+                "duplicate_channel_monitor_template",
+                "ChannelMonitorRequestTemplateDto",
+            ),
+        ] {
+            assert!(
+                source.contains(&format!("invokeNonIdempotent<{output}>(\"{command}\"")),
+                "{command}"
             );
         }
     }

@@ -12,13 +12,18 @@ import {
   clearChangeEvents,
   clearRequestLogs,
   clearStationCredentials,
+  createChannelMonitor,
+  createChannelMonitorTemplate,
   createLocalStationKeyFromRemote,
   createRemoteStationKey,
   createStation,
   createStationKey,
+  deleteChannelMonitor,
+  deleteChannelMonitorTemplate,
   deleteStationKey,
   deleteStation,
   dismissChangeEvent,
+  duplicateChannelMonitorTemplate,
   getRemoteKeyCapability,
   getLatestCollectorSnapshot,
   getSettings,
@@ -52,6 +57,8 @@ import {
   saveStationKeyWithDefaults,
   scanRemoteStationKeys,
   unbindRemoteStationKey,
+  updateChannelMonitor,
+  updateChannelMonitorTemplate,
   updateStationCredentials,
   updateStationKey,
   updateStationKeyGroupBinding,
@@ -362,6 +369,53 @@ describe("generated settings/stations transport envelopes", () => {
       ["list_channel_status_summaries", { input: {} }],
       ["list_channel_monitor_runs", { input: { monitorId: "monitor-1" } }],
       ["list_channel_monitor_templates", { input: {} }],
+    ]);
+  });
+
+  it("sends every channel-monitor mutation through generated envelopes", async () => {
+    const monitorInput = {
+      name: "Fixture monitor",
+      targetType: "station_key" as const,
+      stationId: "station-1",
+      stationKeyId: "key-1",
+      templateId: "template-1",
+      enabled: true,
+      intervalSeconds: 60,
+      jitterSeconds: 5,
+      timeoutSeconds: 15,
+      maxConcurrency: 1,
+      consecutiveFailureThreshold: 3,
+      fallbackModels: ["fixture-model"],
+      note: null,
+    };
+    const templateInput = {
+      name: "Fixture template",
+      endpointKind: "chat_completions",
+      method: "POST",
+      path: "/v1/chat/completions",
+      requestBodyJson: "{}",
+      enabled: true,
+      note: null,
+    };
+
+    await createChannelMonitor(monitorInput);
+    await updateChannelMonitor({ id: "monitor-1", ...monitorInput });
+    await deleteChannelMonitor({ id: "monitor-1" });
+    await createChannelMonitorTemplate(templateInput);
+    await updateChannelMonitorTemplate({ id: "template-1", ...templateInput });
+    await duplicateChannelMonitorTemplate({ id: "template-1" });
+    await deleteChannelMonitorTemplate({ id: "template-1" });
+
+    expect(transport.invoke.mock.calls.slice(-4)).toEqual([
+      ["update_channel_monitor", { input: { id: "monitor-1", ...monitorInput } }],
+      ["delete_channel_monitor", { input: { id: "monitor-1" } }],
+      ["update_channel_monitor_template", { input: { id: "template-1", ...templateInput } }],
+      ["delete_channel_monitor_template", { input: { id: "template-1" } }],
+    ]);
+    expect(transport.invokeNonIdempotent.mock.calls).toEqual([
+      ["create_channel_monitor", { input: monitorInput }],
+      ["create_channel_monitor_template", { input: templateInput }],
+      ["duplicate_channel_monitor_template", { input: { id: "template-1" } }],
     ]);
   });
 });
