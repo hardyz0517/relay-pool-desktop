@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "d6f4a9970e124c30743ee076d1da30c09105d27be040867f50d19aeec19e2ebd";
+    "bc58e46d8fdb6a983ba05e2a06031294fd1532f686c102611d1964679898ba43";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -528,6 +528,27 @@ fn command_contract(name: &str) -> CommandContract {
         "load_pricing_comparison_workspace" => {
             migrated_read("EmptyInputDto", "PricingComparisonWorkspaceDto")
         }
+        "upsert_model_base_price" => migrated_mutation(
+            "UpsertModelBasePriceInputDto",
+            "ModelBasePriceDto",
+            "idempotent",
+            false,
+        ),
+        "reset_model_base_prices_to_builtins" => migrated_mutation(
+            "EmptyInputDto",
+            "Vec<ModelBasePriceDto>",
+            "idempotent",
+            false,
+        ),
+        "upsert_pricing_rule" => migrated_mutation(
+            "UpsertPricingRuleInputDto",
+            "PricingRuleDto",
+            "idempotent",
+            false,
+        ),
+        "delete_pricing_rule" => {
+            migrated_mutation("PricingRuleIdInputDto", "unit", "idempotent", false)
+        }
         "get_proxy_status" => migrated_read("EmptyInputDto", "ProxyStatusDto"),
         "load_local_routing_workspace" => {
             migrated_read("EmptyInputDto", "LocalRoutingWorkspaceDto")
@@ -694,6 +715,7 @@ fn pilot_serialization_fixture() -> String {
     commands.extend(super::dto::routing_health_reads::serialization_fixtures());
     commands.extend(super::dto::routing_mutations::serialization_fixtures());
     commands.extend(super::dto::pricing_reads::serialization_fixtures());
+    commands.extend(super::dto::pricing_mutations::serialization_fixtures());
     commands.extend(super::dto::proxy_workspace_reads::serialization_fixtures());
     let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
     format!(
@@ -951,6 +973,22 @@ export function resolveStationKeyPricingContext(input: PricingContextInputDto): 
 
 export function loadPricingComparisonWorkspace(input: EmptyInputDto = {}): Promise<PricingComparisonWorkspaceDto> {
   return invokeCommand<PricingComparisonWorkspaceDto>("load_pricing_comparison_workspace", { input });
+}
+
+export function upsertModelBasePrice(input: UpsertModelBasePriceInputDto): Promise<ModelBasePriceDto> {
+  return invokeCommand<ModelBasePriceDto>("upsert_model_base_price", { input });
+}
+
+export function resetModelBasePricesToBuiltins(input: EmptyInputDto = {}): Promise<ModelBasePriceDto[]> {
+  return invokeCommand<ModelBasePriceDto[]>("reset_model_base_prices_to_builtins", { input });
+}
+
+export function upsertPricingRule(input: UpsertPricingRuleInputDto): Promise<PricingRuleDto> {
+  return invokeCommand<PricingRuleDto>("upsert_pricing_rule", { input });
+}
+
+export function deletePricingRule(input: PricingRuleIdInputDto): Promise<void> {
+  return invokeCommand<void>("delete_pricing_rule", { input });
 }
 
 export function getProxyStatus(input: EmptyInputDto = {}): Promise<ProxyStatusDto> {
@@ -1388,6 +1426,39 @@ mod tests {
     }
 
     #[test]
+    fn pricing_mutations_have_closed_schemas_and_idempotent_semantics() {
+        for (name, input, output) in [
+            (
+                "upsert_model_base_price",
+                "UpsertModelBasePriceInputDto",
+                "ModelBasePriceDto",
+            ),
+            (
+                "reset_model_base_prices_to_builtins",
+                "EmptyInputDto",
+                "Vec<ModelBasePriceDto>",
+            ),
+            (
+                "upsert_pricing_rule",
+                "UpsertPricingRuleInputDto",
+                "PricingRuleDto",
+            ),
+            ("delete_pricing_rule", "PricingRuleIdInputDto", "unit"),
+        ] {
+            let contract = command_contract(name);
+            assert_eq!(contract.input, input, "{name}");
+            assert_eq!(contract.output, output, "{name}");
+            assert_eq!(contract.mutation_kind, "idempotent", "{name}");
+            assert_eq!(
+                contract.runtime_validation, "rust_dto_pre_application",
+                "{name}"
+            );
+            assert!(!contract.transport_retry, "{name}");
+            assert!(!contract.result_unknown, "{name}");
+        }
+    }
+
+    #[test]
     fn proxy_workspace_reads_have_closed_schemas_and_read_semantics() {
         for (name, output) in [
             ("get_proxy_status", "ProxyStatusDto"),
@@ -1530,6 +1601,17 @@ mod tests {
             "updateStationKeyCapabilities",
             "upsertModelAlias",
             "deleteModelAlias",
+        ] {
+            assert!(
+                source.contains(&format!("function {function}(")),
+                "{function}"
+            );
+        }
+        for function in [
+            "upsertModelBasePrice",
+            "resetModelBasePricesToBuiltins",
+            "upsertPricingRule",
+            "deletePricingRule",
         ] {
             assert!(
                 source.contains(&format!("function {function}(")),

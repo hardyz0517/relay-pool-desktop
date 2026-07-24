@@ -2683,6 +2683,126 @@
       }
     },
     {
+      "command": "upsert_model_base_price",
+      "input": {
+        "builtIn": false,
+        "currency": "USD",
+        "enabled": true,
+        "id": null,
+        "inputPrice": 1.0,
+        "model": "fixture-model",
+        "note": null,
+        "outputPrice": 2.0,
+        "provider": "openai",
+        "sourceCheckedAt": null,
+        "sourceLabel": "Fixture",
+        "sourceUrl": "https://example.test/pricing",
+        "unit": "M"
+      },
+      "output": {
+        "builtIn": false,
+        "createdAt": "1700000000000",
+        "currency": "USD",
+        "enabled": true,
+        "id": "price-1",
+        "inputPrice": 1.0,
+        "model": "fixture-model",
+        "note": null,
+        "outputPrice": 2.0,
+        "provider": "openai",
+        "sourceCheckedAt": null,
+        "sourceLabel": "Fixture",
+        "sourceUrl": "https://example.test/pricing",
+        "unit": "M",
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "reset_model_base_prices_to_builtins",
+      "input": {},
+      "output": [
+        {
+          "builtIn": false,
+          "createdAt": "1700000000000",
+          "currency": "USD",
+          "enabled": true,
+          "id": "price-1",
+          "inputPrice": 1.0,
+          "model": "fixture-model",
+          "note": null,
+          "outputPrice": 2.0,
+          "provider": "openai",
+          "sourceCheckedAt": null,
+          "sourceLabel": "Fixture",
+          "sourceUrl": "https://example.test/pricing",
+          "unit": "M",
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "upsert_pricing_rule",
+      "input": {
+        "basePriceSource": null,
+        "collectedAt": null,
+        "confidence": 1.0,
+        "currency": "USD",
+        "enabled": true,
+        "fixedPrice": null,
+        "groupBindingId": null,
+        "groupName": null,
+        "id": null,
+        "inputPrice": 1.0,
+        "model": "fixture-model",
+        "normalizationStatus": null,
+        "note": null,
+        "outputPrice": 2.0,
+        "priceType": "token",
+        "rateMultiplier": 1.0,
+        "source": "manual",
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "tierLabel": null,
+        "unit": "M",
+        "validFrom": null,
+        "validUntil": null
+      },
+      "output": {
+        "basePriceSource": null,
+        "collectedAt": null,
+        "confidence": 1.0,
+        "createdAt": "1700000000000",
+        "currency": "USD",
+        "enabled": true,
+        "fixedPrice": null,
+        "groupBindingId": null,
+        "groupName": null,
+        "id": "rule-1",
+        "inputPrice": 1.0,
+        "model": "fixture-model",
+        "normalizationStatus": "manual",
+        "note": null,
+        "outputPrice": 2.0,
+        "priceType": "token",
+        "rateMultiplier": 1.0,
+        "source": "manual",
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "tierLabel": null,
+        "unit": "M",
+        "updatedAt": "1700000000000",
+        "validFrom": null,
+        "validUntil": null
+      }
+    },
+    {
+      "command": "delete_pricing_rule",
+      "input": {
+        "id": "rule-1"
+      },
+      "output": null
+    },
+    {
       "command": "get_proxy_status",
       "input": {},
       "output": {

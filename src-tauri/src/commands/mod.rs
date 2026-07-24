@@ -38,6 +38,9 @@ use crate::{
             GroupRateRecordDto, StationGroupBindingDto, StationGroupOptionDto,
             UpsertBalanceSnapshotInputDto, UpsertStationGroupBindingInputDto,
         },
+        pricing_mutations::{
+            PricingRuleIdInputDto, UpsertModelBasePriceInputDto, UpsertPricingRuleInputDto,
+        },
         pricing_reads::{
             ModelBasePriceDto, PricingComparisonWorkspaceDto, PricingContextInputDto,
             PricingRuleDto, ResolvedPricingContextDto,
@@ -79,7 +82,6 @@ use crate::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
         collector::CollectorRunResult,
         credentials::PersistStationSessionInput,
-        pricing::{ModelBasePrice, PricingRule, UpsertModelBasePriceInput, UpsertPricingRuleInput},
         proxy::{ProxyStatus, UpstreamApiFormat},
         routing::StationKeyCapabilities,
         settings::AppSettings,
@@ -1831,48 +1833,65 @@ pub async fn list_model_base_prices(
 #[tauri::command]
 pub async fn upsert_model_base_price(
     services: State<'_, AppServices>,
-    input: UpsertModelBasePriceInput,
-) -> Result<ModelBasePrice, error::CommandError> {
-    services
-        .pricing
-        .upsert_model_base_price(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<ModelBasePriceDto, error::CommandError> {
+    correlation::in_command_scope("upsert_model_base_price", async {
+        let input = UpsertModelBasePriceInputDto::parse(input)?.into_domain();
+        services
+            .pricing
+            .upsert_model_base_price(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn reset_model_base_prices_to_builtins(
     services: State<'_, AppServices>,
-) -> Result<Vec<ModelBasePrice>, error::CommandError> {
-    services
-        .pricing
-        .reset_model_base_prices_to_builtins(PageLimit::new(500).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<Vec<ModelBasePriceDto>, error::CommandError> {
+    correlation::in_command_scope("reset_model_base_prices_to_builtins", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .pricing
+            .reset_model_base_prices_to_builtins(PageLimit::new(500).expect("bounded limit"))
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn upsert_pricing_rule(
     services: State<'_, AppServices>,
-    input: UpsertPricingRuleInput,
-) -> Result<PricingRule, error::CommandError> {
-    services
-        .pricing
-        .upsert_pricing_rule(input)
-        .await
-        .map_err(command_application_error)
+    input: Value,
+) -> Result<PricingRuleDto, error::CommandError> {
+    correlation::in_command_scope("upsert_pricing_rule", async {
+        let input = UpsertPricingRuleInputDto::parse(input)?.into_domain();
+        services
+            .pricing
+            .upsert_pricing_rule(input)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn delete_pricing_rule(
     services: State<'_, AppServices>,
-    id: String,
+    input: Value,
 ) -> Result<(), error::CommandError> {
-    services
-        .pricing
-        .delete_pricing_rule(id)
-        .await
-        .map_err(command_application_error)
+    correlation::in_command_scope("delete_pricing_rule", async {
+        let input = PricingRuleIdInputDto::parse(input)?;
+        services
+            .pricing
+            .delete_pricing_rule(input.id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]

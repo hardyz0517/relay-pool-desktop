@@ -24,6 +24,7 @@ import {
   deleteChannelMonitor,
   deleteChannelMonitorTemplate,
   deleteModelAlias,
+  deletePricingRule,
   deleteStationKey,
   deleteStation,
   detectStationInfo,
@@ -70,6 +71,7 @@ import {
   reorderKeyPool,
   reorderStationKeys,
   reorderStations,
+  resetModelBasePricesToBuiltins,
   resolveChangeEvent,
   resolveStationKeyPricingContext,
   runChannelMonitorNow,
@@ -91,6 +93,8 @@ import {
   upsertBalanceSnapshot,
   upsertChangeEvent,
   upsertModelAlias,
+  upsertModelBasePrice,
+  upsertPricingRule,
   upsertStationGroupBinding,
   type CreateStationInputDto,
   type UpdateSettingsInputDto,
@@ -599,6 +603,61 @@ describe("generated settings/stations transport envelopes", () => {
         },
       ],
       ["load_pricing_comparison_workspace", { input: {} }],
+    ]);
+  });
+
+  it("sends pricing mutations through generated envelopes", async () => {
+    const basePrice = {
+      id: null,
+      provider: "openai",
+      model: "fixture-model",
+      inputPrice: 1,
+      outputPrice: 2,
+      currency: "USD",
+      unit: "M",
+      sourceUrl: "https://example.test/pricing",
+      sourceLabel: "Fixture",
+      sourceCheckedAt: null,
+      enabled: true,
+      builtIn: false,
+      note: null,
+    };
+    const rule = {
+      id: null,
+      stationId: "station-1",
+      stationKeyId: null,
+      groupBindingId: null,
+      groupName: null,
+      tierLabel: null,
+      model: "fixture-model",
+      inputPrice: 1,
+      outputPrice: 2,
+      fixedPrice: null,
+      rateMultiplier: 1,
+      currency: "USD",
+      unit: "M",
+      priceType: "token",
+      basePriceSource: null,
+      normalizationStatus: null,
+      source: "manual",
+      confidence: 1,
+      enabled: true,
+      note: null,
+      collectedAt: null,
+      validFrom: null,
+      validUntil: null,
+    };
+
+    await upsertModelBasePrice(basePrice);
+    await resetModelBasePricesToBuiltins();
+    await upsertPricingRule(rule);
+    await deletePricingRule({ id: "rule-1" });
+
+    expect(transport.invoke.mock.calls).toEqual([
+      ["upsert_model_base_price", { input: basePrice }],
+      ["reset_model_base_prices_to_builtins", { input: {} }],
+      ["upsert_pricing_rule", { input: rule }],
+      ["delete_pricing_rule", { input: { id: "rule-1" } }],
     ]);
   });
 

@@ -1,13 +1,18 @@
-import { invoke } from "@/lib/bridge/transport";
 import {
+  deletePricingRule as deletePricingRuleGenerated,
   listModelBasePrices as listModelBasePricesGenerated,
   listPricingRules as listPricingRulesGenerated,
+  resetModelBasePricesToBuiltins as resetModelBasePricesToBuiltinsGenerated,
   listBalanceSnapshots as listBalanceSnapshotsGenerated,
   listBalanceSnapshotsForStation as listBalanceSnapshotsForStationGenerated,
   listCurrentStationBalanceSnapshots as listCurrentStationBalanceSnapshotsGenerated,
   resolveStationKeyPricingContext as resolveStationKeyPricingContextGenerated,
   upsertBalanceSnapshot as upsertBalanceSnapshotGenerated,
+  upsertModelBasePrice as upsertModelBasePriceGenerated,
+  upsertPricingRule as upsertPricingRuleGenerated,
   type UpsertBalanceSnapshotInputDto,
+  type UpsertModelBasePriceInputDto,
+  type UpsertPricingRuleInputDto,
 } from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import { mockPricingRows } from "@/lib/mock/pricing";
@@ -32,8 +37,8 @@ export function listPricingRules() {
   });
 }
 
-export function upsertPricingRule(input: unknown) {
-  return invoke<PricingRule>("upsert_pricing_rule", { input }).catch((error) => {
+export function upsertPricingRule(input: UpsertPricingRuleInputDto) {
+  return upsertPricingRuleGenerated(input).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const nextRule = coercePricingRule(input);
       memoryPricingRules = [
@@ -47,7 +52,7 @@ export function upsertPricingRule(input: unknown) {
 }
 
 export function deletePricingRule(id: string) {
-  return invoke<void>("delete_pricing_rule", { id }).catch((error) => {
+  return deletePricingRuleGenerated({ id }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       memoryPricingRules = ensureMemoryPricingRules().filter((rule) => rule.id !== id);
       return;
@@ -77,8 +82,8 @@ export function listModelBasePrices() {
   });
 }
 
-export function upsertModelBasePrice(input: unknown) {
-  return invoke<ModelBasePrice>("upsert_model_base_price", { input }).catch((error) => {
+export function upsertModelBasePrice(input: UpsertModelBasePriceInputDto) {
+  return upsertModelBasePriceGenerated(input).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       const nextPrice = coerceModelBasePrice(input);
       memoryModelBasePrices = [
@@ -92,7 +97,7 @@ export function upsertModelBasePrice(input: unknown) {
 }
 
 export function resetModelBasePricesToBuiltins() {
-  return invoke<ModelBasePrice[]>("reset_model_base_prices_to_builtins").catch((error) => {
+  return resetModelBasePricesToBuiltinsGenerated().catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       memoryModelBasePrices = builtinModelBasePrices();
       return memoryModelBasePrices;

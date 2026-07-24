@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "d6f4a9970e124c30743ee076d1da30c09105d27be040867f50d19aeec19e2ebd",
+  "contract_hash": "bc58e46d8fdb6a983ba05e2a06031294fd1532f686c102611d1964679898ba43",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -260,13 +260,13 @@
     {
       "name": "delete_pricing_rule",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "31398ba915ffff947bb3f7b2928ee5702a0f8237801c553682162038383c2cb2",
+      "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "delete_station",
@@ -975,13 +975,13 @@
     {
       "name": "reset_model_base_prices_to_builtins",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "e25027e88e9040afe252dc4c5dae897314df615575c046417e0b84cf89f921fa",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "resolve_change_event",
@@ -1294,24 +1294,24 @@
     {
       "name": "upsert_model_base_price",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "fb3b11fa43ea8a8cf3e19592d131ae141b4ed48db3ea43ac6c5ad000bd3457c5",
+      "output_schema_hash": "7994f078994c3a3c5748404b485a29a5bf6f4d4ebe99a7b7fbfb4434c4f4e029",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "upsert_pricing_rule",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "150cf97bcc3bfff5aa2dd51e66352b23d6a712888fbc9a7ac437206a7e3d8a35",
+      "output_schema_hash": "792d18c99dfc59ea1306fc8db43fb73807dba6e35f79149c65a004aba51f4d5d",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "upsert_station_group_binding",
@@ -1335,6 +1335,6 @@
   ],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "93ed1bc276eea474b59e04901db64667bd042dd01c100fe36c4a79b0eb444353"
+    "serialization_fixture_hash": "ef60ecff35e31e64bca8fdedbafd1fc4028f1b1b22b4a7fabf58b9352c46e61b"
   }
 }
