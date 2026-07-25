@@ -4,8 +4,9 @@ use crate::{
     application::{
         app_services::AppServices,
         command_facades::{
-            ChannelMonitoringCommandFacade, KeyPoolCommandFacade, PricingCommandFacade,
-            RequestLogsCommandFacade, RoutingCommandFacade, SettingsStationsCommandFacade,
+            ChangeEventsCommandFacade, ChannelMonitoringCommandFacade, KeyPoolCommandFacade,
+            PricingCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
+            SettingsStationsCommandFacade,
         },
         data_directory::DataDirectoryPort,
     },
@@ -64,4 +65,10 @@ pub(crate) fn compose_channel_monitoring_command_facade(
 
 pub(crate) fn compose_pricing_command_facade(services: &AppServices) -> PricingCommandFacade {
     PricingCommandFacade::new(Arc::clone(&services.pricing))
+}
+
+pub(crate) fn compose_change_events_command_facade(
+    services: &AppServices,
+) -> ChangeEventsCommandFacade {
+    ChangeEventsCommandFacade::new(Arc::clone(&services.changes))
 }
