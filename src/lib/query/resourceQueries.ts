@@ -1,6 +1,11 @@
 import { queryOptions } from "@tanstack/react-query";
 import { listChangeEvents } from "@/lib/api/changeEvents";
-import { getLatestCollectorSnapshot } from "@/lib/api/collector";
+import {
+  getCaptureSessionStatus,
+  getLatestCollectorSnapshot,
+  listCollectorSnapshots,
+} from "@/lib/api/collector";
+import { listCollectorRuns } from "@/lib/api/collectorRuns";
 import { listCurrentStationBalanceSnapshots, listModelBasePrices } from "@/lib/api/economics";
 import { getProxyStatus, listRequestLogs } from "@/lib/api/proxy";
 import { getSettings } from "@/lib/api/settings";
@@ -53,6 +58,27 @@ export const stationAssetQueryOptions = (stationId: string) =>
         6_000,
       ),
     staleTime: 30_000,
+  });
+
+export const collectorSnapshotsQueryOptions = (stationId: string) =>
+  queryOptions({
+    queryKey: queryKeys.collectorSnapshots(stationId),
+    queryFn: () => listCollectorSnapshots(stationId),
+    staleTime: 30_000,
+  });
+
+export const collectorRunsQueryOptions = (stationId: string) =>
+  queryOptions({
+    queryKey: queryKeys.collectorRuns(stationId),
+    queryFn: () => listCollectorRuns(stationId),
+    staleTime: 10_000,
+  });
+
+export const captureSessionStatusQueryOptions = (stationId: string) =>
+  queryOptions({
+    queryKey: queryKeys.captureSessionStatus(stationId),
+    queryFn: () => getCaptureSessionStatus(stationId),
+    staleTime: 2_000,
   });
 
 export const keyPoolQueryOptions = (refetchInterval: number | false = false) =>

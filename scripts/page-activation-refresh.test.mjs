@@ -9,32 +9,31 @@ const stationsSource = await readFile("src/features/stations/StationsPage.tsx", 
 
 assert.ok(
   hostSource.includes("PageActivityProvider") &&
-    hostSource.includes('const interactive = state === "active" || state === "entering";') &&
-    hostSource.includes("routeId === refreshRouteId") &&
-    hostSource.includes('(shellPageState === "active" || shellPageState === "leaving")') &&
-    /if \(transientActive\) \{\s*return "background";\s*\}[\s\S]*return "active";/.test(
-      hostSource,
-    ) &&
-    hostSource.includes(
-      "<PageActivityProvider active={interactive} refreshEnabled={refreshEnabled}>",
-    ),
-  "the outgoing page should retain its subscription through visual handoff while the entering page defers refresh",
+    hostSource.includes("shellPageVisibilityForState(state)") &&
+    hostSource.includes("<PageActivityProvider visibility={visibility}>") &&
+    hostSource.includes("getPageRetentionDecision({") &&
+    hostSource.includes('return "background";') &&
+    hostSource.includes('return "active";'),
+  "shell host should derive page activity from canonical PageVisibility and retention policy",
 );
 
 assert.ok(
-  activitySource.includes("refreshEnabled = active") &&
-    activitySource.includes("() => ({ interactive: active, refreshEnabled })"),
-  "page interaction and refresh permission should remain independent axes",
+  activitySource.includes("createPageVisibility") &&
+    activitySource.includes("PageVisibilityProvider") &&
+    activitySource.includes("refreshEnabled: visibility.queryEnabled") &&
+    activitySource.includes("interactive: visibility.interactive"),
+  "page activity should adapt canonical visibility into legacy interaction and refresh axes",
 );
 
 assert.ok(
-  activitySource.includes("const PageRefreshContext = createContext(true)") &&
-    activitySource.includes("export function usePageRefreshEnabled()") &&
-    dashboardSource.includes("const refreshEnabled = usePageRefreshEnabled();") &&
-    stationsSource.includes("const refreshEnabled = usePageRefreshEnabled();") &&
+  activitySource.includes("export function usePageRefreshEnabled()") &&
+    dashboardSource.includes("useActivityQuery") &&
+    stationsSource.includes("useActivityQuery") &&
+    stationsSource.includes("useQueries({") &&
+    stationsSource.includes("enabled: refreshEnabled") &&
     !dashboardSource.includes("usePageActivity") &&
     !stationsSource.includes("usePageActivity"),
-  "query-heavy pages should not rerender when only shell interaction state changes",
+  "query-heavy pages should use activity-bound queries while Stations keeps its registered per-row query blocker guarded",
 );
 
 assert.ok(
@@ -82,26 +81,32 @@ const refreshOnlyPages = [
   "src/features/changes/ChangeCenterPage.tsx",
   "src/features/logs/LogsPage.tsx",
 ];
-const activationOnlyPages = [
-  "src/features/collectors/CollectorsPage.tsx",
-  "src/features/settings/SettingsPage.tsx",
-];
-
 for (const page of refreshOnlyPages) {
   const source = await readFile(page, "utf8");
   assert.ok(
-    source.includes("usePageRefreshEnabled") && !source.includes("usePageActivity"),
-    `${page} should subscribe only to refresh permission, not the combined activity object`,
+    (source.includes("useActivityQuery") ||
+      source.includes("usePageRefreshEnabled") ||
+      source.includes("usePageActivation")) &&
+      !source.includes("usePageActivity"),
+    `${page} should have an explicit query/refresh/activation owner without the combined activity object`,
   );
 }
 
-for (const page of activationOnlyPages) {
-  const source = await readFile(page, "utf8");
-  assert.ok(
-    source.includes("usePageActivation") && !source.includes("usePageActivity"),
-    `${page} should rely on its activation hook without a redundant activity subscription`,
-  );
-}
+const collectorsSource = await readFile("src/features/collectors/CollectorsPage.tsx", "utf8");
+assert.ok(
+  collectorsSource.includes("useActivityQuery") &&
+    !collectorsSource.includes("usePageActivation") &&
+    !collectorsSource.includes("usePageActivity"),
+  "collectors page should use activity-bound query owners instead of a local activation loader",
+);
+
+const settingsSource = await readFile("src/features/settings/SettingsPage.tsx", "utf8");
+assert.ok(
+  settingsSource.includes("useActivityQuery") &&
+    !settingsSource.includes("usePageActivation") &&
+    !settingsSource.includes("usePageActivity"),
+  "settings page should use activity-bound query owners instead of a local activation loader",
+);
 
 for (const page of pages) {
   const source = await readFile(page, "utf8");

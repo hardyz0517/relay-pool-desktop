@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   Activity,
@@ -9,7 +10,6 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, EmptyState, InspectorPanel, ObjectRow, SectionCard, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import {
@@ -18,15 +18,19 @@ import {
   detectStationInfo,
   closeCaptureSession,
   finishWebAuthorizationSession,
-  getCaptureSessionStatus,
-  getLatestCollectorSnapshot,
-  listCollectorSnapshots,
   startCaptureSession,
   testStationLogin,
 } from "@/lib/api/collector";
-import { listCollectorRuns } from "@/lib/api/collectorRuns";
 import { updateStationSession } from "@/lib/api/stationKeys";
-import { listStations } from "@/lib/api/stations";
+import { queryKeys } from "@/lib/query/queryKeys";
+import {
+  captureSessionStatusQueryOptions,
+  collectorRunsQueryOptions,
+  collectorSnapshotsQueryOptions,
+  stationAssetQueryOptions,
+  stationsQueryOptions,
+} from "@/lib/query/resourceQueries";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type {
   CaptureSessionStatus,
   CollectorEndpointResult,
@@ -50,15 +54,13 @@ type TaskStatus =
 
 export function CollectorsPage() {
   const toast = useToast();
-  const [stations, setStations] = useState<Station[]>([]);
+  const queryClient = useQueryClient();
+  const stationsQuery = useActivityQuery(stationsQueryOptions());
+  const stations = stationsQuery.data ?? [];
   const [selectedStationId, setSelectedStationId] = useState<string>("");
-  const [latestSnapshot, setLatestSnapshot] = useState<CollectorSnapshot | null>(null);
-  const [history, setHistory] = useState<CollectorSnapshot[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState<string>("");
   const [taskStatus, setTaskStatus] = useState<TaskStatus>("idle");
-  const [captureStatus, setCaptureStatus] = useState<CaptureSessionStatus | null>(null);
   const [taskType, setTaskType] = useState<CollectorTaskType>("full");
-  const [runs, setRuns] = useState<CollectorRun[]>([]);
   const [manualSession, setManualSession] = useState({
     accessToken: "",
     refreshToken: "",
@@ -72,6 +74,33 @@ export function CollectorsPage() {
     () => stations.find((station) => station.id === selectedStationId) ?? stations[0] ?? null,
     [selectedStationId, stations],
   );
+  const selectedCollectorStationId = selectedStation?.id ?? "";
+  const latestSnapshotQuery = useActivityQuery({
+    ...stationAssetQueryOptions(selectedCollectorStationId),
+    enabled: Boolean(selectedCollectorStationId),
+  });
+  const historyQuery = useActivityQuery({
+    ...collectorSnapshotsQueryOptions(selectedCollectorStationId),
+    enabled: Boolean(selectedCollectorStationId),
+  });
+  const captureStatusQuery = useActivityQuery({
+    ...captureSessionStatusQueryOptions(selectedCollectorStationId),
+    enabled: Boolean(selectedCollectorStationId),
+  });
+  const runsQuery = useActivityQuery({
+    ...collectorRunsQueryOptions(selectedCollectorStationId),
+    enabled: Boolean(selectedCollectorStationId),
+  });
+  const fullHistory = historyQuery.data ?? [];
+  const inspectedSnapshot = selectedSnapshotId
+    ? fullHistory.find((snapshot) => snapshot.id === selectedSnapshotId) ?? null
+    : null;
+  const latestSnapshot = inspectedSnapshot ?? latestSnapshotQuery.data ?? null;
+  const history = fullHistory.slice(0, 6);
+  const captureStatus = captureStatusQuery.data ?? null;
+  const runs = runsQuery.data ?? [];
+  const loading = stationsQuery.isPending && stationsQuery.data === undefined;
+  const displayError = error ?? (stationsQuery.error ? readError(stationsQuery.error) : null);
   const summary = toCollectorSummary(latestSnapshot?.summaryJson);
   const recognized = summary.recognized;
   const endpointResults = summary.endpointResults ?? [];
@@ -82,78 +111,54 @@ export function CollectorsPage() {
     ? normalized.rateMultipliers
     : [];
 
-  usePageActivation(({ isInitial }) => {
-    void refreshStations(isInitial);
-    if (!isInitial && selectedStation) {
-      void refreshSnapshot(selectedStation.id);
-      void refreshCaptureStatus(selectedStation.id);
-      void refreshRuns(selectedStation.id);
-    }
-  });
+  useEffect(() => {
+    setSelectedStationId((current) => {
+      if (current && stations.some((station) => station.id === current)) {
+        return current;
+      }
+      return stations[0]?.id ?? "";
+    });
+  }, [stations]);
 
   useEffect(() => {
-    if (!selectedStation) {
-      setLatestSnapshot(null);
-      setHistory([]);
-      setRuns([]);
-      return;
-    }
-    void refreshSnapshot(selectedStation.id);
-    void refreshCaptureStatus(selectedStation.id);
-    void refreshRuns(selectedStation.id);
-  }, [selectedStation?.id]);
+    setSelectedSnapshotId("");
+  }, [selectedCollectorStationId]);
 
-  async function refreshStations(showLoading = true) {
-    if (showLoading) {
-      setLoading(true);
-    }
+  async function refreshCollectorStationData(stationId: string) {
     setError(null);
     try {
-      const nextStations = await listStations();
-      setStations(nextStations);
-      setSelectedStationId((current) => {
-        if (current && nextStations.some((station) => station.id === current)) {
-          return current;
-        }
-        return nextStations[0]?.id ?? "";
-      });
+      await invalidateCollectorStationQueries(stationId, { includeStations: true, includeCapture: true, includeRuns: true });
     } catch (requestError) {
-      const message = readError(requestError);
-      setError(message);
-      toast.error("读取站点失败", message);
-    } finally {
-      if (showLoading) {
-        setLoading(false);
-      }
+      toast.error("刷新采集信息失败", readError(requestError));
     }
   }
 
-  async function refreshSnapshot(stationId: string) {
-    try {
-      const [nextSnapshot, nextHistory] = await Promise.all([
-        getLatestCollectorSnapshot(stationId),
-        listCollectorSnapshots(stationId),
-      ]);
-      setLatestSnapshot(nextSnapshot);
-      setHistory(nextHistory.slice(0, 6));
-    } catch (requestError) {
-      toast.error("刷新采集快照失败", readError(requestError));
-    }
+  function cacheCollectorSnapshot(snapshot: CollectorSnapshot) {
+    queryClient.setQueryData(queryKeys.stationAsset(snapshot.stationId), snapshot);
+    queryClient.setQueryData(queryKeys.collectorSnapshots(snapshot.stationId), (current: CollectorSnapshot[] | undefined) =>
+      upsertCollectorSnapshot(current ?? fullHistory, snapshot),
+    );
+    setSelectedSnapshotId("");
   }
 
-  async function refreshCaptureStatus(stationId: string) {
-    try {
-      setCaptureStatus(await getCaptureSessionStatus(stationId));
-    } catch {
-      setCaptureStatus(null);
+  async function invalidateCollectorStationQueries(
+    stationId: string,
+    options: {
+      includeStations?: boolean;
+      includeCapture?: boolean;
+      includeRuns?: boolean;
+    } = {},
+  ) {
+    if (options.includeStations) {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.stations });
     }
-  }
-
-  async function refreshRuns(stationId: string) {
-    try {
-      setRuns(await listCollectorRuns(stationId));
-    } catch (requestError) {
-      toast.error("刷新采集任务失败", readError(requestError));
+    await queryClient.invalidateQueries({ queryKey: queryKeys.stationAsset(stationId) });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.collectorSnapshots(stationId) });
+    if (options.includeRuns) {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.collectorRuns(stationId) });
+    }
+    if (options.includeCapture) {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.captureSessionStatus(stationId) });
     }
   }
 
@@ -163,12 +168,8 @@ export function CollectorsPage() {
     setError(null);
     try {
       const result = await collectStationTask(selectedStation.id, taskType);
-      setLatestSnapshot(result.snapshot);
-      await Promise.all([
-        refreshStations(),
-        refreshSnapshot(selectedStation.id),
-        refreshRuns(selectedStation.id),
-      ]);
+      cacheCollectorSnapshot(result.snapshot);
+      await invalidateCollectorStationQueries(selectedStation.id, { includeStations: true, includeRuns: true });
       setTaskStatus("success");
       toast.success("采集任务已完成");
     } catch (requestError) {
@@ -208,8 +209,8 @@ export function CollectorsPage() {
     setError(null);
     try {
       const result = await testStationLogin(selectedStation.id);
-      setLatestSnapshot(result.snapshot);
-      await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id)]);
+      cacheCollectorSnapshot(result.snapshot);
+      await invalidateCollectorStationQueries(selectedStation.id, { includeStations: true });
       setTaskStatus("success");
       toast.success("登录测试已完成");
     } catch (requestError) {
@@ -224,8 +225,8 @@ export function CollectorsPage() {
     setError(null);
     try {
       const result = await detectStationInfo(selectedStation.id);
-      setLatestSnapshot(result.snapshot);
-      await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id)]);
+      cacheCollectorSnapshot(result.snapshot);
+      await invalidateCollectorStationQueries(selectedStation.id, { includeStations: true });
       setTaskStatus("success");
       toast.success("高级探测已完成");
     } catch (requestError) {
@@ -240,7 +241,7 @@ export function CollectorsPage() {
     setError(null);
     try {
       const nextStatus = await startCaptureSession(selectedStation.id);
-      setCaptureStatus(nextStatus);
+      queryClient.setQueryData(queryKeys.captureSessionStatus(selectedStation.id), nextStatus);
       toast.success("网页登录授权窗口已打开");
     } catch (requestError) {
       setTaskStatus("failed");
@@ -254,8 +255,8 @@ export function CollectorsPage() {
     setError(null);
     try {
       const result = await finishWebAuthorizationSession(selectedStation.id);
-      setLatestSnapshot(result.snapshot);
-      await Promise.all([refreshStations(), refreshSnapshot(selectedStation.id), refreshCaptureStatus(selectedStation.id)]);
+      cacheCollectorSnapshot(result.snapshot);
+      await invalidateCollectorStationQueries(selectedStation.id, { includeStations: true, includeCapture: true });
       setTaskStatus("success");
       toast.success("网页登录授权已保存");
     } catch (requestError) {
@@ -269,7 +270,7 @@ export function CollectorsPage() {
     setError(null);
     try {
       const nextStatus = await clearCaptureSession(selectedStation.id);
-      setCaptureStatus(nextStatus);
+      queryClient.setQueryData(queryKeys.captureSessionStatus(selectedStation.id), nextStatus);
       setTaskStatus("idle");
       toast.success("捕获状态已清除");
     } catch (requestError) {
@@ -282,7 +283,7 @@ export function CollectorsPage() {
     setError(null);
     try {
       const nextStatus = await closeCaptureSession(selectedStation.id);
-      setCaptureStatus(nextStatus);
+      queryClient.setQueryData(queryKeys.captureSessionStatus(selectedStation.id), nextStatus);
       setTaskStatus("idle");
       toast.success("网页登录授权窗口已关闭");
     } catch (requestError) {
@@ -343,7 +344,7 @@ export function CollectorsPage() {
           </Button>
           <Button
             variant="secondary"
-            onClick={() => selectedStation && void refreshSnapshot(selectedStation.id)}
+            onClick={() => selectedStation && void refreshCollectorStationData(selectedStation.id)}
             disabled={!selectedStation || actionBusy}
           >
             <RefreshCcw className="h-4 w-4" />
@@ -352,6 +353,12 @@ export function CollectorsPage() {
         </div>
       }
     >
+      {displayError && (
+        <div className="mb-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-4 py-3 text-sm text-danger-foreground shadow-[var(--surface-shadow)]">
+          {displayError}
+        </div>
+      )}
+
       {loading ? (
         <div className="rounded-[var(--surface-radius)] border border-border bg-surface px-4 py-5 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">
           正在读取站点和采集快照...
@@ -614,7 +621,7 @@ export function CollectorsPage() {
                           { label: "字段", value: countValue(toCollectorSummary(snapshot.summaryJson).recognized?.matchedFieldCount) },
                         ]}
                         selected={snapshot.id === latestSnapshot?.id}
-                        onClick={() => setLatestSnapshot(snapshot)}
+                        onClick={() => setSelectedSnapshotId(snapshot.id)}
                       />
                     );
                   })
@@ -883,6 +890,22 @@ function sourceLabel(source: string) {
   if (source.includes("collect")) return "信息采集";
   if (source.includes("login-state")) return "登录态采集";
   return "采集快照";
+}
+
+function upsertCollectorSnapshot(snapshots: CollectorSnapshot[], snapshot: CollectorSnapshot) {
+  const nextSnapshots = snapshots.some((item) => item.id === snapshot.id)
+    ? snapshots.map((item) => (item.id === snapshot.id ? snapshot : item))
+    : [snapshot, ...snapshots];
+  return nextSnapshots.sort((left, right) => timestampMs(right.fetchedAt) - timestampMs(left.fetchedAt));
+}
+
+function timestampMs(value: string) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && value.trim() !== "") {
+    return numeric;
+  }
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function toneForConclusion(value: string) {

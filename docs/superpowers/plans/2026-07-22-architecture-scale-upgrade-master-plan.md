@@ -621,7 +621,7 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 
 ### Task 13：迁移 Settings、Collectors 和剩余页面
 
-**当前 checkpoint：** `S3-T13-settings-cache-owner` 已把 SettingsPage 的 settings/proxyStatus server state 收敛到 canonical query options，删除 settings API/AppShell/RoutingPage 的业务 DOM event 同步；Settings、Collector advanced 和 LocalRouting settings mutation owners 成功后直接更新 `queryKeys.settings`，LocalRouting settings 额外失效 `queryKeys.localRoutingWorkspace`。Collectors page 仍保留 activation loader/local server-state，Task 13 未完成。
+**当前 checkpoint：** `S3-T13-settings-cache-owner` 已把 SettingsPage 的 settings/proxyStatus server state 收敛到 canonical query options，删除 settings API/AppShell/RoutingPage 的业务 DOM event 同步；Settings、Collector advanced 和 LocalRouting settings mutation owners 成功后直接更新 `queryKeys.settings`，LocalRouting settings 额外失效 `queryKeys.localRoutingWorkspace`。`S3-T13-collectors-query-owner` 已把 CollectorsPage 的 stations/latest snapshot/history/runs/capture status server state 收敛到 canonical query options，并删除页面 activation loader/local server-state 副本；collector task/capture mutation owner 成功后直接更新或失效对应 Query Cache。Task 13 仍未完成：ChannelMonitoring、ChannelStatus、DataRecovery/Updater 等剩余页面的 local server-state、operation owner 和 retention allowlist 仍需逐片审计。
 
 **文件：**
 

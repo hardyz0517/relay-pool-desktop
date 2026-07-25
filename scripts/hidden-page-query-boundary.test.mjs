@@ -14,7 +14,9 @@ const pages = [
 for (const path of pages) {
   const source = await readFile(path, "utf8");
   assert.ok(
-    source.includes("usePageActivation") || source.includes("usePageRefreshEnabled"),
+    source.includes("usePageActivation") ||
+      source.includes("usePageRefreshEnabled") ||
+      source.includes("useActivityQuery"),
     `${path} should read page activity`,
   );
   assert.ok(
@@ -26,10 +28,11 @@ for (const path of pages) {
 
 const keyPoolSource = await readFile("src/features/key-pool/KeyPoolPage.tsx", "utf8");
 assert.ok(
-  /function handleKeyPoolItemsUpdated\(\) \{\s*if \(!refreshEnabled\) \{\s*return;\s*\}\s*void refresh\(false\);/s.test(
-    keyPoolSource,
-  ),
-  "KeyPool update events should not refresh while the retained page is hidden",
+  keyPoolSource.includes("useActivityQuery(keyPoolQueryOptions())") &&
+    keyPoolSource.includes("useActivityQuery(stationsQueryOptions())") &&
+    !keyPoolSource.includes("handleKeyPoolItemsUpdated") &&
+    !keyPoolSource.includes("KEY_POOL_ITEMS_UPDATED_EVENT"),
+  "KeyPool reads should use activity-bound query owners without DOM update events",
 );
 
 console.log("hidden page query boundary contract passed");
