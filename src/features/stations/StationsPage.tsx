@@ -325,6 +325,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     async () => {
       await Promise.all([
         queryClient.cancelQueries({ queryKey: queryKeys.stations }),
+        queryClient.cancelQueries({ queryKey: queryKeys.keyPool }),
         queryClient.cancelQueries({ queryKey: queryKeys.balanceSnapshots }),
         queryClient.cancelQueries({ queryKey: queryKeys.stationAssets }),
       ]);
@@ -336,6 +337,7 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
     async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.stations }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
         queryClient.invalidateQueries({ queryKey: queryKeys.balanceSnapshots }),
         queryClient.invalidateQueries({ queryKey: queryKeys.stationAssets }),
       ]);

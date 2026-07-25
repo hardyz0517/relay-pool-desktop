@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, KeyRound, LogIn, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
@@ -26,6 +27,7 @@ import { inferGroupCategoryFromEvidence, normalizeGroupCategory } from "@/lib/gr
 import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
+import { queryKeys } from "@/lib/query/queryKeys";
 import {
   isCollectedStationGroupBinding,
   type GroupRateRecord,
@@ -798,6 +800,7 @@ function groupsMatch(row: StationGroupDraft, group: StationKeyGroupOption) {
 
 export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: AddProviderPageProps) {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const editing = Boolean(stationId);
   const [activeStationId, setActiveStationId] = useState<string | null>(stationId ?? null);
   const [form, setForm] = useState<AddProviderFormState>(createDefaultProviderForm);
@@ -830,6 +833,13 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const currentCreditPerCny = useMemo(() => parseCreditPerCny(form.creditPerCny), [form.creditPerCny]);
   const hasUnsavedChanges = serializeProviderDraft(form, groupRows, keyRows) !== initialDraftSnapshot;
+
+  async function invalidateProviderWorkspaceCaches() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.stations }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
+    ]);
+  }
 
   const editableGroupOptions = useMemo(() => {
     const deletedCurrentGroups = currentGroupOptions.filter((option) =>
@@ -1071,6 +1081,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
 
     setActiveStationId(station.id);
     setLocalStationKeys(await refreshLocalStationKeyState(station.id));
+    await invalidateProviderWorkspaceCaches();
     toast.success("供应商已保存，正在获取远端 Key");
     return station.id;
   }
@@ -1128,6 +1139,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         setKeyRows(rowsToSave);
         await saveKeyRows(activeStationId, rowsToSave);
         await refreshLocalStationKeyState(activeStationId);
+        await invalidateProviderWorkspaceCaches();
         if (form.loginUsername.trim() || form.loginPassword.trim() || form.rememberPassword) {
           await updateStationCredentials({
             stationId: activeStationId,
@@ -1184,6 +1196,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
       setKeyRows(rowsToSave);
       await saveKeyRows(station.id, rowsToSave);
+      await invalidateProviderWorkspaceCaches();
       if (form.loginUsername.trim() || form.loginPassword.trim()) {
         await updateStationCredentials({
           stationId: station.id,
@@ -1374,6 +1387,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
         ),
       ]);
       await refreshLocalStationKeyState(targetStationId);
+      await invalidateProviderWorkspaceCaches();
       setCreateRemoteOpen(false);
       toast.success("远端 Key 已创建", result.message || "已同步保存为本地 Key");
     } catch (requestError) {
@@ -1443,6 +1457,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
       (key) => key.stationId === targetStationId,
     );
     const nextLocalKeys = await refreshLocalStationKeyState(targetStationId);
+    await invalidateProviderWorkspaceCaches();
     setRemoteKeys(nextRemoteKeys);
     setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(nextRemoteKeys, nextLocalKeys));
     toast.success("已创建本地 Key", result.message || `${remoteKeyDisplayName(remoteKey)} 已保存为本地 Key。`);
@@ -1466,6 +1481,7 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
     );
     await deleteStationKey(expectedStationKeyId);
     const nextLocalKeys = await refreshLocalStationKeyState(remoteKey.stationId);
+    await invalidateProviderWorkspaceCaches();
     setRemoteKeys(nextRemoteKeys);
     setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(nextRemoteKeys, nextLocalKeys));
     toast.success("已删除自动创建的本地 Key");

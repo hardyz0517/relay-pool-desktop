@@ -568,6 +568,8 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 
 ### Task 11：迁移 Key Pool 与 Stations 并建立 aggregate workspace
 
+**当前 checkpoint：** `S3-T11-key-pool-query-owner` 已把 Key Pool 页面、Add/Edit Key transient 页的 Key Pool/Stations 读源收敛到 canonical React Query options，并删除 `stationKeys` API 层的 key-pool DOM update event；Key Pool、Stations 和 AddProvider 的 key mutation 成功路径改为显式 `QueryClient` cache update/invalidation。Task 11 仍未完成：Stations per-row `useQueries`、bounded aggregate workspace/read-model、backend query-count evidence、partial semantics 和 mutation race tests 尚未关闭，且不得通过隐藏 N+1 或修改 Persistence V2 绕过。
+
 **文件：**
 
 - Create/Modify: `src/features/key-pool/{api,queries,mutations,models,viewModels}.ts`

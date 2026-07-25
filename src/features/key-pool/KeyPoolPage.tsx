@@ -12,20 +12,18 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useQueryClient } from "@tanstack/react-query";
 import { Activity, Bot, Edit3, GripVertical, KeyRound, Loader2, MessageCircle, Plus, RotateCw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import {
-  usePageActivation,
-  usePageRefreshEnabled,
-} from "@/components/shell/PageActivity";
+import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, SelectControl, StatusBadge, SwitchControl, type StatusTone, useToast } from "@/components/ui";
 import { createChannelMonitor, listChannelMonitorTemplates, listChannelMonitors, updateChannelMonitor } from "@/lib/api/channelMonitors";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getStationKeyCapabilities } from "@/lib/api/routing";
-import { listStations } from "@/lib/api/stations";
-import { KEY_POOL_ITEMS_UPDATED_EVENT, deleteStationKey, listKeyPoolItems, reorderKeyPool, saveStationKeyWithDefaults, testStationKeyConnectivity, updateStationKey } from "@/lib/api/stationKeys";
+import { deleteStationKey, reorderKeyPool, saveStationKeyWithDefaults, testStationKeyConnectivity, updateStationKey } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
+import { queryKeys } from "@/lib/query/queryKeys";
 import { keyPoolQueryOptions, stationsQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import { parseTimestampLikeDate } from "@/lib/time";
@@ -86,17 +84,17 @@ const defaultKeyConnectivityModelOptions = [
 
 export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const toast = useToast();
-  const refreshEnabled = usePageRefreshEnabled();
-  useActivityQuery(keyPoolQueryOptions());
-  useActivityQuery(stationsQueryOptions());
-  const [stations, setStations] = useState<Station[]>([]);
-  const [items, setItems] = useState<KeyPoolItem[]>([]);
+  const queryClient = useQueryClient();
+  const keyPoolItemsQuery = useActivityQuery(keyPoolQueryOptions());
+  const stationsQuery = useActivityQuery(stationsQueryOptions());
+  const stations = stationsQuery.data ?? [];
+  const items = keyPoolItemsQuery.data ?? [];
   const [monitors, setMonitors] = useState<ChannelMonitor[]>([]);
   const [monitorTemplates, setMonitorTemplates] = useState<ChannelMonitorRequestTemplate[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<string>("all");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [monitorResourcesLoading, setMonitorResourcesLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [creatingKey, setCreatingKey] = useState(false);
@@ -115,6 +113,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const [monitoringKeyId, setMonitoringKeyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const connectivityRunTokenRef = useRef(0);
+  const loading = keyPoolItemsQuery.isLoading || stationsQuery.isLoading || monitorResourcesLoading;
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const activeDragItem = useMemo(
@@ -123,22 +122,8 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   );
 
   usePageActivation(({ isInitial }) => {
-    void refresh(isInitial);
+    void refreshMonitorResources(isInitial);
   });
-
-  useEffect(() => {
-    function handleKeyPoolItemsUpdated() {
-      if (!refreshEnabled) {
-        return;
-      }
-      void refresh(false);
-    }
-
-    window.addEventListener(KEY_POOL_ITEMS_UPDATED_EVENT, handleKeyPoolItemsUpdated);
-    return () => {
-      window.removeEventListener(KEY_POOL_ITEMS_UPDATED_EVENT, handleKeyPoolItemsUpdated);
-    };
-  }, [refreshEnabled]);
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
@@ -175,20 +160,16 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     [stations],
   );
 
-  async function refresh(showLoading = true) {
+  async function refreshMonitorResources(showLoading = true) {
     if (showLoading) {
-      setLoading(true);
+      setMonitorResourcesLoading(true);
     }
     setError(null);
     try {
-      const [nextStations, nextItems, nextMonitors, nextTemplates] = await Promise.all([
-        listStations(),
-        listKeyPoolItems(),
+      const [nextMonitors, nextTemplates] = await Promise.all([
         listChannelMonitors(),
         listChannelMonitorTemplates(),
       ]);
-      setStations(nextStations);
-      setItems(nextItems);
       setMonitors(nextMonitors);
       setMonitorTemplates(nextTemplates);
     } catch (requestError) {
@@ -197,9 +178,18 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       toast.error("读取密钥池失败", message);
     } finally {
       if (showLoading) {
-        setLoading(false);
+        setMonitorResourcesLoading(false);
       }
     }
+  }
+
+  async function invalidateKeyPoolQueries(includeStations = true) {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
+      ...(includeStations
+        ? [queryClient.invalidateQueries({ queryKey: queryKeys.stations })]
+        : []),
+    ]);
   }
 
   function handleDragStart(event: DragStartEvent) {
@@ -239,14 +229,16 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       }
       nextOrder.push(nextVisible[visibleCursor++]);
     }
-    setItems(nextOrder);
+    await queryClient.cancelQueries({ queryKey: queryKeys.keyPool });
+    queryClient.setQueryData(queryKeys.keyPool, nextOrder);
     setSaving(true);
     try {
       const saved = await reorderKeyPool(nextOrder.map((item) => item.id));
-      setItems(saved);
+      queryClient.setQueryData(queryKeys.keyPool, saved);
+      await invalidateKeyPoolQueries(false);
       toast.success("密钥排序已保存");
     } catch (requestError) {
-      setItems(previousItems);
+      queryClient.setQueryData(queryKeys.keyPool, previousItems);
       toast.error("保存排序失败", readError(requestError));
     } finally {
       setSaving(false);
@@ -275,7 +267,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         status: item.status,
         note: item.note,
       });
-      await refresh();
+      await invalidateKeyPoolQueries(false);
       toast.success(item.enabled ? "密钥已禁用" : "密钥已启用");
     } catch (requestError) {
       toast.error("更新密钥状态失败", readError(requestError));
@@ -297,7 +289,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     try {
       await deleteStationKey(pendingDeleteItem.id);
       setPendingDeleteItem(null);
-      await refresh();
+      await invalidateKeyPoolQueries();
       toast.success("密钥已删除");
     } catch (requestError) {
       toast.error("删除密钥失败", readError(requestError));
@@ -371,7 +363,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       }
       setConnectivityTestResult(result);
       setConnectivityProgressLabel(null);
-      await refresh();
+      await invalidateKeyPoolQueries(false);
       if (result.ok) {
         toast.success("连通性正常", `${item.name} · ${result.durationMs}ms · ${result.model}`);
       } else {
@@ -418,7 +410,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
           toast.info("即时连通性未通过，已创建定时监控", connectivityResult.message);
         }
       }
-      await refresh();
+      await refreshMonitorResources(false);
       toast.success(nextEnabled ? "监控已开启" : "监控已停用");
     } catch (requestError) {
       toast.error("更新监控开关失败", readError(requestError));
@@ -534,7 +526,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       });
       setCreatingKey(false);
       setEditForm(emptyEditForm);
-      await refresh();
+      await invalidateKeyPoolQueries();
       toast.success("密钥已添加");
     } catch (requestError) {
       toast.error("添加密钥失败", readError(requestError));
@@ -568,7 +560,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         capabilities: capabilitiesFromEditForm(editForm),
       });
       setEditingItem(null);
-      await refresh();
+      await invalidateKeyPoolQueries();
       toast.success("密钥已更新");
     } catch (requestError) {
       toast.error("保存密钥失败", readError(requestError));

@@ -8,24 +8,8 @@ import type {
   UpdateStationSessionInput,
 } from "@/lib/types/stationKeys";
 
-export const KEY_POOL_ITEMS_UPDATED_EVENT = "relay-pool:key-pool-items-updated";
-
 function stationKeysClient() {
   return getActiveBackendClient().stationKeys;
-}
-
-function notifyKeyPoolItemsUpdated() {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.dispatchEvent(new CustomEvent(KEY_POOL_ITEMS_UPDATED_EVENT));
-}
-
-function withKeyPoolItemsInvalidation<T>(request: Promise<T>): Promise<T> {
-  return request.then((result) => {
-    notifyKeyPoolItemsUpdated();
-    return result;
-  });
 }
 
 export function listStationKeys(stationId: string) {
@@ -45,13 +29,11 @@ export function scanRemoteStationKeys(stationId: string) {
 }
 
 export function createRemoteStationKey(input: CreateRemoteStationKeyInput) {
-  return withKeyPoolItemsInvalidation(stationKeysClient().createRemoteStationKey(input));
+  return stationKeysClient().createRemoteStationKey(input);
 }
 
 export function createLocalStationKeyFromRemote(remoteKeyId: string, stationId: string) {
-  return withKeyPoolItemsInvalidation(
-    stationKeysClient().createLocalStationKeyFromRemote(remoteKeyId, stationId),
-  );
+  return stationKeysClient().createLocalStationKeyFromRemote(remoteKeyId, stationId);
 }
 
 export function bindRemoteStationKey(remoteKeyId: string, stationKeyId: string) {
@@ -63,29 +45,27 @@ export function unbindRemoteStationKey(remoteKeyId: string, stationId: string) {
 }
 
 export function createStationKey(input: CreateStationKeyInput) {
-  return withKeyPoolItemsInvalidation(stationKeysClient().createStationKey(input));
+  return stationKeysClient().createStationKey(input);
 }
 
 export function updateStationKey(input: UpdateStationKeyInput) {
-  return withKeyPoolItemsInvalidation(stationKeysClient().updateStationKey(input));
+  return stationKeysClient().updateStationKey(input);
 }
 
 export function saveStationKeyWithDefaults(input: SaveStationKeyWithDefaultsInput) {
-  return withKeyPoolItemsInvalidation(stationKeysClient().saveStationKeyWithDefaults(input));
+  return stationKeysClient().saveStationKeyWithDefaults(input);
 }
 
 export function updateStationKeyGroupBinding(stationKeyId: string, groupBindingId: string) {
-  return withKeyPoolItemsInvalidation(
-    stationKeysClient().updateStationKeyGroupBinding(stationKeyId, groupBindingId),
-  );
+  return stationKeysClient().updateStationKeyGroupBinding(stationKeyId, groupBindingId);
 }
 
 export function deleteStationKey(id: string) {
-  return withKeyPoolItemsInvalidation(stationKeysClient().deleteStationKey(id));
+  return stationKeysClient().deleteStationKey(id);
 }
 
 export function reorderStationKeys(stationId: string, keyIds: string[]) {
-  return withKeyPoolItemsInvalidation(stationKeysClient().reorderStationKeys(stationId, keyIds));
+  return stationKeysClient().reorderStationKeys(stationId, keyIds);
 }
 
 export function listKeyPoolItems() {
@@ -93,7 +73,7 @@ export function listKeyPoolItems() {
 }
 
 export function reorderKeyPool(keyIds: string[]) {
-  return withKeyPoolItemsInvalidation(stationKeysClient().reorderKeyPool(keyIds));
+  return stationKeysClient().reorderKeyPool(keyIds);
 }
 
 export function testStationKeyConnectivity(

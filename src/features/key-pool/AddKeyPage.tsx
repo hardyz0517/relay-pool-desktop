@@ -1,11 +1,14 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
 import { listStationGroupOptions } from "@/lib/api/groupFacts";
-import { listStations } from "@/lib/api/stations";
 import { saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
+import { queryKeys } from "@/lib/query/queryKeys";
+import { stationsQueryOptions } from "@/lib/query/resourceQueries";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { Station } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
@@ -44,16 +47,21 @@ const emptyForm: AddKeyFormState = {
 const inputClassName =
   "h-8 rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30";
 
+const emptyStations: Station[] = [];
+
 export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPageProps) {
   const toast = useToast();
-  const [stations, setStations] = useState<Station[]>([]);
+  const queryClient = useQueryClient();
+  const stationsQuery = useActivityQuery(stationsQueryOptions());
+  const stations = stationsQuery.data ?? emptyStations;
   const [groupOptions, setGroupOptions] = useState<StationGroupOption[]>([]);
   const [form, setForm] = useState<AddKeyFormState>(emptyForm);
   const [initialFormSnapshot, setInitialFormSnapshot] = useState(() => serializeAddKeyForm(emptyForm));
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loading = stationsQuery.isLoading;
+  const initializedInitialStationIdRef = useRef<string | null | undefined>(undefined);
   const hasUnsavedChanges = serializeAddKeyForm(form) !== initialFormSnapshot;
 
   const bindingOptions = groupOptions
@@ -64,40 +72,39 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
     }));
 
   useEffect(() => {
-    let alive = true;
-    setLoading(true);
     setError(null);
-    void listStations()
-      .then((nextStations) => {
-        if (!alive) return;
-        setStations(nextStations);
-        const station = initialStationId
-          ? nextStations.find((item) => item.id === initialStationId) ?? null
-          : null;
-        if (station) {
-          const nextForm = createFormForStation(station);
-          setForm(nextForm);
-          setInitialFormSnapshot(serializeAddKeyForm(nextForm));
-          void refreshGroupOptions(station.id, alive);
-        } else {
-          setForm(emptyForm);
-          setInitialFormSnapshot(serializeAddKeyForm(emptyForm));
-          setGroupOptions([]);
-        }
-      })
-      .catch((requestError) => {
-        if (!alive) return;
-        const message = readError(requestError);
-        setError(message);
-        toast.error("读取中转站失败", message);
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
+    if (stationsQuery.isLoading) {
+      return undefined;
+    }
+    if (stationsQuery.error) {
+      setError(readError(stationsQuery.error));
+      return undefined;
+    }
+    if (initializedInitialStationIdRef.current === initialStationId) {
+      return undefined;
+    }
+    let alive = true;
+    const station = initialStationId
+      ? stations.find((item) => item.id === initialStationId) ?? null
+      : null;
+    if (initialStationId && !station && stations.length === 0) {
+      return undefined;
+    }
+    initializedInitialStationIdRef.current = initialStationId;
+    if (station) {
+      const nextForm = createFormForStation(station);
+      setForm(nextForm);
+      setInitialFormSnapshot(serializeAddKeyForm(nextForm));
+      void refreshGroupOptions(station.id, alive);
+    } else {
+      setForm(emptyForm);
+      setInitialFormSnapshot(serializeAddKeyForm(emptyForm));
+      setGroupOptions([]);
+    }
     return () => {
       alive = false;
     };
-  }, [initialStationId, toast]);
+  }, [initialStationId, stations, stationsQuery.error, stationsQuery.isLoading]);
 
   async function refreshGroupOptions(stationId: string, alive = true) {
     try {
@@ -177,6 +184,10 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
             }
           : { kind: "clear" },
       });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.stations }),
+      ]);
       toast.success("密钥已添加");
       onCreated?.();
     } catch (requestError) {
