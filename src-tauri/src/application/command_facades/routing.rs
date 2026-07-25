@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use crate::{
     application::{error::ApplicationError, routing::RoutingService},
@@ -8,9 +8,25 @@ use crate::{
             ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyHealth,
             UpsertModelAliasInput,
         },
-        stations::StationEndpointHealth,
+        stations::{EndpointPingResult, StationEndpointHealth},
+    },
+    services::{
+        endpoint_ping::ping_station_endpoint as probe_station_endpoint,
+        time::now_millis_for_services,
     },
 };
+
+#[derive(Debug)]
+pub(crate) enum EndpointPingCommandError {
+    Application(ApplicationError),
+    ResultUnknown,
+}
+
+impl From<ApplicationError> for EndpointPingCommandError {
+    fn from(error: ApplicationError) -> Self {
+        Self::Application(error)
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct RoutingCommandFacade {
@@ -70,5 +86,42 @@ impl RoutingCommandFacade {
         station_key_id: String,
     ) -> Result<StationKeyHealth, ApplicationError> {
         self.routing.station_key_health_by_id(&station_key_id).await
+    }
+
+    pub(crate) async fn ping_station_endpoint(
+        &self,
+        station_id: String,
+    ) -> Result<EndpointPingResult, EndpointPingCommandError> {
+        let target = self
+            .routing
+            .station_endpoint_probe_target(&station_id)
+            .await?;
+        let checked_at = now_millis_for_services().to_string();
+        let api_base_url = target.api_base_url.clone();
+        let probe = tokio::task::spawn_blocking(move || {
+            probe_station_endpoint(&api_base_url, Duration::from_secs(5))
+        })
+        .await
+        .map_err(|_| EndpointPingCommandError::ResultUnknown)?;
+        let health = self
+            .routing
+            .record_station_endpoint_health(
+                target.station_id,
+                target.endpoint_revision,
+                probe.status,
+                probe.latency_ms,
+                checked_at.clone(),
+                probe.error_summary,
+            )
+            .await
+            .map_err(|_| EndpointPingCommandError::ResultUnknown)?;
+        Ok(EndpointPingResult {
+            station_id: health.station_id,
+            ok: probe.ok,
+            status: health.status,
+            latency_ms: health.latency_ms,
+            checked_at: health.checked_at.unwrap_or(checked_at),
+            error_summary: health.error_summary,
+        })
     }
 }

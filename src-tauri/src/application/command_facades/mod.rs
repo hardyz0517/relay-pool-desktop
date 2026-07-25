@@ -23,5 +23,5 @@ pub(crate) use local_proxy::{LocalProxyCommandError, LocalProxyCommandFacade};
 pub(crate) use pricing::PricingCommandFacade;
 pub(crate) use remote_keys::RemoteKeysCommandFacade;
 pub(crate) use request_logs::RequestLogsCommandFacade;
-pub(crate) use routing::RoutingCommandFacade;
+pub(crate) use routing::{EndpointPingCommandError, RoutingCommandFacade};
 pub(crate) use settings_stations::SettingsStationsCommandFacade;

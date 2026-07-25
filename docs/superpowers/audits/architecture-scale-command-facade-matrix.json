@@ -200,7 +200,8 @@
       "state_type": "RoutingCommandFacade",
       "source_path": "src-tauri/src/application/command_facades/routing.rs",
       "dependencies": [
-        "RoutingService"
+        "RoutingService",
+        "endpoint ping probe"
       ],
       "commands": [
         {
@@ -242,10 +243,14 @@
           "command": "list_balance_snapshots_for_station",
           "use_case": "list_balance_snapshots_for_station",
           "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "ping_station_endpoint",
+          "use_case": "ping_station_endpoint",
+          "dependencies": ["RoutingService", "endpoint ping probe"]
         }
       ],
       "non_goals": [
-        "ping_station_endpoint",
         "local proxy workspace and lifecycle commands"
       ]
     },

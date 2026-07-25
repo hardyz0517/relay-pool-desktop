@@ -21,9 +21,9 @@ use crate::{
         command_facades::{
             ChangeEventsCommandFacade, ChannelMonitoringCommandFacade, ChannelStatusCommandFacade,
             CollectorMetadataCommandFacade, CredentialsCommandFacade, DataDirectoryCommandFacade,
-            KeyPoolCommandFacade, LocalProxyCommandError, LocalProxyCommandFacade,
-            PricingCommandFacade, RemoteKeysCommandFacade, RequestLogsCommandFacade,
-            RoutingCommandFacade, SettingsStationsCommandFacade,
+            EndpointPingCommandError, KeyPoolCommandFacade, LocalProxyCommandError,
+            LocalProxyCommandFacade, PricingCommandFacade, RemoteKeysCommandFacade,
+            RequestLogsCommandFacade, RoutingCommandFacade, SettingsStationsCommandFacade,
         },
         error::ApplicationError,
         pagination::PageLimit,
@@ -105,7 +105,6 @@ use crate::{
         proxy::{ProxyStatus, UpstreamApiFormat},
         routing::StationKeyCapabilities,
         station_keys::KeyPoolItem,
-        stations::EndpointPingResult,
         AppStatus,
     },
     observability::correlation,
@@ -124,12 +123,10 @@ use crate::{
                 DataStoreStartupState,
             },
         },
-        endpoint_ping::ping_station_endpoint as probe_station_endpoint,
         proxy::{redact_error_message, runtime::ProxyRuntimeState, should_fallback},
         remote_keys,
         secrets::{validation::validate_database_secrets, SecretManager},
         station_endpoints::{build_api_url, url_belongs_to_base},
-        time::now_millis_for_services,
         updater,
     },
 };
@@ -1532,6 +1529,15 @@ fn public_channel_monitor_run_error(_: String) -> error::CommandError {
     error::CommandError::from_work(error::WorkFailure::ResultUnknown)
 }
 
+fn public_endpoint_ping_error(error: EndpointPingCommandError) -> error::CommandError {
+    match error {
+        EndpointPingCommandError::Application(error) => public_command_application_error(error),
+        EndpointPingCommandError::ResultUnknown => {
+            error::CommandError::from_work(error::WorkFailure::ResultUnknown)
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn get_station_key_health(
     facade: State<'_, RoutingCommandFacade>,
@@ -1549,44 +1555,17 @@ pub async fn get_station_key_health(
 
 #[tauri::command]
 pub async fn ping_station_endpoint(
-    services: State<'_, AppServices>,
+    facade: State<'_, RoutingCommandFacade>,
     input: Value,
 ) -> Result<EndpointPingResultDto, error::CommandError> {
     correlation::in_command_scope("ping_station_endpoint", async {
         let input = StationIdInputDto::parse(input)?;
-        let target = services
-            .routing
-            .station_endpoint_probe_target(&input.station_id)
+        let result = facade
+            .ping_station_endpoint(input.station_id)
             .await
-            .map_err(public_command_application_error)?;
-        let checked_at = now_millis_for_services().to_string();
-        let api_base_url = target.api_base_url.clone();
-        let probe = tauri::async_runtime::spawn_blocking(move || {
-            probe_station_endpoint(&api_base_url, Duration::from_secs(5))
-        })
-        .await
-        .map_err(|_| error::CommandError::from_work(error::WorkFailure::ResultUnknown))?;
-        let health = services
-            .routing
-            .record_station_endpoint_health(
-                target.station_id,
-                target.endpoint_revision,
-                probe.status,
-                probe.latency_ms,
-                checked_at.clone(),
-                probe.error_summary,
-            )
-            .await
-            .map_err(|_| error::CommandError::from_work(error::WorkFailure::ResultUnknown))?;
-        EndpointPingResultDto::try_from(EndpointPingResult {
-            station_id: health.station_id,
-            ok: probe.ok,
-            status: health.status,
-            latency_ms: health.latency_ms,
-            checked_at: health.checked_at.unwrap_or(checked_at),
-            error_summary: health.error_summary,
-        })
-        .map_err(|_| error::CommandError::from_work(error::WorkFailure::ResultUnknown))
+            .map_err(public_endpoint_ping_error)?;
+        EndpointPingResultDto::try_from(result)
+            .map_err(|_| error::CommandError::from_work(error::WorkFailure::ResultUnknown))
     })
     .await
 }
