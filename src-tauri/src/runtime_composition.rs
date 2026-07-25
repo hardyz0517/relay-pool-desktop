@@ -74,6 +74,7 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     Pricing,
     ChangeEvents,
     Credentials,
+    DataDirectory,
     Monitor,
     Collector,
 > {
@@ -90,6 +91,7 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     pricing: Pricing,
     change_events: ChangeEvents,
     credentials: Credentials,
+    data_directory: DataDirectory,
     monitor: Monitor,
     collector: Collector,
 }
@@ -108,6 +110,7 @@ impl<
         Pricing,
         ChangeEvents,
         Credentials,
+        DataDirectory,
         Monitor,
         Collector,
     >
@@ -125,6 +128,7 @@ impl<
         Pricing,
         ChangeEvents,
         Credentials,
+        DataDirectory,
         Monitor,
         Collector,
     >
@@ -150,6 +154,7 @@ impl<
         pricing: Pricing,
         change_events: ChangeEvents,
         credentials: Credentials,
+        data_directory: DataDirectory,
         monitor: Monitor,
         collector: Collector,
     ) -> Self {
@@ -167,6 +172,7 @@ impl<
             pricing,
             change_events,
             credentials,
+            data_directory,
             monitor,
             collector,
         }
@@ -302,6 +308,7 @@ pub(crate) fn register_ready_services_with_command_facades<
     Pricing,
     ChangeEvents,
     Credentials,
+    DataDirectory,
     Monitor,
     Collector,
 >(
@@ -321,6 +328,7 @@ pub(crate) fn register_ready_services_with_command_facades<
         Pricing,
         ChangeEvents,
         Credentials,
+        DataDirectory,
         Monitor,
         Collector,
     >,
@@ -340,6 +348,7 @@ where
     Pricing: Send + Sync + 'static,
     ChangeEvents: Send + Sync + 'static,
     Credentials: Send + Sync + 'static,
+    DataDirectory: Send + Sync + 'static,
     Monitor: Send + Sync + 'static,
     Collector: Send + Sync + 'static,
 {
@@ -369,6 +378,7 @@ pub(crate) fn register_ready_services_with_command_facades_in<
     Pricing,
     ChangeEvents,
     Credentials,
+    DataDirectory,
     Monitor,
     Collector,
 >(
@@ -388,6 +398,7 @@ pub(crate) fn register_ready_services_with_command_facades_in<
         Pricing,
         ChangeEvents,
         Credentials,
+        DataDirectory,
         Monitor,
         Collector,
     >,
@@ -407,6 +418,7 @@ where
     Pricing: Send + Sync + 'static,
     ChangeEvents: Send + Sync + 'static,
     Credentials: Send + Sync + 'static,
+    DataDirectory: Send + Sync + 'static,
     Monitor: Send + Sync + 'static,
     Collector: Send + Sync + 'static,
 {
@@ -424,6 +436,7 @@ where
         || registry.contains::<Pricing>()
         || registry.contains::<ChangeEvents>()
         || registry.contains::<Credentials>()
+        || registry.contains::<DataDirectory>()
         || registry.contains::<Monitor>()
         || registry.contains::<Collector>()
     {
@@ -444,6 +457,7 @@ where
         pricing,
         change_events,
         credentials,
+        data_directory,
         monitor,
         collector,
     } = services;
@@ -484,6 +498,9 @@ where
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(credentials) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(data_directory) {
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(monitor) {
@@ -552,6 +569,8 @@ mod tests {
     struct SlotFourteen(u8);
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct SlotFifteen(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotSixteen(u8);
 
     #[derive(Default)]
     struct TestRegistry {
@@ -588,7 +607,7 @@ mod tests {
 
     #[test]
     fn command_facade_ready_services_preflight_every_concrete_slot() {
-        for occupied_slot in 0..15 {
+        for occupied_slot in 0..16 {
             let mut registry = TestRegistry::default();
             match occupied_slot {
                 0 => assert!(registry.manage_direct(SlotOne(99))),
@@ -606,6 +625,7 @@ mod tests {
                 12 => assert!(registry.manage_direct(SlotThirteen(99))),
                 13 => assert!(registry.manage_direct(SlotFourteen(99))),
                 14 => assert!(registry.manage_direct(SlotFifteen(99))),
+                15 => assert!(registry.manage_direct(SlotSixteen(99))),
                 _ => unreachable!(),
             }
 
@@ -628,6 +648,7 @@ mod tests {
                     SlotThirteen(1),
                     SlotFourteen(1),
                     SlotFifteen(1),
+                    SlotSixteen(1),
                 ),
             )
             .expect_err("occupied slots must fail before publishing any new ready state");
@@ -649,6 +670,7 @@ mod tests {
                 registry.try_state::<SlotThirteen>().map(|state| state.0),
                 registry.try_state::<SlotFourteen>().map(|state| state.0),
                 registry.try_state::<SlotFifteen>().map(|state| state.0),
+                registry.try_state::<SlotSixteen>().map(|state| state.0),
             ];
             let expected = std::array::from_fn(|index| (index == occupied_slot).then_some(99));
             assert_eq!(observed, expected);
@@ -678,6 +700,7 @@ mod tests {
                 SlotThirteen(13),
                 SlotFourteen(14),
                 SlotFifteen(15),
+                SlotSixteen(16),
             ),
         )
         .expect("vacant registry must publish every ready state");
@@ -697,5 +720,6 @@ mod tests {
         assert_eq!(registry.try_state::<SlotThirteen>(), Some(SlotThirteen(13)));
         assert_eq!(registry.try_state::<SlotFourteen>(), Some(SlotFourteen(14)));
         assert_eq!(registry.try_state::<SlotFifteen>(), Some(SlotFifteen(15)));
+        assert_eq!(registry.try_state::<SlotSixteen>(), Some(SlotSixteen(16)));
     }
 }

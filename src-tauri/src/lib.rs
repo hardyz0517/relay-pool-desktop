@@ -398,6 +398,8 @@ pub fn run() {
                         app_composition::compose_change_events_command_facade(&app_services);
                     let credentials_command_facade =
                         app_composition::compose_credentials_command_facade(&app_services);
+                    let data_directory_command_facade =
+                        app_composition::compose_data_directory_command_facade(&app_services);
                     tauri::async_runtime::block_on(app_services.settings.repair_legacy_settings())
                         .map_err(|error| {
                             format!("failed to repair legacy application settings: {error}")
@@ -447,6 +449,7 @@ pub fn run() {
                             pricing_command_facade,
                             change_events_command_facade,
                             credentials_command_facade,
+                            data_directory_command_facade,
                             channel_monitor_runner,
                             station_collector_runner,
                         ),

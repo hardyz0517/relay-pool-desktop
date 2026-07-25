@@ -20,9 +20,9 @@ use crate::{
         app_services::AppServices,
         command_facades::{
             ChangeEventsCommandFacade, ChannelMonitoringCommandFacade, ChannelStatusCommandFacade,
-            CollectorMetadataCommandFacade, CredentialsCommandFacade, KeyPoolCommandFacade,
-            PricingCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
-            SettingsStationsCommandFacade,
+            CollectorMetadataCommandFacade, CredentialsCommandFacade, DataDirectoryCommandFacade,
+            KeyPoolCommandFacade, PricingCommandFacade, RequestLogsCommandFacade,
+            RoutingCommandFacade, SettingsStationsCommandFacade,
         },
         error::ApplicationError,
         pagination::PageLimit,
@@ -764,7 +764,7 @@ fn public_remote_key_error(error: remote_keys::RemoteKeyOperationError) -> error
 
 #[tauri::command]
 pub async fn choose_data_dir(
-    services: State<'_, AppServices>,
+    facade: State<'_, DataDirectoryCommandFacade>,
     input: Value,
 ) -> Result<SettingsDto, error::CommandError> {
     correlation::in_command_scope("choose_data_dir", async {
@@ -773,17 +773,8 @@ pub async fn choose_data_dir(
             tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().pick_folder())
                 .await
                 .map_err(|_| error::CommandError::internal(None))?;
-        let Some(data_dir) = selected else {
-            return services
-                .settings
-                .load()
-                .await
-                .map(SettingsDto::from)
-                .map_err(public_command_application_error);
-        };
-        services
-            .data_directory
-            .select_pending(data_dir)
+        facade
+            .choose_data_dir(selected)
             .await
             .map(SettingsDto::from)
             .map_err(public_command_application_error)
@@ -793,14 +784,13 @@ pub async fn choose_data_dir(
 
 #[tauri::command]
 pub async fn reset_data_dir(
-    services: State<'_, AppServices>,
+    facade: State<'_, DataDirectoryCommandFacade>,
     input: Value,
 ) -> Result<SettingsDto, error::CommandError> {
     correlation::in_command_scope("reset_data_dir", async {
         EmptyInputDto::parse(input)?;
-        services
-            .data_directory
-            .reset_to_default()
+        facade
+            .reset_data_dir()
             .await
             .map(SettingsDto::from)
             .map_err(public_command_application_error)

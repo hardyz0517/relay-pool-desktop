@@ -2,7 +2,7 @@
   "schema_version": 1,
   "owner": "Task 7",
   "source_inventory_item": "S2-T7-command-facades",
-  "current_shard": "settings-stations-key-pool-routing-request-log-channel-monitoring-channel-status-collector-metadata-pricing-change-events-credentials-command-facades",
+  "current_shard": "settings-stations-key-pool-routing-request-log-channel-monitoring-channel-status-collector-metadata-pricing-change-events-credentials-data-directory-command-facades",
   "migration_state": "partial",
   "facades": [
     {
@@ -447,6 +447,30 @@
         "station login/test commands",
         "collector session persistence",
         "remote-key credential workflows"
+      ]
+    },
+    {
+      "state_type": "DataDirectoryCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/data_directory.rs",
+      "dependencies": [
+        "DataDirectoryService",
+        "SettingsService"
+      ],
+      "commands": [
+        {
+          "command": "choose_data_dir",
+          "use_case": "choose_data_dir",
+          "dependencies": ["DataDirectoryService", "SettingsService"]
+        },
+        {
+          "command": "reset_data_dir",
+          "use_case": "reset_data_dir",
+          "dependencies": ["DataDirectoryService"]
+        }
+      ],
+      "non_goals": [
+        "startup data-store activation commands",
+        "CCSwitch import/proxy startup"
       ]
     },
     {
