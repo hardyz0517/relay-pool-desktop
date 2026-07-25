@@ -647,10 +647,14 @@
           "command": "restart_local_proxy",
           "use_case": "restart_local_proxy",
           "dependencies": ["SettingsService", "RoutingService", "RequestFinalizationService", "ProxyRuntimeState", "Data key"]
+        },
+        {
+          "command": "import_relay_pool_to_ccswitch",
+          "use_case": "import_relay_pool_to_ccswitch",
+          "dependencies": ["SettingsService", "RoutingService", "RequestFinalizationService", "ProxyRuntimeState", "Data key"]
         }
       ],
       "non_goals": [
-        "import_relay_pool_to_ccswitch",
         "prepare_local_proxy_for_update",
         "deeper proxy runtime/lifecycle rewrite",
         "proxy startup auto-start path"

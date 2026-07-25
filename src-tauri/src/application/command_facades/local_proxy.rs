@@ -32,6 +32,11 @@ impl From<String> for LocalProxyCommandError {
     }
 }
 
+pub(crate) struct CcswitchImportProxyTarget {
+    pub(crate) local_access_key: String,
+    pub(crate) proxy_status: ProxyStatus,
+}
+
 #[derive(Clone)]
 pub(crate) struct LocalProxyCommandFacade {
     settings: Arc<SettingsService>,
@@ -83,7 +88,7 @@ impl LocalProxyCommandFacade {
     }
 
     pub(crate) async fn start_local_proxy(&self) -> Result<ProxyStatus, LocalProxyCommandError> {
-        let (settings, config) = self.proxy_start_config().await?;
+        let (settings, _local_access_key, config) = self.proxy_start_config().await?;
         let status = self.proxy.start(config).await?;
         if let Err(error) = self.settings.set_local_proxy_start_on_launch(true).await {
             let _ = self.proxy.stop(status.port).await;
@@ -110,13 +115,24 @@ impl LocalProxyCommandFacade {
     }
 
     pub(crate) async fn restart_local_proxy(&self) -> Result<ProxyStatus, LocalProxyCommandError> {
-        let (settings, config) = self.proxy_start_config().await?;
+        let (settings, _local_access_key, config) = self.proxy_start_config().await?;
         let status = self.proxy.restart(config).await?;
         if let Err(error) = self.settings.set_local_proxy_start_on_launch(true).await {
             let _ = self.proxy.stop(status.port).await;
             return Err(error.into());
         }
         Ok(self.proxy.status(settings.local_proxy_port))
+    }
+
+    pub(crate) async fn import_relay_pool_to_ccswitch(
+        &self,
+    ) -> Result<CcswitchImportProxyTarget, LocalProxyCommandError> {
+        let (_settings, local_access_key, config) = self.proxy_start_config().await?;
+        let proxy_status = self.proxy.start(config).await?;
+        Ok(CcswitchImportProxyTarget {
+            local_access_key,
+            proxy_status,
+        })
     }
 
     async fn load_workspace(&self) -> Result<LocalRoutingWorkspace, ApplicationError> {
@@ -135,7 +151,14 @@ impl LocalProxyCommandFacade {
 
     async fn proxy_start_config(
         &self,
-    ) -> Result<(crate::models::settings::AppSettings, ProxyStartConfig), ApplicationError> {
+    ) -> Result<
+        (
+            crate::models::settings::AppSettings,
+            String,
+            ProxyStartConfig,
+        ),
+        ApplicationError,
+    > {
         let settings = self.settings.load().await?;
         let local_access_key = self.settings.ensure_local_access_key().await?;
         let routing_repository: Arc<dyn RoutingRepository> = Arc::new(V2RoutingRepository::new(
@@ -146,9 +169,9 @@ impl LocalProxyCommandFacade {
         let config = ProxyStartConfig::new_v2(
             routing_repository,
             lifecycle_store,
-            local_access_key,
+            local_access_key.clone(),
             settings.local_proxy_port,
         );
-        Ok((settings, config))
+        Ok((settings, local_access_key, config))
     }
 }

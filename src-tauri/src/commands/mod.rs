@@ -621,32 +621,17 @@ pub async fn update_local_access_key(
 
 #[tauri::command]
 pub async fn import_relay_pool_to_ccswitch(
-    secrets: State<'_, SecretManager>,
-    services: State<'_, AppServices>,
-    proxy: State<'_, Arc<ProxyRuntimeState>>,
+    facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
 ) -> Result<CcswitchImportResultDto, error::CommandError> {
     correlation::in_command_scope("import_relay_pool_to_ccswitch", async {
         EmptyInputDto::parse(input)?;
-        let settings = services
-            .settings
-            .load()
+        let target = facade
+            .import_relay_pool_to_ccswitch()
             .await
-            .map_err(command_application_error)?;
-        let local_access_key = services
-            .settings
-            .ensure_local_access_key()
-            .await
-            .map_err(command_application_error)?;
-        let proxy_status = proxy
-            .start(crate::services::proxy::startup::config_from_v2_services(
-                services.inner(),
-                *secrets.data_key(),
-                local_access_key.clone(),
-                settings.local_proxy_port,
-            ))
-            .await?;
-        let (result, deeplink) = prepare_ccswitch_import(&local_access_key, &proxy_status);
+            .map_err(public_local_proxy_error)?;
+        let (result, deeplink) =
+            prepare_ccswitch_import(&target.local_access_key, &target.proxy_status);
 
         open_url_with_system(&deeplink)?;
 
