@@ -74,6 +74,7 @@ import type {
   UpdateStationKeyCapabilitiesInput,
   UpsertModelAliasInput,
 } from "@/lib/types/routing";
+import type { AppUpdateCheckResult, DownloadProgress } from "@/lib/types/updater";
 
 export type BackendMode = "desktop" | "demo";
 
@@ -278,6 +279,14 @@ export type CollectorsDomainClient = {
   closeCaptureSession(stationId: string): Promise<CaptureSessionStatus>;
 };
 
+export type UpdaterDomainClient = {
+  currentAppVersion(): Promise<string>;
+  checkForAppUpdate(): Promise<AppUpdateCheckResult>;
+  downloadPendingUpdate(onProgress: (progress: DownloadProgress) => void): Promise<void>;
+  installPendingUpdateAndRelaunch(): Promise<void>;
+  closePendingUpdate(): Promise<void>;
+};
+
 export type BackendClient = {
   readonly mode: BackendMode;
   readonly settings: SettingsDomainClient;
@@ -294,6 +303,7 @@ export type BackendClient = {
   readonly routing: RoutingDomainClient;
   readonly channels: ChannelsDomainClient;
   readonly collectors: CollectorsDomainClient;
+  readonly updater: UpdaterDomainClient;
   handshake(): Promise<RuntimeContractInfo>;
 };
 

@@ -1,58 +1,72 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const app = vi.hoisted(() => ({ getVersion: vi.fn() }));
-const core = vi.hoisted(() => ({ isTauri: vi.fn() }));
-const generated = vi.hoisted(() => ({
-  inspectLatestUpdateManifest: vi.fn(),
-  updaterNetworkConfig: vi.fn(),
-}));
-const transport = vi.hoisted(() => ({ invoke: vi.fn() }));
-const process = vi.hoisted(() => ({ relaunch: vi.fn() }));
-const pluginUpdater = vi.hoisted(() => ({ check: vi.fn() }));
-const coordinator = vi.hoisted(() => ({ coordinateUpdateCheck: vi.fn() }));
+import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
+import type { BackendClient } from "@/lib/bridge/BackendClient";
 
-vi.mock("@tauri-apps/api/app", () => app);
-vi.mock("@tauri-apps/api/core", () => core);
-vi.mock("@/lib/bridge/generated", () => generated);
-vi.mock("@/lib/bridge/transport", () => transport);
-vi.mock("@tauri-apps/plugin-process", () => process);
-vi.mock("@tauri-apps/plugin-updater", () => pluginUpdater);
-vi.mock("@/lib/api/updaterCheckCoordinator", () => coordinator);
+import {
+  checkForAppUpdate,
+  closePendingUpdate,
+  currentAppVersion,
+  downloadPendingUpdate,
+  installPendingUpdateAndRelaunch,
+} from "./updater";
 
-import { checkForAppUpdate } from "./updater";
+describe("updater backend cutover", () => {
+  const updater = {
+    currentAppVersion: vi.fn(async () => "0.3.2"),
+    checkForAppUpdate: vi.fn(async () => ({ kind: "current" as const, currentVersion: "0.3.2" })),
+    downloadPendingUpdate: vi.fn(async () => undefined),
+    installPendingUpdateAndRelaunch: vi.fn(async () => undefined),
+    closePendingUpdate: vi.fn(async () => undefined),
+  };
 
-describe("updater generated transport cutover", () => {
   beforeEach(() => {
-    vi.stubGlobal("window", {
-      clearTimeout,
-      setTimeout,
-    });
-    app.getVersion.mockReset().mockResolvedValue("0.3.2");
-    core.isTauri.mockReset().mockReturnValue(true);
-    generated.updaterNetworkConfig.mockReset().mockResolvedValue({ proxyUrl: null });
-    generated.inspectLatestUpdateManifest.mockReset().mockResolvedValue({
-      relation: "current_or_older",
-      version: "0.3.2",
-      notes: null,
-    });
-    transport.invoke.mockReset().mockRejectedValue(new Error("legacy transport invoked"));
-    coordinator.coordinateUpdateCheck.mockReset().mockImplementation(async (options) => {
-      await options.inspectPublished(options.currentVersion);
-      return { kind: "current", currentVersion: options.currentVersion };
-    });
-    pluginUpdater.check.mockReset().mockResolvedValue(null);
+    setActiveBackendClient(testBackendClient({ updater: updater as BackendClient["updater"] }));
+    for (const fn of Object.values(updater)) {
+      fn.mockClear();
+    }
   });
 
-  it("routes updater backend reads through generated wrappers", async () => {
-    await expect(checkForAppUpdate()).resolves.toEqual({
-      kind: "current",
-      currentVersion: "0.3.2",
-    });
+  afterEach(() => {
+    setActiveBackendClient(null);
+  });
 
-    expect(generated.updaterNetworkConfig).toHaveBeenCalledWith();
-    expect(generated.inspectLatestUpdateManifest).toHaveBeenCalledWith({
-      currentVersion: "0.3.2",
-    });
-    expect(transport.invoke).not.toHaveBeenCalled();
+  it("routes updater operations through the active backend client", async () => {
+    const onProgress = vi.fn();
+
+    await expect(currentAppVersion()).resolves.toBe("0.3.2");
+    await expect(checkForAppUpdate()).resolves.toEqual({ kind: "current", currentVersion: "0.3.2" });
+    await downloadPendingUpdate(onProgress);
+    await installPendingUpdateAndRelaunch();
+    await closePendingUpdate();
+
+    expect(updater.currentAppVersion).toHaveBeenCalledTimes(1);
+    expect(updater.checkForAppUpdate).toHaveBeenCalledTimes(1);
+    expect(updater.downloadPendingUpdate).toHaveBeenCalledWith(onProgress);
+    expect(updater.installPendingUpdateAndRelaunch).toHaveBeenCalledTimes(1);
+    expect(updater.closePendingUpdate).toHaveBeenCalledTimes(1);
   });
 });
+
+function testBackendClient(overrides: Partial<BackendClient>): BackendClient {
+  return {
+    mode: "desktop",
+    settings: {} as BackendClient["settings"],
+    stations: {} as BackendClient["stations"],
+    stationKeys: {} as BackendClient["stationKeys"],
+    changeEvents: {} as BackendClient["changeEvents"],
+    collectorRuns: {} as BackendClient["collectorRuns"],
+    collectors: {} as BackendClient["collectors"],
+    proxy: {} as BackendClient["proxy"],
+    localRouting: {} as BackendClient["localRouting"],
+    dataRecovery: {} as BackendClient["dataRecovery"],
+    economics: {} as BackendClient["economics"],
+    groupFacts: {} as BackendClient["groupFacts"],
+    pricing: {} as BackendClient["pricing"],
+    routing: {} as BackendClient["routing"],
+    channels: {} as BackendClient["channels"],
+    updater: {} as BackendClient["updater"],
+    handshake: vi.fn(async () => ({}) as never),
+    ...overrides,
+  };
+}

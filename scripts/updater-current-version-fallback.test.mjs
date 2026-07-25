@@ -2,20 +2,25 @@
 import { readFile } from "node:fs/promises";
 
 const updaterApiSource = await readFile("src/lib/api/updater.ts", "utf8");
+const desktopBackendSource = await readFile("src/lib/bridge/DesktopBackend.ts", "utf8");
 const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
 const tauriLibSource = await readFile("src-tauri/src/lib.rs", "utf8");
 const mainWindowPermissions = await readFile("src-tauri/permissions/main-window.toml", "utf8");
 
 assert.ok(
-  updaterApiSource.includes("coordinateUpdateCheck") &&
-    updaterApiSource.includes("updaterNetworkConfig()") &&
-    updaterApiSource.includes("inspectLatestUpdateManifest({ currentVersion: version })") &&
-    updaterApiSource.includes("withTimeout") &&
-    updaterApiSource.includes("更新检查超时") &&
-    updaterApiSource.includes("nativeUpdateCheckInFlight") &&
-    updaterApiSource.includes("startNativeUpdateCheck") &&
-    updaterApiSource.includes("check(") &&
-    /proxyUrl \? \{ timeout: 10_000, proxy: proxyUrl \}/.test(updaterApiSource),
+  updaterApiSource.includes("getActiveBackendClient().updater.checkForAppUpdate()") &&
+    !updaterApiSource.includes("coordinateUpdateCheck") &&
+    !updaterApiSource.includes("updaterNetworkConfig") &&
+    !updaterApiSource.includes("inspectLatestUpdateManifest") &&
+    desktopBackendSource.includes("coordinateUpdateCheck") &&
+    desktopBackendSource.includes("updaterNetworkConfigBinding()") &&
+    desktopBackendSource.includes("inspectLatestUpdateManifestBinding({ currentVersion: version })") &&
+    desktopBackendSource.includes("withTimeout") &&
+    desktopBackendSource.includes("更新检查超时") &&
+    desktopBackendSource.includes("nativeUpdateCheckInFlight") &&
+    desktopBackendSource.includes("startNativeUpdateCheck") &&
+    desktopBackendSource.includes("check(") &&
+    /proxyUrl \? \{ timeout: 10_000, proxy: proxyUrl \}/.test(desktopBackendSource),
   "updater should share system proxy configuration with the authoritative native check",
 );
 
@@ -24,7 +29,12 @@ assert.ok(
     !updaterApiSource.includes("UPDATE_MANIFEST_URL") &&
     !updaterApiSource.includes("isVersionNewer") &&
     !updaterApiSource.includes("versionParts") &&
-    !updaterApiSource.includes("ensurePendingUpdateForInstall"),
+    !updaterApiSource.includes("ensurePendingUpdateForInstall") &&
+    !desktopBackendSource.includes("fetchLatestManifestVersionFromBrowser") &&
+    !desktopBackendSource.includes("UPDATE_MANIFEST_URL") &&
+    !desktopBackendSource.includes("isVersionNewer") &&
+    !desktopBackendSource.includes("versionParts") &&
+    !desktopBackendSource.includes("ensurePendingUpdateForInstall"),
   "updater must not use a CORS browser fallback or expose manifest-only updates as installable",
 );
 

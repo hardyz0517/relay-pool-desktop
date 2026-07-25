@@ -1,3 +1,6 @@
+import { getVersion } from "@tauri-apps/api/app";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
 import { validateRuntimeContract } from "@/app/bootstrap/runtimeContract";
 import { normalizeGroupCategory } from "@/lib/groupCategories";
 import {
@@ -42,6 +45,7 @@ import {
   getStationKeyCapabilities as getStationKeyCapabilitiesBinding,
   getStationKeyHealth as getStationKeyHealthBinding,
   importRelayPoolToCcswitch as importRelayPoolToCcswitchBinding,
+  inspectLatestUpdateManifest as inspectLatestUpdateManifestBinding,
   listBalanceSnapshots as listBalanceSnapshotsBinding,
   listBalanceSnapshotsForStation as listBalanceSnapshotsForStationBinding,
   listChannelMonitorRuns as listChannelMonitorRunsBinding,
@@ -109,6 +113,7 @@ import {
   updateStationKeyCapabilities as updateStationKeyCapabilitiesBinding,
   updateStationKeyGroupBinding as updateStationKeyGroupBindingBinding,
   updateStationSession as updateStationSessionBinding,
+  updaterNetworkConfig as updaterNetworkConfigBinding,
   startCaptureSession as startCaptureSessionBinding,
   startLocalProxy as startLocalProxyBinding,
   testStationLogin as testStationLoginBinding,
@@ -132,9 +137,12 @@ import {
 } from "./domainMapping";
 import { RuntimeContractMismatchError } from "./runtimeContractError";
 import { invokeStationKeyConnectivityStream } from "./streamingAdapter";
+import { coordinateUpdateCheck } from "./updaterCheckCoordinator";
 
 export class DesktopBackend implements BackendClient {
   readonly mode = "desktop" as const;
+  private pendingUpdate: Update | null = null;
+  private nativeUpdateCheckInFlight: Promise<Update | null> | null = null;
   readonly settings = {
     getSettings: () => getSettingsBinding().then(normalizeSettings),
     getLocalAccessKey: () => getLocalAccessKeyBinding(),
@@ -221,6 +229,71 @@ export class DesktopBackend implements BackendClient {
     createNewDataStore: (confirmed: boolean) => createNewDataStoreBinding({ confirmed }),
     openDataStoreBackupDir: () => openDataStoreBackupDirBinding(),
     exportDataStoreDiagnostic: () => exportDataStoreDiagnosticBinding(),
+  };
+  readonly updater = {
+    currentAppVersion: () => getVersion(),
+    checkForAppUpdate: async () => {
+      const currentVersion = await this.updater.currentAppVersion();
+
+      await this.closePendingUpdateBeforeCheck();
+      const network = await updaterNetworkConfigBinding()
+        .catch(() => ({ proxyUrl: null }));
+      const result = await coordinateUpdateCheck({
+        currentVersion,
+        proxyUrl: network.proxyUrl,
+        checkNative: async (proxyUrl) => {
+          try {
+            return await withTimeout(
+              this.startNativeUpdateCheck(proxyUrl),
+              12_000,
+              "更新检查超时",
+            );
+          } catch (error) {
+            this.abandonNativeUpdateCheck();
+            throw error;
+          }
+        },
+        inspectPublished: (version) => inspectLatestUpdateManifestBinding({ currentVersion: version }),
+      });
+      if (result.kind === "current") return result;
+
+      this.pendingUpdate = result.update;
+
+      return {
+        kind: "available" as const,
+        update: {
+          currentVersion: result.update.currentVersion,
+          version: result.update.version,
+          notes: result.update.body ?? null,
+        },
+      };
+    },
+    downloadPendingUpdate: async (onProgress: Parameters<BackendClient["updater"]["downloadPendingUpdate"]>[0]) => {
+      if (!this.pendingUpdate) throw new Error("没有可下载的应用更新");
+      let downloadedBytes = 0;
+      let totalBytes: number | null = null;
+      await this.pendingUpdate.download((event: DownloadEvent) => {
+        if (event.event === "Started") {
+          totalBytes = event.data.contentLength ?? null;
+          onProgress({ downloadedBytes, totalBytes });
+        } else if (event.event === "Progress") {
+          downloadedBytes += event.data.chunkLength;
+          onProgress({ downloadedBytes, totalBytes });
+        } else {
+          onProgress({ downloadedBytes, totalBytes });
+        }
+      });
+    },
+    installPendingUpdateAndRelaunch: async () => {
+      if (!this.pendingUpdate) throw new Error("没有已下载的应用更新");
+      await this.pendingUpdate.install();
+      await relaunch();
+    },
+    closePendingUpdate: async () => {
+      const update = this.pendingUpdate;
+      this.pendingUpdate = null;
+      await update?.close();
+    },
   };
   readonly economics = {
     listPricingRules: () => listPricingRulesBinding(),
@@ -363,6 +436,38 @@ export class DesktopBackend implements BackendClient {
       updateStationSessionBinding(input),
   };
 
+  private async closePendingUpdateBeforeCheck() {
+    try {
+      await withTimeout(this.updater.closePendingUpdate(), 3_000, "清理旧更新检查超时");
+    } catch {
+      // A stale resource should not block a fresh check; pendingUpdate is already cleared.
+    }
+  }
+
+  private startNativeUpdateCheck(proxyUrl: string | null) {
+    if (!this.nativeUpdateCheckInFlight) {
+      const trackedUpdateCheck = check(
+        proxyUrl ? { timeout: 10_000, proxy: proxyUrl } : { timeout: 10_000 },
+      ).finally(() => {
+        if (this.nativeUpdateCheckInFlight === trackedUpdateCheck) {
+          this.nativeUpdateCheckInFlight = null;
+        }
+      });
+      this.nativeUpdateCheckInFlight = trackedUpdateCheck;
+    }
+    return this.nativeUpdateCheckInFlight;
+  }
+
+  private abandonNativeUpdateCheck() {
+    const abandonedUpdateCheck = this.nativeUpdateCheckInFlight;
+    this.nativeUpdateCheckInFlight = null;
+    if (!abandonedUpdateCheck) return;
+    void abandonedUpdateCheck.then(
+      (update) => update?.close(),
+      () => undefined,
+    );
+  }
+
   async handshake(): Promise<RuntimeContractInfo> {
     const payload = await getRuntimeContractInfo();
     const validation = validateRuntimeContract(payload);
@@ -371,6 +476,22 @@ export class DesktopBackend implements BackendClient {
     }
     return validation.contract;
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 export function createDesktopBackendClient(): BackendClient {

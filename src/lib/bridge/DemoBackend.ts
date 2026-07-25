@@ -62,6 +62,13 @@ export class DemoBackend implements BackendClient {
     clearCaptureSession: (_stationId: string) => this.rejectUnsupported("collectors"),
     closeCaptureSession: (_stationId: string) => this.rejectUnsupported("collectors"),
   };
+  readonly updater: BackendClient["updater"] = {
+    currentAppVersion: async () => "0.0.0",
+    checkForAppUpdate: async () => ({ kind: "unsupported", currentVersion: "0.0.0" }),
+    downloadPendingUpdate: () => this.rejectUnsupported("updater"),
+    installPendingUpdateAndRelaunch: () => this.rejectUnsupported("updater"),
+    closePendingUpdate: async () => undefined,
+  };
   readonly proxy: BackendClient["proxy"] = {
     getProxyStatus: () => this.rejectUnsupported("proxy"),
     startLocalProxy: () => this.rejectUnsupported("proxy"),

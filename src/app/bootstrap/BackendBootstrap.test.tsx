@@ -128,6 +128,7 @@ function testBackendClient(
     pricing: {} as BackendClient["pricing"],
     routing: {} as BackendClient["routing"],
     channels: {} as BackendClient["channels"],
+    updater: {} as BackendClient["updater"],
     ...overrides,
   };
 }
