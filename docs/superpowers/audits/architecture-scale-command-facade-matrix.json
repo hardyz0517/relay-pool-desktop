@@ -2,8 +2,8 @@
   "schema_version": 1,
   "owner": "Task 7",
   "source_inventory_item": "S2-T7-command-facades",
-  "current_shard": "settings-stations-key-pool-remote-keys-routing-request-log-channel-monitoring-channel-status-collector-metadata-station-collection-pricing-change-events-credentials-data-directory-local-proxy-command-facades",
-  "migration_state": "partial",
+  "current_shard": "settings-stations-key-pool-remote-keys-routing-request-log-channel-monitoring-channel-status-collector-metadata-station-collection-station-key-connectivity-capture-pricing-change-events-credentials-data-directory-local-proxy-command-facades",
+  "migration_state": "complete",
   "facades": [
     {
       "state_type": "SettingsStationsCommandFacade",
@@ -651,6 +651,66 @@
       ]
     },
     {
+      "state_type": "StationKeyConnectivityCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/station_key_connectivity.rs",
+      "dependencies": [
+        "CredentialService",
+        "RoutingService"
+      ],
+      "commands": [
+        {
+          "command": "test_station_key_connectivity",
+          "use_case": "prepare_probe_target",
+          "dependencies": ["CredentialService", "RoutingService"]
+        }
+      ],
+      "non_goals": [
+        "endpoint ping command",
+        "route simulation",
+        "station capture/session commands"
+      ]
+    },
+    {
+      "state_type": "CaptureCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/capture.rs",
+      "dependencies": [
+        "StationService",
+        "CredentialService",
+        "CollectorService",
+        "CaptureSessionStore supplied by command state",
+        "AppHandle supplied by command state for web authorization cookie reads"
+      ],
+      "commands": [
+        {
+          "command": "start_capture_session",
+          "use_case": "start_capture_session",
+          "dependencies": ["StationService", "CredentialService"]
+        },
+        {
+          "command": "record_capture_event",
+          "use_case": "record_capture_event",
+          "dependencies": ["StationService", "CredentialService", "CaptureSessionStore"]
+        },
+        {
+          "command": "finish_capture_session",
+          "use_case": "finish_capture_session",
+          "dependencies": ["CollectorService", "CaptureSessionStore"]
+        },
+        {
+          "command": "finish_web_authorization_session",
+          "use_case": "finish_web_authorization_session",
+          "dependencies": ["StationService", "CredentialService", "CollectorService", "CaptureSessionStore", "AppHandle"]
+        }
+      ],
+      "non_goals": [
+        "get_capture_session_status",
+        "clear_capture_session",
+        "close_capture_session",
+        "test_station_login_input",
+        "collector execution commands"
+      ]
+    },
+    {
       "state_type": "LocalProxyCommandFacade",
       "source_path": "src-tauri/src/application/command_facades/local_proxy.rs",
       "dependencies": [
@@ -710,8 +770,5 @@
       ]
     }
   ],
-  "remaining_legacy_state": {
-    "state_type": "AppServices",
-    "reason": "Task 7 is migrating by domain shard; AppServices remains managed until all production commands leave State<AppServices>."
-  }
+  "remaining_legacy_state": null
 }

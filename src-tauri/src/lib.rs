@@ -347,6 +347,7 @@ pub fn run() {
                 prepare_data_store(default_data_dir, *secret_manager.data_key())?;
             app.manage(secret_manager);
             let proxy_runtime = Arc::new(services::proxy::runtime::ProxyRuntimeState::default());
+            let capture_session_store = services::capture::session::CaptureSessionStore::default();
             let runtime_owner = match prepared_data_store {
                 PreparedDataStore::Ready {
                     runtime,
@@ -405,6 +406,14 @@ pub fn run() {
                             &app_services,
                             data_key,
                         );
+                    let station_key_connectivity_command_facade =
+                        app_composition::compose_station_key_connectivity_command_facade(
+                            &app_services,
+                        );
+                    let capture_command_facade = app_composition::compose_capture_command_facade(
+                        &app_services,
+                        capture_session_store.clone(),
+                    );
                     let pricing_command_facade =
                         app_composition::compose_pricing_command_facade(&app_services);
                     let change_events_command_facade =
@@ -467,6 +476,8 @@ pub fn run() {
                             channel_status_command_facade,
                             collector_metadata_command_facade,
                             station_collection_command_facade,
+                            station_key_connectivity_command_facade,
+                            capture_command_facade,
                             pricing_command_facade,
                             change_events_command_facade,
                             credentials_command_facade,
@@ -489,7 +500,7 @@ pub fn run() {
             };
             app.manage(runtime_owner);
             app.manage(commands::LocatedDataStoreCandidates::default());
-            app.manage(services::capture::session::CaptureSessionStore::default());
+            app.manage(capture_session_store);
             app.manage(proxy_runtime);
             services::proxy::startup_auto_start::schedule(app.handle().clone());
             Ok(())

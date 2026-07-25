@@ -1,3 +1,4 @@
+mod capture;
 mod change_events;
 mod channel_monitoring;
 mod channel_status;
@@ -12,7 +13,9 @@ mod request_logs;
 mod routing;
 mod settings_stations;
 mod station_collection;
+mod station_key_connectivity;
 
+pub(crate) use capture::{CaptureCommandError, CaptureCommandFacade};
 pub(crate) use change_events::ChangeEventsCommandFacade;
 pub(crate) use channel_monitoring::ChannelMonitoringCommandFacade;
 pub(crate) use channel_status::ChannelStatusCommandFacade;
@@ -28,4 +31,7 @@ pub(crate) use routing::{EndpointPingCommandError, RoutingCommandFacade};
 pub(crate) use settings_stations::SettingsStationsCommandFacade;
 pub(crate) use station_collection::{
     StationCollectionCommandError, StationCollectionCommandFacade,
+};
+pub(crate) use station_key_connectivity::{
+    StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
 };

@@ -73,6 +73,8 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     ChannelStatus,
     CollectorMetadata,
     StationCollection,
+    StationKeyConnectivity,
+    Capture,
     Pricing,
     ChangeEvents,
     Credentials,
@@ -93,6 +95,8 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     channel_status: ChannelStatus,
     collector_metadata: CollectorMetadata,
     station_collection: StationCollection,
+    station_key_connectivity: StationKeyConnectivity,
+    capture: Capture,
     pricing: Pricing,
     change_events: ChangeEvents,
     credentials: Credentials,
@@ -115,6 +119,8 @@ impl<
         ChannelStatus,
         CollectorMetadata,
         StationCollection,
+        StationKeyConnectivity,
+        Capture,
         Pricing,
         ChangeEvents,
         Credentials,
@@ -136,6 +142,8 @@ impl<
         ChannelStatus,
         CollectorMetadata,
         StationCollection,
+        StationKeyConnectivity,
+        Capture,
         Pricing,
         ChangeEvents,
         Credentials,
@@ -165,6 +173,8 @@ impl<
         channel_status: ChannelStatus,
         collector_metadata: CollectorMetadata,
         station_collection: StationCollection,
+        station_key_connectivity: StationKeyConnectivity,
+        capture: Capture,
         pricing: Pricing,
         change_events: ChangeEvents,
         credentials: Credentials,
@@ -186,6 +196,8 @@ impl<
             channel_status,
             collector_metadata,
             station_collection,
+            station_key_connectivity,
+            capture,
             pricing,
             change_events,
             credentials,
@@ -325,6 +337,8 @@ pub(crate) fn register_ready_services_with_command_facades<
     ChannelStatus,
     CollectorMetadata,
     StationCollection,
+    StationKeyConnectivity,
+    Capture,
     Pricing,
     ChangeEvents,
     Credentials,
@@ -348,6 +362,8 @@ pub(crate) fn register_ready_services_with_command_facades<
         ChannelStatus,
         CollectorMetadata,
         StationCollection,
+        StationKeyConnectivity,
+        Capture,
         Pricing,
         ChangeEvents,
         Credentials,
@@ -371,6 +387,8 @@ where
     ChannelStatus: Send + Sync + 'static,
     CollectorMetadata: Send + Sync + 'static,
     StationCollection: Send + Sync + 'static,
+    StationKeyConnectivity: Send + Sync + 'static,
+    Capture: Send + Sync + 'static,
     Pricing: Send + Sync + 'static,
     ChangeEvents: Send + Sync + 'static,
     Credentials: Send + Sync + 'static,
@@ -404,6 +422,8 @@ pub(crate) fn register_ready_services_with_command_facades_in<
     ChannelStatus,
     CollectorMetadata,
     StationCollection,
+    StationKeyConnectivity,
+    Capture,
     Pricing,
     ChangeEvents,
     Credentials,
@@ -427,6 +447,8 @@ pub(crate) fn register_ready_services_with_command_facades_in<
         ChannelStatus,
         CollectorMetadata,
         StationCollection,
+        StationKeyConnectivity,
+        Capture,
         Pricing,
         ChangeEvents,
         Credentials,
@@ -450,6 +472,8 @@ where
     ChannelStatus: Send + Sync + 'static,
     CollectorMetadata: Send + Sync + 'static,
     StationCollection: Send + Sync + 'static,
+    StationKeyConnectivity: Send + Sync + 'static,
+    Capture: Send + Sync + 'static,
     Pricing: Send + Sync + 'static,
     ChangeEvents: Send + Sync + 'static,
     Credentials: Send + Sync + 'static,
@@ -471,6 +495,8 @@ where
         || registry.contains::<ChannelStatus>()
         || registry.contains::<CollectorMetadata>()
         || registry.contains::<StationCollection>()
+        || registry.contains::<StationKeyConnectivity>()
+        || registry.contains::<Capture>()
         || registry.contains::<Pricing>()
         || registry.contains::<ChangeEvents>()
         || registry.contains::<Credentials>()
@@ -495,6 +521,8 @@ where
         channel_status,
         collector_metadata,
         station_collection,
+        station_key_connectivity,
+        capture,
         pricing,
         change_events,
         credentials,
@@ -537,6 +565,12 @@ where
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(station_collection) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(station_key_connectivity) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(capture) {
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(pricing) {
@@ -628,6 +662,10 @@ mod tests {
     struct SlotEighteen(u8);
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct SlotNineteen(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotTwenty(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotTwentyOne(u8);
 
     #[derive(Default)]
     struct TestRegistry {
@@ -664,7 +702,7 @@ mod tests {
 
     #[test]
     fn command_facade_ready_services_preflight_every_concrete_slot() {
-        for occupied_slot in 0..19 {
+        for occupied_slot in 0..21 {
             let mut registry = TestRegistry::default();
             match occupied_slot {
                 0 => assert!(registry.manage_direct(SlotOne(99))),
@@ -686,6 +724,8 @@ mod tests {
                 16 => assert!(registry.manage_direct(SlotSeventeen(99))),
                 17 => assert!(registry.manage_direct(SlotEighteen(99))),
                 18 => assert!(registry.manage_direct(SlotNineteen(99))),
+                19 => assert!(registry.manage_direct(SlotTwenty(99))),
+                20 => assert!(registry.manage_direct(SlotTwentyOne(99))),
                 _ => unreachable!(),
             }
 
@@ -712,6 +752,8 @@ mod tests {
                     SlotSeventeen(1),
                     SlotEighteen(1),
                     SlotNineteen(1),
+                    SlotTwenty(1),
+                    SlotTwentyOne(1),
                 ),
             )
             .expect_err("occupied slots must fail before publishing any new ready state");
@@ -737,6 +779,8 @@ mod tests {
                 registry.try_state::<SlotSeventeen>().map(|state| state.0),
                 registry.try_state::<SlotEighteen>().map(|state| state.0),
                 registry.try_state::<SlotNineteen>().map(|state| state.0),
+                registry.try_state::<SlotTwenty>().map(|state| state.0),
+                registry.try_state::<SlotTwentyOne>().map(|state| state.0),
             ];
             let expected = std::array::from_fn(|index| (index == occupied_slot).then_some(99));
             assert_eq!(observed, expected);
@@ -770,6 +814,8 @@ mod tests {
                 SlotSeventeen(17),
                 SlotEighteen(18),
                 SlotNineteen(19),
+                SlotTwenty(20),
+                SlotTwentyOne(21),
             ),
         )
         .expect("vacant registry must publish every ready state");
@@ -796,5 +842,10 @@ mod tests {
         );
         assert_eq!(registry.try_state::<SlotEighteen>(), Some(SlotEighteen(18)));
         assert_eq!(registry.try_state::<SlotNineteen>(), Some(SlotNineteen(19)));
+        assert_eq!(registry.try_state::<SlotTwenty>(), Some(SlotTwenty(20)));
+        assert_eq!(
+            registry.try_state::<SlotTwentyOne>(),
+            Some(SlotTwentyOne(21))
+        );
     }
 }

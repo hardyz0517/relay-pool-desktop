@@ -4,11 +4,12 @@ use crate::{
     application::{
         app_services::AppServices,
         command_facades::{
-            ChangeEventsCommandFacade, ChannelMonitoringCommandFacade, ChannelStatusCommandFacade,
-            CollectorMetadataCommandFacade, CredentialsCommandFacade, DataDirectoryCommandFacade,
-            KeyPoolCommandFacade, LocalProxyCommandFacade, PricingCommandFacade,
-            RemoteKeysCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
-            SettingsStationsCommandFacade, StationCollectionCommandFacade,
+            CaptureCommandFacade, ChangeEventsCommandFacade, ChannelMonitoringCommandFacade,
+            ChannelStatusCommandFacade, CollectorMetadataCommandFacade, CredentialsCommandFacade,
+            DataDirectoryCommandFacade, KeyPoolCommandFacade, LocalProxyCommandFacade,
+            PricingCommandFacade, RemoteKeysCommandFacade, RequestLogsCommandFacade,
+            RoutingCommandFacade, SettingsStationsCommandFacade, StationCollectionCommandFacade,
+            StationKeyConnectivityCommandFacade,
         },
         data_directory::DataDirectoryPort,
     },
@@ -101,6 +102,27 @@ pub(crate) fn compose_station_collection_command_facade(
         Arc::clone(&services.credentials),
         Arc::clone(&services.settings),
         data_key,
+    )
+}
+
+pub(crate) fn compose_station_key_connectivity_command_facade(
+    services: &AppServices,
+) -> StationKeyConnectivityCommandFacade {
+    StationKeyConnectivityCommandFacade::new(
+        Arc::clone(&services.credentials),
+        Arc::clone(&services.routing),
+    )
+}
+
+pub(crate) fn compose_capture_command_facade(
+    services: &AppServices,
+    sessions: crate::services::capture::session::CaptureSessionStore,
+) -> CaptureCommandFacade {
+    CaptureCommandFacade::new(
+        Arc::clone(&services.stations),
+        Arc::clone(&services.credentials),
+        Arc::clone(&services.collectors),
+        sessions,
     )
 }
 
