@@ -140,16 +140,23 @@ function safeDetails(details: PublicErrorDetails | undefined, retryable: boolean
 }
 
 function safePublicText(value: unknown, maxBytes: number): string | undefined {
-  if (typeof value !== "string" || value.length === 0 || new TextEncoder().encode(value).byteLength > maxBytes || /[\u0000-\u001f\u007f]/.test(value)) return undefined;
+  if (typeof value !== "string" || value.length === 0 || new TextEncoder().encode(value).byteLength > maxBytes || hasControlCharacter(value)) return undefined;
   const lower = value.toLowerCase();
   if (["://", "?", "#", "cookie", "authorization", "bearer ", "token", "secret", "api_key", "apikey", ".sqlite", "\\"].some((marker) => lower.includes(marker))) return undefined;
   if (value.split(/\s+/).some(looksLikeAbsolutePath)) return undefined;
   return value;
 }
 
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f);
+  });
+}
+
 function looksLikeAbsolutePath(value: string): boolean {
   const trimmed = value.replace(/^[()[\]{};,:'"]+|[()[\]{};,:'"]+$/g, "");
-  return trimmed.startsWith("/") || trimmed.startsWith("\\") || /^[A-Za-z]:[\/\\]/.test(trimmed);
+  return trimmed.startsWith("/") || trimmed.startsWith("\\") || /^[A-Za-z]:[/\\]/.test(trimmed);
 }
 
 function safeCorrelationId(value: string | undefined): string | undefined {

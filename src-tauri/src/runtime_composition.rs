@@ -17,6 +17,10 @@ pub(crate) enum RuntimeCompositionError {
     FinalizationDrain,
 }
 
+#[allow(
+    dead_code,
+    reason = "legacy five-slot bundle remains for source-included persistence fault tests until every ready-service publisher moves to facade-aware bundles"
+)]
 pub(crate) struct ReadyServiceBundle<Startup, Persistence, Application, Monitor, Collector> {
     startup: Startup,
     persistence: Persistence,
@@ -28,6 +32,10 @@ pub(crate) struct ReadyServiceBundle<Startup, Persistence, Application, Monitor,
 impl<Startup, Persistence, Application, Monitor, Collector>
     ReadyServiceBundle<Startup, Persistence, Application, Monitor, Collector>
 {
+    #[allow(
+        dead_code,
+        reason = "source-included fault tests use the legacy five-slot constructor while production publishes the first facade slot through the six-slot constructor"
+    )]
     pub(crate) fn new(
         startup: Startup,
         persistence: Persistence,
@@ -39,6 +47,65 @@ impl<Startup, Persistence, Application, Monitor, Collector>
             startup,
             persistence,
             application,
+            monitor,
+            collector,
+        }
+    }
+}
+
+#[cfg_attr(
+    test,
+    allow(
+        dead_code,
+        reason = "source-included persistence tests do not publish the facade-aware production bundle"
+    )
+)]
+pub(crate) struct ReadyServiceBundleWithSettingsStations<
+    Startup,
+    Persistence,
+    Application,
+    SettingsStations,
+    Monitor,
+    Collector,
+> {
+    startup: Startup,
+    persistence: Persistence,
+    application: Application,
+    settings_stations: SettingsStations,
+    monitor: Monitor,
+    collector: Collector,
+}
+
+impl<Startup, Persistence, Application, SettingsStations, Monitor, Collector>
+    ReadyServiceBundleWithSettingsStations<
+        Startup,
+        Persistence,
+        Application,
+        SettingsStations,
+        Monitor,
+        Collector,
+    >
+{
+    #[cfg_attr(
+        test,
+        allow(
+            dead_code,
+            reason = "source-included persistence tests do not publish the facade-aware production bundle"
+        )
+    )]
+    pub(crate) fn new(
+        startup: Startup,
+        persistence: Persistence,
+        application: Application,
+        settings_stations: SettingsStations,
+        monitor: Monitor,
+        collector: Collector,
+    ) -> Self {
+        Self {
+            startup,
+            persistence,
+            application,
+            settings_stations,
             monitor,
             collector,
         }
@@ -72,12 +139,9 @@ impl<R: Runtime> ReadyServiceRegistry for TauriReadyServiceRegistry<'_, R> {
     }
 }
 
-#[cfg_attr(
-    test,
-    allow(
-        dead_code,
-        reason = "source-included fault tests use the in-memory registry; production startup owns this Tauri adapter"
-    )
+#[allow(
+    dead_code,
+    reason = "legacy five-slot registration remains for source-included persistence fault tests until facade migration fully replaces AppServices command state"
 )]
 pub(crate) fn register_ready_services<R, Startup, Persistence, Application, Monitor, Collector>(
     faults: &dyn UpgradeFaultInjector,
@@ -96,6 +160,10 @@ where
     register_ready_services_in(faults, &mut registry, services)
 }
 
+#[allow(
+    dead_code,
+    reason = "source-included persistence fault tests exercise this five-slot registration path"
+)]
 pub(crate) fn register_ready_services_in<
     Registry,
     Startup,
@@ -151,6 +219,122 @@ where
     Ok(())
 }
 
+#[cfg_attr(
+    test,
+    allow(
+        dead_code,
+        reason = "source-included persistence tests do not publish the facade-aware production bundle"
+    )
+)]
+pub(crate) fn register_ready_services_with_settings_stations<
+    R,
+    Startup,
+    Persistence,
+    Application,
+    SettingsStations,
+    Monitor,
+    Collector,
+>(
+    faults: &dyn UpgradeFaultInjector,
+    app: &mut tauri::App<R>,
+    services: ReadyServiceBundleWithSettingsStations<
+        Startup,
+        Persistence,
+        Application,
+        SettingsStations,
+        Monitor,
+        Collector,
+    >,
+) -> Result<(), RuntimeCompositionError>
+where
+    R: Runtime,
+    Startup: Send + Sync + 'static,
+    Persistence: Send + Sync + 'static,
+    Application: Send + Sync + 'static,
+    SettingsStations: Send + Sync + 'static,
+    Monitor: Send + Sync + 'static,
+    Collector: Send + Sync + 'static,
+{
+    let mut registry = TauriReadyServiceRegistry(app);
+    register_ready_services_with_settings_stations_in(faults, &mut registry, services)
+}
+
+#[cfg_attr(
+    test,
+    allow(
+        dead_code,
+        reason = "source-included persistence tests do not publish the facade-aware production bundle"
+    )
+)]
+pub(crate) fn register_ready_services_with_settings_stations_in<
+    Registry,
+    Startup,
+    Persistence,
+    Application,
+    SettingsStations,
+    Monitor,
+    Collector,
+>(
+    faults: &dyn UpgradeFaultInjector,
+    registry: &mut Registry,
+    services: ReadyServiceBundleWithSettingsStations<
+        Startup,
+        Persistence,
+        Application,
+        SettingsStations,
+        Monitor,
+        Collector,
+    >,
+) -> Result<(), RuntimeCompositionError>
+where
+    Registry: ReadyServiceRegistry,
+    Startup: Send + Sync + 'static,
+    Persistence: Send + Sync + 'static,
+    Application: Send + Sync + 'static,
+    SettingsStations: Send + Sync + 'static,
+    Monitor: Send + Sync + 'static,
+    Collector: Send + Sync + 'static,
+{
+    faults.check(UpgradeFailpoint::ServiceRegistration)?;
+    if registry.contains::<Startup>()
+        || registry.contains::<Persistence>()
+        || registry.contains::<Application>()
+        || registry.contains::<SettingsStations>()
+        || registry.contains::<Monitor>()
+        || registry.contains::<Collector>()
+    {
+        return Err(RuntimeCompositionError::StateSlotOccupied);
+    }
+
+    let ReadyServiceBundleWithSettingsStations {
+        startup,
+        persistence,
+        application,
+        settings_stations,
+        monitor,
+        collector,
+    } = services;
+    if !registry.manage(startup) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(persistence) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(application) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(settings_stations) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(monitor) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(collector) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    Ok(())
+}
+
 pub(crate) async fn drain_finalization<F>(
     faults: &dyn UpgradeFaultInjector,
     drain: F,
@@ -162,4 +346,133 @@ where
     drain
         .await
         .map_err(|_| RuntimeCompositionError::FinalizationDrain)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        any::{Any, TypeId},
+        collections::HashMap,
+    };
+
+    use crate::persistence::upgrade_fault::NoUpgradeFaults;
+
+    use super::{
+        register_ready_services_with_settings_stations_in, ReadyServiceBundleWithSettingsStations,
+        ReadyServiceRegistry, RuntimeCompositionError,
+    };
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotOne(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotTwo(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotThree(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotFour(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotFive(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotSix(u8);
+
+    #[derive(Default)]
+    struct TestRegistry {
+        states: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    }
+
+    impl TestRegistry {
+        fn manage_direct<T: Send + Sync + 'static>(&mut self, state: T) -> bool {
+            let type_id = TypeId::of::<T>();
+            if self.states.contains_key(&type_id) {
+                return false;
+            }
+            self.states.insert(type_id, Box::new(state));
+            true
+        }
+
+        fn try_state<T: Copy + Send + Sync + 'static>(&self) -> Option<T> {
+            self.states
+                .get(&TypeId::of::<T>())
+                .and_then(|state| state.downcast_ref::<T>())
+                .copied()
+        }
+    }
+
+    impl ReadyServiceRegistry for TestRegistry {
+        fn contains<T: Send + Sync + 'static>(&self) -> bool {
+            self.states.contains_key(&TypeId::of::<T>())
+        }
+
+        fn manage<T: Send + Sync + 'static>(&mut self, state: T) -> bool {
+            self.manage_direct(state)
+        }
+    }
+
+    #[test]
+    fn settings_stations_ready_services_preflight_every_concrete_slot() {
+        for occupied_slot in 0..6 {
+            let mut registry = TestRegistry::default();
+            match occupied_slot {
+                0 => assert!(registry.manage_direct(SlotOne(99))),
+                1 => assert!(registry.manage_direct(SlotTwo(99))),
+                2 => assert!(registry.manage_direct(SlotThree(99))),
+                3 => assert!(registry.manage_direct(SlotFour(99))),
+                4 => assert!(registry.manage_direct(SlotFive(99))),
+                5 => assert!(registry.manage_direct(SlotSix(99))),
+                _ => unreachable!(),
+            }
+
+            let error = register_ready_services_with_settings_stations_in(
+                &NoUpgradeFaults,
+                &mut registry,
+                ReadyServiceBundleWithSettingsStations::new(
+                    SlotOne(1),
+                    SlotTwo(1),
+                    SlotThree(1),
+                    SlotFour(1),
+                    SlotFive(1),
+                    SlotSix(1),
+                ),
+            )
+            .expect_err("occupied slots must fail before publishing any new ready state");
+
+            assert_eq!(error, RuntimeCompositionError::StateSlotOccupied);
+            let observed = [
+                registry.try_state::<SlotOne>().map(|state| state.0),
+                registry.try_state::<SlotTwo>().map(|state| state.0),
+                registry.try_state::<SlotThree>().map(|state| state.0),
+                registry.try_state::<SlotFour>().map(|state| state.0),
+                registry.try_state::<SlotFive>().map(|state| state.0),
+                registry.try_state::<SlotSix>().map(|state| state.0),
+            ];
+            let expected = std::array::from_fn(|index| (index == occupied_slot).then_some(99));
+            assert_eq!(observed, expected);
+        }
+    }
+
+    #[test]
+    fn settings_stations_ready_services_publish_complete_bundle() {
+        let mut registry = TestRegistry::default();
+
+        register_ready_services_with_settings_stations_in(
+            &NoUpgradeFaults,
+            &mut registry,
+            ReadyServiceBundleWithSettingsStations::new(
+                SlotOne(1),
+                SlotTwo(2),
+                SlotThree(3),
+                SlotFour(4),
+                SlotFive(5),
+                SlotSix(6),
+            ),
+        )
+        .expect("vacant registry must publish every ready state");
+
+        assert_eq!(registry.try_state::<SlotOne>(), Some(SlotOne(1)));
+        assert_eq!(registry.try_state::<SlotTwo>(), Some(SlotTwo(2)));
+        assert_eq!(registry.try_state::<SlotThree>(), Some(SlotThree(3)));
+        assert_eq!(registry.try_state::<SlotFour>(), Some(SlotFour(4)));
+        assert_eq!(registry.try_state::<SlotFive>(), Some(SlotFive(5)));
+        assert_eq!(registry.try_state::<SlotSix>(), Some(SlotSix(6)));
+    }
 }

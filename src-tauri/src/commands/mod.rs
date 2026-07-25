@@ -16,7 +16,10 @@ pub(crate) mod data_recovery;
 pub(crate) mod error;
 
 use crate::{
-    application::{app_services::AppServices, error::ApplicationError, pagination::PageLimit},
+    application::{
+        app_services::AppServices, command_facades::SettingsStationsCommandFacade,
+        error::ApplicationError, pagination::PageLimit,
+    },
     ipc::dto::{
         change_logs::{
             ChangeEventDto, ChangeEventIdInputDto, ChangeEventIdsInputDto, RequestLogDto,
@@ -121,7 +124,6 @@ use crate::{
         time::now_millis_for_services,
         updater,
     },
-    TrayBehavior,
 };
 
 const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
@@ -482,14 +484,13 @@ fn data_store_updated_at() -> String {
 
 #[tauri::command]
 pub async fn list_stations(
-    services: State<'_, AppServices>,
+    facade: State<'_, SettingsStationsCommandFacade>,
     input: Value,
 ) -> Result<Vec<StationDto>, error::CommandError> {
     correlation::in_command_scope("list_stations", async {
         EmptyInputDto::parse(input)?;
-        services
-            .stations
-            .list()
+        facade
+            .list_stations()
             .await
             .map(|stations| stations.into_iter().map(StationDto::from).collect())
             .map_err(public_command_application_error)
@@ -505,14 +506,13 @@ fn is_supported_database_file(path: &std::path::Path) -> bool {
 
 #[tauri::command]
 pub async fn create_station(
-    services: State<'_, AppServices>,
+    facade: State<'_, SettingsStationsCommandFacade>,
     input: Value,
 ) -> Result<StationDto, error::CommandError> {
     correlation::in_command_scope("create_station", async {
         let input = CreateStationInputDto::parse(input)?.into_domain()?;
-        services
-            .stations
-            .create(input)
+        facade
+            .create_station(input)
             .await
             .map(StationDto::from)
             .map_err(public_command_application_error)
@@ -522,13 +522,12 @@ pub async fn create_station(
 
 #[tauri::command]
 pub async fn update_station(
-    services: State<'_, AppServices>,
+    facade: State<'_, SettingsStationsCommandFacade>,
     input: Value,
 ) -> Result<StationDto, error::CommandError> {
     correlation::in_command_scope("update_station", async {
         let input = UpdateStationInputDto::parse(input)?.into_domain()?;
-        services
-            .stations
+        facade
             .update_station(input)
             .await
             .map(StationDto::from)
@@ -539,14 +538,13 @@ pub async fn update_station(
 
 #[tauri::command]
 pub async fn delete_station(
-    services: State<'_, AppServices>,
+    facade: State<'_, SettingsStationsCommandFacade>,
     input: Value,
 ) -> Result<(), error::CommandError> {
     correlation::in_command_scope("delete_station", async {
         let input = DeleteStationInputDto::parse(input)?;
-        services
-            .stations
-            .delete(input.id)
+        facade
+            .delete_station(input.id)
             .await
             .map_err(public_command_application_error)
     })
@@ -555,14 +553,13 @@ pub async fn delete_station(
 
 #[tauri::command]
 pub async fn reorder_stations(
-    services: State<'_, AppServices>,
+    facade: State<'_, SettingsStationsCommandFacade>,
     input: Value,
 ) -> Result<Vec<StationDto>, error::CommandError> {
     correlation::in_command_scope("reorder_stations", async {
         let input = ReorderStationsInputDto::parse(input)?;
-        services
-            .stations
-            .reorder(input.station_ids)
+        facade
+            .reorder_stations(input.station_ids)
             .await
             .map(|stations| stations.into_iter().map(StationDto::from).collect())
             .map_err(public_command_application_error)
@@ -572,14 +569,13 @@ pub async fn reorder_stations(
 
 #[tauri::command]
 pub async fn get_settings(
-    services: State<'_, AppServices>,
+    facade: State<'_, SettingsStationsCommandFacade>,
     input: Value,
 ) -> Result<SettingsDto, error::CommandError> {
     correlation::in_command_scope("get_settings", async {
         EmptyInputDto::parse(input)?;
-        services
-            .settings
-            .load()
+        facade
+            .get_settings()
             .await
             .map(SettingsDto::from)
             .map_err(public_command_application_error)
@@ -589,14 +585,13 @@ pub async fn get_settings(
 
 #[tauri::command]
 pub async fn get_local_access_key(
-    services: State<'_, AppServices>,
+    facade: State<'_, SettingsStationsCommandFacade>,
     input: Value,
 ) -> Result<String, error::CommandError> {
     correlation::in_command_scope("get_local_access_key", async {
         EmptyInputDto::parse(input)?;
-        services
-            .settings
-            .ensure_local_access_key()
+        facade
+            .get_local_access_key()
             .await
             .map_err(public_command_application_error)
     })
@@ -605,13 +600,12 @@ pub async fn get_local_access_key(
 
 #[tauri::command]
 pub async fn update_local_access_key(
-    services: State<'_, AppServices>,
+    facade: State<'_, SettingsStationsCommandFacade>,
     input: Value,
 ) -> Result<SettingsDto, error::CommandError> {
     correlation::in_command_scope("update_local_access_key", async {
         let input = UpdateLocalAccessKeyInputDto::parse(input)?;
-        services
-            .settings
+        facade
             .update_local_access_key(input.value)
             .await
             .map(SettingsDto::from)
@@ -718,18 +712,15 @@ pub async fn inspect_latest_update_manifest(
 
 #[tauri::command]
 pub async fn update_settings(
-    services: State<'_, AppServices>,
-    tray_behavior: State<'_, crate::TrayBehaviorState>,
+    facade: State<'_, SettingsStationsCommandFacade>,
     input: Value,
 ) -> Result<SettingsDto, error::CommandError> {
     correlation::in_command_scope("update_settings", async {
         let input = UpdateSettingsInputDto::parse(input)?.into_domain()?;
-        let settings = services
-            .settings
-            .update(input)
+        let settings = facade
+            .update_settings(input)
             .await
             .map_err(public_command_application_error)?;
-        tray_behavior.set(TrayBehavior::from_setting(&settings.tray_behavior));
         Ok(SettingsDto::from(settings))
     })
     .await

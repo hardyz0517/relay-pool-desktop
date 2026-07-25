@@ -2,6 +2,7 @@ pub(crate) mod app_services;
 pub(crate) mod changes;
 pub(crate) mod clock;
 pub(crate) mod collectors;
+pub(crate) mod command_facades;
 pub(crate) mod credentials;
 pub(crate) mod data_directory;
 pub(crate) mod error;

@@ -86,7 +86,7 @@ impl TrayBehavior {
 
 fn current_tray_behavior<R: tauri::Runtime>(window: &tauri::Window<R>) -> TrayBehavior {
     window
-        .try_state::<TrayBehaviorState>()
+        .try_state::<Arc<TrayBehaviorState>>()
         .map(|state| state.get())
         .unwrap_or(TrayBehavior::CloseToTray)
 }
@@ -332,7 +332,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            app.manage(TrayBehaviorState::default());
+            app.manage(Arc::new(TrayBehaviorState::default()));
             setup_tray(app)?;
             let secret_manager = services::secrets::SecretManager::initialize()?;
             let app_config_dir = app.path().app_config_dir().map_err(|error| {
@@ -375,6 +375,11 @@ pub fn run() {
                         None,
                         data_directory_port,
                     );
+                    let settings_stations_command_facade =
+                        app_composition::compose_settings_stations_command_facade(
+                            &app_services,
+                            Arc::clone(app.state::<Arc<TrayBehaviorState>>().inner()),
+                        );
                     tauri::async_runtime::block_on(app_services.settings.repair_legacy_settings())
                         .map_err(|error| {
                             format!("failed to repair legacy application settings: {error}")
@@ -391,7 +396,7 @@ pub fn run() {
                     })?;
                     let settings = tauri::async_runtime::block_on(app_services.settings.load())
                         .map_err(|error| format!("failed to load application settings: {error}"))?;
-                    app.state::<TrayBehaviorState>()
+                    app.state::<Arc<TrayBehaviorState>>()
                         .set(TrayBehavior::from_setting(&settings.tray_behavior));
                     let channel_monitor_runner =
                         services::channel_monitors::ChannelMonitorRunnerState::start_v2(
@@ -407,13 +412,14 @@ pub fn run() {
                     );
                     let runtime_owner =
                         DataStoreRuntimeOwner::new(Some(Arc::clone(&runtime)), installation_lease);
-                    runtime_composition::register_ready_services(
+                    runtime_composition::register_ready_services_with_settings_stations(
                         &persistence::upgrade_fault::NoUpgradeFaults,
                         app,
-                        runtime_composition::ReadyServiceBundle::new(
+                        runtime_composition::ReadyServiceBundleWithSettingsStations::new(
                             startup_state,
                             runtime,
                             app_services,
+                            settings_stations_command_facade,
                             channel_monitor_runner,
                             station_collector_runner,
                         ),

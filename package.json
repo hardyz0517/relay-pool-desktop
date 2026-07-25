@@ -14,7 +14,7 @@
     "verify:release-bundle": "node scripts/verify-persistence-v2-artifacts.mjs --artifact src-tauri/target/x86_64-pc-windows-msvc/release/bundle",
     "architecture:fixtures": "node scripts/architecture/check-fixtures.mjs",
     "architecture:typescript": "node scripts/architecture/check-typescript-boundaries.mjs",
-    "architecture:commands": "node scripts/architecture/check-command-registry.mjs",
+    "architecture:commands": "node scripts/architecture/check-command-registry.mjs && node scripts/architecture/check-command-state-boundaries.mjs",
     "architecture:security": "node scripts/architecture/check-tauri-security.mjs && node scripts/architecture/check-build-entries.mjs",
     "architecture:artifacts": "node scripts/architecture/check-artifact-policy.mjs",
     "architecture:dependencies": "node scripts/architecture/check-dependency-lifecycle.mjs",

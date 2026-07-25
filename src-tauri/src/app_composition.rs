@@ -1,9 +1,13 @@
 use std::sync::Arc;
 
 use crate::{
-    application::{app_services::AppServices, data_directory::DataDirectoryPort},
+    application::{
+        app_services::AppServices, command_facades::SettingsStationsCommandFacade,
+        data_directory::DataDirectoryPort,
+    },
     persistence::runtime::PersistenceHandle,
     services::{pricing_catalog::StaticBuiltinModelBasePriceCatalog, secrets::vault::DataKeyVault},
+    TrayBehaviorState,
 };
 
 pub(crate) fn compose_app_services(
@@ -20,5 +24,16 @@ pub(crate) fn compose_app_services(
         data_directory_port,
         Arc::new(DataKeyVault::new(data_key)),
         Arc::new(StaticBuiltinModelBasePriceCatalog),
+    )
+}
+
+pub(crate) fn compose_settings_stations_command_facade(
+    services: &AppServices,
+    tray_behavior: Arc<TrayBehaviorState>,
+) -> SettingsStationsCommandFacade {
+    SettingsStationsCommandFacade::new(
+        Arc::clone(&services.stations),
+        Arc::clone(&services.settings),
+        tray_behavior,
     )
 }

@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "owner": "Task 7",
+  "source_inventory_item": "S2-T7-command-facades",
+  "current_shard": "settings-stations-command-facade",
+  "migration_state": "partial",
+  "facades": [
+    {
+      "state_type": "SettingsStationsCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/settings_stations.rs",
+      "dependencies": [
+        "StationService",
+        "SettingsService",
+        "TrayBehaviorState"
+      ],
+      "commands": [
+        {
+          "command": "list_stations",
+          "use_case": "list_stations",
+          "dependencies": ["StationService"]
+        },
+        {
+          "command": "create_station",
+          "use_case": "create_station",
+          "dependencies": ["StationService"]
+        },
+        {
+          "command": "update_station",
+          "use_case": "update_station",
+          "dependencies": ["StationService"]
+        },
+        {
+          "command": "delete_station",
+          "use_case": "delete_station",
+          "dependencies": ["StationService"]
+        },
+        {
+          "command": "reorder_stations",
+          "use_case": "reorder_stations",
+          "dependencies": ["StationService"]
+        },
+        {
+          "command": "get_settings",
+          "use_case": "get_settings",
+          "dependencies": ["SettingsService"]
+        },
+        {
+          "command": "get_local_access_key",
+          "use_case": "get_local_access_key",
+          "dependencies": ["SettingsService"]
+        },
+        {
+          "command": "update_local_access_key",
+          "use_case": "update_local_access_key",
+          "dependencies": ["SettingsService"]
+        },
+        {
+          "command": "update_settings",
+          "use_case": "update_settings",
+          "dependencies": ["SettingsService", "TrayBehaviorState"]
+        }
+      ],
+      "non_goals": [
+        "import_relay_pool_to_ccswitch",
+        "station_for_capture",
+        "repair_legacy_settings",
+        "set_data_directory_projection",
+        "set_local_proxy_start_on_launch",
+        "import_known_legacy_settings"
+      ]
+    }
+  ],
+  "remaining_legacy_state": {
+    "state_type": "AppServices",
+    "reason": "Task 7 is migrating by domain shard; AppServices remains managed until all production commands leave State<AppServices>."
+  }
+}
