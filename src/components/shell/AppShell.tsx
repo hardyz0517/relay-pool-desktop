@@ -5,9 +5,7 @@ import { appRoutes } from "@/app/routes";
 import { LocalProxyRadarIcon } from "@/components/shell/LocalProxyRadarIcon";
 import { shellLayout } from "@/components/ui/layout";
 import {
-  CHANGE_EVENTS_UPDATED_EVENT,
   markChangeEventsRead,
-  notifyChangeEventsUpdated,
 } from "@/lib/api/changeEvents";
 import { PROXY_STATUS_UPDATED_EVENT } from "@/lib/api/proxy";
 import type { ProxyStatus } from "@/lib/types/proxy";
@@ -45,15 +43,6 @@ export function AppShell({
   const { data: changeEvents = [] } = useQuery(changeEventsQueryOptions(10_000));
   const { data: proxyStatus = null } = useQuery(proxyStatusQueryOptions(2_000));
   const { data: settings = null } = useQuery(settingsQueryOptions());
-
-  useEffect(() => {
-    function refreshChangeEvents() {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.changeEvents });
-    }
-
-    window.addEventListener(CHANGE_EVENTS_UPDATED_EVENT, refreshChangeEvents);
-    return () => window.removeEventListener(CHANGE_EVENTS_UPDATED_EVENT, refreshChangeEvents);
-  }, [queryClient]);
 
   useEffect(() => {
     function handleProxyStatusUpdated(event: Event) {
@@ -105,7 +94,6 @@ export function AppShell({
         queryClient.setQueryData<ChangeEvent[]>(queryKeys.changeEvents, (latestEvents) =>
           mergeChangeEventUpdates(latestEvents ?? currentEvents, readOnEntryResult.updatedEvents),
         );
-        notifyChangeEventsUpdated();
       } catch {
         void queryClient.invalidateQueries({ queryKey: queryKeys.changeEvents });
       }

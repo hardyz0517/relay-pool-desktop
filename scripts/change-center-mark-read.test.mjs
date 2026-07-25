@@ -358,7 +358,6 @@ const changeCenterSource = await readFile("src/features/changes/ChangeCenterPage
 const requestLogTableSource = await readFile("src/features/logs/RequestLogTable.tsx", "utf8");
 const paginationSource = await readFile("src/components/ui/Pagination.tsx", "utf8");
 const appShellSource = await readFile("src/components/shell/AppShell.tsx", "utf8");
-const mockChangeEventsSource = await readFile("src/lib/mock/changeEvents.ts", "utf8");
 const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
 const tauriRegistrySource = await readFile("src-tauri/src/ipc/registry.rs", "utf8");
 const changeServiceSource = await readFile("src-tauri/src/application/changes.rs", "utf8");
@@ -368,13 +367,16 @@ const changeStoreSource = await readFile(
 );
 
 assert.ok(
-  changeEventsApiSource.includes("CHANGE_EVENTS_UPDATED_EVENT"),
-  "change events API should expose a shared browser event name for cross-page refreshes",
+  !changeEventsApiSource.includes("CHANGE_EVENTS_UPDATED_EVENT") &&
+    !changeEventsApiSource.includes("relay-pool:change-events-updated") &&
+    !changeEventsApiSource.includes("CustomEvent"),
+  "change events API should not expose DOM cache synchronization events",
 );
 
 assert.ok(
-  changeCenterSource.includes("notifyChangeEventsUpdated"),
-  "change center status actions should notify other surfaces after event state changes",
+  !changeCenterSource.includes("notifyChangeEventsUpdated") &&
+    changeCenterSource.includes("queryClient.setQueryData(queryKeys.changeEvents"),
+  "change center status actions should update the shared query cache instead of notifying DOM listeners",
 );
 
 assert.ok(
@@ -392,10 +394,10 @@ assert.ok(
 );
 
 assert.ok(
-  appShellSource.includes("CHANGE_EVENTS_UPDATED_EVENT") &&
-    appShellSource.includes("window.addEventListener(CHANGE_EVENTS_UPDATED_EVENT") &&
-    appShellSource.includes("window.removeEventListener(CHANGE_EVENTS_UPDATED_EVENT"),
-  "app shell should refresh the sidebar change badge when change events are updated in-place",
+  !appShellSource.includes("CHANGE_EVENTS_UPDATED_EVENT") &&
+    !appShellSource.includes("window.addEventListener(CHANGE_EVENTS_UPDATED_EVENT") &&
+    !appShellSource.includes("notifyChangeEventsUpdated"),
+  "app shell should not subscribe to change-event DOM synchronization",
 );
 
 assert.ok(
@@ -407,10 +409,8 @@ assert.ok(
 
 assert.ok(
   changeEventsApiSource.includes("markChangeEventsRead") &&
-    /invoke<ChangeEvent\[\]>\("mark_change_events_read", \{ ids: (?:ids|uniqueIds) \}\)/.test(
-      changeEventsApiSource,
-    ),
-  "change events API should expose one batch read command with the captured IDs",
+    changeEventsApiSource.includes("return changeEventsClient().markChangeEventsRead(uniqueIds);"),
+  "change events API should expose one batch read command through the active backend client",
 );
 
 assert.ok(
@@ -421,8 +421,9 @@ assert.ok(
 assert.ok(
   appShellSource.includes("useQuery(changeEventsQueryOptions(10_000))") &&
     appShellSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.changeEvents })") &&
+    appShellSource.includes("queryClient.setQueryData<ChangeEvent[]>(queryKeys.changeEvents") &&
     !appShellSource.includes("}, [activeRouteId]);"),
-  "app shell should poll change events independently from route changes and invalidate the shared query when in-page updates happen",
+  "app shell should poll change events independently from route changes and update the shared cache on entry",
 );
 
 assert.ok(
@@ -432,14 +433,8 @@ assert.ok(
 
 assert.ok(
   changeEventsApiSource.includes("clearChangeEvents") &&
-    changeEventsApiSource.includes('invoke<void>("clear_change_events"') &&
-    changeEventsApiSource.includes("clearMockChangeEvents"),
-  "change events API should expose a clear-history command with a mock fallback",
-);
-
-assert.ok(
-  mockChangeEventsSource.includes("clearMockChangeEvents") && mockChangeEventsSource.includes("memoryChangeEvents = []"),
-  "mock change events should support clearing history for browser-only development",
+    changeEventsApiSource.includes("return changeEventsClient().clearChangeEvents();"),
+  "change events API should expose a clear-history command through the active backend client",
 );
 
 assert.ok(
@@ -502,8 +497,7 @@ assert.ok(
 
 assert.ok(
   tauriCommandsSource.includes("pub async fn clear_change_events") &&
-    tauriCommandsSource.includes(".changes") &&
-    tauriCommandsSource.includes(".clear()") &&
+    tauriCommandsSource.includes(".clear_change_events()") &&
     tauriRegistrySource.includes("clear_change_events =>") &&
     changeServiceSource.includes("pub(crate) async fn clear") &&
     changeStoreSource.includes("DELETE FROM change_events"),
@@ -512,7 +506,7 @@ assert.ok(
 
 assert.ok(
   tauriCommandsSource.includes("pub async fn mark_change_events_read") &&
-    tauriCommandsSource.includes(".mark_many_read(ids)") &&
+    tauriCommandsSource.includes(".mark_change_events_read(input.ids)") &&
     tauriRegistrySource.includes("mark_change_events_read =>") &&
     changeServiceSource.includes("pub(crate) async fn mark_many_read") &&
     changeStoreSource.includes("WHERE id = ?1 AND status = 'unread'"),

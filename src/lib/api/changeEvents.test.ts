@@ -6,12 +6,10 @@ import { DemoBackend } from "@/lib/bridge/DemoBackend";
 import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import { DemoBackendUnsupportedError, type BackendClient } from "@/lib/bridge/BackendClient";
 import {
-  CHANGE_EVENTS_UPDATED_EVENT,
   clearChangeEvents,
   dismissChangeEvent,
   listChangeEvents,
   listChangeEventsForStation,
-  notifyChangeEventsUpdated,
   resolveChangeEvent,
   upsertChangeEvent,
   markChangeEventRead,
@@ -82,13 +80,6 @@ describe("change event backend cutover", () => {
     await expect(listCollectorRuns("station-1")).rejects.toBeInstanceOf(DemoBackendUnsupportedError);
   });
 
-  it("emits the update event without touching the backend", () => {
-    const dispatchEvent = vi.spyOn(window, "dispatchEvent");
-
-    notifyChangeEventsUpdated();
-
-    expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: CHANGE_EVENTS_UPDATED_EVENT }));
-  });
 });
 
 function makeBackendClient() {

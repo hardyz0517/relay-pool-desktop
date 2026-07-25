@@ -1,17 +1,8 @@
 import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type { ChangeEvent, UpsertChangeEventInput } from "@/lib/types/changeEvents";
 
-export const CHANGE_EVENTS_UPDATED_EVENT = "relay-pool:change-events-updated";
-
 function changeEventsClient() {
   return getActiveBackendClient().changeEvents;
-}
-
-export function notifyChangeEventsUpdated() {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.dispatchEvent(new CustomEvent(CHANGE_EVENTS_UPDATED_EVENT));
 }
 
 export function listChangeEvents(): Promise<ChangeEvent[]> {
