@@ -5,8 +5,9 @@ use crate::{
         app_services::AppServices,
         command_facades::{
             ChangeEventsCommandFacade, ChannelMonitoringCommandFacade, ChannelStatusCommandFacade,
-            CredentialsCommandFacade, KeyPoolCommandFacade, PricingCommandFacade,
-            RequestLogsCommandFacade, RoutingCommandFacade, SettingsStationsCommandFacade,
+            CollectorMetadataCommandFacade, CredentialsCommandFacade, KeyPoolCommandFacade,
+            PricingCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
+            SettingsStationsCommandFacade,
         },
         data_directory::DataDirectoryPort,
     },
@@ -67,6 +68,12 @@ pub(crate) fn compose_channel_status_command_facade(
     services: &AppServices,
 ) -> ChannelStatusCommandFacade {
     ChannelStatusCommandFacade::new(Arc::clone(&services.channel_status))
+}
+
+pub(crate) fn compose_collector_metadata_command_facade(
+    services: &AppServices,
+) -> CollectorMetadataCommandFacade {
+    CollectorMetadataCommandFacade::new(Arc::clone(&services.collectors))
 }
 
 pub(crate) fn compose_pricing_command_facade(services: &AppServices) -> PricingCommandFacade {

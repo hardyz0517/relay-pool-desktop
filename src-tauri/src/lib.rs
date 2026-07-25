@@ -390,6 +390,8 @@ pub fn run() {
                         app_composition::compose_channel_monitoring_command_facade(&app_services);
                     let channel_status_command_facade =
                         app_composition::compose_channel_status_command_facade(&app_services);
+                    let collector_metadata_command_facade =
+                        app_composition::compose_collector_metadata_command_facade(&app_services);
                     let pricing_command_facade =
                         app_composition::compose_pricing_command_facade(&app_services);
                     let change_events_command_facade =
@@ -441,6 +443,7 @@ pub fn run() {
                             request_logs_command_facade,
                             channel_monitoring_command_facade,
                             channel_status_command_facade,
+                            collector_metadata_command_facade,
                             pricing_command_facade,
                             change_events_command_facade,
                             credentials_command_facade,

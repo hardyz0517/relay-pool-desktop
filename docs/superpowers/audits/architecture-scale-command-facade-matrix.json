@@ -2,7 +2,7 @@
   "schema_version": 1,
   "owner": "Task 7",
   "source_inventory_item": "S2-T7-command-facades",
-  "current_shard": "settings-stations-key-pool-routing-request-log-channel-monitoring-channel-status-pricing-change-events-credentials-command-facades",
+  "current_shard": "settings-stations-key-pool-routing-request-log-channel-monitoring-channel-status-collector-metadata-pricing-change-events-credentials-command-facades",
   "migration_state": "partial",
   "facades": [
     {
@@ -470,6 +470,56 @@
       "non_goals": [
         "load_pricing_comparison_workspace",
         "channel monitor runner commands"
+      ]
+    },
+    {
+      "state_type": "CollectorMetadataCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/collector_metadata.rs",
+      "dependencies": [
+        "CollectorService"
+      ],
+      "commands": [
+        {
+          "command": "list_station_group_bindings",
+          "use_case": "list_station_group_bindings",
+          "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "list_station_group_options",
+          "use_case": "list_station_group_options",
+          "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "upsert_station_group_binding",
+          "use_case": "upsert_station_group_binding",
+          "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "list_group_rate_records",
+          "use_case": "list_group_rate_records",
+          "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "list_collector_runs",
+          "use_case": "list_collector_runs",
+          "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "list_collector_snapshots",
+          "use_case": "list_collector_snapshots",
+          "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "get_latest_collector_snapshot",
+          "use_case": "get_latest_collector_snapshot",
+          "dependencies": ["CollectorService"]
+        }
+      ],
+      "non_goals": [
+        "collector execution commands",
+        "station login/test commands",
+        "capture session commands",
+        "remote-key workflows"
       ]
     }
   ],
