@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tauri::{AppHandle, Manager};
 
 use crate::{application::app_services::AppServices, services::secrets::SecretManager};
@@ -38,7 +40,7 @@ async fn start_managed_if_requested(app: &AppHandle) -> Result<(), String> {
     }
 
     let secrets = app.state::<SecretManager>();
-    let proxy = app.state::<ProxyRuntimeState>();
+    let proxy = app.state::<Arc<ProxyRuntimeState>>();
     startup::start_from_v2_persisted_settings(services.inner(), *secrets.data_key(), proxy.inner())
         .await?;
     Ok(())

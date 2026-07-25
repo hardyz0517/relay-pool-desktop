@@ -7,7 +7,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     io::Read,
     path::PathBuf,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{ipc::Channel, Manager, State};
@@ -21,8 +21,9 @@ use crate::{
         command_facades::{
             ChangeEventsCommandFacade, ChannelMonitoringCommandFacade, ChannelStatusCommandFacade,
             CollectorMetadataCommandFacade, CredentialsCommandFacade, DataDirectoryCommandFacade,
-            KeyPoolCommandFacade, PricingCommandFacade, RequestLogsCommandFacade,
-            RoutingCommandFacade, SettingsStationsCommandFacade,
+            KeyPoolCommandFacade, LocalProxyCommandError, LocalProxyCommandFacade,
+            PricingCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
+            SettingsStationsCommandFacade,
         },
         error::ApplicationError,
         pagination::PageLimit,
@@ -625,7 +626,7 @@ pub async fn update_local_access_key(
 pub async fn import_relay_pool_to_ccswitch(
     secrets: State<'_, SecretManager>,
     services: State<'_, AppServices>,
-    proxy: State<'_, ProxyRuntimeState>,
+    proxy: State<'_, Arc<ProxyRuntimeState>>,
     input: Value,
 ) -> Result<CcswitchImportResultDto, error::CommandError> {
     correlation::in_command_scope("import_relay_pool_to_ccswitch", async {
@@ -741,6 +742,13 @@ fn public_command_application_error(error: ApplicationError) -> error::CommandEr
     command_application_error(error)
 }
 
+fn public_local_proxy_error(error: LocalProxyCommandError) -> error::CommandError {
+    match error {
+        LocalProxyCommandError::Application(error) => public_command_application_error(error),
+        LocalProxyCommandError::Runtime => error::CommandError::internal(None),
+    }
+}
+
 fn public_remote_key_error(error: remote_keys::RemoteKeyOperationError) -> error::CommandError {
     match error {
         remote_keys::RemoteKeyOperationError::Application(error) => {
@@ -800,162 +808,97 @@ pub async fn reset_data_dir(
 
 #[tauri::command]
 pub async fn get_proxy_status(
-    services: State<'_, AppServices>,
-    proxy: State<'_, ProxyRuntimeState>,
+    facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
 ) -> Result<ProxyStatusDto, error::CommandError> {
     correlation::in_command_scope("get_proxy_status", async {
         EmptyInputDto::parse(input)?;
-        let settings = services
-            .settings
-            .load()
+        facade
+            .get_proxy_status()
             .await
-            .map_err(public_command_application_error)?;
-        Ok(proxy.status(settings.local_proxy_port))
+            .map_err(public_command_application_error)
     })
     .await
 }
 
 #[tauri::command]
 pub async fn load_local_routing_workspace(
-    services: State<'_, AppServices>,
-    proxy: State<'_, ProxyRuntimeState>,
+    facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
 ) -> Result<LocalRoutingWorkspaceDto, error::CommandError> {
     correlation::in_command_scope("load_local_routing_workspace", async {
         EmptyInputDto::parse(input)?;
-        load_local_routing_workspace_v2(services.inner(), proxy.inner()).await
+        facade
+            .load_local_routing_workspace()
+            .await
+            .map_err(public_command_application_error)
     })
     .await
 }
 
 #[tauri::command]
 pub async fn reorder_local_routing_keys(
-    services: State<'_, AppServices>,
-    proxy: State<'_, ProxyRuntimeState>,
+    facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
 ) -> Result<LocalRoutingWorkspaceDto, error::CommandError> {
     correlation::in_command_scope("reorder_local_routing_keys", async {
         let input = ReorderLocalRoutingKeysInputDto::parse(input)?;
-        services
-            .routing
+        facade
             .reorder_local_routing_keys(input.station_key_ids)
             .await
-            .map_err(public_command_application_error)?;
-        load_local_routing_workspace_v2(services.inner(), proxy.inner()).await
+            .map_err(public_command_application_error)
     })
     .await
 }
 
-async fn load_local_routing_workspace_v2(
-    services: &AppServices,
-    proxy: &ProxyRuntimeState,
-) -> Result<crate::services::proxy::routing_types::LocalRoutingWorkspace, error::CommandError> {
-    let settings = services
-        .settings
-        .load()
-        .await
-        .map_err(command_application_error)?;
-    let request_logs = services
-        .request_logs
-        .list_recent(PageLimit::new(500).expect("bounded limit"))
-        .await
-        .map_err(command_application_error)?;
-    let proxy_status = proxy.status(settings.local_proxy_port);
-    services
-        .routing
-        .load_local_routing_workspace(settings, request_logs, proxy_status)
-        .await
-        .map_err(command_application_error)
-}
-
 #[tauri::command]
 pub async fn start_local_proxy(
-    secrets: State<'_, SecretManager>,
-    services: State<'_, AppServices>,
-    proxy: State<'_, ProxyRuntimeState>,
+    facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
 ) -> Result<ProxyStatusDto, error::CommandError> {
     correlation::in_command_scope("start_local_proxy", async {
         EmptyInputDto::parse(input)?;
-        let settings = services
-            .settings
-            .load()
+        facade
+            .start_local_proxy()
             .await
-            .map_err(public_command_application_error)?;
-        let local_key = services
-            .settings
-            .ensure_local_access_key()
-            .await
-            .map_err(public_command_application_error)?;
-        let status = proxy
-            .start(crate::services::proxy::startup::config_from_v2_services(
-                services.inner(),
-                *secrets.data_key(),
-                local_key,
-                settings.local_proxy_port,
-            ))
-            .await?;
-        if let Err(error) = services
-            .settings
-            .set_local_proxy_start_on_launch(true)
-            .await
-        {
-            let _ = proxy.stop(status.port).await;
-            return Err(public_command_application_error(error));
-        }
-        Ok(status)
+            .map_err(public_local_proxy_error)
     })
     .await
 }
 
 #[tauri::command]
 pub async fn stop_local_proxy(
-    services: State<'_, AppServices>,
-    proxy: State<'_, ProxyRuntimeState>,
+    facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
 ) -> Result<ProxyStatusDto, error::CommandError> {
     correlation::in_command_scope("stop_local_proxy", async {
         EmptyInputDto::parse(input)?;
-        let settings = services
-            .settings
-            .load()
+        facade
+            .stop_local_proxy()
             .await
-            .map_err(public_command_application_error)?;
-        let status = proxy.stop(settings.local_proxy_port).await?;
-        services
-            .settings
-            .set_local_proxy_start_on_launch(false)
-            .await
-            .map_err(public_command_application_error)?;
-        Ok(status)
+            .map_err(public_local_proxy_error)
     })
     .await
 }
 
 #[tauri::command]
 pub async fn cleanup_before_update(
-    services: State<'_, AppServices>,
-    proxy: State<'_, ProxyRuntimeState>,
+    facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
 ) -> Result<ProxyStatusDto, error::CommandError> {
     correlation::in_command_scope("cleanup_before_update", async {
         EmptyInputDto::parse(input)?;
-        let settings = services
-            .settings
-            .load()
+        facade
+            .cleanup_before_update()
             .await
-            .map_err(command_application_error)?;
-        Ok(proxy
-            .cleanup_before_update(settings.local_proxy_port)
-            .await?)
+            .map_err(public_local_proxy_error)
     })
     .await
 }
 
 #[tauri::command]
 pub async fn prepare_local_proxy_for_update(
-    proxy: State<'_, ProxyRuntimeState>,
+    proxy: State<'_, Arc<ProxyRuntimeState>>,
     input: Value,
 ) -> Result<ProxyStatusDto, error::CommandError> {
     correlation::in_command_scope("prepare_local_proxy_for_update", async {
@@ -967,40 +910,15 @@ pub async fn prepare_local_proxy_for_update(
 
 #[tauri::command]
 pub async fn restart_local_proxy(
-    secrets: State<'_, SecretManager>,
-    services: State<'_, AppServices>,
-    proxy: State<'_, ProxyRuntimeState>,
+    facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
 ) -> Result<ProxyStatusDto, error::CommandError> {
     correlation::in_command_scope("restart_local_proxy", async {
         EmptyInputDto::parse(input)?;
-        let settings = services
-            .settings
-            .load()
+        facade
+            .restart_local_proxy()
             .await
-            .map_err(public_command_application_error)?;
-        let local_key = services
-            .settings
-            .ensure_local_access_key()
-            .await
-            .map_err(public_command_application_error)?;
-        let status = proxy
-            .restart(crate::services::proxy::startup::config_from_v2_services(
-                services.inner(),
-                *secrets.data_key(),
-                local_key,
-                settings.local_proxy_port,
-            ))
-            .await?;
-        if let Err(error) = services
-            .settings
-            .set_local_proxy_start_on_launch(true)
-            .await
-        {
-            let _ = proxy.stop(status.port).await;
-            return Err(public_command_application_error(error));
-        }
-        Ok(status)
+            .map_err(public_local_proxy_error)
     })
     .await
 }

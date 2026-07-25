@@ -2,7 +2,7 @@
   "schema_version": 1,
   "owner": "Task 7",
   "source_inventory_item": "S2-T7-command-facades",
-  "current_shard": "settings-stations-key-pool-routing-request-log-channel-monitoring-channel-status-collector-metadata-pricing-change-events-credentials-data-directory-command-facades",
+  "current_shard": "settings-stations-key-pool-routing-request-log-channel-monitoring-channel-status-collector-metadata-pricing-change-events-credentials-data-directory-local-proxy-command-facades",
   "migration_state": "partial",
   "facades": [
     {
@@ -553,6 +553,61 @@
         "station login/test commands",
         "capture session commands",
         "remote-key workflows"
+      ]
+    },
+    {
+      "state_type": "LocalProxyCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/local_proxy.rs",
+      "dependencies": [
+        "SettingsService",
+        "RoutingService",
+        "RequestLogService",
+        "RequestFinalizationService",
+        "ProxyRuntimeState",
+        "Data key captured at composition"
+      ],
+      "commands": [
+        {
+          "command": "get_proxy_status",
+          "use_case": "get_proxy_status",
+          "dependencies": ["SettingsService", "ProxyRuntimeState"]
+        },
+        {
+          "command": "load_local_routing_workspace",
+          "use_case": "load_local_routing_workspace",
+          "dependencies": ["SettingsService", "RoutingService", "RequestLogService", "ProxyRuntimeState"]
+        },
+        {
+          "command": "reorder_local_routing_keys",
+          "use_case": "reorder_local_routing_keys",
+          "dependencies": ["RoutingService", "SettingsService", "RequestLogService", "ProxyRuntimeState"]
+        },
+        {
+          "command": "start_local_proxy",
+          "use_case": "start_local_proxy",
+          "dependencies": ["SettingsService", "RoutingService", "RequestFinalizationService", "ProxyRuntimeState", "Data key"]
+        },
+        {
+          "command": "stop_local_proxy",
+          "use_case": "stop_local_proxy",
+          "dependencies": ["SettingsService", "ProxyRuntimeState"]
+        },
+        {
+          "command": "cleanup_before_update",
+          "use_case": "cleanup_before_update",
+          "dependencies": ["SettingsService", "ProxyRuntimeState"]
+        },
+        {
+          "command": "restart_local_proxy",
+          "use_case": "restart_local_proxy",
+          "dependencies": ["SettingsService", "RoutingService", "RequestFinalizationService", "ProxyRuntimeState", "Data key"]
+        }
+      ],
+      "non_goals": [
+        "import_relay_pool_to_ccswitch",
+        "prepare_local_proxy_for_update",
+        "deeper proxy runtime/lifecycle rewrite",
+        "proxy startup auto-start path"
       ]
     }
   ],

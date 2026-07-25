@@ -301,7 +301,7 @@ fn shutdown_application(app: &tauri::AppHandle) {
     {
         runner.stop();
     }
-    if let Some(proxy) = app.try_state::<services::proxy::runtime::ProxyRuntimeState>() {
+    if let Some(proxy) = app.try_state::<Arc<services::proxy::runtime::ProxyRuntimeState>>() {
         let drain = runtime_composition::drain_finalization(
             &persistence::upgrade_fault::NoUpgradeFaults,
             async {
@@ -346,6 +346,7 @@ pub fn run() {
             let prepared_data_store =
                 prepare_data_store(default_data_dir, *secret_manager.data_key())?;
             app.manage(secret_manager);
+            let proxy_runtime = Arc::new(services::proxy::runtime::ProxyRuntimeState::default());
             let runtime_owner = match prepared_data_store {
                 PreparedDataStore::Ready {
                     runtime,
@@ -400,6 +401,12 @@ pub fn run() {
                         app_composition::compose_credentials_command_facade(&app_services);
                     let data_directory_command_facade =
                         app_composition::compose_data_directory_command_facade(&app_services);
+                    let local_proxy_command_facade =
+                        app_composition::compose_local_proxy_command_facade(
+                            &app_services,
+                            Arc::clone(&proxy_runtime),
+                            data_key,
+                        );
                     tauri::async_runtime::block_on(app_services.settings.repair_legacy_settings())
                         .map_err(|error| {
                             format!("failed to repair legacy application settings: {error}")
@@ -450,6 +457,7 @@ pub fn run() {
                             change_events_command_facade,
                             credentials_command_facade,
                             data_directory_command_facade,
+                            local_proxy_command_facade,
                             channel_monitor_runner,
                             station_collector_runner,
                         ),
@@ -468,7 +476,7 @@ pub fn run() {
             app.manage(runtime_owner);
             app.manage(commands::LocatedDataStoreCandidates::default());
             app.manage(services::capture::session::CaptureSessionStore::default());
-            app.manage(services::proxy::runtime::ProxyRuntimeState::default());
+            app.manage(proxy_runtime);
             services::proxy::startup_auto_start::schedule(app.handle().clone());
             Ok(())
         })

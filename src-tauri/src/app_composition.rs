@@ -6,13 +6,16 @@ use crate::{
         command_facades::{
             ChangeEventsCommandFacade, ChannelMonitoringCommandFacade, ChannelStatusCommandFacade,
             CollectorMetadataCommandFacade, CredentialsCommandFacade, DataDirectoryCommandFacade,
-            KeyPoolCommandFacade, PricingCommandFacade, RequestLogsCommandFacade,
-            RoutingCommandFacade, SettingsStationsCommandFacade,
+            KeyPoolCommandFacade, LocalProxyCommandFacade, PricingCommandFacade,
+            RequestLogsCommandFacade, RoutingCommandFacade, SettingsStationsCommandFacade,
         },
         data_directory::DataDirectoryPort,
     },
     persistence::runtime::PersistenceHandle,
-    services::{pricing_catalog::StaticBuiltinModelBasePriceCatalog, secrets::vault::DataKeyVault},
+    services::{
+        pricing_catalog::StaticBuiltinModelBasePriceCatalog, proxy::runtime::ProxyRuntimeState,
+        secrets::vault::DataKeyVault,
+    },
     TrayBehaviorState,
 };
 
@@ -101,5 +104,20 @@ pub(crate) fn compose_data_directory_command_facade(
     DataDirectoryCommandFacade::new(
         Arc::clone(&services.data_directory),
         Arc::clone(&services.settings),
+    )
+}
+
+pub(crate) fn compose_local_proxy_command_facade(
+    services: &AppServices,
+    proxy: Arc<ProxyRuntimeState>,
+    data_key: [u8; 32],
+) -> LocalProxyCommandFacade {
+    LocalProxyCommandFacade::new(
+        Arc::clone(&services.settings),
+        Arc::clone(&services.routing),
+        Arc::clone(&services.request_logs),
+        Arc::clone(&services.request_finalization),
+        proxy,
+        data_key,
     )
 }

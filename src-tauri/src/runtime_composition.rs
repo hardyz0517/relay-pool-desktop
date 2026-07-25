@@ -75,6 +75,7 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     ChangeEvents,
     Credentials,
     DataDirectory,
+    LocalProxy,
     Monitor,
     Collector,
 > {
@@ -92,6 +93,7 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     change_events: ChangeEvents,
     credentials: Credentials,
     data_directory: DataDirectory,
+    local_proxy: LocalProxy,
     monitor: Monitor,
     collector: Collector,
 }
@@ -111,6 +113,7 @@ impl<
         ChangeEvents,
         Credentials,
         DataDirectory,
+        LocalProxy,
         Monitor,
         Collector,
     >
@@ -129,6 +132,7 @@ impl<
         ChangeEvents,
         Credentials,
         DataDirectory,
+        LocalProxy,
         Monitor,
         Collector,
     >
@@ -155,6 +159,7 @@ impl<
         change_events: ChangeEvents,
         credentials: Credentials,
         data_directory: DataDirectory,
+        local_proxy: LocalProxy,
         monitor: Monitor,
         collector: Collector,
     ) -> Self {
@@ -173,6 +178,7 @@ impl<
             change_events,
             credentials,
             data_directory,
+            local_proxy,
             monitor,
             collector,
         }
@@ -309,6 +315,7 @@ pub(crate) fn register_ready_services_with_command_facades<
     ChangeEvents,
     Credentials,
     DataDirectory,
+    LocalProxy,
     Monitor,
     Collector,
 >(
@@ -329,6 +336,7 @@ pub(crate) fn register_ready_services_with_command_facades<
         ChangeEvents,
         Credentials,
         DataDirectory,
+        LocalProxy,
         Monitor,
         Collector,
     >,
@@ -349,6 +357,7 @@ where
     ChangeEvents: Send + Sync + 'static,
     Credentials: Send + Sync + 'static,
     DataDirectory: Send + Sync + 'static,
+    LocalProxy: Send + Sync + 'static,
     Monitor: Send + Sync + 'static,
     Collector: Send + Sync + 'static,
 {
@@ -379,6 +388,7 @@ pub(crate) fn register_ready_services_with_command_facades_in<
     ChangeEvents,
     Credentials,
     DataDirectory,
+    LocalProxy,
     Monitor,
     Collector,
 >(
@@ -399,6 +409,7 @@ pub(crate) fn register_ready_services_with_command_facades_in<
         ChangeEvents,
         Credentials,
         DataDirectory,
+        LocalProxy,
         Monitor,
         Collector,
     >,
@@ -419,6 +430,7 @@ where
     ChangeEvents: Send + Sync + 'static,
     Credentials: Send + Sync + 'static,
     DataDirectory: Send + Sync + 'static,
+    LocalProxy: Send + Sync + 'static,
     Monitor: Send + Sync + 'static,
     Collector: Send + Sync + 'static,
 {
@@ -437,6 +449,7 @@ where
         || registry.contains::<ChangeEvents>()
         || registry.contains::<Credentials>()
         || registry.contains::<DataDirectory>()
+        || registry.contains::<LocalProxy>()
         || registry.contains::<Monitor>()
         || registry.contains::<Collector>()
     {
@@ -458,6 +471,7 @@ where
         change_events,
         credentials,
         data_directory,
+        local_proxy,
         monitor,
         collector,
     } = services;
@@ -501,6 +515,9 @@ where
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(data_directory) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(local_proxy) {
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(monitor) {
@@ -571,6 +588,8 @@ mod tests {
     struct SlotFifteen(u8);
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct SlotSixteen(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotSeventeen(u8);
 
     #[derive(Default)]
     struct TestRegistry {
@@ -607,7 +626,7 @@ mod tests {
 
     #[test]
     fn command_facade_ready_services_preflight_every_concrete_slot() {
-        for occupied_slot in 0..16 {
+        for occupied_slot in 0..17 {
             let mut registry = TestRegistry::default();
             match occupied_slot {
                 0 => assert!(registry.manage_direct(SlotOne(99))),
@@ -626,6 +645,7 @@ mod tests {
                 13 => assert!(registry.manage_direct(SlotFourteen(99))),
                 14 => assert!(registry.manage_direct(SlotFifteen(99))),
                 15 => assert!(registry.manage_direct(SlotSixteen(99))),
+                16 => assert!(registry.manage_direct(SlotSeventeen(99))),
                 _ => unreachable!(),
             }
 
@@ -649,6 +669,7 @@ mod tests {
                     SlotFourteen(1),
                     SlotFifteen(1),
                     SlotSixteen(1),
+                    SlotSeventeen(1),
                 ),
             )
             .expect_err("occupied slots must fail before publishing any new ready state");
@@ -671,6 +692,7 @@ mod tests {
                 registry.try_state::<SlotFourteen>().map(|state| state.0),
                 registry.try_state::<SlotFifteen>().map(|state| state.0),
                 registry.try_state::<SlotSixteen>().map(|state| state.0),
+                registry.try_state::<SlotSeventeen>().map(|state| state.0),
             ];
             let expected = std::array::from_fn(|index| (index == occupied_slot).then_some(99));
             assert_eq!(observed, expected);
@@ -701,6 +723,7 @@ mod tests {
                 SlotFourteen(14),
                 SlotFifteen(15),
                 SlotSixteen(16),
+                SlotSeventeen(17),
             ),
         )
         .expect("vacant registry must publish every ready state");
@@ -721,5 +744,9 @@ mod tests {
         assert_eq!(registry.try_state::<SlotFourteen>(), Some(SlotFourteen(14)));
         assert_eq!(registry.try_state::<SlotFifteen>(), Some(SlotFifteen(15)));
         assert_eq!(registry.try_state::<SlotSixteen>(), Some(SlotSixteen(16)));
+        assert_eq!(
+            registry.try_state::<SlotSeventeen>(),
+            Some(SlotSeventeen(17))
+        );
     }
 }
