@@ -2,7 +2,7 @@
   "schema_version": 1,
   "owner": "Task 7",
   "source_inventory_item": "S2-T7-command-facades",
-  "current_shard": "settings-stations-key-pool-routing-request-log-channel-monitoring-pricing-change-events-command-facades",
+  "current_shard": "settings-stations-key-pool-routing-request-log-channel-monitoring-pricing-change-events-credentials-command-facades",
   "migration_state": "partial",
   "facades": [
     {
@@ -408,6 +408,40 @@
       "non_goals": [
         "collector-emitted change events",
         "change-store persistence implementation"
+      ]
+    },
+    {
+      "state_type": "CredentialsCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/credentials.rs",
+      "dependencies": [
+        "CredentialService"
+      ],
+      "commands": [
+        {
+          "command": "get_station_credentials",
+          "use_case": "get_station_credentials",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "update_station_credentials",
+          "use_case": "update_station_credentials",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "update_station_session",
+          "use_case": "update_station_session",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "clear_station_credentials",
+          "use_case": "clear_station_credentials",
+          "dependencies": ["CredentialService"]
+        }
+      ],
+      "non_goals": [
+        "station login/test commands",
+        "collector session persistence",
+        "remote-key credential workflows"
       ]
     }
   ],

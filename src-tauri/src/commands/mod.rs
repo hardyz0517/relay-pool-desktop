@@ -19,9 +19,9 @@ use crate::{
     application::{
         app_services::AppServices,
         command_facades::{
-            ChangeEventsCommandFacade, ChannelMonitoringCommandFacade, KeyPoolCommandFacade,
-            PricingCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
-            SettingsStationsCommandFacade,
+            ChangeEventsCommandFacade, ChannelMonitoringCommandFacade, CredentialsCommandFacade,
+            KeyPoolCommandFacade, PricingCommandFacade, RequestLogsCommandFacade,
+            RoutingCommandFacade, SettingsStationsCommandFacade,
         },
         error::ApplicationError,
         pagination::PageLimit,
@@ -2354,13 +2354,12 @@ pub async fn resolve_change_event(
 
 #[tauri::command]
 pub async fn get_station_credentials(
-    services: State<'_, AppServices>,
+    facade: State<'_, CredentialsCommandFacade>,
     input: Value,
 ) -> Result<StationCredentialsDto, error::CommandError> {
     correlation::in_command_scope("get_station_credentials", async {
         let input = StationIdInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .get_station_credentials(input.station_id)
             .await
             .map_err(public_command_application_error)
@@ -2370,13 +2369,12 @@ pub async fn get_station_credentials(
 
 #[tauri::command]
 pub async fn update_station_credentials(
-    services: State<'_, AppServices>,
+    facade: State<'_, CredentialsCommandFacade>,
     input: Value,
 ) -> Result<StationCredentialsDto, error::CommandError> {
     correlation::in_command_scope("update_station_credentials", async {
         let input = UpdateStationCredentialsInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .update_station_credentials(input)
             .await
             .map_err(public_command_application_error)
@@ -2386,13 +2384,12 @@ pub async fn update_station_credentials(
 
 #[tauri::command]
 pub async fn update_station_session(
-    services: State<'_, AppServices>,
+    facade: State<'_, CredentialsCommandFacade>,
     input: Value,
 ) -> Result<StationCredentialsDto, error::CommandError> {
     correlation::in_command_scope("update_station_session", async {
         let input = UpdateStationSessionInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .update_station_session(input)
             .await
             .map_err(public_command_application_error)
@@ -2402,13 +2399,12 @@ pub async fn update_station_session(
 
 #[tauri::command]
 pub async fn clear_station_credentials(
-    services: State<'_, AppServices>,
+    facade: State<'_, CredentialsCommandFacade>,
     input: Value,
 ) -> Result<StationCredentialsDto, error::CommandError> {
     correlation::in_command_scope("clear_station_credentials", async {
         let input = StationIdInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .clear_station_credentials(input.station_id)
             .await
             .map_err(public_command_application_error)

@@ -1,5 +1,6 @@
 mod change_events;
 mod channel_monitoring;
+mod credentials;
 mod key_pool;
 mod pricing;
 mod request_logs;
@@ -8,6 +9,7 @@ mod settings_stations;
 
 pub(crate) use change_events::ChangeEventsCommandFacade;
 pub(crate) use channel_monitoring::ChannelMonitoringCommandFacade;
+pub(crate) use credentials::CredentialsCommandFacade;
 pub(crate) use key_pool::KeyPoolCommandFacade;
 pub(crate) use pricing::PricingCommandFacade;
 pub(crate) use request_logs::RequestLogsCommandFacade;
