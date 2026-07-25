@@ -10,16 +10,21 @@ use crate::{
         },
         shared_capabilities::ChannelMonitorSummary,
     },
+    services::channel_monitors::ChannelMonitorRunnerPort,
 };
 
 #[derive(Clone)]
 pub(crate) struct ChannelMonitoringCommandFacade {
     monitoring: Arc<MonitoringService>,
+    runner: Arc<dyn ChannelMonitorRunnerPort>,
 }
 
 impl ChannelMonitoringCommandFacade {
-    pub(crate) fn new(monitoring: Arc<MonitoringService>) -> Self {
-        Self { monitoring }
+    pub(crate) fn new(
+        monitoring: Arc<MonitoringService>,
+        runner: Arc<dyn ChannelMonitorRunnerPort>,
+    ) -> Self {
+        Self { monitoring, runner }
     }
 
     pub(crate) async fn list_channel_monitors(
@@ -101,5 +106,12 @@ impl ChannelMonitoringCommandFacade {
         id: String,
     ) -> Result<(), ApplicationError> {
         self.monitoring.delete_template(id).await
+    }
+
+    pub(crate) async fn run_channel_monitor_now(
+        &self,
+        monitor_id: String,
+    ) -> Result<Vec<ChannelMonitorRun>, String> {
+        self.runner.run_monitor(monitor_id).await
     }
 }

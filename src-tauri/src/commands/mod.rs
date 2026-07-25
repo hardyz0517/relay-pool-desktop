@@ -1515,13 +1515,13 @@ pub async fn delete_channel_monitor_template(
 
 #[tauri::command]
 pub async fn run_channel_monitor_now(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
 ) -> Result<Vec<ChannelMonitorRunDto>, error::CommandError> {
     correlation::in_command_scope("run_channel_monitor_now", async {
         let input = ChannelMonitorIdInputDto::parse(input)?;
-        crate::services::channel_monitors::v2_runner_port(services.inner())
-            .run_monitor(input.monitor_id)
+        facade
+            .run_channel_monitor_now(input.monitor_id)
             .await
             .map_err(public_channel_monitor_run_error)
     })

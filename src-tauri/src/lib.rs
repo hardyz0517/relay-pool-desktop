@@ -389,8 +389,13 @@ pub fn run() {
                         app_composition::compose_routing_command_facade(&app_services);
                     let request_logs_command_facade =
                         app_composition::compose_request_logs_command_facade(&app_services);
+                    let channel_monitor_runner_port =
+                        services::channel_monitors::v2_runner_port(&app_services);
                     let channel_monitoring_command_facade =
-                        app_composition::compose_channel_monitoring_command_facade(&app_services);
+                        app_composition::compose_channel_monitoring_command_facade(
+                            &app_services,
+                            Arc::clone(&channel_monitor_runner_port),
+                        );
                     let channel_status_command_facade =
                         app_composition::compose_channel_status_command_facade(&app_services);
                     let collector_metadata_command_facade =
@@ -429,7 +434,7 @@ pub fn run() {
                         .set(TrayBehavior::from_setting(&settings.tray_behavior));
                     let channel_monitor_runner =
                         services::channel_monitors::ChannelMonitorRunnerState::start_v2(
-                            services::channel_monitors::v2_runner_port(&app_services),
+                            channel_monitor_runner_port,
                         );
                     let station_collector_runner =
                         services::station_collectors::StationCollectorRunnerState::start_v2(

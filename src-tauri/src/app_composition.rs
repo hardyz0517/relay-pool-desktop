@@ -14,6 +14,7 @@ use crate::{
     },
     persistence::runtime::PersistenceHandle,
     services::{
+        channel_monitors::ChannelMonitorRunnerPort,
         pricing_catalog::StaticBuiltinModelBasePriceCatalog, proxy::runtime::ProxyRuntimeState,
         secrets::vault::DataKeyVault,
     },
@@ -74,8 +75,9 @@ pub(crate) fn compose_request_logs_command_facade(
 
 pub(crate) fn compose_channel_monitoring_command_facade(
     services: &AppServices,
+    runner: Arc<dyn ChannelMonitorRunnerPort>,
 ) -> ChannelMonitoringCommandFacade {
-    ChannelMonitoringCommandFacade::new(Arc::clone(&services.monitoring))
+    ChannelMonitoringCommandFacade::new(Arc::clone(&services.monitoring), runner)
 }
 
 pub(crate) fn compose_channel_status_command_facade(

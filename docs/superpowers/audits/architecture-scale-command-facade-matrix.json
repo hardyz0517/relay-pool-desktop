@@ -275,7 +275,8 @@
       "state_type": "ChannelMonitoringCommandFacade",
       "source_path": "src-tauri/src/application/command_facades/channel_monitoring.rs",
       "dependencies": [
-        "MonitoringService"
+        "MonitoringService",
+        "ChannelMonitorRunnerPort"
       ],
       "commands": [
         {
@@ -332,10 +333,14 @@
           "command": "delete_channel_monitor_template",
           "use_case": "delete_channel_monitor_template",
           "dependencies": ["MonitoringService"]
+        },
+        {
+          "command": "run_channel_monitor_now",
+          "use_case": "run_channel_monitor_now",
+          "dependencies": ["ChannelMonitorRunnerPort"]
         }
       ],
       "non_goals": [
-        "run_channel_monitor_now",
         "channel status query workspace commands"
       ]
     },
