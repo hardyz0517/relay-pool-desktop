@@ -519,7 +519,7 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 
 **顺序：** settings/stations -> key pool -> changes/logs -> collectors -> routing/proxy -> updater/data recovery -> pricing/economics/channel monitoring。
 
-**当前 checkpoint：** settings/stations 与 key-pool/stationKeys 子切片已建立 `DesktopBackend` domain client；legacy `src/lib/api/settings.ts`、`src/lib/api/stations.ts` 与 `src/lib/api/stationKeys.ts` 已删除 `isTauriInvokeUnavailable`、browser-preview memory fallback、内存 production state 和直接 generated/transport/streaming adapter import；DemoBackend 对 settings/stations/stationKeys 返回 typed unsupported，station-key connectivity 在 demo 下不得 fake success。其余 feature 仍待迁移，Stage 2 Gate 不得视为通过。
+**当前 checkpoint：** settings/stations、key-pool/stationKeys、changeEvents/collectorRuns、external URL、proxy/localRouting 与 dataRecovery 子切片已建立 `DesktopBackend` domain client；legacy `src/lib/api/settings.ts`、`src/lib/api/stations.ts`、`src/lib/api/stationKeys.ts`、`src/lib/api/changeEvents.ts`、`src/lib/api/collectorRuns.ts`、`src/lib/api/external.ts`、`src/lib/api/proxy.ts`、`src/lib/api/localRouting.ts` 与 `src/lib/api/dataRecovery.ts` 已删除 `isTauriInvokeUnavailable`、browser-preview memory fallback、内存 production state 和直接 generated/transport/streaming adapter import；DemoBackend 对上述真实桌面能力返回 typed unsupported，station-key connectivity 在 demo 下不得 fake success。其余 feature 仍待迁移，Stage 2 Gate 不得视为通过。
 
 **文件：**
 

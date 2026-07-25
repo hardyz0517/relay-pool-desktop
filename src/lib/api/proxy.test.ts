@@ -1,18 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const generated = vi.hoisted(() => ({
-  clearRequestLogs: vi.fn(),
-  getProxyStatus: vi.fn(),
-  listRequestLogs: vi.fn(),
-  prepareLocalProxyForUpdate: vi.fn(),
-  restartLocalProxy: vi.fn(),
-  startLocalProxy: vi.fn(),
-  stopLocalProxy: vi.fn(),
-}));
-const transport = vi.hoisted(() => ({ invoke: vi.fn() }));
-
-vi.mock("@/lib/bridge/generated", () => generated);
-vi.mock("@/lib/bridge/transport", () => transport);
+import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 
 import {
   clearRequestLogs,
@@ -23,83 +11,77 @@ import {
   stopLocalProxy,
 } from "./proxy";
 
-describe("request log generated transport cutover", () => {
+describe("request log backend cutover", () => {
+  const proxy = {
+    clearRequestLogs: vi.fn(async () => undefined),
+    getProxyStatus: vi.fn(async () => proxyStatus()),
+    listRequestLogs: vi.fn(async () => []),
+    prepareLocalProxyForUpdate: vi.fn(async () => proxyStatus()),
+    restartLocalProxy: vi.fn(async () => proxyStatus()),
+    startLocalProxy: vi.fn(async () => proxyStatus({ running: true, lifecycle: "running" })),
+    stopLocalProxy: vi.fn(async () => proxyStatus({ running: false, lifecycle: "stopped" })),
+  };
+
   beforeEach(() => {
     vi.stubGlobal("window", { dispatchEvent: vi.fn() });
     vi.stubGlobal("CustomEvent", class {});
-    generated.clearRequestLogs.mockReset().mockResolvedValue(undefined);
-    generated.listRequestLogs.mockReset().mockResolvedValue([]);
-    generated.startLocalProxy.mockReset().mockResolvedValue({
-      running: true,
-      lifecycle: "running",
-      bindAddr: "127.0.0.1",
-      port: 8787,
-      startedAt: "1700000000000",
-      lastError: null,
-      activeRequests: 0,
-      requestCount: 0,
+    setActiveBackendClient({
+      mode: "desktop",
+      settings: {} as never,
+      stations: {} as never,
+      stationKeys: {} as never,
+      changeEvents: {} as never,
+      collectorRuns: {} as never,
+      proxy: proxy as never,
+      localRouting: {} as never,
+      dataRecovery: {} as never,
+      handshake: vi.fn(async () => ({}) as never),
     });
-    generated.stopLocalProxy.mockReset().mockResolvedValue({
-      running: false,
-      lifecycle: "stopped",
-      bindAddr: "127.0.0.1",
-      port: 8787,
-      startedAt: null,
-      lastError: null,
-      activeRequests: 0,
-      requestCount: 0,
-    });
-    generated.restartLocalProxy.mockReset().mockResolvedValue({
-      running: true,
-      lifecycle: "running",
-      bindAddr: "127.0.0.1",
-      port: 8787,
-      startedAt: "1700000000001",
-      lastError: null,
-      activeRequests: 0,
-      requestCount: 0,
-    });
-    generated.prepareLocalProxyForUpdate.mockReset().mockResolvedValue({
-      running: false,
-      lifecycle: "stopped",
-      bindAddr: "127.0.0.1",
-      port: 8787,
-      startedAt: null,
-      lastError: null,
-      activeRequests: 0,
-      requestCount: 0,
-    });
-    transport.invoke.mockReset().mockResolvedValue(undefined);
+    for (const fn of Object.values(proxy)) {
+      fn.mockReset();
+    }
   });
 
-  it("routes both request-log commands through generated wrappers", async () => {
+  afterEach(() => {
+    setActiveBackendClient(null);
+  });
+
+  it("routes request-log commands through the active backend client", async () => {
     await listRequestLogs();
     await clearRequestLogs();
-    expect(generated.listRequestLogs).toHaveBeenCalledWith();
-    expect(generated.clearRequestLogs).toHaveBeenCalledWith();
+
+    expect(proxy.listRequestLogs).toHaveBeenCalledTimes(1);
+    expect(proxy.clearRequestLogs).toHaveBeenCalledTimes(1);
   });
 
-  it("routes proxy start through the generated wrapper", async () => {
+  it("routes proxy lifecycle commands through the active backend client", async () => {
     await startLocalProxy();
-    expect(generated.startLocalProxy).toHaveBeenCalledWith();
-    expect(transport.invoke).not.toHaveBeenCalled();
-  });
-
-  it("routes proxy stop through the generated wrapper", async () => {
     await stopLocalProxy();
-    expect(generated.stopLocalProxy).toHaveBeenCalledWith();
-    expect(transport.invoke).not.toHaveBeenCalled();
-  });
-
-  it("routes proxy restart through the generated wrapper", async () => {
     await restartLocalProxy();
-    expect(generated.restartLocalProxy).toHaveBeenCalledWith();
-    expect(transport.invoke).not.toHaveBeenCalled();
-  });
-
-  it("routes update preparation through the generated wrapper", async () => {
     await prepareLocalProxyForUpdate();
-    expect(generated.prepareLocalProxyForUpdate).toHaveBeenCalledWith();
-    expect(transport.invoke).not.toHaveBeenCalled();
+
+    expect(proxy.startLocalProxy).toHaveBeenCalledTimes(1);
+    expect(proxy.stopLocalProxy).toHaveBeenCalledTimes(1);
+    expect(proxy.restartLocalProxy).toHaveBeenCalledTimes(1);
+    expect(proxy.prepareLocalProxyForUpdate).toHaveBeenCalledTimes(1);
   });
 });
+
+function proxyStatus(
+  overrides: Partial<{
+    running: boolean;
+    lifecycle: "stopped" | "starting" | "running" | "draining" | "stopping" | "failed";
+  }> = {},
+) {
+  return {
+    running: false,
+    lifecycle: "stopped",
+    bindAddr: "127.0.0.1",
+    port: 8787,
+    startedAt: null,
+    lastError: null,
+    activeRequests: 0,
+    requestCount: 0,
+    ...overrides,
+  };
+}

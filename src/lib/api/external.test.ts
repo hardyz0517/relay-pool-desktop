@@ -1,25 +1,37 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const generated = vi.hoisted(() => ({
-  openExternalUrl: vi.fn(),
-}));
-const transport = vi.hoisted(() => ({ invoke: vi.fn() }));
-
-vi.mock("@/lib/bridge/generated", () => generated);
-vi.mock("@/lib/bridge/transport", () => transport);
+import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 
 import { openExternalUrl } from "./external";
 
-describe("external URL generated transport cutover", () => {
+describe("external URL backend cutover", () => {
+  const stations = {
+    openStationWebsite: vi.fn(async () => undefined),
+  };
+
   beforeEach(() => {
-    generated.openExternalUrl.mockReset().mockResolvedValue(undefined);
-    transport.invoke.mockReset().mockRejectedValue(new Error("legacy transport invoked"));
+    setActiveBackendClient({
+      mode: "desktop",
+      settings: {} as never,
+      stations: stations as never,
+      stationKeys: {} as never,
+      changeEvents: {} as never,
+      collectorRuns: {} as never,
+      proxy: {} as never,
+      localRouting: {} as never,
+      dataRecovery: {} as never,
+      handshake: vi.fn(async () => ({}) as never),
+    });
+    stations.openStationWebsite.mockReset().mockResolvedValue(undefined);
   });
 
-  it("routes URL opening through the generated non-idempotent wrapper", async () => {
+  afterEach(() => {
+    setActiveBackendClient(null);
+  });
+
+  it("routes URL opening through the active backend client", async () => {
     await openExternalUrl("https://example.test");
 
-    expect(generated.openExternalUrl).toHaveBeenCalledWith({ url: "https://example.test" });
-    expect(transport.invoke).not.toHaveBeenCalled();
+    expect(stations.openStationWebsite).toHaveBeenCalledWith("https://example.test");
   });
 });

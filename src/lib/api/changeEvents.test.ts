@@ -1,35 +1,37 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+// @vitest-environment jsdom
 
-const generated = vi.hoisted(() => ({
-  clearChangeEvents: vi.fn(),
-  dismissChangeEvent: vi.fn(),
-  listChangeEvents: vi.fn(),
-  listChangeEventsForStation: vi.fn(),
-  markChangeEventRead: vi.fn(),
-  markChangeEventsRead: vi.fn(),
-  resolveChangeEvent: vi.fn(),
-  upsertChangeEvent: vi.fn(),
-}));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/bridge/generated", () => generated);
-
+import { DemoBackend } from "@/lib/bridge/DemoBackend";
+import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
+import { DemoBackendUnsupportedError, type BackendClient } from "@/lib/bridge/BackendClient";
 import {
+  CHANGE_EVENTS_UPDATED_EVENT,
   clearChangeEvents,
   dismissChangeEvent,
   listChangeEvents,
   listChangeEventsForStation,
-  markChangeEventRead,
-  markChangeEventsRead,
+  notifyChangeEventsUpdated,
   resolveChangeEvent,
   upsertChangeEvent,
+  markChangeEventRead,
+  markChangeEventsRead,
 } from "./changeEvents";
+import { listCollectorRuns } from "./collectorRuns";
 
-describe("change event generated transport cutover", () => {
+describe("change event backend cutover", () => {
+  const backend = makeBackendClient();
+
   beforeEach(() => {
-    for (const fn of Object.values(generated)) fn.mockReset().mockResolvedValue(undefined);
+    setActiveBackendClient(backend.client);
+    backend.reset();
   });
 
-  it("routes all eight commands through generated wrappers", async () => {
+  afterEach(() => {
+    setActiveBackendClient(null);
+  });
+
+  it("routes change-event commands through the active backend client", async () => {
     const input = {
       severity: "warning" as const,
       eventType: "fixture.changed",
@@ -47,6 +49,7 @@ describe("change event generated transport cutover", () => {
       dedupeKey: "fixture",
       source: "fixture",
     };
+
     await listChangeEvents();
     await clearChangeEvents();
     await listChangeEventsForStation("station-1");
@@ -56,10 +59,76 @@ describe("change event generated transport cutover", () => {
     await dismissChangeEvent("change-1");
     await resolveChangeEvent("change-1");
 
-    expect(generated.listChangeEvents).toHaveBeenCalledWith();
-    expect(generated.clearChangeEvents).toHaveBeenCalledWith();
-    expect(generated.listChangeEventsForStation).toHaveBeenCalledWith({ stationId: "station-1" });
-    expect(generated.upsertChangeEvent).toHaveBeenCalledWith(input);
-    expect(generated.markChangeEventsRead).toHaveBeenCalledWith({ ids: ["change-1", "change-2"] });
+    expect(backend.changeEvents.listChangeEvents).toHaveBeenCalledTimes(1);
+    expect(backend.changeEvents.clearChangeEvents).toHaveBeenCalledTimes(1);
+    expect(backend.changeEvents.listChangeEventsForStation).toHaveBeenCalledWith("station-1");
+    expect(backend.changeEvents.upsertChangeEvent).toHaveBeenCalledWith(input);
+    expect(backend.changeEvents.markChangeEventRead).toHaveBeenCalledWith("change-1");
+    expect(backend.changeEvents.markChangeEventsRead).toHaveBeenCalledWith(["change-1", "change-2"]);
+    expect(backend.changeEvents.dismissChangeEvent).toHaveBeenCalledWith("change-1");
+    expect(backend.changeEvents.resolveChangeEvent).toHaveBeenCalledWith("change-1");
+  });
+
+  it("routes collector-run reads through the active backend client", async () => {
+    await listCollectorRuns("station-1");
+
+    expect(backend.collectorRuns.listCollectorRuns).toHaveBeenCalledWith("station-1");
+  });
+
+  it("does not fake change-log success in demo mode", async () => {
+    setActiveBackendClient(new DemoBackend());
+
+    await expect(listChangeEvents()).rejects.toBeInstanceOf(DemoBackendUnsupportedError);
+    await expect(listCollectorRuns("station-1")).rejects.toBeInstanceOf(DemoBackendUnsupportedError);
+  });
+
+  it("emits the update event without touching the backend", () => {
+    const dispatchEvent = vi.spyOn(window, "dispatchEvent");
+
+    notifyChangeEventsUpdated();
+
+    expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: CHANGE_EVENTS_UPDATED_EVENT }));
   });
 });
+
+function makeBackendClient() {
+  const changeEvents = {
+    listChangeEvents: vi.fn(async () => []),
+    clearChangeEvents: vi.fn(async () => undefined),
+    listChangeEventsForStation: vi.fn(async () => []),
+    upsertChangeEvent: vi.fn(async (input) => ({ id: "change-1", ...input } as never)),
+    markChangeEventRead: vi.fn(async (id) => ({ id } as never)),
+    markChangeEventsRead: vi.fn(async (ids: string[]) => ids.map((id: string) => ({ id } as never))),
+    dismissChangeEvent: vi.fn(async (id) => ({ id } as never)),
+    resolveChangeEvent: vi.fn(async (id) => ({ id } as never)),
+  };
+
+  const collectorRuns = {
+    listCollectorRuns: vi.fn(async () => []),
+  };
+
+  return {
+    client: {
+      mode: "desktop" as const,
+      settings: {} as BackendClient["settings"],
+      stations: {} as BackendClient["stations"],
+      stationKeys: {} as BackendClient["stationKeys"],
+      changeEvents,
+      collectorRuns,
+      proxy: {} as BackendClient["proxy"],
+      localRouting: {} as BackendClient["localRouting"],
+      dataRecovery: {} as BackendClient["dataRecovery"],
+      handshake: vi.fn(async () => ({}) as never),
+    } satisfies BackendClient,
+    reset() {
+      for (const fn of Object.values(changeEvents)) {
+        fn.mockClear();
+      }
+      for (const fn of Object.values(collectorRuns)) {
+        fn.mockClear();
+      }
+    },
+    changeEvents,
+    collectorRuns,
+  };
+}

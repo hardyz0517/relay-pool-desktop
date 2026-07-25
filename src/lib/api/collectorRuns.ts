@@ -1,11 +1,5 @@
-import { listCollectorRuns as listCollectorRunsGenerated } from "@/lib/bridge/generated";
-import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
+import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 
 export function listCollectorRuns(stationId: string) {
-  return listCollectorRunsGenerated({ stationId }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return [];
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectorRuns.listCollectorRuns(stationId);
 }

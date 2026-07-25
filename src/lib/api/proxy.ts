@@ -1,125 +1,34 @@
-import {
-  clearRequestLogs as ipcClearRequestLogs,
-  getProxyStatus as ipcGetProxyStatus,
-  listRequestLogs as ipcListRequestLogs,
-  prepareLocalProxyForUpdate as ipcPrepareLocalProxyForUpdate,
-  restartLocalProxy as ipcRestartLocalProxy,
-  startLocalProxy as ipcStartLocalProxy,
-  stopLocalProxy as ipcStopLocalProxy,
-} from "@/lib/bridge/generated";
-import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
+import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 
 export const PROXY_STATUS_UPDATED_EVENT = "relay-pool:proxy-status-updated";
 
-let memoryProxyStatus: ProxyStatus = {
-  running: false,
-  lifecycle: "stopped",
-  bindAddr: "127.0.0.1",
-  port: 8787,
-  startedAt: null,
-  lastError: null,
-  activeRequests: 0,
-  requestCount: 0,
-};
-let memoryRequestLogs: RequestLog[] = [];
-
-export function getProxyStatus() {
-  return ipcGetProxyStatus().catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return memoryProxyStatus;
-    }
-    throw error;
-  });
+export function getProxyStatus(): Promise<ProxyStatus> {
+  return getActiveBackendClient().proxy.getProxyStatus();
 }
 
-export function startLocalProxy() {
-  return ipcStartLocalProxy()
-    .catch((error) => {
-      if (isTauriInvokeUnavailable(error)) {
-        memoryProxyStatus = {
-          ...memoryProxyStatus,
-          running: true,
-          lifecycle: "running",
-          startedAt: new Date().toISOString(),
-          lastError: null,
-        };
-        return memoryProxyStatus;
-      }
-      throw error;
-    })
-    .then(publishProxyStatus);
+export function startLocalProxy(): Promise<ProxyStatus> {
+  return getActiveBackendClient().proxy.startLocalProxy().then(publishProxyStatus);
 }
 
-export function stopLocalProxy() {
-  return ipcStopLocalProxy()
-    .catch((error) => {
-      if (isTauriInvokeUnavailable(error)) {
-        memoryProxyStatus = {
-          ...memoryProxyStatus,
-          running: false,
-          lifecycle: "stopped",
-          activeRequests: 0,
-        };
-        return memoryProxyStatus;
-      }
-      throw error;
-    })
-    .then(publishProxyStatus);
+export function stopLocalProxy(): Promise<ProxyStatus> {
+  return getActiveBackendClient().proxy.stopLocalProxy().then(publishProxyStatus);
 }
 
-export function prepareLocalProxyForUpdate() {
-  return ipcPrepareLocalProxyForUpdate()
-    .catch((error) => {
-      if (isTauriInvokeUnavailable(error)) {
-        memoryProxyStatus = {
-          ...memoryProxyStatus,
-          running: false,
-          lifecycle: "stopped",
-          activeRequests: 0,
-        };
-        return memoryProxyStatus;
-      }
-      throw error;
-    })
-    .then(publishProxyStatus);
+export function prepareLocalProxyForUpdate(): Promise<ProxyStatus> {
+  return getActiveBackendClient().proxy.prepareLocalProxyForUpdate().then(publishProxyStatus);
 }
 
-export function restartLocalProxy() {
-  return ipcRestartLocalProxy()
-    .catch((error) => {
-      if (isTauriInvokeUnavailable(error)) {
-        memoryProxyStatus = {
-          ...memoryProxyStatus,
-          running: true,
-          lifecycle: "running",
-          startedAt: new Date().toISOString(),
-          lastError: null,
-        };
-        return memoryProxyStatus;
-      }
-      throw error;
-    })
-    .then(publishProxyStatus);
+export function restartLocalProxy(): Promise<ProxyStatus> {
+  return getActiveBackendClient().proxy.restartLocalProxy().then(publishProxyStatus);
 }
 
-export function listRequestLogs() {
-  return ipcListRequestLogs().catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return memoryRequestLogs;
-    }
-    throw error;
-  });
+export function listRequestLogs(): Promise<RequestLog[]> {
+  return getActiveBackendClient().proxy.listRequestLogs();
 }
 
-export function clearRequestLogs() {
-  return ipcClearRequestLogs().catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      memoryRequestLogs = [];
-      return;
-    }
-    throw error;
-  });
+export function clearRequestLogs(): Promise<void> {
+  return getActiveBackendClient().proxy.clearRequestLogs();
 }
 
 function publishProxyStatus(status: ProxyStatus) {

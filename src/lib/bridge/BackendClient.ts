@@ -25,6 +25,11 @@ import type {
   UpdateStationKeyInput,
   UpdateStationSessionInput,
 } from "@/lib/types/stationKeys";
+import type { ChangeEvent, UpsertChangeEventInput } from "@/lib/types/changeEvents";
+import type { CollectorRun } from "@/lib/types/collectorRuns";
+import type { ActivationResult, DataStoreCandidate, DataStoreStartupView } from "@/lib/types/dataRecovery";
+import type { LocalRoutingWorkspace, ReorderLocalRoutingKeysInput } from "@/lib/types/localRouting";
+import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 
 export type BackendMode = "desktop" | "demo";
 
@@ -85,11 +90,56 @@ export type StationKeysDomainClient = {
   updateStationSession(input: UpdateStationSessionInput): Promise<StationCredentials>;
 };
 
+export type ChangeEventsDomainClient = {
+  listChangeEvents(): Promise<ChangeEvent[]>;
+  clearChangeEvents(): Promise<void>;
+  listChangeEventsForStation(stationId: string): Promise<ChangeEvent[]>;
+  upsertChangeEvent(input: UpsertChangeEventInput): Promise<ChangeEvent>;
+  markChangeEventRead(id: string): Promise<ChangeEvent>;
+  markChangeEventsRead(ids: string[]): Promise<ChangeEvent[]>;
+  dismissChangeEvent(id: string): Promise<ChangeEvent>;
+  resolveChangeEvent(id: string): Promise<ChangeEvent>;
+};
+
+export type CollectorRunsDomainClient = {
+  listCollectorRuns(stationId: string): Promise<CollectorRun[]>;
+};
+
+export type ProxyDomainClient = {
+  getProxyStatus(): Promise<ProxyStatus>;
+  startLocalProxy(): Promise<ProxyStatus>;
+  stopLocalProxy(): Promise<ProxyStatus>;
+  restartLocalProxy(): Promise<ProxyStatus>;
+  prepareLocalProxyForUpdate(): Promise<ProxyStatus>;
+  listRequestLogs(): Promise<RequestLog[]>;
+  clearRequestLogs(): Promise<void>;
+};
+
+export type LocalRoutingDomainClient = {
+  loadLocalRoutingWorkspace(): Promise<LocalRoutingWorkspace>;
+  reorderLocalRoutingKeys(input: ReorderLocalRoutingKeysInput): Promise<LocalRoutingWorkspace>;
+};
+
+export type DataRecoveryDomainClient = {
+  getDataStoreStartupState(): Promise<DataStoreStartupView>;
+  refreshDataStoreCandidates(): Promise<DataStoreStartupView>;
+  locateDataStoreCandidate(): Promise<DataStoreCandidate | null>;
+  activateDataStoreCandidate(candidateId: string): Promise<ActivationResult>;
+  createNewDataStore(confirmed: boolean): Promise<ActivationResult>;
+  openDataStoreBackupDir(): Promise<void>;
+  exportDataStoreDiagnostic(): Promise<string | null>;
+};
+
 export type BackendClient = {
   readonly mode: BackendMode;
   readonly settings: SettingsDomainClient;
   readonly stations: StationsDomainClient;
   readonly stationKeys: StationKeysDomainClient;
+  readonly changeEvents: ChangeEventsDomainClient;
+  readonly collectorRuns: CollectorRunsDomainClient;
+  readonly proxy: ProxyDomainClient;
+  readonly localRouting: LocalRoutingDomainClient;
+  readonly dataRecovery: DataRecoveryDomainClient;
   handshake(): Promise<RuntimeContractInfo>;
 };
 
