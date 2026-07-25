@@ -6,6 +6,7 @@ export const queryKeys = {
   stationAssets: ["stationAssets"] as const,
   stationAsset: (stationId: string) => ["stationAssets", stationId] as const,
   keyPool: ["keyPool"] as const,
+  modelBasePrices: ["modelBasePrices"] as const,
   balanceSnapshots: ["balanceSnapshots"] as const,
   changeEvents: ["changeEvents"] as const,
   localRoutingWorkspace: ["localRoutingWorkspace"] as const,

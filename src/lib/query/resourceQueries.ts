@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { listChangeEvents } from "@/lib/api/changeEvents";
 import { getLatestCollectorSnapshot } from "@/lib/api/collector";
-import { listCurrentStationBalanceSnapshots } from "@/lib/api/economics";
+import { listCurrentStationBalanceSnapshots, listModelBasePrices } from "@/lib/api/economics";
 import { getProxyStatus, listRequestLogs } from "@/lib/api/proxy";
 import { getSettings } from "@/lib/api/settings";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
@@ -61,6 +61,13 @@ export const keyPoolQueryOptions = (refetchInterval: number | false = false) =>
     queryFn: listKeyPoolItems,
     staleTime: 5_000,
     refetchInterval,
+  });
+
+export const modelBasePricesQueryOptions = () =>
+  queryOptions({
+    queryKey: queryKeys.modelBasePrices,
+    queryFn: listModelBasePrices,
+    staleTime: 60_000,
   });
 
 export const currentStationBalanceSnapshotsQueryOptions = (
