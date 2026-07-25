@@ -382,6 +382,10 @@ pub fn run() {
                         );
                     let key_pool_command_facade =
                         app_composition::compose_key_pool_command_facade(&app_services);
+                    let routing_command_facade =
+                        app_composition::compose_routing_command_facade(&app_services);
+                    let request_logs_command_facade =
+                        app_composition::compose_request_logs_command_facade(&app_services);
                     tauri::async_runtime::block_on(app_services.settings.repair_legacy_settings())
                         .map_err(|error| {
                             format!("failed to repair legacy application settings: {error}")
@@ -423,6 +427,8 @@ pub fn run() {
                             app_services,
                             settings_stations_command_facade,
                             key_pool_command_facade,
+                            routing_command_facade,
+                            request_logs_command_facade,
                             channel_monitor_runner,
                             station_collector_runner,
                         ),

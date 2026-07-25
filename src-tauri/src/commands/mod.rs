@@ -18,7 +18,10 @@ pub(crate) mod error;
 use crate::{
     application::{
         app_services::AppServices,
-        command_facades::{KeyPoolCommandFacade, SettingsStationsCommandFacade},
+        command_facades::{
+            KeyPoolCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
+            SettingsStationsCommandFacade,
+        },
         error::ApplicationError,
         pagination::PageLimit,
     },
@@ -1012,14 +1015,13 @@ pub async fn restart_local_proxy(
 
 #[tauri::command]
 pub async fn list_request_logs(
-    services: State<'_, AppServices>,
+    facade: State<'_, RequestLogsCommandFacade>,
     input: Value,
 ) -> Result<Vec<RequestLogDto>, error::CommandError> {
     correlation::in_command_scope("list_request_logs", async {
         EmptyInputDto::parse(input)?;
-        services
-            .request_logs
-            .list_recent(PageLimit::new(500).expect("bounded limit"))
+        facade
+            .list_request_logs(PageLimit::new(500).expect("bounded limit"))
             .await
             .map_err(public_command_application_error)
     })
@@ -1028,14 +1030,13 @@ pub async fn list_request_logs(
 
 #[tauri::command]
 pub async fn clear_request_logs(
-    services: State<'_, AppServices>,
+    facade: State<'_, RequestLogsCommandFacade>,
     input: Value,
 ) -> Result<(), error::CommandError> {
     correlation::in_command_scope("clear_request_logs", async {
         EmptyInputDto::parse(input)?;
-        services
-            .request_logs
-            .clear()
+        facade
+            .clear_request_logs()
             .await
             .map_err(public_command_application_error)
     })
@@ -1348,13 +1349,12 @@ pub async fn update_station_key_capabilities(
 
 #[tauri::command]
 pub async fn list_model_aliases(
-    services: State<'_, AppServices>,
+    facade: State<'_, RoutingCommandFacade>,
     input: Value,
 ) -> Result<Vec<ModelAliasDto>, error::CommandError> {
     correlation::in_command_scope("list_model_aliases", async {
         EmptyInputDto::parse(input)?;
-        services
-            .routing
+        facade
             .list_model_aliases()
             .await
             .map_err(public_command_application_error)
@@ -1364,13 +1364,12 @@ pub async fn list_model_aliases(
 
 #[tauri::command]
 pub async fn upsert_model_alias(
-    services: State<'_, AppServices>,
+    facade: State<'_, RoutingCommandFacade>,
     input: Value,
 ) -> Result<ModelAliasDto, error::CommandError> {
     correlation::in_command_scope("upsert_model_alias", async {
         let input = UpsertModelAliasInputDto::parse(input)?.into_domain();
-        services
-            .routing
+        facade
             .upsert_model_alias(input)
             .await
             .map_err(public_command_application_error)
@@ -1380,13 +1379,12 @@ pub async fn upsert_model_alias(
 
 #[tauri::command]
 pub async fn delete_model_alias(
-    services: State<'_, AppServices>,
+    facade: State<'_, RoutingCommandFacade>,
     input: Value,
 ) -> Result<(), error::CommandError> {
     correlation::in_command_scope("delete_model_alias", async {
         let input = DeleteModelAliasInputDto::parse(input)?;
-        services
-            .routing
+        facade
             .delete_model_alias(input.id)
             .await
             .map_err(public_command_application_error)
@@ -1396,13 +1394,12 @@ pub async fn delete_model_alias(
 
 #[tauri::command]
 pub async fn list_station_key_health(
-    services: State<'_, AppServices>,
+    facade: State<'_, RoutingCommandFacade>,
     input: Value,
 ) -> Result<Vec<StationKeyHealthDto>, error::CommandError> {
     correlation::in_command_scope("list_station_key_health", async {
         EmptyInputDto::parse(input)?;
-        services
-            .routing
+        facade
             .list_station_key_health()
             .await
             .map_err(public_command_application_error)
@@ -1412,13 +1409,12 @@ pub async fn list_station_key_health(
 
 #[tauri::command]
 pub async fn list_station_endpoint_health(
-    services: State<'_, AppServices>,
+    facade: State<'_, RoutingCommandFacade>,
     input: Value,
 ) -> Result<Vec<StationEndpointHealthDto>, error::CommandError> {
     correlation::in_command_scope("list_station_endpoint_health", async {
         EmptyInputDto::parse(input)?;
-        services
-            .routing
+        facade
             .list_station_endpoint_health()
             .await
             .map_err(public_command_application_error)
@@ -1678,14 +1674,13 @@ fn public_channel_monitor_run_error(_: String) -> error::CommandError {
 
 #[tauri::command]
 pub async fn get_station_key_health(
-    services: State<'_, AppServices>,
+    facade: State<'_, RoutingCommandFacade>,
     input: Value,
 ) -> Result<StationKeyHealthDto, error::CommandError> {
     correlation::in_command_scope("get_station_key_health", async {
         let input = RoutingStationKeyIdInputDto::parse(input)?;
-        services
-            .routing
-            .station_key_health_by_id(&input.station_key_id)
+        facade
+            .get_station_key_health(input.station_key_id)
             .await
             .map_err(public_command_application_error)
     })

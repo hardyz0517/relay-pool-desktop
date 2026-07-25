@@ -2,7 +2,7 @@
   "schema_version": 1,
   "owner": "Task 7",
   "source_inventory_item": "S2-T7-command-facades",
-  "current_shard": "settings-stations-key-pool-command-facades",
+  "current_shard": "settings-stations-key-pool-routing-request-log-command-facades",
   "migration_state": "partial",
   "facades": [
     {
@@ -158,6 +158,72 @@
         "create_local_station_key_from_remote",
         "test_station_key_connectivity",
         "station credential/session capture and login commands"
+      ]
+    },
+    {
+      "state_type": "RoutingCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/routing.rs",
+      "dependencies": [
+        "RoutingService"
+      ],
+      "commands": [
+        {
+          "command": "list_model_aliases",
+          "use_case": "list_model_aliases",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "upsert_model_alias",
+          "use_case": "upsert_model_alias",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "delete_model_alias",
+          "use_case": "delete_model_alias",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "list_station_key_health",
+          "use_case": "list_station_key_health",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "list_station_endpoint_health",
+          "use_case": "list_station_endpoint_health",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "get_station_key_health",
+          "use_case": "get_station_key_health",
+          "dependencies": ["RoutingService"]
+        }
+      ],
+      "non_goals": [
+        "ping_station_endpoint",
+        "simulate_route",
+        "local proxy workspace and lifecycle commands"
+      ]
+    },
+    {
+      "state_type": "RequestLogsCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/request_logs.rs",
+      "dependencies": [
+        "RequestLogService"
+      ],
+      "commands": [
+        {
+          "command": "list_request_logs",
+          "use_case": "list_request_logs",
+          "dependencies": ["RequestLogService"]
+        },
+        {
+          "command": "clear_request_logs",
+          "use_case": "clear_request_logs",
+          "dependencies": ["RequestLogService"]
+        }
+      ],
+      "non_goals": [
+        "load_local_routing_workspace"
       ]
     }
   ],

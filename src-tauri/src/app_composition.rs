@@ -3,7 +3,10 @@ use std::sync::Arc;
 use crate::{
     application::{
         app_services::AppServices,
-        command_facades::{KeyPoolCommandFacade, SettingsStationsCommandFacade},
+        command_facades::{
+            KeyPoolCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
+            SettingsStationsCommandFacade,
+        },
         data_directory::DataDirectoryPort,
     },
     persistence::runtime::PersistenceHandle,
@@ -41,4 +44,14 @@ pub(crate) fn compose_settings_stations_command_facade(
 
 pub(crate) fn compose_key_pool_command_facade(services: &AppServices) -> KeyPoolCommandFacade {
     KeyPoolCommandFacade::new(Arc::clone(&services.credentials))
+}
+
+pub(crate) fn compose_routing_command_facade(services: &AppServices) -> RoutingCommandFacade {
+    RoutingCommandFacade::new(Arc::clone(&services.routing))
+}
+
+pub(crate) fn compose_request_logs_command_facade(
+    services: &AppServices,
+) -> RequestLogsCommandFacade {
+    RequestLogsCommandFacade::new(Arc::clone(&services.request_logs))
 }

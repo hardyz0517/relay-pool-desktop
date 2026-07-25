@@ -66,6 +66,8 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     Application,
     SettingsStations,
     KeyPool,
+    Routing,
+    RequestLogs,
     Monitor,
     Collector,
 > {
@@ -74,17 +76,31 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     application: Application,
     settings_stations: SettingsStations,
     key_pool: KeyPool,
+    routing: Routing,
+    request_logs: RequestLogs,
     monitor: Monitor,
     collector: Collector,
 }
 
-impl<Startup, Persistence, Application, SettingsStations, KeyPool, Monitor, Collector>
+impl<
+        Startup,
+        Persistence,
+        Application,
+        SettingsStations,
+        KeyPool,
+        Routing,
+        RequestLogs,
+        Monitor,
+        Collector,
+    >
     ReadyServiceBundleWithCommandFacades<
         Startup,
         Persistence,
         Application,
         SettingsStations,
         KeyPool,
+        Routing,
+        RequestLogs,
         Monitor,
         Collector,
     >
@@ -102,6 +118,8 @@ impl<Startup, Persistence, Application, SettingsStations, KeyPool, Monitor, Coll
         application: Application,
         settings_stations: SettingsStations,
         key_pool: KeyPool,
+        routing: Routing,
+        request_logs: RequestLogs,
         monitor: Monitor,
         collector: Collector,
     ) -> Self {
@@ -111,6 +129,8 @@ impl<Startup, Persistence, Application, SettingsStations, KeyPool, Monitor, Coll
             application,
             settings_stations,
             key_pool,
+            routing,
+            request_logs,
             monitor,
             collector,
         }
@@ -238,6 +258,8 @@ pub(crate) fn register_ready_services_with_command_facades<
     Application,
     SettingsStations,
     KeyPool,
+    Routing,
+    RequestLogs,
     Monitor,
     Collector,
 >(
@@ -249,6 +271,8 @@ pub(crate) fn register_ready_services_with_command_facades<
         Application,
         SettingsStations,
         KeyPool,
+        Routing,
+        RequestLogs,
         Monitor,
         Collector,
     >,
@@ -260,6 +284,8 @@ where
     Application: Send + Sync + 'static,
     SettingsStations: Send + Sync + 'static,
     KeyPool: Send + Sync + 'static,
+    Routing: Send + Sync + 'static,
+    RequestLogs: Send + Sync + 'static,
     Monitor: Send + Sync + 'static,
     Collector: Send + Sync + 'static,
 {
@@ -281,6 +307,8 @@ pub(crate) fn register_ready_services_with_command_facades_in<
     Application,
     SettingsStations,
     KeyPool,
+    Routing,
+    RequestLogs,
     Monitor,
     Collector,
 >(
@@ -292,6 +320,8 @@ pub(crate) fn register_ready_services_with_command_facades_in<
         Application,
         SettingsStations,
         KeyPool,
+        Routing,
+        RequestLogs,
         Monitor,
         Collector,
     >,
@@ -303,6 +333,8 @@ where
     Application: Send + Sync + 'static,
     SettingsStations: Send + Sync + 'static,
     KeyPool: Send + Sync + 'static,
+    Routing: Send + Sync + 'static,
+    RequestLogs: Send + Sync + 'static,
     Monitor: Send + Sync + 'static,
     Collector: Send + Sync + 'static,
 {
@@ -312,6 +344,8 @@ where
         || registry.contains::<Application>()
         || registry.contains::<SettingsStations>()
         || registry.contains::<KeyPool>()
+        || registry.contains::<Routing>()
+        || registry.contains::<RequestLogs>()
         || registry.contains::<Monitor>()
         || registry.contains::<Collector>()
     {
@@ -324,6 +358,8 @@ where
         application,
         settings_stations,
         key_pool,
+        routing,
+        request_logs,
         monitor,
         collector,
     } = services;
@@ -340,6 +376,12 @@ where
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(key_pool) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(routing) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(request_logs) {
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(monitor) {
@@ -392,6 +434,10 @@ mod tests {
     struct SlotSix(u8);
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct SlotSeven(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotEight(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotNine(u8);
 
     #[derive(Default)]
     struct TestRegistry {
@@ -428,7 +474,7 @@ mod tests {
 
     #[test]
     fn command_facade_ready_services_preflight_every_concrete_slot() {
-        for occupied_slot in 0..7 {
+        for occupied_slot in 0..9 {
             let mut registry = TestRegistry::default();
             match occupied_slot {
                 0 => assert!(registry.manage_direct(SlotOne(99))),
@@ -438,6 +484,8 @@ mod tests {
                 4 => assert!(registry.manage_direct(SlotFive(99))),
                 5 => assert!(registry.manage_direct(SlotSix(99))),
                 6 => assert!(registry.manage_direct(SlotSeven(99))),
+                7 => assert!(registry.manage_direct(SlotEight(99))),
+                8 => assert!(registry.manage_direct(SlotNine(99))),
                 _ => unreachable!(),
             }
 
@@ -452,6 +500,8 @@ mod tests {
                     SlotFive(1),
                     SlotSix(1),
                     SlotSeven(1),
+                    SlotEight(1),
+                    SlotNine(1),
                 ),
             )
             .expect_err("occupied slots must fail before publishing any new ready state");
@@ -465,6 +515,8 @@ mod tests {
                 registry.try_state::<SlotFive>().map(|state| state.0),
                 registry.try_state::<SlotSix>().map(|state| state.0),
                 registry.try_state::<SlotSeven>().map(|state| state.0),
+                registry.try_state::<SlotEight>().map(|state| state.0),
+                registry.try_state::<SlotNine>().map(|state| state.0),
             ];
             let expected = std::array::from_fn(|index| (index == occupied_slot).then_some(99));
             assert_eq!(observed, expected);
@@ -486,6 +538,8 @@ mod tests {
                 SlotFive(5),
                 SlotSix(6),
                 SlotSeven(7),
+                SlotEight(8),
+                SlotNine(9),
             ),
         )
         .expect("vacant registry must publish every ready state");
@@ -497,5 +551,7 @@ mod tests {
         assert_eq!(registry.try_state::<SlotFive>(), Some(SlotFive(5)));
         assert_eq!(registry.try_state::<SlotSix>(), Some(SlotSix(6)));
         assert_eq!(registry.try_state::<SlotSeven>(), Some(SlotSeven(7)));
+        assert_eq!(registry.try_state::<SlotEight>(), Some(SlotEight(8)));
+        assert_eq!(registry.try_state::<SlotNine>(), Some(SlotNine(9)));
     }
 }
