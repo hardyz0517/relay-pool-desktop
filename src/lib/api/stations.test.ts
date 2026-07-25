@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const generated = vi.hoisted(() => ({
   createStation: vi.fn(),
@@ -15,13 +15,27 @@ const transport = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@/lib/bridge/generated", () => generated);
 vi.mock("@/lib/bridge/transport", () => transport);
 
+import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
+import { DesktopBackend } from "@/lib/bridge/DesktopBackend";
 import { openStationWebsite, pingStationEndpoint } from "./stations";
 
 describe("station endpoint ping generated transport cutover", () => {
   beforeEach(() => {
-    generated.pingStationEndpoint.mockReset().mockResolvedValue(undefined);
+    setActiveBackendClient(new DesktopBackend());
+    generated.pingStationEndpoint.mockReset().mockResolvedValue({
+      stationId: "station-1",
+      ok: true,
+      status: "success",
+      latencyMs: 12,
+      checkedAt: "2026-07-22T00:00:00.000Z",
+      errorSummary: null,
+    });
     generated.openExternalUrl.mockReset().mockResolvedValue(undefined);
     transport.invoke.mockReset().mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    setActiveBackendClient(null);
   });
 
   it("routes endpoint ping through the generated non-idempotent wrapper", async () => {

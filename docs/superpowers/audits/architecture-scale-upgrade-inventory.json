@@ -107,24 +107,24 @@
     "feature_direct_invoke": [
       {
         "id": "legacy-frontend-transport",
-        "paths": ["src/lib/api/changeEvents.ts", "src/lib/api/channelMonitors.ts", "src/lib/api/collector.ts", "src/lib/api/collectorRuns.ts", "src/lib/api/dataRecovery.ts", "src/lib/api/economics.ts", "src/lib/api/external.ts", "src/lib/api/groupFacts.ts", "src/lib/api/localRouting.ts", "src/lib/api/proxy.ts", "src/lib/api/routing.ts", "src/lib/api/settings.ts", "src/lib/api/stationKeys.ts", "src/lib/api/stations.ts", "src/lib/api/updater.ts", "src/lib/queries/channelQueries.ts", "src/lib/queries/pricingQueries.ts"],
-        "owner": "Task 8 bridge and Task 9 feature cutover",
+        "paths": ["src/lib/api/changeEvents.ts", "src/lib/api/channelMonitors.ts", "src/lib/api/collector.ts", "src/lib/api/collectorRuns.ts", "src/lib/api/dataRecovery.ts", "src/lib/api/economics.ts", "src/lib/api/external.ts", "src/lib/api/groupFacts.ts", "src/lib/api/localRouting.ts", "src/lib/api/proxy.ts", "src/lib/api/routing.ts", "src/lib/api/stationKeys.ts", "src/lib/api/updater.ts", "src/lib/queries/channelQueries.ts", "src/lib/queries/pricingQueries.ts"],
+        "owner": "Task 9 feature cutover",
         "callers": ["src/features", "src/lib/query/resourceQueries.ts"],
-        "migration_task": 8,
+        "migration_task": 9,
         "delete_task": 9,
-        "exception_reason": "Direct invoke is isolated to legacy API/query wrappers; feature code must not add more.",
+        "exception_reason": "Direct invoke remains isolated to legacy API/query wrappers after the settings/stations child shard; feature code must not add more.",
         "evidence_command": "rg -l \"invoke\" src/lib/api src/lib/queries src/features"
       }
     ],
     "fallbacks": [
       {
         "id": "browser-preview-business-fallbacks",
-        "paths": ["src/lib/api/changeEvents.ts", "src/lib/api/channelMonitors.ts", "src/lib/api/collector.ts", "src/lib/api/collectorRuns.ts", "src/lib/api/dataRecovery.ts", "src/lib/api/economics.ts", "src/lib/api/groupFacts.ts", "src/lib/api/localRouting.ts", "src/lib/api/proxy.ts", "src/lib/api/routing.ts", "src/lib/api/settings.ts", "src/lib/api/stationKeys.ts", "src/lib/api/stations.ts", "src/lib/queries/channelQueries.ts", "src/lib/queries/pricingQueries.ts"],
+        "paths": ["src/lib/api/changeEvents.ts", "src/lib/api/channelMonitors.ts", "src/lib/api/collector.ts", "src/lib/api/collectorRuns.ts", "src/lib/api/dataRecovery.ts", "src/lib/api/economics.ts", "src/lib/api/groupFacts.ts", "src/lib/api/localRouting.ts", "src/lib/api/proxy.ts", "src/lib/api/routing.ts", "src/lib/api/stationKeys.ts", "src/lib/queries/channelQueries.ts", "src/lib/queries/pricingQueries.ts"],
         "owner": "Task 9 feature cutover",
         "callers": ["Legacy feature API/query wrappers only; production and demo entries are physically separated by Task 8"],
         "migration_task": 9,
         "delete_task": 9,
-        "exception_reason": "Business fallback remains in legacy API/query wrappers until Task 9 migrates features to narrow domain clients.",
+        "exception_reason": "Business fallback remains in legacy API/query wrappers until Task 9 migrates the remaining features to narrow domain clients; settings/stations wrappers are already cut over.",
         "evidence_command": "rg -n \"isTauriInvokeUnavailable|isTauriCommandNotFound|browser preview\" src/lib/api src/lib/queries"
       }
     ],

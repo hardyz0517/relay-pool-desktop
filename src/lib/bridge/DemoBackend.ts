@@ -12,6 +12,25 @@ type DemoStore = {
 
 export class DemoBackend implements BackendClient {
   readonly mode = "demo" as const;
+  readonly settings: BackendClient["settings"] = {
+    getSettings: () => this.rejectUnsupported("settings"),
+    getLocalAccessKey: () => this.rejectUnsupported("settings.local_access_key"),
+    updateLocalAccessKey: (_value: string) => this.rejectUnsupported("settings.local_access_key"),
+    importRelayPoolToCCSwitch: () => this.rejectUnsupported("settings.ccswitch_import"),
+    updateSettings: () => this.rejectUnsupported("settings"),
+    chooseDataDir: () => this.rejectUnsupported("settings.data_dir"),
+    resetDataDir: () => this.rejectUnsupported("settings.data_dir"),
+  };
+  readonly stations: BackendClient["stations"] = {
+    listStations: () => this.rejectUnsupported("stations"),
+    createStation: () => this.rejectUnsupported("stations"),
+    updateStation: () => this.rejectUnsupported("stations"),
+    deleteStation: (_id: string) => this.rejectUnsupported("stations"),
+    openStationWebsite: (_url: string) => this.rejectUnsupported("stations.external_url"),
+    reorderStations: () => this.rejectUnsupported("stations"),
+    listStationEndpointHealth: () => this.rejectUnsupported("stations.endpoint_health"),
+    pingStationEndpoint: (_stationId: string) => this.rejectUnsupported("stations.endpoint_ping"),
+  };
   private store: DemoStore = createInitialStore();
 
   async handshake(): Promise<RuntimeContractInfo> {
@@ -29,6 +48,10 @@ export class DemoBackend implements BackendClient {
 
   unsupported(capability: string): never {
     throw new DemoBackendUnsupportedError(capability);
+  }
+
+  private rejectUnsupported<T>(capability: string): Promise<T> {
+    return Promise.reject(new DemoBackendUnsupportedError(capability));
   }
 }
 

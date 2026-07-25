@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { IncompatibleRuntimeScreen } from "@/app/IncompatibleRuntimeScreen";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/Card";
+import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type { BackendClient } from "@/lib/bridge/BackendClient";
 import type { RuntimeContractInfo } from "@/lib/bridge/contract";
 import { unknownErrorMessage } from "@/lib/bridge/errorMessage";
@@ -45,6 +46,7 @@ export function BackendBootstrap({
     void client.handshake().then(
       (contract) => {
         if (requestSequence.current !== requestId) return;
+        setActiveBackendClient(client);
         if (client.mode === "demo") {
           setState({ kind: "DemoReady", client, contract });
         } else {
@@ -53,6 +55,7 @@ export function BackendBootstrap({
       },
       (error) => {
         if (requestSequence.current !== requestId) return;
+        setActiveBackendClient(null);
         setState(isRuntimeContractMismatch(error)
           ? { kind: "IncompatibleRuntime", client, error }
           : { kind: "RuntimeUnavailable", client, error });
@@ -64,6 +67,7 @@ export function BackendBootstrap({
     start();
     return () => {
       requestSequence.current += 1;
+      setActiveBackendClient(null);
     };
   }, [start]);
 

@@ -35,12 +35,11 @@ afterEach(() => {
 describe("BackendBootstrap", () => {
   it("handshakes desktop before mounting data-store bootstrap", async () => {
     let resolveHandshake: (value: RuntimeContractInfo) => void = () => undefined;
-    const client: BackendClient = {
-      mode: "desktop",
+    const client = testBackendClient("desktop", {
       handshake: vi.fn(() => new Promise<RuntimeContractInfo>((resolve) => {
         resolveHandshake = resolve;
       })),
-    };
+    });
     const renderDataStoreBootstrap = vi.fn((renderReady: () => ReactNode) => renderReady());
 
     await act(async () => {
@@ -66,10 +65,9 @@ describe("BackendBootstrap", () => {
   });
 
   it("shows incompatible runtime without falling back to demo or data-store bootstrap", async () => {
-    const client: BackendClient = {
-      mode: "desktop",
+    const client = testBackendClient("desktop", {
       handshake: vi.fn(() => Promise.reject(new RuntimeContractMismatchError("hash_mismatch"))),
-    };
+    });
     const renderDataStoreBootstrap = vi.fn((renderReady: () => ReactNode) => renderReady());
 
     await act(async () => {
@@ -89,10 +87,9 @@ describe("BackendBootstrap", () => {
   });
 
   it("uses demo mode without data-store bootstrap", async () => {
-    const client: BackendClient = {
-      mode: "demo",
+    const client = testBackendClient("demo", {
       handshake: vi.fn(() => Promise.resolve(contract)),
-    };
+    });
     const renderDataStoreBootstrap = vi.fn((renderReady: () => ReactNode) => renderReady());
 
     await act(async () => {
@@ -110,3 +107,15 @@ describe("BackendBootstrap", () => {
     expect(host.querySelector("[data-testid='demo-app']")).not.toBeNull();
   });
 });
+
+function testBackendClient(
+  mode: BackendClient["mode"],
+  overrides: Pick<BackendClient, "handshake">,
+): BackendClient {
+  return {
+    mode,
+    settings: {} as BackendClient["settings"],
+    stations: {} as BackendClient["stations"],
+    ...overrides,
+  };
+}

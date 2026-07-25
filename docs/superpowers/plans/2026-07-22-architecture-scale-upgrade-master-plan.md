@@ -519,6 +519,8 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 
 **顺序：** settings/stations -> key pool -> changes/logs -> collectors -> routing/proxy -> updater/data recovery -> pricing/economics/channel monitoring。
 
+**当前 checkpoint：** settings/stations 子切片已建立 `DesktopBackend` domain client，legacy `src/lib/api/settings.ts` 与 `src/lib/api/stations.ts` 已删除 `isTauriInvokeUnavailable`、browser-preview memory fallback 和直接 generated/transport import；DemoBackend 对 settings/stations 返回 typed unsupported。其余 feature 仍待迁移，Stage 2 Gate 不得视为通过。
+
 **文件：**
 
 - Modify: `src/lib/bridge/**`, `src/app/bootstrap/**` only for composition contracts

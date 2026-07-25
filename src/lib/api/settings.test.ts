@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const generated = vi.hoisted(() => ({
   getLocalAccessKey: vi.fn(),
@@ -14,6 +14,8 @@ const transport = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@/lib/bridge/generated", () => generated);
 vi.mock("@/lib/bridge/transport", () => transport);
 
+import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
+import { DesktopBackend } from "@/lib/bridge/DesktopBackend";
 import {
   getLocalAccessKey,
   chooseDataDir,
@@ -24,6 +26,7 @@ import {
 
 describe("settings bootstrap generated transport cutover", () => {
   beforeEach(() => {
+    setActiveBackendClient(new DesktopBackend());
     generated.getLocalAccessKey.mockReset().mockResolvedValue("sk-local-fixture");
     generated.updateLocalAccessKey.mockReset().mockResolvedValue(fixtureSettings());
     generated.importRelayPoolToCcswitch.mockReset().mockResolvedValue({
@@ -34,6 +37,10 @@ describe("settings bootstrap generated transport cutover", () => {
     generated.chooseDataDir.mockReset().mockResolvedValue(fixtureSettings());
     generated.resetDataDir.mockReset().mockResolvedValue(fixtureSettings());
     transport.invoke.mockReset().mockRejectedValue(new Error("legacy transport invoked"));
+  });
+
+  afterEach(() => {
+    setActiveBackendClient(null);
   });
 
   it("routes local access key reads and writes through generated wrappers", async () => {

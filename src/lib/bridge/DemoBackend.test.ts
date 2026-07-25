@@ -39,4 +39,17 @@ describe("DemoBackend", () => {
       capability: "data_recovery",
     });
   });
+
+  it("does not provide fake settings or station data", async () => {
+    const backend = new DemoBackend();
+
+    await expect(backend.settings.getSettings()).rejects.toMatchObject({
+      code: "unsupported",
+      capability: "settings",
+    });
+    await expect(backend.stations.listStations()).rejects.toMatchObject({
+      code: "unsupported",
+      capability: "stations",
+    });
+  });
 });
