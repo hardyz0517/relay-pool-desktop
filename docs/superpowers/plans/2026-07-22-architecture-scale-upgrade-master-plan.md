@@ -606,7 +606,7 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 - Create/Modify: each feature's `api.ts`, `queries.ts`, `mutations.ts`, models/view models and colocated tests
 - Create/Modify: exact Rust application read-model/command DTO paths expanded by Task 0 for each page shard
 
-**当前 checkpoint：** `S3-T12-model-base-prices-query-owner` 已把 ModelBasePricesPage 的模型基准价格列表从本地 `rows/loading` server state 和 mount-time `listModelBasePrices()` loader 迁移到 canonical `modelBasePricesQueryOptions/useActivityQuery`；reset/upsert mutation owner 成功后直接更新 `queryKeys.modelBasePrices` 并失效 `queryKeys.pricing`。`S3-T12-change-events-query-sync` 已删除 change-events API/AppShell/ChangeCenter 的业务 DOM event 同步，ChangeCenter 和 AppShell read-on-entry mutation owners 直接更新 `queryKeys.changeEvents`。Task 12 仍未完成：Dashboard/Logs/Changes/Pricing/Routing 的剩余页面级 server-state、bounded read-model、hidden-query 和 observer/query-budget Gate 仍需逐片验证。
+**当前 checkpoint：** `S3-T12-model-base-prices-query-owner` 已把 ModelBasePricesPage 的模型基准价格列表从本地 `rows/loading` server state 和 mount-time `listModelBasePrices()` loader 迁移到 canonical `modelBasePricesQueryOptions/useActivityQuery`；reset/upsert mutation owner 成功后直接更新 `queryKeys.modelBasePrices` 并失效 `queryKeys.pricing`。`S3-T12-change-events-query-sync` 已删除 change-events API/AppShell/ChangeCenter 的业务 DOM event 同步，ChangeCenter 和 AppShell read-on-entry mutation owners 直接更新 `queryKeys.changeEvents`。`S3-T12-proxy-status-query-sync` 已删除 proxy API/AppShell 的业务 DOM status event；Dashboard/Routing/Settings/Updater lifecycle owners 成功后写入 `queryKeys.proxyStatus`。Task 12 仍未完成：Dashboard/Logs/Changes/Pricing/Routing 的剩余页面级 server-state、bounded read-model、hidden-query 和 observer/query-budget Gate 仍需逐片验证。
 
 每个页面：
 

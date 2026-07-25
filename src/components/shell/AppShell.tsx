@@ -7,8 +7,6 @@ import { shellLayout } from "@/components/ui/layout";
 import {
   markChangeEventsRead,
 } from "@/lib/api/changeEvents";
-import { PROXY_STATUS_UPDATED_EVENT } from "@/lib/api/proxy";
-import type { ProxyStatus } from "@/lib/types/proxy";
 import {
   changeEventsQueryOptions,
   proxyStatusQueryOptions,
@@ -43,15 +41,6 @@ export function AppShell({
   const { data: changeEvents = [] } = useQuery(changeEventsQueryOptions(10_000));
   const { data: proxyStatus = null } = useQuery(proxyStatusQueryOptions(2_000));
   const { data: settings = null } = useQuery(settingsQueryOptions());
-
-  useEffect(() => {
-    function handleProxyStatusUpdated(event: Event) {
-      queryClient.setQueryData(queryKeys.proxyStatus, (event as CustomEvent<ProxyStatus>).detail);
-    }
-
-    window.addEventListener(PROXY_STATUS_UPDATED_EVENT, handleProxyStatusUpdated);
-    return () => window.removeEventListener(PROXY_STATUS_UPDATED_EVENT, handleProxyStatusUpdated);
-  }, [queryClient]);
 
   const visibleRoutes = useMemo(
     () =>

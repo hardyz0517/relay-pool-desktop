@@ -1,26 +1,24 @@
 import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 
-export const PROXY_STATUS_UPDATED_EVENT = "relay-pool:proxy-status-updated";
-
 export function getProxyStatus(): Promise<ProxyStatus> {
   return getActiveBackendClient().proxy.getProxyStatus();
 }
 
 export function startLocalProxy(): Promise<ProxyStatus> {
-  return getActiveBackendClient().proxy.startLocalProxy().then(publishProxyStatus);
+  return getActiveBackendClient().proxy.startLocalProxy();
 }
 
 export function stopLocalProxy(): Promise<ProxyStatus> {
-  return getActiveBackendClient().proxy.stopLocalProxy().then(publishProxyStatus);
+  return getActiveBackendClient().proxy.stopLocalProxy();
 }
 
 export function prepareLocalProxyForUpdate(): Promise<ProxyStatus> {
-  return getActiveBackendClient().proxy.prepareLocalProxyForUpdate().then(publishProxyStatus);
+  return getActiveBackendClient().proxy.prepareLocalProxyForUpdate();
 }
 
 export function restartLocalProxy(): Promise<ProxyStatus> {
-  return getActiveBackendClient().proxy.restartLocalProxy().then(publishProxyStatus);
+  return getActiveBackendClient().proxy.restartLocalProxy();
 }
 
 export function listRequestLogs(): Promise<RequestLog[]> {
@@ -29,9 +27,4 @@ export function listRequestLogs(): Promise<RequestLog[]> {
 
 export function clearRequestLogs(): Promise<void> {
   return getActiveBackendClient().proxy.clearRequestLogs();
-}
-
-function publishProxyStatus(status: ProxyStatus) {
-  window.dispatchEvent(new CustomEvent<ProxyStatus>(PROXY_STATUS_UPDATED_EVENT, { detail: status }));
-  return status;
 }

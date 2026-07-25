@@ -23,8 +23,6 @@ describe("request log backend cutover", () => {
   };
 
   beforeEach(() => {
-    vi.stubGlobal("window", { dispatchEvent: vi.fn() });
-    vi.stubGlobal("CustomEvent", class {});
     setActiveBackendClient({
       mode: "desktop",
       settings: {} as never,

@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { UpdateDialog } from "./UpdateDialog";
 import {
   initialUpdaterState,
@@ -25,6 +26,7 @@ import {
 } from "@/lib/api/updater";
 import { prepareLocalProxyForUpdate } from "@/lib/api/proxy";
 import { normalizeUpdaterError } from "@/lib/api/updaterErrors";
+import { queryKeys } from "@/lib/query/queryKeys";
 import { useToast } from "@/components/ui";
 
 type UpdaterContextValue = {
@@ -42,6 +44,7 @@ const UpdaterContext = createContext<UpdaterContextValue | null>(null);
 
 export function UpdaterProvider({ children }: { children: ReactNode }) {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const [state, dispatch] = useReducer(reduceUpdaterState, initialUpdaterState);
   const [dialogOpen, setDialogOpen] = useState(false);
   const checkingRef = useRef(false);
@@ -113,7 +116,8 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
       });
       operation = "prepare";
       dispatch({ type: "CLEANUP_STARTED" });
-      await prepareLocalProxyForUpdate();
+      const nextProxyStatus = await prepareLocalProxyForUpdate();
+      queryClient.setQueryData(queryKeys.proxyStatus, nextProxyStatus);
       operation = "install";
       dispatch({ type: "INSTALL_STARTED" });
       await installPendingUpdateAndRelaunch();
@@ -126,7 +130,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
     } finally {
       installingRef.current = false;
     }
-  }, [state.phase]);
+  }, [queryClient, state.phase]);
 
   const showUpdateDialog = useCallback(() => {
     if (state.phase === "available" || state.phase === "failed") {
