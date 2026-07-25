@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use crate::{
     application::{
-        app_services::AppServices, command_facades::SettingsStationsCommandFacade,
+        app_services::AppServices,
+        command_facades::{KeyPoolCommandFacade, SettingsStationsCommandFacade},
         data_directory::DataDirectoryPort,
     },
     persistence::runtime::PersistenceHandle,
@@ -36,4 +37,8 @@ pub(crate) fn compose_settings_stations_command_facade(
         Arc::clone(&services.settings),
         tray_behavior,
     )
+}
+
+pub(crate) fn compose_key_pool_command_facade(services: &AppServices) -> KeyPoolCommandFacade {
+    KeyPoolCommandFacade::new(Arc::clone(&services.credentials))
 }

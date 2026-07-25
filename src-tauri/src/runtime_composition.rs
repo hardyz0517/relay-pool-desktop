@@ -60,11 +60,12 @@ impl<Startup, Persistence, Application, Monitor, Collector>
         reason = "source-included persistence tests do not publish the facade-aware production bundle"
     )
 )]
-pub(crate) struct ReadyServiceBundleWithSettingsStations<
+pub(crate) struct ReadyServiceBundleWithCommandFacades<
     Startup,
     Persistence,
     Application,
     SettingsStations,
+    KeyPool,
     Monitor,
     Collector,
 > {
@@ -72,16 +73,18 @@ pub(crate) struct ReadyServiceBundleWithSettingsStations<
     persistence: Persistence,
     application: Application,
     settings_stations: SettingsStations,
+    key_pool: KeyPool,
     monitor: Monitor,
     collector: Collector,
 }
 
-impl<Startup, Persistence, Application, SettingsStations, Monitor, Collector>
-    ReadyServiceBundleWithSettingsStations<
+impl<Startup, Persistence, Application, SettingsStations, KeyPool, Monitor, Collector>
+    ReadyServiceBundleWithCommandFacades<
         Startup,
         Persistence,
         Application,
         SettingsStations,
+        KeyPool,
         Monitor,
         Collector,
     >
@@ -98,6 +101,7 @@ impl<Startup, Persistence, Application, SettingsStations, Monitor, Collector>
         persistence: Persistence,
         application: Application,
         settings_stations: SettingsStations,
+        key_pool: KeyPool,
         monitor: Monitor,
         collector: Collector,
     ) -> Self {
@@ -106,6 +110,7 @@ impl<Startup, Persistence, Application, SettingsStations, Monitor, Collector>
             persistence,
             application,
             settings_stations,
+            key_pool,
             monitor,
             collector,
         }
@@ -226,22 +231,24 @@ where
         reason = "source-included persistence tests do not publish the facade-aware production bundle"
     )
 )]
-pub(crate) fn register_ready_services_with_settings_stations<
+pub(crate) fn register_ready_services_with_command_facades<
     R,
     Startup,
     Persistence,
     Application,
     SettingsStations,
+    KeyPool,
     Monitor,
     Collector,
 >(
     faults: &dyn UpgradeFaultInjector,
     app: &mut tauri::App<R>,
-    services: ReadyServiceBundleWithSettingsStations<
+    services: ReadyServiceBundleWithCommandFacades<
         Startup,
         Persistence,
         Application,
         SettingsStations,
+        KeyPool,
         Monitor,
         Collector,
     >,
@@ -252,11 +259,12 @@ where
     Persistence: Send + Sync + 'static,
     Application: Send + Sync + 'static,
     SettingsStations: Send + Sync + 'static,
+    KeyPool: Send + Sync + 'static,
     Monitor: Send + Sync + 'static,
     Collector: Send + Sync + 'static,
 {
     let mut registry = TauriReadyServiceRegistry(app);
-    register_ready_services_with_settings_stations_in(faults, &mut registry, services)
+    register_ready_services_with_command_facades_in(faults, &mut registry, services)
 }
 
 #[cfg_attr(
@@ -266,22 +274,24 @@ where
         reason = "source-included persistence tests do not publish the facade-aware production bundle"
     )
 )]
-pub(crate) fn register_ready_services_with_settings_stations_in<
+pub(crate) fn register_ready_services_with_command_facades_in<
     Registry,
     Startup,
     Persistence,
     Application,
     SettingsStations,
+    KeyPool,
     Monitor,
     Collector,
 >(
     faults: &dyn UpgradeFaultInjector,
     registry: &mut Registry,
-    services: ReadyServiceBundleWithSettingsStations<
+    services: ReadyServiceBundleWithCommandFacades<
         Startup,
         Persistence,
         Application,
         SettingsStations,
+        KeyPool,
         Monitor,
         Collector,
     >,
@@ -292,6 +302,7 @@ where
     Persistence: Send + Sync + 'static,
     Application: Send + Sync + 'static,
     SettingsStations: Send + Sync + 'static,
+    KeyPool: Send + Sync + 'static,
     Monitor: Send + Sync + 'static,
     Collector: Send + Sync + 'static,
 {
@@ -300,17 +311,19 @@ where
         || registry.contains::<Persistence>()
         || registry.contains::<Application>()
         || registry.contains::<SettingsStations>()
+        || registry.contains::<KeyPool>()
         || registry.contains::<Monitor>()
         || registry.contains::<Collector>()
     {
         return Err(RuntimeCompositionError::StateSlotOccupied);
     }
 
-    let ReadyServiceBundleWithSettingsStations {
+    let ReadyServiceBundleWithCommandFacades {
         startup,
         persistence,
         application,
         settings_stations,
+        key_pool,
         monitor,
         collector,
     } = services;
@@ -324,6 +337,9 @@ where
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(settings_stations) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(key_pool) {
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(monitor) {
@@ -358,7 +374,7 @@ mod tests {
     use crate::persistence::upgrade_fault::NoUpgradeFaults;
 
     use super::{
-        register_ready_services_with_settings_stations_in, ReadyServiceBundleWithSettingsStations,
+        register_ready_services_with_command_facades_in, ReadyServiceBundleWithCommandFacades,
         ReadyServiceRegistry, RuntimeCompositionError,
     };
 
@@ -374,6 +390,8 @@ mod tests {
     struct SlotFive(u8);
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct SlotSix(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotSeven(u8);
 
     #[derive(Default)]
     struct TestRegistry {
@@ -409,8 +427,8 @@ mod tests {
     }
 
     #[test]
-    fn settings_stations_ready_services_preflight_every_concrete_slot() {
-        for occupied_slot in 0..6 {
+    fn command_facade_ready_services_preflight_every_concrete_slot() {
+        for occupied_slot in 0..7 {
             let mut registry = TestRegistry::default();
             match occupied_slot {
                 0 => assert!(registry.manage_direct(SlotOne(99))),
@@ -419,19 +437,21 @@ mod tests {
                 3 => assert!(registry.manage_direct(SlotFour(99))),
                 4 => assert!(registry.manage_direct(SlotFive(99))),
                 5 => assert!(registry.manage_direct(SlotSix(99))),
+                6 => assert!(registry.manage_direct(SlotSeven(99))),
                 _ => unreachable!(),
             }
 
-            let error = register_ready_services_with_settings_stations_in(
+            let error = register_ready_services_with_command_facades_in(
                 &NoUpgradeFaults,
                 &mut registry,
-                ReadyServiceBundleWithSettingsStations::new(
+                ReadyServiceBundleWithCommandFacades::new(
                     SlotOne(1),
                     SlotTwo(1),
                     SlotThree(1),
                     SlotFour(1),
                     SlotFive(1),
                     SlotSix(1),
+                    SlotSeven(1),
                 ),
             )
             .expect_err("occupied slots must fail before publishing any new ready state");
@@ -444,6 +464,7 @@ mod tests {
                 registry.try_state::<SlotFour>().map(|state| state.0),
                 registry.try_state::<SlotFive>().map(|state| state.0),
                 registry.try_state::<SlotSix>().map(|state| state.0),
+                registry.try_state::<SlotSeven>().map(|state| state.0),
             ];
             let expected = std::array::from_fn(|index| (index == occupied_slot).then_some(99));
             assert_eq!(observed, expected);
@@ -451,19 +472,20 @@ mod tests {
     }
 
     #[test]
-    fn settings_stations_ready_services_publish_complete_bundle() {
+    fn command_facade_ready_services_publish_complete_bundle() {
         let mut registry = TestRegistry::default();
 
-        register_ready_services_with_settings_stations_in(
+        register_ready_services_with_command_facades_in(
             &NoUpgradeFaults,
             &mut registry,
-            ReadyServiceBundleWithSettingsStations::new(
+            ReadyServiceBundleWithCommandFacades::new(
                 SlotOne(1),
                 SlotTwo(2),
                 SlotThree(3),
                 SlotFour(4),
                 SlotFive(5),
                 SlotSix(6),
+                SlotSeven(7),
             ),
         )
         .expect("vacant registry must publish every ready state");
@@ -474,5 +496,6 @@ mod tests {
         assert_eq!(registry.try_state::<SlotFour>(), Some(SlotFour(4)));
         assert_eq!(registry.try_state::<SlotFive>(), Some(SlotFive(5)));
         assert_eq!(registry.try_state::<SlotSix>(), Some(SlotSix(6)));
+        assert_eq!(registry.try_state::<SlotSeven>(), Some(SlotSeven(7)));
     }
 }

@@ -380,6 +380,8 @@ pub fn run() {
                             &app_services,
                             Arc::clone(app.state::<Arc<TrayBehaviorState>>().inner()),
                         );
+                    let key_pool_command_facade =
+                        app_composition::compose_key_pool_command_facade(&app_services);
                     tauri::async_runtime::block_on(app_services.settings.repair_legacy_settings())
                         .map_err(|error| {
                             format!("failed to repair legacy application settings: {error}")
@@ -412,14 +414,15 @@ pub fn run() {
                     );
                     let runtime_owner =
                         DataStoreRuntimeOwner::new(Some(Arc::clone(&runtime)), installation_lease);
-                    runtime_composition::register_ready_services_with_settings_stations(
+                    runtime_composition::register_ready_services_with_command_facades(
                         &persistence::upgrade_fault::NoUpgradeFaults,
                         app,
-                        runtime_composition::ReadyServiceBundleWithSettingsStations::new(
+                        runtime_composition::ReadyServiceBundleWithCommandFacades::new(
                             startup_state,
                             runtime,
                             app_services,
                             settings_stations_command_facade,
+                            key_pool_command_facade,
                             channel_monitor_runner,
                             station_collector_runner,
                         ),

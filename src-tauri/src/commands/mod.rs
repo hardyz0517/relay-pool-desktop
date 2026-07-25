@@ -17,8 +17,10 @@ pub(crate) mod error;
 
 use crate::{
     application::{
-        app_services::AppServices, command_facades::SettingsStationsCommandFacade,
-        error::ApplicationError, pagination::PageLimit,
+        app_services::AppServices,
+        command_facades::{KeyPoolCommandFacade, SettingsStationsCommandFacade},
+        error::ApplicationError,
+        pagination::PageLimit,
     },
     ipc::dto::{
         change_logs::{
@@ -1042,13 +1044,12 @@ pub async fn clear_request_logs(
 
 #[tauri::command]
 pub async fn list_station_keys(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<Vec<StationKeyDto>, error::CommandError> {
     correlation::in_command_scope("list_station_keys", async {
         let input = StationIdInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .list_station_keys(input.station_id)
             .await
             .map_err(public_command_application_error)
@@ -1058,13 +1059,12 @@ pub async fn list_station_keys(
 
 #[tauri::command]
 pub async fn create_station_key(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<StationKeyDto, error::CommandError> {
     correlation::in_command_scope("create_station_key", async {
         let input = CreateStationKeyInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .create_station_key(input)
             .await
             .map_err(public_command_application_error)
@@ -1074,13 +1074,12 @@ pub async fn create_station_key(
 
 #[tauri::command]
 pub async fn update_station_key(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<StationKeyDto, error::CommandError> {
     correlation::in_command_scope("update_station_key", async {
         let input = UpdateStationKeyInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .update_station_key(input)
             .await
             .map_err(public_command_application_error)
@@ -1090,13 +1089,12 @@ pub async fn update_station_key(
 
 #[tauri::command]
 pub async fn save_station_key_with_defaults(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<SaveStationKeyWithDefaultsResultDto, error::CommandError> {
     correlation::in_command_scope("save_station_key_with_defaults", async {
         let input = SaveStationKeyWithDefaultsInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .save_station_key_with_defaults(input)
             .await
             .map_err(public_command_application_error)
@@ -1106,13 +1104,12 @@ pub async fn save_station_key_with_defaults(
 
 #[tauri::command]
 pub async fn update_station_key_group_binding(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<StationKeyDto, error::CommandError> {
     correlation::in_command_scope("update_station_key_group_binding", async {
         let input = UpdateStationKeyGroupBindingInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .update_station_key_group_binding(input)
             .await
             .map_err(public_command_application_error)
@@ -1122,13 +1119,12 @@ pub async fn update_station_key_group_binding(
 
 #[tauri::command]
 pub async fn delete_station_key(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<(), error::CommandError> {
     correlation::in_command_scope("delete_station_key", async {
         let input = StationKeyIdInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .delete_station_key(input.id)
             .await
             .map_err(public_command_application_error)
@@ -1138,13 +1134,12 @@ pub async fn delete_station_key(
 
 #[tauri::command]
 pub async fn reorder_station_keys(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<Vec<StationKeyDto>, error::CommandError> {
     correlation::in_command_scope("reorder_station_keys", async {
         let input = ReorderStationKeysInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .reorder_station_keys(input.station_id, input.key_ids)
             .await
             .map_err(public_command_application_error)
@@ -1154,13 +1149,12 @@ pub async fn reorder_station_keys(
 
 #[tauri::command]
 pub async fn get_remote_key_capability(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<RemoteKeyCapabilityDto, error::CommandError> {
     correlation::in_command_scope("get_remote_key_capability", async {
         let input = StationIdInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .get_remote_key_capability(input.station_id)
             .await
             .map_err(public_command_application_error)
@@ -1170,13 +1164,12 @@ pub async fn get_remote_key_capability(
 
 #[tauri::command]
 pub async fn list_remote_station_keys(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<Vec<RemoteStationKeyDto>, error::CommandError> {
     correlation::in_command_scope("list_remote_station_keys", async {
         let input = StationIdInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .list_remote_station_keys(input.station_id)
             .await
             .map_err(public_command_application_error)
@@ -1265,13 +1258,12 @@ pub async fn create_local_station_key_from_remote(
 
 #[tauri::command]
 pub async fn bind_remote_station_key(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<Vec<RemoteStationKeyDto>, error::CommandError> {
     correlation::in_command_scope("bind_remote_station_key", async {
         let input = BindRemoteStationKeyInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .bind_remote_station_key(input.remote_key_id, input.station_key_id)
             .await
             .map_err(public_command_application_error)
@@ -1281,13 +1273,12 @@ pub async fn bind_remote_station_key(
 
 #[tauri::command]
 pub async fn unbind_remote_station_key(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<Vec<RemoteStationKeyDto>, error::CommandError> {
     correlation::in_command_scope("unbind_remote_station_key", async {
         let input = RemoteStationKeyInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .unbind_remote_station_key(input.remote_key_id, input.station_id)
             .await
             .map_err(public_command_application_error)
@@ -1297,13 +1288,12 @@ pub async fn unbind_remote_station_key(
 
 #[tauri::command]
 pub async fn list_key_pool_items(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<Vec<KeyPoolItemDto>, error::CommandError> {
     correlation::in_command_scope("list_key_pool_items", async {
         EmptyInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .list_key_pool_items()
             .await
             .map_err(public_command_application_error)
@@ -1313,13 +1303,12 @@ pub async fn list_key_pool_items(
 
 #[tauri::command]
 pub async fn reorder_key_pool(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<Vec<KeyPoolItemDto>, error::CommandError> {
     correlation::in_command_scope("reorder_key_pool", async {
         let input = ReorderKeyPoolInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .reorder_key_pool(input.key_ids)
             .await
             .map_err(public_command_application_error)
@@ -1329,13 +1318,12 @@ pub async fn reorder_key_pool(
 
 #[tauri::command]
 pub async fn get_station_key_capabilities(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<StationKeyCapabilitiesDto, error::CommandError> {
     correlation::in_command_scope("get_station_key_capabilities", async {
         let input = RoutingStationKeyIdInputDto::parse(input)?;
-        services
-            .credentials
+        facade
             .get_station_key_capabilities(input.station_key_id)
             .await
             .map_err(public_command_application_error)
@@ -1345,13 +1333,12 @@ pub async fn get_station_key_capabilities(
 
 #[tauri::command]
 pub async fn update_station_key_capabilities(
-    services: State<'_, AppServices>,
+    facade: State<'_, KeyPoolCommandFacade>,
     input: Value,
 ) -> Result<StationKeyCapabilitiesDto, error::CommandError> {
     correlation::in_command_scope("update_station_key_capabilities", async {
         let input = UpdateStationKeyCapabilitiesInputDto::parse(input)?.into_domain();
-        services
-            .credentials
+        facade
             .update_station_key_capabilities(input)
             .await
             .map_err(public_command_application_error)
