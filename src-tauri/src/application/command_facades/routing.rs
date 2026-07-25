@@ -3,7 +3,11 @@ use std::sync::Arc;
 use crate::{
     application::{error::ApplicationError, routing::RoutingService},
     models::{
-        routing::{ModelAlias, StationKeyHealth, UpsertModelAliasInput},
+        pricing::BalanceSnapshot,
+        routing::{
+            ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyHealth,
+            UpsertModelAliasInput,
+        },
         stations::StationEndpointHealth,
     },
 };
@@ -43,6 +47,22 @@ impl RoutingCommandFacade {
         &self,
     ) -> Result<Vec<StationEndpointHealth>, ApplicationError> {
         self.routing.list_station_endpoint_health().await
+    }
+
+    pub(crate) async fn simulate_route(
+        &self,
+        input: RouteSimulationInput,
+    ) -> Result<RouteSimulationResult, ApplicationError> {
+        self.routing.simulate_route(input).await
+    }
+
+    pub(crate) async fn list_balance_snapshots_for_station(
+        &self,
+        station_id: &str,
+    ) -> Result<Vec<BalanceSnapshot>, ApplicationError> {
+        self.routing
+            .list_balance_snapshots_for_station(station_id)
+            .await
     }
 
     pub(crate) async fn get_station_key_health(

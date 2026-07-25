@@ -1947,13 +1947,12 @@ pub async fn test_station_key_connectivity(
 
 #[tauri::command]
 pub async fn simulate_route(
-    services: State<'_, AppServices>,
+    facade: State<'_, RoutingCommandFacade>,
     input: Value,
 ) -> Result<RouteSimulationResultDto, error::CommandError> {
     correlation::in_command_scope("simulate_route", async {
         let input = RouteSimulationInputDto::parse(input)?.into_domain();
-        services
-            .routing
+        facade
             .simulate_route(input)
             .await
             .map_err(public_command_application_error)
@@ -2099,13 +2098,12 @@ pub async fn list_current_station_balance_snapshots(
 
 #[tauri::command]
 pub async fn list_balance_snapshots_for_station(
-    services: State<'_, AppServices>,
+    facade: State<'_, RoutingCommandFacade>,
     input: Value,
 ) -> Result<Vec<BalanceSnapshotDto>, error::CommandError> {
     correlation::in_command_scope("list_balance_snapshots_for_station", async {
         let input = CollectorStationIdInputDto::parse(input)?;
-        services
-            .routing
+        facade
             .list_balance_snapshots_for_station(&input.station_id)
             .await
             .map_err(public_command_application_error)

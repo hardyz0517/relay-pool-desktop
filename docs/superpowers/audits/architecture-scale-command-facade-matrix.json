@@ -196,11 +196,20 @@
           "command": "get_station_key_health",
           "use_case": "get_station_key_health",
           "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "simulate_route",
+          "use_case": "simulate_route",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "list_balance_snapshots_for_station",
+          "use_case": "list_balance_snapshots_for_station",
+          "dependencies": ["RoutingService"]
         }
       ],
       "non_goals": [
         "ping_station_endpoint",
-        "simulate_route",
         "local proxy workspace and lifecycle commands"
       ]
     },
