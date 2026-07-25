@@ -13,6 +13,7 @@ import {
   locateDataStoreCandidate,
   openDataStoreBackupDir,
   refreshDataStoreCandidates,
+  restartApp,
 } from "./dataRecovery";
 
 describe("data recovery backend cutover", () => {
@@ -22,6 +23,7 @@ describe("data recovery backend cutover", () => {
     locateDataStoreCandidate: vi.fn(async () => candidate()),
     activateDataStoreCandidate: vi.fn(async () => ({ restartRequired: true })),
     createNewDataStore: vi.fn(async () => ({ restartRequired: true })),
+    restartApp: vi.fn(async () => undefined),
     openDataStoreBackupDir: vi.fn(async () => undefined),
     exportDataStoreDiagnostic: vi.fn(async () => "diagnostic.zip"),
   };
@@ -61,6 +63,7 @@ describe("data recovery backend cutover", () => {
     await locateDataStoreCandidate();
     await activateDataStoreCandidate("candidate-7");
     await createNewDataStore(true);
+    await restartApp();
     await openDataStoreBackupDir();
     await exportDataStoreDiagnostic();
 
@@ -69,6 +72,7 @@ describe("data recovery backend cutover", () => {
     expect(dataRecovery.locateDataStoreCandidate).toHaveBeenCalledTimes(1);
     expect(dataRecovery.activateDataStoreCandidate).toHaveBeenCalledWith("candidate-7");
     expect(dataRecovery.createNewDataStore).toHaveBeenCalledWith(true);
+    expect(dataRecovery.restartApp).toHaveBeenCalledTimes(1);
     expect(dataRecovery.openDataStoreBackupDir).toHaveBeenCalledTimes(1);
     expect(dataRecovery.exportDataStoreDiagnostic).toHaveBeenCalledTimes(1);
   });

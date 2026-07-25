@@ -88,6 +88,7 @@ export class DemoBackend implements BackendClient {
     locateDataStoreCandidate: () => this.rejectUnsupported("data_recovery"),
     activateDataStoreCandidate: (_candidateId: string) => this.rejectUnsupported("data_recovery"),
     createNewDataStore: (_confirmed: boolean) => this.rejectUnsupported("data_recovery"),
+    restartApp: () => this.rejectUnsupported("data_recovery.restart"),
     openDataStoreBackupDir: () => this.rejectUnsupported("data_recovery"),
     exportDataStoreDiagnostic: () => this.rejectUnsupported("data_recovery"),
   };

@@ -21,6 +21,10 @@ export function createNewDataStore(confirmed: boolean) {
   return getActiveBackendClient().dataRecovery.createNewDataStore(confirmed);
 }
 
+export function restartApp() {
+  return getActiveBackendClient().dataRecovery.restartApp();
+}
+
 export function openDataStoreBackupDir() {
   return getActiveBackendClient().dataRecovery.openDataStoreBackupDir();
 }

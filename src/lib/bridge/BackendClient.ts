@@ -171,6 +171,7 @@ export type DataRecoveryDomainClient = {
   locateDataStoreCandidate(): Promise<DataStoreCandidate | null>;
   activateDataStoreCandidate(candidateId: string): Promise<ActivationResult>;
   createNewDataStore(confirmed: boolean): Promise<ActivationResult>;
+  restartApp(): Promise<void>;
   openDataStoreBackupDir(): Promise<void>;
   exportDataStoreDiagnostic(): Promise<string | null>;
 };

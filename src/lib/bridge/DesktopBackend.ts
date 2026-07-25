@@ -227,6 +227,7 @@ export class DesktopBackend implements BackendClient {
     locateDataStoreCandidate: () => locateDataStoreCandidateBinding().then(normalizeDataStoreCandidate),
     activateDataStoreCandidate: (candidateId: string) => activateDataStoreCandidateBinding({ candidateId }),
     createNewDataStore: (confirmed: boolean) => createNewDataStoreBinding({ confirmed }),
+    restartApp: () => relaunch(),
     openDataStoreBackupDir: () => openDataStoreBackupDirBinding(),
     exportDataStoreDiagnostic: () => exportDataStoreDiagnosticBinding(),
   };

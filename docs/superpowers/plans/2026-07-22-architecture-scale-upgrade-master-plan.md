@@ -501,7 +501,7 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 - [x] bootstrap 只选择一次 `desktop | demo`：打包的 Tauri entry 固定请求 desktop handshake，显式 browser-preview/test entry 才注入 demo；未知/缺失 mode fail closed。mode 不由任意 invoke error、command-not-found、`window.__TAURI__` 或 feature 环境变量运行时猜测。
 - [x] `BackendBootstrap` 使用显式状态机：`SelectingMode -> HandshakingDesktop -> DataStoreBootstrapping -> Ready`，或 `SelectingMode -> DemoReady`。desktop 必须 handshake 成功后才挂载 `DataStoreBootstrap`；demo 不挂载 `DataStoreBootstrap`，不调用任何 data-recovery/真实系统 command。
 - [x] desktop contract mismatch 进入 `IncompatibleRuntimeScreen`，普通 runtime unavailable 进入可重试 fatal recovery；二者都不创建 DemoBackend、不挂载业务页面。重试复用同一 fixed desktop mode，不重新猜 mode。
-- [ ] `src/main.tsx` 只组合 theme/query/toast/backend bootstrap providers，不直接调用 command 或读取 backend mode；App/feature 通过 typed provider 获得窄 domain client。
+- [x] `src/main.tsx` 只组合 theme/query/toast/backend bootstrap providers，不直接调用 command 或读取 backend mode；App/feature 通过 typed provider 获得窄 domain client。
 - [x] `pnpm build` 只构建 production desktop entry，`pnpm build:demo`/`dev:demo` 使用独立 config/HTML；production `dist`/Tauri bundle scan 不含 demo bootstrap marker、fixture dataset 或可触发 demo 的 query/env/localStorage branch。
 - [x] 按 threat model 为 production `tauri.conf.json` 建立非空 CSP，默认禁止 remote script、`unsafe-eval` 和 main-window remote navigation；dev/demo 需要的放宽只存在独立 Vite/Tauri test config，不进入 release provenance。
 - [x] main capability 保持 least privilege，compiled registry/ACL/capability gate 证明 main command 授权精确；Task 17.B 再收紧 `capture-*` remote capability，不在此处把 capture 权限并入 main。
@@ -510,8 +510,8 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 - [x] demo mode 在 shell/bootstrap 上有稳定可测试的可见标识和显式 reset command；Desktop handshake 失败时该标识绝不能出现。
 - [x] 不支持的 demo capability 返回 typed `Unsupported`；不得复制真实 provider 登录、采集或路由决策。
 - [x] architecture gate 禁止 DemoBackend/demo fixtures import DesktopBackend、generated invoke、Tauri API、credential/data-recovery/network/file adapter；contract test 以 fail-fast spies 证明 demo workflow 零真实调用。
-- [ ] feature 只接收 matching domain client/query hook；完整 `BackendClient` 只在 bootstrap composition 出现。
-- [ ] contract tests 对同一领域 client 验证成功/typed failure/unsupported shape。
+- [x] feature 只接收 matching domain client/query hook；完整 `BackendClient` 只在 bootstrap composition 出现。
+- [x] contract tests 对同一领域 client 验证成功/typed failure/unsupported shape。
 
 **退出：** architecture gate 阻止 feature import Tauri core、完整 BackendClient 和 desktop binding。
 
@@ -519,7 +519,7 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 
 **顺序：** settings/stations -> key pool -> changes/logs -> collectors -> routing/proxy -> updater/data recovery -> pricing/economics/channel monitoring。
 
-**当前 checkpoint：** settings/stations、key-pool/stationKeys、changeEvents/collectorRuns、external URL、proxy/localRouting、dataRecovery、economics、groupFacts、pricing workspace、routing/health、channel monitoring/status、collectors 与 updater 子切片已建立 `DesktopBackend` domain client；legacy `src/lib/api/settings.ts`、`src/lib/api/stations.ts`、`src/lib/api/stationKeys.ts`、`src/lib/api/changeEvents.ts`、`src/lib/api/collectorRuns.ts`、`src/lib/api/external.ts`、`src/lib/api/proxy.ts`、`src/lib/api/localRouting.ts`、`src/lib/api/dataRecovery.ts`、`src/lib/api/economics.ts`、`src/lib/api/groupFacts.ts`、`src/lib/queries/pricingQueries.ts`、`src/lib/api/routing.ts`、`src/lib/api/channelMonitors.ts`、`src/lib/queries/channelQueries.ts`、`src/lib/api/collector.ts` 与 `src/lib/api/updater.ts` 已删除 `isTauriInvokeUnavailable`、browser-preview memory fallback、内存 production state 和直接 generated/transport/streaming/native updater adapter import；DemoBackend 对真实桌面能力返回 typed unsupported，station-key connectivity 在 demo 下不得 fake success。`src/lib/api` / `src/lib/queries` production direct Tauri/generated/fallback surface 扫描已为空；Stage 2 Gate 仍需完整 Task 9 收口审计和本阶段最终 gate 证据后才能关闭。
+**当前 checkpoint：** settings/stations、key-pool/stationKeys、changeEvents/collectorRuns、external URL、proxy/localRouting、dataRecovery、economics、groupFacts、pricing workspace、routing/health、channel monitoring/status、collectors 与 updater 子切片已建立 `DesktopBackend` domain client；legacy `src/lib/api/settings.ts`、`src/lib/api/stations.ts`、`src/lib/api/stationKeys.ts`、`src/lib/api/changeEvents.ts`、`src/lib/api/collectorRuns.ts`、`src/lib/api/external.ts`、`src/lib/api/proxy.ts`、`src/lib/api/localRouting.ts`、`src/lib/api/dataRecovery.ts`、`src/lib/api/economics.ts`、`src/lib/api/groupFacts.ts`、`src/lib/queries/pricingQueries.ts`、`src/lib/api/routing.ts`、`src/lib/api/channelMonitors.ts`、`src/lib/queries/channelQueries.ts`、`src/lib/api/collector.ts` 与 `src/lib/api/updater.ts` 已删除 `isTauriInvokeUnavailable`、browser-preview memory fallback、内存 production state 和直接 generated/transport/streaming/native updater adapter import；data-recovery feature 的 restart/error display 也改走 backend client/pure error formatter，不再直接 import Tauri；DemoBackend 对真实桌面能力返回 typed unsupported，station-key connectivity 在 demo 下不得 fake success。`src/features`、`src/lib/api` 与 `src/lib/queries` production direct Tauri/generated/fallback surface 扫描为空；Stage 2 Gate 在 2026-07-25 closeout 审计通过。
 
 **文件：**
 
@@ -530,14 +530,16 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 
 每个 feature：
 
-- [ ] 写 Desktop failure 和 Demo unsupported RED component test。
-- [ ] 注入窄 client，保持现有 loading/error/partial 体验。
-- [ ] 删除 `isTauriInvokeUnavailable`、command-not-found 业务 fallback、内存 production state 和 mock success。
-- [ ] 删除 feature 直接 `invoke` 与手写 command name。
-- [ ] 验证 desktop runtime unavailable 显示 recovery/error，不显示空成功。
-- [ ] 验证 demo 不调用任何真实 adapter。
+- [x] 写 Desktop failure 和 Demo unsupported RED component test。
+- [x] 注入窄 client，保持现有 loading/error/partial 体验。
+- [x] 删除 `isTauriInvokeUnavailable`、command-not-found 业务 fallback、内存 production state 和 mock success。
+- [x] 删除 feature 直接 `invoke` 与手写 command name。
+- [x] 验证 desktop runtime unavailable 显示 recovery/error，不显示空成功。
+- [x] 验证 demo 不调用任何真实 adapter。
 
 **Stage 2 Gate：** runtime mode 只有 bootstrap owner；production API 隐式 fallback 为零；feature 不持有完整 BackendClient；command 不持有完整 AppServices。Production/demo build entry 物理分离，packaged bundle 不可达 DemoBackend，production CSP 非空且 main capability 通过 least-privilege/registry gate。
+
+**Gate evidence（2026-07-25）：** `pnpm.cmd exec vitest run ...` 覆盖 16 个 Task 9 API/query/bootstrap/demo tests（31 tests）；`pnpm.cmd run build` 通过 `theme:audit && tsc --noEmit && vite build`；`pnpm.cmd run architecture:typescript` 通过 904 resolved edges；`pnpm.cmd run architecture:security` 通过 2 capabilities 和 416 production / 245 demo modules；`node scripts/architecture/check-command-state-boundaries.mjs` 通过 103 migrated commands；updater 四个 source-contract scripts 通过；`cargo check --manifest-path src-tauri\Cargo.toml` 使用 `output/cargo/stage2-gate` 通过；`rg` 扫描确认 `src/features`、`src/lib/api`、`src/lib/queries` 无 production direct Tauri/generated/fallback surface；Persistence V2 protected paths 零 diff。
 
 ## 11. Stage 3：Query ownership、Aggregate Read Models 与页面生命周期
 
