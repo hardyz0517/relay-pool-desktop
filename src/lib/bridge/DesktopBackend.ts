@@ -9,6 +9,8 @@ import {
   chooseDataDir as chooseDataDirBinding,
   clearStationCredentials as clearStationCredentialsBinding,
   activateDataStoreCandidate as activateDataStoreCandidateBinding,
+  createChannelMonitor as createChannelMonitorBinding,
+  createChannelMonitorTemplate as createChannelMonitorTemplateBinding,
   createLocalStationKeyFromRemote as createLocalStationKeyFromRemoteBinding,
   createNewDataStore as createNewDataStoreBinding,
   createRemoteStationKey as createRemoteStationKeyBinding,
@@ -16,6 +18,9 @@ import {
   createStationKey as createStationKeyBinding,
   deleteStation as deleteStationBinding,
   deleteStationKey as deleteStationKeyBinding,
+  deleteChannelMonitor as deleteChannelMonitorBinding,
+  deleteChannelMonitorTemplate as deleteChannelMonitorTemplateBinding,
+  duplicateChannelMonitorTemplate as duplicateChannelMonitorTemplateBinding,
   exportDataStoreDiagnostic as exportDataStoreDiagnosticBinding,
   getRemoteKeyCapability as getRemoteKeyCapabilityBinding,
   getDataStoreStartupState as getDataStoreStartupStateBinding,
@@ -28,6 +33,11 @@ import {
   importRelayPoolToCcswitch as importRelayPoolToCcswitchBinding,
   listBalanceSnapshots as listBalanceSnapshotsBinding,
   listBalanceSnapshotsForStation as listBalanceSnapshotsForStationBinding,
+  listChannelMonitorRuns as listChannelMonitorRunsBinding,
+  listChannelMonitorSummaries as listChannelMonitorSummariesBinding,
+  listChannelMonitorTemplates as listChannelMonitorTemplatesBinding,
+  listChannelMonitors as listChannelMonitorsBinding,
+  listChannelStatusSummaries as listChannelStatusSummariesBinding,
   listCurrentStationBalanceSnapshots as listCurrentStationBalanceSnapshotsBinding,
   listGroupRateRecords as listGroupRateRecordsBinding,
   listKeyPoolItems as listKeyPoolItemsBinding,
@@ -35,6 +45,7 @@ import {
   listChangeEventsForStation as listChangeEventsForStationBinding,
   listCollectorRuns as listCollectorRunsBinding,
   loadLocalRoutingWorkspace as loadLocalRoutingWorkspaceBinding,
+  loadChannelStatusWorkspace as loadChannelStatusWorkspaceBinding,
   loadPricingComparisonWorkspace as loadPricingComparisonWorkspaceBinding,
   listModelAliases as listModelAliasesBinding,
   listModelBasePrices as listModelBasePricesBinding,
@@ -65,6 +76,7 @@ import {
   resolveStationKeyPricingContext as resolveStationKeyPricingContextBinding,
   resetDataDir as resetDataDirBinding,
   resolveChangeEvent as resolveChangeEventBinding,
+  runChannelMonitorNow as runChannelMonitorNowBinding,
   saveStationKeyWithDefaults as saveStationKeyWithDefaultsBinding,
   scanRemoteStationKeys as scanRemoteStationKeysBinding,
   simulateRoute as simulateRouteBinding,
@@ -78,6 +90,8 @@ import {
   upsertStationGroupBinding as upsertStationGroupBindingBinding,
   updateSettings as updateSettingsBinding,
   updateStation as updateStationBinding,
+  updateChannelMonitor as updateChannelMonitorBinding,
+  updateChannelMonitorTemplate as updateChannelMonitorTemplateBinding,
   updateStationCredentials as updateStationCredentialsBinding,
   updateStationKey as updateStationKeyBinding,
   updateStationKeyCapabilities as updateStationKeyCapabilitiesBinding,
@@ -227,6 +241,45 @@ export class DesktopBackend implements BackendClient {
         sessionHash: input.sessionHash ?? null,
         previousResponseId: input.previousResponseId ?? null,
       }),
+  };
+  readonly channels = {
+    listChannelMonitors: () => listChannelMonitorsBinding(),
+    listChannelMonitorSummaries: (
+      options: Parameters<BackendClient["channels"]["listChannelMonitorSummaries"]>[0] = {},
+    ) =>
+      listChannelMonitorSummariesBinding({
+        runSince: options.runSince ?? null,
+        runLimit: options.runLimit ?? null,
+      }),
+    listChannelStatusSummaries: () => listChannelStatusSummariesBinding(),
+    createChannelMonitor: (input: Parameters<BackendClient["channels"]["createChannelMonitor"]>[0]) =>
+      createChannelMonitorBinding(input),
+    updateChannelMonitor: (input: Parameters<BackendClient["channels"]["updateChannelMonitor"]>[0]) =>
+      updateChannelMonitorBinding(input),
+    deleteChannelMonitor: (id: string) => deleteChannelMonitorBinding({ id }),
+    runChannelMonitorNow: (monitorId: string) => runChannelMonitorNowBinding({ monitorId }),
+    listChannelMonitorRuns: (monitorId: string) => listChannelMonitorRunsBinding({ monitorId }),
+    listChannelMonitorTemplates: () => listChannelMonitorTemplatesBinding(),
+    createChannelMonitorTemplate: (
+      input: Parameters<BackendClient["channels"]["createChannelMonitorTemplate"]>[0],
+    ) => createChannelMonitorTemplateBinding(input),
+    updateChannelMonitorTemplate: (
+      input: Parameters<BackendClient["channels"]["updateChannelMonitorTemplate"]>[0],
+    ) => updateChannelMonitorTemplateBinding(input),
+    duplicateChannelMonitorTemplate: (id: string) => duplicateChannelMonitorTemplateBinding({ id }),
+    deleteChannelMonitorTemplate: (id: string) => deleteChannelMonitorTemplateBinding({ id }),
+    loadChannelMonitoringWorkspace: async () => {
+      const [monitorSummaries, stations, keyPoolItems, templates] = await Promise.all([
+        listChannelMonitorSummariesBinding({ runSince: null, runLimit: null }),
+        listStationsBinding().then((stations) => stations.map(normalizeStation)),
+        listKeyPoolItemsBinding(),
+        listChannelMonitorTemplatesBinding(),
+      ]);
+
+      return { monitorSummaries, stations, keyPoolItems, templates };
+    },
+    loadChannelStatusWorkspace: () =>
+      loadChannelStatusWorkspaceBinding() as ReturnType<BackendClient["channels"]["loadChannelStatusWorkspace"]>,
   };
   readonly stationKeys = {
     listStationKeys: (stationId: string) => listStationKeysBinding({ stationId }),

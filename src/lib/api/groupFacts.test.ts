@@ -84,6 +84,7 @@ function testBackendClient(overrides: Partial<BackendClient>): BackendClient {
     groupFacts: {} as BackendClient["groupFacts"],
     pricing: {} as BackendClient["pricing"],
     routing: {} as BackendClient["routing"],
+    channels: {} as BackendClient["channels"],
     handshake: vi.fn(async () => ({}) as never),
     ...overrides,
   };

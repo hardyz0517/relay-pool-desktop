@@ -1,4 +1,15 @@
 import type { RuntimeContractInfo } from "./contract";
+import type {
+  ChannelMonitor,
+  ChannelMonitorRequestTemplate,
+  ChannelMonitorRun,
+  ChannelMonitorSummary,
+  ChannelStatusSummary,
+  CreateChannelMonitorInput,
+  CreateChannelMonitorTemplateInput,
+  UpdateChannelMonitorInput,
+  UpdateChannelMonitorTemplateInput,
+} from "@/lib/types/channelMonitors";
 import type { AppSettings, CcswitchImportResult, UpdateSettingsInput } from "@/lib/types/settings";
 import type {
   BalanceSnapshot,
@@ -204,6 +215,43 @@ export type RoutingDomainClient = {
   simulateRoute(input: RouteSimulationInput): Promise<RouteSimulationResult>;
 };
 
+export type ChannelMonitorSummaryOptions = {
+  runLimit?: number;
+  runSince?: string;
+};
+
+export type ChannelMonitoringWorkspace = {
+  monitorSummaries: ChannelMonitorSummary[];
+  stations: Station[];
+  keyPoolItems: KeyPoolItem[];
+  templates: ChannelMonitorRequestTemplate[];
+};
+
+export type ChannelStatusWorkspace = {
+  keyPoolItems: KeyPoolItem[];
+  requestLogs: RequestLog[];
+  stationKeyHealth: StationKeyHealth[];
+  channelStatusSummaries: ChannelStatusSummary[];
+};
+
+export type ChannelsDomainClient = {
+  listChannelMonitors(): Promise<ChannelMonitor[]>;
+  listChannelMonitorSummaries(options?: ChannelMonitorSummaryOptions): Promise<ChannelMonitorSummary[]>;
+  listChannelStatusSummaries(): Promise<ChannelStatusSummary[]>;
+  createChannelMonitor(input: CreateChannelMonitorInput): Promise<ChannelMonitor>;
+  updateChannelMonitor(input: UpdateChannelMonitorInput): Promise<ChannelMonitor>;
+  deleteChannelMonitor(id: string): Promise<void>;
+  runChannelMonitorNow(monitorId: string): Promise<ChannelMonitorRun[]>;
+  listChannelMonitorRuns(monitorId: string): Promise<ChannelMonitorRun[]>;
+  listChannelMonitorTemplates(): Promise<ChannelMonitorRequestTemplate[]>;
+  createChannelMonitorTemplate(input: CreateChannelMonitorTemplateInput): Promise<ChannelMonitorRequestTemplate>;
+  updateChannelMonitorTemplate(input: UpdateChannelMonitorTemplateInput): Promise<ChannelMonitorRequestTemplate>;
+  duplicateChannelMonitorTemplate(id: string): Promise<ChannelMonitorRequestTemplate>;
+  deleteChannelMonitorTemplate(id: string): Promise<void>;
+  loadChannelMonitoringWorkspace(): Promise<ChannelMonitoringWorkspace>;
+  loadChannelStatusWorkspace(): Promise<ChannelStatusWorkspace>;
+};
+
 export type BackendClient = {
   readonly mode: BackendMode;
   readonly settings: SettingsDomainClient;
@@ -218,6 +266,7 @@ export type BackendClient = {
   readonly groupFacts: GroupFactsDomainClient;
   readonly pricing: PricingDomainClient;
   readonly routing: RoutingDomainClient;
+  readonly channels: ChannelsDomainClient;
   handshake(): Promise<RuntimeContractInfo>;
 };
 

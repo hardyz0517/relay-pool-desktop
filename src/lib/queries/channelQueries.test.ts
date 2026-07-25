@@ -3,40 +3,40 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type { BackendClient } from "@/lib/bridge/BackendClient";
 
-import { loadPricingComparisonWorkspace } from "./pricingQueries";
+import { loadChannelMonitoringWorkspace, loadChannelStatusWorkspace } from "./channelQueries";
 
-describe("pricing workspace backend cutover", () => {
-  const pricing = {
-    loadPricingComparisonWorkspace: vi.fn(async () => ({
+describe("channel query backend cutover", () => {
+  const channels = {
+    loadChannelMonitoringWorkspace: vi.fn(async () => ({
+      monitorSummaries: [],
       stations: [],
-      stationKeys: [],
-      groupBindings: [],
-      groupRates: [],
-      pricingRules: [],
-      developerModeEnabled: false,
+      keyPoolItems: [],
+      templates: [],
+    })),
+    loadChannelStatusWorkspace: vi.fn(async () => ({
+      keyPoolItems: [],
+      requestLogs: [],
+      stationKeyHealth: [],
+      channelStatusSummaries: [],
     })),
   };
 
   beforeEach(() => {
-    setActiveBackendClient(testBackendClient({ pricing: pricing as BackendClient["pricing"] }));
-    pricing.loadPricingComparisonWorkspace.mockClear();
+    setActiveBackendClient(testBackendClient({ channels: channels as unknown as BackendClient["channels"] }));
+    channels.loadChannelMonitoringWorkspace.mockClear();
+    channels.loadChannelStatusWorkspace.mockClear();
   });
 
   afterEach(() => {
     setActiveBackendClient(null);
   });
 
-  it("loads the pricing workspace through the active backend client", async () => {
-    await expect(loadPricingComparisonWorkspace()).resolves.toMatchObject({
-      stations: [],
-      stationKeys: [],
-      groupBindings: [],
-      groupRates: [],
-      pricingRules: [],
-      developerModeEnabled: false,
-    });
+  it("routes channel workspaces through the active backend client", async () => {
+    await loadChannelMonitoringWorkspace();
+    await loadChannelStatusWorkspace();
 
-    expect(pricing.loadPricingComparisonWorkspace).toHaveBeenCalledTimes(1);
+    expect(channels.loadChannelMonitoringWorkspace).toHaveBeenCalledTimes(1);
+    expect(channels.loadChannelStatusWorkspace).toHaveBeenCalledTimes(1);
   });
 });
 

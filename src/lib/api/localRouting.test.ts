@@ -25,6 +25,7 @@ describe("local routing backend cutover", () => {
       groupFacts: {} as never,
       pricing: {} as never,
       routing: {} as never,
+      channels: {} as never,
       handshake: vi.fn(async () => ({}) as never),
     });
     localRouting.loadLocalRoutingWorkspace.mockReset();

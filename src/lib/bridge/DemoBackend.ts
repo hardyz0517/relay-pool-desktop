@@ -100,6 +100,23 @@ export class DemoBackend implements BackendClient {
     getStationKeyHealth: (_stationKeyId: string) => this.rejectUnsupported("routing"),
     simulateRoute: () => this.rejectUnsupported("routing"),
   };
+  readonly channels: BackendClient["channels"] = {
+    listChannelMonitors: () => this.rejectUnsupported("channels"),
+    listChannelMonitorSummaries: () => this.rejectUnsupported("channels"),
+    listChannelStatusSummaries: () => this.rejectUnsupported("channels"),
+    createChannelMonitor: () => this.rejectUnsupported("channels"),
+    updateChannelMonitor: () => this.rejectUnsupported("channels"),
+    deleteChannelMonitor: (_id: string) => this.rejectUnsupported("channels"),
+    runChannelMonitorNow: (_monitorId: string) => this.rejectUnsupported("channels"),
+    listChannelMonitorRuns: (_monitorId: string) => this.rejectUnsupported("channels"),
+    listChannelMonitorTemplates: () => this.rejectUnsupported("channels"),
+    createChannelMonitorTemplate: () => this.rejectUnsupported("channels"),
+    updateChannelMonitorTemplate: () => this.rejectUnsupported("channels"),
+    duplicateChannelMonitorTemplate: (_id: string) => this.rejectUnsupported("channels"),
+    deleteChannelMonitorTemplate: (_id: string) => this.rejectUnsupported("channels"),
+    loadChannelMonitoringWorkspace: () => this.rejectUnsupported("channels"),
+    loadChannelStatusWorkspace: () => this.rejectUnsupported("channels"),
+  };
   readonly stationKeys: BackendClient["stationKeys"] = {
     listStationKeys: (_stationId: string) => this.rejectUnsupported("station_keys"),
     getRemoteKeyCapability: (_stationId: string) => this.rejectUnsupported("station_keys.remote_key"),
