@@ -46,7 +46,7 @@ const monitorGridClassName =
 export function ChannelMonitoringTab({ headerActions, onHealthChanged }: ChannelMonitoringTabProps) {
   const toast = useToast();
   const refreshEnabled = usePageRefreshEnabled();
-  useActivityQuery(refreshEnabled, channelMonitoringQueryOptions());
+  useActivityQuery(channelMonitoringQueryOptions());
   const [monitors, setMonitors] = useState<ChannelMonitor[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
   const [keys, setKeys] = useState<KeyPoolItem[]>([]);

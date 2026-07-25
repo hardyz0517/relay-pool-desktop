@@ -23,7 +23,7 @@ export function RoutingPage() {
   const refreshEnabled = usePageRefreshEnabled();
   const [activeTab, setActiveTab] = useState<LocalRoutingTab>("status");
   const [proxyActionPending, setProxyActionPending] = useState(false);
-  const workspaceQuery = useActivityQuery(refreshEnabled, localRoutingWorkspaceQueryOptions());
+  const workspaceQuery = useActivityQuery(localRoutingWorkspaceQueryOptions());
   const workspace = workspaceQuery.data ?? null;
   const loading = workspaceQuery.isPending && workspaceQuery.data === undefined;
   const error = workspaceQuery.error ? readError(workspaceQuery.error) : null;

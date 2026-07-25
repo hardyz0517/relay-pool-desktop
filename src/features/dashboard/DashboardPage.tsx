@@ -87,19 +87,17 @@ export function DashboardPage() {
   const { state: updaterState, showUpdateDialog } = useUpdater();
   const queryClient = useQueryClient();
   const refreshEnabled = usePageRefreshEnabled();
-  const proxyStatusQuery = useActivityQuery(refreshEnabled, proxyStatusQueryOptions(false));
+  const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions(false));
   const requestLogsQuery = useActivityQuery(
-    refreshEnabled,
     requestLogsQueryOptions(proxyStatusQuery.data?.running ? 2_000 : false),
   );
-  const keyPoolQuery = useActivityQuery(refreshEnabled, keyPoolQueryOptions());
-  const stationsQuery = useActivityQuery(refreshEnabled, stationsQueryOptions());
+  const keyPoolQuery = useActivityQuery(keyPoolQueryOptions());
+  const stationsQuery = useActivityQuery(stationsQueryOptions());
   const balancesQuery = useActivityQuery(
-    refreshEnabled,
     currentStationBalanceSnapshotsQueryOptions(),
   );
-  const settingsQuery = useActivityQuery(refreshEnabled, settingsQueryOptions());
-  const changeEventsQuery = useActivityQuery(refreshEnabled, changeEventsQueryOptions(false));
+  const settingsQuery = useActivityQuery(settingsQueryOptions());
+  const changeEventsQuery = useActivityQuery(changeEventsQueryOptions(false));
   const [startingLocalProxy, setStartingLocalProxy] = useState(false);
   const [stoppingLocalProxy, setStoppingLocalProxy] = useState(false);
   const [importingCCSwitch, setImportingCCSwitch] = useState(false);

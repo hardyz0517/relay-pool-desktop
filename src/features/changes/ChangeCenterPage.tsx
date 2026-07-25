@@ -3,9 +3,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { CheckCheck, RefreshCw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
-  usePageRefreshEnabled,
-} from "@/components/shell/PageActivity";
-import {
   Button,
   ConfirmDialog,
   EmptyState,
@@ -46,9 +43,8 @@ import {
 export function ChangeCenterPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const refreshEnabled = usePageRefreshEnabled();
-  const eventsQuery = useActivityQuery(refreshEnabled, changeEventsQueryOptions(false));
-  const stationsQuery = useActivityQuery(refreshEnabled, stationsQueryOptions());
+  const eventsQuery = useActivityQuery(changeEventsQueryOptions(false));
+  const stationsQuery = useActivityQuery(stationsQueryOptions());
   const events = eventsQuery.data ?? [];
   const stationNamesById = useMemo(
     () => new Map((stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)),

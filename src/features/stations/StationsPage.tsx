@@ -185,12 +185,11 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   const [error, setError] = useState<string | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
-  const stationsQuery = useActivityQuery(refreshEnabled, stationsQueryOptions());
+  const stationsQuery = useActivityQuery(stationsQueryOptions());
   const balancesQuery = useActivityQuery(
-    refreshEnabled,
     currentStationBalanceSnapshotsQueryOptions(),
   );
-  const changesQuery = useActivityQuery(refreshEnabled, changeEventsQueryOptions(false));
+  const changesQuery = useActivityQuery(changeEventsQueryOptions(false));
   const stations = stationsQuery.data ?? [];
   const balanceSnapshots = balancesQuery.data ?? [];
   const changeEvents = changesQuery.data ?? [];

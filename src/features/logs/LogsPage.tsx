@@ -46,13 +46,12 @@ export function LogsPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const refreshEnabled = usePageRefreshEnabled();
-  const proxyStatusQuery = useActivityQuery(refreshEnabled, proxyStatusQueryOptions(false));
+  const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions(false));
   const logsQuery = useActivityQuery(
-    refreshEnabled,
     requestLogsQueryOptions(proxyStatusQuery.data?.running ? 2_000 : false),
   );
-  const keysQuery = useActivityQuery(refreshEnabled, keyPoolQueryOptions());
-  const settingsQuery = useActivityQuery(refreshEnabled, settingsQueryOptions());
+  const keysQuery = useActivityQuery(keyPoolQueryOptions());
+  const settingsQuery = useActivityQuery(settingsQueryOptions());
   const logs = logsQuery.data ?? [];
   const keys = keysQuery.data ?? [];
   const developerModeEnabled = settingsQuery.data?.developerModeEnabled ?? false;

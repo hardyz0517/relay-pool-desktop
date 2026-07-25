@@ -87,8 +87,8 @@ const defaultKeyConnectivityModelOptions = [
 export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const toast = useToast();
   const refreshEnabled = usePageRefreshEnabled();
-  useActivityQuery(refreshEnabled, keyPoolQueryOptions());
-  useActivityQuery(refreshEnabled, stationsQueryOptions());
+  useActivityQuery(keyPoolQueryOptions());
+  useActivityQuery(stationsQueryOptions());
   const [stations, setStations] = useState<Station[]>([]);
   const [items, setItems] = useState<KeyPoolItem[]>([]);
   const [monitors, setMonitors] = useState<ChannelMonitor[]>([]);

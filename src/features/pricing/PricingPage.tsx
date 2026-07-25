@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { Coins, Image, RefreshCw, ShieldCheck, TrendingDown } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageRefreshEnabled } from "@/components/shell/PageActivity";
 import {
   Button,
   EmptyState,
@@ -59,9 +58,7 @@ type PricingPageProps = {
 
 export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
   const toast = useToast();
-  const refreshEnabled = usePageRefreshEnabled();
   const pricingQuery = useActivityQuery(
-    refreshEnabled,
     pricingComparisonQueryOptions(),
   );
   const workspace = pricingQuery.data;

@@ -7,6 +7,7 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import { recordHiddenPageQueryStart } from "@/app/navigationPerformance";
+import { usePageQueryEnabled } from "@/app/navigation/PageVisibility";
 
 type ActivityQueryOptions<
   TQueryFnData,
@@ -23,9 +24,9 @@ export function useActivityQuery<
   TData = TQueryFnData,
   TQueryKey extends QueryKey = QueryKey,
 >(
-  active: boolean,
   options: ActivityQueryOptions<TQueryFnData, TError, TData, TQueryKey>,
 ): UseQueryResult<TData, TError> {
+  const active = usePageQueryEnabled();
   const requestedEnabled = options.enabled !== false;
   const queryEnabled = active && requestedEnabled;
   const guardedQueryFn = useMemo(() => {
