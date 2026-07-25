@@ -72,6 +72,7 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     ChannelMonitoring,
     ChannelStatus,
     CollectorMetadata,
+    StationCollection,
     Pricing,
     ChangeEvents,
     Credentials,
@@ -91,6 +92,7 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     channel_monitoring: ChannelMonitoring,
     channel_status: ChannelStatus,
     collector_metadata: CollectorMetadata,
+    station_collection: StationCollection,
     pricing: Pricing,
     change_events: ChangeEvents,
     credentials: Credentials,
@@ -112,6 +114,7 @@ impl<
         ChannelMonitoring,
         ChannelStatus,
         CollectorMetadata,
+        StationCollection,
         Pricing,
         ChangeEvents,
         Credentials,
@@ -132,6 +135,7 @@ impl<
         ChannelMonitoring,
         ChannelStatus,
         CollectorMetadata,
+        StationCollection,
         Pricing,
         ChangeEvents,
         Credentials,
@@ -160,6 +164,7 @@ impl<
         channel_monitoring: ChannelMonitoring,
         channel_status: ChannelStatus,
         collector_metadata: CollectorMetadata,
+        station_collection: StationCollection,
         pricing: Pricing,
         change_events: ChangeEvents,
         credentials: Credentials,
@@ -180,6 +185,7 @@ impl<
             channel_monitoring,
             channel_status,
             collector_metadata,
+            station_collection,
             pricing,
             change_events,
             credentials,
@@ -318,6 +324,7 @@ pub(crate) fn register_ready_services_with_command_facades<
     ChannelMonitoring,
     ChannelStatus,
     CollectorMetadata,
+    StationCollection,
     Pricing,
     ChangeEvents,
     Credentials,
@@ -340,6 +347,7 @@ pub(crate) fn register_ready_services_with_command_facades<
         ChannelMonitoring,
         ChannelStatus,
         CollectorMetadata,
+        StationCollection,
         Pricing,
         ChangeEvents,
         Credentials,
@@ -362,6 +370,7 @@ where
     ChannelMonitoring: Send + Sync + 'static,
     ChannelStatus: Send + Sync + 'static,
     CollectorMetadata: Send + Sync + 'static,
+    StationCollection: Send + Sync + 'static,
     Pricing: Send + Sync + 'static,
     ChangeEvents: Send + Sync + 'static,
     Credentials: Send + Sync + 'static,
@@ -394,6 +403,7 @@ pub(crate) fn register_ready_services_with_command_facades_in<
     ChannelMonitoring,
     ChannelStatus,
     CollectorMetadata,
+    StationCollection,
     Pricing,
     ChangeEvents,
     Credentials,
@@ -416,6 +426,7 @@ pub(crate) fn register_ready_services_with_command_facades_in<
         ChannelMonitoring,
         ChannelStatus,
         CollectorMetadata,
+        StationCollection,
         Pricing,
         ChangeEvents,
         Credentials,
@@ -438,6 +449,7 @@ where
     ChannelMonitoring: Send + Sync + 'static,
     ChannelStatus: Send + Sync + 'static,
     CollectorMetadata: Send + Sync + 'static,
+    StationCollection: Send + Sync + 'static,
     Pricing: Send + Sync + 'static,
     ChangeEvents: Send + Sync + 'static,
     Credentials: Send + Sync + 'static,
@@ -458,6 +470,7 @@ where
         || registry.contains::<ChannelMonitoring>()
         || registry.contains::<ChannelStatus>()
         || registry.contains::<CollectorMetadata>()
+        || registry.contains::<StationCollection>()
         || registry.contains::<Pricing>()
         || registry.contains::<ChangeEvents>()
         || registry.contains::<Credentials>()
@@ -481,6 +494,7 @@ where
         channel_monitoring,
         channel_status,
         collector_metadata,
+        station_collection,
         pricing,
         change_events,
         credentials,
@@ -520,6 +534,9 @@ where
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(collector_metadata) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(station_collection) {
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(pricing) {
@@ -609,6 +626,8 @@ mod tests {
     struct SlotSeventeen(u8);
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct SlotEighteen(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotNineteen(u8);
 
     #[derive(Default)]
     struct TestRegistry {
@@ -645,7 +664,7 @@ mod tests {
 
     #[test]
     fn command_facade_ready_services_preflight_every_concrete_slot() {
-        for occupied_slot in 0..18 {
+        for occupied_slot in 0..19 {
             let mut registry = TestRegistry::default();
             match occupied_slot {
                 0 => assert!(registry.manage_direct(SlotOne(99))),
@@ -666,6 +685,7 @@ mod tests {
                 15 => assert!(registry.manage_direct(SlotSixteen(99))),
                 16 => assert!(registry.manage_direct(SlotSeventeen(99))),
                 17 => assert!(registry.manage_direct(SlotEighteen(99))),
+                18 => assert!(registry.manage_direct(SlotNineteen(99))),
                 _ => unreachable!(),
             }
 
@@ -691,6 +711,7 @@ mod tests {
                     SlotSixteen(1),
                     SlotSeventeen(1),
                     SlotEighteen(1),
+                    SlotNineteen(1),
                 ),
             )
             .expect_err("occupied slots must fail before publishing any new ready state");
@@ -715,6 +736,7 @@ mod tests {
                 registry.try_state::<SlotSixteen>().map(|state| state.0),
                 registry.try_state::<SlotSeventeen>().map(|state| state.0),
                 registry.try_state::<SlotEighteen>().map(|state| state.0),
+                registry.try_state::<SlotNineteen>().map(|state| state.0),
             ];
             let expected = std::array::from_fn(|index| (index == occupied_slot).then_some(99));
             assert_eq!(observed, expected);
@@ -747,6 +769,7 @@ mod tests {
                 SlotSixteen(16),
                 SlotSeventeen(17),
                 SlotEighteen(18),
+                SlotNineteen(19),
             ),
         )
         .expect("vacant registry must publish every ready state");
@@ -772,5 +795,6 @@ mod tests {
             Some(SlotSeventeen(17))
         );
         assert_eq!(registry.try_state::<SlotEighteen>(), Some(SlotEighteen(18)));
+        assert_eq!(registry.try_state::<SlotNineteen>(), Some(SlotNineteen(19)));
     }
 }

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "owner": "Task 7",
   "source_inventory_item": "S2-T7-command-facades",
-  "current_shard": "settings-stations-key-pool-remote-keys-routing-request-log-channel-monitoring-channel-status-collector-metadata-pricing-change-events-credentials-data-directory-local-proxy-command-facades",
+  "current_shard": "settings-stations-key-pool-remote-keys-routing-request-log-channel-monitoring-channel-status-collector-metadata-station-collection-pricing-change-events-credentials-data-directory-local-proxy-command-facades",
   "migration_state": "partial",
   "facades": [
     {
@@ -598,6 +598,55 @@
         "collector execution commands",
         "station login/test commands",
         "capture session commands",
+        "remote-key workflows"
+      ]
+    },
+    {
+      "state_type": "StationCollectionCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/station_collection.rs",
+      "dependencies": [
+        "CollectorService",
+        "CredentialService",
+        "SettingsService",
+        "Data key captured at composition"
+      ],
+      "commands": [
+        {
+          "command": "detect_sub2api_station",
+          "use_case": "run_station_collection",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService", "Data key"]
+        },
+        {
+          "command": "collect_sub2api_station",
+          "use_case": "run_station_collection",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService", "Data key"]
+        },
+        {
+          "command": "detect_station_info",
+          "use_case": "run_station_collection",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService", "Data key"]
+        },
+        {
+          "command": "collect_station_info",
+          "use_case": "run_station_collection",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService", "Data key"]
+        },
+        {
+          "command": "collect_station_task",
+          "use_case": "run_station_collection",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService", "Data key"]
+        },
+        {
+          "command": "test_station_login",
+          "use_case": "test_station_login",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService", "Data key"]
+        }
+      ],
+      "non_goals": [
+        "test_station_login_input",
+        "capture session commands",
+        "web authorization commands",
+        "collector metadata read commands",
         "remote-key workflows"
       ]
     },

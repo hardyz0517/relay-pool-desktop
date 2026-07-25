@@ -24,6 +24,7 @@ use crate::{
             EndpointPingCommandError, KeyPoolCommandFacade, LocalProxyCommandError,
             LocalProxyCommandFacade, PricingCommandFacade, RemoteKeysCommandFacade,
             RequestLogsCommandFacade, RoutingCommandFacade, SettingsStationsCommandFacade,
+            StationCollectionCommandError, StationCollectionCommandFacade,
         },
         error::ApplicationError,
         pagination::PageLimit,
@@ -2243,84 +2244,73 @@ pub async fn clear_station_credentials(
 
 #[tauri::command]
 pub async fn detect_sub2api_station(
-    services: State<'_, AppServices>,
-    secrets: State<'_, SecretManager>,
+    facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
     correlation::in_command_scope("detect_sub2api_station", async {
         let input = CollectorStationIdInputDto::parse(input)?;
-        run_station_collection_v2(
-            services.inner(),
-            *secrets.data_key(),
-            input.station_id,
-            collectors::adapters::CollectorTask::Detect,
-        )
-        .await
+        facade
+            .run_station_collection(
+                input.station_id,
+                collectors::adapters::CollectorTask::Detect,
+            )
+            .await
+            .map_err(public_station_collection_error)
     })
     .await
 }
 
 #[tauri::command]
 pub async fn collect_sub2api_station(
-    services: State<'_, AppServices>,
-    secrets: State<'_, SecretManager>,
+    facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
     correlation::in_command_scope("collect_sub2api_station", async {
         let input = CollectorStationIdInputDto::parse(input)?;
-        run_station_collection_v2(
-            services.inner(),
-            *secrets.data_key(),
-            input.station_id,
-            collectors::adapters::CollectorTask::Full,
-        )
-        .await
+        facade
+            .run_station_collection(input.station_id, collectors::adapters::CollectorTask::Full)
+            .await
+            .map_err(public_station_collection_error)
     })
     .await
 }
 
 #[tauri::command]
 pub async fn detect_station_info(
-    services: State<'_, AppServices>,
-    secrets: State<'_, SecretManager>,
+    facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
     correlation::in_command_scope("detect_station_info", async {
         let input = CollectorStationIdInputDto::parse(input)?;
-        run_station_collection_v2(
-            services.inner(),
-            *secrets.data_key(),
-            input.station_id,
-            collectors::adapters::CollectorTask::Detect,
-        )
-        .await
+        facade
+            .run_station_collection(
+                input.station_id,
+                collectors::adapters::CollectorTask::Detect,
+            )
+            .await
+            .map_err(public_station_collection_error)
     })
     .await
 }
 
 #[tauri::command]
 pub async fn collect_station_info(
-    services: State<'_, AppServices>,
-    secrets: State<'_, SecretManager>,
+    facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
     correlation::in_command_scope("collect_station_info", async {
         let input = CollectorStationIdInputDto::parse(input)?;
-        run_station_collection_v2(
-            services.inner(),
-            *secrets.data_key(),
-            input.station_id,
-            collectors::adapters::CollectorTask::Full,
-        )
-        .await
+        facade
+            .run_station_collection(input.station_id, collectors::adapters::CollectorTask::Full)
+            .await
+            .map_err(public_station_collection_error)
     })
     .await
 }
 
 #[tauri::command]
 pub async fn collect_station_task(
-    services: State<'_, AppServices>,
-    secrets: State<'_, SecretManager>,
+    facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
     correlation::in_command_scope("collect_station_task", async {
@@ -2332,38 +2322,25 @@ pub async fn collect_station_task(
             StationCollectorTaskTypeDto::Models => collectors::adapters::CollectorTask::Models,
             StationCollectorTaskTypeDto::Full => collectors::adapters::CollectorTask::Full,
         };
-        run_station_collection_v2(
-            services.inner(),
-            *secrets.data_key(),
-            input.station_id,
-            task,
-        )
-        .await
+        facade
+            .run_station_collection(input.station_id, task)
+            .await
+            .map_err(public_station_collection_error)
     })
     .await
 }
 
 #[tauri::command]
 pub async fn test_station_login(
-    services: State<'_, AppServices>,
-    secrets: State<'_, SecretManager>,
+    facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
     correlation::in_command_scope("test_station_login", async {
         let input = CollectorStationIdInputDto::parse(input)?;
-        let data_key = *secrets.data_key();
-        let source = collectors::V2CollectorSourceAdapter::new(
-            services.collectors.clone(),
-            services.credentials.clone(),
-            services.settings.clone(),
-        );
-        let prepared = tauri::async_runtime::spawn_blocking(move || {
-            collectors::prepare_station_login_test_v2(&source, &data_key, input.station_id)
-        })
-        .await
-        .map_err(|_| error::CommandError::internal(None))?
-        .map_err(public_command_application_error)?;
-        apply_prepared_collection_v2(services.inner(), prepared).await
+        facade
+            .test_station_login(input.station_id)
+            .await
+            .map_err(public_station_collection_error)
     })
     .await
 }
@@ -2389,34 +2366,12 @@ fn public_station_login_probe_error(_: String) -> error::CommandError {
     })
 }
 
-async fn run_station_collection_v2(
-    services: &AppServices,
-    data_key: [u8; 32],
-    station_id: String,
-    task: collectors::adapters::CollectorTask,
-) -> Result<CollectorRunResultDto, error::CommandError> {
-    let source = collectors::V2CollectorSourceAdapter::new(
-        services.collectors.clone(),
-        services.credentials.clone(),
-        services.settings.clone(),
-    );
-    let prepared = tauri::async_runtime::spawn_blocking(move || {
-        collectors::prepare_station_collection_v2(&source, &data_key, station_id, task)
-    })
-    .await
-    .map_err(|_| error::CommandError::internal(None))?
-    .map_err(public_command_application_error)?;
-    apply_prepared_collection_v2(services, prepared).await
-}
-
-async fn apply_prepared_collection_v2(
-    services: &AppServices,
-    prepared: collectors::PreparedStationCollection,
-) -> Result<CollectorRunResultDto, error::CommandError> {
-    let apply = collectors::apply::V2CollectorApplyAdapter::new((*services.collectors).clone());
-    collectors::apply_prepared_station_collection_v2(&services.collectors, &apply, prepared)
-        .await
-        .map_err(command_application_error)
+fn public_station_collection_error(error: StationCollectionCommandError) -> error::CommandError {
+    match error {
+        StationCollectionCommandError::Prepare(error) => public_command_application_error(error),
+        StationCollectionCommandError::Apply(error) => command_application_error(error),
+        StationCollectionCommandError::Internal => error::CommandError::internal(None),
+    }
 }
 
 #[tauri::command]

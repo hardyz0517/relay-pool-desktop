@@ -11,6 +11,7 @@ mod remote_keys;
 mod request_logs;
 mod routing;
 mod settings_stations;
+mod station_collection;
 
 pub(crate) use change_events::ChangeEventsCommandFacade;
 pub(crate) use channel_monitoring::ChannelMonitoringCommandFacade;
@@ -25,3 +26,6 @@ pub(crate) use remote_keys::RemoteKeysCommandFacade;
 pub(crate) use request_logs::RequestLogsCommandFacade;
 pub(crate) use routing::{EndpointPingCommandError, RoutingCommandFacade};
 pub(crate) use settings_stations::SettingsStationsCommandFacade;
+pub(crate) use station_collection::{
+    StationCollectionCommandError, StationCollectionCommandFacade,
+};
