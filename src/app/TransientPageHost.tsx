@@ -4,6 +4,7 @@ import {
   completeTransientPageExit,
   type TransientPageExitSnapshot,
 } from "@/app/transientPageExitPolicy";
+import { transientPageVisibility } from "@/app/navigation/PageVisibility";
 import { PageActivityProvider } from "@/components/shell/PageActivity";
 import type { TransientPageId } from "@/lib/types/navigation";
 
@@ -39,6 +40,7 @@ const ACTIONABLE_ELEMENT_SELECTOR = [
 
 function TransientPageLayer({ page }: { page: TransientPageDescriptor }) {
   const isPresent = useIsPresent();
+  const visibility = transientPageVisibility(isPresent);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
@@ -62,7 +64,7 @@ function TransientPageLayer({ page }: { page: TransientPageDescriptor }) {
       data-page-transition-page-id={page.pageId}
       data-page-transition-state={isPresent ? "active" : "exiting"}
     >
-      <PageActivityProvider active={isPresent}>
+      <PageActivityProvider visibility={visibility}>
         <motion.div
           aria-hidden={!isPresent}
           className="app-page-transition-content"

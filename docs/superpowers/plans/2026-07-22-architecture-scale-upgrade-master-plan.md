@@ -545,6 +545,8 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 
 ### Task 10：建立 canonical query policy 和唯一 PageVisibility
 
+**当前 checkpoint：** `S3-T10-page-visibility-foundation` 已建立 `PageVisibility` canonical provider、shell/transient visibility mapping 和 `pageRetentionPolicy` migration allowlist；`ShellPageHost`/`TransientPageHost` 只向旧 `PageActivity` adapter 传 visibility，`refreshRouteId` 二级刷新 owner 已删除。当前 retention allowlist 暂时保持现有全部 shell 页面保活行为，Task 11-13 逐页迁移 query/read model 后再收窄；Stations per-row `useQueries`、DOM data event 和业务 query/local-copy 双 owner 尚未删除。
+
 **文件：**
 
 - Create: `src/app/navigation/PageVisibility.tsx`
@@ -558,7 +560,7 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 - [ ] current/entering page 才是 foreground；previous/leaving/retained/被 transient 覆盖的 shell page 均为 background，并同步设置 inert/focus/keyboard ownership。transition test 覆盖快速往返、reduced motion、transient open/close 和焦点恢复。
 - [ ] 默认离开页面后 unmount；昂贵不可序列化 draft 只能进入显式 retention allowlist，并具有内存上限。
 - [ ] prefetch 使用 QueryClient，不通过预挂载隐藏页面。
-- [ ] `PageActivity` 只可作为迁移 adapter，输入必须收敛到 visibility；最终删除第二套 refresh 语义。
+- [x] `PageActivity` 只可作为迁移 adapter，输入必须收敛到 visibility；最终删除第二套 refresh 语义。
 - [ ] 增加 hidden-query-start metric，invariant 违反时测试 fail，不用补偿 refresh 掩盖。
 - [ ] `PageVisibility` 只控制订阅/refetch policy，不清空 cache 或提交业务状态；短 command 的 AbortSignal 只能阻止过期结果进入 cache，不能谎称后端已取消。需要真实取消/progress 的工作必须进入 OperationRegistry。
 

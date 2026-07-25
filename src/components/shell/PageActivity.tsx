@@ -1,8 +1,12 @@
-import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
-  InteractionActivityProvider,
-  useInteractionActivity,
-} from "@/components/ui/InteractionActivity";
+  createPageVisibility,
+  PageVisibilityProvider,
+  usePageQueryEnabled,
+  usePageVisibility,
+  type PageVisibility as CanonicalPageVisibility,
+} from "@/app/navigation/PageVisibility";
+import { useInteractionActivity } from "@/components/ui/InteractionActivity";
 
 export type PageActivity = {
   interactive: boolean;
@@ -13,43 +17,43 @@ type PageActivation = {
   isInitial: boolean;
 };
 
-const PageActivityContext = createContext<PageActivity>({
-  interactive: true,
-  refreshEnabled: true,
-});
-const PageRefreshContext = createContext(true);
-
 export function PageActivityProvider({
   active,
   refreshEnabled = active,
+  visibility,
   children,
 }: {
-  active: boolean;
+  active?: boolean;
   refreshEnabled?: boolean;
+  visibility?: CanonicalPageVisibility;
   children: ReactNode;
 }) {
-  const value = useMemo<PageActivity>(
-    () => ({ interactive: active, refreshEnabled }),
-    [active, refreshEnabled],
-  );
-
+  const resolvedVisibility = visibility ?? createPageVisibility({
+    kind: active && refreshEnabled ? "foreground" : "background",
+    interactive: Boolean(active),
+    queryEnabled: Boolean(active && refreshEnabled),
+    reason: active ? "active" : "inactive",
+  });
   return (
-    <PageActivityContext.Provider value={value}>
-      <PageRefreshContext.Provider value={value.refreshEnabled}>
-        <InteractionActivityProvider active={active}>
-          {children}
-        </InteractionActivityProvider>
-      </PageRefreshContext.Provider>
-    </PageActivityContext.Provider>
+    <PageVisibilityProvider visibility={resolvedVisibility}>
+      {children}
+    </PageVisibilityProvider>
   );
 }
 
 export function usePageActivity() {
-  return useContext(PageActivityContext);
+  const visibility = usePageVisibility();
+  return useMemo<PageActivity>(
+    () => ({
+      interactive: visibility.interactive,
+      refreshEnabled: visibility.queryEnabled,
+    }),
+    [visibility.interactive, visibility.queryEnabled],
+  );
 }
 
 export function usePageRefreshEnabled() {
-  return useContext(PageRefreshContext);
+  return usePageQueryEnabled();
 }
 
 export function usePageActivation(onActivate: (activation: PageActivation) => void) {
