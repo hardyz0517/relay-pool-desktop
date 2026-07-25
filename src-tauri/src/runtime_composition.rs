@@ -69,6 +69,7 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     Routing,
     RequestLogs,
     ChannelMonitoring,
+    ChannelStatus,
     Pricing,
     ChangeEvents,
     Credentials,
@@ -83,6 +84,7 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     routing: Routing,
     request_logs: RequestLogs,
     channel_monitoring: ChannelMonitoring,
+    channel_status: ChannelStatus,
     pricing: Pricing,
     change_events: ChangeEvents,
     credentials: Credentials,
@@ -99,6 +101,7 @@ impl<
         Routing,
         RequestLogs,
         ChannelMonitoring,
+        ChannelStatus,
         Pricing,
         ChangeEvents,
         Credentials,
@@ -114,6 +117,7 @@ impl<
         Routing,
         RequestLogs,
         ChannelMonitoring,
+        ChannelStatus,
         Pricing,
         ChangeEvents,
         Credentials,
@@ -137,6 +141,7 @@ impl<
         routing: Routing,
         request_logs: RequestLogs,
         channel_monitoring: ChannelMonitoring,
+        channel_status: ChannelStatus,
         pricing: Pricing,
         change_events: ChangeEvents,
         credentials: Credentials,
@@ -152,6 +157,7 @@ impl<
             routing,
             request_logs,
             channel_monitoring,
+            channel_status,
             pricing,
             change_events,
             credentials,
@@ -285,6 +291,7 @@ pub(crate) fn register_ready_services_with_command_facades<
     Routing,
     RequestLogs,
     ChannelMonitoring,
+    ChannelStatus,
     Pricing,
     ChangeEvents,
     Credentials,
@@ -302,6 +309,7 @@ pub(crate) fn register_ready_services_with_command_facades<
         Routing,
         RequestLogs,
         ChannelMonitoring,
+        ChannelStatus,
         Pricing,
         ChangeEvents,
         Credentials,
@@ -319,6 +327,7 @@ where
     Routing: Send + Sync + 'static,
     RequestLogs: Send + Sync + 'static,
     ChannelMonitoring: Send + Sync + 'static,
+    ChannelStatus: Send + Sync + 'static,
     Pricing: Send + Sync + 'static,
     ChangeEvents: Send + Sync + 'static,
     Credentials: Send + Sync + 'static,
@@ -346,6 +355,7 @@ pub(crate) fn register_ready_services_with_command_facades_in<
     Routing,
     RequestLogs,
     ChannelMonitoring,
+    ChannelStatus,
     Pricing,
     ChangeEvents,
     Credentials,
@@ -363,6 +373,7 @@ pub(crate) fn register_ready_services_with_command_facades_in<
         Routing,
         RequestLogs,
         ChannelMonitoring,
+        ChannelStatus,
         Pricing,
         ChangeEvents,
         Credentials,
@@ -380,6 +391,7 @@ where
     Routing: Send + Sync + 'static,
     RequestLogs: Send + Sync + 'static,
     ChannelMonitoring: Send + Sync + 'static,
+    ChannelStatus: Send + Sync + 'static,
     Pricing: Send + Sync + 'static,
     ChangeEvents: Send + Sync + 'static,
     Credentials: Send + Sync + 'static,
@@ -395,6 +407,7 @@ where
         || registry.contains::<Routing>()
         || registry.contains::<RequestLogs>()
         || registry.contains::<ChannelMonitoring>()
+        || registry.contains::<ChannelStatus>()
         || registry.contains::<Pricing>()
         || registry.contains::<ChangeEvents>()
         || registry.contains::<Credentials>()
@@ -413,6 +426,7 @@ where
         routing,
         request_logs,
         channel_monitoring,
+        channel_status,
         pricing,
         change_events,
         credentials,
@@ -441,6 +455,9 @@ where
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(channel_monitoring) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(channel_status) {
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(pricing) {
@@ -514,6 +531,8 @@ mod tests {
     struct SlotTwelve(u8);
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct SlotThirteen(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotFourteen(u8);
 
     #[derive(Default)]
     struct TestRegistry {
@@ -550,7 +569,7 @@ mod tests {
 
     #[test]
     fn command_facade_ready_services_preflight_every_concrete_slot() {
-        for occupied_slot in 0..13 {
+        for occupied_slot in 0..14 {
             let mut registry = TestRegistry::default();
             match occupied_slot {
                 0 => assert!(registry.manage_direct(SlotOne(99))),
@@ -566,6 +585,7 @@ mod tests {
                 10 => assert!(registry.manage_direct(SlotEleven(99))),
                 11 => assert!(registry.manage_direct(SlotTwelve(99))),
                 12 => assert!(registry.manage_direct(SlotThirteen(99))),
+                13 => assert!(registry.manage_direct(SlotFourteen(99))),
                 _ => unreachable!(),
             }
 
@@ -586,6 +606,7 @@ mod tests {
                     SlotEleven(1),
                     SlotTwelve(1),
                     SlotThirteen(1),
+                    SlotFourteen(1),
                 ),
             )
             .expect_err("occupied slots must fail before publishing any new ready state");
@@ -605,6 +626,7 @@ mod tests {
                 registry.try_state::<SlotEleven>().map(|state| state.0),
                 registry.try_state::<SlotTwelve>().map(|state| state.0),
                 registry.try_state::<SlotThirteen>().map(|state| state.0),
+                registry.try_state::<SlotFourteen>().map(|state| state.0),
             ];
             let expected = std::array::from_fn(|index| (index == occupied_slot).then_some(99));
             assert_eq!(observed, expected);
@@ -632,6 +654,7 @@ mod tests {
                 SlotEleven(11),
                 SlotTwelve(12),
                 SlotThirteen(13),
+                SlotFourteen(14),
             ),
         )
         .expect("vacant registry must publish every ready state");
@@ -649,5 +672,6 @@ mod tests {
         assert_eq!(registry.try_state::<SlotEleven>(), Some(SlotEleven(11)));
         assert_eq!(registry.try_state::<SlotTwelve>(), Some(SlotTwelve(12)));
         assert_eq!(registry.try_state::<SlotThirteen>(), Some(SlotThirteen(13)));
+        assert_eq!(registry.try_state::<SlotFourteen>(), Some(SlotFourteen(14)));
     }
 }

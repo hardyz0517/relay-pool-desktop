@@ -19,9 +19,9 @@ use crate::{
     application::{
         app_services::AppServices,
         command_facades::{
-            ChangeEventsCommandFacade, ChannelMonitoringCommandFacade, CredentialsCommandFacade,
-            KeyPoolCommandFacade, PricingCommandFacade, RequestLogsCommandFacade,
-            RoutingCommandFacade, SettingsStationsCommandFacade,
+            ChangeEventsCommandFacade, ChannelMonitoringCommandFacade, ChannelStatusCommandFacade,
+            CredentialsCommandFacade, KeyPoolCommandFacade, PricingCommandFacade,
+            RequestLogsCommandFacade, RoutingCommandFacade, SettingsStationsCommandFacade,
         },
         error::ApplicationError,
         pagination::PageLimit,
@@ -1455,14 +1455,13 @@ pub async fn list_channel_monitor_summaries(
 
 #[tauri::command]
 pub async fn list_channel_status_summaries(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelStatusCommandFacade>,
     input: Value,
 ) -> Result<Vec<ChannelStatusSummaryDto>, error::CommandError> {
     correlation::in_command_scope("list_channel_status_summaries", async {
         EmptyInputDto::parse(input)?;
-        services
-            .channel_status
-            .load(PageLimit::new(200).expect("bounded limit"))
+        facade
+            .list_channel_status_summaries(PageLimit::new(200).expect("bounded limit"))
             .await
             .map_err(public_command_application_error)
     })
@@ -1471,14 +1470,13 @@ pub async fn list_channel_status_summaries(
 
 #[tauri::command]
 pub async fn load_channel_status_workspace(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelStatusCommandFacade>,
     input: Value,
 ) -> Result<ChannelStatusWorkspaceDto, error::CommandError> {
     correlation::in_command_scope("load_channel_status_workspace", async {
         EmptyInputDto::parse(input)?;
-        services
-            .channel_status
-            .load_workspace(PageLimit::new(200).expect("bounded limit"))
+        facade
+            .load_channel_status_workspace(PageLimit::new(200).expect("bounded limit"))
             .await
             .map(ChannelStatusWorkspaceDto::from)
             .map_err(public_command_application_error)

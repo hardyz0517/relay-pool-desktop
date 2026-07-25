@@ -2,7 +2,7 @@
   "schema_version": 1,
   "owner": "Task 7",
   "source_inventory_item": "S2-T7-command-facades",
-  "current_shard": "settings-stations-key-pool-routing-request-log-channel-monitoring-pricing-change-events-credentials-command-facades",
+  "current_shard": "settings-stations-key-pool-routing-request-log-channel-monitoring-channel-status-pricing-change-events-credentials-command-facades",
   "migration_state": "partial",
   "facades": [
     {
@@ -442,6 +442,29 @@
         "station login/test commands",
         "collector session persistence",
         "remote-key credential workflows"
+      ]
+    },
+    {
+      "state_type": "ChannelStatusCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/channel_status.rs",
+      "dependencies": [
+        "ChannelStatusQuery"
+      ],
+      "commands": [
+        {
+          "command": "list_channel_status_summaries",
+          "use_case": "list_channel_status_summaries",
+          "dependencies": ["ChannelStatusQuery"]
+        },
+        {
+          "command": "load_channel_status_workspace",
+          "use_case": "load_channel_status_workspace",
+          "dependencies": ["ChannelStatusQuery"]
+        }
+      ],
+      "non_goals": [
+        "load_pricing_comparison_workspace",
+        "channel monitor runner commands"
       ]
     }
   ],
