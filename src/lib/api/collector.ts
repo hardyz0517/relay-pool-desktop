@@ -1,18 +1,22 @@
-import { invoke } from "@/lib/bridge/transport";
 import {
+  clearCaptureSession as clearCaptureSessionGenerated,
   collectStationInfo as collectStationInfoGenerated,
   collectStationTask as collectStationTaskGenerated,
   collectSub2apiStation as collectSub2apiStationGenerated,
+  closeCaptureSession as closeCaptureSessionGenerated,
   detectStationInfo as detectStationInfoGenerated,
   detectSub2apiStation as detectSub2apiStationGenerated,
+  finishCaptureSession as finishCaptureSessionGenerated,
+  finishWebAuthorizationSession as finishWebAuthorizationSessionGenerated,
+  getCaptureSessionStatus as getCaptureSessionStatusGenerated,
   getLatestCollectorSnapshot as getLatestCollectorSnapshotGenerated,
   listCollectorSnapshots as listCollectorSnapshotsGenerated,
+  startCaptureSession as startCaptureSessionGenerated,
   testStationLogin as testStationLoginGenerated,
   testStationLoginInput as testStationLoginInputGenerated,
 } from "@/lib/bridge/generated";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
-  CaptureSessionStatus,
   CollectorRunResult,
   CollectorSnapshot,
   CollectorTaskType,
@@ -113,7 +117,7 @@ export function getLatestCollectorSnapshot(stationId: string) {
 }
 
 export function startCaptureSession(stationId: string) {
-  return invoke<CaptureSessionStatus>("start_capture_session", { stationId }).catch((error) => {
+  return startCaptureSessionGenerated({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return {
         stationId,
@@ -134,7 +138,7 @@ export function startManualAuthorization(stationId: string) {
 }
 
 export function getCaptureSessionStatus(stationId: string) {
-  return invoke<CaptureSessionStatus>("get_capture_session_status", { stationId }).catch((error) => {
+  return getCaptureSessionStatusGenerated({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return {
         stationId,
@@ -151,7 +155,7 @@ export function getCaptureSessionStatus(stationId: string) {
 }
 
 export function finishCaptureSession(stationId: string) {
-  return invoke<CollectorRunResult>("finish_capture_session", { stationId }).catch((error) => {
+  return finishCaptureSessionGenerated({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return createMemoryRun(stationId, "webview-capture", "manual_required");
     }
@@ -160,7 +164,7 @@ export function finishCaptureSession(stationId: string) {
 }
 
 export function finishWebAuthorizationSession(stationId: string) {
-  return invoke<CollectorRunResult>("finish_web_authorization_session", { stationId }).catch((error) => {
+  return finishWebAuthorizationSessionGenerated({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return createMemoryRun(stationId, "webview-capture", "manual_required");
     }
@@ -169,7 +173,7 @@ export function finishWebAuthorizationSession(stationId: string) {
 }
 
 export function clearCaptureSession(stationId: string) {
-  return invoke<CaptureSessionStatus>("clear_capture_session", { stationId }).catch((error) => {
+  return clearCaptureSessionGenerated({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return {
         stationId,
@@ -186,7 +190,7 @@ export function clearCaptureSession(stationId: string) {
 }
 
 export function closeCaptureSession(stationId: string) {
-  return invoke<CaptureSessionStatus>("close_capture_session", { stationId }).catch((error) => {
+  return closeCaptureSessionGenerated({ stationId }).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return {
         stationId,

@@ -60,6 +60,7 @@ use crate::{
             UpdateLocalAccessKeyInputDto, UpdateSettingsInputDto,
         },
         station_collector_operations::{
+            CaptureSessionStatusDto, CaptureStationIdInputDto, CapturedHttpEventInputDto,
             CollectorRunResultDto, StationCollectorTaskInputDto, StationCollectorTaskTypeDto,
             StationLoginTestInputDto, StationLoginTestResultDto,
         },
@@ -87,7 +88,7 @@ use crate::{
     },
     ipc::runtime_contract::{current_runtime_contract, RuntimeContractInfo},
     models::{
-        capture::{CaptureSessionStatus, CapturedHttpEventInput},
+        capture::CapturedHttpEventInput,
         collector::CollectorRunResult,
         credentials::PersistStationSessionInput,
         proxy::{ProxyStatus, UpstreamApiFormat},
@@ -2587,171 +2588,197 @@ pub async fn start_capture_session(
     app: tauri::AppHandle,
     services: State<'_, AppServices>,
     sessions: State<'_, capture::session::CaptureSessionStore>,
-    station_id: String,
-) -> Result<CaptureSessionStatus, error::CommandError> {
-    let station = services
-        .stations
-        .station_for_capture(&station_id)
-        .await
-        .map_err(command_application_error)?;
-    let credentials = services
-        .credentials
-        .get_station_credentials(station_id.clone())
-        .await
-        .map_err(command_application_error)?;
-    let login_password_secret = if credentials.password_present {
-        services
-            .credentials
-            .get_station_login_password(station_id.clone())
+    input: Value,
+) -> Result<CaptureSessionStatusDto, error::CommandError> {
+    correlation::in_command_scope("start_capture_session", async {
+        let input = CaptureStationIdInputDto::parse(input)?;
+        let station_id = input.station_id;
+        let station = services
+            .stations
+            .station_for_capture(&station_id)
             .await
-            .map_err(command_application_error)?
-    } else {
-        None
-    };
-    let login_password = login_password_secret
-        .as_ref()
-        .map(|secret| {
-            std::str::from_utf8(secret.as_bytes())
-                .map_err(|_| "stored station login password is not valid UTF-8".to_string())
-        })
-        .transpose()?;
-    let label = capture_window_label(&station_id);
-    let endpoint_revision = station.endpoint_revision;
-    let script = capture_script(
-        &station_id,
-        &label,
-        credentials.login_username.as_deref(),
-        login_password,
-    );
-    let app_handle = app.clone();
-    let label_for_start = label.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Some(window) = app_handle.get_webview_window(&label_for_start) {
-            window
-                .set_focus()
-                .map_err(|error| format!("聚焦捕获窗口失败: {error}"))?;
+            .map_err(command_application_error)?;
+        let credentials = services
+            .credentials
+            .get_station_credentials(station_id.clone())
+            .await
+            .map_err(command_application_error)?;
+        let login_password_secret = if credentials.password_present {
+            services
+                .credentials
+                .get_station_login_password(station_id.clone())
+                .await
+                .map_err(command_application_error)?
         } else {
-            tauri::WebviewWindowBuilder::new(
-                &app_handle,
-                label_for_start.clone(),
-                tauri::WebviewUrl::External(
-                    "about:blank"
-                        .parse()
-                        .map_err(|error| format!("捕获窗口初始化失败: {error}"))?,
-                ),
-            )
-            .title(format!("网页登录 / 捕获 - {}", station.name))
-            .inner_size(1100.0, 760.0)
-            .initialization_script(&script)
-            .build()
-            .map_err(|error| format!("打开网页登录窗口失败: {error}"))?;
+            None
+        };
+        let login_password = login_password_secret
+            .as_ref()
+            .map(|secret| {
+                std::str::from_utf8(secret.as_bytes())
+                    .map_err(|_| "stored station login password is not valid UTF-8".to_string())
+            })
+            .transpose()?;
+        let label = capture_window_label(&station_id);
+        let endpoint_revision = station.endpoint_revision;
+        let script = capture_script(
+            &station_id,
+            &label,
+            credentials.login_username.as_deref(),
+            login_password,
+        );
+        let app_handle = app.clone();
+        let label_for_start = label.clone();
+        tauri::async_runtime::spawn_blocking(move || {
             if let Some(window) = app_handle.get_webview_window(&label_for_start) {
-                let target_url = station.website_url.clone();
-                let target = target_url
-                    .parse()
-                    .map_err(|error| format!("Base URL 无法作为网页登录地址打开: {error}"))?;
-                let navigator = window.clone();
                 window
-                    .run_on_main_thread(move || {
-                        let _ = navigator.navigate(target);
-                    })
-                    .map_err(|error| format!("安排捕获窗口导航失败: {error}"))?;
+                    .set_focus()
+                    .map_err(|error| format!("聚焦捕获窗口失败: {error}"))?;
+            } else {
+                tauri::WebviewWindowBuilder::new(
+                    &app_handle,
+                    label_for_start.clone(),
+                    tauri::WebviewUrl::External(
+                        "about:blank"
+                            .parse()
+                            .map_err(|error| format!("捕获窗口初始化失败: {error}"))?,
+                    ),
+                )
+                .title(format!("网页登录 / 捕获 - {}", station.name))
+                .inner_size(1100.0, 760.0)
+                .initialization_script(&script)
+                .build()
+                .map_err(|error| format!("打开网页登录窗口失败: {error}"))?;
+                if let Some(window) = app_handle.get_webview_window(&label_for_start) {
+                    let target_url = station.website_url.clone();
+                    let target = target_url
+                        .parse()
+                        .map_err(|error| format!("Base URL 无法作为网页登录地址打开: {error}"))?;
+                    let navigator = window.clone();
+                    window
+                        .run_on_main_thread(move || {
+                            let _ = navigator.navigate(target);
+                        })
+                        .map_err(|error| format!("安排捕获窗口导航失败: {error}"))?;
+                }
             }
-        }
-        Ok::<(), error::CommandError>(())
+            Ok::<(), error::CommandError>(())
+        })
+        .await
+        .map_err(|error| format!("打开网页登录窗口失败: {error}"))??;
+        Ok(sessions.start(station_id, label, endpoint_revision)?)
     })
     .await
-    .map_err(|error| format!("打开网页登录窗口失败: {error}"))??;
-    Ok(sessions.start(station_id, label, endpoint_revision)?)
 }
 
 #[tauri::command]
-pub fn get_capture_session_status(
+pub async fn get_capture_session_status(
     sessions: State<'_, capture::session::CaptureSessionStore>,
-    station_id: String,
-) -> Result<CaptureSessionStatus, error::CommandError> {
-    Ok(sessions.status(&station_id)?)
+    input: Value,
+) -> Result<CaptureSessionStatusDto, error::CommandError> {
+    correlation::in_command_scope("get_capture_session_status", async {
+        let input = CaptureStationIdInputDto::parse(input)?;
+        Ok(sessions.status(&input.station_id)?)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn record_capture_event(
     services: State<'_, AppServices>,
     sessions: State<'_, capture::session::CaptureSessionStore>,
-    input: CapturedHttpEventInput,
-) -> Result<CaptureSessionStatus, error::CommandError> {
-    let station = services
-        .stations
-        .station_for_capture(&input.station_id)
-        .await
-        .map_err(command_application_error)?;
-    if !capture_request_belongs_to_station(
-        &station.website_url,
-        &station.api_base_url,
-        &input.request_url,
-    ) {
-        return Err("捕获事件不属于当前站点 Base URL，已拒绝。"
-            .to_string()
-            .into());
-    }
-    let web_authorization_user_id = web_authorization_candidate_user_id_from_input(&input);
-    let captured_credentials = capture::extract_session_credentials(&input);
-    let station_id = input.station_id.clone();
-    let event = capture::sanitize_event(input);
-    let receipt = sessions.push_event(&station_id, event, web_authorization_user_id)?;
-    if let Some(session) = captured_credentials {
-        services
-            .credentials
-            .persist_station_session_if_revision(session, receipt.endpoint_revision)
+    input: Value,
+) -> Result<CaptureSessionStatusDto, error::CommandError> {
+    correlation::in_command_scope("record_capture_event", async {
+        let input = CapturedHttpEventInputDto::parse(input)?.into_domain();
+        let station = services
+            .stations
+            .station_for_capture(&input.station_id)
             .await
-            .map_err(capture_endpoint_revision_error)?;
-    }
-    Ok(receipt.status)
+            .map_err(command_application_error)?;
+        if !capture_request_belongs_to_station(
+            &station.website_url,
+            &station.api_base_url,
+            &input.request_url,
+        ) {
+            return Err("捕获事件不属于当前站点 Base URL，已拒绝。"
+                .to_string()
+                .into());
+        }
+        let web_authorization_user_id = web_authorization_candidate_user_id_from_input(&input);
+        let captured_credentials = capture::extract_session_credentials(&input);
+        let station_id = input.station_id.clone();
+        let event = capture::sanitize_event(input);
+        let receipt = sessions.push_event(&station_id, event, web_authorization_user_id)?;
+        if let Some(session) = captured_credentials {
+            services
+                .credentials
+                .persist_station_session_if_revision(session, receipt.endpoint_revision)
+                .await
+                .map_err(capture_endpoint_revision_error)?;
+        }
+        Ok(receipt.status)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn clear_capture_session(
+pub async fn clear_capture_session(
     sessions: State<'_, capture::session::CaptureSessionStore>,
-    station_id: String,
-) -> Result<CaptureSessionStatus, error::CommandError> {
-    Ok(sessions.clear(&station_id)?)
+    input: Value,
+) -> Result<CaptureSessionStatusDto, error::CommandError> {
+    correlation::in_command_scope("clear_capture_session", async {
+        let input = CaptureStationIdInputDto::parse(input)?;
+        Ok(sessions.clear(&input.station_id)?)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn close_capture_session(
+pub async fn close_capture_session(
     app: tauri::AppHandle,
     sessions: State<'_, capture::session::CaptureSessionStore>,
-    station_id: String,
-) -> Result<CaptureSessionStatus, error::CommandError> {
-    let label = capture_window_label(&station_id);
-    if let Some(window) = app.get_webview_window(&label) {
-        window
-            .close()
-            .map_err(|error| format!("关闭网页登录窗口失败: {error}"))?;
-    }
-    Ok(sessions.clear(&station_id)?)
+    input: Value,
+) -> Result<CaptureSessionStatusDto, error::CommandError> {
+    correlation::in_command_scope("close_capture_session", async {
+        let input = CaptureStationIdInputDto::parse(input)?;
+        let label = capture_window_label(&input.station_id);
+        if let Some(window) = app.get_webview_window(&label) {
+            window
+                .close()
+                .map_err(|error| format!("关闭网页登录窗口失败: {error}"))?;
+        }
+        Ok(sessions.clear(&input.station_id)?)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn finish_capture_session(
     services: State<'_, AppServices>,
     sessions: State<'_, capture::session::CaptureSessionStore>,
-    station_id: String,
-) -> Result<CollectorRunResult, error::CommandError> {
-    let commit = sessions.begin_finish(&station_id)?;
-    let result =
-        finish_capture_session_with_events(services.inner(), &station_id, &commit, None).await;
-    match result {
-        Ok(result) => {
-            sessions.complete_commit(&station_id, &commit)?;
-            Ok(result)
+    input: Value,
+) -> Result<CollectorRunResultDto, error::CommandError> {
+    correlation::in_command_scope("finish_capture_session", async {
+        let input = CaptureStationIdInputDto::parse(input)?;
+        let station_id = input.station_id;
+        let commit = sessions.begin_finish(&station_id)?;
+        let result =
+            finish_capture_session_with_events(services.inner(), &station_id, &commit, None).await;
+        match result {
+            Ok(result) => {
+                sessions.complete_commit(&station_id, &commit)?;
+                Ok(result)
+            }
+            Err(error) => Err(abort_capture_commit(
+                sessions.inner(),
+                &station_id,
+                &commit,
+                error,
+            )),
         }
-        Err(error) => Err(abort_capture_commit(
-            sessions.inner(),
-            &station_id,
-            &commit,
-            error,
-        )),
-    }
+    })
+    .await
 }
 
 async fn finish_capture_session_with_events(
@@ -2798,76 +2825,81 @@ pub async fn finish_web_authorization_session(
     app: tauri::AppHandle,
     services: State<'_, AppServices>,
     sessions: State<'_, capture::session::CaptureSessionStore>,
-    station_id: String,
-) -> Result<CollectorRunResult, error::CommandError> {
-    let station = services
-        .stations
-        .station_for_capture(&station_id)
-        .await
-        .map_err(command_application_error)?;
-    let candidate = sessions
-        .web_authorization_candidate(&station_id)?
-        .ok_or_else(|| {
-            "网页登录授权尚未捕获到用户身份，请在授权窗口完成登录后重试。".to_string()
-        })?;
-    let cookie_header =
-        read_capture_window_cookie_header(app, &station_id, &station.website_url).await?;
-    let verified = capture::web_authorization::verify_newapi_cookie_session(
-        &station.website_url,
-        &cookie_header,
-        &candidate.user_id,
-        Duration::from_secs(20),
-    )?;
-    let commit = sessions.begin_web_authorization_commit(&station_id, &candidate)?;
-    let persist_result = services
-        .credentials
-        .persist_station_session_if_revision(
-            PersistStationSessionInput {
-                station_id: station_id.clone(),
-                access_token: None,
-                refresh_token: None,
-                cookie: Some(verified.cookie_header),
-                newapi_user_id: Some(verified.newapi_user_id),
-                token_expires_at: None,
-                session_expires_at: None,
-                session_source: verified.session_source,
-            },
-            commit.endpoint_revision,
-        )
-        .await
-        .map_err(capture_endpoint_revision_error);
-    if let Err(error) = persist_result {
-        return Err(abort_capture_commit(
-            sessions.inner(),
-            &station_id,
-            &commit,
-            error,
-        ));
-    }
-
-    let result = finish_capture_session_with_events(
-        services.inner(),
-        &station_id,
-        &commit,
-        Some(capture::web_authorization_summary(
-            "success",
-            Some("web_authorization"),
-            true,
-        )),
-    )
-    .await;
-    match result {
-        Ok(result) => {
-            sessions.complete_commit(&station_id, &commit)?;
-            Ok(result)
+    input: Value,
+) -> Result<CollectorRunResultDto, error::CommandError> {
+    correlation::in_command_scope("finish_web_authorization_session", async {
+        let input = CaptureStationIdInputDto::parse(input)?;
+        let station_id = input.station_id;
+        let station = services
+            .stations
+            .station_for_capture(&station_id)
+            .await
+            .map_err(command_application_error)?;
+        let candidate = sessions
+            .web_authorization_candidate(&station_id)?
+            .ok_or_else(|| {
+                "网页登录授权尚未捕获到用户身份，请在授权窗口完成登录后重试。".to_string()
+            })?;
+        let cookie_header =
+            read_capture_window_cookie_header(app, &station_id, &station.website_url).await?;
+        let verified = capture::web_authorization::verify_newapi_cookie_session(
+            &station.website_url,
+            &cookie_header,
+            &candidate.user_id,
+            Duration::from_secs(20),
+        )?;
+        let commit = sessions.begin_web_authorization_commit(&station_id, &candidate)?;
+        let persist_result = services
+            .credentials
+            .persist_station_session_if_revision(
+                PersistStationSessionInput {
+                    station_id: station_id.clone(),
+                    access_token: None,
+                    refresh_token: None,
+                    cookie: Some(verified.cookie_header),
+                    newapi_user_id: Some(verified.newapi_user_id),
+                    token_expires_at: None,
+                    session_expires_at: None,
+                    session_source: verified.session_source,
+                },
+                commit.endpoint_revision,
+            )
+            .await
+            .map_err(capture_endpoint_revision_error);
+        if let Err(error) = persist_result {
+            return Err(abort_capture_commit(
+                sessions.inner(),
+                &station_id,
+                &commit,
+                error,
+            ));
         }
-        Err(error) => Err(abort_capture_commit(
-            sessions.inner(),
+
+        let result = finish_capture_session_with_events(
+            services.inner(),
             &station_id,
             &commit,
-            error,
-        )),
-    }
+            Some(capture::web_authorization_summary(
+                "success",
+                Some("web_authorization"),
+                true,
+            )),
+        )
+        .await;
+        match result {
+            Ok(result) => {
+                sessions.complete_commit(&station_id, &commit)?;
+                Ok(result)
+            }
+            Err(error) => Err(abort_capture_commit(
+                sessions.inner(),
+                &station_id,
+                &commit,
+                error,
+            )),
+        }
+    })
+    .await
 }
 
 fn abort_capture_commit(

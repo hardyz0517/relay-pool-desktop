@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "source_revision": "636c373bd177db1e8e3d3cbc80b30910adbd2385",
+  "source_revision": "7e9104bd333f607c28361e7fe80fcaf0775e77f3",
   "generated_at_date": "2026-07-24",
-  "source_snapshot": "S1-T5-updater-data-recovery",
+  "source_snapshot": "S1-T5-collector-capture",
   "source_authority": {
     "compiled_registry": "src-tauri/src/ipc/registry.rs",
     "rust_signatures": "src-tauri/src/commands/mod.rs",
@@ -22,14 +22,14 @@
   ],
   "classification_notes": [
     "Runtime/bootstrap -> settings_stations; Channel connectivity -> station_keys; update/data-directory -> updater_data_recovery.",
-    "S1-T5 settings/stations, station-key ordinary, changes/logs, collector ordinary groups, routing/health reads, pricing reads, proxy workspace reads, routing capability/model-alias mutations, pricing mutations, local-routing reorder, endpoint ping, proxy lifecycle, updater backend reads, settings bootstrap, and updater/data-recovery ordinary commands fully migrate 111 commands; get_runtime_contract_info remains pilot partial and 8 commands remain legacy placeholders.",
+    "S1-T5 settings/stations, station-key ordinary, changes/logs, collector ordinary groups, routing/health reads, pricing reads, proxy workspace reads, routing capability/model-alias mutations, pricing mutations, local-routing reorder, endpoint ping, proxy lifecycle, updater backend reads, settings bootstrap, updater/data-recovery, and collector capture ordinary commands fully migrate 118 commands; get_runtime_contract_info remains pilot partial and one command remains a legacy placeholder.",
     "test_station_key_connectivity remains the single Channel command and is intentionally partial/legacy until Task 6.",
     "No command proves an application-owned operation key; idempotent_with_key count is zero.",
     "scan_remote_station_keys is an idempotent mutation because it atomically replaces the local remote-key snapshot and matching key metadata; transport retry remains disabled.",
     "create_station is NonIdempotent: transport retry is disabled and ambiguous post-dispatch rejection becomes typed ResultUnknownError.",
-    "record_capture_event is intentionally capture-only, not missing from ACL; it must not be granted to main-window.",
+    "record_capture_event is intentionally capture-only, not missing from ACL, and must not be granted to main-window. finish_web_authorization_session is a capture-specific command also callable by the main-window manual UI; capture remote windows receive only the separate record-capture-event permission and cannot call station/key/settings/proxy/updater/data-recovery commands.",
     "Empty frontend_callers means no literal caller in requested API/query directories.",
-    "Audit artifact only: the updater/data-recovery child shard may close while the Stage 1 Gate remains blocked on collector capture ordinary commands and Task 6 streaming."
+    "Audit artifact only: the collector-capture child shard may close while the Stage 1 Gate remains blocked on Task 6 streaming and the remaining pilot/legacy command."
   ],
   "statistics": {
     "commands": 120,
@@ -51,13 +51,13 @@
       "read": 46
     },
     "explicit_pilot_schema_partial": 1,
-    "legacy_unmigrated_placeholder": 8,
+    "legacy_unmigrated_placeholder": 1,
     "acl_allowed_main_window": 119,
     "commands_with_frontend_callers": 116,
     "commands_without_frontend_callers": 4,
     "public_command_error": 120,
     "public_non_command_error": 0,
-    "fully_migrated": 111,
+    "fully_migrated": 118,
     "acl_capture_only": 1,
     "acl_unallowlisted": 0
   },
@@ -1979,9 +1979,9 @@
       "transport": "ordinary",
       "rust_input": [
         "sessions: State<'_, capture::session::CaptureSessionStore>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "CaptureSessionStatus",
+      "rust_output": "CaptureSessionStatusDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -1991,27 +1991,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/collector.ts",
-          "line": 147
+          "line": 175
         }
       ],
       "mutation_kind": "idempotent",
       "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "CaptureStationIdInputDto is parsed before session clear",
         "reject unknown top-level fields before application use case",
-        "bound non-empty ID(s) with frozen grammar"
+        "bound non-empty station ID with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and session clear",
+      "migration_status": "fully_migrated_s1_t5_collector_capture",
+      "delete_owner": "Task 5 collector capture shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CaptureStationIdInputDto",
+        "output": "CaptureSessionStatusDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:169",
-        "rust_signature": "src-tauri/src/commands/mod.rs:2167"
+        "registry": "src-tauri/src/ipc/registry.rs:535",
+        "rust_signature": "src-tauri/src/commands/mod.rs:2726",
+        "generated_transport_test": "src/lib/api/collector.test.ts:50"
       }
     },
     {
@@ -2022,9 +2023,9 @@
       "rust_input": [
         "app: tauri::AppHandle",
         "sessions: State<'_, capture::session::CaptureSessionStore>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "CaptureSessionStatus",
+      "rust_output": "CaptureSessionStatusDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -2034,27 +2035,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/collector.ts",
-          "line": 164
+          "line": 192
         }
       ],
       "mutation_kind": "idempotent",
       "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "CaptureStationIdInputDto is parsed before capture window close",
         "reject unknown top-level fields before application use case",
-        "bound non-empty ID(s) with frozen grammar"
+        "bound non-empty station ID with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and capture window close",
+      "migration_status": "fully_migrated_s1_t5_collector_capture",
+      "delete_owner": "Task 5 collector capture shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CaptureStationIdInputDto",
+        "output": "CaptureSessionStatusDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:170",
-        "rust_signature": "src-tauri/src/commands/mod.rs:2175"
+        "registry": "src-tauri/src/ipc/registry.rs:535",
+        "rust_signature": "src-tauri/src/commands/mod.rs:2738",
+        "generated_transport_test": "src/lib/api/collector.test.ts:51"
       }
     },
     {
@@ -2495,9 +2497,9 @@
       "rust_input": [
         "services: State<'_, AppServices>",
         "sessions: State<'_, capture::session::CaptureSessionStore>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "CollectorRunResult",
+      "rust_output": "CollectorRunResultDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -2507,27 +2509,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/collector.ts",
-          "line": 129
+          "line": 157
         }
       ],
       "mutation_kind": "non_idempotent",
       "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "CaptureStationIdInputDto is parsed before capture commit",
         "reject unknown top-level fields before application use case",
-        "bound non-empty ID(s) with frozen grammar"
+        "bound non-empty station ID with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and capture commit",
+      "migration_status": "fully_migrated_s1_t5_collector_capture",
+      "delete_owner": "Task 5 collector capture shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CaptureStationIdInputDto",
+        "output": "CollectorRunResultDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:167",
-        "rust_signature": "src-tauri/src/commands/mod.rs:2190"
+        "registry": "src-tauri/src/ipc/registry.rs:522",
+        "rust_signature": "src-tauri/src/commands/mod.rs:2757",
+        "generated_transport_test": "src/lib/api/collector.test.ts:61"
       }
     },
     {
@@ -2539,39 +2542,44 @@
         "app: tauri::AppHandle",
         "services: State<'_, AppServices>",
         "sessions: State<'_, capture::session::CaptureSessionStore>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "CollectorRunResult",
+      "rust_output": "CollectorRunResultDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
         "permission": "main-window",
-        "status": "allowed"
+        "status": "allowed",
+        "secondary_manifest": "src-tauri/permissions/record-capture-event.toml",
+        "secondary_permission": "record-capture-event",
+        "secondary_status": "capture_window_allowed"
       },
       "frontend_callers": [
         {
           "path": "src/lib/api/collector.ts",
-          "line": 138
+          "line": 166
         }
       ],
       "mutation_kind": "non_idempotent",
       "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "CaptureStationIdInputDto is parsed before Web authorization capture commit",
         "reject unknown top-level fields before application use case",
-        "bound non-empty ID(s) with frozen grammar"
+        "bound non-empty station ID with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and Web authorization commit",
+      "migration_status": "fully_migrated_s1_t5_collector_capture",
+      "delete_owner": "Task 5 collector capture shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CaptureStationIdInputDto",
+        "output": "CollectorRunResultDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:168",
-        "rust_signature": "src-tauri/src/commands/mod.rs:2252"
+        "registry": "src-tauri/src/ipc/registry.rs:522",
+        "rust_signature": "src-tauri/src/commands/mod.rs:2824",
+        "generated_transport_test": "src/lib/api/collector.test.ts:62",
+        "capture_acl": "src-tauri/permissions/record-capture-event.toml:4"
       }
     },
     {
@@ -2581,9 +2589,9 @@
       "transport": "ordinary",
       "rust_input": [
         "sessions: State<'_, capture::session::CaptureSessionStore>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "CaptureSessionStatus",
+      "rust_output": "CaptureSessionStatusDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -2593,27 +2601,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/collector.ts",
-          "line": 112
+          "line": 140
         }
       ],
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "CaptureStationIdInputDto is parsed before session status read",
         "reject unknown top-level fields before application use case",
-        "bound non-empty ID(s) with frozen grammar"
+        "bound non-empty station ID with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and session status read",
+      "migration_status": "fully_migrated_s1_t5_collector_capture",
+      "delete_owner": "Task 5 collector capture shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CaptureStationIdInputDto",
+        "output": "CaptureSessionStatusDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:165",
-        "rust_signature": "src-tauri/src/commands/mod.rs:2124"
+        "registry": "src-tauri/src/ipc/registry.rs:527",
+        "rust_signature": "src-tauri/src/commands/mod.rs:2675",
+        "generated_transport_test": "src/lib/api/collector.test.ts:49"
       }
     },
     {
@@ -3255,9 +3264,9 @@
       "rust_input": [
         "services: State<'_, AppServices>",
         "sessions: State<'_, capture::session::CaptureSessionStore>",
-        "input: CapturedHttpEventInput"
+        "input: Value"
       ],
-      "rust_output": "CaptureSessionStatus",
+      "rust_output": "CaptureSessionStatusDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/record-capture-event.toml",
@@ -3268,21 +3277,22 @@
       "mutation_kind": "non_idempotent",
       "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "CapturedHttpEventInputDto is parsed before station lookup and event recording",
         "reject unknown top-level fields before application use case",
         "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and capture event/session dispatch",
+      "migration_status": "fully_migrated_s1_t5_collector_capture",
+      "delete_owner": "Task 5 collector capture shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CapturedHttpEventInputDto",
+        "output": "CaptureSessionStatusDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:166",
-        "rust_signature": "src-tauri/src/commands/mod.rs:2132"
+        "registry": "src-tauri/src/ipc/registry.rs:530",
+        "rust_signature": "src-tauri/src/commands/mod.rs:2687",
+        "acl": "src-tauri/permissions/record-capture-event.toml:4"
       }
     },
     {
@@ -3336,9 +3346,9 @@
         "app: tauri::AppHandle",
         "services: State<'_, AppServices>",
         "sessions: State<'_, capture::session::CaptureSessionStore>",
-        "station_id: String"
+        "input: Value"
       ],
-      "rust_output": "CaptureSessionStatus",
+      "rust_output": "CaptureSessionStatusDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -3348,27 +3358,28 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/collector.ts",
-          "line": 91
+          "line": 119
         }
       ],
       "mutation_kind": "non_idempotent",
       "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
+        "CaptureStationIdInputDto is parsed before capture window/session creation",
         "reject unknown top-level fields before application use case",
-        "bound non-empty ID(s) with frozen grammar"
+        "bound non-empty station ID with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 collectors shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before DTO validation and capture window/session creation",
+      "migration_status": "fully_migrated_s1_t5_collector_capture",
+      "delete_owner": "Task 5 collector capture shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CaptureStationIdInputDto",
+        "output": "CaptureSessionStatusDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:164",
-        "rust_signature": "src-tauri/src/commands/mod.rs:2041"
+        "registry": "src-tauri/src/ipc/registry.rs:518",
+        "rust_signature": "src-tauri/src/commands/mod.rs:2587",
+        "generated_transport_test": "src/lib/api/collector.test.ts:48"
       }
     },
     {

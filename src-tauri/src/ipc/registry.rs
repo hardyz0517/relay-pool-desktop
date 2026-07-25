@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "9e5c9e850e1b3e60d89261982adcbcd18029ecd6ebe1fd2ba98621675267ad0f";
+    "fc13cf79f99c35b0fbd75a019304cb9244b605097bea23a3c9c57f50542ad553";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -510,6 +510,33 @@ fn command_contract(name: &str) -> CommandContract {
         "test_station_login_input" => {
             migrated_read("StationLoginTestInputDto", "StationLoginTestResultDto")
         }
+        "start_capture_session" => migrated_mutation(
+            "CaptureStationIdInputDto",
+            "CaptureSessionStatusDto",
+            "non_idempotent",
+            true,
+        ),
+        "finish_capture_session" | "finish_web_authorization_session" => migrated_mutation(
+            "CaptureStationIdInputDto",
+            "CollectorRunResultDto",
+            "non_idempotent",
+            true,
+        ),
+        "get_capture_session_status" => {
+            migrated_read("CaptureStationIdInputDto", "CaptureSessionStatusDto")
+        }
+        "record_capture_event" => migrated_mutation(
+            "CapturedHttpEventInputDto",
+            "CaptureSessionStatusDto",
+            "non_idempotent",
+            true,
+        ),
+        "clear_capture_session" | "close_capture_session" => migrated_mutation(
+            "CaptureStationIdInputDto",
+            "CaptureSessionStatusDto",
+            "idempotent",
+            false,
+        ),
         "get_station_key_capabilities" => {
             migrated_read("RoutingStationKeyIdInputDto", "StationKeyCapabilitiesDto")
         }
@@ -1029,6 +1056,34 @@ export function testStationLogin(input: CollectorStationIdInputDto): Promise<Col
 
 export function testStationLoginInput(input: StationLoginTestInputDto): Promise<StationLoginTestResultDto> {
   return invokeCommand<StationLoginTestResultDto>("test_station_login_input", { input });
+}
+
+export function startCaptureSession(input: CaptureStationIdInputDto): Promise<CaptureSessionStatusDto> {
+  return invokeNonIdempotent<CaptureSessionStatusDto>("start_capture_session", { input });
+}
+
+export function getCaptureSessionStatus(input: CaptureStationIdInputDto): Promise<CaptureSessionStatusDto> {
+  return invokeCommand<CaptureSessionStatusDto>("get_capture_session_status", { input });
+}
+
+export function recordCaptureEvent(input: CapturedHttpEventInputDto): Promise<CaptureSessionStatusDto> {
+  return invokeNonIdempotent<CaptureSessionStatusDto>("record_capture_event", { input });
+}
+
+export function finishCaptureSession(input: CaptureStationIdInputDto): Promise<CollectorRunResultDto> {
+  return invokeNonIdempotent<CollectorRunResultDto>("finish_capture_session", { input });
+}
+
+export function finishWebAuthorizationSession(input: CaptureStationIdInputDto): Promise<CollectorRunResultDto> {
+  return invokeNonIdempotent<CollectorRunResultDto>("finish_web_authorization_session", { input });
+}
+
+export function clearCaptureSession(input: CaptureStationIdInputDto): Promise<CaptureSessionStatusDto> {
+  return invokeCommand<CaptureSessionStatusDto>("clear_capture_session", { input });
+}
+
+export function closeCaptureSession(input: CaptureStationIdInputDto): Promise<CaptureSessionStatusDto> {
+  return invokeCommand<CaptureSessionStatusDto>("close_capture_session", { input });
 }
 
 export function getStationKeyCapabilities(input: RoutingStationKeyIdInputDto): Promise<StationKeyCapabilitiesDto> {

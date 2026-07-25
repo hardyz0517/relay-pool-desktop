@@ -2355,6 +2355,38 @@
       }
     },
     {
+      "command": "record_capture_event",
+      "input": {
+        "contentType": "application/json",
+        "durationMs": 25,
+        "errorMessage": null,
+        "finishedAt": "2026-07-24T00:00:01Z",
+        "method": "GET",
+        "pageUrl": "https://example.test/admin",
+        "requestPath": "/api/user",
+        "requestUrl": "https://example.test/api/user",
+        "responseJson": {
+          "ok": true
+        },
+        "responseKind": "json",
+        "responseSize": 42,
+        "responseText": null,
+        "sourceWindowId": "capture-station-1",
+        "startedAt": "2026-07-24T00:00:00Z",
+        "stationId": "station-1",
+        "status": 200
+      },
+      "output": {
+        "captureCount": 1,
+        "lastError": null,
+        "pendingConfirmationCount": 0,
+        "recognizedFieldCount": 0,
+        "stationId": "station-1",
+        "status": "capturing",
+        "webAuthorizationCandidate": false
+      }
+    },
+    {
       "command": "get_station_key_capabilities",
       "input": {
         "stationKeyId": "key-1"
