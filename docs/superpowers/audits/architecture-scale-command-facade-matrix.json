@@ -2,7 +2,7 @@
   "schema_version": 1,
   "owner": "Task 7",
   "source_inventory_item": "S2-T7-command-facades",
-  "current_shard": "settings-stations-key-pool-routing-request-log-channel-monitoring-command-facades",
+  "current_shard": "settings-stations-key-pool-routing-request-log-channel-monitoring-pricing-command-facades",
   "migration_state": "partial",
   "facades": [
     {
@@ -292,6 +292,69 @@
       "non_goals": [
         "run_channel_monitor_now",
         "channel status query workspace commands"
+      ]
+    },
+    {
+      "state_type": "PricingCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/pricing.rs",
+      "dependencies": [
+        "PricingService"
+      ],
+      "commands": [
+        {
+          "command": "list_pricing_rules",
+          "use_case": "list_pricing_rules",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "list_model_base_prices",
+          "use_case": "list_model_base_prices",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "upsert_model_base_price",
+          "use_case": "upsert_model_base_price",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "reset_model_base_prices_to_builtins",
+          "use_case": "reset_model_base_prices_to_builtins",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "upsert_pricing_rule",
+          "use_case": "upsert_pricing_rule",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "delete_pricing_rule",
+          "use_case": "delete_pricing_rule",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "resolve_station_key_pricing_context",
+          "use_case": "resolve_station_key_pricing_context",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "list_balance_snapshots",
+          "use_case": "list_balance_snapshots",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "list_current_station_balance_snapshots",
+          "use_case": "list_balance_snapshots",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "upsert_balance_snapshot",
+          "use_case": "upsert_balance_snapshot",
+          "dependencies": ["PricingService"]
+        }
+      ],
+      "non_goals": [
+        "list_balance_snapshots_for_station",
+        "load_pricing_comparison_workspace"
       ]
     }
   ],

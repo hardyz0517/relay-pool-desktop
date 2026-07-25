@@ -19,8 +19,8 @@ use crate::{
     application::{
         app_services::AppServices,
         command_facades::{
-            ChannelMonitoringCommandFacade, KeyPoolCommandFacade, RequestLogsCommandFacade,
-            RoutingCommandFacade, SettingsStationsCommandFacade,
+            ChannelMonitoringCommandFacade, KeyPoolCommandFacade, PricingCommandFacade,
+            RequestLogsCommandFacade, RoutingCommandFacade, SettingsStationsCommandFacade,
         },
         error::ApplicationError,
         pagination::PageLimit,
@@ -1974,13 +1974,12 @@ pub async fn simulate_route(
 
 #[tauri::command]
 pub async fn list_pricing_rules(
-    services: State<'_, AppServices>,
+    facade: State<'_, PricingCommandFacade>,
     input: Value,
 ) -> Result<Vec<PricingRuleDto>, error::CommandError> {
     correlation::in_command_scope("list_pricing_rules", async {
         EmptyInputDto::parse(input)?;
-        services
-            .pricing
+        facade
             .list_pricing_rules(PageLimit::new(200).expect("bounded limit"))
             .await
             .map_err(public_command_application_error)
@@ -1990,13 +1989,12 @@ pub async fn list_pricing_rules(
 
 #[tauri::command]
 pub async fn list_model_base_prices(
-    services: State<'_, AppServices>,
+    facade: State<'_, PricingCommandFacade>,
     input: Value,
 ) -> Result<Vec<ModelBasePriceDto>, error::CommandError> {
     correlation::in_command_scope("list_model_base_prices", async {
         EmptyInputDto::parse(input)?;
-        services
-            .pricing
+        facade
             .list_model_base_prices(PageLimit::new(200).expect("bounded limit"))
             .await
             .map_err(public_command_application_error)
@@ -2006,13 +2004,12 @@ pub async fn list_model_base_prices(
 
 #[tauri::command]
 pub async fn upsert_model_base_price(
-    services: State<'_, AppServices>,
+    facade: State<'_, PricingCommandFacade>,
     input: Value,
 ) -> Result<ModelBasePriceDto, error::CommandError> {
     correlation::in_command_scope("upsert_model_base_price", async {
         let input = UpsertModelBasePriceInputDto::parse(input)?.into_domain();
-        services
-            .pricing
+        facade
             .upsert_model_base_price(input)
             .await
             .map_err(public_command_application_error)
@@ -2022,13 +2019,12 @@ pub async fn upsert_model_base_price(
 
 #[tauri::command]
 pub async fn reset_model_base_prices_to_builtins(
-    services: State<'_, AppServices>,
+    facade: State<'_, PricingCommandFacade>,
     input: Value,
 ) -> Result<Vec<ModelBasePriceDto>, error::CommandError> {
     correlation::in_command_scope("reset_model_base_prices_to_builtins", async {
         EmptyInputDto::parse(input)?;
-        services
-            .pricing
+        facade
             .reset_model_base_prices_to_builtins(PageLimit::new(500).expect("bounded limit"))
             .await
             .map_err(public_command_application_error)
@@ -2038,13 +2034,12 @@ pub async fn reset_model_base_prices_to_builtins(
 
 #[tauri::command]
 pub async fn upsert_pricing_rule(
-    services: State<'_, AppServices>,
+    facade: State<'_, PricingCommandFacade>,
     input: Value,
 ) -> Result<PricingRuleDto, error::CommandError> {
     correlation::in_command_scope("upsert_pricing_rule", async {
         let input = UpsertPricingRuleInputDto::parse(input)?.into_domain();
-        services
-            .pricing
+        facade
             .upsert_pricing_rule(input)
             .await
             .map_err(public_command_application_error)
@@ -2054,13 +2049,12 @@ pub async fn upsert_pricing_rule(
 
 #[tauri::command]
 pub async fn delete_pricing_rule(
-    services: State<'_, AppServices>,
+    facade: State<'_, PricingCommandFacade>,
     input: Value,
 ) -> Result<(), error::CommandError> {
     correlation::in_command_scope("delete_pricing_rule", async {
         let input = PricingRuleIdInputDto::parse(input)?;
-        services
-            .pricing
+        facade
             .delete_pricing_rule(input.id)
             .await
             .map_err(public_command_application_error)
@@ -2070,19 +2064,14 @@ pub async fn delete_pricing_rule(
 
 #[tauri::command]
 pub async fn resolve_station_key_pricing_context(
-    services: State<'_, AppServices>,
+    facade: State<'_, PricingCommandFacade>,
     input: Value,
 ) -> Result<ResolvedPricingContextDto, error::CommandError> {
     correlation::in_command_scope("resolve_station_key_pricing_context", async {
         let (station_key_id, requested_model, request_kind) =
             PricingContextInputDto::parse(input)?.into_parts();
-        services
-            .pricing
-            .resolve_station_key_pricing_context(
-                &station_key_id,
-                &requested_model,
-                Some(request_kind),
-            )
+        facade
+            .resolve_station_key_pricing_context(&station_key_id, &requested_model, request_kind)
             .await
             .map_err(public_command_application_error)
     })
@@ -2091,14 +2080,13 @@ pub async fn resolve_station_key_pricing_context(
 
 #[tauri::command]
 pub async fn list_balance_snapshots(
-    services: State<'_, AppServices>,
+    facade: State<'_, PricingCommandFacade>,
     input: Value,
 ) -> Result<Vec<BalanceSnapshotDto>, error::CommandError> {
     correlation::in_command_scope("list_balance_snapshots", async {
         EmptyInputDto::parse(input)?;
-        services
-            .pricing
-            .latest_station_balances(PageLimit::new(200).expect("bounded limit"))
+        facade
+            .list_balance_snapshots(PageLimit::new(200).expect("bounded limit"))
             .await
             .map_err(public_command_application_error)
     })
@@ -2107,14 +2095,13 @@ pub async fn list_balance_snapshots(
 
 #[tauri::command]
 pub async fn list_current_station_balance_snapshots(
-    services: State<'_, AppServices>,
+    facade: State<'_, PricingCommandFacade>,
     input: Value,
 ) -> Result<Vec<BalanceSnapshotDto>, error::CommandError> {
     correlation::in_command_scope("list_current_station_balance_snapshots", async {
         EmptyInputDto::parse(input)?;
-        services
-            .pricing
-            .latest_station_balances(PageLimit::new(200).expect("bounded limit"))
+        facade
+            .list_balance_snapshots(PageLimit::new(200).expect("bounded limit"))
             .await
             .map_err(public_command_application_error)
     })
@@ -2139,13 +2126,12 @@ pub async fn list_balance_snapshots_for_station(
 
 #[tauri::command]
 pub async fn upsert_balance_snapshot(
-    services: State<'_, AppServices>,
+    facade: State<'_, PricingCommandFacade>,
     input: Value,
 ) -> Result<BalanceSnapshotDto, error::CommandError> {
     correlation::in_command_scope("upsert_balance_snapshot", async {
         let input = UpsertBalanceSnapshotInputDto::parse(input)?.into_domain();
-        services
-            .pricing
+        facade
             .upsert_balance_snapshot(input)
             .await
             .map_err(public_command_application_error)

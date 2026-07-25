@@ -69,6 +69,7 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     Routing,
     RequestLogs,
     ChannelMonitoring,
+    Pricing,
     Monitor,
     Collector,
 > {
@@ -80,6 +81,7 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     routing: Routing,
     request_logs: RequestLogs,
     channel_monitoring: ChannelMonitoring,
+    pricing: Pricing,
     monitor: Monitor,
     collector: Collector,
 }
@@ -93,6 +95,7 @@ impl<
         Routing,
         RequestLogs,
         ChannelMonitoring,
+        Pricing,
         Monitor,
         Collector,
     >
@@ -105,6 +108,7 @@ impl<
         Routing,
         RequestLogs,
         ChannelMonitoring,
+        Pricing,
         Monitor,
         Collector,
     >
@@ -125,6 +129,7 @@ impl<
         routing: Routing,
         request_logs: RequestLogs,
         channel_monitoring: ChannelMonitoring,
+        pricing: Pricing,
         monitor: Monitor,
         collector: Collector,
     ) -> Self {
@@ -137,6 +142,7 @@ impl<
             routing,
             request_logs,
             channel_monitoring,
+            pricing,
             monitor,
             collector,
         }
@@ -267,6 +273,7 @@ pub(crate) fn register_ready_services_with_command_facades<
     Routing,
     RequestLogs,
     ChannelMonitoring,
+    Pricing,
     Monitor,
     Collector,
 >(
@@ -281,6 +288,7 @@ pub(crate) fn register_ready_services_with_command_facades<
         Routing,
         RequestLogs,
         ChannelMonitoring,
+        Pricing,
         Monitor,
         Collector,
     >,
@@ -295,6 +303,7 @@ where
     Routing: Send + Sync + 'static,
     RequestLogs: Send + Sync + 'static,
     ChannelMonitoring: Send + Sync + 'static,
+    Pricing: Send + Sync + 'static,
     Monitor: Send + Sync + 'static,
     Collector: Send + Sync + 'static,
 {
@@ -319,6 +328,7 @@ pub(crate) fn register_ready_services_with_command_facades_in<
     Routing,
     RequestLogs,
     ChannelMonitoring,
+    Pricing,
     Monitor,
     Collector,
 >(
@@ -333,6 +343,7 @@ pub(crate) fn register_ready_services_with_command_facades_in<
         Routing,
         RequestLogs,
         ChannelMonitoring,
+        Pricing,
         Monitor,
         Collector,
     >,
@@ -347,6 +358,7 @@ where
     Routing: Send + Sync + 'static,
     RequestLogs: Send + Sync + 'static,
     ChannelMonitoring: Send + Sync + 'static,
+    Pricing: Send + Sync + 'static,
     Monitor: Send + Sync + 'static,
     Collector: Send + Sync + 'static,
 {
@@ -359,6 +371,7 @@ where
         || registry.contains::<Routing>()
         || registry.contains::<RequestLogs>()
         || registry.contains::<ChannelMonitoring>()
+        || registry.contains::<Pricing>()
         || registry.contains::<Monitor>()
         || registry.contains::<Collector>()
     {
@@ -374,6 +387,7 @@ where
         routing,
         request_logs,
         channel_monitoring,
+        pricing,
         monitor,
         collector,
     } = services;
@@ -399,6 +413,9 @@ where
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(channel_monitoring) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(pricing) {
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(monitor) {
@@ -457,6 +474,8 @@ mod tests {
     struct SlotNine(u8);
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct SlotTen(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotEleven(u8);
 
     #[derive(Default)]
     struct TestRegistry {
@@ -493,7 +512,7 @@ mod tests {
 
     #[test]
     fn command_facade_ready_services_preflight_every_concrete_slot() {
-        for occupied_slot in 0..10 {
+        for occupied_slot in 0..11 {
             let mut registry = TestRegistry::default();
             match occupied_slot {
                 0 => assert!(registry.manage_direct(SlotOne(99))),
@@ -506,6 +525,7 @@ mod tests {
                 7 => assert!(registry.manage_direct(SlotEight(99))),
                 8 => assert!(registry.manage_direct(SlotNine(99))),
                 9 => assert!(registry.manage_direct(SlotTen(99))),
+                10 => assert!(registry.manage_direct(SlotEleven(99))),
                 _ => unreachable!(),
             }
 
@@ -523,6 +543,7 @@ mod tests {
                     SlotEight(1),
                     SlotNine(1),
                     SlotTen(1),
+                    SlotEleven(1),
                 ),
             )
             .expect_err("occupied slots must fail before publishing any new ready state");
@@ -539,6 +560,7 @@ mod tests {
                 registry.try_state::<SlotEight>().map(|state| state.0),
                 registry.try_state::<SlotNine>().map(|state| state.0),
                 registry.try_state::<SlotTen>().map(|state| state.0),
+                registry.try_state::<SlotEleven>().map(|state| state.0),
             ];
             let expected = std::array::from_fn(|index| (index == occupied_slot).then_some(99));
             assert_eq!(observed, expected);
@@ -563,6 +585,7 @@ mod tests {
                 SlotEight(8),
                 SlotNine(9),
                 SlotTen(10),
+                SlotEleven(11),
             ),
         )
         .expect("vacant registry must publish every ready state");
@@ -577,5 +600,6 @@ mod tests {
         assert_eq!(registry.try_state::<SlotEight>(), Some(SlotEight(8)));
         assert_eq!(registry.try_state::<SlotNine>(), Some(SlotNine(9)));
         assert_eq!(registry.try_state::<SlotTen>(), Some(SlotTen(10)));
+        assert_eq!(registry.try_state::<SlotEleven>(), Some(SlotEleven(11)));
     }
 }
