@@ -1,23 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const generated = vi.hoisted(() => ({
-  deletePricingRule: vi.fn(),
-  listBalanceSnapshots: vi.fn(),
-  listBalanceSnapshotsForStation: vi.fn(),
-  listCurrentStationBalanceSnapshots: vi.fn(),
-  listModelBasePrices: vi.fn(),
-  listPricingRules: vi.fn(),
-  resetModelBasePricesToBuiltins: vi.fn(),
-  resolveStationKeyPricingContext: vi.fn(),
-  upsertBalanceSnapshot: vi.fn(),
-  upsertModelBasePrice: vi.fn(),
-  upsertPricingRule: vi.fn(),
-}));
-
-const transport = vi.hoisted(() => ({ invoke: vi.fn() }));
-
-vi.mock("@/lib/bridge/generated", () => generated);
-vi.mock("@/lib/bridge/transport", () => transport);
+import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
+import type { BackendClient } from "@/lib/bridge/BackendClient";
 
 import {
   deletePricingRule,
@@ -26,13 +10,33 @@ import {
   upsertPricingRule,
 } from "./economics";
 
-describe("pricing mutation generated transport cutover", () => {
+describe("pricing mutation backend cutover", () => {
+  const economics = {
+    listPricingRules: vi.fn(async () => []),
+    upsertPricingRule: vi.fn(async (input) => ({ id: "rule-1", createdAt: "now", updatedAt: "now", ...input })),
+    deletePricingRule: vi.fn(async () => undefined),
+    resolveStationKeyPricingContext: vi.fn(async () => ({}) as never),
+    listModelBasePrices: vi.fn(async () => []),
+    upsertModelBasePrice: vi.fn(async (input) => ({ id: "base-1", createdAt: "now", updatedAt: "now", ...input })),
+    resetModelBasePricesToBuiltins: vi.fn(async () => []),
+    listBalanceSnapshots: vi.fn(async () => []),
+    listCurrentStationBalanceSnapshots: vi.fn(async () => []),
+    listBalanceSnapshotsForStation: vi.fn(async () => []),
+    upsertBalanceSnapshot: vi.fn(async (input) => ({ id: "balance-1", createdAt: "now", updatedAt: "now", ...input })),
+  };
+
   beforeEach(() => {
-    for (const fn of Object.values(generated)) fn.mockReset().mockResolvedValue(undefined);
-    transport.invoke.mockReset().mockRejectedValue(new Error("legacy transport invoked"));
+    setActiveBackendClient(testBackendClient({ economics: economics as BackendClient["economics"] }));
+    for (const fn of Object.values(economics)) {
+      fn.mockClear();
+    }
   });
 
-  it("routes all four pricing mutations through generated wrappers", async () => {
+  afterEach(() => {
+    setActiveBackendClient(null);
+  });
+
+  it("routes pricing mutations through the active backend client", async () => {
     const basePrice = {
       id: null,
       provider: "openai",
@@ -79,10 +83,28 @@ describe("pricing mutation generated transport cutover", () => {
     await upsertPricingRule(rule);
     await deletePricingRule("rule-1");
 
-    expect(generated.upsertModelBasePrice).toHaveBeenCalledWith(basePrice);
-    expect(generated.resetModelBasePricesToBuiltins).toHaveBeenCalledWith();
-    expect(generated.upsertPricingRule).toHaveBeenCalledWith(rule);
-    expect(generated.deletePricingRule).toHaveBeenCalledWith({ id: "rule-1" });
-    expect(transport.invoke).not.toHaveBeenCalled();
+    expect(economics.upsertModelBasePrice).toHaveBeenCalledWith(basePrice);
+    expect(economics.resetModelBasePricesToBuiltins).toHaveBeenCalledTimes(1);
+    expect(economics.upsertPricingRule).toHaveBeenCalledWith(rule);
+    expect(economics.deletePricingRule).toHaveBeenCalledWith("rule-1");
   });
 });
+
+function testBackendClient(overrides: Partial<BackendClient>): BackendClient {
+  return {
+    mode: "desktop",
+    settings: {} as BackendClient["settings"],
+    stations: {} as BackendClient["stations"],
+    stationKeys: {} as BackendClient["stationKeys"],
+    changeEvents: {} as BackendClient["changeEvents"],
+    collectorRuns: {} as BackendClient["collectorRuns"],
+    proxy: {} as BackendClient["proxy"],
+    localRouting: {} as BackendClient["localRouting"],
+    dataRecovery: {} as BackendClient["dataRecovery"],
+    economics: {} as BackendClient["economics"],
+    groupFacts: {} as BackendClient["groupFacts"],
+    pricing: {} as BackendClient["pricing"],
+    handshake: vi.fn(async () => ({}) as never),
+    ...overrides,
+  };
+}

@@ -122,6 +122,9 @@ function testBackendClient(
     proxy: {} as BackendClient["proxy"],
     localRouting: {} as BackendClient["localRouting"],
     dataRecovery: {} as BackendClient["dataRecovery"],
+    economics: {} as BackendClient["economics"],
+    groupFacts: {} as BackendClient["groupFacts"],
+    pricing: {} as BackendClient["pricing"],
     ...overrides,
   };
 }

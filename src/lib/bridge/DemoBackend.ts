@@ -67,6 +67,29 @@ export class DemoBackend implements BackendClient {
     openDataStoreBackupDir: () => this.rejectUnsupported("data_recovery"),
     exportDataStoreDiagnostic: () => this.rejectUnsupported("data_recovery"),
   };
+  readonly economics: BackendClient["economics"] = {
+    listPricingRules: () => this.rejectUnsupported("economics"),
+    upsertPricingRule: () => this.rejectUnsupported("economics"),
+    deletePricingRule: (_id: string) => this.rejectUnsupported("economics"),
+    resolveStationKeyPricingContext: (_stationKeyId: string, _requestedModel: string) =>
+      this.rejectUnsupported("economics"),
+    listModelBasePrices: () => this.rejectUnsupported("economics"),
+    upsertModelBasePrice: () => this.rejectUnsupported("economics"),
+    resetModelBasePricesToBuiltins: () => this.rejectUnsupported("economics"),
+    listBalanceSnapshots: () => this.rejectUnsupported("economics"),
+    listCurrentStationBalanceSnapshots: () => this.rejectUnsupported("economics"),
+    listBalanceSnapshotsForStation: (_stationId: string) => this.rejectUnsupported("economics"),
+    upsertBalanceSnapshot: () => this.rejectUnsupported("economics"),
+  };
+  readonly groupFacts: BackendClient["groupFacts"] = {
+    listStationGroupBindings: (_stationId: string) => this.rejectUnsupported("group_facts"),
+    listStationGroupOptions: (_stationId: string) => this.rejectUnsupported("group_facts"),
+    listGroupRateRecords: (_stationId: string) => this.rejectUnsupported("group_facts"),
+    upsertStationGroupBinding: () => this.rejectUnsupported("group_facts"),
+  };
+  readonly pricing: BackendClient["pricing"] = {
+    loadPricingComparisonWorkspace: () => this.rejectUnsupported("pricing"),
+  };
   readonly stationKeys: BackendClient["stationKeys"] = {
     listStationKeys: (_stationId: string) => this.rejectUnsupported("station_keys"),
     getRemoteKeyCapability: (_stationId: string) => this.rejectUnsupported("station_keys.remote_key"),

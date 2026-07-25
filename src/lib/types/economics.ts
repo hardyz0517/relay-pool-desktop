@@ -87,6 +87,78 @@ export type PricingStatus =
 
 export type RequestKind = "text" | "image" | "video" | "any";
 
+export type UpsertBalanceSnapshotInput = {
+  id: string | null;
+  stationId: string;
+  stationKeyId: string | null;
+  scope: "station" | "station_key";
+  value: number | null;
+  currency: string;
+  creditUnit: string | null;
+  usedValue: number | null;
+  totalValue: number | null;
+  todayRequestCount: number | null;
+  totalRequestCount: number | null;
+  todayConsumption: number | null;
+  totalConsumption: number | null;
+  todayBaseConsumption: number | null;
+  totalBaseConsumption: number | null;
+  todayTokenCount: number | null;
+  totalTokenCount: number | null;
+  todayInputTokenCount: number | null;
+  todayOutputTokenCount: number | null;
+  totalInputTokenCount: number | null;
+  totalOutputTokenCount: number | null;
+  accountConcurrencyLimit: number | null;
+  lowBalanceThreshold: number | null;
+  status: "unknown" | "normal" | "low" | "depleted";
+  source: string;
+  confidence: number;
+  collectedAt: string | null;
+};
+
+export type UpsertModelBasePriceInput = {
+  id?: string | null;
+  provider: string;
+  model: string;
+  inputPrice: number | null;
+  outputPrice: number | null;
+  currency: string;
+  unit: string;
+  sourceUrl: string;
+  sourceLabel: string;
+  sourceCheckedAt: string | null;
+  enabled: boolean;
+  builtIn: boolean;
+  note: string | null;
+};
+
+export type UpsertPricingRuleInput = {
+  id?: string | null;
+  stationId: string;
+  stationKeyId: string | null;
+  groupBindingId: string | null;
+  groupName: string | null;
+  tierLabel: string | null;
+  model: string;
+  inputPrice: number | null;
+  outputPrice: number | null;
+  fixedPrice: number | null;
+  rateMultiplier: number | null;
+  currency: string;
+  unit: string;
+  priceType: string;
+  basePriceSource: string | null;
+  normalizationStatus: string | null;
+  source: string;
+  confidence: number;
+  enabled: boolean;
+  note: string | null;
+  collectedAt: string | null;
+  validFrom: string | null;
+  validUntil: string | null;
+};
+
 export type ResolvedPricingContext = {
   stationKeyId: string;
   stationId: string;

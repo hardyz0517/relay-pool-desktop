@@ -37,6 +37,9 @@ describe("data recovery backend cutover", () => {
       proxy: {} as BackendClient["proxy"],
       localRouting: {} as BackendClient["localRouting"],
       dataRecovery,
+      economics: {} as BackendClient["economics"],
+      groupFacts: {} as BackendClient["groupFacts"],
+      pricing: {} as BackendClient["pricing"],
       handshake: vi.fn(async () => ({}) as never),
     });
     for (const fn of Object.values(dataRecovery)) {

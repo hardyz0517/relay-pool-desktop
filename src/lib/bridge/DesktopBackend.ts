@@ -1,6 +1,8 @@
 import { validateRuntimeContract } from "@/app/bootstrap/runtimeContract";
+import { normalizeGroupCategory } from "@/lib/groupCategories";
 import {
   bindRemoteStationKey as bindRemoteStationKeyBinding,
+  deletePricingRule as deletePricingRuleBinding,
   clearChangeEvents as clearChangeEventsBinding,
   clearRequestLogs as clearRequestLogsBinding,
   chooseDataDir as chooseDataDirBinding,
@@ -21,13 +23,22 @@ import {
   getSettings as getSettingsBinding,
   getStationCredentials as getStationCredentialsBinding,
   importRelayPoolToCcswitch as importRelayPoolToCcswitchBinding,
+  listBalanceSnapshots as listBalanceSnapshotsBinding,
+  listBalanceSnapshotsForStation as listBalanceSnapshotsForStationBinding,
+  listCurrentStationBalanceSnapshots as listCurrentStationBalanceSnapshotsBinding,
+  listGroupRateRecords as listGroupRateRecordsBinding,
   listKeyPoolItems as listKeyPoolItemsBinding,
   listChangeEvents as listChangeEventsBinding,
   listChangeEventsForStation as listChangeEventsForStationBinding,
   listCollectorRuns as listCollectorRunsBinding,
   loadLocalRoutingWorkspace as loadLocalRoutingWorkspaceBinding,
+  loadPricingComparisonWorkspace as loadPricingComparisonWorkspaceBinding,
+  listModelBasePrices as listModelBasePricesBinding,
+  listPricingRules as listPricingRulesBinding,
   listRemoteStationKeys as listRemoteStationKeysBinding,
   listStationEndpointHealth as listStationEndpointHealthBinding,
+  listStationGroupBindings as listStationGroupBindingsBinding,
+  listStationGroupOptions as listStationGroupOptionsBinding,
   listStationKeys as listStationKeysBinding,
   listStations as listStationsBinding,
   locateDataStoreCandidate as locateDataStoreCandidateBinding,
@@ -45,13 +56,19 @@ import {
   reorderStations as reorderStationsBinding,
   prepareLocalProxyForUpdate as prepareLocalProxyForUpdateBinding,
   refreshDataStoreCandidates as refreshDataStoreCandidatesBinding,
+  resetModelBasePricesToBuiltins as resetModelBasePricesToBuiltinsBinding,
+  resolveStationKeyPricingContext as resolveStationKeyPricingContextBinding,
   resetDataDir as resetDataDirBinding,
   resolveChangeEvent as resolveChangeEventBinding,
   saveStationKeyWithDefaults as saveStationKeyWithDefaultsBinding,
   scanRemoteStationKeys as scanRemoteStationKeysBinding,
   unbindRemoteStationKey as unbindRemoteStationKeyBinding,
   updateLocalAccessKey as updateLocalAccessKeyBinding,
+  upsertBalanceSnapshot as upsertBalanceSnapshotBinding,
   upsertChangeEvent as upsertChangeEventBinding,
+  upsertModelBasePrice as upsertModelBasePriceBinding,
+  upsertPricingRule as upsertPricingRuleBinding,
+  upsertStationGroupBinding as upsertStationGroupBindingBinding,
   updateSettings as updateSettingsBinding,
   updateStation as updateStationBinding,
   updateStationCredentials as updateStationCredentialsBinding,
@@ -144,6 +161,40 @@ export class DesktopBackend implements BackendClient {
     openDataStoreBackupDir: () => openDataStoreBackupDirBinding(),
     exportDataStoreDiagnostic: () => exportDataStoreDiagnosticBinding(),
   };
+  readonly economics = {
+    listPricingRules: () => listPricingRulesBinding(),
+    upsertPricingRule: (input: Parameters<BackendClient["economics"]["upsertPricingRule"]>[0]) =>
+      upsertPricingRuleBinding(input),
+    deletePricingRule: (id: string) => deletePricingRuleBinding({ id }),
+    resolveStationKeyPricingContext: (
+      stationKeyId: string,
+      requestedModel: string,
+      requestKind: Parameters<BackendClient["economics"]["resolveStationKeyPricingContext"]>[2] = "text",
+    ) => resolveStationKeyPricingContextBinding({ stationKeyId, requestedModel, requestKind }),
+    listModelBasePrices: () => listModelBasePricesBinding(),
+    upsertModelBasePrice: (input: Parameters<BackendClient["economics"]["upsertModelBasePrice"]>[0]) =>
+      upsertModelBasePriceBinding(input),
+    resetModelBasePricesToBuiltins: () => resetModelBasePricesToBuiltinsBinding(),
+    listBalanceSnapshots: () => listBalanceSnapshotsBinding(),
+    listCurrentStationBalanceSnapshots: () => listCurrentStationBalanceSnapshotsBinding(),
+    listBalanceSnapshotsForStation: (stationId: string) => listBalanceSnapshotsForStationBinding({ stationId }),
+    upsertBalanceSnapshot: (input: Parameters<BackendClient["economics"]["upsertBalanceSnapshot"]>[0]) =>
+      upsertBalanceSnapshotBinding(input),
+  };
+  readonly groupFacts = {
+    listStationGroupBindings: (stationId: string) =>
+      listStationGroupBindingsBinding({ stationId }).then((bindings) => bindings.map(normalizeGroupBinding)),
+    listStationGroupOptions: (stationId: string) =>
+      listStationGroupOptionsBinding({ stationId }).then((options) => options.map(normalizeGroupOption)),
+    listGroupRateRecords: (stationId: string) =>
+      listGroupRateRecordsBinding({ stationId }).then((records) => records.map(normalizeGroupRateRecord)),
+    upsertStationGroupBinding: (input: Parameters<BackendClient["groupFacts"]["upsertStationGroupBinding"]>[0]) =>
+      upsertStationGroupBindingBinding(input).then(normalizeGroupBinding),
+  };
+  readonly pricing = {
+    loadPricingComparisonWorkspace: () =>
+      loadPricingComparisonWorkspaceBinding() as ReturnType<BackendClient["pricing"]["loadPricingComparisonWorkspace"]>,
+  };
   readonly stationKeys = {
     listStationKeys: (stationId: string) => listStationKeysBinding({ stationId }),
     getRemoteKeyCapability: (stationId: string) => getRemoteKeyCapabilityBinding({ stationId }),
@@ -216,4 +267,34 @@ function normalizeUpdateStationKeyInput(
     delete normalized.manualRateMultiplier;
   }
   return normalized;
+}
+
+function normalizeGroupBinding(
+  binding: Awaited<ReturnType<typeof upsertStationGroupBindingBinding>>,
+): Awaited<ReturnType<BackendClient["groupFacts"]["upsertStationGroupBinding"]>> {
+  return {
+    ...binding,
+    inferredGroupCategory: normalizeGroupCategory(binding.inferredGroupCategory),
+    groupCategoryOverride: normalizeGroupCategory(binding.groupCategoryOverride),
+  };
+}
+
+function normalizeGroupOption(
+  option: Awaited<ReturnType<typeof listStationGroupOptionsBinding>>[number],
+): Awaited<ReturnType<BackendClient["groupFacts"]["listStationGroupOptions"]>>[number] {
+  return {
+    ...option,
+    inferredGroupCategory: normalizeGroupCategory(option.inferredGroupCategory),
+    groupCategoryOverride: normalizeGroupCategory(option.groupCategoryOverride),
+    effectiveGroupCategory: normalizeGroupCategory(option.effectiveGroupCategory) ?? "unknown",
+  };
+}
+
+function normalizeGroupRateRecord(
+  record: Awaited<ReturnType<typeof listGroupRateRecordsBinding>>[number],
+): Awaited<ReturnType<BackendClient["groupFacts"]["listGroupRateRecords"]>>[number] {
+  return {
+    ...record,
+    inferredGroupCategory: normalizeGroupCategory(record.inferredGroupCategory),
+  };
 }

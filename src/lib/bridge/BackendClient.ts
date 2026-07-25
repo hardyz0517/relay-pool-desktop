@@ -1,6 +1,22 @@
 import type { RuntimeContractInfo } from "./contract";
 import type { AppSettings, CcswitchImportResult, UpdateSettingsInput } from "@/lib/types/settings";
 import type {
+  BalanceSnapshot,
+  ModelBasePrice,
+  PricingRule,
+  RequestKind,
+  ResolvedPricingContext,
+  UpsertBalanceSnapshotInput,
+  UpsertModelBasePriceInput,
+  UpsertPricingRuleInput,
+} from "@/lib/types/economics";
+import type {
+  GroupRateRecord,
+  StationGroupBinding,
+  StationGroupOption,
+  UpsertStationGroupBindingInput,
+} from "@/lib/types/groupFacts";
+import type {
   EndpointPingResult,
   Station,
   StationEndpointHealth,
@@ -130,6 +146,44 @@ export type DataRecoveryDomainClient = {
   exportDataStoreDiagnostic(): Promise<string | null>;
 };
 
+export type EconomicsDomainClient = {
+  listPricingRules(): Promise<PricingRule[]>;
+  upsertPricingRule(input: UpsertPricingRuleInput): Promise<PricingRule>;
+  deletePricingRule(id: string): Promise<void>;
+  resolveStationKeyPricingContext(
+    stationKeyId: string,
+    requestedModel: string,
+    requestKind?: RequestKind,
+  ): Promise<ResolvedPricingContext>;
+  listModelBasePrices(): Promise<ModelBasePrice[]>;
+  upsertModelBasePrice(input: UpsertModelBasePriceInput): Promise<ModelBasePrice>;
+  resetModelBasePricesToBuiltins(): Promise<ModelBasePrice[]>;
+  listBalanceSnapshots(): Promise<BalanceSnapshot[]>;
+  listCurrentStationBalanceSnapshots(): Promise<BalanceSnapshot[]>;
+  listBalanceSnapshotsForStation(stationId: string): Promise<BalanceSnapshot[]>;
+  upsertBalanceSnapshot(input: UpsertBalanceSnapshotInput): Promise<BalanceSnapshot>;
+};
+
+export type GroupFactsDomainClient = {
+  listStationGroupBindings(stationId: string): Promise<StationGroupBinding[]>;
+  listStationGroupOptions(stationId: string): Promise<StationGroupOption[]>;
+  listGroupRateRecords(stationId: string): Promise<GroupRateRecord[]>;
+  upsertStationGroupBinding(input: UpsertStationGroupBindingInput): Promise<StationGroupBinding>;
+};
+
+export type PricingComparisonWorkspace = {
+  stations: Station[];
+  stationKeys: StationKey[];
+  groupBindings: StationGroupBinding[];
+  groupRates: GroupRateRecord[];
+  pricingRules: PricingRule[];
+  developerModeEnabled: boolean;
+};
+
+export type PricingDomainClient = {
+  loadPricingComparisonWorkspace(): Promise<PricingComparisonWorkspace>;
+};
+
 export type BackendClient = {
   readonly mode: BackendMode;
   readonly settings: SettingsDomainClient;
@@ -140,6 +194,9 @@ export type BackendClient = {
   readonly proxy: ProxyDomainClient;
   readonly localRouting: LocalRoutingDomainClient;
   readonly dataRecovery: DataRecoveryDomainClient;
+  readonly economics: EconomicsDomainClient;
+  readonly groupFacts: GroupFactsDomainClient;
+  readonly pricing: PricingDomainClient;
   handshake(): Promise<RuntimeContractInfo>;
 };
 
