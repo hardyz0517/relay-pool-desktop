@@ -7,7 +7,8 @@ use crate::{
             ChangeEventsCommandFacade, ChannelMonitoringCommandFacade, ChannelStatusCommandFacade,
             CollectorMetadataCommandFacade, CredentialsCommandFacade, DataDirectoryCommandFacade,
             KeyPoolCommandFacade, LocalProxyCommandFacade, PricingCommandFacade,
-            RequestLogsCommandFacade, RoutingCommandFacade, SettingsStationsCommandFacade,
+            RemoteKeysCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
+            SettingsStationsCommandFacade,
         },
         data_directory::DataDirectoryPort,
     },
@@ -49,6 +50,16 @@ pub(crate) fn compose_settings_stations_command_facade(
 
 pub(crate) fn compose_key_pool_command_facade(services: &AppServices) -> KeyPoolCommandFacade {
     KeyPoolCommandFacade::new(Arc::clone(&services.credentials))
+}
+
+pub(crate) fn compose_remote_keys_command_facade(
+    services: &AppServices,
+) -> RemoteKeysCommandFacade {
+    RemoteKeysCommandFacade::new(
+        Arc::clone(&services.collectors),
+        Arc::clone(&services.credentials),
+        Arc::clone(&services.settings),
+    )
 }
 
 pub(crate) fn compose_routing_command_facade(services: &AppServices) -> RoutingCommandFacade {

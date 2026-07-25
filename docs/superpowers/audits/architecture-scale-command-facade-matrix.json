@@ -2,7 +2,7 @@
   "schema_version": 1,
   "owner": "Task 7",
   "source_inventory_item": "S2-T7-command-facades",
-  "current_shard": "settings-stations-key-pool-routing-request-log-channel-monitoring-channel-status-collector-metadata-pricing-change-events-credentials-data-directory-local-proxy-command-facades",
+  "current_shard": "settings-stations-key-pool-remote-keys-routing-request-log-channel-monitoring-channel-status-collector-metadata-pricing-change-events-credentials-data-directory-local-proxy-command-facades",
   "migration_state": "partial",
   "facades": [
     {
@@ -158,6 +158,42 @@
         "create_local_station_key_from_remote",
         "test_station_key_connectivity",
         "station credential/session capture and login commands"
+      ]
+    },
+    {
+      "state_type": "RemoteKeysCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/remote_keys.rs",
+      "dependencies": [
+        "CollectorService",
+        "CredentialService",
+        "SettingsService",
+        "V2CollectorSourceAdapter"
+      ],
+      "commands": [
+        {
+          "command": "scan_remote_station_keys",
+          "use_case": "scan_remote_station_keys",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService"]
+        },
+        {
+          "command": "create_remote_station_key",
+          "use_case": "create_remote_station_key",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService"]
+        },
+        {
+          "command": "create_local_station_key_from_remote",
+          "use_case": "create_local_station_key_from_remote",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService"]
+        }
+      ],
+      "non_goals": [
+        "bind_remote_station_key",
+        "unbind_remote_station_key",
+        "get_remote_key_capability",
+        "list_remote_station_keys",
+        "test_station_key_connectivity",
+        "collector execution commands",
+        "station login/test commands"
       ]
     },
     {

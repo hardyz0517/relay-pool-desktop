@@ -66,6 +66,7 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     Application,
     SettingsStations,
     KeyPool,
+    RemoteKeys,
     Routing,
     RequestLogs,
     ChannelMonitoring,
@@ -84,6 +85,7 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     application: Application,
     settings_stations: SettingsStations,
     key_pool: KeyPool,
+    remote_keys: RemoteKeys,
     routing: Routing,
     request_logs: RequestLogs,
     channel_monitoring: ChannelMonitoring,
@@ -104,6 +106,7 @@ impl<
         Application,
         SettingsStations,
         KeyPool,
+        RemoteKeys,
         Routing,
         RequestLogs,
         ChannelMonitoring,
@@ -123,6 +126,7 @@ impl<
         Application,
         SettingsStations,
         KeyPool,
+        RemoteKeys,
         Routing,
         RequestLogs,
         ChannelMonitoring,
@@ -150,6 +154,7 @@ impl<
         application: Application,
         settings_stations: SettingsStations,
         key_pool: KeyPool,
+        remote_keys: RemoteKeys,
         routing: Routing,
         request_logs: RequestLogs,
         channel_monitoring: ChannelMonitoring,
@@ -169,6 +174,7 @@ impl<
             application,
             settings_stations,
             key_pool,
+            remote_keys,
             routing,
             request_logs,
             channel_monitoring,
@@ -306,6 +312,7 @@ pub(crate) fn register_ready_services_with_command_facades<
     Application,
     SettingsStations,
     KeyPool,
+    RemoteKeys,
     Routing,
     RequestLogs,
     ChannelMonitoring,
@@ -327,6 +334,7 @@ pub(crate) fn register_ready_services_with_command_facades<
         Application,
         SettingsStations,
         KeyPool,
+        RemoteKeys,
         Routing,
         RequestLogs,
         ChannelMonitoring,
@@ -348,6 +356,7 @@ where
     Application: Send + Sync + 'static,
     SettingsStations: Send + Sync + 'static,
     KeyPool: Send + Sync + 'static,
+    RemoteKeys: Send + Sync + 'static,
     Routing: Send + Sync + 'static,
     RequestLogs: Send + Sync + 'static,
     ChannelMonitoring: Send + Sync + 'static,
@@ -379,6 +388,7 @@ pub(crate) fn register_ready_services_with_command_facades_in<
     Application,
     SettingsStations,
     KeyPool,
+    RemoteKeys,
     Routing,
     RequestLogs,
     ChannelMonitoring,
@@ -400,6 +410,7 @@ pub(crate) fn register_ready_services_with_command_facades_in<
         Application,
         SettingsStations,
         KeyPool,
+        RemoteKeys,
         Routing,
         RequestLogs,
         ChannelMonitoring,
@@ -421,6 +432,7 @@ where
     Application: Send + Sync + 'static,
     SettingsStations: Send + Sync + 'static,
     KeyPool: Send + Sync + 'static,
+    RemoteKeys: Send + Sync + 'static,
     Routing: Send + Sync + 'static,
     RequestLogs: Send + Sync + 'static,
     ChannelMonitoring: Send + Sync + 'static,
@@ -440,6 +452,7 @@ where
         || registry.contains::<Application>()
         || registry.contains::<SettingsStations>()
         || registry.contains::<KeyPool>()
+        || registry.contains::<RemoteKeys>()
         || registry.contains::<Routing>()
         || registry.contains::<RequestLogs>()
         || registry.contains::<ChannelMonitoring>()
@@ -462,6 +475,7 @@ where
         application,
         settings_stations,
         key_pool,
+        remote_keys,
         routing,
         request_logs,
         channel_monitoring,
@@ -488,6 +502,9 @@ where
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(key_pool) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    if !registry.manage(remote_keys) {
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(routing) {
@@ -590,6 +607,8 @@ mod tests {
     struct SlotSixteen(u8);
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct SlotSeventeen(u8);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SlotEighteen(u8);
 
     #[derive(Default)]
     struct TestRegistry {
@@ -626,7 +645,7 @@ mod tests {
 
     #[test]
     fn command_facade_ready_services_preflight_every_concrete_slot() {
-        for occupied_slot in 0..17 {
+        for occupied_slot in 0..18 {
             let mut registry = TestRegistry::default();
             match occupied_slot {
                 0 => assert!(registry.manage_direct(SlotOne(99))),
@@ -646,6 +665,7 @@ mod tests {
                 14 => assert!(registry.manage_direct(SlotFifteen(99))),
                 15 => assert!(registry.manage_direct(SlotSixteen(99))),
                 16 => assert!(registry.manage_direct(SlotSeventeen(99))),
+                17 => assert!(registry.manage_direct(SlotEighteen(99))),
                 _ => unreachable!(),
             }
 
@@ -670,6 +690,7 @@ mod tests {
                     SlotFifteen(1),
                     SlotSixteen(1),
                     SlotSeventeen(1),
+                    SlotEighteen(1),
                 ),
             )
             .expect_err("occupied slots must fail before publishing any new ready state");
@@ -693,6 +714,7 @@ mod tests {
                 registry.try_state::<SlotFifteen>().map(|state| state.0),
                 registry.try_state::<SlotSixteen>().map(|state| state.0),
                 registry.try_state::<SlotSeventeen>().map(|state| state.0),
+                registry.try_state::<SlotEighteen>().map(|state| state.0),
             ];
             let expected = std::array::from_fn(|index| (index == occupied_slot).then_some(99));
             assert_eq!(observed, expected);
@@ -724,6 +746,7 @@ mod tests {
                 SlotFifteen(15),
                 SlotSixteen(16),
                 SlotSeventeen(17),
+                SlotEighteen(18),
             ),
         )
         .expect("vacant registry must publish every ready state");
@@ -748,5 +771,6 @@ mod tests {
             registry.try_state::<SlotSeventeen>(),
             Some(SlotSeventeen(17))
         );
+        assert_eq!(registry.try_state::<SlotEighteen>(), Some(SlotEighteen(18)));
     }
 }

@@ -383,6 +383,8 @@ pub fn run() {
                         );
                     let key_pool_command_facade =
                         app_composition::compose_key_pool_command_facade(&app_services);
+                    let remote_keys_command_facade =
+                        app_composition::compose_remote_keys_command_facade(&app_services);
                     let routing_command_facade =
                         app_composition::compose_routing_command_facade(&app_services);
                     let request_logs_command_facade =
@@ -448,6 +450,7 @@ pub fn run() {
                             app_services,
                             settings_stations_command_facade,
                             key_pool_command_facade,
+                            remote_keys_command_facade,
                             routing_command_facade,
                             request_logs_command_facade,
                             channel_monitoring_command_facade,

@@ -22,8 +22,8 @@ use crate::{
             ChangeEventsCommandFacade, ChannelMonitoringCommandFacade, ChannelStatusCommandFacade,
             CollectorMetadataCommandFacade, CredentialsCommandFacade, DataDirectoryCommandFacade,
             KeyPoolCommandFacade, LocalProxyCommandError, LocalProxyCommandFacade,
-            PricingCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
-            SettingsStationsCommandFacade,
+            PricingCommandFacade, RemoteKeysCommandFacade, RequestLogsCommandFacade,
+            RoutingCommandFacade, SettingsStationsCommandFacade,
         },
         error::ApplicationError,
         pagination::PageLimit,
@@ -1090,23 +1090,13 @@ pub async fn list_remote_station_keys(
 
 #[tauri::command]
 pub async fn scan_remote_station_keys(
-    services: State<'_, AppServices>,
+    facade: State<'_, RemoteKeysCommandFacade>,
     input: Value,
 ) -> Result<RemoteKeyScanResultDto, error::CommandError> {
     correlation::in_command_scope("scan_remote_station_keys", async {
         let input = StationIdInputDto::parse(input)?;
-        let source = collectors::V2CollectorSourceAdapter::new(
-            services.collectors.clone(),
-            services.credentials.clone(),
-            services.settings.clone(),
-        );
-        let prepared = tauri::async_runtime::spawn_blocking(move || {
-            remote_keys::prepare_remote_key_scan_v2(&source, input.station_id)
-        })
-        .await
-        .map_err(|_| error::CommandError::internal(None))?
-        .map_err(public_remote_key_error)?;
-        remote_keys::finish_remote_key_scan_v2(services.credentials.as_ref(), prepared)
+        facade
+            .scan_remote_station_keys(input.station_id)
             .await
             .map_err(public_remote_key_error)
     })
@@ -1115,23 +1105,13 @@ pub async fn scan_remote_station_keys(
 
 #[tauri::command]
 pub async fn create_remote_station_key(
-    services: State<'_, AppServices>,
+    facade: State<'_, RemoteKeysCommandFacade>,
     input: Value,
 ) -> Result<CreateRemoteStationKeyResultDto, error::CommandError> {
     correlation::in_command_scope("create_remote_station_key", async {
         let input = CreateRemoteStationKeyInputDto::parse(input)?;
-        let source = collectors::V2CollectorSourceAdapter::new(
-            services.collectors.clone(),
-            services.credentials.clone(),
-            services.settings.clone(),
-        );
-        let prepared = tauri::async_runtime::spawn_blocking(move || {
-            remote_keys::prepare_remote_key_creation_v2(&source, input)
-        })
-        .await
-        .map_err(|_| error::CommandError::internal(None))?
-        .map_err(public_remote_key_error)?;
-        remote_keys::finish_remote_key_creation_v2(services.credentials.as_ref(), prepared)
+        facade
+            .create_remote_station_key(input)
             .await
             .map_err(public_remote_key_error)
     })
@@ -1140,27 +1120,13 @@ pub async fn create_remote_station_key(
 
 #[tauri::command]
 pub async fn create_local_station_key_from_remote(
-    services: State<'_, AppServices>,
+    facade: State<'_, RemoteKeysCommandFacade>,
     input: Value,
 ) -> Result<CreateLocalStationKeyFromRemoteResultDto, error::CommandError> {
     correlation::in_command_scope("create_local_station_key_from_remote", async {
         let input = RemoteStationKeyInputDto::parse(input)?;
-        let source = collectors::V2CollectorSourceAdapter::new(
-            services.collectors.clone(),
-            services.credentials.clone(),
-            services.settings.clone(),
-        );
-        let prepared = tauri::async_runtime::spawn_blocking(move || {
-            remote_keys::prepare_local_key_from_remote_v2(
-                &source,
-                input.station_id,
-                input.remote_key_id,
-            )
-        })
-        .await
-        .map_err(|_| error::CommandError::internal(None))?
-        .map_err(public_remote_key_error)?;
-        remote_keys::finish_local_key_from_remote_v2(services.credentials.as_ref(), prepared)
+        facade
+            .create_local_station_key_from_remote(input.station_id, input.remote_key_id)
             .await
             .map_err(public_remote_key_error)
     })
