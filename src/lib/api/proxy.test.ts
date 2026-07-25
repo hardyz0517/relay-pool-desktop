@@ -38,6 +38,7 @@ describe("request log backend cutover", () => {
       economics: {} as never,
       groupFacts: {} as never,
       pricing: {} as never,
+      routing: {} as never,
       handshake: vi.fn(async () => ({}) as never),
     });
     for (const fn of Object.values(proxy)) {

@@ -125,6 +125,7 @@ function testBackendClient(
     economics: {} as BackendClient["economics"],
     groupFacts: {} as BackendClient["groupFacts"],
     pricing: {} as BackendClient["pricing"],
+    routing: {} as BackendClient["routing"],
     ...overrides,
   };
 }

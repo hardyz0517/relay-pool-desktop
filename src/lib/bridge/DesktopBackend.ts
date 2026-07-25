@@ -2,6 +2,7 @@ import { validateRuntimeContract } from "@/app/bootstrap/runtimeContract";
 import { normalizeGroupCategory } from "@/lib/groupCategories";
 import {
   bindRemoteStationKey as bindRemoteStationKeyBinding,
+  deleteModelAlias as deleteModelAliasBinding,
   deletePricingRule as deletePricingRuleBinding,
   clearChangeEvents as clearChangeEventsBinding,
   clearRequestLogs as clearRequestLogsBinding,
@@ -22,6 +23,8 @@ import {
   getRuntimeContractInfo,
   getSettings as getSettingsBinding,
   getStationCredentials as getStationCredentialsBinding,
+  getStationKeyCapabilities as getStationKeyCapabilitiesBinding,
+  getStationKeyHealth as getStationKeyHealthBinding,
   importRelayPoolToCcswitch as importRelayPoolToCcswitchBinding,
   listBalanceSnapshots as listBalanceSnapshotsBinding,
   listBalanceSnapshotsForStation as listBalanceSnapshotsForStationBinding,
@@ -33,12 +36,14 @@ import {
   listCollectorRuns as listCollectorRunsBinding,
   loadLocalRoutingWorkspace as loadLocalRoutingWorkspaceBinding,
   loadPricingComparisonWorkspace as loadPricingComparisonWorkspaceBinding,
+  listModelAliases as listModelAliasesBinding,
   listModelBasePrices as listModelBasePricesBinding,
   listPricingRules as listPricingRulesBinding,
   listRemoteStationKeys as listRemoteStationKeysBinding,
   listStationEndpointHealth as listStationEndpointHealthBinding,
   listStationGroupBindings as listStationGroupBindingsBinding,
   listStationGroupOptions as listStationGroupOptionsBinding,
+  listStationKeyHealth as listStationKeyHealthBinding,
   listStationKeys as listStationKeysBinding,
   listStations as listStationsBinding,
   locateDataStoreCandidate as locateDataStoreCandidateBinding,
@@ -62,10 +67,12 @@ import {
   resolveChangeEvent as resolveChangeEventBinding,
   saveStationKeyWithDefaults as saveStationKeyWithDefaultsBinding,
   scanRemoteStationKeys as scanRemoteStationKeysBinding,
+  simulateRoute as simulateRouteBinding,
   unbindRemoteStationKey as unbindRemoteStationKeyBinding,
   updateLocalAccessKey as updateLocalAccessKeyBinding,
   upsertBalanceSnapshot as upsertBalanceSnapshotBinding,
   upsertChangeEvent as upsertChangeEventBinding,
+  upsertModelAlias as upsertModelAliasBinding,
   upsertModelBasePrice as upsertModelBasePriceBinding,
   upsertPricingRule as upsertPricingRuleBinding,
   upsertStationGroupBinding as upsertStationGroupBindingBinding,
@@ -73,6 +80,7 @@ import {
   updateStation as updateStationBinding,
   updateStationCredentials as updateStationCredentialsBinding,
   updateStationKey as updateStationKeyBinding,
+  updateStationKeyCapabilities as updateStationKeyCapabilitiesBinding,
   updateStationKeyGroupBinding as updateStationKeyGroupBindingBinding,
   updateStationSession as updateStationSessionBinding,
   startLocalProxy as startLocalProxyBinding,
@@ -194,6 +202,31 @@ export class DesktopBackend implements BackendClient {
   readonly pricing = {
     loadPricingComparisonWorkspace: () =>
       loadPricingComparisonWorkspaceBinding() as ReturnType<BackendClient["pricing"]["loadPricingComparisonWorkspace"]>,
+  };
+  readonly routing = {
+    getStationKeyCapabilities: (stationKeyId: string) => getStationKeyCapabilitiesBinding({ stationKeyId }),
+    updateStationKeyCapabilities: (input: Parameters<BackendClient["routing"]["updateStationKeyCapabilities"]>[0]) =>
+      updateStationKeyCapabilitiesBinding(input),
+    listModelAliases: () => listModelAliasesBinding(),
+    upsertModelAlias: (input: Parameters<BackendClient["routing"]["upsertModelAlias"]>[0]) =>
+      upsertModelAliasBinding(input),
+    deleteModelAlias: (id: string) => deleteModelAliasBinding({ id }),
+    listStationKeyHealth: () => listStationKeyHealthBinding(),
+    getStationKeyHealth: (stationKeyId: string) => getStationKeyHealthBinding({ stationKeyId }),
+    simulateRoute: (input: Parameters<BackendClient["routing"]["simulateRoute"]>[0]) =>
+      simulateRouteBinding({
+        endpoint: input.endpoint,
+        model: input.model,
+        stream: input.stream,
+        usesTools: input.usesTools,
+        usesVision: input.usesVision,
+        usesReasoning: input.usesReasoning,
+        policy: input.policy,
+        maxRateMultiplier: input.maxRateMultiplier ?? null,
+        routingGroupFilter: input.routingGroupFilter ?? null,
+        sessionHash: input.sessionHash ?? null,
+        previousResponseId: input.previousResponseId ?? null,
+      }),
   };
   readonly stationKeys = {
     listStationKeys: (stationId: string) => listStationKeysBinding({ stationId }),

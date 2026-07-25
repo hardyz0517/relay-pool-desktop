@@ -46,6 +46,15 @@ import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { ActivationResult, DataStoreCandidate, DataStoreStartupView } from "@/lib/types/dataRecovery";
 import type { LocalRoutingWorkspace, ReorderLocalRoutingKeysInput } from "@/lib/types/localRouting";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
+import type {
+  ModelAlias,
+  RouteSimulationInput,
+  RouteSimulationResult,
+  StationKeyCapabilities,
+  StationKeyHealth,
+  UpdateStationKeyCapabilitiesInput,
+  UpsertModelAliasInput,
+} from "@/lib/types/routing";
 
 export type BackendMode = "desktop" | "demo";
 
@@ -184,6 +193,17 @@ export type PricingDomainClient = {
   loadPricingComparisonWorkspace(): Promise<PricingComparisonWorkspace>;
 };
 
+export type RoutingDomainClient = {
+  getStationKeyCapabilities(stationKeyId: string): Promise<StationKeyCapabilities>;
+  updateStationKeyCapabilities(input: UpdateStationKeyCapabilitiesInput): Promise<StationKeyCapabilities>;
+  listModelAliases(): Promise<ModelAlias[]>;
+  upsertModelAlias(input: UpsertModelAliasInput): Promise<ModelAlias>;
+  deleteModelAlias(id: string): Promise<void>;
+  listStationKeyHealth(): Promise<StationKeyHealth[]>;
+  getStationKeyHealth(stationKeyId: string): Promise<StationKeyHealth>;
+  simulateRoute(input: RouteSimulationInput): Promise<RouteSimulationResult>;
+};
+
 export type BackendClient = {
   readonly mode: BackendMode;
   readonly settings: SettingsDomainClient;
@@ -197,6 +217,7 @@ export type BackendClient = {
   readonly economics: EconomicsDomainClient;
   readonly groupFacts: GroupFactsDomainClient;
   readonly pricing: PricingDomainClient;
+  readonly routing: RoutingDomainClient;
   handshake(): Promise<RuntimeContractInfo>;
 };
 

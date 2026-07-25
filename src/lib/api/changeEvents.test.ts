@@ -121,6 +121,7 @@ function makeBackendClient() {
       economics: {} as BackendClient["economics"],
       groupFacts: {} as BackendClient["groupFacts"],
       pricing: {} as BackendClient["pricing"],
+      routing: {} as BackendClient["routing"],
       handshake: vi.fn(async () => ({}) as never),
     } satisfies BackendClient,
     reset() {
