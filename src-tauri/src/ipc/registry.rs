@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "ea9ba398771e5933c4406bcf36bb6fd3ebef4ec7216ffa8316c2dab4a8205c64";
+    "3daa6a02863cb141ef7d6c9e785d033295a0afaa4a8460841795567742a97f79";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -669,7 +669,7 @@ fn command_contract(name: &str) -> CommandContract {
             "non_idempotent",
             true,
         ),
-        "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
+        "get_runtime_contract_info" => migrated_read("EmptyInputDto", "RuntimeContractInfo"),
         _ => legacy_declared("legacy_unmigrated_input", "legacy_unmigrated_output"),
     }
 }
@@ -1242,6 +1242,14 @@ export function inspectLatestUpdateManifest(input: PublishedUpdateInspectionInpu
 
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
         )
+        .replace(
+            r#"export function getRuntimeContractInfo(): Promise<RuntimeContractInfo> {
+  return invokeCommand<RuntimeContractInfo>("get_runtime_contract_info");
+}"#,
+            r#"export function getRuntimeContractInfo(input: EmptyInputDto = {}): Promise<RuntimeContractInfo> {
+  return invokeCommand<RuntimeContractInfo>("get_runtime_contract_info", { input });
+}"#,
+        )
 }
 
 #[cfg(test)]
@@ -1319,6 +1327,7 @@ mod tests {
     #[test]
     fn migrated_settings_station_commands_have_closed_schemas_and_no_transport_retry() {
         for name in [
+            "get_runtime_contract_info",
             "get_settings",
             "list_stations",
             "update_settings",
@@ -1798,6 +1807,9 @@ mod tests {
         assert!(source.contains("@/lib/bridge/transport"));
         assert!(!source.contains("@tauri-apps/api/core"));
         assert!(source.contains(r#"invokeNonIdempotent<StationDto>("create_station""#));
+        assert!(source.contains(
+            r#"function getRuntimeContractInfo(input: EmptyInputDto = {}): Promise<RuntimeContractInfo>"#
+        ));
         for wrapper in [
             "updateSettings",
             "createStation",

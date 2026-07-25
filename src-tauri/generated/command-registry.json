@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "ea9ba398771e5933c4406bcf36bb6fd3ebef4ec7216ffa8316c2dab4a8205c64",
+  "contract_hash": "3daa6a02863cb141ef7d6c9e785d033295a0afaa4a8460841795567742a97f79",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -436,13 +436,13 @@
     {
       "name": "get_runtime_contract_info",
       "transport": "ordinary",
-      "input_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "abcbf5b415bc38777015aa98b0c6e0ec3e827062935f0b71c1d9765c918f06e3",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "get_settings",

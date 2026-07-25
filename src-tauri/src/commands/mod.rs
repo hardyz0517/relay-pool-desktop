@@ -242,8 +242,14 @@ pub async fn app_status(input: Value) -> Result<AppStatusDto, error::CommandErro
 
 /// Returns only the immutable build/IPC identity needed before normal app queries.
 #[tauri::command]
-pub fn get_runtime_contract_info() -> Result<RuntimeContractInfo, error::CommandError> {
-    Ok(current_runtime_contract())
+pub async fn get_runtime_contract_info(
+    input: Value,
+) -> Result<RuntimeContractInfo, error::CommandError> {
+    correlation::in_command_scope("get_runtime_contract_info", async {
+        EmptyInputDto::parse(input)?;
+        Ok(current_runtime_contract())
+    })
+    .await
 }
 
 #[tauri::command]

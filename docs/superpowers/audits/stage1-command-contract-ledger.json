@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "source_revision": "c433f510ee16216314e560035a1b6b0afc48039e",
+  "source_revision": "11ba3b0b9b81e6eace7e568a23ee1645cbe0ba81",
   "generated_at_date": "2026-07-25",
-  "source_snapshot": "S1-T6-streaming-channel",
+  "source_snapshot": "S1-T4-runtime-contract-closeout",
   "source_authority": {
     "compiled_registry": "src-tauri/src/ipc/registry.rs",
     "rust_signatures": "src-tauri/src/commands/mod.rs",
@@ -22,14 +22,14 @@
   ],
   "classification_notes": [
     "Runtime/bootstrap -> settings_stations; Channel connectivity -> station_keys; update/data-directory -> updater_data_recovery.",
-    "S1-T5 settings/stations, station-key ordinary, changes/logs, collector ordinary groups, routing/health reads, pricing reads, proxy workspace reads, routing capability/model-alias mutations, pricing mutations, local-routing reorder, endpoint ping, proxy lifecycle, updater backend reads, settings bootstrap, updater/data-recovery, collector capture ordinary commands, and S1-T6 streaming Channel migrate 119 commands; get_runtime_contract_info remains pilot partial.",
+    "S1-T4 runtime contract closeout, S1-T5 settings/stations, station-key ordinary, changes/logs, collector ordinary groups, routing/health reads, pricing reads, proxy workspace reads, routing capability/model-alias mutations, pricing mutations, local-routing reorder, endpoint ping, proxy lifecycle, updater backend reads, settings bootstrap, updater/data-recovery, collector capture ordinary commands, and S1-T6 streaming Channel migrate all 120 commands.",
     "test_station_key_connectivity remains the single Channel command and now uses strict DTO input plus a versioned detach-only streaming envelope.",
     "No command proves an application-owned operation key; idempotent_with_key count is zero.",
     "scan_remote_station_keys is an idempotent mutation because it atomically replaces the local remote-key snapshot and matching key metadata; transport retry remains disabled.",
     "create_station is NonIdempotent: transport retry is disabled and ambiguous post-dispatch rejection becomes typed ResultUnknownError.",
     "record_capture_event is intentionally capture-only, not missing from ACL, and must not be granted to main-window. finish_web_authorization_session is a capture-specific command also callable by the main-window manual UI; capture remote windows receive only the separate record-capture-event permission and cannot call station/key/settings/proxy/updater/data-recovery commands.",
     "Empty frontend_callers means no literal caller in requested API/query directories.",
-    "Audit artifact only: the streaming Channel child shard may close while the Stage 1 Gate remains blocked on the remaining runtime-contract pilot partial."
+    "Audit artifact only: Stage 1 command-contract ledger has no remaining legacy or pilot placeholders; Stage 2 entry still requires the full Stage 1 Gate command set to be rerun on this revision."
   ],
   "statistics": {
     "commands": 120,
@@ -50,14 +50,14 @@
       "non_idempotent": 31,
       "read": 45
     },
-    "explicit_pilot_schema_partial": 1,
+    "explicit_pilot_schema_partial": 0,
     "legacy_unmigrated_placeholder": 0,
     "acl_allowed_main_window": 119,
     "commands_with_frontend_callers": 116,
     "commands_without_frontend_callers": 4,
     "public_command_error": 120,
     "public_non_command_error": 0,
-    "fully_migrated": 119,
+    "fully_migrated": 120,
     "acl_capture_only": 1,
     "acl_unallowlisted": 0
   },
@@ -231,7 +231,9 @@
       "group": "settings_stations",
       "group_assignment_reason": "Runtime/bootstrap read assigned to the first settings_stations shard.",
       "transport": "ordinary",
-      "rust_input": [],
+      "rust_input": [
+        "input: Value"
+      ],
       "rust_output": "RuntimeContractInfo",
       "public_error": "error::CommandError",
       "acl": {
@@ -241,22 +243,24 @@
       },
       "frontend_callers": [],
       "mutation_kind": "read",
-      "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
+      "retry_policy": "transport retry disabled; deterministic read with empty DTO validation",
       "runtime_validation_requirements": [
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "pilot_schema_declared_partial; generated group cutover and runtime validation incomplete",
-      "delete_owner": "Task 5 settings_stations shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented_command_scope; command has no application/outbound fan-out",
+      "migration_status": "fully_migrated_s1_t4_runtime_contract_closeout",
+      "delete_owner": "Task 9 may absorb the generated wrapper into bootstrap/domain backend clients",
       "declared_schema": {
-        "input": "unit",
+        "input": "EmptyInputDto",
         "output": "RuntimeContractInfo",
         "error": "CommandError"
       },
       "evidence": {
         "registry": "src-tauri/src/ipc/registry.rs:52",
-        "rust_signature": "src-tauri/src/commands/mod.rs:210"
+        "rust_signature": "src-tauri/src/commands/mod.rs:244",
+        "generated_wrapper": "src/lib/bridge/generated.ts",
+        "runtime_validator": "src/app/bootstrap/runtimeContract.ts"
       }
     },
     {
