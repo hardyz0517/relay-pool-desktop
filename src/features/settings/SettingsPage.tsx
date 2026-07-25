@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Copy, ExternalLink, FolderOpen, Github, Play, RefreshCw, RotateCcw, Square, Wand2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -12,7 +12,10 @@ import {
   stopLocalProxy,
 } from "@/lib/api/proxy";
 import { openExternalUrl } from "@/lib/api/external";
-import { chooseDataDir, getLocalAccessKey, getSettings, resetDataDir, SETTINGS_UPDATED_EVENT, updateLocalAccessKey, updateSettings } from "@/lib/api/settings";
+import { chooseDataDir, getLocalAccessKey, resetDataDir, updateLocalAccessKey, updateSettings } from "@/lib/api/settings";
+import { queryKeys } from "@/lib/query/queryKeys";
+import { proxyStatusQueryOptions, settingsQueryOptions } from "@/lib/query/resourceQueries";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { ProxyStatus } from "@/lib/types/proxy";
 import { useUpdater } from "@/features/updater/UpdaterProvider";
 import { isUpdaterBusyPhase } from "@/features/updater/updateState";
@@ -74,11 +77,13 @@ const REPOSITORY_URL = "https://github.com/hardyz0517/relay-pool-desktop";
 
 export function SettingsPage() {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const { state: updaterState, checkNow: checkForUpdates } = useUpdater();
-  const [settings, setSettings] = useState<AppSettings>(fallbackSettings);
-  const [proxyStatus, setProxyStatus] = useState<ProxyStatus>(fallbackProxyStatus);
+  const settingsQuery = useActivityQuery(settingsQueryOptions());
+  const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions());
+  const settings = settingsQuery.data ?? fallbackSettings;
+  const proxyStatus = proxyStatusQuery.data ?? fallbackProxyStatus;
   const [form, setForm] = useState<SettingsFormState>(settingsToForm(fallbackSettings));
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [proxyBusy, setProxyBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,10 +92,24 @@ export function SettingsPage() {
   const [localAccessKeyDraft, setLocalAccessKeyDraft] = useState("");
   const [localAccessKeyOriginal, setLocalAccessKeyOriginal] = useState("");
   const localAccessKeyInputRef = useRef<HTMLInputElement | null>(null);
+  const loading = settingsQuery.isLoading || proxyStatusQuery.isLoading;
 
-  usePageActivation(({ isInitial }) => {
-    void refreshSettings(isInitial);
-  });
+  useEffect(() => {
+    if (!settingsQuery.data) {
+      return;
+    }
+    setForm(settingsToForm(settingsQuery.data));
+  }, [settingsQuery.data]);
+
+  useEffect(() => {
+    const queryError = settingsQuery.error ?? proxyStatusQuery.error;
+    if (!queryError) {
+      return;
+    }
+    const message = readError(queryError);
+    setError(message);
+    toast.error("刷新设置失败", message);
+  }, [proxyStatusQuery.error, settingsQuery.error, toast]);
 
   useEffect(() => {
     if (localAccessKeyEditing) {
@@ -98,28 +117,6 @@ export function SettingsPage() {
       localAccessKeyInputRef.current?.select();
     }
   }, [localAccessKeyEditing]);
-
-  async function refreshSettings(showLoading = true) {
-    if (showLoading) {
-      setLoading(true);
-    }
-    setError(null);
-    try {
-      const nextSettings = await getSettings();
-      const nextProxyStatus = await getProxyStatus();
-      setSettings(nextSettings);
-      setProxyStatus(nextProxyStatus);
-      setForm(settingsToForm(nextSettings));
-    } catch (requestError) {
-      const message = readError(requestError);
-      setError(message);
-      toast.error("刷新设置失败", message);
-    } finally {
-      if (showLoading) {
-        setLoading(false);
-      }
-    }
-  }
 
   async function handleProxyAction(action: "start" | "stop" | "restart") {
     setProxyBusy(true);
@@ -131,7 +128,7 @@ export function SettingsPage() {
           : action === "stop"
             ? await stopLocalProxy()
             : await restartLocalProxy();
-      setProxyStatus(nextStatus);
+      queryClient.setQueryData(queryKeys.proxyStatus, nextStatus);
       toast.success(
         action === "stop"
           ? "本地代理已停止"
@@ -142,7 +139,7 @@ export function SettingsPage() {
       setError(message);
       toast.error("代理操作失败", message);
       try {
-        setProxyStatus(await getProxyStatus());
+        queryClient.setQueryData(queryKeys.proxyStatus, await getProxyStatus());
       } catch {
         // Keep the visible error from the failed action.
       }
@@ -209,9 +206,8 @@ export function SettingsPage() {
     setError(null);
     try {
       const nextSettings = await updateLocalAccessKey(nextValue);
-      setSettings(nextSettings);
+      queryClient.setQueryData(queryKeys.settings, nextSettings);
       setForm(settingsToForm(nextSettings));
-      window.dispatchEvent(new CustomEvent<AppSettings>(SETTINGS_UPDATED_EVENT, { detail: nextSettings }));
       toast.success("本地访问密钥已更新");
     } catch (requestError) {
       const message = readError(requestError);
@@ -242,9 +238,8 @@ export function SettingsPage() {
     setError(null);
     try {
       const nextSettings = await chooseDataDir();
-      setSettings(nextSettings);
+      queryClient.setQueryData(queryKeys.settings, nextSettings);
       setForm(settingsToForm(nextSettings));
-      window.dispatchEvent(new CustomEvent<AppSettings>(SETTINGS_UPDATED_EVENT, { detail: nextSettings }));
       if (nextSettings.dataDirChangeRequiresRestart) {
         toast.success("数据保存位置已更新", "重启后使用新的数据目录。");
       }
@@ -262,9 +257,8 @@ export function SettingsPage() {
     setError(null);
     try {
       const nextSettings = await resetDataDir();
-      setSettings(nextSettings);
+      queryClient.setQueryData(queryKeys.settings, nextSettings);
       setForm(settingsToForm(nextSettings));
-      window.dispatchEvent(new CustomEvent<AppSettings>(SETTINGS_UPDATED_EVENT, { detail: nextSettings }));
       if (nextSettings.dataDirChangeRequiresRestart) {
         toast.success("数据保存位置已恢复默认", "重启后使用默认数据目录。");
       } else {
@@ -289,9 +283,8 @@ export function SettingsPage() {
     setError(null);
     try {
       const nextSettings = await updateSettings(formToInput(nextForm, settings));
-      setSettings(nextSettings);
+      queryClient.setQueryData(queryKeys.settings, nextSettings);
       setForm(settingsToForm(nextSettings));
-      window.dispatchEvent(new CustomEvent<AppSettings>(SETTINGS_UPDATED_EVENT, { detail: nextSettings }));
       toast.success(successMessage);
     } catch (requestError) {
       const message = readError(requestError);

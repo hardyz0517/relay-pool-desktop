@@ -568,7 +568,7 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 
 ### Task 11：迁移 Key Pool 与 Stations 并建立 aggregate workspace
 
-**当前 checkpoint：** `S3-T11-key-pool-query-owner` 已把 Key Pool 页面、Add/Edit Key transient 页的 Key Pool/Stations 读源收敛到 canonical React Query options，并删除 `stationKeys` API 层的 key-pool DOM update event；Key Pool、Stations 和 AddProvider 的 key mutation 成功路径改为显式 `QueryClient` cache update/invalidation。Task 11 仍未完成：Stations per-row `useQueries`、bounded aggregate workspace/read-model、backend query-count evidence、partial semantics 和 mutation race tests 尚未关闭，且不得通过隐藏 N+1 或修改 Persistence V2 绕过。
+**当前 checkpoint：** `S3-T11-key-pool-query-owner` 已把 Key Pool 页面、Add/Edit Key transient 页的 Key Pool/Stations 读源收敛到 canonical React Query options，并删除 `stationKeys` API 层的 key-pool DOM update event；Key Pool、Stations 和 AddProvider 的 key mutation 成功路径改为显式 `QueryClient` cache update/invalidation。`S3-T11-stations-bounded-snapshot-read-blocker` 已确认 Stations 列表的 per-row `getLatestCollectorSnapshot(stationId)` 不能在不新增 Persistence/read-port 能力时改成真实 bounded aggregate；最新快照影响采集失败/需登录/未采集标签和 rate chips，不得用空快照或前端 wrapper 伪装通过。Task 11 仍未完成：Stations per-row `useQueries`、bounded aggregate workspace/read-model、backend query-count evidence、partial semantics 和 mutation race tests 尚未关闭，且不得通过隐藏 N+1 或修改 Persistence V2 绕过。
 
 **文件：**
 
@@ -618,6 +618,8 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 **退出：** shell 不重复页面 workspace query；read model 不携带 secret/raw payload；跨资源 mutation 等待契约内 invalidation 后再 settled。
 
 ### Task 13：迁移 Settings、Collectors 和剩余页面
+
+**当前 checkpoint：** `S3-T13-settings-cache-owner` 已把 SettingsPage 的 settings/proxyStatus server state 收敛到 canonical query options，删除 settings API/AppShell/RoutingPage 的业务 DOM event 同步；Settings、Collector advanced 和 LocalRouting settings mutation owners 成功后直接更新 `queryKeys.settings`，LocalRouting settings 额外失效 `queryKeys.localRoutingWorkspace`。Collectors page 仍保留 activation loader/local server-state，Task 13 未完成。
 
 **文件：**
 

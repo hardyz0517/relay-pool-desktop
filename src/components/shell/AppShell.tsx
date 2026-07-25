@@ -10,9 +10,7 @@ import {
   notifyChangeEventsUpdated,
 } from "@/lib/api/changeEvents";
 import { PROXY_STATUS_UPDATED_EVENT } from "@/lib/api/proxy";
-import { SETTINGS_UPDATED_EVENT } from "@/lib/api/settings";
 import type { ProxyStatus } from "@/lib/types/proxy";
-import type { AppSettings } from "@/lib/types/settings";
 import {
   changeEventsQueryOptions,
   proxyStatusQueryOptions,
@@ -64,20 +62,6 @@ export function AppShell({
 
     window.addEventListener(PROXY_STATUS_UPDATED_EVENT, handleProxyStatusUpdated);
     return () => window.removeEventListener(PROXY_STATUS_UPDATED_EVENT, handleProxyStatusUpdated);
-  }, [queryClient]);
-
-  useEffect(() => {
-    function handleSettingsUpdated(event: Event) {
-      const nextSettings = (event as CustomEvent<AppSettings>).detail;
-      if (nextSettings) {
-        queryClient.setQueryData(queryKeys.settings, nextSettings);
-        return;
-      }
-      void queryClient.invalidateQueries({ queryKey: queryKeys.settings });
-    }
-
-    window.addEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
-    return () => window.removeEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
   }, [queryClient]);
 
   const visibleRoutes = useMemo(

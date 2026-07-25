@@ -1,8 +1,6 @@
 import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type { UpdateSettingsInput } from "@/lib/types/settings";
 
-export const SETTINGS_UPDATED_EVENT = "relay-pool-settings-updated";
-
 export function getSettings() {
   return getActiveBackendClient().settings.getSettings();
 }
