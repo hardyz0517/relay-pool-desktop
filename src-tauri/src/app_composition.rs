@@ -4,8 +4,8 @@ use crate::{
     application::{
         app_services::AppServices,
         command_facades::{
-            KeyPoolCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
-            SettingsStationsCommandFacade,
+            ChannelMonitoringCommandFacade, KeyPoolCommandFacade, RequestLogsCommandFacade,
+            RoutingCommandFacade, SettingsStationsCommandFacade,
         },
         data_directory::DataDirectoryPort,
     },
@@ -54,4 +54,10 @@ pub(crate) fn compose_request_logs_command_facade(
     services: &AppServices,
 ) -> RequestLogsCommandFacade {
     RequestLogsCommandFacade::new(Arc::clone(&services.request_logs))
+}
+
+pub(crate) fn compose_channel_monitoring_command_facade(
+    services: &AppServices,
+) -> ChannelMonitoringCommandFacade {
+    ChannelMonitoringCommandFacade::new(Arc::clone(&services.monitoring))
 }

@@ -19,8 +19,8 @@ use crate::{
     application::{
         app_services::AppServices,
         command_facades::{
-            KeyPoolCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
-            SettingsStationsCommandFacade,
+            ChannelMonitoringCommandFacade, KeyPoolCommandFacade, RequestLogsCommandFacade,
+            RoutingCommandFacade, SettingsStationsCommandFacade,
         },
         error::ApplicationError,
         pagination::PageLimit,
@@ -1424,14 +1424,13 @@ pub async fn list_station_endpoint_health(
 
 #[tauri::command]
 pub async fn list_channel_monitors(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
 ) -> Result<Vec<ChannelMonitorDto>, error::CommandError> {
     correlation::in_command_scope("list_channel_monitors", async {
         EmptyInputDto::parse(input)?;
-        services
-            .monitoring
-            .list_monitors(PageLimit::new(200).expect("bounded limit"))
+        facade
+            .list_channel_monitors(PageLimit::new(200).expect("bounded limit"))
             .await
             .map_err(public_command_application_error)
     })
@@ -1440,13 +1439,12 @@ pub async fn list_channel_monitors(
 
 #[tauri::command]
 pub async fn list_channel_monitor_summaries(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
 ) -> Result<Vec<ChannelMonitorSummaryDto>, error::CommandError> {
     correlation::in_command_scope("list_channel_monitor_summaries", async {
         let input = ChannelMonitorSummaryInputDto::parse(input)?;
-        services
-            .monitoring
+        facade
             .list_channel_monitor_summaries(input.run_since.as_deref(), input.run_limit)
             .await
             .map_err(public_command_application_error)
@@ -1506,14 +1504,13 @@ pub async fn load_pricing_comparison_workspace(
 
 #[tauri::command]
 pub async fn create_channel_monitor(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
 ) -> Result<ChannelMonitorDto, error::CommandError> {
     correlation::in_command_scope("create_channel_monitor", async {
         let input = CreateChannelMonitorInputDto::parse(input)?.into_domain();
-        services
-            .monitoring
-            .create_monitor(input)
+        facade
+            .create_channel_monitor(input)
             .await
             .map_err(public_command_application_error)
     })
@@ -1522,14 +1519,13 @@ pub async fn create_channel_monitor(
 
 #[tauri::command]
 pub async fn update_channel_monitor(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
 ) -> Result<ChannelMonitorDto, error::CommandError> {
     correlation::in_command_scope("update_channel_monitor", async {
         let input = UpdateChannelMonitorInputDto::parse(input)?.into_domain();
-        services
-            .monitoring
-            .update_monitor(input)
+        facade
+            .update_channel_monitor(input)
             .await
             .map_err(public_command_application_error)
     })
@@ -1538,14 +1534,13 @@ pub async fn update_channel_monitor(
 
 #[tauri::command]
 pub async fn delete_channel_monitor(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
 ) -> Result<(), error::CommandError> {
     correlation::in_command_scope("delete_channel_monitor", async {
         let input = ChannelMonitorMutationIdInputDto::parse(input)?;
-        services
-            .monitoring
-            .delete_monitor(input.id)
+        facade
+            .delete_channel_monitor(input.id)
             .await
             .map_err(public_command_application_error)
     })
@@ -1554,20 +1549,17 @@ pub async fn delete_channel_monitor(
 
 #[tauri::command]
 pub async fn list_channel_monitor_runs(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
 ) -> Result<Vec<ChannelMonitorRunDto>, error::CommandError> {
     correlation::in_command_scope("list_channel_monitor_runs", async {
         let input = ChannelMonitorIdInputDto::parse(input)?;
-        services
-            .monitoring
-            .list_run_page(
+        facade
+            .list_channel_monitor_runs(
                 &input.monitor_id,
-                None,
                 PageLimit::new(500).expect("bounded limit"),
             )
             .await
-            .map(|page| page.items)
             .map_err(public_command_application_error)
     })
     .await
@@ -1575,14 +1567,13 @@ pub async fn list_channel_monitor_runs(
 
 #[tauri::command]
 pub async fn list_channel_monitor_templates(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
 ) -> Result<Vec<ChannelMonitorRequestTemplateDto>, error::CommandError> {
     correlation::in_command_scope("list_channel_monitor_templates", async {
         EmptyInputDto::parse(input)?;
-        services
-            .monitoring
-            .list_templates(PageLimit::new(200).expect("bounded limit"))
+        facade
+            .list_channel_monitor_templates(PageLimit::new(200).expect("bounded limit"))
             .await
             .map_err(public_command_application_error)
     })
@@ -1591,14 +1582,13 @@ pub async fn list_channel_monitor_templates(
 
 #[tauri::command]
 pub async fn create_channel_monitor_template(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
 ) -> Result<ChannelMonitorRequestTemplateDto, error::CommandError> {
     correlation::in_command_scope("create_channel_monitor_template", async {
         let input = CreateChannelMonitorTemplateInputDto::parse(input)?.into_domain();
-        services
-            .monitoring
-            .create_template(input)
+        facade
+            .create_channel_monitor_template(input)
             .await
             .map_err(public_command_application_error)
     })
@@ -1607,14 +1597,13 @@ pub async fn create_channel_monitor_template(
 
 #[tauri::command]
 pub async fn update_channel_monitor_template(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
 ) -> Result<ChannelMonitorRequestTemplateDto, error::CommandError> {
     correlation::in_command_scope("update_channel_monitor_template", async {
         let input = UpdateChannelMonitorTemplateInputDto::parse(input)?.into_domain();
-        services
-            .monitoring
-            .update_template(input)
+        facade
+            .update_channel_monitor_template(input)
             .await
             .map_err(public_command_application_error)
     })
@@ -1623,14 +1612,13 @@ pub async fn update_channel_monitor_template(
 
 #[tauri::command]
 pub async fn duplicate_channel_monitor_template(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
 ) -> Result<ChannelMonitorRequestTemplateDto, error::CommandError> {
     correlation::in_command_scope("duplicate_channel_monitor_template", async {
         let input = ChannelMonitorMutationIdInputDto::parse(input)?;
-        services
-            .monitoring
-            .duplicate_template(input.id)
+        facade
+            .duplicate_channel_monitor_template(input.id)
             .await
             .map_err(public_command_application_error)
     })
@@ -1639,14 +1627,13 @@ pub async fn duplicate_channel_monitor_template(
 
 #[tauri::command]
 pub async fn delete_channel_monitor_template(
-    services: State<'_, AppServices>,
+    facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
 ) -> Result<(), error::CommandError> {
     correlation::in_command_scope("delete_channel_monitor_template", async {
         let input = ChannelMonitorMutationIdInputDto::parse(input)?;
-        services
-            .monitoring
-            .delete_template(input.id)
+        facade
+            .delete_channel_monitor_template(input.id)
             .await
             .map_err(public_command_application_error)
     })
