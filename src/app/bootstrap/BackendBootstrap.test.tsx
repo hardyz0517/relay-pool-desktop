@@ -116,6 +116,7 @@ function testBackendClient(
     mode,
     settings: {} as BackendClient["settings"],
     stations: {} as BackendClient["stations"],
+    stationKeys: {} as BackendClient["stationKeys"],
     ...overrides,
   };
 }

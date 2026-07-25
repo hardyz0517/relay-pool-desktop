@@ -52,4 +52,17 @@ describe("DemoBackend", () => {
       capability: "stations",
     });
   });
+
+  it("does not provide fake station key or connectivity data", async () => {
+    const backend = new DemoBackend();
+
+    await expect(backend.stationKeys.listKeyPoolItems()).rejects.toMatchObject({
+      code: "unsupported",
+      capability: "station_keys.key_pool",
+    });
+    await expect(backend.stationKeys.testStationKeyConnectivity("key-1", "gpt-4o-mini")).rejects.toMatchObject({
+      code: "unsupported",
+      capability: "station_keys.connectivity",
+    });
+  });
 });

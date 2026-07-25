@@ -31,6 +31,34 @@ export class DemoBackend implements BackendClient {
     listStationEndpointHealth: () => this.rejectUnsupported("stations.endpoint_health"),
     pingStationEndpoint: (_stationId: string) => this.rejectUnsupported("stations.endpoint_ping"),
   };
+  readonly stationKeys: BackendClient["stationKeys"] = {
+    listStationKeys: (_stationId: string) => this.rejectUnsupported("station_keys"),
+    getRemoteKeyCapability: (_stationId: string) => this.rejectUnsupported("station_keys.remote_key"),
+    listRemoteStationKeys: (_stationId: string) => this.rejectUnsupported("station_keys.remote_key"),
+    scanRemoteStationKeys: (_stationId: string) => this.rejectUnsupported("station_keys.remote_key_scan"),
+    createRemoteStationKey: () => this.rejectUnsupported("station_keys.remote_key"),
+    createLocalStationKeyFromRemote: (_remoteKeyId: string, _stationId: string) =>
+      this.rejectUnsupported("station_keys.remote_key"),
+    bindRemoteStationKey: (_remoteKeyId: string, _stationKeyId: string) =>
+      this.rejectUnsupported("station_keys.remote_key_binding"),
+    unbindRemoteStationKey: (_remoteKeyId: string, _stationId: string) =>
+      this.rejectUnsupported("station_keys.remote_key_binding"),
+    createStationKey: () => this.rejectUnsupported("station_keys"),
+    updateStationKey: () => this.rejectUnsupported("station_keys"),
+    saveStationKeyWithDefaults: () => this.rejectUnsupported("station_keys.defaults"),
+    updateStationKeyGroupBinding: (_stationKeyId: string, _groupBindingId: string) =>
+      this.rejectUnsupported("station_keys.group_binding"),
+    deleteStationKey: (_id: string) => this.rejectUnsupported("station_keys"),
+    reorderStationKeys: (_stationId: string, _keyIds: string[]) => this.rejectUnsupported("station_keys.reorder"),
+    listKeyPoolItems: () => this.rejectUnsupported("station_keys.key_pool"),
+    reorderKeyPool: (_keyIds: string[]) => this.rejectUnsupported("station_keys.key_pool"),
+    testStationKeyConnectivity: (_stationKeyId: string, _model: string) =>
+      this.rejectUnsupported("station_keys.connectivity"),
+    getStationCredentials: (_stationId: string) => this.rejectUnsupported("station_keys.credentials"),
+    updateStationCredentials: () => this.rejectUnsupported("station_keys.credentials"),
+    clearStationCredentials: (_stationId: string) => this.rejectUnsupported("station_keys.credentials"),
+    updateStationSession: () => this.rejectUnsupported("station_keys.session"),
+  };
   private store: DemoStore = createInitialStore();
 
   async handshake(): Promise<RuntimeContractInfo> {
