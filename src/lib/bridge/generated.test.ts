@@ -8,6 +8,7 @@ const transport = vi.hoisted(() => ({
 vi.mock("@/lib/bridge/transport", () => transport);
 
 import {
+  activateDataStoreCandidate,
   appStatus,
   bindRemoteStationKey,
   clearChangeEvents,
@@ -16,9 +17,12 @@ import {
   collectStationInfo,
   collectStationTask,
   collectSub2apiStation,
+  cleanupBeforeUpdate,
+  chooseDataDir,
   createChannelMonitor,
   createChannelMonitorTemplate,
   createLocalStationKeyFromRemote,
+  createNewDataStore,
   createRemoteStationKey,
   createStation,
   createStationKey,
@@ -32,6 +36,8 @@ import {
   detectSub2apiStation,
   dismissChangeEvent,
   duplicateChannelMonitorTemplate,
+  exportDataStoreDiagnostic,
+  getDataStoreStartupState,
   getRemoteKeyCapability,
   getLatestCollectorSnapshot,
   getLocalAccessKey,
@@ -51,6 +57,7 @@ import {
   listChannelMonitorTemplates,
   listChannelMonitors,
   listChannelStatusSummaries,
+  locateDataStoreCandidate,
   listBalanceSnapshots,
   listBalanceSnapshotsForStation,
   listCollectorRuns,
@@ -72,16 +79,20 @@ import {
   listStationGroupOptions,
   markChangeEventRead,
   markChangeEventsRead,
+  openDataStoreBackupDir,
   openExternalUrl,
   pingStationEndpoint,
+  prepareLocalProxyForUpdate,
   reorderKeyPool,
   reorderLocalRoutingKeys,
   reorderStationKeys,
   reorderStations,
   resetModelBasePricesToBuiltins,
+  resetDataDir,
   resolveChangeEvent,
   resolveStationKeyPricingContext,
   restartLocalProxy,
+  refreshDataStoreCandidates,
   runChannelMonitorNow,
   saveStationKeyWithDefaults,
   scanRemoteStationKeys,
@@ -740,6 +751,36 @@ describe("generated settings/stations transport envelopes", () => {
       ["restart_local_proxy", { input: {} }],
     ]);
     expect(transport.invoke).not.toHaveBeenCalled();
+  });
+
+  it("sends data recovery and update-prep commands through generated envelopes", async () => {
+    await getDataStoreStartupState();
+    await refreshDataStoreCandidates();
+    await cleanupBeforeUpdate();
+    await prepareLocalProxyForUpdate();
+    await activateDataStoreCandidate({ candidateId: "candidate-1" });
+    await locateDataStoreCandidate();
+    await createNewDataStore({ confirmed: true });
+    await openDataStoreBackupDir();
+    await exportDataStoreDiagnostic();
+    await chooseDataDir();
+    await resetDataDir();
+
+    expect(transport.invoke.mock.calls).toEqual([
+      ["get_data_store_startup_state", { input: {} }],
+      ["refresh_data_store_candidates", { input: {} }],
+      ["cleanup_before_update", { input: {} }],
+      ["prepare_local_proxy_for_update", { input: {} }],
+    ]);
+    expect(transport.invokeNonIdempotent.mock.calls).toEqual([
+      ["activate_data_store_candidate", { input: { candidateId: "candidate-1" } }],
+      ["locate_data_store_candidate", { input: {} }],
+      ["create_new_data_store", { input: { confirmed: true } }],
+      ["open_data_store_backup_dir", { input: {} }],
+      ["export_data_store_diagnostic", { input: {} }],
+      ["choose_data_dir", { input: {} }],
+      ["reset_data_dir", { input: {} }],
+    ]);
   });
 
   it("sends updater backend reads through generated envelopes", async () => {

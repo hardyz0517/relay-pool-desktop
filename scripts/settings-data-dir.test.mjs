@@ -5,7 +5,7 @@ const settingsPageSource = await readFile("src/features/settings/SettingsPage.ts
 const settingsApiSource = await readFile("src/lib/api/settings.ts", "utf8");
 const settingsTypesSource = await readFile("src/lib/types/settings.ts", "utf8");
 const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
-const tauriLibSource = await readFile("src-tauri/src/lib.rs", "utf8");
+const registrySource = await readFile("src-tauri/src/ipc/registry.rs", "utf8");
 const dataDirectoryServiceSource = await readFile(
   "src-tauri/src/application/data_directory.rs",
   "utf8",
@@ -58,11 +58,13 @@ assert.ok(
 
 assert.ok(
   settingsApiSource.includes("chooseDataDir") &&
-    settingsApiSource.includes('invoke<AppSettings>("choose_data_dir"') &&
+    settingsApiSource.includes("chooseDataDirBinding().then(normalizeSettings)") &&
+    !settingsApiSource.includes('invoke<AppSettings>("choose_data_dir"') &&
     settingsApiSource.includes("resetDataDir") &&
-    settingsApiSource.includes('invoke<AppSettings>("reset_data_dir"') &&
+    settingsApiSource.includes("resetDataDirBinding().then(normalizeSettings)") &&
+    !settingsApiSource.includes('invoke<AppSettings>("reset_data_dir"') &&
     settingsApiSource.includes("normalizeSettings"),
-  "settings API should expose desktop commands for choosing and resetting the data directory",
+  "settings API should expose generated desktop commands for choosing and resetting the data directory",
 );
 
 assert.ok(
@@ -76,9 +78,9 @@ assert.ok(
 );
 
 assert.ok(
-  tauriLibSource.includes("commands::choose_data_dir") &&
-    tauriLibSource.includes("commands::reset_data_dir"),
-  "Tauri command handler should register choose_data_dir and reset_data_dir",
+  registrySource.includes("choose_data_dir => $crate::commands::choose_data_dir") &&
+    registrySource.includes("reset_data_dir => $crate::commands::reset_data_dir"),
+  "Tauri command registry should register choose_data_dir and reset_data_dir",
 );
 
 assert.ok(

@@ -1,8 +1,9 @@
-import { invoke } from "@/lib/bridge/transport";
 import {
   getLocalAccessKey as getLocalAccessKeyBinding,
   getSettings as getSettingsBinding,
   importRelayPoolToCcswitch as importRelayPoolToCcswitchBinding,
+  chooseDataDir as chooseDataDirBinding,
+  resetDataDir as resetDataDirBinding,
   updateLocalAccessKey as updateLocalAccessKeyBinding,
   updateSettings as updateSettingsBinding,
 } from "@/lib/bridge/generated";
@@ -109,7 +110,7 @@ function toUpdateSettingsDto(input: UpdateSettingsInput): UpdateSettingsInputDto
 }
 
 export function chooseDataDir() {
-  return invoke<AppSettings>("choose_data_dir").then(normalizeSettings).catch((error) => {
+  return chooseDataDirBinding().then(normalizeSettings).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       throw new Error("只有桌面端可以选择数据保存位置");
     }
@@ -118,7 +119,7 @@ export function chooseDataDir() {
 }
 
 export function resetDataDir() {
-  return invoke<AppSettings>("reset_data_dir").then(normalizeSettings).catch((error) => {
+  return resetDataDirBinding().then(normalizeSettings).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       throw new Error("只有桌面端可以恢复默认数据保存位置");
     }

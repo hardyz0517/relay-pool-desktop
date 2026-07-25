@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "source_revision": "63f94f1aaa404fa5f32e1550b2b2ef4f392db97a",
+  "source_revision": "636c373bd177db1e8e3d3cbc80b30910adbd2385",
   "generated_at_date": "2026-07-24",
-  "source_snapshot": "S1-T5-settings-bootstrap",
+  "source_snapshot": "S1-T5-updater-data-recovery",
   "source_authority": {
     "compiled_registry": "src-tauri/src/ipc/registry.rs",
     "rust_signatures": "src-tauri/src/commands/mod.rs",
@@ -22,14 +22,14 @@
   ],
   "classification_notes": [
     "Runtime/bootstrap -> settings_stations; Channel connectivity -> station_keys; update/data-directory -> updater_data_recovery.",
-    "S1-T5 settings/stations, station-key ordinary, changes/logs, collector ordinary groups, routing/health reads, pricing reads, proxy workspace reads, routing capability/model-alias mutations, pricing mutations, local-routing reorder, endpoint ping, proxy start, proxy stop, proxy restart, and updater backend reads fully migrate 95 commands; five earlier pilot schemas remain partial and 20 commands remain legacy placeholders.",
+    "S1-T5 settings/stations, station-key ordinary, changes/logs, collector ordinary groups, routing/health reads, pricing reads, proxy workspace reads, routing capability/model-alias mutations, pricing mutations, local-routing reorder, endpoint ping, proxy lifecycle, updater backend reads, settings bootstrap, and updater/data-recovery ordinary commands fully migrate 111 commands; get_runtime_contract_info remains pilot partial and 8 commands remain legacy placeholders.",
     "test_station_key_connectivity remains the single Channel command and is intentionally partial/legacy until Task 6.",
     "No command proves an application-owned operation key; idempotent_with_key count is zero.",
     "scan_remote_station_keys is an idempotent mutation because it atomically replaces the local remote-key snapshot and matching key metadata; transport retry remains disabled.",
     "create_station is NonIdempotent: transport retry is disabled and ambiguous post-dispatch rejection becomes typed ResultUnknownError.",
     "record_capture_event is intentionally capture-only, not missing from ACL; it must not be granted to main-window.",
     "Empty frontend_callers means no literal caller in requested API/query directories.",
-    "Audit artifact only: the updater-backend-reads child shard may close while the Stage 1 Gate remains blocked on remaining Task 5 data-recovery/data-directory commands and Task 6."
+    "Audit artifact only: the updater/data-recovery child shard may close while the Stage 1 Gate remains blocked on collector capture ordinary commands and Task 6 streaming."
   ],
   "statistics": {
     "commands": 120,
@@ -50,14 +50,14 @@
       "non_idempotent": 30,
       "read": 46
     },
-    "explicit_pilot_schema_partial": 3,
-    "legacy_unmigrated_placeholder": 17,
+    "explicit_pilot_schema_partial": 1,
+    "legacy_unmigrated_placeholder": 8,
     "acl_allowed_main_window": 119,
     "commands_with_frontend_callers": 116,
     "commands_without_frontend_callers": 4,
-    "public_command_error": 118,
-    "public_non_command_error": 2,
-    "fully_migrated": 100,
+    "public_command_error": 120,
+    "public_non_command_error": 0,
+    "fully_migrated": 111,
     "acl_capture_only": 1,
     "acl_unallowlisted": 0
   },
@@ -4663,9 +4663,9 @@
         "state: State<'_, DataStoreStartupState>",
         "located: State<'_, LocatedDataStoreCandidates>",
         "secrets: State<'_, SecretManager>",
-        "candidate_id: String"
+        "input: Value -> ActivateDataStoreCandidateInputDto"
       ],
-      "rust_output": "ActivationResult",
+      "rust_output": "ActivationResultDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -4674,32 +4674,31 @@
       },
       "frontend_callers": [
         {
-          "path": "src/lib/api/dataRecovery.test.ts",
-          "line": 47
-        },
-        {
           "path": "src/lib/api/dataRecovery.ts",
-          "line": 43
+          "line": 51
         }
       ],
       "mutation_kind": "non_idempotent",
       "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "bound non-empty ID(s) with frozen grammar"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 updater_data_recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before bounded candidate-id validation and activation",
+      "migration_status": "fully_migrated_s1_t5_updater_data_recovery",
+      "delete_owner": "Task 5 updater/data-recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "ActivateDataStoreCandidateInputDto",
+        "output": "ActivationResultDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:56",
-        "rust_signature": "src-tauri/src/commands/mod.rs:251"
+        "registry": "src-tauri/src/ipc/registry.rs:607",
+        "rust_signature": "src-tauri/src/commands/mod.rs:300",
+        "dto_validation_test": "src-tauri/src/ipc/dto/updater_data_recovery.rs:139",
+        "generated_wrapper": "src/lib/bridge/generated.ts:1639",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:761",
+        "legacy_wrapper_cutover_test": "src/lib/api/dataRecovery.test.ts:48"
       }
     },
     {
@@ -4708,9 +4707,10 @@
       "group_assignment_reason": "Data-directory/update preparation belongs to updater_data_recovery; Persistence V2 remains read-only.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value -> EmptyInputDto"
       ],
-      "rust_output": "AppSettings",
+      "rust_output": "SettingsDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -4720,7 +4720,7 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/settings.ts",
-          "line": 85
+          "line": 113
         }
       ],
       "mutation_kind": "non_idempotent",
@@ -4729,17 +4729,20 @@
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "pilot_schema_declared_partial; generated group cutover and runtime validation incomplete",
-      "delete_owner": "Task 5 updater_data_recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before empty-input validation and data-directory selection",
+      "migration_status": "fully_migrated_s1_t5_updater_data_recovery",
+      "delete_owner": "Task 5 updater/data-recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "unit",
-        "output": "AppSettings",
+        "input": "EmptyInputDto",
+        "output": "SettingsDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:73",
-        "rust_signature": "src-tauri/src/commands/mod.rs:636"
+        "registry": "src-tauri/src/ipc/registry.rs:625",
+        "rust_signature": "src-tauri/src/commands/mod.rs:761",
+        "generated_wrapper": "src/lib/bridge/generated.ts:1655",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:766",
+        "legacy_wrapper_cutover_test": "src/lib/api/settings.test.ts:59"
       }
     },
     {
@@ -4749,9 +4752,10 @@
       "transport": "ordinary",
       "rust_input": [
         "services: State<'_, AppServices>",
-        "proxy: State<'_, ProxyRuntimeState>"
+        "proxy: State<'_, ProxyRuntimeState>",
+        "input: Value -> EmptyInputDto"
       ],
-      "rust_output": "ProxyStatus",
+      "rust_output": "ProxyStatusDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -4762,21 +4766,23 @@
       "mutation_kind": "idempotent",
       "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 updater_data_recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before empty-input validation and proxy update cleanup",
+      "migration_status": "fully_migrated_s1_t5_updater_data_recovery",
+      "delete_owner": "Task 5 updater/data-recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "ProxyStatusDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:80",
-        "rust_signature": "src-tauri/src/commands/mod.rs:785"
+        "registry": "src-tauri/src/ipc/registry.rs:628",
+        "rust_signature": "src-tauri/src/commands/mod.rs:942",
+        "generated_wrapper": "src/lib/bridge/generated.ts:1663",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:759",
+        "source_contract_test": "scripts/updater-cleanup-contract.test.mjs:17"
       }
     },
     {
@@ -4786,50 +4792,9 @@
       "transport": "ordinary",
       "rust_input": [
         "state: State<'_, DataStoreStartupState>",
-        "confirmed: bool"
+        "input: Value -> CreateNewDataStoreInputDto"
       ],
-      "rust_output": "ActivationResult",
-      "public_error": "error::CommandError",
-      "acl": {
-        "manifest": "src-tauri/permissions/main-window.toml",
-        "permission": "main-window",
-        "status": "allowed"
-      },
-      "frontend_callers": [
-        {
-          "path": "src/lib/api/dataRecovery.ts",
-          "line": 59
-        }
-      ],
-      "mutation_kind": "non_idempotent",
-      "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
-      "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
-        "reject unknown top-level fields before application use case",
-        "deny unknown nested fields; freeze DTO string/array/body/enum/URL/ID/numeric bounds"
-      ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 updater_data_recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
-      "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
-        "error": "CommandError"
-      },
-      "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:57",
-        "rust_signature": "src-tauri/src/commands/mod.rs:326"
-      }
-    },
-    {
-      "name": "export_data_store_diagnostic",
-      "group": "updater_data_recovery",
-      "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
-      "transport": "ordinary",
-      "rust_input": [
-        "state: State<'_, DataStoreStartupState>"
-      ],
-      "rust_output": "Option<String>",
+      "rust_output": "ActivationResultDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -4845,33 +4810,37 @@
       "mutation_kind": "non_idempotent",
       "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
-        "accept only empty arguments"
+        "require explicit confirmation boolean before application use case"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 updater_data_recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before create-new-store confirmation validation and creation",
+      "migration_status": "fully_migrated_s1_t5_updater_data_recovery",
+      "delete_owner": "Task 5 updater/data-recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "CreateNewDataStoreInputDto",
+        "output": "ActivationResultDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:59",
-        "rust_signature": "src-tauri/src/commands/mod.rs:376"
+        "registry": "src-tauri/src/ipc/registry.rs:613",
+        "rust_signature": "src-tauri/src/commands/mod.rs:380",
+        "dto_validation_test": "src-tauri/src/ipc/dto/updater_data_recovery.rs:139",
+        "generated_wrapper": "src/lib/bridge/generated.ts:1643",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:757",
+        "legacy_wrapper_cutover_test": "src/lib/api/dataRecovery.test.ts:48"
       }
     },
     {
-      "name": "get_data_store_startup_state",
+      "name": "export_data_store_diagnostic",
       "group": "updater_data_recovery",
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "state: State<'_, DataStoreStartupState>"
+        "state: State<'_, DataStoreStartupState>",
+        "input: Value -> EmptyInputDto"
       ],
-      "rust_output": "data_recovery::DataStoreStartupView",
-      "public_error": "none",
+      "rust_output": "Option<String>",
+      "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
         "permission": "main-window",
@@ -4880,27 +4849,73 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/dataRecovery.ts",
-          "line": 33
+          "line": 75
+        }
+      ],
+      "mutation_kind": "non_idempotent",
+      "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
+      "runtime_validation_requirements": [
+        "reject unknown top-level fields before application use case",
+        "accept only empty arguments"
+      ],
+      "correlation_scope_status": "implemented: command correlation scope established before empty-input validation and diagnostic export",
+      "migration_status": "fully_migrated_s1_t5_updater_data_recovery",
+      "delete_owner": "Task 5 updater/data-recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "declared_schema": {
+        "input": "EmptyInputDto",
+        "output": "Option<String>",
+        "error": "CommandError"
+      },
+      "evidence": {
+        "registry": "src-tauri/src/ipc/registry.rs:622",
+        "rust_signature": "src-tauri/src/commands/mod.rs:439",
+        "generated_wrapper": "src/lib/bridge/generated.ts:1651",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:757",
+        "legacy_wrapper_cutover_test": "src/lib/api/dataRecovery.test.ts:48"
+      }
+    },
+    {
+      "name": "get_data_store_startup_state",
+      "group": "updater_data_recovery",
+      "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
+      "transport": "ordinary",
+      "rust_input": [
+        "state: State<'_, DataStoreStartupState>",
+        "input: Value -> EmptyInputDto"
+      ],
+      "rust_output": "DataStoreStartupViewDto",
+      "public_error": "error::CommandError",
+      "acl": {
+        "manifest": "src-tauri/permissions/main-window.toml",
+        "permission": "main-window",
+        "status": "allowed"
+      },
+      "frontend_callers": [
+        {
+          "path": "src/lib/api/dataRecovery.ts",
+          "line": 41
         }
       ],
       "mutation_kind": "read",
       "retry_policy": "current: no automatic retry; target: only bounded retry for typed transient failure",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 updater_data_recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before empty-input validation and startup-state projection",
+      "migration_status": "fully_migrated_s1_t5_updater_data_recovery",
+      "delete_owner": "Task 5 updater/data-recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "DataStoreStartupViewDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:53",
-        "rust_signature": "src-tauri/src/commands/mod.rs:215"
+        "registry": "src-tauri/src/ipc/registry.rs:594",
+        "rust_signature": "src-tauri/src/commands/mod.rs:249",
+        "generated_wrapper": "src/lib/bridge/generated.ts:1627",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:757",
+        "legacy_wrapper_cutover_test": "src/lib/api/dataRecovery.test.ts:23"
       }
     },
     {
@@ -4951,9 +4966,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "located: State<'_, LocatedDataStoreCandidates>"
+        "located: State<'_, LocatedDataStoreCandidates>",
+        "input: Value -> EmptyInputDto"
       ],
-      "rust_output": "Option<data_recovery::DataStoreCandidateView>",
+      "rust_output": "Option<DataStoreCandidateViewDto>",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -4963,27 +4979,29 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/dataRecovery.ts",
-          "line": 51
+          "line": 59
         }
       ],
       "mutation_kind": "non_idempotent",
       "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 updater_data_recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before empty-input validation and file-dialog candidate inspection",
+      "migration_status": "fully_migrated_s1_t5_updater_data_recovery",
+      "delete_owner": "Task 5 updater/data-recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "Option<DataStoreCandidateViewDto>",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:55",
-        "rust_signature": "src-tauri/src/commands/mod.rs:230"
+        "registry": "src-tauri/src/ipc/registry.rs:601",
+        "rust_signature": "src-tauri/src/commands/mod.rs:274",
+        "generated_wrapper": "src/lib/bridge/generated.ts:1635",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:757",
+        "legacy_wrapper_cutover_test": "src/lib/api/dataRecovery.test.ts:86"
       }
     },
     {
@@ -4992,9 +5010,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "state: State<'_, DataStoreStartupState>"
+        "state: State<'_, DataStoreStartupState>",
+        "input: Value -> EmptyInputDto"
       ],
-      "rust_output": "()",
+      "rust_output": "unit",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -5004,27 +5023,29 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/dataRecovery.ts",
-          "line": 63
+          "line": 71
         }
       ],
       "mutation_kind": "non_idempotent",
       "retry_policy": "automatic retry forbidden; lost response requires typed result_unknown; no operation key is proven",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 updater_data_recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before empty-input validation and backup-directory opening",
+      "migration_status": "fully_migrated_s1_t5_updater_data_recovery",
+      "delete_owner": "Task 5 updater/data-recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "unit",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:58",
-        "rust_signature": "src-tauri/src/commands/mod.rs:362"
+        "registry": "src-tauri/src/ipc/registry.rs:619",
+        "rust_signature": "src-tauri/src/commands/mod.rs:420",
+        "generated_wrapper": "src/lib/bridge/generated.ts:1647",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:757",
+        "legacy_wrapper_cutover_test": "src/lib/api/dataRecovery.test.ts:48"
       }
     },
     {
@@ -5033,9 +5054,10 @@
       "group_assignment_reason": "Data-directory/update preparation belongs to updater_data_recovery; Persistence V2 remains read-only.",
       "transport": "ordinary",
       "rust_input": [
-        "proxy: State<'_, ProxyRuntimeState>"
+        "proxy: State<'_, ProxyRuntimeState>",
+        "input: Value -> EmptyInputDto"
       ],
-      "rust_output": "ProxyStatus",
+      "rust_output": "ProxyStatusDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -5045,27 +5067,30 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/proxy.ts",
-          "line": 64
+          "line": 72
         }
       ],
       "mutation_kind": "idempotent",
       "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 updater_data_recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before empty-input validation and proxy update preparation",
+      "migration_status": "fully_migrated_s1_t5_updater_data_recovery",
+      "delete_owner": "Task 5 updater/data-recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "ProxyStatusDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:81",
-        "rust_signature": "src-tauri/src/commands/mod.rs:800"
+        "registry": "src-tauri/src/ipc/registry.rs:631",
+        "rust_signature": "src-tauri/src/commands/mod.rs:962",
+        "generated_wrapper": "src/lib/bridge/generated.ts:1667",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:760",
+        "legacy_wrapper_cutover_test": "src/lib/api/proxy.test.ts:101",
+        "source_contract_test": "scripts/updater-cleanup-contract.test.mjs:11"
       }
     },
     {
@@ -5074,9 +5099,10 @@
       "group_assignment_reason": "Assigned from current API/query ownership and behavior under required Task 5 order.",
       "transport": "ordinary",
       "rust_input": [
-        "state: State<'_, DataStoreStartupState>"
+        "state: State<'_, DataStoreStartupState>",
+        "input: Value -> EmptyInputDto"
       ],
-      "rust_output": "data_recovery::DataStoreStartupView",
+      "rust_output": "DataStoreStartupViewDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -5086,27 +5112,29 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/dataRecovery.ts",
-          "line": 47
+          "line": 55
         }
       ],
       "mutation_kind": "idempotent",
       "retry_policy": "current: no automatic retry; target: application-owned retry only for same validated intent",
       "runtime_validation_requirements": [
-        "real generated input schema required; current legacy placeholder is not validation",
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "legacy_unmigrated_placeholder",
-      "delete_owner": "Task 5 updater_data_recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before empty-input validation and startup candidate refresh",
+      "migration_status": "fully_migrated_s1_t5_updater_data_recovery",
+      "delete_owner": "Task 5 updater/data-recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "legacy_unmigrated_input",
-        "output": "legacy_unmigrated_output",
+        "input": "EmptyInputDto",
+        "output": "DataStoreStartupViewDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:54",
-        "rust_signature": "src-tauri/src/commands/mod.rs:222"
+        "registry": "src-tauri/src/ipc/registry.rs:595",
+        "rust_signature": "src-tauri/src/commands/mod.rs:261",
+        "generated_wrapper": "src/lib/bridge/generated.ts:1631",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:757",
+        "legacy_wrapper_cutover_test": "src/lib/api/dataRecovery.test.ts:23"
       }
     },
     {
@@ -5115,9 +5143,10 @@
       "group_assignment_reason": "Data-directory/update preparation belongs to updater_data_recovery; Persistence V2 remains read-only.",
       "transport": "ordinary",
       "rust_input": [
-        "services: State<'_, AppServices>"
+        "services: State<'_, AppServices>",
+        "input: Value -> EmptyInputDto"
       ],
-      "rust_output": "AppSettings",
+      "rust_output": "SettingsDto",
       "public_error": "error::CommandError",
       "acl": {
         "manifest": "src-tauri/permissions/main-window.toml",
@@ -5127,7 +5156,7 @@
       "frontend_callers": [
         {
           "path": "src/lib/api/settings.ts",
-          "line": 94
+          "line": 122
         }
       ],
       "mutation_kind": "non_idempotent",
@@ -5136,17 +5165,20 @@
         "reject unknown top-level fields before application use case",
         "accept only empty arguments"
       ],
-      "correlation_scope_status": "not_implemented: no proven command -> application -> outbound/work continuity",
-      "migration_status": "pilot_schema_declared_partial; generated group cutover and runtime validation incomplete",
-      "delete_owner": "Task 5 updater_data_recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
+      "correlation_scope_status": "implemented: command correlation scope established before empty-input validation and data-directory reset",
+      "migration_status": "fully_migrated_s1_t5_updater_data_recovery",
+      "delete_owner": "Task 5 updater/data-recovery shard deletes handwritten DTO/command string/error parser; Task 9 deletes residual legacy wrapper",
       "declared_schema": {
-        "input": "unit",
-        "output": "AppSettings",
+        "input": "EmptyInputDto",
+        "output": "SettingsDto",
         "error": "CommandError"
       },
       "evidence": {
-        "registry": "src-tauri/src/ipc/registry.rs:74",
-        "rust_signature": "src-tauri/src/commands/mod.rs:657"
+        "registry": "src-tauri/src/ipc/registry.rs:625",
+        "rust_signature": "src-tauri/src/commands/mod.rs:790",
+        "generated_wrapper": "src/lib/bridge/generated.ts:1659",
+        "generated_transport_test": "src/lib/bridge/generated.test.ts:766",
+        "legacy_wrapper_cutover_test": "src/lib/api/settings.test.ts:59"
       }
     },
     {

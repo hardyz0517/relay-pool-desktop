@@ -79,8 +79,9 @@ use crate::{
             UpdateStationInputDto,
         },
         updater_data_recovery::{
-            PublishedUpdateInspectionDto, PublishedUpdateInspectionInputDto,
-            UpdaterNetworkConfigDto,
+            ActivateDataStoreCandidateInputDto, ActivationResultDto, CreateNewDataStoreInputDto,
+            DataStoreCandidateViewDto, DataStoreStartupViewDto, PublishedUpdateInspectionDto,
+            PublishedUpdateInspectionInputDto, UpdaterNetworkConfigDto,
         },
         EmptyInputDto, StationDto,
     },
@@ -91,7 +92,6 @@ use crate::{
         credentials::PersistStationSessionInput,
         proxy::{ProxyStatus, UpstreamApiFormat},
         routing::StationKeyCapabilities,
-        settings::AppSettings,
         station_keys::KeyPoolItem,
         stations::EndpointPingResult,
         AppStatus,
@@ -246,190 +246,224 @@ pub fn get_runtime_contract_info() -> Result<RuntimeContractInfo, error::Command
 }
 
 #[tauri::command]
-pub fn get_data_store_startup_state(
+pub async fn get_data_store_startup_state(
     state: State<'_, DataStoreStartupState>,
-) -> data_recovery::DataStoreStartupView {
-    data_recovery::startup_view(&state)
+    input: Value,
+) -> Result<DataStoreStartupViewDto, error::CommandError> {
+    correlation::in_command_scope("get_data_store_startup_state", async {
+        EmptyInputDto::parse(input)?;
+        Ok(data_recovery::startup_view(&state))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn refresh_data_store_candidates(
+pub async fn refresh_data_store_candidates(
     state: State<'_, DataStoreStartupState>,
-) -> Result<data_recovery::DataStoreStartupView, error::CommandError> {
-    Ok(inspect_startup(state.default_data_dir())
-        .map(|state| data_recovery::startup_view(&state))?)
+    input: Value,
+) -> Result<DataStoreStartupViewDto, error::CommandError> {
+    correlation::in_command_scope("refresh_data_store_candidates", async {
+        EmptyInputDto::parse(input)?;
+        Ok(inspect_startup(state.default_data_dir())
+            .map(|state| data_recovery::startup_view(&state))?)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn locate_data_store_candidate(
+pub async fn locate_data_store_candidate(
     located: State<'_, LocatedDataStoreCandidates>,
-) -> Result<Option<data_recovery::DataStoreCandidateView>, error::CommandError> {
-    let Some(path) = rfd::FileDialog::new()
-        .add_filter("Relay Pool SQLite", &["sqlite3"])
-        .pick_file()
-    else {
-        return Ok(None);
-    };
-    if !is_supported_database_file(&path) {
-        return Err(format!(
-            "selected database must be named {DATABASE_FILE} or {DATABASE_FILE_V2}"
-        )
-        .into());
-    }
-    let candidate = inspect_candidate(&path, CandidateRole::Located)?.candidate;
-    located.record(&candidate);
-    Ok(Some(data_recovery::candidate_view(&candidate)))
+    input: Value,
+) -> Result<Option<DataStoreCandidateViewDto>, error::CommandError> {
+    correlation::in_command_scope("locate_data_store_candidate", async {
+        EmptyInputDto::parse(input)?;
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Relay Pool SQLite", &["sqlite3"])
+            .pick_file()
+        else {
+            return Ok(None);
+        };
+        if !is_supported_database_file(&path) {
+            return Err(format!(
+                "selected database must be named {DATABASE_FILE} or {DATABASE_FILE_V2}"
+            )
+            .into());
+        }
+        let candidate = inspect_candidate(&path, CandidateRole::Located)?.candidate;
+        located.record(&candidate);
+        Ok(Some(data_recovery::candidate_view(&candidate)))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn activate_data_store_candidate(
+pub async fn activate_data_store_candidate(
     state: State<'_, DataStoreStartupState>,
     located: State<'_, LocatedDataStoreCandidates>,
     secrets: State<'_, SecretManager>,
-    candidate_id: String,
-) -> Result<ActivationResult, error::CommandError> {
-    let candidate_path = state
-        .candidates
-        .iter()
-        .find(|candidate| candidate.id == candidate_id)
-        .map(|candidate| PathBuf::from(&candidate.path))
-        .or_else(|| located.path(&candidate_id))
-        .ok_or_else(|| {
-            "selected data store candidate is not part of inspected evidence".to_string()
-        })?;
-    let canonical_path = candidate_path
-        .canonicalize()
-        .map_err(|error| format!("failed to resolve selected database path: {error}"))?;
-    if !is_supported_database_file(&canonical_path) {
-        return Err(format!(
-            "selected database must be named {DATABASE_FILE} or {DATABASE_FILE_V2}"
-        )
-        .into());
-    }
-
-    if crate::services::data_store::generation_upgrade::commit_explicit_generation_two_recovery(
-        state.default_data_dir(),
-        &canonical_path,
-        *secrets.data_key(),
-    )? {
-        return Ok(ActivationResult {
-            restart_required: true,
-        });
-    }
-
-    let inspected = inspect_candidate(&canonical_path, CandidateRole::Located)?;
-    if inspected.candidate.health != CandidateHealth::Healthy
-        || !inspected.contains_relay_pool_schema
-        || !inspected.candidate.schema_compatible
-    {
-        return Err("selected database is not a healthy Relay Pool database"
-            .to_string()
+    input: Value,
+) -> Result<ActivationResultDto, error::CommandError> {
+    correlation::in_command_scope("activate_data_store_candidate", async {
+        let input = ActivateDataStoreCandidateInputDto::parse(input)?;
+        let candidate_path = state
+            .candidates
+            .iter()
+            .find(|candidate| candidate.id == input.candidate_id)
+            .map(|candidate| PathBuf::from(&candidate.path))
+            .or_else(|| located.path(&input.candidate_id))
+            .ok_or_else(|| {
+                "selected data store candidate is not part of inspected evidence".to_string()
+            })?;
+        let canonical_path = candidate_path
+            .canonicalize()
+            .map_err(|error| format!("failed to resolve selected database path: {error}"))?;
+        if !is_supported_database_file(&canonical_path) {
+            return Err(format!(
+                "selected database must be named {DATABASE_FILE} or {DATABASE_FILE_V2}"
+            )
             .into());
-    }
-    validate_database_secrets(&canonical_path, secrets.data_key())?;
-    backup_selected_database(&canonical_path, state.default_data_dir())?;
+        }
 
-    let active_data_dir = canonical_path
-        .parent()
-        .ok_or_else(|| "selected database path has no parent directory".to_string())?;
-    let database_generation =
-        if canonical_path.file_name().and_then(|name| name.to_str()) == Some(DATABASE_FILE_V2) {
+        if crate::services::data_store::generation_upgrade::commit_explicit_generation_two_recovery(
+            state.default_data_dir(),
+            &canonical_path,
+            *secrets.data_key(),
+        )? {
+            return Ok(ActivationResult {
+                restart_required: true,
+            });
+        }
+
+        let inspected = inspect_candidate(&canonical_path, CandidateRole::Located)?;
+        if inspected.candidate.health != CandidateHealth::Healthy
+            || !inspected.contains_relay_pool_schema
+            || !inspected.candidate.schema_compatible
+        {
+            return Err("selected database is not a healthy Relay Pool database"
+                .to_string()
+                .into());
+        }
+        validate_database_secrets(&canonical_path, secrets.data_key())?;
+        backup_selected_database(&canonical_path, state.default_data_dir())?;
+
+        let active_data_dir = canonical_path
+            .parent()
+            .ok_or_else(|| "selected database path has no parent directory".to_string())?;
+        let database_generation = if canonical_path.file_name().and_then(|name| name.to_str())
+            == Some(DATABASE_FILE_V2)
+        {
             DatabaseGeneration::Two
         } else {
             DatabaseGeneration::One
         };
-    write_config_v3(
-        &state.default_data_dir().join(DATA_DIR_CONFIG_FILE),
-        &DataDirConfigV3 {
-            version: 3,
-            active_data_dir: Some(active_data_dir.to_path_buf()),
-            pending_data_dir: None,
-            source_data_dir: None,
-            database_generation,
-            updated_at: data_store_updated_at(),
-        },
-    )?;
-    create_installation_marker(state.default_data_dir())?;
+        write_config_v3(
+            &state.default_data_dir().join(DATA_DIR_CONFIG_FILE),
+            &DataDirConfigV3 {
+                version: 3,
+                active_data_dir: Some(active_data_dir.to_path_buf()),
+                pending_data_dir: None,
+                source_data_dir: None,
+                database_generation,
+                updated_at: data_store_updated_at(),
+            },
+        )?;
+        create_installation_marker(state.default_data_dir())?;
 
-    Ok(ActivationResult {
-        restart_required: true,
+        Ok(ActivationResult {
+            restart_required: true,
+        })
     })
+    .await
 }
 
 #[tauri::command]
 pub async fn create_new_data_store(
     state: State<'_, DataStoreStartupState>,
-    confirmed: bool,
-) -> Result<ActivationResult, error::CommandError> {
-    if !confirmed {
-        return Err("creating a new data store requires confirmation"
-            .to_string()
-            .into());
-    }
-    let Some(data_dir) = rfd::FileDialog::new().pick_folder() else {
-        return Err("no data directory selected".to_string().into());
-    };
-    let db_path = data_dir.join(DatabaseGeneration::Two.database_file());
-    if db_path.exists() {
-        return Err(format!("target database already exists: {}", db_path.display()).into());
-    }
-    crate::services::data_store::generation_upgrade::initialize_empty_generation_two(&db_path)
-        .await?;
-    write_config_v3(
-        &state.default_data_dir().join(DATA_DIR_CONFIG_FILE),
-        &DataDirConfigV3 {
-            version: 3,
-            active_data_dir: Some(data_dir.clone()),
-            pending_data_dir: None,
-            source_data_dir: None,
-            database_generation: DatabaseGeneration::Two,
-            updated_at: data_store_updated_at(),
-        },
-    )?;
-    create_installation_marker(state.default_data_dir())?;
-    Ok(ActivationResult {
-        restart_required: true,
+    input: Value,
+) -> Result<ActivationResultDto, error::CommandError> {
+    correlation::in_command_scope("create_new_data_store", async {
+        let input = CreateNewDataStoreInputDto::parse(input)?;
+        if !input.confirmed {
+            return Err("creating a new data store requires confirmation"
+                .to_string()
+                .into());
+        }
+        let Some(data_dir) = rfd::FileDialog::new().pick_folder() else {
+            return Err("no data directory selected".to_string().into());
+        };
+        let db_path = data_dir.join(DatabaseGeneration::Two.database_file());
+        if db_path.exists() {
+            return Err(format!("target database already exists: {}", db_path.display()).into());
+        }
+        crate::services::data_store::generation_upgrade::initialize_empty_generation_two(&db_path)
+            .await?;
+        write_config_v3(
+            &state.default_data_dir().join(DATA_DIR_CONFIG_FILE),
+            &DataDirConfigV3 {
+                version: 3,
+                active_data_dir: Some(data_dir.clone()),
+                pending_data_dir: None,
+                source_data_dir: None,
+                database_generation: DatabaseGeneration::Two,
+                updated_at: data_store_updated_at(),
+            },
+        )?;
+        create_installation_marker(state.default_data_dir())?;
+        Ok(ActivationResult {
+            restart_required: true,
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn open_data_store_backup_dir(
+pub async fn open_data_store_backup_dir(
     state: State<'_, DataStoreStartupState>,
+    input: Value,
 ) -> Result<(), error::CommandError> {
-    let backups = state.default_data_dir().join("backups");
-    std::fs::create_dir_all(&backups).map_err(|error| {
-        format!(
-            "failed to create backup directory {}: {error}",
-            backups.display()
-        )
-    })?;
-    Ok(open_path_with_system(&backups)?)
-}
-
-#[tauri::command]
-pub fn export_data_store_diagnostic(
-    state: State<'_, DataStoreStartupState>,
-) -> Result<Option<String>, error::CommandError> {
-    let Some(path) = rfd::FileDialog::new()
-        .set_file_name("relay-pool-data-store-diagnostic.json")
-        .save_file()
-    else {
-        return Ok(None);
-    };
-    let report = build_diagnostic_report(state.default_data_dir(), &state)?;
-    let bytes = serde_json::to_vec_pretty(&report)
-        .map_err(|error| format!("failed to serialize data-store diagnostic: {error}"))?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
+    correlation::in_command_scope("open_data_store_backup_dir", async {
+        EmptyInputDto::parse(input)?;
+        let backups = state.default_data_dir().join("backups");
+        std::fs::create_dir_all(&backups).map_err(|error| {
             format!(
-                "failed to create diagnostic directory {}: {error}",
-                parent.display()
+                "failed to create backup directory {}: {error}",
+                backups.display()
             )
         })?;
-    }
-    std::fs::write(&path, bytes)
-        .map_err(|error| format!("failed to write diagnostic {}: {error}", path.display()))?;
-    Ok(Some(path.display().to_string()))
+        Ok(open_path_with_system(&backups)?)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn export_data_store_diagnostic(
+    state: State<'_, DataStoreStartupState>,
+    input: Value,
+) -> Result<Option<String>, error::CommandError> {
+    correlation::in_command_scope("export_data_store_diagnostic", async {
+        EmptyInputDto::parse(input)?;
+        let Some(path) = rfd::FileDialog::new()
+            .set_file_name("relay-pool-data-store-diagnostic.json")
+            .save_file()
+        else {
+            return Ok(None);
+        };
+        let report = build_diagnostic_report(state.default_data_dir(), &state)?;
+        let bytes = serde_json::to_vec_pretty(&report)
+            .map_err(|error| format!("failed to serialize data-store diagnostic: {error}"))?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "failed to create diagnostic directory {}: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+        std::fs::write(&path, bytes)
+            .map_err(|error| format!("failed to write diagnostic {}: {error}", path.display()))?;
+        Ok(Some(path.display().to_string()))
+    })
+    .await
 }
 
 fn data_store_updated_at() -> String {
@@ -726,33 +760,47 @@ fn public_remote_key_error(error: remote_keys::RemoteKeyOperationError) -> error
 #[tauri::command]
 pub async fn choose_data_dir(
     services: State<'_, AppServices>,
-) -> Result<AppSettings, error::CommandError> {
-    let selected = tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().pick_folder())
-        .await
-        .map_err(|_| error::CommandError::internal(None))?;
-    let Some(data_dir) = selected else {
-        return services
-            .settings
-            .load()
+    input: Value,
+) -> Result<SettingsDto, error::CommandError> {
+    correlation::in_command_scope("choose_data_dir", async {
+        EmptyInputDto::parse(input)?;
+        let selected =
+            tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().pick_folder())
+                .await
+                .map_err(|_| error::CommandError::internal(None))?;
+        let Some(data_dir) = selected else {
+            return services
+                .settings
+                .load()
+                .await
+                .map(SettingsDto::from)
+                .map_err(public_command_application_error);
+        };
+        services
+            .data_directory
+            .select_pending(data_dir)
             .await
-            .map_err(public_command_application_error);
-    };
-    services
-        .data_directory
-        .select_pending(data_dir)
-        .await
-        .map_err(public_command_application_error)
+            .map(SettingsDto::from)
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn reset_data_dir(
     services: State<'_, AppServices>,
-) -> Result<AppSettings, error::CommandError> {
-    services
-        .data_directory
-        .reset_to_default()
-        .await
-        .map_err(public_command_application_error)
+    input: Value,
+) -> Result<SettingsDto, error::CommandError> {
+    correlation::in_command_scope("reset_data_dir", async {
+        EmptyInputDto::parse(input)?;
+        services
+            .data_directory
+            .reset_to_default()
+            .await
+            .map(SettingsDto::from)
+            .map_err(public_command_application_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -894,22 +942,32 @@ pub async fn stop_local_proxy(
 pub async fn cleanup_before_update(
     services: State<'_, AppServices>,
     proxy: State<'_, ProxyRuntimeState>,
-) -> Result<ProxyStatus, error::CommandError> {
-    let settings = services
-        .settings
-        .load()
-        .await
-        .map_err(command_application_error)?;
-    Ok(proxy
-        .cleanup_before_update(settings.local_proxy_port)
-        .await?)
+    input: Value,
+) -> Result<ProxyStatusDto, error::CommandError> {
+    correlation::in_command_scope("cleanup_before_update", async {
+        EmptyInputDto::parse(input)?;
+        let settings = services
+            .settings
+            .load()
+            .await
+            .map_err(command_application_error)?;
+        Ok(proxy
+            .cleanup_before_update(settings.local_proxy_port)
+            .await?)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn prepare_local_proxy_for_update(
     proxy: State<'_, ProxyRuntimeState>,
-) -> Result<ProxyStatus, error::CommandError> {
-    Ok(proxy.prepare_for_update(Duration::from_secs(30)).await?)
+    input: Value,
+) -> Result<ProxyStatusDto, error::CommandError> {
+    correlation::in_command_scope("prepare_local_proxy_for_update", async {
+        EmptyInputDto::parse(input)?;
+        Ok(proxy.prepare_for_update(Duration::from_secs(30)).await?)
+    })
+    .await
 }
 
 #[tauri::command]

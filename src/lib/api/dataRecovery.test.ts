@@ -50,7 +50,7 @@ describe("data recovery API", () => {
     await activateDataStoreCandidate("candidate-7");
 
     expect(mocks.invoke).toHaveBeenCalledWith("activate_data_store_candidate", {
-      candidateId: "candidate-7",
+      input: { candidateId: "candidate-7" },
     });
   });
 

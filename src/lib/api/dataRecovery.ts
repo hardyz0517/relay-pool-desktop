@@ -1,8 +1,15 @@
-import { invoke } from "@/lib/bridge/transport";
+import {
+  activateDataStoreCandidate as activateDataStoreCandidateBinding,
+  createNewDataStore as createNewDataStoreBinding,
+  exportDataStoreDiagnostic as exportDataStoreDiagnosticBinding,
+  getDataStoreStartupState as getDataStoreStartupStateBinding,
+  locateDataStoreCandidate as locateDataStoreCandidateBinding,
+  openDataStoreBackupDir as openDataStoreBackupDirBinding,
+  refreshDataStoreCandidates as refreshDataStoreCandidatesBinding,
+} from "@/lib/bridge/generated";
 
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import type {
-  ActivationResult,
   DataStoreCandidate,
   DataStoreStartupView,
   SchemaCompatibilityView,
@@ -30,7 +37,7 @@ const browserPreviewStartupState: DataStoreStartupView = {
 
 export async function getDataStoreStartupState(): Promise<DataStoreStartupView> {
   try {
-    return parseStartupView(await invoke<unknown>("get_data_store_startup_state"));
+    return parseStartupView(await getDataStoreStartupStateBinding());
   } catch (error) {
     if (isTauriInvokeUnavailable(error)) {
       return browserPreviewStartupState;
@@ -40,15 +47,15 @@ export async function getDataStoreStartupState(): Promise<DataStoreStartupView> 
 }
 
 export function activateDataStoreCandidate(candidateId: string) {
-  return invoke<ActivationResult>("activate_data_store_candidate", { candidateId });
+  return activateDataStoreCandidateBinding({ candidateId });
 }
 
 export function refreshDataStoreCandidates() {
-  return invoke<unknown>("refresh_data_store_candidates").then(parseStartupView);
+  return refreshDataStoreCandidatesBinding().then(parseStartupView);
 }
 
 export function locateDataStoreCandidate() {
-  return invoke<unknown>("locate_data_store_candidate").then((value) => {
+  return locateDataStoreCandidateBinding().then((value) => {
     if (value === null) return null;
     if (!isCandidate(value)) throw new Error("invalid data store candidate response");
     return value as DataStoreCandidate;
@@ -56,15 +63,15 @@ export function locateDataStoreCandidate() {
 }
 
 export function createNewDataStore(confirmed: boolean) {
-  return invoke<ActivationResult>("create_new_data_store", { confirmed });
+  return createNewDataStoreBinding({ confirmed });
 }
 
 export function openDataStoreBackupDir() {
-  return invoke<void>("open_data_store_backup_dir");
+  return openDataStoreBackupDirBinding();
 }
 
 export function exportDataStoreDiagnostic() {
-  return invoke<string | null>("export_data_store_diagnostic");
+  return exportDataStoreDiagnosticBinding();
 }
 
 function parseStartupView(value: unknown): DataStoreStartupView {

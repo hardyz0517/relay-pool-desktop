@@ -4,6 +4,7 @@ const generated = vi.hoisted(() => ({
   clearRequestLogs: vi.fn(),
   getProxyStatus: vi.fn(),
   listRequestLogs: vi.fn(),
+  prepareLocalProxyForUpdate: vi.fn(),
   restartLocalProxy: vi.fn(),
   startLocalProxy: vi.fn(),
   stopLocalProxy: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock("@/lib/bridge/transport", () => transport);
 import {
   clearRequestLogs,
   listRequestLogs,
+  prepareLocalProxyForUpdate,
   restartLocalProxy,
   startLocalProxy,
   stopLocalProxy,
@@ -57,6 +59,16 @@ describe("request log generated transport cutover", () => {
       activeRequests: 0,
       requestCount: 0,
     });
+    generated.prepareLocalProxyForUpdate.mockReset().mockResolvedValue({
+      running: false,
+      lifecycle: "stopped",
+      bindAddr: "127.0.0.1",
+      port: 8787,
+      startedAt: null,
+      lastError: null,
+      activeRequests: 0,
+      requestCount: 0,
+    });
     transport.invoke.mockReset().mockResolvedValue(undefined);
   });
 
@@ -82,6 +94,12 @@ describe("request log generated transport cutover", () => {
   it("routes proxy restart through the generated wrapper", async () => {
     await restartLocalProxy();
     expect(generated.restartLocalProxy).toHaveBeenCalledWith();
+    expect(transport.invoke).not.toHaveBeenCalled();
+  });
+
+  it("routes update preparation through the generated wrapper", async () => {
+    await prepareLocalProxyForUpdate();
+    expect(generated.prepareLocalProxyForUpdate).toHaveBeenCalledWith();
     expect(transport.invoke).not.toHaveBeenCalled();
   });
 });

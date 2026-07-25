@@ -3,15 +3,16 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 const commands = await readFile("src-tauri/src/commands/mod.rs", "utf8");
-const tauriLib = await readFile("src-tauri/src/lib.rs", "utf8");
+const registry = await readFile("src-tauri/src/ipc/registry.rs", "utf8");
 const updaterApi = await readFile("src/lib/api/updater.ts", "utf8").catch(() => "");
 const proxyApi = await readFile("src/lib/api/proxy.ts", "utf8").catch(() => "");
 const provider = await readFile("src/features/updater/UpdaterProvider.tsx", "utf8").catch(() => "");
 
 assert.ok(commands.includes("pub async fn prepare_local_proxy_for_update"));
 assert.ok(commands.includes("proxy.prepare_for_update"));
-assert.ok(tauriLib.includes("commands::prepare_local_proxy_for_update"));
-assert.ok(proxyApi.includes('invoke<ProxyStatus>("prepare_local_proxy_for_update")'));
+assert.ok(registry.includes("prepare_local_proxy_for_update => $crate::commands::prepare_local_proxy_for_update"));
+assert.ok(proxyApi.includes("ipcPrepareLocalProxyForUpdate()"));
+assert.ok(!proxyApi.includes('invoke<ProxyStatus>("prepare_local_proxy_for_update")'));
 assert.ok(provider.includes("prepareLocalProxyForUpdate"));
 assert.ok(!updaterApi.includes("cleanup_before_update"));
 assert.ok(!provider.includes("cleanupBeforeUpdate"));

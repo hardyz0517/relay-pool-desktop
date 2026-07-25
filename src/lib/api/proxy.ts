@@ -1,8 +1,8 @@
-import { invoke } from "@/lib/bridge/transport";
 import {
   clearRequestLogs as ipcClearRequestLogs,
   getProxyStatus as ipcGetProxyStatus,
   listRequestLogs as ipcListRequestLogs,
+  prepareLocalProxyForUpdate as ipcPrepareLocalProxyForUpdate,
   restartLocalProxy as ipcRestartLocalProxy,
   startLocalProxy as ipcStartLocalProxy,
   stopLocalProxy as ipcStopLocalProxy,
@@ -69,7 +69,7 @@ export function stopLocalProxy() {
 }
 
 export function prepareLocalProxyForUpdate() {
-  return invoke<ProxyStatus>("prepare_local_proxy_for_update")
+  return ipcPrepareLocalProxyForUpdate()
     .catch((error) => {
       if (isTauriInvokeUnavailable(error)) {
         memoryProxyStatus = {

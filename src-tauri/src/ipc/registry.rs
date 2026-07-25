@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "a487532662185c8e111a4c254662e12ed290230d7d35834879cfd767c504c729";
+    "9e5c9e850e1b3e60d89261982adcbcd18029ecd6ebe1fd2ba98621675267ad0f";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -591,13 +591,52 @@ fn command_contract(name: &str) -> CommandContract {
         "restart_local_proxy" => {
             migrated_mutation("EmptyInputDto", "ProxyStatusDto", "non_idempotent", true)
         }
+        "get_data_store_startup_state" => migrated_read("EmptyInputDto", "DataStoreStartupViewDto"),
+        "refresh_data_store_candidates" => migrated_mutation(
+            "EmptyInputDto",
+            "DataStoreStartupViewDto",
+            "idempotent",
+            false,
+        ),
+        "locate_data_store_candidate" => migrated_mutation(
+            "EmptyInputDto",
+            "Option<DataStoreCandidateViewDto>",
+            "non_idempotent",
+            true,
+        ),
+        "activate_data_store_candidate" => migrated_mutation(
+            "ActivateDataStoreCandidateInputDto",
+            "ActivationResultDto",
+            "non_idempotent",
+            true,
+        ),
+        "create_new_data_store" => migrated_mutation(
+            "CreateNewDataStoreInputDto",
+            "ActivationResultDto",
+            "non_idempotent",
+            true,
+        ),
+        "open_data_store_backup_dir" => {
+            migrated_mutation("EmptyInputDto", "unit", "non_idempotent", true)
+        }
+        "export_data_store_diagnostic" => {
+            migrated_mutation("EmptyInputDto", "Option<String>", "non_idempotent", true)
+        }
+        "choose_data_dir" | "reset_data_dir" => {
+            migrated_mutation("EmptyInputDto", "SettingsDto", "non_idempotent", true)
+        }
+        "cleanup_before_update" => {
+            migrated_mutation("EmptyInputDto", "ProxyStatusDto", "idempotent", false)
+        }
+        "prepare_local_proxy_for_update" => {
+            migrated_mutation("EmptyInputDto", "ProxyStatusDto", "idempotent", false)
+        }
         "updater_network_config" => migrated_read("EmptyInputDto", "UpdaterNetworkConfigDto"),
         "inspect_latest_update_manifest" => migrated_read(
             "PublishedUpdateInspectionInputDto",
             "PublishedUpdateInspectionDto",
         ),
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
-        "choose_data_dir" | "reset_data_dir" => legacy_declared("unit", "AppSettings"),
         _ => legacy_declared("legacy_unmigrated_input", "legacy_unmigrated_output"),
     }
 }
@@ -1086,6 +1125,50 @@ export function stopLocalProxy(input: EmptyInputDto = {}): Promise<ProxyStatusDt
 
 export function restartLocalProxy(input: EmptyInputDto = {}): Promise<ProxyStatusDto> {
   return invokeNonIdempotent<ProxyStatusDto>("restart_local_proxy", { input });
+}
+
+export function getDataStoreStartupState(input: EmptyInputDto = {}): Promise<DataStoreStartupViewDto> {
+  return invokeCommand<DataStoreStartupViewDto>("get_data_store_startup_state", { input });
+}
+
+export function refreshDataStoreCandidates(input: EmptyInputDto = {}): Promise<DataStoreStartupViewDto> {
+  return invokeCommand<DataStoreStartupViewDto>("refresh_data_store_candidates", { input });
+}
+
+export function locateDataStoreCandidate(input: EmptyInputDto = {}): Promise<DataStoreCandidateViewDto | null> {
+  return invokeNonIdempotent<DataStoreCandidateViewDto | null>("locate_data_store_candidate", { input });
+}
+
+export function activateDataStoreCandidate(input: ActivateDataStoreCandidateInputDto): Promise<ActivationResultDto> {
+  return invokeNonIdempotent<ActivationResultDto>("activate_data_store_candidate", { input });
+}
+
+export function createNewDataStore(input: CreateNewDataStoreInputDto): Promise<ActivationResultDto> {
+  return invokeNonIdempotent<ActivationResultDto>("create_new_data_store", { input });
+}
+
+export function openDataStoreBackupDir(input: EmptyInputDto = {}): Promise<void> {
+  return invokeNonIdempotent<void>("open_data_store_backup_dir", { input });
+}
+
+export function exportDataStoreDiagnostic(input: EmptyInputDto = {}): Promise<string | null> {
+  return invokeNonIdempotent<string | null>("export_data_store_diagnostic", { input });
+}
+
+export function chooseDataDir(input: EmptyInputDto = {}): Promise<SettingsDto> {
+  return invokeNonIdempotent<SettingsDto>("choose_data_dir", { input });
+}
+
+export function resetDataDir(input: EmptyInputDto = {}): Promise<SettingsDto> {
+  return invokeNonIdempotent<SettingsDto>("reset_data_dir", { input });
+}
+
+export function cleanupBeforeUpdate(input: EmptyInputDto = {}): Promise<ProxyStatusDto> {
+  return invokeCommand<ProxyStatusDto>("cleanup_before_update", { input });
+}
+
+export function prepareLocalProxyForUpdate(input: EmptyInputDto = {}): Promise<ProxyStatusDto> {
+  return invokeCommand<ProxyStatusDto>("prepare_local_proxy_for_update", { input });
 }
 
 export function updaterNetworkConfig(input: EmptyInputDto = {}): Promise<UpdaterNetworkConfigDto> {

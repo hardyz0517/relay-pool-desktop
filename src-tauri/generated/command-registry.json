@@ -2,18 +2,18 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "a487532662185c8e111a4c254662e12ed290230d7d35834879cfd767c504c729",
+  "contract_hash": "9e5c9e850e1b3e60d89261982adcbcd18029ecd6ebe1fd2ba98621675267ad0f",
   "commands": [
     {
       "name": "activate_data_store_candidate",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "ee7d0e129953135e88eb4070757e5045bcbbbedf18f29b654bc4868929f96be6",
+      "output_schema_hash": "4c7ea8b59e76684d62c7be4a2ad533ee2e0615c5baab0736c4451efcaadd3b62",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "non_idempotent",
       "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "app_status",
@@ -40,24 +40,24 @@
     {
       "name": "choose_data_dir",
       "transport": "ordinary",
-      "input_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
-      "output_schema_hash": "72ffb4fcea5c727a855fedeecd2fd4a5e70448fde0b59ef077815401083d2bdd",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "188562d545305afeaa4b61f5d2aa5fe777d60efcbd50d6d7b23107e5db7023d5",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "non_idempotent",
       "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "cleanup_before_update",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "fca495968a68fe3f60ade05a9678e990bf77f61dc09f63fbbf10b1280db2b44f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "clear_capture_session",
@@ -183,13 +183,13 @@
     {
       "name": "create_new_data_store",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "5b449fabba057fd0a18cacfe9985d4b3170c77fe05d2b8dec0538ed9f717aba7",
+      "output_schema_hash": "4c7ea8b59e76684d62c7be4a2ad533ee2e0615c5baab0736c4451efcaadd3b62",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "non_idempotent",
       "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "create_remote_station_key",
@@ -337,13 +337,13 @@
     {
       "name": "export_data_store_diagnostic",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "1d999400720309c1df84128526206caf5c69bdfc038b9351504bf9a7553e8dd8",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "non_idempotent",
       "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "finish_capture_session",
@@ -381,13 +381,13 @@
     {
       "name": "get_data_store_startup_state",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "89e5f210bc0c084ae4fa720a65a119e9ef7130d1e32c8bc24717419a61f98a35",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "get_latest_collector_snapshot",
@@ -821,13 +821,13 @@
     {
       "name": "locate_data_store_candidate",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "9f8b27b1671679d8b0b60ef69a5b2fd4210a394b53ec9d4507a21fa8cf5f0491",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "non_idempotent",
       "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "mark_change_event_read",
@@ -854,13 +854,13 @@
     {
       "name": "open_data_store_backup_dir",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "non_idempotent",
       "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "open_external_url",
@@ -887,13 +887,13 @@
     {
       "name": "prepare_local_proxy_for_update",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "fca495968a68fe3f60ade05a9678e990bf77f61dc09f63fbbf10b1280db2b44f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "record_capture_event",
@@ -909,13 +909,13 @@
     {
       "name": "refresh_data_store_candidates",
       "transport": "ordinary",
-      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
-      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "89e5f210bc0c084ae4fa720a65a119e9ef7130d1e32c8bc24717419a61f98a35",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "reorder_key_pool",
@@ -964,13 +964,13 @@
     {
       "name": "reset_data_dir",
       "transport": "ordinary",
-      "input_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
-      "output_schema_hash": "72ffb4fcea5c727a855fedeecd2fd4a5e70448fde0b59ef077815401083d2bdd",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "188562d545305afeaa4b61f5d2aa5fe777d60efcbd50d6d7b23107e5db7023d5",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "legacy_unclassified",
+      "mutation_kind": "non_idempotent",
       "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "legacy_unmigrated"
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
     },
     {
       "name": "reset_model_base_prices_to_builtins",
