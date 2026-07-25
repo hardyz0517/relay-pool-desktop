@@ -51,7 +51,11 @@ runMain(() => {
   const productionConfigPath = manifest.production_config.path ?? manifest.production_config;
   assert(typeof productionConfigPath === "string", "production_config.path is required");
   const config = readJson(productionConfigPath, "production Tauri config");
-  if (config.app?.security?.csp == null) requireDebt(manifest, /csp/i, "production csp:null", currentStage);
+  const csp = config.app?.security?.csp;
+  assert(typeof csp === "string" && csp.trim(), "production CSP must be a non-empty string");
+  assert(/\bscript-src\s+'self'(?:;|$)/.test(csp), "production CSP must pin script-src to 'self'");
+  assert(!/\bunsafe-eval\b/.test(csp), "production CSP must not allow unsafe-eval");
+  assert(!/\bscript-src[^;]*(?:https?:|data:|blob:|\*)/.test(csp), "production CSP must not allow remote script sources");
 
   const capabilityFiles = listFiles(path.join(repoRoot, "src-tauri/capabilities"), (file) => file.endsWith(".json"));
   assert(capabilityFiles.length > 0, "no Tauri capability manifests found");

@@ -498,18 +498,18 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 - Modify: `src-tauri/tauri.conf.json`, `src-tauri/capabilities/default.json`
 - Create/Modify: `src/features/*/api.ts`
 
-- [ ] bootstrap 只选择一次 `desktop | demo`：打包的 Tauri entry 固定请求 desktop handshake，显式 browser-preview/test entry 才注入 demo；未知/缺失 mode fail closed。mode 不由任意 invoke error、command-not-found、`window.__TAURI__` 或 feature 环境变量运行时猜测。
-- [ ] `BackendBootstrap` 使用显式状态机：`SelectingMode -> HandshakingDesktop -> DataStoreBootstrapping -> Ready`，或 `SelectingMode -> DemoReady`。desktop 必须 handshake 成功后才挂载 `DataStoreBootstrap`；demo 不挂载 `DataStoreBootstrap`，不调用任何 data-recovery/真实系统 command。
-- [ ] desktop contract mismatch 进入 `IncompatibleRuntimeScreen`，普通 runtime unavailable 进入可重试 fatal recovery；二者都不创建 DemoBackend、不挂载业务页面。重试复用同一 fixed desktop mode，不重新猜 mode。
+- [x] bootstrap 只选择一次 `desktop | demo`：打包的 Tauri entry 固定请求 desktop handshake，显式 browser-preview/test entry 才注入 demo；未知/缺失 mode fail closed。mode 不由任意 invoke error、command-not-found、`window.__TAURI__` 或 feature 环境变量运行时猜测。
+- [x] `BackendBootstrap` 使用显式状态机：`SelectingMode -> HandshakingDesktop -> DataStoreBootstrapping -> Ready`，或 `SelectingMode -> DemoReady`。desktop 必须 handshake 成功后才挂载 `DataStoreBootstrap`；demo 不挂载 `DataStoreBootstrap`，不调用任何 data-recovery/真实系统 command。
+- [x] desktop contract mismatch 进入 `IncompatibleRuntimeScreen`，普通 runtime unavailable 进入可重试 fatal recovery；二者都不创建 DemoBackend、不挂载业务页面。重试复用同一 fixed desktop mode，不重新猜 mode。
 - [ ] `src/main.tsx` 只组合 theme/query/toast/backend bootstrap providers，不直接调用 command 或读取 backend mode；App/feature 通过 typed provider 获得窄 domain client。
-- [ ] `pnpm build` 只构建 production desktop entry，`pnpm build:demo`/`dev:demo` 使用独立 config/HTML；production `dist`/Tauri bundle scan 不含 demo bootstrap marker、fixture dataset 或可触发 demo 的 query/env/localStorage branch。
-- [ ] 按 threat model 为 production `tauri.conf.json` 建立非空 CSP，默认禁止 remote script、`unsafe-eval` 和 main-window remote navigation；dev/demo 需要的放宽只存在独立 Vite/Tauri test config，不进入 release provenance。
-- [ ] main capability 保持 least privilege，compiled registry/ACL/capability gate 证明 main command 授权精确；Task 17.B 再收紧 `capture-*` remote capability，不在此处把 capture 权限并入 main。
-- [ ] DesktopBackend 只调用 generated binding/stream adapter，不把 transport failure 变成默认值。
-- [ ] DemoBackend 使用固定 clock、seed 和 resettable store；真实 keyring/database/file/network/updater 全部不可达。
-- [ ] demo mode 在 shell/bootstrap 上有稳定可测试的可见标识和显式 reset command；Desktop handshake 失败时该标识绝不能出现。
-- [ ] 不支持的 demo capability 返回 typed `Unsupported`；不得复制真实 provider 登录、采集或路由决策。
-- [ ] architecture gate 禁止 DemoBackend/demo fixtures import DesktopBackend、generated invoke、Tauri API、credential/data-recovery/network/file adapter；contract test 以 fail-fast spies 证明 demo workflow 零真实调用。
+- [x] `pnpm build` 只构建 production desktop entry，`pnpm build:demo`/`dev:demo` 使用独立 config/HTML；production `dist`/Tauri bundle scan 不含 demo bootstrap marker、fixture dataset 或可触发 demo 的 query/env/localStorage branch。
+- [x] 按 threat model 为 production `tauri.conf.json` 建立非空 CSP，默认禁止 remote script、`unsafe-eval` 和 main-window remote navigation；dev/demo 需要的放宽只存在独立 Vite/Tauri test config，不进入 release provenance。
+- [x] main capability 保持 least privilege，compiled registry/ACL/capability gate 证明 main command 授权精确；Task 17.B 再收紧 `capture-*` remote capability，不在此处把 capture 权限并入 main。
+- [x] DesktopBackend 只调用 generated binding/stream adapter，不把 transport failure 变成默认值。
+- [x] DemoBackend 使用固定 clock、seed 和 resettable store；真实 keyring/database/file/network/updater 全部不可达。
+- [x] demo mode 在 shell/bootstrap 上有稳定可测试的可见标识和显式 reset command；Desktop handshake 失败时该标识绝不能出现。
+- [x] 不支持的 demo capability 返回 typed `Unsupported`；不得复制真实 provider 登录、采集或路由决策。
+- [x] architecture gate 禁止 DemoBackend/demo fixtures import DesktopBackend、generated invoke、Tauri API、credential/data-recovery/network/file adapter；contract test 以 fail-fast spies 证明 demo workflow 零真实调用。
 - [ ] feature 只接收 matching domain client/query hook；完整 `BackendClient` 只在 bootstrap composition 出现。
 - [ ] contract tests 对同一领域 client 验证成功/typed failure/unsupported shape。
 

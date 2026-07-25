@@ -12,6 +12,7 @@ assert.deepEqual(unknown, [], `unknown generate-bindings arguments: ${unknown.jo
 
 const artifacts = [
   ["generated.ts", "src/lib/bridge/generated.ts"],
+  ["contract.ts", "src/lib/bridge/contract.ts"],
   ["command-registry.json", "src-tauri/generated/command-registry.json"],
   ["pilot-serialization.json", "src-tauri/src/ipc/dto/fixtures/pilot-serialization.json"],
 ];

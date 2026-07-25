@@ -53,5 +53,13 @@ runMain(() => {
   const graph = resolvedImports(entry);
   const demoReachable = [...graph].filter((file) => /(?:^|[\\/])demo(?:[.\\/]|$)|DemoBackend/i.test(file));
   assert(demoReachable.length === 0, `production entry reaches demo assets: ${demoReachable.map((file) => path.relative(repoRoot, file)).join(", ")}`);
-  console.log(`Build entry gate passed (${graph.size} production modules)`);
+  const demoEntry = htmlEntry("demo.html");
+  assert(demoEntry === "src/demo.tsx", `demo HTML entry must be src/demo.tsx, got ${demoEntry}`);
+  const demoGraph = resolvedImports(demoEntry);
+  const realBackendReachable = [...demoGraph].filter((file) =>
+    /(?:^|[\\/])(?:DesktopBackend|generated|transport|tauriErrors)(?:\.|[\\/])|(?:^|[\\/])features[\\/]data-recovery[\\/]/i.test(file)
+    || /(?:^|[\\/])@tauri-apps[\\/]/i.test(file),
+  );
+  assert(realBackendReachable.length === 0, `demo entry reaches real desktop assets: ${realBackendReachable.map((file) => path.relative(repoRoot, file)).join(", ")}`);
+  console.log(`Build entry gate passed (${graph.size} production modules, ${demoGraph.size} demo modules)`);
 });

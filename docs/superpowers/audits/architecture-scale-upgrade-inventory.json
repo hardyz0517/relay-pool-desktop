@@ -83,13 +83,13 @@
     "csp_build_entries": [
       {
         "id": "production-entry-and-csp",
-        "paths": ["index.html", "src/main.tsx", "vite.config.ts", "src-tauri/tauri.conf.json"],
+        "paths": ["index.html", "src/main.tsx", "demo.html", "src/demo.tsx", "vite.config.ts", "vite.demo.config.ts", "src-tauri/tauri.conf.json"],
         "owner": "Task 8",
         "callers": ["Vite production build", "Tauri production bundle"],
         "migration_task": 8,
         "delete_task": 8,
-        "exception_reason": "Single production/preview entry and csp:null are temporary release risks.",
-        "evidence_command": "rg -n \"frontendDist|beforeBuildCommand|csp|main.tsx\" index.html vite.config.ts src-tauri/tauri.conf.json"
+        "exception_reason": "Task 8 physically separates production and demo entries and installs a non-null production CSP; Task 28 still performs final bundle provenance scanning.",
+        "evidence_command": "pnpm architecture:security"
       }
     ],
     "app_services_state": [
@@ -120,11 +120,11 @@
       {
         "id": "browser-preview-business-fallbacks",
         "paths": ["src/lib/api/changeEvents.ts", "src/lib/api/channelMonitors.ts", "src/lib/api/collector.ts", "src/lib/api/collectorRuns.ts", "src/lib/api/dataRecovery.ts", "src/lib/api/economics.ts", "src/lib/api/groupFacts.ts", "src/lib/api/localRouting.ts", "src/lib/api/proxy.ts", "src/lib/api/routing.ts", "src/lib/api/settings.ts", "src/lib/api/stationKeys.ts", "src/lib/api/stations.ts", "src/lib/queries/channelQueries.ts", "src/lib/queries/pricingQueries.ts"],
-        "owner": "Task 8 DemoBackend",
-        "callers": ["Production and preview currently share the same imports"],
-        "migration_task": 8,
+        "owner": "Task 9 feature cutover",
+        "callers": ["Legacy feature API/query wrappers only; production and demo entries are physically separated by Task 8"],
+        "migration_task": 9,
         "delete_task": 9,
-        "exception_reason": "Browser preview fallback is mixed into production transport catch paths.",
+        "exception_reason": "Business fallback remains in legacy API/query wrappers until Task 9 migrates features to narrow domain clients.",
         "evidence_command": "rg -n \"isTauriInvokeUnavailable|isTauriCommandNotFound|browser preview\" src/lib/api src/lib/queries"
       }
     ],
@@ -331,7 +331,7 @@
     {"id":"S7-T26-28-qualification","stage":7,"paths":["docs/superpowers/audits/2026-07-22-architecture-scale-deterministic-qualification.md","docs/superpowers/audits/2026-07-22-architecture-scale-soak-live-qualification.md","docs/superpowers/audits/2026-07-22-architecture-scale-upgrade-final-qualification.md","output/architecture-scale/qualification/deterministic","output/architecture-scale/qualification/soak","output/architecture-scale/qualification/live","output/architecture-scale/qualification/release"],"owner":"Tasks 26-28","depends_on":["Task 25"],"cutover":"Deterministic, soak/live and release-locked evidence refer to one revision","delete_paths":[],"focused_gates":["behavior parity","10/100/500 performance","shutdown soak","bundle secret/CSP/demo reachability"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"}
   ],
   "temporary_adapters": [
-    {"id":"legacy-browser-preview-fallback","paths":["src/lib/api","src/lib/queries"],"introduced_shard":"legacy-baseline","delete_shard":"S2-T8-9-backend-cutover","owner":"Task 8","expiry_stage":2,"reason":"Preview behavior is currently mixed with production transport."},
+    {"id":"legacy-browser-preview-fallback","paths":["src/lib/api","src/lib/queries"],"introduced_shard":"legacy-baseline","delete_shard":"S2-T8-9-backend-cutover","owner":"Task 9","expiry_stage":2,"reason":"Legacy API/query wrappers still contain browser-preview fallback until feature clients are cut over; production/demo entries are physically separated by Task 8."},
     {"id":"legacy-sync-provider-adapters","paths":["src-tauri/src/services/collectors","src-tauri/src/services/outbound.rs"],"introduced_shard":"legacy-baseline","delete_shard":"S5-T19-22-provider-capabilities","owner":"Task 22","expiry_stage":5,"reason":"Provider operations remain synchronous until outbound and capability cutover."},
     {"id":"stage1-public-error-source-adapters","paths":["src-tauri/src/commands/error.rs"],"introduced_shard":"S1-T4-errors-handshake","delete_shard":"S5-T19-22-provider-capabilities","owner":"Tasks 14, 15, 19","expiry_stage":5,"reason":"Closed Stage 1 mapping categories freeze public error semantics until Task 14 outbound, Task 15 operation, and Task 19 driver owners provide their final typed failures."}
   ],
@@ -341,7 +341,7 @@
     {"id":"station-key-crud","samples":["station CRUD","key CRUD/reorder","group binding preservation","secret masking"],"owner":"Task 5/11","status":"covered by contract and Rust tests"},
     {"id":"collector-monitor","samples":["collector facts and runs","monitor summaries and run-now","failure redaction"],"owner":"Task 12/16/17","status":"covered by contract and Rust tests"},
     {"id":"proxy-lifecycle","samples":["startup","status","drain","update preparation","shutdown"],"owner":"Task 14/17","status":"covered by proxy lifecycle tests; ExitRequested characterization missing"},
-    {"id":"navigation-preview","samples":["page navigation/retention","desktop mode","browser preview"],"owner":"Task 8/10","status":"source-contract covered; production/demo bundle isolation not yet present"}
+    {"id":"navigation-preview","samples":["page navigation/retention","desktop mode","browser preview"],"owner":"Task 8/10","status":"Task 8 production/demo build graph isolation covered; page retention remains Task 10"}
   ],
   "performance_baselines": [
     {"id":"stations-query-topology-10","dataset":{"stations":10,"sha256":"781fa1b19da69361d0f4120c41edde45bdca25fe172a61840a25dd6ccdfcda5a"},"source_revision":"6a204908e2b3697e4c80951771950e29872942d9","profile":"vitest-jsdom-production-query-topology","machine_fingerprint":"windows-26200-ryzen7-3700x-16logical-17035784192bytes","warm_up":5,"samples":30,"raw_result_path":"output/architecture-scale/baseline/frontend-report.json","metrics":{"frontend_invoke_count":{"min":13,"max":13},"projected_response_json_bytes":{"p50":3526,"p95":3526},"data_ready_commit_ms":{"p50":31.0411,"p95":31.7979},"rendered_rows":10,"hidden_query_starts":0,"backend_read_port_round_trips":null,"real_tauri_ipc_payload_bytes":null,"webview2_page_commit_ms":null},"qualification":"frontend-jsdom-current-query-topology-baseline-only","status":"measured_frontend_downstream_runtime_blocked"},

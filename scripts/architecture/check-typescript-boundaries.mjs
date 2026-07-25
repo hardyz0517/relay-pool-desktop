@@ -42,7 +42,9 @@ function isFeaturePublicEntry(file, owner) {
 
 function isCompositionRoot(file) {
   const normalized = normalizePath(file);
-  return normalized === "src/app/App.tsx" || normalized === "src/app/shellPageRegistry.tsx";
+  return normalized === "src/main.tsx"
+    || normalized === "src/app/App.tsx"
+    || normalized === "src/app/shellPageRegistry.tsx";
 }
 
 function collectSpecifiers(sourceFile) {
@@ -198,7 +200,7 @@ export function checkProject(configPath, manifest) {
       violations.push(`feature imports composition root: ${identity}`);
       continue;
     }
-    if (edge.fromOwner === "shared" && edge.toOwner.startsWith("feature:") && !allowlist.combined.has(identity)) {
+    if (edge.fromOwner === "shared" && edge.toOwner.startsWith("feature:") && !isCompositionRoot(edge.from) && !allowlist.combined.has(identity)) {
       violations.push(`shared layer imports feature implementation: ${identity}`);
       continue;
     }

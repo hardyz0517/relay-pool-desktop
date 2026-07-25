@@ -3,7 +3,7 @@ import {
   IPC_CONTRACT_VERSION,
   type RuntimeCapability,
   type RuntimeContractInfo,
-} from "@/lib/bridge/generated";
+} from "@/lib/bridge/contract";
 
 const MAX_PAYLOAD_BYTES = 8_192;
 const MAX_CAPABILITIES = 64;

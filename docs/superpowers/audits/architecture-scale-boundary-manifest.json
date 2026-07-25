@@ -33,20 +33,6 @@
       "reason": "The composition root legitimately registers features but currently imports private page descendants because feature public entries do not yet exist. Task 24 replaces these with explicit feature exports."
     },
     {
-      "id": "legacy-bootstrap-production-graph-coupling",
-      "ecosystem": "typescript",
-      "identities": [
-        "src/main.tsx -> src/features/data-recovery/DataStoreBootstrap.tsx [static]",
-        "src/main.tsx -> src/features/updater/UpdaterProvider.tsx [static]",
-        "src/features/data-recovery/DataStoreBootstrap.tsx -> src/app/App.tsx [static]"
-      ],
-      "owner": "Task 8",
-      "introduced_shard": "legacy-baseline",
-      "delete_shard": "Task 8",
-      "expiry_stage": 2,
-      "reason": "The current bootstrap is feature-owned and reverses the composition dependency. Task 8 moves desktop/demo bootstrap ownership to the application root."
-    },
-    {
       "id": "legacy-query-updater-change-owner-edges",
       "ecosystem": "typescript",
       "identities": [

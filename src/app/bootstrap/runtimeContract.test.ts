@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IPC_BINDING_HASH, IPC_CONTRACT_VERSION } from "@/lib/bridge/generated";
+import { IPC_BINDING_HASH, IPC_CONTRACT_VERSION } from "@/lib/bridge/contract";
 import { validateRuntimeContract } from "./runtimeContract";
 
 const matching = {

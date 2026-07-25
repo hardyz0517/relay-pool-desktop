@@ -5,7 +5,7 @@
     "path": "src-tauri/tauri.conf.json",
     "owner": "Task 8",
     "entry": "index.html -> src/main.tsx",
-    "csp": null
+    "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost blob: data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
   },
   "development_config": {
     "path": "src-tauri/tauri.conf.json",
@@ -13,10 +13,10 @@
     "owner": "Task 8"
   },
   "preview_config": {
-    "path": "vite.config.ts",
-    "entry": "index.html -> src/main.tsx",
+    "path": "vite.demo.config.ts",
+    "entry": "demo.html -> src/demo.tsx",
     "owner": "Task 8",
-    "status": "currently-shared-with-production"
+    "status": "physically-separated-from-production"
   },
   "window_patterns": [
     {
@@ -60,19 +60,12 @@
   },
   "demo_entry_reachability": {
     "production": false,
+    "demo_entry": "demo.html -> src/demo.tsx",
     "legacy_browser_fallback_reachable": true,
     "owner": "Task 8",
-    "qualification": "Task 8 creates a physically separate demo graph and Task 28 scans the production bundle"
+    "qualification": "Task 8 build-entry gate proves production graph cannot reach DemoBackend and demo graph cannot reach DesktopBackend/generated invoke/Tauri/data recovery"
   },
   "temporary_entries": [
-    {
-      "id": "production-csp-null",
-      "owner": "Task 8",
-      "introduced_shard": "legacy-baseline",
-      "delete_shard": "S2-T8-9-backend-cutover",
-      "expiry_stage": 2,
-      "reason": "The current main WebView has no production CSP. Task 8 must install a non-null policy before production backend cutover."
-    },
     {
       "id": "capture-remote-wildcard-url-shell",
       "owner": "Task 17",
@@ -88,14 +81,6 @@
       "delete_shard": "S4-T17-blocking-capture-shutdown",
       "expiry_stage": 4,
       "reason": "Stage 0 found no application validator binding each remote invoke to the expected normalized exact origin."
-    },
-    {
-      "id": "production-demo-entry-not-physically-separated",
-      "owner": "Task 8",
-      "introduced_shard": "legacy-baseline",
-      "delete_shard": "S2-T8-9-backend-cutover",
-      "expiry_stage": 2,
-      "reason": "Browser preview fallback code is currently reachable from production imports even though no separate demo entry exists."
     },
     {
       "id": "direct-exit-and-late-shutdown-drain",

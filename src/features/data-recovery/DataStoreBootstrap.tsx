@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
-import { App } from "@/app/App";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/Card";
 import { getDataStoreStartupState } from "@/lib/api/dataRecovery";
@@ -14,10 +13,10 @@ type BootstrapStatus =
   | { kind: "loaded"; state: DataStoreStartupView };
 
 type DataStoreBootstrapProps = {
-  renderReady?: () => ReactNode;
+  renderReady: () => ReactNode;
 };
 
-export function DataStoreBootstrap({ renderReady = () => <App /> }: DataStoreBootstrapProps) {
+export function DataStoreBootstrap({ renderReady }: DataStoreBootstrapProps) {
   const [status, setStatus] = useState<BootstrapStatus>({ kind: "loading" });
   const requestSequence = useRef(0);
 
