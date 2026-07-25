@@ -298,7 +298,8 @@
       "state_type": "PricingCommandFacade",
       "source_path": "src-tauri/src/application/command_facades/pricing.rs",
       "dependencies": [
-        "PricingService"
+        "PricingService",
+        "PricingComparisonQuery"
       ],
       "commands": [
         {
@@ -350,11 +351,15 @@
           "command": "upsert_balance_snapshot",
           "use_case": "upsert_balance_snapshot",
           "dependencies": ["PricingService"]
+        },
+        {
+          "command": "load_pricing_comparison_workspace",
+          "use_case": "load_pricing_comparison_workspace",
+          "dependencies": ["PricingComparisonQuery"]
         }
       ],
       "non_goals": [
-        "list_balance_snapshots_for_station",
-        "load_pricing_comparison_workspace"
+        "list_balance_snapshots_for_station"
       ]
     },
     {

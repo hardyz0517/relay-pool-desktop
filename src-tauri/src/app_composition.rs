@@ -70,7 +70,10 @@ pub(crate) fn compose_channel_status_command_facade(
 }
 
 pub(crate) fn compose_pricing_command_facade(services: &AppServices) -> PricingCommandFacade {
-    PricingCommandFacade::new(Arc::clone(&services.pricing))
+    PricingCommandFacade::new(
+        Arc::clone(&services.pricing),
+        Arc::clone(&services.pricing_comparison),
+    )
 }
 
 pub(crate) fn compose_change_events_command_facade(

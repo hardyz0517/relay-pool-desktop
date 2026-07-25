@@ -1,21 +1,34 @@
 use std::sync::Arc;
 
 use crate::{
-    application::{error::ApplicationError, pagination::PageLimit, pricing::PricingService},
-    models::pricing::{
-        BalanceSnapshot, ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
-        UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
+    application::{
+        error::ApplicationError, pagination::PageLimit, pricing::PricingService,
+        queries::pricing_comparison::PricingComparisonQuery,
+    },
+    models::{
+        pricing::{
+            BalanceSnapshot, ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
+            UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
+        },
+        shared_capabilities::PricingComparisonWorkspace,
     },
 };
 
 #[derive(Clone)]
 pub(crate) struct PricingCommandFacade {
     pricing: Arc<PricingService>,
+    pricing_comparison: Arc<PricingComparisonQuery>,
 }
 
 impl PricingCommandFacade {
-    pub(crate) fn new(pricing: Arc<PricingService>) -> Self {
-        Self { pricing }
+    pub(crate) fn new(
+        pricing: Arc<PricingService>,
+        pricing_comparison: Arc<PricingComparisonQuery>,
+    ) -> Self {
+        Self {
+            pricing,
+            pricing_comparison,
+        }
     }
 
     pub(crate) async fn list_pricing_rules(
@@ -86,5 +99,12 @@ impl PricingCommandFacade {
         input: UpsertBalanceSnapshotInput,
     ) -> Result<BalanceSnapshot, ApplicationError> {
         self.pricing.upsert_balance_snapshot(input).await
+    }
+
+    pub(crate) async fn load_pricing_comparison_workspace(
+        &self,
+        limit: PageLimit,
+    ) -> Result<PricingComparisonWorkspace, ApplicationError> {
+        self.pricing_comparison.load(limit).await
     }
 }

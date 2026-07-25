@@ -1486,14 +1486,13 @@ pub async fn load_channel_status_workspace(
 
 #[tauri::command]
 pub async fn load_pricing_comparison_workspace(
-    services: State<'_, AppServices>,
+    facade: State<'_, PricingCommandFacade>,
     input: Value,
 ) -> Result<PricingComparisonWorkspaceDto, error::CommandError> {
     correlation::in_command_scope("load_pricing_comparison_workspace", async {
         EmptyInputDto::parse(input)?;
-        services
-            .pricing_comparison
-            .load(PageLimit::new(500).expect("bounded limit"))
+        facade
+            .load_pricing_comparison_workspace(PageLimit::new(500).expect("bounded limit"))
             .await
             .map(PricingComparisonWorkspaceDto::from)
             .map_err(public_command_application_error)
