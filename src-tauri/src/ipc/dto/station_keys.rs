@@ -118,6 +118,25 @@ impl ReorderStationKeysInputDto {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StationKeyConnectivityInputDto {
+    pub station_key_id: String,
+    pub model: String,
+}
+
+impl StationKeyConnectivityInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value)?;
+        validate_id("stationKeyId", &input.station_key_id)?;
+        validate_text("model", &input.model, MAX_TEXT_BYTES, false)?;
+        Ok(Self {
+            station_key_id: input.station_key_id,
+            model: input.model.trim().to_string(),
+        })
+    }
+}
+
 pub struct CreateStationKeyInputDto;
 impl CreateStationKeyInputDto {
     pub fn parse(

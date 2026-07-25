@@ -11,7 +11,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "fc13cf79f99c35b0fbd75a019304cb9244b605097bea23a3c9c57f50542ad553";
+    "ea9ba398771e5933c4406bcf36bb6fd3ebef4ec7216ffa8316c2dab4a8205c64";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -662,6 +662,12 @@ fn command_contract(name: &str) -> CommandContract {
         "inspect_latest_update_manifest" => migrated_read(
             "PublishedUpdateInspectionInputDto",
             "PublishedUpdateInspectionDto",
+        ),
+        "test_station_key_connectivity" => migrated_mutation(
+            "StationKeyConnectivityInputDto",
+            "StationKeyConnectivityTestResult",
+            "non_idempotent",
+            true,
         ),
         "get_runtime_contract_info" => legacy_declared("unit", "RuntimeContractInfo"),
         _ => legacy_declared("legacy_unmigrated_input", "legacy_unmigrated_output"),

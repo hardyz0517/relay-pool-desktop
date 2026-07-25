@@ -180,7 +180,20 @@ export type StationKeyConnectivityResponseMode = "stream" | "non_stream_fallback
 export type StationKeyConnectivityTestEvent =
   | { type: "attemptStarted"; model: string; protocol: string }
   | { type: "delta"; text: string }
-  | { type: "fallback"; reason: string };
+  | { type: "fallback"; reason: string }
+  | { type: "completed"; ok: boolean }
+  | { type: "failed"; message: string };
+
+export type StationKeyConnectivityCancelCapability = "detach_only";
+
+export type StationKeyConnectivityTestEventEnvelope = {
+  schemaVersion: 1;
+  runId: string;
+  sequence: number;
+  terminal: boolean;
+  cancelCapability: StationKeyConnectivityCancelCapability;
+  event: StationKeyConnectivityTestEvent;
+};
 
 export type RemoteKeyMatchStatus = "matched" | "possible" | "unbound";
 

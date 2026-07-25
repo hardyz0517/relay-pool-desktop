@@ -71,9 +71,9 @@ use crate::{
             RemoteKeyScanResultDto, RemoteStationKeyDto, RemoteStationKeyInputDto,
             ReorderKeyPoolInputDto, ReorderStationKeysInputDto, SaveStationKeyWithDefaultsInputDto,
             SaveStationKeyWithDefaultsResultDto, StationCredentialsDto, StationIdInputDto,
-            StationKeyDto, StationKeyIdInputDto, UpdateStationCredentialsInputDto,
-            UpdateStationKeyGroupBindingInputDto, UpdateStationKeyInputDto,
-            UpdateStationSessionInputDto,
+            StationKeyConnectivityInputDto, StationKeyDto, StationKeyIdInputDto,
+            UpdateStationCredentialsInputDto, UpdateStationKeyGroupBindingInputDto,
+            UpdateStationKeyInputDto, UpdateStationSessionInputDto,
         },
         stations::{
             CreateStationInputDto, DeleteStationInputDto, ReorderStationsInputDto,
@@ -1784,12 +1784,100 @@ enum StationKeyConnectivityResponseMode {
     NonStreamFallback,
 }
 
+const STATION_KEY_CONNECTIVITY_EVENT_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StationKeyConnectivityTestEvent {
+    schema_version: u32,
+    run_id: String,
+    sequence: u64,
+    terminal: bool,
+    cancel_capability: StationKeyConnectivityCancelCapability,
+    event: StationKeyConnectivityTestEventPayload,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StationKeyConnectivityCancelCapability {
+    DetachOnly,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-pub enum StationKeyConnectivityTestEvent {
+pub enum StationKeyConnectivityTestEventPayload {
     AttemptStarted { model: String, protocol: String },
     Delta { text: String },
     Fallback { reason: String },
+    Completed { ok: bool },
+    Failed { message: String },
+}
+
+struct StationKeyConnectivityProgress {
+    run_id: String,
+    sequence: u64,
+    progress: Channel<StationKeyConnectivityTestEvent>,
+    terminal_sent: bool,
+}
+
+impl StationKeyConnectivityProgress {
+    fn new(progress: Channel<StationKeyConnectivityTestEvent>) -> Self {
+        Self {
+            run_id: uuid::Uuid::now_v7().to_string(),
+            sequence: 0,
+            progress,
+            terminal_sent: false,
+        }
+    }
+
+    fn emit(&mut self, event: StationKeyConnectivityTestEventPayload, terminal: bool) {
+        if self.terminal_sent {
+            return;
+        }
+        let envelope = station_key_connectivity_event_envelope(
+            self.run_id.clone(),
+            self.sequence,
+            terminal,
+            event,
+        );
+        self.sequence = self.sequence.saturating_add(1);
+        if terminal {
+            self.terminal_sent = true;
+        }
+        let _ = self.progress.send(envelope);
+    }
+
+    fn emit_terminal(&mut self, result: &StationKeyConnectivityProbeResult) {
+        if result.ok {
+            self.emit(
+                StationKeyConnectivityTestEventPayload::Completed { ok: true },
+                true,
+            );
+        } else {
+            self.emit(
+                StationKeyConnectivityTestEventPayload::Failed {
+                    message: result.message.clone(),
+                },
+                true,
+            );
+        }
+    }
+}
+
+fn station_key_connectivity_event_envelope(
+    run_id: String,
+    sequence: u64,
+    terminal: bool,
+    event: StationKeyConnectivityTestEventPayload,
+) -> StationKeyConnectivityTestEvent {
+    StationKeyConnectivityTestEvent {
+        schema_version: STATION_KEY_CONNECTIVITY_EVENT_SCHEMA_VERSION,
+        run_id,
+        sequence,
+        terminal,
+        cancel_capability: StationKeyConnectivityCancelCapability::DetachOnly,
+        event,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1839,56 +1927,67 @@ impl StationKeyConnectivityProbeResult {
 #[tauri::command]
 pub async fn test_station_key_connectivity(
     services: State<'_, AppServices>,
-    station_key_id: String,
-    model: String,
+    input: Value,
     progress: Channel<StationKeyConnectivityTestEvent>,
 ) -> Result<StationKeyConnectivityTestResult, error::CommandError> {
-    let key = services
-        .credentials
-        .list_key_pool_items()
+    correlation::in_command_scope("test_station_key_connectivity", async {
+        let input = StationKeyConnectivityInputDto::parse(input)?;
+        let station_key_id = input.station_key_id;
+        let model = input.model;
+        let key = services
+            .credentials
+            .list_key_pool_items()
+            .await
+            .map_err(command_application_error)?
+            .into_iter()
+            .find(|item| item.id == station_key_id)
+            .ok_or_else(|| "Station Key does not exist".to_string())?;
+        if !key.api_key_present {
+            return Err("Station Key does not have a saved API key"
+                .to_string()
+                .into());
+        }
+        let secret = services
+            .credentials
+            .resolve_station_key_secret(station_key_id.clone())
+            .await
+            .map_err(command_application_error)?;
+        let api_key = String::from_utf8(secret.as_bytes().to_vec())
+            .map(zeroize::Zeroizing::new)
+            .map_err(|_| "Station Key API key is not valid UTF-8".to_string())?;
+        let capabilities = services
+            .credentials
+            .get_station_key_capabilities(station_key_id.clone())
+            .await
+            .map_err(command_application_error)?;
+        let station_id = key.station_id.clone();
+        let endpoint_revision = key.station_endpoint_revision;
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            test_station_key_connectivity_prepared_blocking(
+                key,
+                api_key,
+                capabilities,
+                model,
+                progress,
+            )
+        })
         .await
-        .map_err(command_application_error)?
-        .into_iter()
-        .find(|item| item.id == station_key_id)
-        .ok_or_else(|| "Station Key does not exist".to_string())?;
-    if !key.api_key_present {
-        return Err("Station Key does not have a saved API key"
-            .to_string()
-            .into());
-    }
-    let secret = services
-        .credentials
-        .resolve_station_key_secret(station_key_id.clone())
-        .await
-        .map_err(command_application_error)?;
-    let api_key = String::from_utf8(secret.as_bytes().to_vec())
-        .map(zeroize::Zeroizing::new)
-        .map_err(|_| "Station Key API key is not valid UTF-8".to_string())?;
-    let capabilities = services
-        .credentials
-        .get_station_key_capabilities(station_key_id.clone())
-        .await
-        .map_err(command_application_error)?;
-    let station_id = key.station_id.clone();
-    let endpoint_revision = key.station_endpoint_revision;
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        test_station_key_connectivity_prepared_blocking(key, api_key, capabilities, model, progress)
+        .map_err(|error| format!("测试密钥连通性任务失败: {error}"))??;
+        services
+            .routing
+            .record_station_key_connectivity(
+                station_key_id,
+                station_id,
+                endpoint_revision,
+                result.ok,
+                result.duration_ms,
+                result.message.clone(),
+            )
+            .await
+            .map_err(command_application_error)?;
+        Ok(result)
     })
     .await
-    .map_err(|error| format!("测试密钥连通性任务失败: {error}"))??;
-    services
-        .routing
-        .record_station_key_connectivity(
-            station_key_id,
-            station_id,
-            endpoint_revision,
-            result.ok,
-            result.duration_ms,
-            result.message.clone(),
-        )
-        .await
-        .map_err(command_application_error)?;
-    Ok(result)
 }
 
 #[tauri::command]
@@ -3332,6 +3431,7 @@ fn test_station_key_connectivity_prepared_blocking(
     model: String,
     progress: Channel<StationKeyConnectivityTestEvent>,
 ) -> Result<StationKeyConnectivityTestResult, String> {
+    let mut progress = StationKeyConnectivityProgress::new(progress);
     let upstream_api_format = match key.station_upstream_api_format.as_str() {
         "openai_chat_completions" => UpstreamApiFormat::OpenAiChatCompletions,
         "openai_responses" => UpstreamApiFormat::OpenAiResponses,
@@ -3357,11 +3457,12 @@ fn test_station_key_connectivity_prepared_blocking(
                     api_key.as_str(),
                     candidate,
                     kind,
-                    &progress,
+                    &mut progress,
                 )
             },
         )
     });
+    progress.emit_terminal(&result);
     Ok(StationKeyConnectivityTestResult {
         station_key_id: key.id,
         ok: result.ok,
@@ -3418,10 +3519,10 @@ fn station_key_connectivity_protocol_label(kind: StationKeyConnectivityProbeKind
 }
 
 fn emit_station_key_connectivity_event(
-    progress: &Channel<StationKeyConnectivityTestEvent>,
-    event: StationKeyConnectivityTestEvent,
+    progress: &mut StationKeyConnectivityProgress,
+    event: StationKeyConnectivityTestEventPayload,
 ) {
-    let _ = progress.send(event);
+    progress.emit(event, false);
 }
 
 fn redact_connectivity_error(message: &str) -> String {
@@ -3707,9 +3808,9 @@ fn run_station_key_connectivity_stream_first_probe<F, E>(
 ) -> StationKeyConnectivityProbeResult
 where
     F: FnMut(StationKeyConnectivityRequestMode) -> StationKeyConnectivityProbeResult,
-    E: FnMut(StationKeyConnectivityTestEvent),
+    E: FnMut(StationKeyConnectivityTestEventPayload),
 {
-    emit_event(StationKeyConnectivityTestEvent::AttemptStarted {
+    emit_event(StationKeyConnectivityTestEventPayload::AttemptStarted {
         model: model.to_string(),
         protocol: station_key_connectivity_protocol_label(kind),
     });
@@ -3720,7 +3821,7 @@ where
     }
 
     let fallback_reason = redact_connectivity_error(&stream_result.message);
-    emit_event(StationKeyConnectivityTestEvent::Fallback {
+    emit_event(StationKeyConnectivityTestEventPayload::Fallback {
         reason: fallback_reason.clone(),
     });
     let fallback_result = send_attempt(StationKeyConnectivityRequestMode::NonStream);
@@ -3795,15 +3896,21 @@ fn send_station_key_connectivity_probe(
     api_key: &str,
     model: &str,
     kind: StationKeyConnectivityProbeKind,
-    progress: &Channel<StationKeyConnectivityTestEvent>,
+    progress: &mut StationKeyConnectivityProgress,
 ) -> StationKeyConnectivityProbeResult {
+    let progress = std::cell::RefCell::new(progress);
     run_station_key_connectivity_stream_first_probe(
         model,
         kind,
         |mode| match mode {
             StationKeyConnectivityRequestMode::Stream => {
+                let mut progress = progress.borrow_mut();
                 send_station_key_connectivity_stream_probe_attempt(
-                    base_url, api_key, model, kind, progress,
+                    base_url,
+                    api_key,
+                    model,
+                    kind,
+                    &mut **progress,
                 )
             }
             StationKeyConnectivityRequestMode::NonStream => {
@@ -3812,7 +3919,10 @@ fn send_station_key_connectivity_probe(
                 )
             }
         },
-        |event| emit_station_key_connectivity_event(progress, event),
+        |event| {
+            let mut progress = progress.borrow_mut();
+            emit_station_key_connectivity_event(&mut **progress, event);
+        },
     )
 }
 
@@ -3881,7 +3991,7 @@ fn send_station_key_connectivity_stream_probe_attempt(
     api_key: &str,
     model: &str,
     kind: StationKeyConnectivityProbeKind,
-    progress: &Channel<StationKeyConnectivityTestEvent>,
+    progress: &mut StationKeyConnectivityProgress,
 ) -> StationKeyConnectivityProbeResult {
     let url = match build_station_key_connectivity_probe_url(base_url, kind) {
         Ok(url) => url,
@@ -3983,7 +4093,7 @@ fn send_station_key_connectivity_stream_probe_attempt(
         for delta in deltas {
             emit_station_key_connectivity_event(
                 progress,
-                StationKeyConnectivityTestEvent::Delta { text: delta },
+                StationKeyConnectivityTestEventPayload::Delta { text: delta },
             );
         }
     }
@@ -4472,6 +4582,25 @@ mod tests {
     }
 
     #[test]
+    fn station_key_connectivity_event_envelope_is_versioned_and_terminal() {
+        let value = serde_json::to_value(station_key_connectivity_event_envelope(
+            "run-1".to_string(),
+            7,
+            true,
+            StationKeyConnectivityTestEventPayload::Completed { ok: true },
+        ))
+        .expect("serialize streaming envelope");
+
+        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["runId"], "run-1");
+        assert_eq!(value["sequence"], 7);
+        assert_eq!(value["terminal"], true);
+        assert_eq!(value["cancelCapability"], "detach_only");
+        assert_eq!(value["event"]["type"], "completed");
+        assert_eq!(value["event"]["ok"], true);
+    }
+
+    #[test]
     fn station_key_connectivity_stream_success_does_not_retry_non_stream() {
         let mut attempted_modes = Vec::new();
         let mut events = Vec::new();
@@ -4498,7 +4627,7 @@ mod tests {
         assert_eq!(result.stream_fallback_reason, None);
         assert!(matches!(
             events.first(),
-            Some(StationKeyConnectivityTestEvent::AttemptStarted { model, .. }) if model == "gpt-test"
+            Some(StationKeyConnectivityTestEventPayload::AttemptStarted { model, .. }) if model == "gpt-test"
         ));
     }
 
@@ -4550,7 +4679,7 @@ mod tests {
         );
         assert!(events.iter().any(|event| matches!(
             event,
-            StationKeyConnectivityTestEvent::Fallback { reason } if reason == "missing terminal signal"
+            StationKeyConnectivityTestEventPayload::Fallback { reason } if reason == "missing terminal signal"
         )));
     }
 

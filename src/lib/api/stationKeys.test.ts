@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const generated = vi.hoisted(() => ({
+  invokeCommand: vi.fn(),
   listStations: vi.fn(),
   listStationKeys: vi.fn(),
   createStationKey: vi.fn(),

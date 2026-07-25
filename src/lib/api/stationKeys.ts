@@ -1,4 +1,3 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   bindRemoteStationKey as ipcBindRemoteStationKey,
   clearStationCredentials as ipcClearStationCredentials,
@@ -22,6 +21,7 @@ import {
   updateStationSession as ipcUpdateStationSession,
 } from "@/lib/bridge/generated";
 import type { UpdateStationKeyInputDto } from "@/lib/bridge/generated";
+import { invokeStationKeyConnectivityStream } from "@/lib/bridge/streamingAdapter";
 import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
 import {
   getStationKeyCapabilities,
@@ -39,7 +39,6 @@ import type {
   RemoteKeyScanResult,
   RemoteStationKey,
   StationKeyConnectivityTestEvent,
-  StationKeyConnectivityTestResult,
   StationCredentials,
   StationKey,
   SaveStationKeyWithDefaultsInput,
@@ -365,9 +364,10 @@ export function testStationKeyConnectivity(
   model: string,
   options: { onEvent?: (event: StationKeyConnectivityTestEvent) => void } = {},
 ) {
-  const progress = new Channel<StationKeyConnectivityTestEvent>();
-  progress.onmessage = (event) => options.onEvent?.(event);
-  return invoke<StationKeyConnectivityTestResult>("test_station_key_connectivity", { stationKeyId, model, progress }).catch((error) => {
+  return invokeStationKeyConnectivityStream(
+    { stationKeyId, model },
+    { onEvent: options.onEvent },
+  ).catch((error) => {
     if (isTauriInvokeUnavailable(error)) {
       return {
         stationKeyId,
@@ -732,8 +732,22 @@ async function memoryCapabilitiesForSavedKey(
 }
 
 function defaultStationKeyCapabilitiesInput(stationKeyId: string): UpdateStationKeyCapabilitiesInput {
-  const { updatedAt: _updatedAt, ...input } = defaultStationKeyCapabilities(stationKeyId);
-  return input;
+  const capabilities = defaultStationKeyCapabilities(stationKeyId);
+  return {
+    stationKeyId: capabilities.stationKeyId,
+    supportsChatCompletions: capabilities.supportsChatCompletions,
+    supportsResponses: capabilities.supportsResponses,
+    supportsEmbeddings: capabilities.supportsEmbeddings,
+    supportsStream: capabilities.supportsStream,
+    supportsTools: capabilities.supportsTools,
+    supportsVision: capabilities.supportsVision,
+    supportsReasoning: capabilities.supportsReasoning,
+    modelAllowlist: capabilities.modelAllowlist,
+    modelBlocklist: capabilities.modelBlocklist,
+    preferredModels: capabilities.preferredModels,
+    onlyUseAsBackup: capabilities.onlyUseAsBackup,
+    routingTags: capabilities.routingTags,
+  };
 }
 
 function nextMemoryId(prefix: string) {

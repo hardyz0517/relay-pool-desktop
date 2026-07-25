@@ -3,6 +3,7 @@ export type StationKeyIdInputDto = { id: string };
 export type RemoteStationKeyInputDto = { remoteKeyId: string; stationId: string };
 export type ReorderKeyPoolInputDto = { keyIds: string[] };
 export type ReorderStationKeysInputDto = { stationId: string; keyIds: string[] };
+export type StationKeyConnectivityInputDto = { stationKeyId: string; model: string };
 
 export type StationKeyStatusInput = "unchecked" | "healthy" | "warning" | "error" | "disabled";
 
