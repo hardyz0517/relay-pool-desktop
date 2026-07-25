@@ -1,5 +1,13 @@
 import type { RuntimeContractInfo } from "./contract";
 import type {
+  CaptureSessionStatus,
+  CollectorRunResult,
+  CollectorSnapshot,
+  CollectorTaskType,
+  StationLoginTestInput,
+  StationLoginTestResult,
+} from "@/lib/types/collector";
+import type {
   ChannelMonitor,
   ChannelMonitorRequestTemplate,
   ChannelMonitorRun,
@@ -252,6 +260,24 @@ export type ChannelsDomainClient = {
   loadChannelStatusWorkspace(): Promise<ChannelStatusWorkspace>;
 };
 
+export type CollectorsDomainClient = {
+  detectSub2apiStation(stationId: string): Promise<CollectorRunResult>;
+  collectSub2apiStation(stationId: string): Promise<CollectorRunResult>;
+  detectStationInfo(stationId: string): Promise<CollectorRunResult>;
+  collectStationInfo(stationId: string): Promise<CollectorRunResult>;
+  collectStationTask(stationId: string, taskType: CollectorTaskType): Promise<CollectorRunResult>;
+  testStationLogin(stationId: string): Promise<CollectorRunResult>;
+  testStationLoginInput(input: StationLoginTestInput): Promise<StationLoginTestResult>;
+  listCollectorSnapshots(stationId: string): Promise<CollectorSnapshot[]>;
+  getLatestCollectorSnapshot(stationId: string): Promise<CollectorSnapshot | null>;
+  startCaptureSession(stationId: string): Promise<CaptureSessionStatus>;
+  getCaptureSessionStatus(stationId: string): Promise<CaptureSessionStatus>;
+  finishCaptureSession(stationId: string): Promise<CollectorRunResult>;
+  finishWebAuthorizationSession(stationId: string): Promise<CollectorRunResult>;
+  clearCaptureSession(stationId: string): Promise<CaptureSessionStatus>;
+  closeCaptureSession(stationId: string): Promise<CaptureSessionStatus>;
+};
+
 export type BackendClient = {
   readonly mode: BackendMode;
   readonly settings: SettingsDomainClient;
@@ -267,6 +293,7 @@ export type BackendClient = {
   readonly pricing: PricingDomainClient;
   readonly routing: RoutingDomainClient;
   readonly channels: ChannelsDomainClient;
+  readonly collectors: CollectorsDomainClient;
   handshake(): Promise<RuntimeContractInfo>;
 };
 

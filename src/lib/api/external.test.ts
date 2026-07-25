@@ -17,6 +17,7 @@ describe("external URL backend cutover", () => {
       stationKeys: {} as never,
       changeEvents: {} as never,
       collectorRuns: {} as never,
+      collectors: {} as never,
       proxy: {} as never,
       localRouting: {} as never,
       dataRecovery: {} as never,

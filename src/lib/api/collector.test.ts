@@ -1,76 +1,131 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const generated = vi.hoisted(() => ({
-  clearCaptureSession: vi.fn(),
-  collectStationInfo: vi.fn(),
-  collectStationTask: vi.fn(),
-  collectSub2apiStation: vi.fn(),
-  closeCaptureSession: vi.fn(),
-  detectStationInfo: vi.fn(),
-  detectSub2apiStation: vi.fn(),
-  finishCaptureSession: vi.fn(),
-  finishWebAuthorizationSession: vi.fn(),
-  getCaptureSessionStatus: vi.fn(),
-  getLatestCollectorSnapshot: vi.fn(),
-  listCollectorSnapshots: vi.fn(),
-  startCaptureSession: vi.fn(),
-  testStationLogin: vi.fn(),
-  testStationLoginInput: vi.fn(),
-}));
-
-const transport = vi.hoisted(() => ({
-  invoke: vi.fn(),
-}));
-
-vi.mock("@/lib/bridge/generated", () => generated);
-vi.mock("@/lib/bridge/transport", () => transport);
+import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
+import type { BackendClient } from "@/lib/bridge/BackendClient";
 
 import {
   clearCaptureSession,
   closeCaptureSession,
+  collectStationInfo,
+  collectStationTask,
+  collectSub2apiStation,
+  detectStationInfo,
+  detectSub2apiStation,
   finishCaptureSession,
   finishWebAuthorizationSession,
   getCaptureSessionStatus,
+  getLatestCollectorSnapshot,
+  listCollectorSnapshots,
   startCaptureSession,
+  startManualAuthorization,
+  testStationLogin,
+  testStationLoginInput,
 } from "./collector";
 
-describe("collector capture generated transport cutover", () => {
+describe("collector backend cutover", () => {
+  const collectors = {
+    detectSub2apiStation: vi.fn(async () => runResult()),
+    collectSub2apiStation: vi.fn(async () => runResult()),
+    detectStationInfo: vi.fn(async () => runResult()),
+    collectStationInfo: vi.fn(async () => runResult()),
+    collectStationTask: vi.fn(async () => runResult()),
+    testStationLogin: vi.fn(async () => runResult()),
+    testStationLoginInput: vi.fn(async () => ({
+      status: "success",
+      message: "ok",
+      diagnosis: null,
+      tokenPresent: true,
+    })),
+    listCollectorSnapshots: vi.fn(async () => []),
+    getLatestCollectorSnapshot: vi.fn(async () => null),
+    startCaptureSession: vi.fn(async () => captureStatus("capturing")),
+    getCaptureSessionStatus: vi.fn(async () => captureStatus("idle")),
+    finishCaptureSession: vi.fn(async () => runResult()),
+    finishWebAuthorizationSession: vi.fn(async () => runResult()),
+    clearCaptureSession: vi.fn(async () => captureStatus("idle")),
+    closeCaptureSession: vi.fn(async () => captureStatus("idle")),
+  };
+
   beforeEach(() => {
-    for (const fn of Object.values(generated)) {
-      fn.mockReset().mockResolvedValue(fixtureCaptureStatus());
+    setActiveBackendClient(testBackendClient({ collectors: collectors as BackendClient["collectors"] }));
+    for (const fn of Object.values(collectors)) {
+      fn.mockClear();
     }
-    generated.finishCaptureSession.mockResolvedValue(fixtureCollectorRun());
-    generated.finishWebAuthorizationSession.mockResolvedValue(fixtureCollectorRun());
-    transport.invoke.mockReset().mockRejectedValue(new Error("legacy transport invoked"));
   });
 
-  it("routes capture session status commands through generated wrappers", async () => {
+  afterEach(() => {
+    setActiveBackendClient(null);
+  });
+
+  it("routes collector and capture operations through the active backend client", async () => {
+    const loginInput = {
+      stationType: "newapi",
+      websiteUrl: "https://example.test",
+      loginUsername: "fixture-user",
+      loginPassword: "fixture-password",
+    };
+
+    await detectSub2apiStation("station-1");
+    await collectSub2apiStation("station-1");
+    await detectStationInfo("station-1");
+    await collectStationInfo("station-1");
+    await collectStationTask("station-1", "full");
+    await testStationLogin("station-1");
+    await testStationLoginInput(loginInput);
+    await listCollectorSnapshots("station-1");
+    await getLatestCollectorSnapshot("station-1");
     await startCaptureSession("station-1");
+    await startManualAuthorization("station-1");
     await getCaptureSessionStatus("station-1");
+    await finishCaptureSession("station-1");
+    await finishWebAuthorizationSession("station-1");
     await clearCaptureSession("station-1");
     await closeCaptureSession("station-1");
 
-    expect(generated.startCaptureSession).toHaveBeenCalledWith({ stationId: "station-1" });
-    expect(generated.getCaptureSessionStatus).toHaveBeenCalledWith({ stationId: "station-1" });
-    expect(generated.clearCaptureSession).toHaveBeenCalledWith({ stationId: "station-1" });
-    expect(generated.closeCaptureSession).toHaveBeenCalledWith({ stationId: "station-1" });
-    expect(transport.invoke).not.toHaveBeenCalled();
-  });
-
-  it("routes capture finish commands through generated wrappers", async () => {
-    await finishCaptureSession("station-1");
-    await finishWebAuthorizationSession("station-1");
-
-    expect(generated.finishCaptureSession).toHaveBeenCalledWith({ stationId: "station-1" });
-    expect(generated.finishWebAuthorizationSession).toHaveBeenCalledWith({ stationId: "station-1" });
-    expect(transport.invoke).not.toHaveBeenCalled();
+    expect(collectors.detectSub2apiStation).toHaveBeenCalledWith("station-1");
+    expect(collectors.collectSub2apiStation).toHaveBeenCalledWith("station-1");
+    expect(collectors.detectStationInfo).toHaveBeenCalledWith("station-1");
+    expect(collectors.collectStationInfo).toHaveBeenCalledWith("station-1");
+    expect(collectors.collectStationTask).toHaveBeenCalledWith("station-1", "full");
+    expect(collectors.testStationLogin).toHaveBeenCalledWith("station-1");
+    expect(collectors.testStationLoginInput).toHaveBeenCalledWith(loginInput);
+    expect(collectors.listCollectorSnapshots).toHaveBeenCalledWith("station-1");
+    expect(collectors.getLatestCollectorSnapshot).toHaveBeenCalledWith("station-1");
+    expect(collectors.startCaptureSession).toHaveBeenCalledTimes(2);
+    expect(collectors.getCaptureSessionStatus).toHaveBeenCalledWith("station-1");
+    expect(collectors.finishCaptureSession).toHaveBeenCalledWith("station-1");
+    expect(collectors.finishWebAuthorizationSession).toHaveBeenCalledWith("station-1");
+    expect(collectors.clearCaptureSession).toHaveBeenCalledWith("station-1");
+    expect(collectors.closeCaptureSession).toHaveBeenCalledWith("station-1");
   });
 });
 
-function fixtureCaptureStatus() {
+function testBackendClient(overrides: Partial<BackendClient>): BackendClient {
+  return {
+    mode: "desktop",
+    settings: {} as BackendClient["settings"],
+    stations: {} as BackendClient["stations"],
+    stationKeys: {} as BackendClient["stationKeys"],
+    changeEvents: {} as BackendClient["changeEvents"],
+    collectorRuns: {} as BackendClient["collectorRuns"],
+    collectors: {} as BackendClient["collectors"],
+    proxy: {} as BackendClient["proxy"],
+    localRouting: {} as BackendClient["localRouting"],
+    dataRecovery: {} as BackendClient["dataRecovery"],
+    economics: {} as BackendClient["economics"],
+    groupFacts: {} as BackendClient["groupFacts"],
+    pricing: {} as BackendClient["pricing"],
+    routing: {} as BackendClient["routing"],
+    channels: {} as BackendClient["channels"],
+    handshake: vi.fn(async () => ({}) as never),
+    ...overrides,
+  };
+}
+
+function captureStatus(status: string) {
   return {
     stationId: "station-1",
-    status: "capturing",
+    status,
     captureCount: 0,
     recognizedFieldCount: 0,
     pendingConfirmationCount: 0,
@@ -79,21 +134,20 @@ function fixtureCaptureStatus() {
   };
 }
 
-function fixtureCollectorRun() {
-  const now = "2026-07-24T00:00:00Z";
+function runResult() {
   return {
     snapshot: {
       id: "snapshot-1",
       stationId: "station-1",
       endpointRevision: 1,
-      source: "webview-capture",
+      source: "fixture",
       status: "checked",
-      fetchedAt: now,
+      fetchedAt: "now",
       summaryJson: {},
       normalizedJson: {},
       rawJsonRedacted: null,
       errorMessage: null,
-      createdAt: now,
+      createdAt: "now",
     },
     events: [],
   };

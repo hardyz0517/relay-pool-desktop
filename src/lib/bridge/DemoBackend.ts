@@ -45,6 +45,23 @@ export class DemoBackend implements BackendClient {
   readonly collectorRuns: BackendClient["collectorRuns"] = {
     listCollectorRuns: (_stationId: string) => this.rejectUnsupported("collector_runs"),
   };
+  readonly collectors: BackendClient["collectors"] = {
+    detectSub2apiStation: (_stationId: string) => this.rejectUnsupported("collectors"),
+    collectSub2apiStation: (_stationId: string) => this.rejectUnsupported("collectors"),
+    detectStationInfo: (_stationId: string) => this.rejectUnsupported("collectors"),
+    collectStationInfo: (_stationId: string) => this.rejectUnsupported("collectors"),
+    collectStationTask: (_stationId: string) => this.rejectUnsupported("collectors"),
+    testStationLogin: (_stationId: string) => this.rejectUnsupported("collectors"),
+    testStationLoginInput: () => this.rejectUnsupported("collectors"),
+    listCollectorSnapshots: (_stationId: string) => this.rejectUnsupported("collectors"),
+    getLatestCollectorSnapshot: (_stationId: string) => this.rejectUnsupported("collectors"),
+    startCaptureSession: (_stationId: string) => this.rejectUnsupported("collectors"),
+    getCaptureSessionStatus: (_stationId: string) => this.rejectUnsupported("collectors"),
+    finishCaptureSession: (_stationId: string) => this.rejectUnsupported("collectors"),
+    finishWebAuthorizationSession: (_stationId: string) => this.rejectUnsupported("collectors"),
+    clearCaptureSession: (_stationId: string) => this.rejectUnsupported("collectors"),
+    closeCaptureSession: (_stationId: string) => this.rejectUnsupported("collectors"),
+  };
   readonly proxy: BackendClient["proxy"] = {
     getProxyStatus: () => this.rejectUnsupported("proxy"),
     startLocalProxy: () => this.rejectUnsupported("proxy"),

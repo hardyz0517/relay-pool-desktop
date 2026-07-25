@@ -119,6 +119,7 @@ function testBackendClient(
     stationKeys: {} as BackendClient["stationKeys"],
     changeEvents: {} as BackendClient["changeEvents"],
     collectorRuns: {} as BackendClient["collectorRuns"],
+    collectors: {} as BackendClient["collectors"],
     proxy: {} as BackendClient["proxy"],
     localRouting: {} as BackendClient["localRouting"],
     dataRecovery: {} as BackendClient["dataRecovery"],

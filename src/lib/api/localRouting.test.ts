@@ -18,6 +18,7 @@ describe("local routing backend cutover", () => {
       stationKeys: {} as never,
       changeEvents: {} as never,
       collectorRuns: {} as never,
+      collectors: {} as never,
       proxy: {} as never,
       localRouting: localRouting as never,
       dataRecovery: {} as never,
