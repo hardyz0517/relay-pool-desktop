@@ -1,20 +1,25 @@
-use std::{
-    io::Read,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
+use http::{header, HeaderName, HeaderValue, Method, StatusCode};
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 
-use crate::services::{
-    channel_monitors::{
-        redaction::redact_monitor_text,
-        templates::{normalize_monitor_method, RenderedMonitorRequest},
+use crate::{
+    outbound::{
+        AsyncOutboundClient, OutboundFailure, OutboundFailureKind, OutboundHeaderPolicy,
+        OutboundHeaders, OutboundRequest, ProxyPolicy, RequestBudget, SecretHeaderValue,
     },
-    proxy::observability::{ObservedUsage, SseUsageObserver},
-    station_endpoints::build_api_url,
+    services::{
+        channel_monitors::{
+            redaction::redact_monitor_text,
+            templates::{normalize_monitor_method, RenderedMonitorRequest},
+        },
+        proxy::observability::{ObservedUsage, SseUsageObserver},
+        station_endpoints::build_api_url,
+    },
 };
 
-const MAX_RESPONSE_EXCERPT_BYTES: u64 = 4096;
+const MAX_RESPONSE_EXCERPT_BYTES: usize = 4096;
 
 #[derive(Debug, Clone)]
 pub struct MonitorProbeUsage {
@@ -47,11 +52,13 @@ pub struct MonitorProbeResult {
     pub usage: Option<MonitorProbeUsage>,
 }
 
-pub fn run_monitor_probe(
+pub async fn run_monitor_probe(
+    outbound: &AsyncOutboundClient,
     base_url: &str,
     api_key: &str,
     request: &RenderedMonitorRequest,
     timeout_seconds: i64,
+    cancellation_token: CancellationToken,
 ) -> MonitorProbeResult {
     let started_at = Instant::now();
     let Some(url) = build_probe_url(base_url, &request.path) else {
@@ -61,7 +68,11 @@ pub fn run_monitor_probe(
             "Invalid monitor request path; expected same-origin absolute path",
         );
     };
-    let method = match normalize_monitor_method(&request.method) {
+    let method = match normalize_monitor_method(&request.method).and_then(|method| {
+        method
+            .parse::<Method>()
+            .map_err(|_| "Invalid monitor request method".to_string())
+    }) {
         Ok(method) => method,
         Err(error) => return failed_result(started_at, None, &error),
     };
@@ -88,43 +99,77 @@ pub fn run_monitor_probe(
         );
     }
 
-    let timeout = probe_timeout(timeout_seconds);
-    let agent = ureq::AgentBuilder::new()
-        .timeout(timeout)
-        .timeout_connect(timeout)
-        .timeout_read(timeout)
-        .timeout_write(timeout)
-        .build();
     let accept_header = if request.stream {
         "text/event-stream"
     } else {
         "application/json"
     };
-    let mut upstream = agent
-        .request(&method, &url)
-        .timeout(timeout)
-        .set("Authorization", &format!("Bearer {api_key}"));
-
-    for (name, value) in &request.headers {
-        if !is_forbidden_header(name) {
-            upstream = upstream.set(name, value);
+    let outbound_request = match build_outbound_probe_request(
+        method,
+        url,
+        api_key,
+        request,
+        accept_header,
+        probe_timeout(timeout_seconds),
+    ) {
+        Ok(request) => request,
+        Err(error) => {
+            return failed_result(started_at, None, &format!("Network probe failed: {error}"));
         }
-    }
-    upstream = upstream.set("Accept", accept_header);
-
-    let response = if request.body.is_empty() {
-        upstream.call()
-    } else {
-        upstream.send_bytes(&request.body)
     };
 
-    match response {
-        Ok(response) => response_result(started_at, response, request.stream),
-        Err(ureq::Error::Status(_, response)) => {
-            response_result(started_at, response, request.stream)
+    if request.stream {
+        streaming_response_result(started_at, outbound, outbound_request, cancellation_token).await
+    } else {
+        match outbound.execute(outbound_request, cancellation_token).await {
+            Ok(response) => response_result(started_at, response.status, &response.body),
+            Err(error) => {
+                failed_result(started_at, None, &format!("Network probe failed: {error}"))
+            }
         }
-        Err(error) => failed_result(started_at, None, &format!("Network probe failed: {error}")),
     }
+}
+
+fn build_outbound_probe_request(
+    method: Method,
+    url: String,
+    api_key: &str,
+    request: &RenderedMonitorRequest,
+    accept_header: &'static str,
+    timeout: Duration,
+) -> Result<OutboundRequest, OutboundFailure> {
+    let policy = OutboundHeaderPolicy::provider_default();
+    let mut headers = OutboundHeaders::new();
+    headers.insert_sensitive(
+        header::AUTHORIZATION,
+        SecretHeaderValue::new(format!("Bearer {api_key}")),
+        &policy,
+    )?;
+    for (name, value) in &request.headers {
+        if is_forbidden_header(name) {
+            continue;
+        }
+        headers.insert_public(
+            HeaderName::from_bytes(name.as_bytes())
+                .map_err(|_| OutboundFailure::new(OutboundFailureKind::InvalidHeader))?,
+            HeaderValue::from_str(value)
+                .map_err(|_| OutboundFailure::new(OutboundFailureKind::InvalidHeader))?,
+            &policy,
+        )?;
+    }
+    headers.insert_public(
+        header::ACCEPT,
+        HeaderValue::from_static(accept_header),
+        &policy,
+    )?;
+    Ok(OutboundRequest {
+        method,
+        url,
+        headers,
+        body: request.body.clone(),
+        proxy: ProxyPolicy::Direct,
+        budget: RequestBudget::from_now(timeout),
+    })
 }
 
 fn build_probe_url(base_url: &str, path: &str) -> Option<String> {
@@ -150,19 +195,10 @@ fn probe_timeout(timeout_seconds: i64) -> Duration {
     Duration::from_secs(timeout_seconds.max(1) as u64)
 }
 
-fn response_result(
-    started_at: Instant,
-    response: ureq::Response,
-    stream: bool,
-) -> MonitorProbeResult {
-    if stream {
-        return streaming_response_result(started_at, response);
-    }
-    let status_code = response.status();
-    let body = response_body(response);
-    let response_json = body
-        .as_ref()
-        .and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok());
+fn response_result(started_at: Instant, status: StatusCode, body: &[u8]) -> MonitorProbeResult {
+    let status_code = status.as_u16();
+    let response_json =
+        serde_json::from_slice::<Value>(&body[..body.len().min(MAX_RESPONSE_EXCERPT_BYTES)]).ok();
     let ok = status_code < 400;
     let error_summary = if ok {
         None
@@ -182,35 +218,35 @@ fn response_result(
     }
 }
 
-fn streaming_response_result(started_at: Instant, response: ureq::Response) -> MonitorProbeResult {
-    let status_code = response.status();
-    let mut reader = response.into_reader();
+async fn streaming_response_result(
+    started_at: Instant,
+    outbound: &AsyncOutboundClient,
+    request: OutboundRequest,
+    cancellation_token: CancellationToken,
+) -> MonitorProbeResult {
     let mut observer = SseUsageObserver::default();
     let mut first_token_ms = None;
-    let mut read_error = None;
-    let mut buffer = [0_u8; 8192];
-
-    loop {
-        let count = match reader.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(count) => count,
-            Err(error) => {
-                read_error = Some(redact_monitor_text(&format!(
-                    "Failed to read streaming monitor response: {error}"
-                )));
-                break;
+    let response = outbound
+        .execute_stream(request, cancellation_token, |chunk| {
+            if first_token_ms.is_none() {
+                first_token_ms = Some(elapsed_ms(started_at));
             }
-        };
-        if first_token_ms.is_none() {
-            first_token_ms = Some(elapsed_ms(started_at));
-        }
-        observer.push(&buffer[..count]);
-    }
+            observer.push(chunk);
+            Ok(())
+        })
+        .await;
 
-    let ok = status_code < 400 && read_error.is_none();
-    let error_summary = read_error.or_else(|| {
-        (!ok).then(|| redact_monitor_text(&format!("Upstream returned HTTP {status_code}")))
-    });
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+            return failed_result(started_at, None, &format!("Network probe failed: {error}"));
+        }
+    };
+
+    let status_code = response.status.as_u16();
+    let ok = status_code < 400;
+    let error_summary =
+        (!ok).then(|| redact_monitor_text(&format!("Upstream returned HTTP {status_code}")));
     MonitorProbeResult {
         ok,
         status_code: Some(status_code),
@@ -219,16 +255,6 @@ fn streaming_response_result(started_at: Instant, response: ureq::Response) -> M
         error_summary,
         usage: observer.usage().cloned().map(MonitorProbeUsage::from),
     }
-}
-
-fn response_body(response: ureq::Response) -> Option<Vec<u8>> {
-    let mut bytes = Vec::new();
-    response
-        .into_reader()
-        .take(MAX_RESPONSE_EXCERPT_BYTES)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    Some(bytes)
 }
 
 fn parse_monitor_probe_usage(value: &Value) -> Option<MonitorProbeUsage> {
@@ -302,13 +328,13 @@ mod tests {
         time::Duration,
     };
 
-    #[test]
-    fn sends_probe_with_authorization_and_parses_success_response() {
+    #[tokio::test]
+    async fn sends_probe_with_authorization_and_parses_success_response() {
         let (origin, received) = spawn_upstream(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 28\r\n\r\n{\"ok\":true,\"token\":\"secret\"}",
         );
         let mut headers = HashMap::new();
-        headers.insert("x-monitor".to_string(), "yes".to_string());
+        headers.insert("x-request-id".to_string(), "monitor-probe-1".to_string());
         let request = RenderedMonitorRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
@@ -319,7 +345,15 @@ mod tests {
         };
         let base_url = format!("{origin}/v1");
 
-        let result = run_monitor_probe(&base_url, "sk-probe-key", &request, 2);
+        let result = run_monitor_probe(
+            &test_outbound_client(),
+            &base_url,
+            "sk-probe-key",
+            &request,
+            2,
+            CancellationToken::new(),
+        )
+        .await;
         let raw_request = received
             .recv_timeout(Duration::from_secs(2))
             .expect("upstream request");
@@ -328,13 +362,14 @@ mod tests {
         assert_eq!(result.status_code, Some(200));
         assert_eq!(result.error_summary, None);
         assert!(raw_request.starts_with("POST /v1/chat/completions HTTP/1.1"));
-        assert!(raw_request.contains("Authorization: Bearer sk-probe-key"));
-        assert!(raw_request.contains("x-monitor: yes"));
+        let raw_request_lower = raw_request.to_ascii_lowercase();
+        assert!(raw_request_lower.contains("authorization: bearer sk-probe-key"));
+        assert!(raw_request_lower.contains("x-request-id: monitor-probe-1"));
         assert!(raw_request.contains(r#"{"model":"gpt-test"}"#));
     }
 
-    #[test]
-    fn sends_probe_with_complete_api_namespace_without_duplicate_v1() {
+    #[tokio::test]
+    async fn sends_probe_with_complete_api_namespace_without_duplicate_v1() {
         let (origin, received) =
             spawn_upstream("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
         let request = RenderedMonitorRequest {
@@ -347,7 +382,15 @@ mod tests {
         };
         let base_url = format!("{origin}/api/v3");
 
-        let result = run_monitor_probe(&base_url, "sk-probe-key", &request, 2);
+        let result = run_monitor_probe(
+            &test_outbound_client(),
+            &base_url,
+            "sk-probe-key",
+            &request,
+            2,
+            CancellationToken::new(),
+        )
+        .await;
         let raw_request = received
             .recv_timeout(Duration::from_secs(2))
             .expect("upstream request");
@@ -356,8 +399,8 @@ mod tests {
         assert!(raw_request.starts_with("POST /api/v3/chat/completions HTTP/1.1"));
     }
 
-    #[test]
-    fn streaming_probe_records_first_token_and_final_usage() {
+    #[tokio::test]
+    async fn streaming_probe_records_first_token_and_final_usage() {
         let (origin, received) = spawn_staged_upstream(&[
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"O\"}\n\n",
             "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":9,\"output_tokens\":4,\"input_tokens_details\":{\"cached_tokens\":3}}}}\n\n",
@@ -372,13 +415,23 @@ mod tests {
         };
         let base_url = format!("{origin}/v1");
 
-        let result = run_monitor_probe(&base_url, "sk-probe-key", &request, 2);
+        let result = run_monitor_probe(
+            &test_outbound_client(),
+            &base_url,
+            "sk-probe-key",
+            &request,
+            2,
+            CancellationToken::new(),
+        )
+        .await;
         let raw_request = received
             .recv_timeout(Duration::from_secs(2))
             .expect("upstream request");
 
         assert!(result.ok);
-        assert!(raw_request.contains("Accept: text/event-stream"));
+        assert!(raw_request
+            .to_ascii_lowercase()
+            .contains("accept: text/event-stream"));
         assert!(result.first_token_ms.is_some());
         let usage = result.usage.expect("stream usage");
         assert_eq!(usage.prompt_tokens, Some(9));
@@ -387,8 +440,8 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, Some(3));
     }
 
-    #[test]
-    fn ignores_template_authorization_and_cookie_headers() {
+    #[tokio::test]
+    async fn ignores_template_authorization_and_cookie_headers() {
         let (origin, received) =
             spawn_upstream("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
         let mut headers = HashMap::new();
@@ -397,7 +450,7 @@ mod tests {
             "Bearer sk-template".to_string(),
         );
         headers.insert("Cookie".to_string(), "session=secret".to_string());
-        headers.insert("x-safe".to_string(), "safe".to_string());
+        headers.insert("x-request-id".to_string(), "safe".to_string());
         let request = RenderedMonitorRequest {
             method: "GET".to_string(),
             path: "/v1/models".to_string(),
@@ -408,20 +461,29 @@ mod tests {
         };
         let base_url = format!("{origin}/v1");
 
-        let result = run_monitor_probe(&base_url, "sk-real-key", &request, 2);
+        let result = run_monitor_probe(
+            &test_outbound_client(),
+            &base_url,
+            "sk-real-key",
+            &request,
+            2,
+            CancellationToken::new(),
+        )
+        .await;
         let raw_request = received
             .recv_timeout(Duration::from_secs(2))
             .expect("upstream request");
 
         assert!(result.ok);
-        assert!(raw_request.contains("Authorization: Bearer sk-real-key"));
+        let raw_request_lower = raw_request.to_ascii_lowercase();
+        assert!(raw_request_lower.contains("authorization: bearer sk-real-key"));
         assert!(!raw_request.contains("sk-template"));
         assert!(!raw_request.contains("session=secret"));
-        assert!(raw_request.contains("x-safe: safe"));
+        assert!(raw_request_lower.contains("x-request-id: safe"));
     }
 
-    #[test]
-    fn rejects_path_that_would_override_host() {
+    #[tokio::test]
+    async fn rejects_path_that_would_override_host() {
         let request = RenderedMonitorRequest {
             method: "GET".to_string(),
             path: "https://evil.example/v1/models".to_string(),
@@ -431,15 +493,23 @@ mod tests {
             reasoning_effort: None,
         };
 
-        let result = run_monitor_probe("http://127.0.0.1:9", "sk-real-key", &request, 1);
+        let result = run_monitor_probe(
+            &test_outbound_client(),
+            "http://127.0.0.1:9",
+            "sk-real-key",
+            &request,
+            1,
+            CancellationToken::new(),
+        )
+        .await;
 
         assert!(!result.ok);
         assert_eq!(result.status_code, None);
         assert!(result.error_summary.unwrap().contains("path"));
     }
 
-    #[test]
-    fn rejects_paths_with_whitespace_or_dot_segments() {
+    #[tokio::test]
+    async fn rejects_paths_with_whitespace_or_dot_segments() {
         for path in [
             "/v1/models bad",
             "/../v1/models",
@@ -455,15 +525,23 @@ mod tests {
                 reasoning_effort: None,
             };
 
-            let result = run_monitor_probe("http://127.0.0.1:9", "sk-real-key", &request, 1);
+            let result = run_monitor_probe(
+                &test_outbound_client(),
+                "http://127.0.0.1:9",
+                "sk-real-key",
+                &request,
+                1,
+                CancellationToken::new(),
+            )
+            .await;
 
             assert!(!result.ok, "{path} should be rejected");
             assert_eq!(result.status_code, None);
         }
     }
 
-    #[test]
-    fn rejects_invalid_or_unsupported_methods_at_probe_boundary() {
+    #[tokio::test]
+    async fn rejects_invalid_or_unsupported_methods_at_probe_boundary() {
         for method in ["TRACE", "BAD METHOD", "POST\r\nX-Bad: yes"] {
             let request = RenderedMonitorRequest {
                 method: method.to_string(),
@@ -474,7 +552,15 @@ mod tests {
                 reasoning_effort: None,
             };
 
-            let result = run_monitor_probe("http://127.0.0.1:9", "sk-real-key", &request, 1);
+            let result = run_monitor_probe(
+                &test_outbound_client(),
+                "http://127.0.0.1:9",
+                "sk-real-key",
+                &request,
+                1,
+                CancellationToken::new(),
+            )
+            .await;
 
             assert!(!result.ok, "{method} should be rejected");
             assert_eq!(result.status_code, None);
@@ -482,8 +568,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn rejects_invalid_forwarded_headers_at_probe_boundary() {
+    #[tokio::test]
+    async fn rejects_invalid_forwarded_headers_at_probe_boundary() {
         for (name, value) in [
             ("x-bad\r\nInjected", "safe"),
             ("x-safe", "ok\r\nX-Evil: yes"),
@@ -499,7 +585,15 @@ mod tests {
                 reasoning_effort: None,
             };
 
-            let result = run_monitor_probe("http://127.0.0.1:9", "sk-real-key", &request, 1);
+            let result = run_monitor_probe(
+                &test_outbound_client(),
+                "http://127.0.0.1:9",
+                "sk-real-key",
+                &request,
+                1,
+                CancellationToken::new(),
+            )
+            .await;
 
             assert!(!result.ok, "{name:?}: {value:?} should be rejected");
             assert_eq!(result.status_code, None);
@@ -507,11 +601,47 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn cancelled_probe_fails_closed_without_status() {
+        let cancellation_token = CancellationToken::new();
+        cancellation_token.cancel();
+        let request = RenderedMonitorRequest {
+            method: "GET".to_string(),
+            path: "/v1/models".to_string(),
+            headers: HashMap::new(),
+            body: Vec::new(),
+            stream: false,
+            reasoning_effort: None,
+        };
+
+        let result = run_monitor_probe(
+            &test_outbound_client(),
+            "http://127.0.0.1:9",
+            "sk-real-key",
+            &request,
+            1,
+            cancellation_token,
+        )
+        .await;
+
+        assert!(!result.ok);
+        assert_eq!(result.status_code, None);
+        assert!(result
+            .error_summary
+            .unwrap()
+            .to_ascii_lowercase()
+            .contains("cancelled"));
+    }
+
     #[test]
     fn normalizes_probe_timeout_to_minimum_one_second() {
         assert_eq!(probe_timeout(-5), Duration::from_secs(1));
         assert_eq!(probe_timeout(0), Duration::from_secs(1));
         assert_eq!(probe_timeout(3), Duration::from_secs(3));
+    }
+
+    fn test_outbound_client() -> AsyncOutboundClient {
+        AsyncOutboundClient::new(crate::outbound::AsyncOutboundClientConfig::architecture_budget())
     }
 
     fn spawn_upstream(response: &'static str) -> (String, mpsc::Receiver<String>) {

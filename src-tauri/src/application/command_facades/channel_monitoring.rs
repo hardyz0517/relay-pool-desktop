@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use tokio_util::sync::CancellationToken;
+
 use crate::{
     application::{error::ApplicationError, monitoring::MonitoringService, pagination::PageLimit},
     models::{
@@ -112,6 +114,8 @@ impl ChannelMonitoringCommandFacade {
         &self,
         monitor_id: String,
     ) -> Result<Vec<ChannelMonitorRun>, String> {
-        self.runner.run_monitor(monitor_id).await
+        self.runner
+            .run_monitor(monitor_id, CancellationToken::new())
+            .await
     }
 }

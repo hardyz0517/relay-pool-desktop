@@ -107,13 +107,11 @@
     "crate::commands::open_url_with_system::<method>::spawn",
     "crate::commands::start_capture_session::tauri::async_runtime::spawn_blocking",
     "crate::commands::test_station_key_connectivity::tauri::async_runtime::spawn_blocking",
-    "crate::services::channel_monitors::<impl>::probe::tauri::async_runtime::spawn_blocking",
     "crate::services::proxy::lifecycle::writer::<impl>::start::tokio::spawn",
     "crate::services::proxy::server::spawn_server::tokio::spawn",
     "crate::services::proxy::startup_auto_start::schedule::tauri::async_runtime::spawn"
   ],
   "http_client_construction_allowlist": [
-    "crate::services::channel_monitors::probe::run_monitor_probe::ureq::AgentBuilder::new",
     "crate::services::endpoint_ping::ping_station_endpoint::ureq::AgentBuilder::new",
     "crate::services::outbound::agent_builder_for_proxy::ureq::AgentBuilder::new",
     "crate::outbound::client::<impl>::client_for_policy::reqwest::Client::builder",

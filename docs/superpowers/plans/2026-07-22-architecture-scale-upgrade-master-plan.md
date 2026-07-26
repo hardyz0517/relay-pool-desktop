@@ -795,6 +795,8 @@ Task 17 必须拆成三个互不混合的 production cutover。
 
 **当前 checkpoint：** `S4-T17A2-channel-monitor-supervised-runner` 将 channel monitor scheduled runner 从自有 OS thread、atomic stop flag 和 `block_on` loop 切到共享 `TaskSupervisor`。启动 composition 克隆 managed supervisor，注册单一 `channel-monitor-runner` task/concurrency key，runner loop 使用 Tokio interval/select cancellation，`ChannelMonitorRunnerState` 的 stop/drop 只请求 cancel，join handle 由 supervisor 统一持有；旧 runner thread allowlist 项已删除。该片尚未迁移 probe `spawn_blocking` 或 `ureq` transport。
 
+**当前 checkpoint：** `S4-T17A3-channel-monitor-probe-async-outbound` 将 channel monitor probe HTTP 从 direct `spawn_blocking` + `ureq::AgentBuilder` 切到共享 `AsyncOutboundClient`。`v2_runner_port` 通过启动 composition 接收同一个 managed outbound client；scheduled runner 将 `TaskRunContext` cancellation token 传入每个 probe，manual `run_channel_monitor_now` 使用显式 one-shot token；per-target batch 仍按 `max_concurrency` 有界并由当前 monitor run 直接 `join_all` 等待，不创建无 owner probe task。旧 monitor probe `spawn_blocking` 和 `ureq` allowlist 项已删除。该片不迁移 capture、shutdown 或 provider capability drivers。
+
 **文件：**
 
 - Modify: `src-tauri/src/services/channel_monitors/mod.rs`

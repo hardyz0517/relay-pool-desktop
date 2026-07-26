@@ -384,6 +384,7 @@ pub fn run() {
                     )
                     .map_err(|error| format!("failed to compose work runtime: {error}"))?;
                     let blocking_executor = work_runtime.blocking.clone();
+                    let outbound_client = work_runtime.outbound.clone();
                     let supervisor_handle = work_runtime.supervisor.clone();
                     let settings_stations_command_facade =
                         app_composition::compose_settings_stations_command_facade(
@@ -399,7 +400,7 @@ pub fn run() {
                     let request_logs_command_facade =
                         app_composition::compose_request_logs_command_facade(&app_services);
                     let channel_monitor_runner_port =
-                        services::channel_monitors::v2_runner_port(&app_services);
+                        services::channel_monitors::v2_runner_port(&app_services, outbound_client);
                     let channel_monitoring_command_facade =
                         app_composition::compose_channel_monitoring_command_facade(
                             &app_services,
