@@ -1737,6 +1737,7 @@ pub struct StationKeyConnectivityTestResult {
 }
 
 const STATION_KEY_CONNECTIVITY_EVENT_SCHEMA_VERSION: u32 = 1;
+const STATION_KEY_CONNECTIVITY_OPERATION_RESULT_PREFIX: &str = "station_key_connectivity.result ";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3048,6 +3049,9 @@ async fn run_station_key_connectivity_operation(
         "completed ok={} status={} model={} mode={:?}",
         result.ok, result.status_code, result.model, result.response_mode
     ));
+    if let Some(message) = station_key_connectivity_operation_result_progress_message(&result) {
+        let _ = context.emit_progress(message);
+    }
     context.enter_commit_barrier();
     match facade
         .record_station_key_connectivity(
@@ -3502,6 +3506,14 @@ fn outbound_failure_terminal_or_result(error: OutboundFailure) -> OperationTermi
             code: OperationFailureCode::new("connectivity-transport"),
         },
     }
+}
+
+fn station_key_connectivity_operation_result_progress_message(
+    result: &StationKeyConnectivityTestResult,
+) -> Option<String> {
+    serde_json::to_string(result)
+        .ok()
+        .map(|payload| format!("{STATION_KEY_CONNECTIVITY_OPERATION_RESULT_PREFIX}{payload}"))
 }
 
 fn test_station_key_connectivity_prepared_blocking(
@@ -4051,6 +4063,32 @@ mod tests {
         assert_eq!(chat["model"], "gpt-test");
         assert_eq!(chat["messages"][0]["content"], "hi");
         assert_eq!(chat["stream"], true);
+    }
+
+    #[test]
+    fn station_key_connectivity_operation_result_progress_is_parseable_json_projection() {
+        let result = StationKeyConnectivityTestResult {
+            station_key_id: "key-1".to_string(),
+            ok: true,
+            status_code: 200,
+            duration_ms: 42,
+            model: "gpt-test".to_string(),
+            message: "ok".to_string(),
+            response_mode: StationKeyConnectivityResponseMode::Stream,
+            stream_fallback_reason: None,
+        };
+
+        let message = station_key_connectivity_operation_result_progress_message(&result)
+            .expect("result progress serializes");
+        let payload = message
+            .strip_prefix(STATION_KEY_CONNECTIVITY_OPERATION_RESULT_PREFIX)
+            .expect("result progress has stable prefix");
+        let value = serde_json::from_str::<Value>(payload).expect("result progress is JSON");
+
+        assert_eq!(value["stationKeyId"], "key-1");
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["statusCode"], 200);
+        assert_eq!(value["responseMode"], "stream");
     }
 
     #[test]

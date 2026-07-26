@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   closestCenter,
   type DraggableAttributes,
@@ -44,6 +44,8 @@ import {
   updateStationKeyMonitorEnabledInput,
 } from "@/features/channels/channelMonitorViewModel";
 import { OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS } from "./stationKeyCapabilityDefaults";
+import { ConnectivityOperationCancelledError } from "./connectivityOperationController";
+import { useConnectivityOperation } from "./useConnectivityOperation";
 
 type FilterMode = "all" | "enabled" | "disabled";
 
@@ -87,6 +89,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const keyPoolItemsQuery = useActivityQuery(keyPoolQueryOptions());
   const stationsQuery = useActivityQuery(stationsQueryOptions());
   const channelMonitoringQuery = useActivityQuery(channelMonitoringQueryOptions());
+  const connectivityOperation = useConnectivityOperation();
   const stations = stationsQuery.data ?? [];
   const items = keyPoolItemsQuery.data ?? [];
   const monitorSummaries = channelMonitoringQuery.data?.monitorSummaries ?? [];
@@ -115,7 +118,6 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const [testingKeyId, setTestingKeyId] = useState<string | null>(null);
   const [monitoringKeyId, setMonitoringKeyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const connectivityRunTokenRef = useRef(0);
   const queryError = keyPoolItemsQuery.error ?? stationsQuery.error ?? channelMonitoringQuery.error;
   const displayError = error ?? (queryError ? readError(queryError) : null);
   const loading =
@@ -308,8 +310,6 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       return;
     }
     const item = connectivityDialogItem;
-    const runToken = connectivityRunTokenRef.current + 1;
-    connectivityRunTokenRef.current = runToken;
     setTestingKeyId(item.id);
     setError(null);
     setConnectivityTestError(null);
@@ -318,9 +318,6 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     setConnectivityStreamFallbackReason(null);
     setConnectivityProgressLabel("正在请求流式响应...");
     const handleConnectivityEvent = (event: StationKeyConnectivityTestEvent) => {
-      if (connectivityRunTokenRef.current !== runToken) {
-        return;
-      }
       if (event.type === "attemptStarted") {
         setDisplayedResponseText("");
         setConnectivityStreamFallbackReason(null);
@@ -338,10 +335,10 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       }
     };
     try {
-      const result = await testStationKeyConnectivity(item.id, model, { onEvent: handleConnectivityEvent });
-      if (connectivityRunTokenRef.current !== runToken) {
-        return;
-      }
+      const result = await connectivityOperation.run(
+        { stationKeyId: item.id, model },
+        { onEvent: handleConnectivityEvent },
+      );
       setConnectivityTestResult(result);
       setConnectivityProgressLabel(null);
       await invalidateKeyPoolQueries(false);
@@ -351,7 +348,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         toast.error("连通性异常", `${result.statusCode || "网络"} · ${result.message}`);
       }
     } catch (requestError) {
-      if (connectivityRunTokenRef.current !== runToken) {
+      if (requestError instanceof ConnectivityOperationCancelledError) {
         return;
       }
       const message = readError(requestError);
@@ -359,9 +356,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
       setConnectivityProgressLabel(null);
       toast.error("测试连通性失败", message);
     } finally {
-      if (connectivityRunTokenRef.current === runToken) {
-        setTestingKeyId(null);
-      }
+      setTestingKeyId(null);
     }
   }
 
@@ -699,7 +694,7 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         onDisplayedResponseTextChange={setDisplayedResponseText}
         testing={Boolean(connectivityDialogItem && testingKeyId === connectivityDialogItem.id)}
         onClose={() => {
-          connectivityRunTokenRef.current += 1;
+          connectivityOperation.cancel();
           setConnectivityDialogItem(null);
           setConnectivityCapabilities(null);
           setConnectivityTestResult(null);

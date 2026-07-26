@@ -728,6 +728,8 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 **当前 checkpoint：** `S4-T15G-connectivity-operation-start-command` 新增 `start_station_key_connectivity_operation`，通过 managed `WorkRuntimeBundle.operation` 启动真实 `OperationRegistry` entry，并用 `AsyncOutboundClient` 执行 streaming-first connectivity probe、non-stream fallback、取消/超时 terminal 映射和 commit-barrier 后的 connectivity 记录；compiled IPC registry、generated bindings 与 main-window ACL 已声明该 start command 为 non-idempotent/result-unknown。该片尚未把前端 key-pool controller 从 legacy channel command 切到 operation status/cancel 轮询。
 
+**当前 checkpoint：** `S4-T15H-connectivity-operation-controller` 新增 key-pool connectivity operation controller 与 hook，手动连通性 dialog 改为调用 `start_station_key_connectivity_operation`、轮询 `get_operation_status`、关闭时 abort 并触发 `cancel_operation`，并从 bounded progress 中解析脱敏 result projection。该片仍保留 monitor-create convenience probe 的 legacy helper caller，后续由其 owning shard 删除最后兼容调用。
+
 **文件：**
 
 - Create: `src-tauri/src/background_tasks/operation.rs`
