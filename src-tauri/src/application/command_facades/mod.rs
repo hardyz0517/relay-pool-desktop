@@ -21,7 +21,7 @@ pub(crate) use channel_monitoring::ChannelMonitoringCommandFacade;
 pub(crate) use channel_status::ChannelStatusCommandFacade;
 pub(crate) use collector_metadata::CollectorMetadataCommandFacade;
 pub(crate) use credentials::CredentialsCommandFacade;
-pub(crate) use data_directory::DataDirectoryCommandFacade;
+pub(crate) use data_directory::{DataDirectoryCommandError, DataDirectoryCommandFacade};
 pub(crate) use key_pool::KeyPoolCommandFacade;
 pub(crate) use local_proxy::{LocalProxyCommandError, LocalProxyCommandFacade};
 pub(crate) use pricing::PricingCommandFacade;

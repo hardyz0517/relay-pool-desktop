@@ -809,6 +809,8 @@ Task 17 必须拆成三个互不混合的 production cutover。
 
 #### Task 17.B：capture、dialog、keyring 等真实 blocking ports
 
+**当前 checkpoint：** `S4-T17B1-data-directory-blocking-executor` 将 data directory selection/reset 的同步 filesystem compatibility port 和 `choose_data_dir` folder dialog 从 direct `spawn_blocking` 切到共享 `BlockingExecutor`。启动 composition 先构造 managed WorkRuntime，再把同一个 executor 注入 `AppServices/DataDirectoryService` 和 `DataDirectoryCommandFacade`；`choose_data_dir` 保持单 facade State command，dialog job 由 facade 提交有界 blocking job；原有 `InvalidTarget`/`Io` port error 映射保持不变，blocking queue full/timeout 有稳定 work/application 分类。旧 data-directory 和 choose-data-dir direct `spawn_blocking` allowlist 项已删除。该片不迁移 capture window/cookie、keyring、updater 或 shutdown。
+
 **文件：**
 
 - Modify: `src-tauri/src/services/capture/**`

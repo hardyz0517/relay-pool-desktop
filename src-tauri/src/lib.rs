@@ -372,13 +372,6 @@ pub fn run() {
                             active_data_dir.clone(),
                         ),
                     );
-                    let app_services = app_composition::compose_app_services(
-                        runtime.handle(),
-                        data_key,
-                        active_data_dir.display().to_string(),
-                        None,
-                        data_directory_port,
-                    );
                     let work_runtime = app_composition::compose_work_runtime(
                         app_composition::WorkRuntimeConfig::architecture_budget(),
                     )
@@ -386,6 +379,14 @@ pub fn run() {
                     let blocking_executor = work_runtime.blocking.clone();
                     let outbound_client = work_runtime.outbound.clone();
                     let supervisor_handle = work_runtime.supervisor.clone();
+                    let app_services = app_composition::compose_app_services(
+                        runtime.handle(),
+                        data_key,
+                        active_data_dir.display().to_string(),
+                        None,
+                        data_directory_port,
+                        blocking_executor.clone(),
+                    );
                     let settings_stations_command_facade =
                         app_composition::compose_settings_stations_command_facade(
                             &app_services,
@@ -431,7 +432,10 @@ pub fn run() {
                     let credentials_command_facade =
                         app_composition::compose_credentials_command_facade(&app_services);
                     let data_directory_command_facade =
-                        app_composition::compose_data_directory_command_facade(&app_services);
+                        app_composition::compose_data_directory_command_facade(
+                            &app_services,
+                            blocking_executor.clone(),
+                        );
                     let local_proxy_command_facade =
                         app_composition::compose_local_proxy_command_facade(
                             &app_services,

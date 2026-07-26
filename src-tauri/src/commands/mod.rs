@@ -22,13 +22,13 @@ use crate::{
         command_facades::{
             CaptureCommandError, CaptureCommandFacade, ChangeEventsCommandFacade,
             ChannelMonitoringCommandFacade, ChannelStatusCommandFacade,
-            CollectorMetadataCommandFacade, CredentialsCommandFacade, DataDirectoryCommandFacade,
-            EndpointPingCommandError, KeyPoolCommandFacade, LocalProxyCommandError,
-            LocalProxyCommandFacade, PricingCommandFacade, RemoteKeysCommandFacade,
-            RequestLogsCommandFacade, RoutingCommandFacade, SettingsStationsCommandFacade,
-            StationCollectionCommandError, StationCollectionCommandFacade,
-            StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
-            StationKeyConnectivityProbeTarget,
+            CollectorMetadataCommandFacade, CredentialsCommandFacade, DataDirectoryCommandError,
+            DataDirectoryCommandFacade, EndpointPingCommandError, KeyPoolCommandFacade,
+            LocalProxyCommandError, LocalProxyCommandFacade, PricingCommandFacade,
+            RemoteKeysCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
+            SettingsStationsCommandFacade, StationCollectionCommandError,
+            StationCollectionCommandFacade, StationKeyConnectivityCommandError,
+            StationKeyConnectivityCommandFacade, StationKeyConnectivityProbeTarget,
         },
         connectivity_probe::{
             build_station_key_connectivity_probe_body, build_station_key_connectivity_probe_url,
@@ -808,15 +808,11 @@ pub async fn choose_data_dir(
 ) -> Result<SettingsDto, error::CommandError> {
     correlation::in_command_scope("choose_data_dir", async {
         EmptyInputDto::parse(input)?;
-        let selected =
-            tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().pick_folder())
-                .await
-                .map_err(|_| error::CommandError::internal(None))?;
         facade
-            .choose_data_dir(selected)
+            .choose_data_dir()
             .await
             .map(SettingsDto::from)
-            .map_err(public_command_application_error)
+            .map_err(public_data_directory_error)
     })
     .await
 }
@@ -2454,6 +2450,13 @@ fn public_station_collection_error(error: StationCollectionCommandError) -> erro
         StationCollectionCommandError::Prepare(error) => public_command_application_error(error),
         StationCollectionCommandError::Apply(error) => command_application_error(error),
         StationCollectionCommandError::Blocking(error) => public_blocking_executor_error(error),
+    }
+}
+
+fn public_data_directory_error(error: DataDirectoryCommandError) -> error::CommandError {
+    match error {
+        DataDirectoryCommandError::Application(error) => public_command_application_error(error),
+        DataDirectoryCommandError::Blocking(error) => public_blocking_executor_error(error),
     }
 }
 

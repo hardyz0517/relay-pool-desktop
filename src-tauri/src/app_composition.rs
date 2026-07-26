@@ -90,12 +90,14 @@ pub(crate) fn compose_app_services(
     data_dir: String,
     pending_data_dir: Option<String>,
     data_directory_port: Arc<dyn DataDirectoryPort>,
+    blocking: BlockingExecutor,
 ) -> AppServices {
     AppServices::for_runtime(
         runtime,
         data_dir,
         pending_data_dir,
         data_directory_port,
+        blocking,
         Arc::new(DataKeyVault::new(data_key)),
         Arc::new(StaticBuiltinModelBasePriceCatalog),
     )
@@ -280,10 +282,12 @@ pub(crate) fn compose_credentials_command_facade(
 
 pub(crate) fn compose_data_directory_command_facade(
     services: &AppServices,
+    blocking: BlockingExecutor,
 ) -> DataDirectoryCommandFacade {
     DataDirectoryCommandFacade::new(
         Arc::clone(&services.data_directory),
         Arc::clone(&services.settings),
+        blocking,
     )
 }
 
