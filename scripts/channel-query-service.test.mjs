@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 
 const querySource = await readFile("src/lib/queries/channelQueries.ts", "utf8");
 const monitoringSource = await readFile("src/features/channels/ChannelMonitoringTab.tsx", "utf8");
+const statusPageSource = await readFile("src/features/channels/ChannelStatusPage.tsx", "utf8");
 const statusSource = await readFile("src/features/channels/ChannelStatusTab.tsx", "utf8");
 
 assert.ok(
@@ -72,6 +73,15 @@ assert.ok(
     !statusSource.includes("setHealth(workspace.stationKeyHealth)") &&
     !statusSource.includes("setStatusSummaries(workspace.channelStatusSummaries)"),
   "channel status tab should consume the canonical status workspace query cache",
+);
+
+assert.ok(
+  statusPageSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.channelStatus })") &&
+    !statusPageSource.includes("statusRefreshToken") &&
+    !statusSource.includes("refreshToken") &&
+    !statusSource.includes("useEffect") &&
+    statusSource.includes("statusQuery.refetch({ throwOnError: true })"),
+  "channel status refresh should stay inside the canonical status query owner",
 );
 
 assert.ok(

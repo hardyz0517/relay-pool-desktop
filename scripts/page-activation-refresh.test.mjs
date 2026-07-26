@@ -124,6 +124,16 @@ assert.ok(
   "monitoring should use the channel monitoring query owner instead of an activation loader",
 );
 
+const channelStatusPageSource = await readFile("src/features/channels/ChannelStatusPage.tsx", "utf8");
+const channelStatusSource = await readFile("src/features/channels/ChannelStatusTab.tsx", "utf8");
+assert.ok(
+  channelStatusPageSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.channelStatus })") &&
+    !channelStatusPageSource.includes("statusRefreshToken") &&
+    !channelStatusSource.includes("refreshToken") &&
+    !channelStatusSource.includes("useEffect"),
+  "channel status refresh should use query invalidation instead of a tab token",
+);
+
 const logsSource = await readFile("src/features/logs/LogsPage.tsx", "utf8");
 assert.ok(
   /useActivityQuery\(\s*requestLogsQueryOptions\(/.test(logsSource) &&

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import {
   closestCenter,
   type DraggableAttributes,
@@ -96,7 +96,7 @@ const outcomeClassName: Record<RecentOutcome, string> = {
   unknown: "bg-muted-foreground/45",
 };
 
-export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
+export function ChannelStatusTab() {
   const toast = useToast();
   const statusQuery = useActivityQuery(channelStatusQueryOptions(5_000));
   const workspace = statusQuery.data;
@@ -112,13 +112,6 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
   const [timeWindow, setTimeWindow] = useState<ChannelWindow>("recent");
   const loading = statusQuery.isPending && workspace === undefined;
   const error = statusQuery.error ? readError(statusQuery.error) : null;
-  const refetchStatus = statusQuery.refetch;
-
-  useEffect(() => {
-    if (refreshToken > 0) {
-      void refetchStatus();
-    }
-  }, [refreshToken, refetchStatus]);
 
   const visibleLogs = useMemo(() => filterLogsByWindow(logs, timeWindow), [logs, timeWindow]);
   const channels = useMemo(
@@ -155,7 +148,7 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
 
   async function refresh(showSuccess = false) {
     try {
-      await refetchStatus({ throwOnError: true });
+      await statusQuery.refetch({ throwOnError: true });
       if (showSuccess) {
         toast.success("渠道状态已刷新");
       }
