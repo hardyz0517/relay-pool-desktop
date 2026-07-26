@@ -17,6 +17,7 @@ use crate::background_tasks::{
 
 type TaskJoinResult = Result<Result<(), TaskFailure>, ()>;
 
+#[derive(Clone)]
 pub struct TaskSupervisor {
     inner: Arc<Mutex<SupervisorInner>>,
     tracker: TaskTracker,

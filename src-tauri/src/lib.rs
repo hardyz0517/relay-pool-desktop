@@ -452,6 +452,7 @@ pub fn run() {
                         app_composition::WorkRuntimeConfig::architecture_budget(),
                     )
                     .map_err(|error| format!("failed to compose work runtime: {error}"))?;
+                    let supervisor_handle = work_runtime.supervisor.clone();
                     runtime_composition::register_work_runtime(
                         &persistence::upgrade_fault::NoUpgradeFaults,
                         app,
@@ -464,8 +465,12 @@ pub fn run() {
                         );
                     let station_collector_runner =
                         services::station_collectors::StationCollectorRunnerState::start_v2(
+                            supervisor_handle,
                             services::station_collectors::v2_runner_port(&app_services, data_key),
-                        );
+                        )
+                        .map_err(|error| {
+                            format!("failed to start station collector runner: {error}")
+                        })?;
                     println!(
                         "Relay Pool Desktop database initialized at {}",
                         database_path.display()

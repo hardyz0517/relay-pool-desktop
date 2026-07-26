@@ -764,6 +764,8 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 **当前 checkpoint：** `S4-T16A-station-collector-runner-characterization` 在迁移前固化现有 runner 语义：每个 due station 先跑 Balance 再跑 Groups，Balance 失败后仍保留 Groups side effect，partial failure message shape 不漂移，同 station 依赖进程内 guard 拒绝重入且 guard drop 后释放，stop flag 已置位时不会等待完整 poll interval。该片只建立迁移前行为护栏；尚未删除旧 OS thread、atomic stop flag 或 `block_on` loop。
 
+**当前 checkpoint：** `S4-T16B-station-collector-supervised-runner` 将 station collector scheduled runner 从自有 OS thread、atomic stop flag 和 `block_on` loop 切到共享 `TaskSupervisor`：startup 克隆 managed supervisor 作为 runner handle，注册单一 `station-collector-runner` task/concurrency key，runner loop 使用 Tokio interval/select cancellation，`StationCollectorRunnerState` 的 stop/drop 只请求 cancel，join handle 由 supervisor 统一持有。该片尚未把 manual collection commands 切成 operation 或迁移 collector prepare 的 blocking port。
+
 **文件：**
 
 - Modify: `src-tauri/src/services/station_collectors.rs`

@@ -1,10 +1,6 @@
 use std::{
     collections::HashSet,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex, OnceLock,
-    },
-    thread::{self, JoinHandle},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 
@@ -12,6 +8,7 @@ use futures_util::future::BoxFuture;
 
 use crate::{
     application::{app_services::AppServices, collectors::CollectorService, pagination::PageLimit},
+    background_tasks::{TaskFailure, TaskId, TaskRunContext, TaskSpec, TaskSupervisor},
     services::collectors::{
         self,
         adapters::CollectorTask,
@@ -21,7 +18,10 @@ use crate::{
 };
 
 const RUNNER_POLL_INTERVAL: Duration = Duration::from_secs(30);
-const RUNNER_STOP_SLICE: Duration = Duration::from_millis(250);
+const RUNNER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+const RUNNER_TASK_ID: &str = "station-collector-runner";
+const RUNNER_TASK_KIND: &str = "station_collector_runner";
+const RUNNER_CONCURRENCY_KEY: &str = "station-collector-runner";
 static ACTIVE_STATION_RUNS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 pub(crate) fn v2_runner_port(
@@ -147,57 +147,77 @@ impl StationCollectorRunnerPort for V2StationCollectorRunnerAdapter {
 }
 
 pub struct StationCollectorRunnerState {
-    stop_requested: Arc<AtomicBool>,
-    handle: Mutex<Option<JoinHandle<()>>>,
+    supervisor: TaskSupervisor,
+    task_id: TaskId,
 }
 
 impl StationCollectorRunnerState {
     #[allow(dead_code)]
     pub fn stop(&self) {
-        self.stop_requested.store(true, Ordering::Relaxed);
-        if let Ok(mut handle) = self.handle.lock() {
-            if let Some(handle) = handle.take() {
-                let _ = handle.join();
-            }
-        }
+        let _ = self.supervisor.cancel(&self.task_id);
     }
 
-    pub(crate) fn start_v2(port: Arc<dyn StationCollectorRunnerPort>) -> Self {
-        let stop_requested = Arc::new(AtomicBool::new(false));
-        let thread_stop = Arc::clone(&stop_requested);
-        let handle = thread::spawn(move || {
-            tauri::async_runtime::block_on(runner_loop_v2(port, thread_stop))
-        });
-        Self {
-            stop_requested,
-            handle: Mutex::new(Some(handle)),
-        }
+    pub(crate) fn start_v2(
+        supervisor: TaskSupervisor,
+        port: Arc<dyn StationCollectorRunnerPort>,
+    ) -> Result<Self, String> {
+        let task_id = TaskId::from(RUNNER_TASK_ID);
+        let runner_port = Arc::clone(&port);
+        supervisor
+            .register(
+                TaskSpec::new(task_id.clone(), RUNNER_TASK_KIND, move |context| {
+                    let port = Arc::clone(&runner_port);
+                    Box::pin(runner_loop_v2(port, context))
+                })
+                .with_concurrency_key(RUNNER_CONCURRENCY_KEY)
+                .with_shutdown_timeout(RUNNER_SHUTDOWN_TIMEOUT),
+            )
+            .map_err(|error| error.to_string())?;
+        supervisor
+            .start(&task_id)
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            supervisor,
+            task_id,
+        })
     }
 }
 
 async fn runner_loop_v2(
     port: Arc<dyn StationCollectorRunnerPort>,
-    stop_requested: Arc<AtomicBool>,
-) {
-    while !stop_requested.load(Ordering::Relaxed) {
-        match port.due_station_ids(256).await {
-            Ok(station_ids) => {
-                for station_id in station_ids {
-                    if stop_requested.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    if let Err(error) =
-                        run_station_collection_guarded_v2(port.as_ref(), &station_id).await
-                    {
-                        eprintln!("Station collector runner failed for {station_id}: {error}");
-                    }
-                }
+    context: TaskRunContext,
+) -> Result<(), TaskFailure> {
+    let mut interval = tokio::time::interval(RUNNER_POLL_INTERVAL);
+    loop {
+        tokio::select! {
+            _ = context.cancellation_token.cancelled() => {
+                return Err(TaskFailure::cancelled());
             }
-            Err(error) => {
-                eprintln!("Station collector runner could not query due stations: {error}")
+            _ = interval.tick() => {
+                run_due_station_collections_once_v2(port.as_ref(), &context).await;
             }
         }
-        sleep_until_next_poll(&stop_requested);
+    }
+}
+
+async fn run_due_station_collections_once_v2(
+    port: &dyn StationCollectorRunnerPort,
+    context: &TaskRunContext,
+) {
+    match port.due_station_ids(256).await {
+        Ok(station_ids) => {
+            for station_id in station_ids {
+                if context.cancellation_token.is_cancelled() {
+                    break;
+                }
+                if let Err(error) = run_station_collection_guarded_v2(port, &station_id).await {
+                    eprintln!("Station collector runner failed for {station_id}: {error}");
+                }
+            }
+        }
+        Err(error) => {
+            eprintln!("Station collector runner could not query due stations: {error}")
+        }
     }
 }
 
@@ -217,12 +237,7 @@ async fn run_station_collection_guarded_v2(
 
 impl Drop for StationCollectorRunnerState {
     fn drop(&mut self) {
-        self.stop_requested.store(true, Ordering::Relaxed);
-        if let Ok(mut handle) = self.handle.lock() {
-            if let Some(handle) = handle.take() {
-                let _ = handle.join();
-            }
-        }
+        let _ = self.supervisor.cancel(&self.task_id);
     }
 }
 
@@ -237,14 +252,6 @@ fn combine_collection_results(
         (Err(balance_error), Err(groups_error)) => Err(format!(
             "balance collection failed: {balance_error}; group collection failed: {groups_error}"
         )),
-    }
-}
-
-fn sleep_until_next_poll(stop_requested: &AtomicBool) {
-    let mut slept = Duration::ZERO;
-    while slept < RUNNER_POLL_INTERVAL && !stop_requested.load(Ordering::Relaxed) {
-        thread::sleep(RUNNER_STOP_SLICE);
-        slept += RUNNER_STOP_SLICE;
     }
 }
 
@@ -280,6 +287,7 @@ impl Drop for StationCollectorRunGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::background_tasks::TaskState;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Mutex,
@@ -376,16 +384,6 @@ mod tests {
         assert_eq!(after_release.calls().len(), 2);
     }
 
-    #[test]
-    fn stop_requested_sleep_returns_without_poll_interval_delay() {
-        let stop_requested = AtomicBool::new(true);
-        let started = std::time::Instant::now();
-
-        sleep_until_next_poll(&stop_requested);
-
-        assert!(started.elapsed() < RUNNER_STOP_SLICE);
-    }
-
     struct RecordingRunnerPort {
         calls: Arc<Mutex<Vec<(String, CollectorTask)>>>,
         results: Arc<Mutex<Vec<Result<(), String>>>>,
@@ -466,5 +464,26 @@ mod tests {
                 Box::pin(async { Ok(()) })
             }
         }
+    }
+
+    #[tokio::test]
+    async fn start_v2_registers_runner_with_supervisor_and_stop_cancels_task() {
+        let supervisor = TaskSupervisor::new();
+        let task_id = TaskId::from(RUNNER_TASK_ID);
+        let port = Arc::new(RecordingRunnerPort::new(Vec::new()));
+
+        let runner =
+            StationCollectorRunnerState::start_v2(supervisor.clone(), port).expect("runner starts");
+
+        assert_eq!(
+            supervisor.status(&task_id).expect("runner status").state,
+            TaskState::Running
+        );
+
+        runner.stop();
+        assert_eq!(
+            supervisor.status(&task_id).expect("runner status").state,
+            TaskState::Stopping
+        );
     }
 }
