@@ -14,8 +14,22 @@ use serde::Deserialize;
 mod outbound {
     use std::time::{Duration, Instant};
 
+    use bytes::Bytes;
+    use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
+    use tokio_util::sync::CancellationToken;
+
     #[derive(Clone)]
     pub struct AsyncOutboundClient;
+
+    impl AsyncOutboundClient {
+        pub async fn execute(
+            &self,
+            _request: OutboundRequest,
+            _cancellation_token: CancellationToken,
+        ) -> Result<OutboundResponse, OutboundFailure> {
+            Err(OutboundFailure::new(OutboundFailureKind::RequestFailed))
+        }
+    }
 
     #[derive(Clone)]
     pub struct ProxyPolicy;
@@ -35,6 +49,107 @@ mod outbound {
         pub fn remaining(&self) -> Option<Duration> {
             let remaining = self.deadline.saturating_duration_since(Instant::now());
             (!remaining.is_zero()).then_some(remaining)
+        }
+    }
+
+    pub struct OutboundRequest {
+        pub method: Method,
+        pub url: String,
+        pub correlation_id: Option<String>,
+        pub headers: OutboundHeaders,
+        pub body: Vec<u8>,
+        pub proxy: ProxyPolicy,
+        pub budget: RequestBudget,
+    }
+
+    pub struct OutboundResponse {
+        pub status: StatusCode,
+        pub headers: HeaderMap,
+        pub body: Bytes,
+        pub evidence: OutboundEvidence,
+    }
+
+    pub struct OutboundEvidence {
+        pub final_url: String,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct OutboundFailure {
+        pub kind: OutboundFailureKind,
+    }
+
+    impl OutboundFailure {
+        pub fn new(kind: OutboundFailureKind) -> Self {
+            Self { kind }
+        }
+    }
+
+    impl std::fmt::Display for OutboundFailure {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(formatter, "{:?}", self.kind)
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum OutboundFailureKind {
+        InvalidUrl,
+        InvalidHeader,
+        HeaderNotAllowed(String),
+        ProxyPolicy,
+        TransportPolicy,
+        ConnectTimeout,
+        FirstByteTimeout,
+        BodyTimeout,
+        TotalTimeout,
+        BudgetExhausted,
+        Cancelled,
+        BodyLimitExceeded { limit_bytes: usize },
+        RedirectBlocked,
+        RedirectLoop,
+        RedirectLimitExceeded,
+        RetryAfterExceedsBudget,
+        RequestFailed,
+    }
+
+    pub struct OutboundHeaderPolicy;
+
+    impl OutboundHeaderPolicy {
+        pub fn provider_default() -> Self {
+            Self
+        }
+    }
+
+    pub struct OutboundHeaders;
+
+    impl OutboundHeaders {
+        pub fn new() -> Self {
+            Self
+        }
+
+        pub fn insert_sensitive(
+            &mut self,
+            _name: HeaderName,
+            _value: SecretHeaderValue,
+            _policy: &OutboundHeaderPolicy,
+        ) -> Result<(), OutboundFailure> {
+            Ok(())
+        }
+
+        pub fn insert_public(
+            &mut self,
+            _name: HeaderName,
+            _value: HeaderValue,
+            _policy: &OutboundHeaderPolicy,
+        ) -> Result<(), OutboundFailure> {
+            Ok(())
+        }
+    }
+
+    pub struct SecretHeaderValue(String);
+
+    impl SecretHeaderValue {
+        pub fn new(value: impl Into<String>) -> Self {
+            Self(value.into())
         }
     }
 }
@@ -103,6 +218,16 @@ mod services {
         }
     }
 
+    pub mod station_endpoints {
+        pub fn build_api_url(base_url: &str, path: &str) -> Result<String, String> {
+            let base = base_url.trim_end_matches('/');
+            if !path.starts_with('/') || path.contains("://") {
+                return Err("invalid path".to_string());
+            }
+            Ok(format!("{base}{path}"))
+        }
+    }
+
     pub mod collectors {
         pub mod facts {
             include!(concat!(
@@ -150,7 +275,7 @@ mod services {
 
 use services::collectors::{
     contract::{ProviderDescriptor, ProviderKind},
-    drivers::{stage19a_static_entries, REQUIRED_PROVIDER_KINDS},
+    drivers::{static_provider_entries, REQUIRED_PROVIDER_KINDS},
     failure::DriverFailureKind,
     orchestration::ProviderRegistry,
 };
@@ -243,7 +368,7 @@ fn provider_capability_matrix_matches_static_registry() {
     let root = repo_root();
     let matrix = read_matrix(&root);
     assert_eq!(matrix.schema_version, 1);
-    let registry = ProviderRegistry::new(stage19a_static_entries(), REQUIRED_PROVIDER_KINDS)
+    let registry = ProviderRegistry::new(static_provider_entries(), REQUIRED_PROVIDER_KINDS)
         .expect("registry");
     let providers = matrix
         .providers

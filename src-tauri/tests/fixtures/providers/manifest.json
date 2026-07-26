@@ -176,31 +176,326 @@
       }
     },
     {
-      "id": "openai-compatible-collector-unsupported",
+      "id": "openai-compatible-collector-success",
       "providerKind": "openai-compatible",
       "capability": "collector",
-      "scenario": "unsupported",
+      "scenario": "success",
       "endpointRole": "models",
       "requestSchema": {
-        "kind": "none",
-        "reason": "Task 19.A registry entry does not declare a collector driver"
+        "method": "GET",
+        "path": "/v1/models",
+        "authorization": "bearer-secret-header"
       },
       "responseSchema": {
-        "kind": "driver_failure",
-        "failureKind": "unsupported"
+        "status": 200,
+        "body": { "data": [{ "id": "gpt-4o-mini" }, { "id": "text-embedding-3-small" }] }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": ["sk-p8-secret-plaintext-canary"]
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic OpenAI-compatible /v1/models success fixture for the Task 19.C reference driver."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": { "models": ["gpt-4o-mini", "text-embedding-3-small"] }
+      }
+    },
+    {
+      "id": "openai-compatible-collector-partial",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "partial",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": { "data": [] }
       },
       "redaction": {
         "status": "not_applicable",
         "secretCanaries": []
       },
       "source": {
-        "kind": "stage19a-registry-descriptor",
-        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
-        "provenance": "Static registry declares OpenAI-compatible with no collector capability until Task 19.C reference driver cutover."
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic empty model list fixture; canonical status is partial rather than guessed success."
       },
       "expected": {
-        "registryStatus": "unsupported",
-        "failureKind": "unsupported",
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": { "models": [] }
+      }
+    },
+    {
+      "id": "openai-compatible-collector-auth-failure",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "auth_failure",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": { "error": { "message": "invalid api key" } }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": ["sk-p8-secret-plaintext-canary"]
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic OpenAI-compatible auth rejection fixture maps to typed auth failure."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-rate-limit",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "rate_limit",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "responseSchema": {
+        "status": 429,
+        "body": { "error": { "message": "rate limited" } }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic rate limit fixture maps to retry-within-budget typed failure."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "rate_limited",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-server-failure",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "server_failure",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "responseSchema": {
+        "status": 502,
+        "body": { "error": { "message": "bad gateway" } }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic server failure fixture maps to provider unavailable."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-malformed",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "malformed",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": "not-json"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic malformed payload fixture ensures parser does not panic."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": { "models": [] }
+      }
+    },
+    {
+      "id": "openai-compatible-collector-unknown-shape",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "unknown_shape",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": { "object": "list", "items": [{ "name": "not-standard" }] }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic unknown shape fixture verifies only standard data[].id values become facts."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": { "models": [] }
+      }
+    },
+    {
+      "id": "openai-compatible-collector-cancel",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "cancel",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models",
+        "cancellation": "before-first-byte"
+      },
+      "responseSchema": {
+        "kind": "outbound_failure",
+        "failureKind": "cancelled"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Cancellation fixture is enforced through shared AsyncOutboundClient failure mapping."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "cancelled",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-budget-exhaustion",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "budget_exhaustion",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models",
+        "budget": "expired"
+      },
+      "responseSchema": {
+        "kind": "outbound_failure",
+        "failureKind": "budget_exhausted"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Budget exhaustion fixture is enforced through shared RequestBudget failure mapping."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "budget_exhausted",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-stale-endpoint-revision",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "stale_endpoint_revision",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models",
+        "endpointRevision": "stale-before-apply"
+      },
+      "responseSchema": {
+        "kind": "apply_barrier",
+        "failureKind": "stale_endpoint_revision"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/mod.rs",
+        "provenance": "Endpoint revision remains carried through the V2 apply barrier after driver collection."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "stale_endpoint_revision",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-redaction",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "redaction",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models",
+        "authorization": "Bearer sk-p8-secret-plaintext-canary"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": { "error": { "message": "Bearer sk-p8-secret-plaintext-canary rejected" } }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": ["sk-p8-secret-plaintext-canary"]
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Redaction fixture verifies driver failure detail and evidence never retain full API keys."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
         "canonicalFacts": null
       }
     },

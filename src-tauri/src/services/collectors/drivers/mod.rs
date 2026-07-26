@@ -1,8 +1,13 @@
+pub mod openai_compatible;
+
+use std::sync::Arc;
+
 use crate::services::collectors::contract::{
-    DriverCapabilities, ProviderDescriptor, ProviderEntry, ProviderKind,
+    CollectorCapabilityDescriptor, DriverCapabilities, ProviderDescriptor, ProviderEntry,
+    ProviderKind,
 };
 
-pub fn stage19a_static_entries() -> Vec<ProviderEntry> {
+pub fn static_provider_entries() -> Vec<ProviderEntry> {
     vec![
         ProviderEntry::unsupported(ProviderDescriptor {
             kind: ProviderKind::Sub2Api,
@@ -16,12 +21,23 @@ pub fn stage19a_static_entries() -> Vec<ProviderEntry> {
             station_types: &["newapi"],
             capabilities: DriverCapabilities::none(),
         }),
-        ProviderEntry::unsupported(ProviderDescriptor {
-            kind: ProviderKind::OpenAiCompatible,
-            display_name: "OpenAI-compatible",
-            station_types: &["openai-compatible", "openai_compatible"],
-            capabilities: DriverCapabilities::none(),
-        }),
+        ProviderEntry {
+            descriptor: ProviderDescriptor {
+                kind: ProviderKind::OpenAiCompatible,
+                display_name: "OpenAI-compatible",
+                station_types: &["openai-compatible", "openai_compatible"],
+                capabilities: DriverCapabilities {
+                    collector: Some(CollectorCapabilityDescriptor {
+                        supported_tasks: openai_compatible::SUPPORTED_COLLECTOR_TASKS,
+                    }),
+                    remote_key: None,
+                    authorization: None,
+                },
+            },
+            collector: Some(Arc::new(openai_compatible::OpenAiCompatibleCollectorDriver)),
+            remote_key: None,
+            authorization: None,
+        },
     ]
 }
 

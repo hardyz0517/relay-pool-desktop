@@ -8,6 +8,7 @@ use crate::{
     background_tasks::{BlockingExecutor, BlockingExecutorError},
     models::collector::CollectorRunResult,
     observability::correlation,
+    outbound::AsyncOutboundClient,
     services::collectors::{self, adapters::CollectorTask, V2CollectorSourceAdapter},
 };
 
@@ -24,6 +25,8 @@ pub(crate) struct StationCollectionCommandFacade {
     credentials: Arc<CredentialService>,
     settings: Arc<SettingsService>,
     blocking: BlockingExecutor,
+    outbound: AsyncOutboundClient,
+    providers: Arc<collectors::orchestration::ProviderRegistry>,
     data_key: [u8; 32],
 }
 
@@ -33,6 +36,8 @@ impl StationCollectionCommandFacade {
         credentials: Arc<CredentialService>,
         settings: Arc<SettingsService>,
         blocking: BlockingExecutor,
+        outbound: AsyncOutboundClient,
+        providers: Arc<collectors::orchestration::ProviderRegistry>,
         data_key: [u8; 32],
     ) -> Self {
         Self {
@@ -40,6 +45,8 @@ impl StationCollectionCommandFacade {
             credentials,
             settings,
             blocking,
+            outbound,
+            providers,
             data_key,
         }
     }
@@ -59,7 +66,7 @@ impl StationCollectionCommandFacade {
                 current_correlation_id(),
                 None,
                 move |_| {
-                    Ok(collectors::prepare_station_collection_v2(
+                    Ok(collectors::prepare_station_collection_route_v2(
                         &source, &data_key, station_id, task,
                     ))
                 },
@@ -69,6 +76,20 @@ impl StationCollectionCommandFacade {
             .await
             .map_err(StationCollectionCommandError::Blocking)?
             .map_err(StationCollectionCommandError::Prepare)?;
+        let prepared = match prepared {
+            collectors::PreparedStationCollectionRoute::Legacy(prepared) => prepared,
+            collectors::PreparedStationCollectionRoute::OpenAiCompatible(prepared) => {
+                collectors::finish_openai_compatible_collection_v2(
+                    self.providers.as_ref(),
+                    &self.outbound,
+                    prepared,
+                    tokio_util::sync::CancellationToken::new(),
+                    current_correlation_id(),
+                )
+                .await
+                .map_err(StationCollectionCommandError::Prepare)?
+            }
+        };
         self.apply_prepared_collection(prepared).await
     }
 

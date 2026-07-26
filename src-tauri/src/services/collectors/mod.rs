@@ -29,9 +29,11 @@ pub mod sub2api;
 pub(crate) mod apply {
     pub(crate) use super::collector_apply::{CollectorApplyPort, V2CollectorApplyAdapter};
 }
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
+use futures_util::{future::BoxFuture, FutureExt};
 use serde_json::{json, Value};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     application::{
@@ -51,6 +53,7 @@ use crate::{
         station_keys::StationKey,
         stations::Station,
     },
+    outbound::{AsyncOutboundClient, ManualProxy, ProxyPolicy, RequestBudget},
 };
 
 use collector_apply::CollectorApplyPort;
@@ -239,6 +242,291 @@ struct LoginTestAttempt {
     token_present: bool,
     login_message: Option<String>,
     manual_required: Option<String>,
+}
+
+pub(crate) enum PreparedStationCollectionRoute {
+    Legacy(PreparedStationCollection),
+    OpenAiCompatible(PreparedOpenAiCompatibleCollection),
+}
+
+pub(crate) enum PreparedStationTaskRoute {
+    Legacy((String, i64, adapters::AdapterOutput)),
+    OpenAiCompatible(PreparedOpenAiCompatibleCollection),
+}
+
+pub(crate) enum PreparedOpenAiCompatibleCollection {
+    Immediate(PreparedStationCollection),
+    Driver(PreparedOpenAiCompatibleDriverCollection),
+}
+
+pub(crate) struct PreparedOpenAiCompatibleDriverCollection {
+    station_id: String,
+    endpoint_revision: i64,
+    task: adapters::CollectorTask,
+    output_task: adapters::CollectorTask,
+    driver_task: contract::CollectorTaskKind,
+    enabled_key_count: usize,
+    api_base_url: String,
+    website_url: Option<String>,
+    proxy: ProxyPolicy,
+    credential_handle: contract::OpaqueCredentialHandle,
+    secret_accessor: StaticSecretAccessor,
+}
+
+struct StaticSecretAccessor {
+    expected: contract::OpaqueCredentialHandle,
+    secret: String,
+}
+
+impl contract::DriverSecretAccessor for StaticSecretAccessor {
+    fn resolve_secret<'a>(
+        &'a self,
+        handle: &'a contract::OpaqueCredentialHandle,
+        purpose: contract::CredentialSecretPurpose,
+    ) -> BoxFuture<'a, Result<contract::CredentialSecret, failure::DriverFailure>> {
+        async move {
+            if purpose != contract::CredentialSecretPurpose::AuthorizationHeader
+                || handle != &self.expected
+            {
+                return Err(failure::DriverFailure::unsupported(
+                    "credential handle is not available to this driver context",
+                ));
+            }
+            Ok(contract::CredentialSecret::new(self.secret.clone()))
+        }
+        .boxed()
+    }
+}
+
+pub(crate) fn prepare_station_collection_route_v2(
+    source: &dyn CollectorSourcePort,
+    data_key: &[u8; 32],
+    station_id: String,
+    task: adapters::CollectorTask,
+) -> Result<PreparedStationCollectionRoute, ApplicationError> {
+    let station = source
+        .station_for_collector(&station_id)
+        .map_err(|_| ApplicationError::Internal)?;
+    let adapter = adapter_name_for_station_type(&station.station_type)
+        .map_err(|_| ApplicationError::ConstraintViolation)?
+        .to_string();
+    if adapter != "openai-compatible" {
+        return prepare_station_collection_v2(source, data_key, station_id, task)
+            .map(PreparedStationCollectionRoute::Legacy);
+    }
+    prepare_openai_compatible_collection_v2(source, data_key, station, task)
+        .map(PreparedStationCollectionRoute::OpenAiCompatible)
+}
+
+pub(crate) fn prepare_station_task_route_v2(
+    source: &dyn CollectorSourcePort,
+    data_key: &[u8; 32],
+    station_id: String,
+    task: adapters::CollectorTask,
+) -> Result<PreparedStationTaskRoute, ApplicationError> {
+    let station = source
+        .station_for_collector(&station_id)
+        .map_err(|_| ApplicationError::Internal)?;
+    let adapter = adapter_name_for_station_type(&station.station_type)
+        .map_err(|_| ApplicationError::ConstraintViolation)?
+        .to_string();
+    if adapter != "openai-compatible" {
+        return prepare_station_task_v2(source, data_key, station_id, task)
+            .map(PreparedStationTaskRoute::Legacy);
+    }
+    prepare_openai_compatible_collection_v2(source, data_key, station, task)
+        .map(PreparedStationTaskRoute::OpenAiCompatible)
+}
+
+fn prepare_openai_compatible_collection_v2(
+    source: &dyn CollectorSourcePort,
+    data_key: &[u8; 32],
+    station: Station,
+    task: adapters::CollectorTask,
+) -> Result<PreparedOpenAiCompatibleCollection, ApplicationError> {
+    let station_id = station.id.clone();
+    let tasks = if task == adapters::CollectorTask::Full {
+        vec![adapters::CollectorTask::Models]
+    } else {
+        vec![task]
+    };
+    if tasks.len() != 1 {
+        return Err(ApplicationError::ConstraintViolation);
+    }
+    let child_task = tasks[0];
+    if !matches!(
+        child_task,
+        adapters::CollectorTask::Detect | adapters::CollectorTask::Models
+    ) {
+        return Ok(PreparedOpenAiCompatibleCollection::Immediate(
+            prepared_openai_immediate_collection(
+                station_id,
+                station.endpoint_revision,
+                task,
+                child_task,
+                manual_required_output(
+                    child_task,
+                    "unsupported_task",
+                    "OpenAI-compatible 站点不支持该采集能力。",
+                ),
+                0,
+            ),
+        ));
+    }
+    let keys = source
+        .list_station_keys(station_id.clone())
+        .map_err(|_| ApplicationError::Internal)?;
+    let enabled_key_count = keys.iter().filter(|key| key.enabled).count();
+    let Some(key) = keys
+        .into_iter()
+        .find(|key| key.enabled && key.api_key_present)
+    else {
+        return Ok(PreparedOpenAiCompatibleCollection::Immediate(
+            prepared_openai_immediate_collection(
+                station_id,
+                station.endpoint_revision,
+                task,
+                child_task,
+                manual_required_output(
+                    child_task,
+                    "api_key_required",
+                    "模型采集需要可用 API Key。",
+                ),
+                enabled_key_count,
+            ),
+        ));
+    };
+    let api_key = match source.resolve_station_key_secret_with_data_key(data_key, &key.id) {
+        Ok(api_key) => api_key,
+        Err(error) => {
+            return Ok(PreparedOpenAiCompatibleCollection::Immediate(
+                prepared_openai_immediate_collection(
+                    station_id,
+                    station.endpoint_revision,
+                    task,
+                    child_task,
+                    manual_required_output(
+                        child_task,
+                        "api_key_required",
+                        &format!(
+                            "API Key 不可解密：{}",
+                            crate::services::secrets::mask::redact_text(&error)
+                        ),
+                    ),
+                    enabled_key_count,
+                ),
+            ));
+        }
+    };
+    let settings = source
+        .get_settings()
+        .map_err(|_| ApplicationError::Internal)?;
+    let proxy = crate::services::outbound::resolve_proxy_config(
+        &station.collector_proxy_mode,
+        station.collector_proxy_url.clone(),
+        &settings.collector_proxy_mode,
+        settings.collector_proxy_url,
+    );
+    let proxy =
+        proxy_policy_from_collector_config(proxy).map_err(|_| ApplicationError::Internal)?;
+    let credential_handle = contract::OpaqueCredentialHandle {
+        station_id: station_id.clone(),
+        credential_revision: station.endpoint_revision,
+        scope: contract::CredentialScope::StationKey,
+    };
+    let driver_task =
+        collector_task_kind(child_task).ok_or(ApplicationError::ConstraintViolation)?;
+    Ok(PreparedOpenAiCompatibleCollection::Driver(
+        PreparedOpenAiCompatibleDriverCollection {
+            station_id: station_id.clone(),
+            endpoint_revision: station.endpoint_revision,
+            task,
+            output_task: child_task,
+            driver_task,
+            enabled_key_count,
+            api_base_url: station.api_base_url,
+            website_url: (!station.website_url.trim().is_empty()).then_some(station.website_url),
+            proxy,
+            credential_handle: credential_handle.clone(),
+            secret_accessor: StaticSecretAccessor {
+                expected: credential_handle,
+                secret: api_key,
+            },
+        },
+    ))
+}
+
+pub(crate) async fn finish_openai_compatible_collection_v2(
+    registry: &orchestration::ProviderRegistry,
+    outbound: &AsyncOutboundClient,
+    prepared: PreparedOpenAiCompatibleCollection,
+    cancellation_token: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<PreparedStationCollection, ApplicationError> {
+    match prepared {
+        PreparedOpenAiCompatibleCollection::Immediate(prepared) => Ok(prepared),
+        PreparedOpenAiCompatibleCollection::Driver(prepared) => {
+            let driver = registry
+                .collector(contract::ProviderKind::OpenAiCompatible)
+                .map_err(|_| ApplicationError::ConstraintViolation)?;
+            let context = contract::CollectorContext {
+                station: contract::StationIdentity {
+                    station_id: prepared.station_id.clone(),
+                    endpoint_revision: prepared.endpoint_revision,
+                    provider: contract::ProviderKind::OpenAiCompatible,
+                },
+                endpoints: contract::ProviderEndpoints {
+                    api_base_url: Some(prepared.api_base_url),
+                    website_url: prepared.website_url,
+                },
+                credential: prepared.credential_handle,
+                secrets: &prepared.secret_accessor,
+                outbound,
+                proxy: prepared.proxy,
+                budget: RequestBudget::from_now(Duration::from_secs(20)),
+                cancellation: cancellation_token,
+                correlation_id: correlation_id.unwrap_or_else(|| "station-collection".to_string()),
+            };
+            let output = driver
+                .collect(&context, prepared.driver_task)
+                .await
+                .map(|output| driver_output_to_adapter_output(prepared.output_task, output))
+                .unwrap_or_else(|failure| {
+                    driver_failure_to_adapter_output(prepared.output_task, failure)
+                });
+            Ok(PreparedStationCollection {
+                station_id: prepared.station_id,
+                endpoint_revision: prepared.endpoint_revision,
+                adapter: "openai-compatible".to_string(),
+                task: prepared.task,
+                outputs: vec![output],
+                enabled_key_count: prepared.enabled_key_count,
+            })
+        }
+    }
+}
+
+pub(crate) async fn finish_openai_compatible_task_v2(
+    registry: &orchestration::ProviderRegistry,
+    outbound: &AsyncOutboundClient,
+    prepared: PreparedOpenAiCompatibleCollection,
+    cancellation_token: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<(String, i64, adapters::AdapterOutput), ApplicationError> {
+    let prepared = finish_openai_compatible_collection_v2(
+        registry,
+        outbound,
+        prepared,
+        cancellation_token,
+        correlation_id,
+    )
+    .await?;
+    let output = prepared
+        .outputs
+        .into_iter()
+        .next()
+        .ok_or(ApplicationError::ConstraintViolation)?;
+    Ok((prepared.station_id, prepared.endpoint_revision, output))
 }
 
 pub(crate) fn prepare_station_task_v2(
@@ -759,9 +1047,11 @@ fn dispatch_adapter_output(
     let result = match adapter {
         "sub2api" => adapters::sub2api::collect(source, data_key, station_id, task),
         "newapi" => adapters::newapi::collect(source, data_key, station_id, task),
-        "openai-compatible" => {
-            adapters::openai_compatible::collect(source, data_key, station_id, task)
-        }
+        "openai-compatible" => Ok(manual_required_output(
+            task,
+            "async_driver_required",
+            "OpenAI-compatible 采集必须通过 capability driver 执行。",
+        )),
         _ => unreachable!("adapter is validated before dispatch"),
     };
 
@@ -789,6 +1079,178 @@ fn failed_adapter_output(
         raw_json_redacted: None,
         error_code: Some("adapter_error".to_string()),
         error_message: Some(message),
+    }
+}
+
+fn prepared_openai_immediate_collection(
+    station_id: String,
+    endpoint_revision: i64,
+    task: adapters::CollectorTask,
+    child_task: adapters::CollectorTask,
+    output: adapters::AdapterOutput,
+    enabled_key_count: usize,
+) -> PreparedStationCollection {
+    PreparedStationCollection {
+        station_id,
+        endpoint_revision,
+        adapter: "openai-compatible".to_string(),
+        task,
+        outputs: vec![adapters::AdapterOutput {
+            task: child_task,
+            ..output
+        }],
+        enabled_key_count,
+    }
+}
+
+fn manual_required_output(
+    task: adapters::CollectorTask,
+    code: &str,
+    message: &str,
+) -> adapters::AdapterOutput {
+    adapters::AdapterOutput {
+        adapter: "openai-compatible".to_string(),
+        task,
+        status: "manual_required".to_string(),
+        facts: facts::CollectorFacts::default(),
+        summary_json: json!({
+            "adapter": "openai-compatible",
+            "task": task.as_str(),
+            "message": message,
+        }),
+        normalized_json: json!({ "models": [] }),
+        raw_json_redacted: None,
+        error_code: Some(code.to_string()),
+        error_message: Some(message.to_string()),
+    }
+}
+
+fn driver_output_to_adapter_output(
+    task: adapters::CollectorTask,
+    output: contract::DriverOutput,
+) -> adapters::AdapterOutput {
+    let model_names = output
+        .facts
+        .models
+        .iter()
+        .map(|model| model.model.clone())
+        .collect::<Vec<_>>();
+    let endpoint_results = output
+        .evidence
+        .iter()
+        .map(endpoint_evidence_json)
+        .collect::<Vec<_>>();
+    adapters::AdapterOutput {
+        adapter: "openai-compatible".to_string(),
+        task,
+        status: match output.status {
+            contract::DriverOutputStatus::Success => "success",
+            contract::DriverOutputStatus::Partial => "partial",
+            contract::DriverOutputStatus::ManualRequired => "manual_required",
+        }
+        .to_string(),
+        facts: output.facts,
+        summary_json: json!({
+            "adapter": "openai-compatible",
+            "task": task.as_str(),
+            "endpointResults": endpoint_results,
+            "modelCount": model_names.len(),
+        }),
+        normalized_json: json!({ "models": model_names }),
+        raw_json_redacted: output.diagnostics.raw_json_redacted,
+        error_code: None,
+        error_message: None,
+    }
+}
+
+fn driver_failure_to_adapter_output(
+    task: adapters::CollectorTask,
+    failure: failure::DriverFailure,
+) -> adapters::AdapterOutput {
+    let message = failure
+        .sanitized_detail
+        .clone()
+        .unwrap_or_else(|| format!("{:?}", failure.kind));
+    let endpoint_results = failure
+        .evidence
+        .entries()
+        .iter()
+        .map(endpoint_evidence_json)
+        .collect::<Vec<_>>();
+    adapters::AdapterOutput {
+        adapter: "openai-compatible".to_string(),
+        task,
+        status: match failure.kind {
+            failure::DriverFailureKind::Unsupported => "manual_required",
+            _ => "failed",
+        }
+        .to_string(),
+        facts: facts::CollectorFacts::default(),
+        summary_json: json!({
+            "adapter": "openai-compatible",
+            "task": task.as_str(),
+            "endpointResults": endpoint_results,
+            "message": message,
+        }),
+        normalized_json: json!({ "models": [] }),
+        raw_json_redacted: None,
+        error_code: Some(driver_failure_code(failure.kind).to_string()),
+        error_message: Some(message),
+    }
+}
+
+fn endpoint_evidence_json(evidence: &evidence::EndpointEvidence) -> Value {
+    json!({
+        "role": format!("{:?}", evidence.role),
+        "url": evidence.url,
+        "status": evidence.status_code,
+        "ok": evidence.status_code.is_some_and(|status| (200..400).contains(&status)),
+        "method": evidence.method,
+        "detail": evidence.detail,
+    })
+}
+
+fn driver_failure_code(kind: failure::DriverFailureKind) -> &'static str {
+    match kind {
+        failure::DriverFailureKind::Unsupported => "unsupported_task",
+        failure::DriverFailureKind::InvalidRequest => "invalid_request",
+        failure::DriverFailureKind::AuthRejected => "auth_rejected",
+        failure::DriverFailureKind::RateLimited => "rate_limited",
+        failure::DriverFailureKind::Timeout => "network_timeout",
+        failure::DriverFailureKind::BudgetExhausted => "budget_exhausted",
+        failure::DriverFailureKind::Cancelled => "cancelled",
+        failure::DriverFailureKind::Transport => "network_error",
+        failure::DriverFailureKind::MalformedPayload => "malformed_payload",
+        failure::DriverFailureKind::ProviderUnavailable => "provider_unavailable",
+        failure::DriverFailureKind::Internal => "internal",
+    }
+}
+
+fn collector_task_kind(task: adapters::CollectorTask) -> Option<contract::CollectorTaskKind> {
+    match task {
+        adapters::CollectorTask::Balance => Some(contract::CollectorTaskKind::Balance),
+        adapters::CollectorTask::Groups => Some(contract::CollectorTaskKind::Groups),
+        adapters::CollectorTask::Models => Some(contract::CollectorTaskKind::Models),
+        adapters::CollectorTask::Full => Some(contract::CollectorTaskKind::Full),
+        adapters::CollectorTask::Detect => Some(contract::CollectorTaskKind::Detect),
+    }
+}
+
+fn proxy_policy_from_collector_config(
+    proxy: crate::services::outbound::ProxyConfig,
+) -> Result<ProxyPolicy, String> {
+    match proxy.mode.as_str() {
+        "direct" => Ok(ProxyPolicy::Direct),
+        "system" => Ok(ProxyPolicy::System),
+        "manual" => {
+            let Some(url) = proxy.url.as_deref() else {
+                return Err("手动采集代理地址不能为空".to_string());
+            };
+            ManualProxy::parse(url)
+                .map(ProxyPolicy::Manual)
+                .map_err(|error| crate::services::secrets::mask::redact_text(&error.to_string()))
+        }
+        _ => Ok(ProxyPolicy::Direct),
     }
 }
 
@@ -898,6 +1360,61 @@ fn has_login_credentials(username: &Option<String>, password_present: bool) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn openai_driver_output_keeps_child_task_for_full_parent() {
+        let output = driver_output_to_adapter_output(
+            adapters::CollectorTask::Models,
+            contract::DriverOutput {
+                facts: facts::CollectorFacts {
+                    models: vec![facts::CollectedModelFact {
+                        station_id: "station-1".to_string(),
+                        model: "gpt-4o-mini".to_string(),
+                        available: true,
+                        source: "openai_models".to_string(),
+                        confidence: 0.9,
+                    }],
+                    ..facts::CollectorFacts::default()
+                },
+                evidence: Vec::new(),
+                status: contract::DriverOutputStatus::Success,
+                diagnostics: contract::RedactedDiagnostics {
+                    summary: None,
+                    raw_json_redacted: None,
+                },
+            },
+        );
+
+        let prepared = PreparedStationCollection {
+            station_id: "station-1".to_string(),
+            endpoint_revision: 7,
+            adapter: "openai-compatible".to_string(),
+            task: adapters::CollectorTask::Full,
+            outputs: vec![output],
+            enabled_key_count: 1,
+        };
+        let full = aggregate_full_output_v2(&prepared);
+
+        assert_eq!(prepared.outputs[0].task, adapters::CollectorTask::Models);
+        assert_eq!(full.task, adapters::CollectorTask::Full);
+        assert_eq!(
+            full.normalized_json["childRuns"][0]["task"],
+            adapters::CollectorTask::Models.as_str()
+        );
+        assert_eq!(full.normalized_json["models"][0], "gpt-4o-mini");
+    }
+
+    #[test]
+    fn collector_task_kind_preserves_detect_and_models_for_openai_driver() {
+        assert_eq!(
+            collector_task_kind(adapters::CollectorTask::Detect),
+            Some(contract::CollectorTaskKind::Detect)
+        );
+        assert_eq!(
+            collector_task_kind(adapters::CollectorTask::Models),
+            Some(contract::CollectorTaskKind::Models)
+        );
+    }
 
     #[test]
     fn login_requires_username_and_password() {

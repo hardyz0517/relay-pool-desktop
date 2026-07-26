@@ -55,9 +55,21 @@
       "stationTypes": ["openai-compatible", "openai_compatible"],
       "capabilities": {
         "collector": {
-          "status": "unsupported",
-          "declaredInRegistry": false,
-          "fixtureIds": ["openai-compatible-collector-unsupported"]
+          "status": "supported",
+          "declaredInRegistry": true,
+          "fixtureIds": [
+            "openai-compatible-collector-success",
+            "openai-compatible-collector-partial",
+            "openai-compatible-collector-auth-failure",
+            "openai-compatible-collector-rate-limit",
+            "openai-compatible-collector-server-failure",
+            "openai-compatible-collector-malformed",
+            "openai-compatible-collector-unknown-shape",
+            "openai-compatible-collector-cancel",
+            "openai-compatible-collector-budget-exhaustion",
+            "openai-compatible-collector-stale-endpoint-revision",
+            "openai-compatible-collector-redaction"
+          ]
         },
         "remote_key": {
           "status": "unsupported",

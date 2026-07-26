@@ -362,8 +362,10 @@ pub fn run() {
                 app_composition::WorkRuntimeConfig::architecture_budget(),
             )
             .map_err(|error| format!("failed to compose work runtime: {error}"))?;
-            let _provider_registry = app_composition::compose_provider_registry()
-                .map_err(|error| format!("failed to compose provider registry: {error}"))?;
+            let provider_registry = Arc::new(
+                app_composition::compose_provider_registry()
+                    .map_err(|error| format!("failed to compose provider registry: {error}"))?,
+            );
             let blocking_executor = work_runtime.blocking.clone();
             let secret_manager = tauri::async_runtime::block_on(
                 services::secrets::SecretManager::initialize(blocking_executor.clone()),
@@ -426,8 +428,10 @@ pub fn run() {
                         app_composition::compose_routing_command_facade(&app_services);
                     let request_logs_command_facade =
                         app_composition::compose_request_logs_command_facade(&app_services);
-                    let channel_monitor_runner_port =
-                        services::channel_monitors::v2_runner_port(&app_services, outbound_client);
+                    let channel_monitor_runner_port = services::channel_monitors::v2_runner_port(
+                        &app_services,
+                        outbound_client.clone(),
+                    );
                     let channel_monitoring_command_facade =
                         app_composition::compose_channel_monitoring_command_facade(
                             &app_services,
@@ -441,6 +445,8 @@ pub fn run() {
                         app_composition::compose_station_collection_command_facade(
                             &app_services,
                             blocking_executor.clone(),
+                            outbound_client.clone(),
+                            Arc::clone(&provider_registry),
                             data_key,
                         );
                     let station_key_connectivity_command_facade =
@@ -507,6 +513,8 @@ pub fn run() {
                             services::station_collectors::v2_runner_port(
                                 &app_services,
                                 blocking_executor,
+                                outbound_client,
+                                provider_registry,
                                 data_key,
                             ),
                         )

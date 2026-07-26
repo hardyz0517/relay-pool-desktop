@@ -78,7 +78,14 @@ pub fn redact_value(value: &Value) -> Value {
             Value::Object(next)
         }
         Value::Array(items) => Value::Array(items.iter().map(redact_value).collect()),
-        Value::String(text) if looks_like_secret(text) => Value::String("[REDACTED]".to_string()),
+        Value::String(text) => {
+            let redacted = redact_text(text);
+            if redacted == *text {
+                value.clone()
+            } else {
+                Value::String(redacted)
+            }
+        }
         _ => value.clone(),
     }
 }
@@ -151,5 +158,24 @@ mod tests {
         assert!(redacted.contains("[REDACTED]"));
         assert!(redacted.contains("gpt-4o-mini"));
         assert!(!redacted.contains("sk-p8-secret-plaintext-canary"));
+    }
+
+    #[test]
+    fn redact_value_removes_embedded_secret_in_error_message() {
+        let value = serde_json::json!({
+            "error": {
+                "message": "bad key sk-p8-secret-plaintext-canary"
+            }
+        });
+
+        let redacted = redact_value(&value);
+
+        assert!(redacted["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("[REDACTED]"));
+        assert!(!redacted
+            .to_string()
+            .contains("sk-p8-secret-plaintext-canary"));
     }
 }

@@ -23,7 +23,7 @@ use crate::{
     services::{
         channel_monitors::ChannelMonitorRunnerPort,
         collectors::{
-            drivers::{stage19a_static_entries, REQUIRED_PROVIDER_KINDS},
+            drivers::{static_provider_entries, REQUIRED_PROVIDER_KINDS},
             orchestration::{ProviderRegistry, ProviderRegistryError},
         },
         pricing_catalog::StaticBuiltinModelBasePriceCatalog,
@@ -90,7 +90,7 @@ fn validate_work_runtime_config(config: &WorkRuntimeConfig) -> Result<(), Runtim
 }
 
 pub(crate) fn compose_provider_registry() -> Result<ProviderRegistry, ProviderRegistryError> {
-    ProviderRegistry::new(stage19a_static_entries(), REQUIRED_PROVIDER_KINDS)
+    ProviderRegistry::new(static_provider_entries(), REQUIRED_PROVIDER_KINDS)
 }
 
 pub(crate) fn compose_app_services(
@@ -169,6 +169,8 @@ pub(crate) fn compose_collector_metadata_command_facade(
 pub(crate) fn compose_station_collection_command_facade(
     services: &AppServices,
     blocking: BlockingExecutor,
+    outbound: AsyncOutboundClient,
+    providers: Arc<ProviderRegistry>,
     data_key: [u8; 32],
 ) -> StationCollectionCommandFacade {
     StationCollectionCommandFacade::new(
@@ -176,6 +178,8 @@ pub(crate) fn compose_station_collection_command_facade(
         Arc::clone(&services.credentials),
         Arc::clone(&services.settings),
         blocking,
+        outbound,
+        providers,
         data_key,
     )
 }
@@ -278,11 +282,12 @@ mod tests {
     }
 
     #[test]
-    fn provider_registry_composition_keeps_capabilities_unsupported_until_cutover() {
+    fn provider_registry_composition_registers_openai_reference_collector_only() {
         let registry = compose_provider_registry().expect("provider registry");
 
-        let failure = match registry.collector(ProviderKind::OpenAiCompatible) {
-            Ok(_) => panic!("Task 19.C owns the reference collector driver cutover"),
+        assert!(registry.collector(ProviderKind::OpenAiCompatible).is_ok());
+        let failure = match registry.remote_key(ProviderKind::OpenAiCompatible) {
+            Ok(_) => panic!("OpenAI-compatible has no remote-key capability"),
             Err(failure) => failure,
         };
 
