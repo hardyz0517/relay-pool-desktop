@@ -336,7 +336,14 @@ pub fn run() {
         .setup(|app| {
             app.manage(Arc::new(TrayBehaviorState::default()));
             setup_tray(app)?;
-            let secret_manager = services::secrets::SecretManager::initialize()?;
+            let work_runtime = app_composition::compose_work_runtime(
+                app_composition::WorkRuntimeConfig::architecture_budget(),
+            )
+            .map_err(|error| format!("failed to compose work runtime: {error}"))?;
+            let blocking_executor = work_runtime.blocking.clone();
+            let secret_manager = tauri::async_runtime::block_on(
+                services::secrets::SecretManager::initialize(blocking_executor.clone()),
+            )?;
             let app_config_dir = app.path().app_config_dir().map_err(|error| {
                 format!("failed to resolve application config directory: {error}")
             })?;
@@ -372,11 +379,6 @@ pub fn run() {
                             active_data_dir.clone(),
                         ),
                     );
-                    let work_runtime = app_composition::compose_work_runtime(
-                        app_composition::WorkRuntimeConfig::architecture_budget(),
-                    )
-                    .map_err(|error| format!("failed to compose work runtime: {error}"))?;
-                    let blocking_executor = work_runtime.blocking.clone();
                     let outbound_client = work_runtime.outbound.clone();
                     let supervisor_handle = work_runtime.supervisor.clone();
                     let app_services = app_composition::compose_app_services(

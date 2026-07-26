@@ -813,6 +813,8 @@ Task 17 必须拆成三个互不混合的 production cutover。
 
 **当前 checkpoint：** `S4-T17B2-capture-window-blocking-executor` 将 capture window create/focus/navigate 和 WebView cookie read 从 direct `tauri::async_runtime::spawn_blocking` 切到共享 `BlockingExecutor`。`CaptureCommandFacade` 通过启动 composition 接收同一个 managed blocking executor；`start_capture_session` 收敛为单 facade-owned command path，`finish_web_authorization_session` 的 cookie 读取进入有界 blocking job，blocking 饱和/超时映射到稳定 public work failure。该片不改变 capture capability shell、window/station/revision/origin 校验、credential/vault 持久化或 Persistence V2。
 
+**当前 checkpoint：** `S4-T17B3-keyring-blocking-executor` 将 startup `SecretManager::initialize` 的 OS keyring data-key load/create 接入共享 `BlockingExecutor`。启动 setup 先按 architecture budget 构造 WorkRuntime，再通过 bounded blocking job 初始化系统凭据 data key，随后才准备 data store 和注册 ready services；原始 keyring 错误文本保持向外返回，executor queue/timeout/cancel 失败统一归为 startup credential task failure。该片不改变 vault 加密格式、credential persistence、data store preparation 或 Persistence V2。
+
 **文件：**
 
 - Modify: `src-tauri/src/services/capture/**`
