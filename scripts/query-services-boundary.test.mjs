@@ -5,12 +5,20 @@ import path from "node:path";
 const root = process.cwd();
 const queriesDir = path.join(root, "src", "lib", "queries");
 const queryFiles = (await readdir(queriesDir))
-  .filter((fileName) => fileName.endsWith(".ts"))
+  .filter((fileName) => fileName.endsWith(".ts") && !fileName.endsWith(".test.ts"))
   .sort();
 
 assert.deepEqual(
   queryFiles,
-  ["changeQueries.ts", "channelQueries.ts", "dashboardQueries.ts", "localRoutingQueries.ts", "logQueries.ts", "routingQueries.ts"],
+  [
+    "changeQueries.ts",
+    "channelQueries.ts",
+    "dashboardQueries.ts",
+    "localRoutingQueries.ts",
+    "logQueries.ts",
+    "pricingQueries.ts",
+    "routingQueries.ts",
+  ],
   "Stage 2 query service inventory should be explicit until the next slice adds another reviewed query module",
 );
 
@@ -55,7 +63,7 @@ for (const fileName of queryFiles) {
 
   assert.match(
     source,
-    /(?:export\s+type\s+\w+Workspace\b|import\s+type\s+\{\s*\w+Workspace\s*\})/,
+    /(?:export\s+type\s+(?:\{[\s\S]*?\b\w+Workspace\b[\s\S]*?\}|\w+Workspace\b)|import\s+type\s+\{[\s\S]*?\b\w+Workspace\b[\s\S]*?\})/,
     `${relativePath} should declare or explicitly import its raw facts workspace type`,
   );
   assert.match(

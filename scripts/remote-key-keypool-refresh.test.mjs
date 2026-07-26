@@ -5,36 +5,36 @@ const stationKeysApiSource = await readFile("src/lib/api/stationKeys.ts", "utf8"
 const keyPoolPageSource = await readFile("src/features/key-pool/KeyPoolPage.tsx", "utf8");
 const addProviderSource = await readFile("src/features/stations/AddProviderPage.tsx", "utf8");
 
-assert.ok(
-  stationKeysApiSource.includes("KEY_POOL_ITEMS_UPDATED_EVENT"),
-  "station key API should expose a shared key-pool invalidation event",
+assert.match(
+  stationKeysApiSource,
+  /getActiveBackendClient\(\)\.stationKeys/,
+  "station key API should route station-key operations through the active backend facade",
 );
 
 assert.match(
   stationKeysApiSource,
-  /createLocalStationKeyFromRemote[\s\S]*withKeyPoolItemsInvalidation\(/,
-  "creating a local key from a remote discovery should invalidate the mounted key pool",
+  /createLocalStationKeyFromRemote\(remoteKeyId,\s*stationId\)/,
+  "creating a local key from a remote discovery should keep the backend full-secret sync path",
 );
 
 assert.match(
   stationKeysApiSource,
-  /deleteStationKey[\s\S]*withKeyPoolItemsInvalidation\(/,
-  "deleting a station key outside the key-pool page should invalidate the mounted key pool",
-);
-
-assert.match(
-  keyPoolPageSource,
-  /window\.addEventListener\(KEY_POOL_ITEMS_UPDATED_EVENT,\s*handleKeyPoolItemsUpdated\)/,
-  "KeyPoolPage should refresh when another page changes station keys",
-);
-
-assert.match(
-  keyPoolPageSource,
-  /window\.removeEventListener\(KEY_POOL_ITEMS_UPDATED_EVENT,\s*handleKeyPoolItemsUpdated\)/,
-  "KeyPoolPage should remove the cross-page refresh listener on unmount",
+  /deleteStationKey\(id\)/,
+  "deleting a station key should keep the backend station-key delete path",
 );
 
 assert.ok(
-  addProviderSource.includes("createLocalStationKeyFromRemote(remoteKey.id, targetStationId)"),
-  "remote local-key toggle should still use the backend full-secret sync path",
+  keyPoolPageSource.includes("useActivityQuery(keyPoolQueryOptions())") &&
+    keyPoolPageSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.keyPool })") &&
+    !keyPoolPageSource.includes("KEY_POOL_ITEMS_UPDATED_EVENT") &&
+    !keyPoolPageSource.includes("handleKeyPoolItemsUpdated"),
+  "KeyPoolPage should own key-pool reads through Query Cache, without DOM invalidation events",
+);
+
+assert.ok(
+  addProviderSource.includes("createLocalStationKeyFromRemote(remoteKey.id, targetStationId)") &&
+    addProviderSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.keyPool })") &&
+    addProviderSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.stations })") &&
+    addProviderSource.includes("await invalidateProviderWorkspaceCaches()"),
+  "remote local-key toggle should still sync via backend and invalidate canonical provider workspace queries",
 );

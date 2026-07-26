@@ -28,6 +28,14 @@ function countBackendInvokes(source, command) {
   return source.match(pattern)?.length ?? 0;
 }
 
+function countBackendClientCalls(source, path) {
+  const pattern = new RegExp(
+    "\\bgetActiveBackendClient\\s*\\(\\s*\\)\\s*\\." + path.split(".").map(escapeRegExp).join("\\s*\\.\\s*") + "\\s*\\(",
+    "g",
+  );
+  return source.match(pattern)?.length ?? 0;
+}
+
 function findRegisteredQueryOptions(source, prefix, queryFunction) {
   const pattern = new RegExp(
     "\\bexport\\s+const\\s+(" +
@@ -53,12 +61,17 @@ function importsNamedFrom(source, name, modulePath) {
 
 function findActivityQuery(source, queryOptionsName) {
   if (!queryOptionsName) return null;
-  const pattern = new RegExp(
+  const legacyPattern = new RegExp(
     "\\bconst\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*useActivityQuery\\s*\\(\\s*refreshEnabled\\s*,\\s*" +
       escapeRegExp(queryOptionsName) +
       "\\s*\\(",
   );
-  return source.match(pattern);
+  const currentPattern = new RegExp(
+    "\\bconst\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*useActivityQuery\\s*\\(\\s*" +
+      escapeRegExp(queryOptionsName) +
+      "\\s*\\(",
+  );
+  return source.match(legacyPattern) ?? source.match(currentPattern);
 }
 
 function consumesQueryData(source, activityQueryMatch) {
@@ -76,9 +89,10 @@ assert.match(
 );
 
 assert.equal(
-  countBackendInvokes(channelQuerySource, "load_channel_status_workspace"),
+  countBackendInvokes(channelQuerySource, "load_channel_status_workspace") +
+    countBackendClientCalls(channelQuerySource, "channels.loadChannelStatusWorkspace"),
   1,
-  "channel status query service should invoke load_channel_status_workspace exactly once before using any browser-only fallback",
+  "channel status query service should call the channel status backend workspace exactly once before using any browser-only fallback",
 );
 
 const channelRawReads = [
@@ -134,9 +148,10 @@ assert.match(
 );
 
 assert.equal(
-  countBackendInvokes(pricingQuerySource, "load_pricing_comparison_workspace"),
+  countBackendInvokes(pricingQuerySource, "load_pricing_comparison_workspace") +
+    countBackendClientCalls(pricingQuerySource, "pricing.loadPricingComparisonWorkspace"),
   1,
-  "pricing query service should invoke load_pricing_comparison_workspace exactly once before using any browser-only fallback",
+  "pricing query service should call the pricing comparison backend workspace exactly once before using any browser-only fallback",
 );
 
 const pricingResourceQuery = findRegisteredQueryOptions(
