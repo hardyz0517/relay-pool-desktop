@@ -230,6 +230,7 @@ pub const OPERATIONS_TYPE: TypeDescriptor = TypeDescriptor {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::time::Instant;
 
     use serde_json::json;
@@ -320,7 +321,46 @@ mod tests {
         assert_eq!(value["state"]["terminal"]["code"], "provider-timeout");
         assert_eq!(value["progress"][0]["sequence"], 3);
         assert_eq!(value["progress"][0]["message"], "probing");
-        assert!(value.get("startedAt").is_none());
+
+        let root = value.as_object().expect("operation snapshot object");
+        assert_eq!(
+            root.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "kind",
+                "operationId",
+                "ownerFeature",
+                "progress",
+                "state",
+                "terminal",
+            ])
+        );
+        let progress = value["progress"][0]
+            .as_object()
+            .expect("operation progress object");
+        assert_eq!(
+            progress.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+            BTreeSet::from(["message", "sequence"])
+        );
+        let terminal = value["terminal"]
+            .as_object()
+            .expect("operation terminal object");
+        assert_eq!(
+            terminal.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+            BTreeSet::from(["code", "terminal"])
+        );
+        for forbidden in [
+            "commitBarrier",
+            "databasePath",
+            "handle",
+            "join",
+            "secret",
+            "startedAt",
+            "token",
+        ] {
+            assert!(value.get(forbidden).is_none(), "{forbidden}");
+            assert!(progress.get(forbidden).is_none(), "{forbidden}");
+            assert!(terminal.get(forbidden).is_none(), "{forbidden}");
+        }
     }
 
     #[test]
@@ -333,12 +373,30 @@ mod tests {
         .expect("stopped outcome serializes");
         assert_eq!(stopped["outcome"], "stopped");
         assert_eq!(stopped["terminal"]["terminal"], "cancelled");
+        assert_eq!(
+            stopped
+                .as_object()
+                .expect("stopped cancel outcome object")
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["outcome", "terminal"])
+        );
 
         let still_stopping = serde_json::to_value(CancelOperationOutcomeDto::from(
             OperationCancelOutcome::StillStopping,
         ))
         .expect("still-stopping outcome serializes");
         assert_eq!(still_stopping["outcome"], "still_stopping");
+        assert_eq!(
+            still_stopping
+                .as_object()
+                .expect("still-stopping cancel outcome object")
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["outcome"])
+        );
 
         let already_terminal = serde_json::to_value(CancelOperationOutcomeDto::from(
             OperationCancelOutcome::AlreadyTerminal {

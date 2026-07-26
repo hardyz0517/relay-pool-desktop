@@ -32,6 +32,7 @@ struct Graph {
     edges: BTreeSet<Edge>,
     public_exports: BTreeSet<String>,
     spawn_sites: BTreeSet<String>,
+    blocking_executor_submit_sites: BTreeSet<String>,
     http_client_sites: BTreeSet<String>,
     registry_macros: BTreeSet<String>,
     parsed_modules: BTreeSet<String>,
@@ -76,6 +77,19 @@ impl<'ast> Visit<'ast> for SourceVisitor<'_> {
             self.graph
                 .spawn_sites
                 .insert(format!("{}::<method>::{}", self.owner, node.method));
+        }
+        if node.method == "submit" {
+            if let Some(syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(kind),
+                ..
+            })) = node.args.first()
+            {
+                self.graph.blocking_executor_submit_sites.insert(format!(
+                    "{}::<method>::submit::{}",
+                    self.owner,
+                    kind.value()
+                ));
+            }
         }
         visit::visit_expr_method_call(self, node);
     }
@@ -883,5 +897,28 @@ fn production_boundaries_match_manifest() {
             graph.http_client_sites.contains(site),
             "stale HTTP client allowlist entry: {site}"
         );
+    }
+    assert!(
+        !graph.blocking_executor_submit_sites.is_empty(),
+        "BlockingExecutor submit sites must be visible to the production boundary gate"
+    );
+    for site in &graph.blocking_executor_submit_sites {
+        let normalized = site.to_ascii_lowercase();
+        for forbidden in [
+            "authorization",
+            "endpoint",
+            "http",
+            "network",
+            "outbound",
+            "provider",
+            "remote_key",
+            "request",
+            "response",
+        ] {
+            assert!(
+                !normalized.contains(forbidden),
+                "network-shaped work must not enter BlockingExecutor: {site}"
+            );
+        }
     }
 }
