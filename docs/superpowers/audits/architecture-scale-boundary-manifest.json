@@ -99,6 +99,7 @@
     "crate::application::command_facades::capture::read_capture_window_cookie_header::tauri::async_runtime::spawn_blocking",
     "crate::background_tasks::blocking::<impl>::submit::tokio::spawn",
     "crate::background_tasks::blocking::<impl>::submit::tokio::task::spawn_blocking",
+    "crate::background_tasks::operation::<impl>::start::tokio::spawn",
     "crate::background_tasks::supervisor::<impl>::start_locked::<method>::spawn",
     "crate::application::command_facades::station_collection::<impl>::run_station_collection::tokio::task::spawn_blocking",
     "crate::application::command_facades::station_collection::<impl>::test_station_login::tokio::task::spawn_blocking",

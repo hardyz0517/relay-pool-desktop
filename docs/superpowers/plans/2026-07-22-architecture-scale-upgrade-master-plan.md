@@ -714,6 +714,8 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 ### Task 15：建立 OperationRegistry 并迁移 connectivity probe
 
+**当前 checkpoint：** `S4-T15A-operation-registry-kernel` 已新增独立 `background_tasks::operation` 内核和 `operation_registry` focused tests，覆盖 start/id、atomic global capacity/concurrency-key admission、bounded progress ring、progress byte limit、`Completed`/`Failed`/`Cancelled`/`TimedOut`/`ResultUnknown` terminal、cancel wait/still-stopping、fixed detach policy、commit barrier、terminal capacity、GC 与 typed `Expired` tombstone。该片只建立 foreground operation lifecycle primitive；尚未迁移 connectivity production command、frontend controller 或 protocol probe。
+
 **文件：**
 
 - Create: `src-tauri/src/background_tasks/operation.rs`
