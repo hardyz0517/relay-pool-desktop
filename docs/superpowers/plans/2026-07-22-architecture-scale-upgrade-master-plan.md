@@ -649,6 +649,8 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 #### Task 14.A：纯 TaskSupervisor lifecycle kernel
 
+**当前 checkpoint：** `S4-T14A-task-supervisor-kernel` 已新增独立 `background_tasks::{task,status,shutdown,supervisor}` 内核和 `task_supervisor` focused tests，覆盖 duplicate id、concurrency-key non-reentry、cancel terminal、transient retry/backoff、configuration failure、panic terminal 和 shutdown timeout。该片只建立窄 lifecycle primitive，并通过 architecture boundary manifest 登记唯一 `TaskTracker::spawn` site；尚未接入 production runner、BlockingExecutor、AsyncOutboundClient 或 app composition。
+
 **文件：**
 
 - Create: `src-tauri/src/background_tasks/{mod,task,supervisor,status,shutdown}.rs`

@@ -1,5 +1,6 @@
 mod app_composition;
 mod application;
+pub mod background_tasks;
 mod commands;
 mod ipc;
 mod models;
