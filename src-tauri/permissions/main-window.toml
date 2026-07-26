@@ -76,6 +76,7 @@ commands.allow = [
   "get_station_key_health",
   "get_operation_status",
   "cancel_operation",
+  "start_station_key_connectivity_operation",
   "ping_station_endpoint",
   "test_station_key_connectivity",
   "simulate_route",

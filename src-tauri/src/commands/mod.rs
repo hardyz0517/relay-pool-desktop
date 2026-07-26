@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose, Engine as _};
+use http::{header, HeaderValue, Method};
 use serde::Serialize;
 use serde_json::Value;
 use std::process::Command;
@@ -27,6 +28,7 @@ use crate::{
             RequestLogsCommandFacade, RoutingCommandFacade, SettingsStationsCommandFacade,
             StationCollectionCommandError, StationCollectionCommandFacade,
             StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
+            StationKeyConnectivityProbeTarget,
         },
         connectivity_probe::{
             build_station_key_connectivity_probe_body, build_station_key_connectivity_probe_url,
@@ -35,15 +37,20 @@ use crate::{
             run_station_key_connectivity_model_attempts,
             run_station_key_connectivity_single_model_probe,
             run_station_key_connectivity_stream_first_probe,
-            station_key_connectivity_model_candidates, StationKeyConnectivityProbeKind,
-            StationKeyConnectivityProbeResult, StationKeyConnectivityRequestMode,
-            StationKeyConnectivityResponseMode, StationKeyConnectivitySseDecoder,
-            StationKeyConnectivityTestEventPayload,
+            should_try_station_key_connectivity_chat_fallback,
+            station_key_connectivity_model_candidates, station_key_connectivity_protocol_label,
+            StationKeyConnectivityProbeKind, StationKeyConnectivityProbeResult,
+            StationKeyConnectivityRequestMode, StationKeyConnectivityResponseMode,
+            StationKeyConnectivitySseDecoder, StationKeyConnectivityTestEventPayload,
+            DEFAULT_STATION_KEY_CONNECTIVITY_MODEL,
         },
         error::ApplicationError,
         pagination::PageLimit,
     },
-    background_tasks::OperationRegistryError,
+    background_tasks::{
+        OperationContext, OperationFailureCode, OperationOwner, OperationRegistryError,
+        OperationStartRequest, OperationTerminal,
+    },
     ipc::dto::{
         change_logs::{
             ChangeEventDto, ChangeEventIdInputDto, ChangeEventIdsInputDto, RequestLogDto,
@@ -68,7 +75,7 @@ use crate::{
         },
         operations::{
             CancelOperationInputDto, CancelOperationOutcomeDto, OperationIdInputDto,
-            OperationSnapshotDto,
+            OperationSnapshotDto, OperationStartedDto,
         },
         pricing_mutations::{
             PricingRuleIdInputDto, UpsertModelBasePriceInputDto, UpsertPricingRuleInputDto,
@@ -126,6 +133,10 @@ use crate::{
         AppStatus,
     },
     observability::correlation,
+    outbound::{
+        AsyncOutboundClient, OutboundFailure, OutboundFailureKind, OutboundHeaderPolicy,
+        OutboundHeaders, OutboundRequest, ProxyPolicy, RequestBudget, SecretHeaderValue,
+    },
     services::{
         capture, collectors,
         data_store::{
@@ -150,9 +161,7 @@ use crate::{
 };
 
 #[cfg(test)]
-use crate::application::connectivity_probe::{
-    should_try_station_key_connectivity_chat_fallback, STATION_KEY_CONNECTIVITY_SSE_PENDING_LIMIT,
-};
+use crate::application::connectivity_probe::STATION_KEY_CONNECTIVITY_SSE_PENDING_LIMIT;
 
 #[cfg(test)]
 use serde_json::json;
@@ -163,6 +172,7 @@ const DATABASE_FILE_V2: &str = "relay-pool-desktop-v2.sqlite3";
 
 const STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+const STATION_KEY_CONNECTIVITY_OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 const LOCATED_CANDIDATE_LIMIT: usize = 32;
 
@@ -1646,6 +1656,57 @@ pub async fn cancel_operation(
 }
 
 #[tauri::command]
+pub async fn start_station_key_connectivity_operation(
+    facade: State<'_, StationKeyConnectivityCommandFacade>,
+    runtime: State<'_, ManagedWorkRuntime>,
+    input: Value,
+) -> Result<OperationStartedDto, error::CommandError> {
+    correlation::in_command_scope("start_station_key_connectivity_operation", async {
+        let input = StationKeyConnectivityInputDto::parse(input)?;
+        let station_key_id = input.station_key_id;
+        let model = input.model;
+        let target = facade
+            .prepare_probe_target(station_key_id.clone())
+            .await
+            .map_err(station_key_connectivity_command_error)?;
+        let station_id = target.key.station_id.clone();
+        let endpoint_revision = target.key.station_endpoint_revision;
+        let concurrency_key = format!("station-key-connectivity:{station_key_id}");
+        let operation_station_key_id = station_key_id.clone();
+        let facade = facade.inner().clone();
+        let outbound = runtime.outbound.clone();
+        let operation_id = runtime
+            .operation
+            .start(
+                OperationStartRequest::new(
+                    "station_key_connectivity",
+                    OperationOwner::new("key-pool"),
+                    move |context| {
+                        Box::pin(async move {
+                            run_station_key_connectivity_operation(
+                                context,
+                                facade,
+                                outbound,
+                                target,
+                                operation_station_key_id,
+                                station_id,
+                                endpoint_revision,
+                                model,
+                            )
+                            .await
+                        })
+                    },
+                )
+                .with_deadline(STATION_KEY_CONNECTIVITY_OPERATION_TIMEOUT)
+                .with_concurrency_key(concurrency_key),
+            )
+            .map_err(public_operation_registry_error)?;
+        Ok(OperationStartedDto::from(operation_id))
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn ping_station_endpoint(
     facade: State<'_, RoutingCommandFacade>,
     input: Value,
@@ -2961,6 +3022,486 @@ fn validate_external_http_url(url: &str) -> Result<&str, String> {
         return Err("只支持打开 HTTP 或 HTTPS 链接。".to_string());
     }
     Ok(trimmed)
+}
+
+async fn run_station_key_connectivity_operation(
+    context: OperationContext,
+    facade: StationKeyConnectivityCommandFacade,
+    outbound: AsyncOutboundClient,
+    target: StationKeyConnectivityProbeTarget,
+    station_key_id: String,
+    station_id: String,
+    endpoint_revision: i64,
+    model: String,
+) -> OperationTerminal {
+    let result =
+        match run_station_key_connectivity_prepared_outbound(&context, &outbound, &target, model)
+            .await
+        {
+            Ok(result) => result,
+            Err(terminal) => return terminal,
+        };
+    if context.cancellation_token.is_cancelled() {
+        return OperationTerminal::Cancelled;
+    }
+    let _ = context.emit_progress(format!(
+        "completed ok={} status={} model={} mode={:?}",
+        result.ok, result.status_code, result.model, result.response_mode
+    ));
+    context.enter_commit_barrier();
+    match facade
+        .record_station_key_connectivity(
+            station_key_id,
+            station_id,
+            endpoint_revision,
+            result.ok,
+            result.duration_ms,
+            result.message,
+        )
+        .await
+    {
+        Ok(()) => OperationTerminal::Completed,
+        Err(_) => OperationTerminal::ResultUnknown,
+    }
+}
+
+async fn run_station_key_connectivity_prepared_outbound(
+    context: &OperationContext,
+    outbound: &AsyncOutboundClient,
+    target: &StationKeyConnectivityProbeTarget,
+    model: String,
+) -> Result<StationKeyConnectivityTestResult, OperationTerminal> {
+    let upstream_api_format = match target.key.station_upstream_api_format.as_str() {
+        "openai_chat_completions" => UpstreamApiFormat::OpenAiChatCompletions,
+        "openai_responses" => UpstreamApiFormat::OpenAiResponses,
+        "custom_openai_compatible" => UpstreamApiFormat::CustomOpenAiCompatible,
+        _ => UpstreamApiFormat::Auto,
+    };
+    let discovered_models = discover_station_key_connectivity_models_outbound(
+        outbound,
+        &target.key.station_api_base_url,
+        target.api_key.as_str(),
+        context.cancellation_token.clone(),
+    )
+    .await
+    .unwrap_or_default();
+    let requested_model = model.trim().to_string();
+    let candidates = station_key_connectivity_model_candidates(
+        Some(&target.capabilities),
+        Some(requested_model.as_str()),
+        &discovered_models,
+    );
+    let mut last = None;
+    for candidate in &candidates {
+        if context.cancellation_token.is_cancelled() {
+            return Err(OperationTerminal::Cancelled);
+        }
+        let result = run_station_key_connectivity_single_model_probe_outbound(
+            context,
+            outbound,
+            &target.key.station_api_base_url,
+            target.api_key.as_str(),
+            candidate,
+            &upstream_api_format,
+            Some(&target.capabilities),
+        )
+        .await?;
+        if result.ok {
+            return Ok(StationKeyConnectivityTestResult {
+                station_key_id: target.key.id.clone(),
+                ok: result.ok,
+                status_code: result.status_code,
+                duration_ms: result.duration_ms,
+                model: candidate.clone(),
+                message: result.message,
+                response_mode: result.response_mode,
+                stream_fallback_reason: result.stream_fallback_reason,
+            });
+        }
+        last = Some((candidate.clone(), result));
+    }
+    let (model, result) = last.unwrap_or_else(|| {
+        (
+            DEFAULT_STATION_KEY_CONNECTIVITY_MODEL.to_string(),
+            StationKeyConnectivityProbeResult::failure(
+                0,
+                0,
+                "connectivity probe did not run".to_string(),
+            ),
+        )
+    });
+    Ok(StationKeyConnectivityTestResult {
+        station_key_id: target.key.id.clone(),
+        ok: result.ok,
+        status_code: result.status_code,
+        duration_ms: result.duration_ms,
+        model,
+        message: result.message,
+        response_mode: result.response_mode,
+        stream_fallback_reason: result.stream_fallback_reason,
+    })
+}
+
+async fn discover_station_key_connectivity_models_outbound(
+    outbound: &AsyncOutboundClient,
+    base_url: &str,
+    api_key: &str,
+    cancellation_token: tokio_util::sync::CancellationToken,
+) -> Option<Vec<String>> {
+    let url = build_api_url(base_url, "/v1/models").ok()?;
+    let response = outbound
+        .execute(
+            outbound_json_request(
+                Method::GET,
+                url,
+                api_key,
+                "application/json",
+                Vec::new(),
+                STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT,
+            )
+            .ok()?,
+            cancellation_token,
+        )
+        .await
+        .ok()?;
+    if !response.status.is_success() {
+        return None;
+    }
+    let value = serde_json::from_slice::<Value>(&response.body).ok()?;
+    let models = model_ids_from_models_response(&value);
+    (!models.is_empty()).then_some(models)
+}
+
+async fn run_station_key_connectivity_single_model_probe_outbound(
+    context: &OperationContext,
+    outbound: &AsyncOutboundClient,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    upstream_api_format: &UpstreamApiFormat,
+    capabilities: Option<&StationKeyCapabilities>,
+) -> Result<StationKeyConnectivityProbeResult, OperationTerminal> {
+    let response_result = send_station_key_connectivity_probe_outbound(
+        context,
+        outbound,
+        base_url,
+        api_key,
+        model,
+        StationKeyConnectivityProbeKind::Responses,
+    )
+    .await?;
+    if response_result.ok
+        || !should_try_station_key_connectivity_chat_fallback(
+            upstream_api_format,
+            capabilities,
+            response_result.status_code,
+        )
+    {
+        return Ok(response_result);
+    }
+
+    let chat_result = send_station_key_connectivity_probe_outbound(
+        context,
+        outbound,
+        base_url,
+        api_key,
+        model,
+        StationKeyConnectivityProbeKind::ChatCompletions,
+    )
+    .await?;
+    let duration_ms = response_result
+        .duration_ms
+        .saturating_add(chat_result.duration_ms);
+    if chat_result.ok {
+        let mut chat_result = chat_result;
+        chat_result.duration_ms = duration_ms;
+        return Ok(chat_result);
+    }
+
+    Ok(StationKeyConnectivityProbeResult::failure(
+        chat_result.status_code,
+        duration_ms,
+        format!(
+            "Responses: {}; Chat Completions: {}",
+            response_result.message, chat_result.message
+        ),
+    ))
+}
+
+async fn send_station_key_connectivity_probe_outbound(
+    context: &OperationContext,
+    outbound: &AsyncOutboundClient,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    kind: StationKeyConnectivityProbeKind,
+) -> Result<StationKeyConnectivityProbeResult, OperationTerminal> {
+    let protocol = station_key_connectivity_protocol_label(kind);
+    let _ = context.emit_progress(format!("attempt_started protocol={protocol} model={model}"));
+    let stream_result = send_station_key_connectivity_stream_probe_outbound(
+        context, outbound, base_url, api_key, model, kind,
+    )
+    .await?;
+    if stream_result.ok {
+        return Ok(stream_result.with_response_mode(StationKeyConnectivityResponseMode::Stream));
+    }
+
+    let fallback_reason = redact_connectivity_error(&stream_result.message);
+    let _ = context.emit_progress(format!("fallback reason={fallback_reason}"));
+    let fallback_result = send_station_key_connectivity_non_stream_probe_outbound(
+        context, outbound, base_url, api_key, model, kind,
+    )
+    .await?;
+    let duration_ms = stream_result
+        .duration_ms
+        .saturating_add(fallback_result.duration_ms);
+    if fallback_result.ok {
+        return Ok(StationKeyConnectivityProbeResult::success(
+            fallback_result.status_code,
+            duration_ms,
+            fallback_result.message,
+        )
+        .with_response_mode(StationKeyConnectivityResponseMode::NonStreamFallback)
+        .with_stream_fallback_reason(Some(fallback_reason)));
+    }
+
+    Ok(StationKeyConnectivityProbeResult::failure(
+        fallback_result.status_code,
+        duration_ms,
+        format!(
+            "Stream: {}; Non-stream fallback: {}",
+            stream_result.message, fallback_result.message
+        ),
+    )
+    .with_response_mode(StationKeyConnectivityResponseMode::NonStreamFallback)
+    .with_stream_fallback_reason(Some(fallback_reason)))
+}
+
+async fn send_station_key_connectivity_non_stream_probe_outbound(
+    context: &OperationContext,
+    outbound: &AsyncOutboundClient,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    kind: StationKeyConnectivityProbeKind,
+) -> Result<StationKeyConnectivityProbeResult, OperationTerminal> {
+    let url = match build_station_key_connectivity_probe_url(base_url, kind) {
+        Ok(url) => url,
+        Err(error) => {
+            return Ok(StationKeyConnectivityProbeResult::failure(
+                0,
+                0,
+                redact_error_message(&format!("API Base URL 无效: {error}")),
+            ));
+        }
+    };
+    let body = build_station_key_connectivity_probe_body(
+        model,
+        kind,
+        StationKeyConnectivityRequestMode::NonStream,
+    );
+    let started = Instant::now();
+    let response = outbound
+        .execute(
+            outbound_json_request(
+                Method::POST,
+                url,
+                api_key,
+                "application/json",
+                serde_json::to_vec(&body).unwrap_or_default(),
+                STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT,
+            )
+            .map_err(|_| OperationTerminal::Failed {
+                code: OperationFailureCode::new("connectivity-request-invalid"),
+            })?,
+            context.cancellation_token.clone(),
+        )
+        .await
+        .map_err(outbound_failure_terminal_or_result)?;
+    let duration_ms = elapsed_ms(started);
+    let status_code = response.status.as_u16();
+    let response_text = String::from_utf8_lossy(&response.body).to_string();
+    if response.status.is_success() {
+        let message =
+            extract_station_key_connectivity_reply(&response_text, kind).unwrap_or_else(|| {
+                match kind {
+                    StationKeyConnectivityProbeKind::Responses => "Responses 连通正常".to_string(),
+                    StationKeyConnectivityProbeKind::ChatCompletions => {
+                        "Chat Completions 连通正常".to_string()
+                    }
+                }
+            });
+        return Ok(StationKeyConnectivityProbeResult::success(
+            status_code,
+            duration_ms,
+            message,
+        ));
+    }
+    Ok(StationKeyConnectivityProbeResult::failure(
+        status_code,
+        duration_ms,
+        response_error_message(&response_text, status_code),
+    ))
+}
+
+async fn send_station_key_connectivity_stream_probe_outbound(
+    context: &OperationContext,
+    outbound: &AsyncOutboundClient,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    kind: StationKeyConnectivityProbeKind,
+) -> Result<StationKeyConnectivityProbeResult, OperationTerminal> {
+    let url = match build_station_key_connectivity_probe_url(base_url, kind) {
+        Ok(url) => url,
+        Err(error) => {
+            return Ok(StationKeyConnectivityProbeResult::failure(
+                0,
+                0,
+                redact_error_message(&format!("API Base URL 无效: {error}")),
+            ));
+        }
+    };
+    let request_body = build_station_key_connectivity_probe_body(
+        model,
+        kind,
+        StationKeyConnectivityRequestMode::Stream,
+    );
+    let started = Instant::now();
+    let mut response_body = Vec::new();
+    let response = outbound
+        .execute_stream(
+            outbound_json_request(
+                Method::POST,
+                url,
+                api_key,
+                "text/event-stream",
+                serde_json::to_vec(&request_body).unwrap_or_default(),
+                STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT,
+            )
+            .map_err(|_| OperationTerminal::Failed {
+                code: OperationFailureCode::new("connectivity-request-invalid"),
+            })?,
+            context.cancellation_token.clone(),
+            |chunk| {
+                response_body.extend_from_slice(chunk);
+                let _ = context.emit_progress("stream_chunk_received");
+                Ok(())
+            },
+        )
+        .await
+        .map_err(outbound_failure_terminal_or_result)?;
+    let duration_ms = elapsed_ms(started);
+    let status_code = response.status.as_u16();
+    let response_text = String::from_utf8_lossy(&response_body).to_string();
+    if !response.status.is_success() {
+        return Ok(StationKeyConnectivityProbeResult::failure(
+            status_code,
+            duration_ms,
+            response_error_message(&response_text, status_code),
+        ));
+    }
+    let content_type = response
+        .headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !content_type.contains("text/event-stream") {
+        return Ok(StationKeyConnectivityProbeResult::failure(
+            status_code,
+            duration_ms,
+            redact_connectivity_error(&format!(
+                "Expected text/event-stream response, got {}",
+                if content_type.is_empty() {
+                    "missing content-type"
+                } else {
+                    content_type.as_str()
+                }
+            )),
+        ));
+    }
+    let mut decoder = StationKeyConnectivitySseDecoder::new(kind);
+    let deltas = match decoder.push(&response_body) {
+        Ok(deltas) => deltas,
+        Err(error) => {
+            return Ok(StationKeyConnectivityProbeResult::failure(
+                status_code,
+                duration_ms,
+                redact_connectivity_error(&error),
+            ));
+        }
+    };
+    for _ in deltas {
+        let _ = context.emit_progress("stream_delta_received");
+    }
+    match decoder.finish() {
+        Ok(message) if !message.trim().is_empty() => Ok(
+            StationKeyConnectivityProbeResult::success(status_code, duration_ms, message),
+        ),
+        Ok(_) => Ok(StationKeyConnectivityProbeResult::success(
+            status_code,
+            duration_ms,
+            match kind {
+                StationKeyConnectivityProbeKind::Responses => {
+                    "Responses streaming connected".to_string()
+                }
+                StationKeyConnectivityProbeKind::ChatCompletions => {
+                    "Chat Completions streaming connected".to_string()
+                }
+            },
+        )),
+        Err(error) => Ok(StationKeyConnectivityProbeResult::failure(
+            status_code,
+            duration_ms,
+            redact_connectivity_error(&error),
+        )),
+    }
+}
+
+fn outbound_json_request(
+    method: Method,
+    url: String,
+    api_key: &str,
+    accept: &'static str,
+    body: Vec<u8>,
+    timeout: Duration,
+) -> Result<OutboundRequest, OutboundFailure> {
+    let policy = OutboundHeaderPolicy::provider_default();
+    let mut headers = OutboundHeaders::new();
+    headers.insert_sensitive(
+        header::AUTHORIZATION,
+        SecretHeaderValue::new(format!("Bearer {api_key}")),
+        &policy,
+    )?;
+    headers.insert_public(header::ACCEPT, HeaderValue::from_static(accept), &policy)?;
+    if !body.is_empty() {
+        headers.insert_public(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+            &policy,
+        )?;
+    }
+    Ok(OutboundRequest {
+        method,
+        url,
+        headers,
+        body,
+        proxy: ProxyPolicy::Direct,
+        budget: RequestBudget::from_now(timeout),
+    })
+}
+
+fn outbound_failure_terminal_or_result(error: OutboundFailure) -> OperationTerminal {
+    match error.kind {
+        OutboundFailureKind::Cancelled => OperationTerminal::Cancelled,
+        OutboundFailureKind::TotalTimeout | OutboundFailureKind::BudgetExhausted => {
+            OperationTerminal::TimedOut
+        }
+        _ => OperationTerminal::Failed {
+            code: OperationFailureCode::new("connectivity-transport"),
+        },
+    }
 }
 
 fn test_station_key_connectivity_prepared_blocking(

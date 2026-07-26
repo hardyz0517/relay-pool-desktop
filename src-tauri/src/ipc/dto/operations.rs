@@ -71,6 +71,20 @@ impl CancelOperationInputDto {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct OperationStartedDto {
+    pub operation_id: String,
+}
+
+impl From<OperationId> for OperationStartedDto {
+    fn from(operation_id: OperationId) -> Self {
+        Self {
+            operation_id: operation_id.as_u64().to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct OperationSnapshotDto {
     pub operation_id: String,
     pub kind: String,
@@ -260,6 +274,16 @@ mod tests {
             "waitMs": 5_001
         }))
         .expect_err("oversized cancel wait is rejected");
+    }
+
+    #[test]
+    fn operation_started_projects_string_operation_id() {
+        let value = serde_json::to_value(OperationStartedDto::from(
+            OperationId::from_u64(12).expect("valid operation id"),
+        ))
+        .expect("operation started dto serializes");
+
+        assert_eq!(value["operationId"], "12");
     }
 
     #[test]

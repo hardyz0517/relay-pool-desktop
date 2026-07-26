@@ -34,4 +34,5 @@ pub(crate) use station_collection::{
 };
 pub(crate) use station_key_connectivity::{
     StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
+    StationKeyConnectivityProbeTarget,
 };

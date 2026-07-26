@@ -125,6 +125,7 @@ macro_rules! ipc_command_registry {
             get_station_key_health => $crate::commands::get_station_key_health,
             get_operation_status => $crate::commands::get_operation_status,
             cancel_operation => $crate::commands::cancel_operation,
+            start_station_key_connectivity_operation => $crate::commands::start_station_key_connectivity_operation,
             ping_station_endpoint => $crate::commands::ping_station_endpoint,
             test_station_key_connectivity => $crate::commands::test_station_key_connectivity,
             simulate_route => $crate::commands::simulate_route,
@@ -577,6 +578,12 @@ fn command_contract(name: &str) -> CommandContract {
             "CancelOperationOutcomeDto",
             "idempotent",
             false,
+        ),
+        "start_station_key_connectivity_operation" => migrated_mutation(
+            "StationKeyConnectivityInputDto",
+            "OperationStartedDto",
+            "non_idempotent",
+            true,
         ),
         "ping_station_endpoint" => migrated_mutation(
             "StationIdInputDto",
@@ -1149,6 +1156,10 @@ export function getOperationStatus(input: OperationIdInputDto): Promise<Operatio
 
 export function cancelOperation(input: CancelOperationInputDto): Promise<CancelOperationOutcomeDto> {
   return invokeCommand<CancelOperationOutcomeDto>("cancel_operation", { input });
+}
+
+export function startStationKeyConnectivityOperation(input: StationKeyConnectivityInputDto): Promise<OperationStartedDto> {
+  return invokeNonIdempotent<OperationStartedDto>("start_station_key_connectivity_operation", { input });
 }
 
 export function simulateRoute(input: RouteSimulationInputDto): Promise<RouteSimulationResultDto> {
@@ -1800,6 +1811,17 @@ mod tests {
         assert_eq!(cancel.runtime_validation, "rust_dto_pre_application");
         assert!(!cancel.transport_retry);
         assert!(!cancel.result_unknown);
+
+        let start_connectivity = command_contract("start_station_key_connectivity_operation");
+        assert_eq!(start_connectivity.input, "StationKeyConnectivityInputDto");
+        assert_eq!(start_connectivity.output, "OperationStartedDto");
+        assert_eq!(start_connectivity.mutation_kind, "non_idempotent");
+        assert_eq!(
+            start_connectivity.runtime_validation,
+            "rust_dto_pre_application"
+        );
+        assert!(!start_connectivity.transport_retry);
+        assert!(start_connectivity.result_unknown);
     }
 
     #[test]

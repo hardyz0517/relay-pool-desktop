@@ -1,5 +1,6 @@
 export type OperationIdInputDto = { operationId: string };
 export type CancelOperationInputDto = { operationId: string; waitMs?: number | null };
+export type OperationStartedDto = { operationId: string };
 
 export type OperationProgressDto = {
   sequence: number;

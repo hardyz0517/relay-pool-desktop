@@ -726,6 +726,8 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 **当前 checkpoint：** `S4-T15F-async-outbound-streaming` 扩展 `AsyncOutboundClient` 的有界 streaming body read 能力，复用既有 client pool、proxy/redirect、budget、cancellation、body limit 和 redacted evidence 合同，并用本地 TCP fixture 覆盖 chunk delivery、cancel 和 body-limit。该片只补齐 connectivity operation 迁移到 async outbound 所需的 transport primitive；尚未新增 connectivity start command、operation-specific result projection 或 UI controller cutover。
 
+**当前 checkpoint：** `S4-T15G-connectivity-operation-start-command` 新增 `start_station_key_connectivity_operation`，通过 managed `WorkRuntimeBundle.operation` 启动真实 `OperationRegistry` entry，并用 `AsyncOutboundClient` 执行 streaming-first connectivity probe、non-stream fallback、取消/超时 terminal 映射和 commit-barrier 后的 connectivity 记录；compiled IPC registry、generated bindings 与 main-window ACL 已声明该 start command 为 non-idempotent/result-unknown。该片尚未把前端 key-pool controller 从 legacy channel command 切到 operation status/cancel 轮询。
+
 **文件：**
 
 - Create: `src-tauri/src/background_tasks/operation.rs`
@@ -734,6 +736,10 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 - Create: `src/features/key-pool/useConnectivityOperation.ts`
 - Modify: `src/features/key-pool/KeyPoolPage.tsx`
 - Modify: `src-tauri/src/commands/mod.rs`（仅 connectivity transport adapter，Task 23 再移动文件）
+- Modify: `src-tauri/src/ipc/dto/operations.rs`
+- Modify: `src-tauri/src/ipc/registry.rs`
+- Modify: `src-tauri/permissions/main-window.toml`
+- Modify: generated IPC/ACL artifacts from Task 3/5/15
 
 - [ ] RED tests 覆盖 start/id、bounded progress、`Completed`/`Failed`/`Cancelled`/`TimedOut`/`ResultUnknown`、channel close 和 exactly-one terminal；越过不可逆 commit barrier 后不能谎报 `Cancelled`。
 - [ ] operation id 在进程生命周期内不可复用；registry 只保留有界 progress ring 和 terminal summary，不保存 secret/body。Task 1 冻结 terminal TTL、最大条数和 GC 周期，容量达到时只淘汰已 terminal 的最老记录，绝不丢弃 running handle。
