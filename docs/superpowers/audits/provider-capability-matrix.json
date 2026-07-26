@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "stage": "Stage 5 Task 19.B",
+  "status": "contract-foundation-no-production-provider-cutover",
+  "registryOwner": "src-tauri/src/services/collectors/drivers/mod.rs",
+  "harness": "src-tauri/tests/provider_conformance.rs",
+  "providers": [
+    {
+      "kind": "sub2api",
+      "displayName": "Sub2API",
+      "stationTypes": ["sub2api"],
+      "capabilities": {
+        "collector": {
+          "status": "unsupported",
+          "declaredInRegistry": false,
+          "fixtureIds": ["sub2api-collector-unsupported"]
+        },
+        "remote_key": {
+          "status": "unsupported",
+          "declaredInRegistry": false,
+          "fixtureIds": ["sub2api-remote-key-unsupported"]
+        },
+        "authorization": {
+          "status": "unsupported",
+          "declaredInRegistry": false,
+          "fixtureIds": ["sub2api-authorization-unsupported"]
+        }
+      }
+    },
+    {
+      "kind": "newapi",
+      "displayName": "NewAPI",
+      "stationTypes": ["newapi"],
+      "capabilities": {
+        "collector": {
+          "status": "unsupported",
+          "declaredInRegistry": false,
+          "fixtureIds": ["newapi-collector-unsupported"]
+        },
+        "remote_key": {
+          "status": "unsupported",
+          "declaredInRegistry": false,
+          "fixtureIds": ["newapi-remote-key-unsupported"]
+        },
+        "authorization": {
+          "status": "unsupported",
+          "declaredInRegistry": false,
+          "fixtureIds": ["newapi-authorization-unsupported"]
+        }
+      }
+    },
+    {
+      "kind": "openai-compatible",
+      "displayName": "OpenAI-compatible",
+      "stationTypes": ["openai-compatible", "openai_compatible"],
+      "capabilities": {
+        "collector": {
+          "status": "unsupported",
+          "declaredInRegistry": false,
+          "fixtureIds": ["openai-compatible-collector-unsupported"]
+        },
+        "remote_key": {
+          "status": "unsupported",
+          "declaredInRegistry": false,
+          "fixtureIds": ["openai-compatible-remote-key-unsupported"]
+        },
+        "authorization": {
+          "status": "unsupported",
+          "declaredInRegistry": false,
+          "fixtureIds": ["openai-compatible-authorization-unsupported"]
+        }
+      }
+    }
+  ]
+}

@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "Stage 19.A freezes provider evidence contracts before production driver cutover"
-)]
-
 use serde_json::Value;
 
 const MAX_EVIDENCE_ITEMS: usize = 8;

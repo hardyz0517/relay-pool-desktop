@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "Stage 19.A freezes provider failure contracts before production driver cutover"
-)]
-
 use std::time::Duration;
 
 use crate::services::collectors::evidence::{redact_text, EndpointRole, EvidenceSet};

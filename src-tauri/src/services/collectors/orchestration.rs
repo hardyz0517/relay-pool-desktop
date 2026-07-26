@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "Stage 19.A freezes provider registry contracts before production driver cutover"
-)]
-
 use std::{
     collections::{HashMap, HashSet},
     future::Future,

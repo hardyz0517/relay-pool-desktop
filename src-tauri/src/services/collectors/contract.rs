@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "Stage 19.A freezes provider capability contracts before production driver cutover"
-)]
-
 use std::{fmt, sync::Arc};
 
 use futures_util::future::BoxFuture;

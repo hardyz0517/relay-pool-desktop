@@ -1,0 +1,266 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "sub2api-collector-unsupported",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "unsupported",
+      "endpointRole": "unknown",
+      "requestSchema": {
+        "kind": "none",
+        "reason": "Task 19.A registry entry does not declare a collector driver"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "unsupported"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "stage19a-registry-descriptor",
+        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
+        "provenance": "Static registry declares Sub2API with no collector capability until Task 20 cutover."
+      },
+      "expected": {
+        "registryStatus": "unsupported",
+        "failureKind": "unsupported",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-unsupported",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "unsupported",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "kind": "none",
+        "reason": "Task 19.A registry entry does not declare a remote-key driver"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "unsupported"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "stage19a-registry-descriptor",
+        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
+        "provenance": "Static registry declares Sub2API with no remote-key capability until Task 21 cutover."
+      },
+      "expected": {
+        "registryStatus": "unsupported",
+        "failureKind": "unsupported",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-authorization-unsupported",
+      "providerKind": "sub2api",
+      "capability": "authorization",
+      "scenario": "unsupported",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "kind": "none",
+        "reason": "Task 19.A registry entry does not declare an authorization driver"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "unsupported"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "stage19a-registry-descriptor",
+        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
+        "provenance": "Static registry declares Sub2API with no authorization capability."
+      },
+      "expected": {
+        "registryStatus": "unsupported",
+        "failureKind": "unsupported",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-unsupported",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "unsupported",
+      "endpointRole": "unknown",
+      "requestSchema": {
+        "kind": "none",
+        "reason": "Task 19.A registry entry does not declare a collector driver"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "unsupported"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "stage19a-registry-descriptor",
+        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
+        "provenance": "Static registry declares NewAPI with no collector capability until Task 20 cutover."
+      },
+      "expected": {
+        "registryStatus": "unsupported",
+        "failureKind": "unsupported",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-unsupported",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "unsupported",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "kind": "none",
+        "reason": "Task 19.A registry entry does not declare a remote-key driver"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "unsupported"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "stage19a-registry-descriptor",
+        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
+        "provenance": "Static registry declares NewAPI with no remote-key capability until Task 20 cutover."
+      },
+      "expected": {
+        "registryStatus": "unsupported",
+        "failureKind": "unsupported",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-unsupported",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "unsupported",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "kind": "none",
+        "reason": "Task 19.A registry entry does not declare an authorization driver"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "unsupported"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "stage19a-registry-descriptor",
+        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
+        "provenance": "Static registry declares NewAPI with no authorization capability until Task 20 cutover."
+      },
+      "expected": {
+        "registryStatus": "unsupported",
+        "failureKind": "unsupported",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-unsupported",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "unsupported",
+      "endpointRole": "models",
+      "requestSchema": {
+        "kind": "none",
+        "reason": "Task 19.A registry entry does not declare a collector driver"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "unsupported"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "stage19a-registry-descriptor",
+        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
+        "provenance": "Static registry declares OpenAI-compatible with no collector capability until Task 19.C reference driver cutover."
+      },
+      "expected": {
+        "registryStatus": "unsupported",
+        "failureKind": "unsupported",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-remote-key-unsupported",
+      "providerKind": "openai-compatible",
+      "capability": "remote_key",
+      "scenario": "unsupported",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "kind": "none",
+        "reason": "OpenAI-compatible provider has no remote-key capability in the Stage 5 plan"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "unsupported"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "stage19a-registry-descriptor",
+        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
+        "provenance": "Static registry declares OpenAI-compatible with no remote-key capability."
+      },
+      "expected": {
+        "registryStatus": "unsupported",
+        "failureKind": "unsupported",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-authorization-unsupported",
+      "providerKind": "openai-compatible",
+      "capability": "authorization",
+      "scenario": "unsupported",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "kind": "none",
+        "reason": "OpenAI-compatible provider has no web authorization capability in the Stage 5 plan"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "unsupported"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "stage19a-registry-descriptor",
+        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
+        "provenance": "Static registry declares OpenAI-compatible with no authorization capability."
+      },
+      "expected": {
+        "registryStatus": "unsupported",
+        "failureKind": "unsupported",
+        "canonicalFacts": null
+      }
+    }
+  ]
+}

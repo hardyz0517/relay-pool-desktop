@@ -1,10 +1,26 @@
 pub mod adapters;
 pub(crate) mod collector_apply;
+#[allow(
+    dead_code,
+    reason = "Stage 19.A freezes provider capability contracts before production driver cutover"
+)]
 pub mod contract;
 pub mod drivers;
+#[allow(
+    dead_code,
+    reason = "Stage 19.A freezes provider evidence contracts before production driver cutover"
+)]
 pub mod evidence;
 pub mod facts;
+#[allow(
+    dead_code,
+    reason = "Stage 19.A freezes provider failure contracts before production driver cutover"
+)]
 pub mod failure;
+#[allow(
+    dead_code,
+    reason = "Stage 19.A freezes provider registry contracts before production driver cutover"
+)]
 pub mod orchestration;
 pub mod sub2api;
 
