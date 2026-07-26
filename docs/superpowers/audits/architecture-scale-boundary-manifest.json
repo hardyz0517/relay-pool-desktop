@@ -96,6 +96,7 @@
     "crate::application::command_facades::routing::<impl>::ping_station_endpoint::tokio::task::spawn_blocking",
     "crate::background_tasks::blocking::<impl>::submit::tokio::spawn",
     "crate::background_tasks::blocking::<impl>::submit::tokio::task::spawn_blocking",
+    "crate::background_tasks::exit::<impl>::handle_exit_requested::tauri::async_runtime::spawn",
     "crate::background_tasks::operation::<impl>::start::tokio::spawn",
     "crate::background_tasks::supervisor::<impl>::start_locked::<method>::spawn",
     "crate::commands::inspect_latest_update_manifest::tauri::async_runtime::spawn_blocking",

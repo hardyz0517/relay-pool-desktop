@@ -19,6 +19,7 @@ use std::time::Duration;
 
 pub use services::data_store::installation_lease::{InstallationLease, LeaseError};
 
+use crate::background_tasks::{ExitCoordinator, ExitReason};
 use services::data_store::{
     inspect_startup,
     relocation::apply_trusted_relocation,
@@ -116,7 +117,11 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 show_main_window(app);
             }
             if menu_id.as_ref() == "quit" {
-                app.exit(0);
+                if let Some(coordinator) = app.try_state::<ExitCoordinator>() {
+                    coordinator.request_exit(app.clone(), ExitReason::TrayQuit, 0);
+                } else {
+                    eprintln!("exit coordinator unavailable for tray quit request");
+                }
             }
         })
         .on_tray_icon_event(|tray, event| match event {
@@ -294,7 +299,7 @@ fn prepare_data_store(
     }
 }
 
-fn shutdown_application(app: &tauri::AppHandle) {
+async fn drain_application_shutdown(app: tauri::AppHandle) {
     if let Some(runner) = app.try_state::<services::channel_monitors::ChannelMonitorRunnerState>() {
         runner.stop();
     }
@@ -314,13 +319,29 @@ fn shutdown_application(app: &tauri::AppHandle) {
                     .map_err(|_| ())
             },
         );
-        if let Err(error) = tauri::async_runtime::block_on(drain) {
+        if let Err(error) = drain.await {
             eprintln!("application shutdown stopped before persistence close: {error}");
             return;
         }
     }
+    if let Some(work_runtime) = app.try_state::<app_composition::ManagedWorkRuntime>() {
+        if let Err(error) = work_runtime
+            .supervisor
+            .shutdown(Duration::from_secs(10))
+            .await
+        {
+            eprintln!("task supervisor shutdown failed: {error}");
+        }
+        if let Err(error) = work_runtime
+            .blocking
+            .shutdown(Duration::from_secs(10))
+            .await
+        {
+            eprintln!("blocking executor shutdown failed: {error}");
+        }
+    }
     if let Some(owner) = app.try_state::<DataStoreRuntimeOwner>() {
-        if let Err(error) = tauri::async_runtime::block_on(owner.shutdown()) {
+        if let Err(error) = owner.shutdown().await {
             eprintln!("data store shutdown failed: {error}");
         }
     }
@@ -335,6 +356,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             app.manage(Arc::new(TrayBehaviorState::default()));
+            app.manage(ExitCoordinator::new(Duration::from_secs(45)));
             setup_tray(app)?;
             let work_runtime = app_composition::compose_work_runtime(
                 app_composition::WorkRuntimeConfig::architecture_budget(),
@@ -553,7 +575,15 @@ pub fn run() {
                 }
                 WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
-                    window.app_handle().exit(0);
+                    if let Some(coordinator) = window.try_state::<ExitCoordinator>() {
+                        coordinator.request_exit(
+                            window.app_handle().clone(),
+                            ExitReason::MainWindowClose,
+                            0,
+                        );
+                    } else {
+                        eprintln!("exit coordinator unavailable for main window close request");
+                    }
                 }
                 WindowEvent::Resized(_)
                     if behavior.hides_on_minimize() && window.is_minimized().unwrap_or(false) =>
@@ -569,10 +599,19 @@ pub fn run() {
         .invoke_handler(crate::ipc_command_registry!(tauri_handler_from_registry))
         .build(tauri::generate_context!())
         .expect("failed to build Relay Pool Desktop");
-    app.run(|app, event| {
-        if matches!(event, RunEvent::Exit) {
-            shutdown_application(app);
+    app.run(|app, event| match event {
+        RunEvent::ExitRequested { api, code, .. } => {
+            if let Some(coordinator) = app.try_state::<ExitCoordinator>() {
+                coordinator.handle_exit_requested(
+                    app.clone(),
+                    code,
+                    &api,
+                    drain_application_shutdown,
+                );
+            }
         }
+        RunEvent::Exit => {}
+        _ => {}
     });
 }
 

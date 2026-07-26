@@ -1,4 +1,5 @@
 pub mod blocking;
+pub mod exit;
 pub mod operation;
 pub mod shutdown;
 pub mod status;
@@ -9,6 +10,7 @@ pub use blocking::{
     BlockingExecutor, BlockingExecutorConfig, BlockingExecutorError, BlockingJobContext,
     BlockingJobHandle, BlockingJobId, BlockingJobMetrics,
 };
+pub use exit::{ExitCoordinator, ExitReason};
 pub use operation::{
     BoxOperationFuture, CancellationPolicy, OperationCancelOutcome, OperationContext,
     OperationDetachOutcome, OperationFailureCode, OperationId, OperationOwner, OperationProgress,

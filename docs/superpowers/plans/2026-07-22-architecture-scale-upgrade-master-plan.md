@@ -835,6 +835,8 @@ Task 17 必须拆成三个互不混合的 production cutover。
 
 **当前 checkpoint：** `S4-T17C1-exit-shutdown-characterization` 用 focused tests 固化现有 `DataStoreRuntimeOwner::shutdown` 基础语义：ready 模式必须先进入 persistence runtime draining，read guard 释放后关闭 runtime 并释放 installation lease；recovery 模式没有 persistence runtime 时仍释放 lease；同一 owner 二次 shutdown 在 lease 已释放后保持幂等成功。该片不引入 `ExitCoordinator`，也不迁移 tray/window/updater/OS exit source；旧 `app.exit` 和 `RunEvent::Exit + block_on` 债务继续留给后续 17.C cutover shard。
 
+**当前 checkpoint：** `S4-T17C2-exit-coordinator-cutover` 新增 `background_tasks::exit::ExitCoordinator` 并迁移 tray Quit、main window true-close 和 Tauri `RunEvent::ExitRequested`。首次 exit request 在可 prevent 阶段启动 bounded async drain；drain 停止 monitor/collector runner、drain proxy、关闭 supervisor/blocking executor 并释放 data-store owner 后，coordinator 标记 final exit 并只触发一次 `app.exit`。`RunEvent::Exit` 不再执行主要 async shutdown 或 `block_on`。该片不改变 updater install/restart API，也不接管 proxy request lifecycle。
+
 **文件：**
 
 - Modify: `src-tauri/src/services/updater.rs`
