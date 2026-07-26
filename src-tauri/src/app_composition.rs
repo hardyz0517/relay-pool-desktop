@@ -13,7 +13,10 @@ use crate::{
         },
         data_directory::DataDirectoryPort,
     },
-    background_tasks::{BlockingExecutor, BlockingExecutorConfig, TaskSupervisor},
+    background_tasks::{
+        BlockingExecutor, BlockingExecutorConfig, OperationRegistry, OperationRegistryConfig,
+        TaskSupervisor,
+    },
     outbound::{AsyncOutboundClient, AsyncOutboundClientConfig},
     persistence::runtime::PersistenceHandle,
     runtime_composition::{RuntimeCompositionError, WorkRuntimeBundle},
@@ -26,12 +29,13 @@ use crate::{
 };
 
 pub(crate) type ManagedWorkRuntime =
-    WorkRuntimeBundle<TaskSupervisor, BlockingExecutor, AsyncOutboundClient>;
+    WorkRuntimeBundle<TaskSupervisor, BlockingExecutor, AsyncOutboundClient, OperationRegistry>;
 
 #[derive(Clone, Debug)]
 pub(crate) struct WorkRuntimeConfig {
     pub blocking: BlockingExecutorConfig,
     pub outbound: AsyncOutboundClientConfig,
+    pub operation: OperationRegistryConfig,
 }
 
 impl WorkRuntimeConfig {
@@ -39,6 +43,7 @@ impl WorkRuntimeConfig {
         Self {
             blocking: BlockingExecutorConfig::architecture_budget(),
             outbound: AsyncOutboundClientConfig::architecture_budget(),
+            operation: OperationRegistryConfig::architecture_budget(),
         }
     }
 }
@@ -51,6 +56,7 @@ pub(crate) fn compose_work_runtime(
         TaskSupervisor::new(),
         BlockingExecutor::new(config.blocking),
         AsyncOutboundClient::new(config.outbound),
+        OperationRegistry::new(config.operation),
     ))
 }
 
@@ -66,6 +72,12 @@ fn validate_work_runtime_config(config: &WorkRuntimeConfig) -> Result<(), Runtim
         || config.outbound.timeouts.first_byte_timeout.is_zero()
         || config.outbound.timeouts.body_read_timeout.is_zero()
         || config.outbound.timeouts.total_timeout.is_zero()
+        || config.operation.max_running_global == 0
+        || config.operation.max_running_per_concurrency_key == 0
+        || config.operation.progress_ring_entries_per_operation == 0
+        || config.operation.progress_entry_max_bytes == 0
+        || config.operation.terminal_max_entries == 0
+        || config.operation.default_deadline.is_zero()
     {
         return Err(RuntimeCompositionError::WorkRuntimeConfiguration);
     }
@@ -161,7 +173,7 @@ mod tests {
 
     use crate::{
         app_composition::{compose_work_runtime, WorkRuntimeConfig},
-        background_tasks::{BlockingExecutorConfig, TaskId},
+        background_tasks::{BlockingExecutorConfig, OperationRegistryConfig, TaskId},
         outbound::{AsyncOutboundClientConfig, OutboundHeaderPolicy, TimeoutPolicy},
         runtime_composition::RuntimeCompositionError,
     };
@@ -173,6 +185,7 @@ mod tests {
 
         assert_eq!(runtime.blocking.metrics().queued, 0);
         assert_eq!(runtime.outbound.metrics().pool_size, 0);
+        assert_eq!(runtime.operation.metrics().running, 0);
         assert!(runtime.supervisor.status(&TaskId::from("missing")).is_err());
     }
 
@@ -194,10 +207,29 @@ mod tests {
                 redirect_max_hops: 5,
                 https_downgrade_allowed: false,
             },
+            operation: OperationRegistryConfig::architecture_budget(),
         };
 
         let error = match compose_work_runtime(config) {
             Ok(_) => panic!("invalid budget must fail closed"),
+            Err(error) => error,
+        };
+        assert_eq!(error, RuntimeCompositionError::WorkRuntimeConfiguration);
+    }
+
+    #[test]
+    fn work_runtime_composition_rejects_invalid_operation_budget_before_construction() {
+        let config = WorkRuntimeConfig {
+            blocking: BlockingExecutorConfig::architecture_budget(),
+            outbound: AsyncOutboundClientConfig::architecture_budget(),
+            operation: OperationRegistryConfig {
+                max_running_global: 0,
+                ..OperationRegistryConfig::architecture_budget()
+            },
+        };
+
+        let error = match compose_work_runtime(config) {
+            Ok(_) => panic!("invalid operation budget must fail closed"),
             Err(error) => error,
         };
         assert_eq!(error, RuntimeCompositionError::WorkRuntimeConfiguration);

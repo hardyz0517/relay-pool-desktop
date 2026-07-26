@@ -718,6 +718,8 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 **当前 checkpoint：** `S4-T15B-connectivity-protocol-kernel` 将 connectivity protocol selection、model candidate policy、request body construction、SSE terminal decode、reply/error redaction 和 attempt orchestration 从 `commands/mod.rs` 抽入 `application::connectivity_probe`。该片保持现有 Tauri command 和 legacy blocking `ureq` transport adapter 作为唯一生产路径；尚未迁移 OperationRegistry start/cancel/status command、frontend operation controller 或 AsyncOutboundClient。
 
+**当前 checkpoint：** `S4-T15C-operation-runtime-registration` 将 `OperationRegistry` 纳入单一 `WorkRuntimeBundle`，随 `TaskSupervisor`、`BlockingExecutor` 和 `AsyncOutboundClient` 一起按 architecture budgets 构造并原子注册。该片只建立 managed runtime owner；尚未新增 operation start/cancel/status command、frontend controller 或 connectivity AsyncOutboundClient cutover。
+
 **文件：**
 
 - Create: `src-tauri/src/background_tasks/operation.rs`

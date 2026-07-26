@@ -244,20 +244,29 @@ impl<R: Runtime> ReadyServiceRegistry for TauriReadyServiceRegistry<'_, R> {
 
 #[allow(
     dead_code,
-    reason = "Task 14.D publishes the managed work runtime before Task 15 consumes its supervisor/blocking/outbound fields"
+    reason = "Task 14/15 publish the managed work runtime before production callers consume every field"
 )]
-pub(crate) struct WorkRuntimeBundle<Supervisor, Blocking, Outbound> {
+pub(crate) struct WorkRuntimeBundle<Supervisor, Blocking, Outbound, Operation> {
     pub(crate) supervisor: Supervisor,
     pub(crate) blocking: Blocking,
     pub(crate) outbound: Outbound,
+    pub(crate) operation: Operation,
 }
 
-impl<Supervisor, Blocking, Outbound> WorkRuntimeBundle<Supervisor, Blocking, Outbound> {
-    pub(crate) fn new(supervisor: Supervisor, blocking: Blocking, outbound: Outbound) -> Self {
+impl<Supervisor, Blocking, Outbound, Operation>
+    WorkRuntimeBundle<Supervisor, Blocking, Outbound, Operation>
+{
+    pub(crate) fn new(
+        supervisor: Supervisor,
+        blocking: Blocking,
+        outbound: Outbound,
+        operation: Operation,
+    ) -> Self {
         Self {
             supervisor,
             blocking,
             outbound,
+            operation,
         }
     }
 }
@@ -266,34 +275,36 @@ impl<Supervisor, Blocking, Outbound> WorkRuntimeBundle<Supervisor, Blocking, Out
     dead_code,
     reason = "source-included persistence tests compile runtime_composition without production Tauri setup"
 )]
-pub(crate) fn register_work_runtime<R, Supervisor, Blocking, Outbound>(
+pub(crate) fn register_work_runtime<R, Supervisor, Blocking, Outbound, Operation>(
     faults: &dyn UpgradeFaultInjector,
     app: &mut tauri::App<R>,
-    work_runtime: WorkRuntimeBundle<Supervisor, Blocking, Outbound>,
+    work_runtime: WorkRuntimeBundle<Supervisor, Blocking, Outbound, Operation>,
 ) -> Result<(), RuntimeCompositionError>
 where
     R: Runtime,
     Supervisor: Send + Sync + 'static,
     Blocking: Send + Sync + 'static,
     Outbound: Send + Sync + 'static,
+    Operation: Send + Sync + 'static,
 {
     let mut registry = TauriReadyServiceRegistry(app);
     register_work_runtime_in(faults, &mut registry, work_runtime)
 }
 
-pub(crate) fn register_work_runtime_in<Registry, Supervisor, Blocking, Outbound>(
+pub(crate) fn register_work_runtime_in<Registry, Supervisor, Blocking, Outbound, Operation>(
     faults: &dyn UpgradeFaultInjector,
     registry: &mut Registry,
-    work_runtime: WorkRuntimeBundle<Supervisor, Blocking, Outbound>,
+    work_runtime: WorkRuntimeBundle<Supervisor, Blocking, Outbound, Operation>,
 ) -> Result<(), RuntimeCompositionError>
 where
     Registry: ReadyServiceRegistry,
     Supervisor: Send + Sync + 'static,
     Blocking: Send + Sync + 'static,
     Outbound: Send + Sync + 'static,
+    Operation: Send + Sync + 'static,
 {
     faults.check(UpgradeFailpoint::ServiceRegistration)?;
-    if registry.contains::<WorkRuntimeBundle<Supervisor, Blocking, Outbound>>() {
+    if registry.contains::<WorkRuntimeBundle<Supervisor, Blocking, Outbound, Operation>>() {
         return Err(RuntimeCompositionError::StateSlotOccupied);
     }
     if !registry.manage(work_runtime) {
@@ -924,33 +935,51 @@ mod tests {
         struct BlockingSlot(u8);
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         struct OutboundSlot(u8);
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        struct OperationSlot(u8);
 
         let mut registry = TestRegistry::default();
         register_work_runtime_in(
             &NoUpgradeFaults,
             &mut registry,
-            WorkRuntimeBundle::new(SupervisorSlot(1), BlockingSlot(2), OutboundSlot(3)),
+            WorkRuntimeBundle::new(
+                SupervisorSlot(1),
+                BlockingSlot(2),
+                OutboundSlot(3),
+                OperationSlot(4),
+            ),
         )
         .expect("vacant registry publishes work runtime bundle");
 
         let state = registry
             .states
             .get(&TypeId::of::<
-                WorkRuntimeBundle<SupervisorSlot, BlockingSlot, OutboundSlot>,
+                WorkRuntimeBundle<SupervisorSlot, BlockingSlot, OutboundSlot, OperationSlot>,
             >())
             .and_then(|state| {
                 state
-                    .downcast_ref::<WorkRuntimeBundle<SupervisorSlot, BlockingSlot, OutboundSlot>>()
+                    .downcast_ref::<WorkRuntimeBundle<
+                        SupervisorSlot,
+                        BlockingSlot,
+                        OutboundSlot,
+                        OperationSlot,
+                    >>()
             })
             .expect("work runtime state is registered as one bundle");
         assert_eq!(state.supervisor, SupervisorSlot(1));
         assert_eq!(state.blocking, BlockingSlot(2));
         assert_eq!(state.outbound, OutboundSlot(3));
+        assert_eq!(state.operation, OperationSlot(4));
 
         let error = register_work_runtime_in(
             &NoUpgradeFaults,
             &mut registry,
-            WorkRuntimeBundle::new(SupervisorSlot(9), BlockingSlot(9), OutboundSlot(9)),
+            WorkRuntimeBundle::new(
+                SupervisorSlot(9),
+                BlockingSlot(9),
+                OutboundSlot(9),
+                OperationSlot(9),
+            ),
         )
         .expect_err("occupied work runtime slot fails before replacement");
         assert_eq!(error, RuntimeCompositionError::StateSlotOccupied);
@@ -958,15 +987,21 @@ mod tests {
         let state = registry
             .states
             .get(&TypeId::of::<
-                WorkRuntimeBundle<SupervisorSlot, BlockingSlot, OutboundSlot>,
+                WorkRuntimeBundle<SupervisorSlot, BlockingSlot, OutboundSlot, OperationSlot>,
             >())
             .and_then(|state| {
                 state
-                    .downcast_ref::<WorkRuntimeBundle<SupervisorSlot, BlockingSlot, OutboundSlot>>()
+                    .downcast_ref::<WorkRuntimeBundle<
+                        SupervisorSlot,
+                        BlockingSlot,
+                        OutboundSlot,
+                        OperationSlot,
+                    >>()
             })
             .expect("original work runtime state remains");
         assert_eq!(state.supervisor, SupervisorSlot(1));
         assert_eq!(state.blocking, BlockingSlot(2));
         assert_eq!(state.outbound, OutboundSlot(3));
+        assert_eq!(state.operation, OperationSlot(4));
     }
 }
