@@ -599,30 +599,38 @@ impl ChannelMonitorRunnerState {
 
 async fn runner_loop_v2(port: Arc<dyn ChannelMonitorRunnerPort>, stop_requested: Arc<AtomicBool>) {
     while !stop_requested.load(Ordering::Relaxed) {
-        match port.due_monitor_ids(256).await {
-            Ok(monitor_ids) => {
-                for monitor_id in monitor_ids {
-                    if stop_requested.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let _guard = match MonitorRunGuard::try_start(&monitor_id) {
-                        Ok(guard) => guard,
-                        Err(error) => {
-                            if !is_monitor_already_running_error(&error) {
-                                eprintln!("Channel monitor runner failed: {error}");
-                            }
-                            continue;
-                        }
-                    };
-                    if let Err(error) = port.run_monitor(monitor_id).await {
+        run_due_channel_monitors_once_v2(port.as_ref(), &stop_requested).await;
+        sleep_until_next_poll(&stop_requested);
+    }
+}
+
+async fn run_due_channel_monitors_once_v2(
+    port: &dyn ChannelMonitorRunnerPort,
+    stop_requested: &AtomicBool,
+) {
+    match port.due_monitor_ids(256).await {
+        Ok(monitor_ids) => {
+            for monitor_id in monitor_ids {
+                if stop_requested.load(Ordering::Relaxed) {
+                    break;
+                }
+                if let Err(error) = run_channel_monitor_guarded_v2(port, monitor_id).await {
+                    if !is_monitor_already_running_error(&error) {
                         eprintln!("Channel monitor runner failed: {error}");
                     }
                 }
             }
-            Err(error) => eprintln!("Channel monitor runner could not query due monitors: {error}"),
         }
-        sleep_until_next_poll(&stop_requested);
+        Err(error) => eprintln!("Channel monitor runner could not query due monitors: {error}"),
     }
+}
+
+async fn run_channel_monitor_guarded_v2(
+    port: &dyn ChannelMonitorRunnerPort,
+    monitor_id: String,
+) -> Result<Vec<ChannelMonitorRun>, String> {
+    let _guard = MonitorRunGuard::try_start(&monitor_id)?;
+    port.run_monitor(monitor_id).await
 }
 
 impl Drop for ChannelMonitorRunnerState {
@@ -647,6 +655,8 @@ fn sleep_until_next_poll(stop_requested: &AtomicBool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use tokio::sync::{oneshot, Notify};
 
     struct StubPersistence {
         monitor: ChannelMonitor,
@@ -765,6 +775,197 @@ mod tests {
 
         assert_eq!(error, "Channel monitor probe returned no terminal run");
         assert!(recorded.lock().expect("recorded runs").is_empty());
+    }
+
+    #[tokio::test]
+    async fn due_runner_runs_each_due_monitor_once_in_order() {
+        let stop_requested = AtomicBool::new(false);
+        let port = RecordingMonitorRunnerPort::new(
+            vec!["monitor-1".to_string(), "monitor-2".to_string()],
+            vec![Ok(Vec::new()), Ok(Vec::new())],
+        );
+
+        run_due_channel_monitors_once_v2(&port, &stop_requested).await;
+
+        assert_eq!(
+            port.calls(),
+            vec!["monitor-1".to_string(), "monitor-2".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn due_runner_stops_between_monitors_when_stop_is_requested() {
+        let stop_requested = Arc::new(AtomicBool::new(false));
+        let port = StopAfterFirstMonitorRunnerPort::new(
+            Arc::clone(&stop_requested),
+            vec!["monitor-stop-1".to_string(), "monitor-stop-2".to_string()],
+        );
+
+        run_due_channel_monitors_once_v2(&port, stop_requested.as_ref()).await;
+
+        assert_eq!(port.calls(), vec!["monitor-stop-1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn guarded_monitor_run_rejects_same_monitor_reentry_until_guard_drops() {
+        let notify_started = Arc::new(Notify::new());
+        let (release_sender, release_receiver) = oneshot::channel();
+        let port = BlockingFirstMonitorRunnerPort::new(
+            Arc::clone(&notify_started),
+            Mutex::new(Some(release_receiver)),
+        );
+        let running = tokio::spawn(async move {
+            run_channel_monitor_guarded_v2(&port, "monitor-guarded".to_string()).await
+        });
+        notify_started.notified().await;
+
+        let duplicate = RecordingMonitorRunnerPort::new(Vec::new(), vec![Ok(Vec::new())]);
+        let duplicate_result =
+            run_channel_monitor_guarded_v2(&duplicate, "monitor-guarded".to_string()).await;
+        assert_eq!(
+            duplicate_result.expect_err("duplicate monitor run must be rejected"),
+            MONITOR_ALREADY_RUNNING_ERROR
+        );
+        assert!(duplicate.calls().is_empty());
+
+        release_sender.send(()).expect("release first run");
+        running
+            .await
+            .expect("first run joins")
+            .expect("first run succeeds");
+
+        let after_release = RecordingMonitorRunnerPort::new(Vec::new(), vec![Ok(Vec::new())]);
+        run_channel_monitor_guarded_v2(&after_release, "monitor-guarded".to_string())
+            .await
+            .expect("guard is released after first run");
+        assert_eq!(after_release.calls(), vec!["monitor-guarded".to_string()]);
+    }
+
+    struct RecordingMonitorRunnerPort {
+        due: Vec<String>,
+        calls: Arc<Mutex<Vec<String>>>,
+        results: Arc<Mutex<Vec<Result<Vec<ChannelMonitorRun>, String>>>>,
+    }
+
+    impl RecordingMonitorRunnerPort {
+        fn new(due: Vec<String>, results: Vec<Result<Vec<ChannelMonitorRun>, String>>) -> Self {
+            Self {
+                due,
+                calls: Arc::new(Mutex::new(Vec::new())),
+                results: Arc::new(Mutex::new(results)),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().expect("calls").clone()
+        }
+    }
+
+    impl ChannelMonitorRunnerPort for RecordingMonitorRunnerPort {
+        fn due_monitor_ids(&self, _limit: u32) -> BoxFuture<'static, Result<Vec<String>, String>> {
+            let due = self.due.clone();
+            Box::pin(async move { Ok(due) })
+        }
+
+        fn run_monitor(
+            &self,
+            monitor_id: String,
+        ) -> BoxFuture<'static, Result<Vec<ChannelMonitorRun>, String>> {
+            self.calls.lock().expect("calls").push(monitor_id);
+            let result = self
+                .results
+                .lock()
+                .expect("results")
+                .pop()
+                .unwrap_or_else(|| Ok(Vec::new()));
+            Box::pin(async move { result })
+        }
+    }
+
+    struct StopAfterFirstMonitorRunnerPort {
+        stop_requested: Arc<AtomicBool>,
+        due: Vec<String>,
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl StopAfterFirstMonitorRunnerPort {
+        fn new(stop_requested: Arc<AtomicBool>, due: Vec<String>) -> Self {
+            Self {
+                stop_requested,
+                due,
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().expect("calls").clone()
+        }
+    }
+
+    impl ChannelMonitorRunnerPort for StopAfterFirstMonitorRunnerPort {
+        fn due_monitor_ids(&self, _limit: u32) -> BoxFuture<'static, Result<Vec<String>, String>> {
+            let due = self.due.clone();
+            Box::pin(async move { Ok(due) })
+        }
+
+        fn run_monitor(
+            &self,
+            monitor_id: String,
+        ) -> BoxFuture<'static, Result<Vec<ChannelMonitorRun>, String>> {
+            self.calls.lock().expect("calls").push(monitor_id);
+            self.stop_requested.store(true, Ordering::Relaxed);
+            Box::pin(async move { Ok(Vec::new()) })
+        }
+    }
+
+    struct BlockingFirstMonitorRunnerPort {
+        notify_started: Arc<Notify>,
+        release_receiver: Mutex<Option<oneshot::Receiver<()>>>,
+        calls: AtomicUsize,
+    }
+
+    impl BlockingFirstMonitorRunnerPort {
+        fn new(
+            notify_started: Arc<Notify>,
+            release_receiver: Mutex<Option<oneshot::Receiver<()>>>,
+        ) -> Self {
+            Self {
+                notify_started,
+                release_receiver,
+                calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl ChannelMonitorRunnerPort for BlockingFirstMonitorRunnerPort {
+        fn due_monitor_ids(&self, _limit: u32) -> BoxFuture<'static, Result<Vec<String>, String>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn run_monitor(
+            &self,
+            _monitor_id: String,
+        ) -> BoxFuture<'static, Result<Vec<ChannelMonitorRun>, String>> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                let notify_started = Arc::clone(&self.notify_started);
+                let receiver = self
+                    .release_receiver
+                    .lock()
+                    .expect("release receiver")
+                    .take()
+                    .expect("first call has release receiver");
+                Box::pin(async move {
+                    notify_started.notify_waiters();
+                    receiver
+                        .await
+                        .map(|_| Vec::new())
+                        .map_err(|_| "release dropped".to_string())
+                })
+            } else {
+                Box::pin(async { Ok(Vec::new()) })
+            }
+        }
     }
 
     fn sample_monitor() -> ChannelMonitor {

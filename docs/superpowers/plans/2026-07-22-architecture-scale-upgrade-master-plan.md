@@ -791,6 +791,8 @@ Task 17 必须拆成三个互不混合的 production cutover。
 
 #### Task 17.A：channel monitor runner/probe
 
+**当前 checkpoint：** `S4-T17A1-channel-monitor-runner-characterization` 提取了 channel monitor runner 的单次 due loop 和 per-monitor guard helper，并用 focused tests 固化当前语义：due monitors 按返回顺序逐个执行，stop flag 在 monitor 间生效，同 monitor 依赖进程内 guard 拒绝重入且 guard drop 后释放，V2 runner 继续 fail-closed 拒绝空 probe terminal result。该片不迁移自有 thread/atomic stop、不迁移 probe `spawn_blocking` 或 `ureq` transport。
+
 **文件：**
 
 - Modify: `src-tauri/src/services/channel_monitors/mod.rs`
