@@ -448,6 +448,16 @@ pub fn run() {
                         .map_err(|error| format!("failed to load application settings: {error}"))?;
                     app.state::<Arc<TrayBehaviorState>>()
                         .set(TrayBehavior::from_setting(&settings.tray_behavior));
+                    let work_runtime = app_composition::compose_work_runtime(
+                        app_composition::WorkRuntimeConfig::architecture_budget(),
+                    )
+                    .map_err(|error| format!("failed to compose work runtime: {error}"))?;
+                    runtime_composition::register_work_runtime(
+                        &persistence::upgrade_fault::NoUpgradeFaults,
+                        app,
+                        work_runtime,
+                    )
+                    .map_err(|error| format!("failed to register work runtime: {error}"))?;
                     let channel_monitor_runner =
                         services::channel_monitors::ChannelMonitorRunnerState::start_v2(
                             channel_monitor_runner_port,

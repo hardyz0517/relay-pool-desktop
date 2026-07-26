@@ -13,7 +13,10 @@ use crate::{
         },
         data_directory::DataDirectoryPort,
     },
+    background_tasks::{BlockingExecutor, BlockingExecutorConfig, TaskSupervisor},
+    outbound::{AsyncOutboundClient, AsyncOutboundClientConfig},
     persistence::runtime::PersistenceHandle,
+    runtime_composition::{RuntimeCompositionError, WorkRuntimeBundle},
     services::{
         channel_monitors::ChannelMonitorRunnerPort,
         pricing_catalog::StaticBuiltinModelBasePriceCatalog, proxy::runtime::ProxyRuntimeState,
@@ -21,6 +24,53 @@ use crate::{
     },
     TrayBehaviorState,
 };
+
+pub(crate) type ManagedWorkRuntime =
+    WorkRuntimeBundle<TaskSupervisor, BlockingExecutor, AsyncOutboundClient>;
+
+#[derive(Clone, Debug)]
+pub(crate) struct WorkRuntimeConfig {
+    pub blocking: BlockingExecutorConfig,
+    pub outbound: AsyncOutboundClientConfig,
+}
+
+impl WorkRuntimeConfig {
+    pub(crate) fn architecture_budget() -> Self {
+        Self {
+            blocking: BlockingExecutorConfig::architecture_budget(),
+            outbound: AsyncOutboundClientConfig::architecture_budget(),
+        }
+    }
+}
+
+pub(crate) fn compose_work_runtime(
+    config: WorkRuntimeConfig,
+) -> Result<ManagedWorkRuntime, RuntimeCompositionError> {
+    validate_work_runtime_config(&config)?;
+    Ok(WorkRuntimeBundle::new(
+        TaskSupervisor::new(),
+        BlockingExecutor::new(config.blocking),
+        AsyncOutboundClient::new(config.outbound),
+    ))
+}
+
+fn validate_work_runtime_config(config: &WorkRuntimeConfig) -> Result<(), RuntimeCompositionError> {
+    if config.blocking.max_running == 0
+        || config.blocking.queue_capacity == 0
+        || config.blocking.queue_timeout.is_zero()
+        || config.blocking.default_execution_timeout.is_zero()
+        || config.outbound.max_attempts == 0
+        || config.outbound.success_body_max_bytes == 0
+        || config.outbound.error_body_max_bytes == 0
+        || config.outbound.timeouts.connect_timeout.is_zero()
+        || config.outbound.timeouts.first_byte_timeout.is_zero()
+        || config.outbound.timeouts.body_read_timeout.is_zero()
+        || config.outbound.timeouts.total_timeout.is_zero()
+    {
+        return Err(RuntimeCompositionError::WorkRuntimeConfiguration);
+    }
+    Ok(())
+}
 
 pub(crate) fn compose_app_services(
     runtime: PersistenceHandle,
@@ -103,6 +153,55 @@ pub(crate) fn compose_station_collection_command_facade(
         Arc::clone(&services.settings),
         data_key,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use crate::{
+        app_composition::{compose_work_runtime, WorkRuntimeConfig},
+        background_tasks::{BlockingExecutorConfig, TaskId},
+        outbound::{AsyncOutboundClientConfig, OutboundHeaderPolicy, TimeoutPolicy},
+        runtime_composition::RuntimeCompositionError,
+    };
+
+    #[test]
+    fn work_runtime_composition_uses_architecture_budgets() {
+        let runtime =
+            compose_work_runtime(WorkRuntimeConfig::architecture_budget()).expect("work runtime");
+
+        assert_eq!(runtime.blocking.metrics().queued, 0);
+        assert_eq!(runtime.outbound.metrics().pool_size, 0);
+        assert!(runtime.supervisor.status(&TaskId::from("missing")).is_err());
+    }
+
+    #[test]
+    fn work_runtime_composition_rejects_invalid_dependency_budget_before_construction() {
+        let config = WorkRuntimeConfig {
+            blocking: BlockingExecutorConfig {
+                max_running: 0,
+                queue_capacity: 16,
+                queue_timeout: Duration::from_millis(2_000),
+                default_execution_timeout: Duration::from_millis(30_000),
+            },
+            outbound: AsyncOutboundClientConfig {
+                timeouts: TimeoutPolicy::provider_default(),
+                header_policy: OutboundHeaderPolicy::provider_default(),
+                success_body_max_bytes: 8_388_608,
+                error_body_max_bytes: 65_536,
+                max_attempts: 2,
+                redirect_max_hops: 5,
+                https_downgrade_allowed: false,
+            },
+        };
+
+        let error = match compose_work_runtime(config) {
+            Ok(_) => panic!("invalid budget must fail closed"),
+            Err(error) => error,
+        };
+        assert_eq!(error, RuntimeCompositionError::WorkRuntimeConfiguration);
+    }
 }
 
 pub(crate) fn compose_station_key_connectivity_command_facade(

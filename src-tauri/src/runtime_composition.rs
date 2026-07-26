@@ -11,6 +11,12 @@ pub(crate) enum RuntimeCompositionError {
     Injected(#[from] UpgradeInjectedFailure),
     #[error("runtime service state slot is already occupied")]
     StateSlotOccupied,
+    #[allow(
+        dead_code,
+        reason = "source-included persistence tests compile runtime_composition without app_composition constructors"
+    )]
+    #[error("runtime work dependency configuration is invalid")]
+    WorkRuntimeConfiguration,
     #[error("runtime service registration failed")]
     ServiceRegistration,
     #[error("proxy finalization drain failed")]
@@ -234,6 +240,66 @@ impl<R: Runtime> ReadyServiceRegistry for TauriReadyServiceRegistry<'_, R> {
     fn manage<T: Send + Sync + 'static>(&mut self, state: T) -> bool {
         self.0.manage(state)
     }
+}
+
+#[allow(
+    dead_code,
+    reason = "Task 14.D publishes the managed work runtime before Task 15 consumes its supervisor/blocking/outbound fields"
+)]
+pub(crate) struct WorkRuntimeBundle<Supervisor, Blocking, Outbound> {
+    pub(crate) supervisor: Supervisor,
+    pub(crate) blocking: Blocking,
+    pub(crate) outbound: Outbound,
+}
+
+impl<Supervisor, Blocking, Outbound> WorkRuntimeBundle<Supervisor, Blocking, Outbound> {
+    pub(crate) fn new(supervisor: Supervisor, blocking: Blocking, outbound: Outbound) -> Self {
+        Self {
+            supervisor,
+            blocking,
+            outbound,
+        }
+    }
+}
+
+#[allow(
+    dead_code,
+    reason = "source-included persistence tests compile runtime_composition without production Tauri setup"
+)]
+pub(crate) fn register_work_runtime<R, Supervisor, Blocking, Outbound>(
+    faults: &dyn UpgradeFaultInjector,
+    app: &mut tauri::App<R>,
+    work_runtime: WorkRuntimeBundle<Supervisor, Blocking, Outbound>,
+) -> Result<(), RuntimeCompositionError>
+where
+    R: Runtime,
+    Supervisor: Send + Sync + 'static,
+    Blocking: Send + Sync + 'static,
+    Outbound: Send + Sync + 'static,
+{
+    let mut registry = TauriReadyServiceRegistry(app);
+    register_work_runtime_in(faults, &mut registry, work_runtime)
+}
+
+pub(crate) fn register_work_runtime_in<Registry, Supervisor, Blocking, Outbound>(
+    faults: &dyn UpgradeFaultInjector,
+    registry: &mut Registry,
+    work_runtime: WorkRuntimeBundle<Supervisor, Blocking, Outbound>,
+) -> Result<(), RuntimeCompositionError>
+where
+    Registry: ReadyServiceRegistry,
+    Supervisor: Send + Sync + 'static,
+    Blocking: Send + Sync + 'static,
+    Outbound: Send + Sync + 'static,
+{
+    faults.check(UpgradeFailpoint::ServiceRegistration)?;
+    if registry.contains::<WorkRuntimeBundle<Supervisor, Blocking, Outbound>>() {
+        return Err(RuntimeCompositionError::StateSlotOccupied);
+    }
+    if !registry.manage(work_runtime) {
+        return Err(RuntimeCompositionError::ServiceRegistration);
+    }
+    Ok(())
 }
 
 #[allow(
@@ -620,8 +686,9 @@ mod tests {
     use crate::persistence::upgrade_fault::NoUpgradeFaults;
 
     use super::{
-        register_ready_services_with_command_facades_in, ReadyServiceBundleWithCommandFacades,
-        ReadyServiceRegistry, RuntimeCompositionError,
+        register_ready_services_with_command_facades_in, register_work_runtime_in,
+        ReadyServiceBundleWithCommandFacades, ReadyServiceRegistry, RuntimeCompositionError,
+        WorkRuntimeBundle,
     };
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -847,5 +914,59 @@ mod tests {
             registry.try_state::<SlotTwentyOne>(),
             Some(SlotTwentyOne(21))
         );
+    }
+
+    #[test]
+    fn work_runtime_registers_as_one_atomic_state_slot() {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        struct SupervisorSlot(u8);
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        struct BlockingSlot(u8);
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        struct OutboundSlot(u8);
+
+        let mut registry = TestRegistry::default();
+        register_work_runtime_in(
+            &NoUpgradeFaults,
+            &mut registry,
+            WorkRuntimeBundle::new(SupervisorSlot(1), BlockingSlot(2), OutboundSlot(3)),
+        )
+        .expect("vacant registry publishes work runtime bundle");
+
+        let state = registry
+            .states
+            .get(&TypeId::of::<
+                WorkRuntimeBundle<SupervisorSlot, BlockingSlot, OutboundSlot>,
+            >())
+            .and_then(|state| {
+                state
+                    .downcast_ref::<WorkRuntimeBundle<SupervisorSlot, BlockingSlot, OutboundSlot>>()
+            })
+            .expect("work runtime state is registered as one bundle");
+        assert_eq!(state.supervisor, SupervisorSlot(1));
+        assert_eq!(state.blocking, BlockingSlot(2));
+        assert_eq!(state.outbound, OutboundSlot(3));
+
+        let error = register_work_runtime_in(
+            &NoUpgradeFaults,
+            &mut registry,
+            WorkRuntimeBundle::new(SupervisorSlot(9), BlockingSlot(9), OutboundSlot(9)),
+        )
+        .expect_err("occupied work runtime slot fails before replacement");
+        assert_eq!(error, RuntimeCompositionError::StateSlotOccupied);
+
+        let state = registry
+            .states
+            .get(&TypeId::of::<
+                WorkRuntimeBundle<SupervisorSlot, BlockingSlot, OutboundSlot>,
+            >())
+            .and_then(|state| {
+                state
+                    .downcast_ref::<WorkRuntimeBundle<SupervisorSlot, BlockingSlot, OutboundSlot>>()
+            })
+            .expect("original work runtime state remains");
+        assert_eq!(state.supervisor, SupervisorSlot(1));
+        assert_eq!(state.blocking, BlockingSlot(2));
+        assert_eq!(state.outbound, OutboundSlot(3));
     }
 }

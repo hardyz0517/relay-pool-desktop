@@ -697,6 +697,8 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 #### Task 14.D：原子 composition 与临时 allowlist
 
+**当前 checkpoint：** `S4-T14D-work-runtime-composition` 已在 `app_composition` 中按 architecture capacity budgets 构造 `TaskSupervisor`、`BlockingExecutor` 和 `AsyncOutboundClient`，并通过 `runtime_composition::WorkRuntimeBundle` 作为单一 managed state 原子注册；生产启动顺序改为先注册 work runtime，再启动 legacy channel monitor / station collector runners。该片没有新增 direct spawn/spawn_blocking 或 HTTP construction site，现有 allowlist 继续由 boundary gate 审计；尚未迁移 production runner、operation 或 provider caller。
+
 **文件：**
 
 - Modify: `src-tauri/src/app_composition.rs`
