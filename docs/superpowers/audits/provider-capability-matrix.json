@@ -8,51 +8,80 @@
     {
       "kind": "sub2api",
       "displayName": "Sub2API",
-      "stationTypes": ["sub2api"],
+      "stationTypes": [
+        "sub2api"
+      ],
       "capabilities": {
         "collector": {
           "status": "unsupported",
           "declaredInRegistry": false,
-          "fixtureIds": ["sub2api-collector-unsupported"]
+          "fixtureIds": [
+            "sub2api-collector-unsupported"
+          ]
         },
         "remote_key": {
           "status": "unsupported",
           "declaredInRegistry": false,
-          "fixtureIds": ["sub2api-remote-key-unsupported"]
+          "fixtureIds": [
+            "sub2api-remote-key-unsupported"
+          ]
         },
         "authorization": {
           "status": "unsupported",
           "declaredInRegistry": false,
-          "fixtureIds": ["sub2api-authorization-unsupported"]
+          "fixtureIds": [
+            "sub2api-authorization-unsupported"
+          ]
         }
       }
     },
     {
       "kind": "newapi",
       "displayName": "NewAPI",
-      "stationTypes": ["newapi"],
+      "stationTypes": [
+        "newapi"
+      ],
       "capabilities": {
         "collector": {
-          "status": "unsupported",
-          "declaredInRegistry": false,
-          "fixtureIds": ["newapi-collector-unsupported"]
+          "status": "supported",
+          "declaredInRegistry": true,
+          "fixtureIds": [
+            "newapi-collector-success",
+            "newapi-collector-partial",
+            "newapi-collector-auth-failure",
+            "newapi-collector-rate-limit",
+            "newapi-collector-server-failure",
+            "newapi-collector-malformed",
+            "newapi-collector-unknown-shape",
+            "newapi-collector-cancel",
+            "newapi-collector-budget-exhaustion",
+            "newapi-collector-stale-endpoint-revision",
+            "newapi-collector-redaction"
+          ]
         },
         "remote_key": {
           "status": "unsupported",
           "declaredInRegistry": false,
-          "fixtureIds": ["newapi-remote-key-unsupported"]
+          "fixtureIds": [
+            "newapi-remote-key-unsupported"
+          ]
         },
         "authorization": {
           "status": "unsupported",
           "declaredInRegistry": false,
-          "fixtureIds": ["newapi-authorization-unsupported"]
+          "fixtureIds": [
+            "newapi-authorization-unsupported"
+          ]
         }
       }
     },
     {
       "kind": "openai-compatible",
       "displayName": "OpenAI-compatible",
-      "stationTypes": ["openai-compatible", "openai_compatible"],
+      "stationTypes": [
+        "openai-compatible",
+        "openai_compatible"
+      ],
       "capabilities": {
         "collector": {
           "status": "supported",
@@ -74,12 +103,16 @@
         "remote_key": {
           "status": "unsupported",
           "declaredInRegistry": false,
-          "fixtureIds": ["openai-compatible-remote-key-unsupported"]
+          "fixtureIds": [
+            "openai-compatible-remote-key-unsupported"
+          ]
         },
         "authorization": {
           "status": "unsupported",
           "declaredInRegistry": false,
-          "fixtureIds": ["openai-compatible-authorization-unsupported"]
+          "fixtureIds": [
+            "openai-compatible-authorization-unsupported"
+          ]
         }
       }
     }

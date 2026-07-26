@@ -131,6 +131,14 @@ pub enum CredentialSecretPurpose {
     LoginPassword,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderAuthContext {
+    NewApi {
+        user_id: String,
+        secret_purpose: CredentialSecretPurpose,
+    },
+}
+
 pub struct CredentialSecret {
     value: Zeroizing<String>,
 }
@@ -159,6 +167,7 @@ pub struct CollectorContext<'a> {
     pub station: StationIdentity,
     pub endpoints: ProviderEndpoints,
     pub credential: OpaqueCredentialHandle,
+    pub auth: Option<ProviderAuthContext>,
     pub secrets: &'a dyn DriverSecretAccessor,
     pub outbound: &'a AsyncOutboundClient,
     pub proxy: ProxyPolicy,

@@ -72,6 +72,7 @@ impl OutboundHeaderPolicy {
                 "openai-organization",
                 "openai-project",
                 "openai-beta",
+                "new-api-user",
             ],
             ["authorization", "cookie", "proxy-authorization"],
         )

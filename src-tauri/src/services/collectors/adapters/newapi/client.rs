@@ -146,7 +146,7 @@ fn authenticated_json(
     Err(auth_required_error("NewAPI authentication failed"))
 }
 
-fn resolve_auth_context(
+pub(super) fn resolve_auth_context(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: &Station,

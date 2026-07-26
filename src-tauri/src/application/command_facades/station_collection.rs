@@ -89,6 +89,17 @@ impl StationCollectionCommandFacade {
                 .await
                 .map_err(StationCollectionCommandError::Prepare)?
             }
+            collectors::PreparedStationCollectionRoute::NewApi(prepared) => {
+                collectors::finish_newapi_collection_v2(
+                    self.providers.as_ref(),
+                    &self.outbound,
+                    prepared,
+                    tokio_util::sync::CancellationToken::new(),
+                    current_correlation_id(),
+                )
+                .await
+                .map_err(StationCollectionCommandError::Prepare)?
+            }
         };
         self.apply_prepared_collection(prepared).await
     }

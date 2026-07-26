@@ -16,12 +16,23 @@ pub fn static_provider_entries() -> Vec<ProviderEntry> {
             station_types: &["sub2api"],
             capabilities: DriverCapabilities::none(),
         }),
-        ProviderEntry::unsupported(ProviderDescriptor {
-            kind: ProviderKind::NewApi,
-            display_name: "NewAPI",
-            station_types: &["newapi"],
-            capabilities: DriverCapabilities::none(),
-        }),
+        ProviderEntry {
+            descriptor: ProviderDescriptor {
+                kind: ProviderKind::NewApi,
+                display_name: "NewAPI",
+                station_types: &["newapi"],
+                capabilities: DriverCapabilities {
+                    collector: Some(CollectorCapabilityDescriptor {
+                        supported_tasks: newapi::SUPPORTED_COLLECTOR_TASKS,
+                    }),
+                    remote_key: None,
+                    authorization: None,
+                },
+            },
+            collector: Some(Arc::new(newapi::NewApiCollectorDriver)),
+            remote_key: None,
+            authorization: None,
+        },
         ProviderEntry {
             descriptor: ProviderDescriptor {
                 kind: ProviderKind::OpenAiCompatible,

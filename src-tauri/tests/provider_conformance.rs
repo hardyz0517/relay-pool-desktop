@@ -226,6 +226,10 @@ mod services {
             }
             Ok(format!("{base}{path}"))
         }
+
+        pub fn build_management_url(base_url: &str, path: &str) -> Result<String, String> {
+            build_api_url(base_url, path)
+        }
     }
 
     pub mod group_categories {

@@ -163,6 +163,17 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
                     .await
                     .map_err(|error| error.to_string())?
                 }
+                collectors::PreparedStationTaskRoute::NewApi(prepared) => {
+                    collectors::finish_newapi_task_v2(
+                        providers.as_ref(),
+                        &outbound,
+                        prepared,
+                        context.cancellation_token.clone(),
+                        Some(context.correlation_id.clone()),
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?
+                }
             };
             collectors::apply_prepared_station_task_v2(
                 apply.as_ref(),

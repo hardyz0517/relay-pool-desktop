@@ -89,31 +89,400 @@
       }
     },
     {
-      "id": "newapi-collector-unsupported",
+      "id": "newapi-collector-success",
       "providerKind": "newapi",
       "capability": "collector",
-      "scenario": "unsupported",
-      "endpointRole": "unknown",
+      "scenario": "success",
+      "endpointRole": "balance",
       "requestSchema": {
-        "kind": "none",
-        "reason": "Task 19.A registry entry does not declare a collector driver"
+        "method": "GET",
+        "websitePath": [
+          "/api/status",
+          "/api/user/self"
+        ],
+        "auth": "new-api-user plus session secret"
       },
       "responseSchema": {
-        "kind": "driver_failure",
-        "failureKind": "unsupported"
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "quota": 750000,
+            "used_quota": 250000,
+            "request_count": 12
+          }
+        }
       },
       "redaction": {
         "status": "not_applicable",
         "secretCanaries": []
       },
       "source": {
-        "kind": "stage19a-registry-descriptor",
-        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
-        "provenance": "Static registry declares NewAPI with no collector capability until Task 20 cutover."
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector success fixture for Task 20.B production collector cutover."
       },
       "expected": {
-        "registryStatus": "unsupported",
-        "failureKind": "unsupported",
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "balances": [
+            "station"
+          ]
+        }
+      }
+    },
+    {
+      "id": "newapi-collector-partial",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "partial",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/user/self/groups"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {}
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector partial fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "groups": []
+        }
+      }
+    },
+    {
+      "id": "newapi-collector-auth-failure",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "auth_failure",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/status",
+          "/api/user/self"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "success": false,
+          "message": "session rejected"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector auth_failure fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-rate-limit",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "rate_limit",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/status",
+          "/api/user/self"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "status": 429,
+        "body": {
+          "success": false,
+          "message": "rate limited"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector rate_limit fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "rate_limited",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-server-failure",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "server_failure",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/user/models"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "status": 502,
+        "body": {
+          "success": false,
+          "message": "bad gateway"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector server_failure fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-malformed",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "malformed",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/user/models"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": "not-json"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector malformed fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-unknown-shape",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "unknown_shape",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/user/models"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": [
+            {
+              "id": "non-string-model-object"
+            }
+          ]
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector unknown_shape fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "newapi-collector-cancel",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "cancel",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/user/models"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "kind": "outbound_failure",
+        "failureKind": "cancelled"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector cancel fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "cancelled",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-budget-exhaustion",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "budget_exhaustion",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/user/models"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "kind": "outbound_failure",
+        "failureKind": "budget_exhausted"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector budget_exhaustion fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "budget_exhausted",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-stale-endpoint-revision",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "stale_endpoint_revision",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/status",
+          "/api/user/self"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "kind": "apply_barrier",
+        "failureKind": "stale_endpoint_revision"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/mod.rs",
+        "provenance": "Synthetic NewAPI collector stale_endpoint_revision fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "stale_endpoint_revision",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-redaction",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "redaction",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/status",
+          "/api/user/self"
+        ],
+        "auth": "new-api-user plus session secret"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "success": false,
+          "message": "session rejected"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector redaction fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
         "canonicalFacts": null
       }
     },
@@ -188,11 +557,22 @@
       },
       "responseSchema": {
         "status": 200,
-        "body": { "data": [{ "id": "gpt-4o-mini" }, { "id": "text-embedding-3-small" }] }
+        "body": {
+          "data": [
+            {
+              "id": "gpt-4o-mini"
+            },
+            {
+              "id": "text-embedding-3-small"
+            }
+          ]
+        }
       },
       "redaction": {
         "status": "verified",
-        "secretCanaries": ["sk-p8-secret-plaintext-canary"]
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary"
+        ]
       },
       "source": {
         "kind": "openai-compatible-reference-driver-fixture",
@@ -202,7 +582,12 @@
       "expected": {
         "registryStatus": "supported",
         "failureKind": "none",
-        "canonicalFacts": { "models": ["gpt-4o-mini", "text-embedding-3-small"] }
+        "canonicalFacts": {
+          "models": [
+            "gpt-4o-mini",
+            "text-embedding-3-small"
+          ]
+        }
       }
     },
     {
@@ -217,7 +602,9 @@
       },
       "responseSchema": {
         "status": 200,
-        "body": { "data": [] }
+        "body": {
+          "data": []
+        }
       },
       "redaction": {
         "status": "not_applicable",
@@ -231,7 +618,9 @@
       "expected": {
         "registryStatus": "supported",
         "failureKind": "none",
-        "canonicalFacts": { "models": [] }
+        "canonicalFacts": {
+          "models": []
+        }
       }
     },
     {
@@ -246,11 +635,17 @@
       },
       "responseSchema": {
         "status": 401,
-        "body": { "error": { "message": "invalid api key" } }
+        "body": {
+          "error": {
+            "message": "invalid api key"
+          }
+        }
       },
       "redaction": {
         "status": "verified",
-        "secretCanaries": ["sk-p8-secret-plaintext-canary"]
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary"
+        ]
       },
       "source": {
         "kind": "openai-compatible-reference-driver-fixture",
@@ -275,7 +670,11 @@
       },
       "responseSchema": {
         "status": 429,
-        "body": { "error": { "message": "rate limited" } }
+        "body": {
+          "error": {
+            "message": "rate limited"
+          }
+        }
       },
       "redaction": {
         "status": "not_applicable",
@@ -304,7 +703,11 @@
       },
       "responseSchema": {
         "status": 502,
-        "body": { "error": { "message": "bad gateway" } }
+        "body": {
+          "error": {
+            "message": "bad gateway"
+          }
+        }
       },
       "redaction": {
         "status": "not_applicable",
@@ -347,7 +750,9 @@
       "expected": {
         "registryStatus": "supported",
         "failureKind": "none",
-        "canonicalFacts": { "models": [] }
+        "canonicalFacts": {
+          "models": []
+        }
       }
     },
     {
@@ -362,7 +767,14 @@
       },
       "responseSchema": {
         "status": 200,
-        "body": { "object": "list", "items": [{ "name": "not-standard" }] }
+        "body": {
+          "object": "list",
+          "items": [
+            {
+              "name": "not-standard"
+            }
+          ]
+        }
       },
       "redaction": {
         "status": "not_applicable",
@@ -376,7 +788,9 @@
       "expected": {
         "registryStatus": "supported",
         "failureKind": "none",
-        "canonicalFacts": { "models": [] }
+        "canonicalFacts": {
+          "models": []
+        }
       }
     },
     {
@@ -482,11 +896,17 @@
       },
       "responseSchema": {
         "status": 401,
-        "body": { "error": { "message": "Bearer sk-p8-secret-plaintext-canary rejected" } }
+        "body": {
+          "error": {
+            "message": "Bearer sk-p8-secret-plaintext-canary rejected"
+          }
+        }
       },
       "redaction": {
         "status": "verified",
-        "secretCanaries": ["sk-p8-secret-plaintext-canary"]
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary"
+        ]
       },
       "source": {
         "kind": "openai-compatible-reference-driver-fixture",

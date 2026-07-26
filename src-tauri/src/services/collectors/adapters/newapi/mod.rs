@@ -52,6 +52,37 @@ pub(crate) fn test_login_credentials(
     auth::test_login_credentials(base_url, login_username, login_password)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PreparedNewApiAuthKind {
+    AccessToken,
+    Cookie,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedNewApiAuthContext {
+    pub kind: PreparedNewApiAuthKind,
+    pub secret: String,
+    pub user_id: String,
+}
+
+pub(crate) fn prepare_collector_auth_context(
+    database: &dyn CollectorSourcePort,
+    data_key: &[u8; 32],
+    station: &Station,
+) -> Result<PreparedNewApiAuthContext, String> {
+    let auth = client::resolve_auth_context(database, data_key, station)
+        .map_err(newapi_request_error_message)?;
+    let kind = match auth.kind {
+        auth::NewApiAuthKind::AccessToken => PreparedNewApiAuthKind::AccessToken,
+        auth::NewApiAuthKind::Cookie => PreparedNewApiAuthKind::Cookie,
+    };
+    Ok(PreparedNewApiAuthContext {
+        kind,
+        secret: auth.secret,
+        user_id: auth.user_id,
+    })
+}
+
 #[cfg(test)]
 fn parse_newapi_balance(station_id: &str, payload: &Value) -> CollectedBalanceFact {
     parsers::parse_balance_fact(station_id, payload, Some(500000.0))
