@@ -206,13 +206,17 @@ impl From<OperationRegistryMetrics> for OperationRuntimeSummary {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{
+        sync::{mpsc, Arc},
+        time::Duration,
+    };
 
     use crate::{
         background_tasks::{
-            BlockingExecutor, BlockingExecutorConfig, OperationOwner, OperationRegistry,
-            OperationRegistryConfig, OperationStartRequest, OperationTerminal, RestartPolicy,
-            RuntimeTaskStatus, TaskFailure, TaskSpec, TaskState, TaskSupervisor,
+            BlockingExecutor, BlockingExecutorConfig, BlockingExecutorError, OperationOwner,
+            OperationRegistry, OperationRegistryConfig, OperationRegistryError,
+            OperationStartRequest, OperationTerminal, RestartPolicy, RuntimeTaskStatus,
+            TaskFailure, TaskSpec, TaskState, TaskSupervisor, TaskSupervisorError,
         },
         observability::{
             diagnostics::RuntimeDiagnostics,
@@ -220,6 +224,148 @@ mod tests {
         },
         outbound::{AsyncOutboundClient, AsyncOutboundClientConfig},
     };
+
+    #[tokio::test]
+    async fn mixed_runtime_saturation_is_predictable_and_visible() {
+        let diagnostics = RuntimeDiagnostics::new(32).expect("diagnostics");
+        let supervisor = TaskSupervisor::new();
+        let task_release = Arc::new(tokio::sync::Notify::new());
+        supervisor
+            .register(
+                TaskSpec::new("collector-a", "station-collector", {
+                    let task_release = Arc::clone(&task_release);
+                    move |_| {
+                        let task_release = Arc::clone(&task_release);
+                        Box::pin(async move {
+                            task_release.notified().await;
+                            Ok(())
+                        })
+                    }
+                })
+                .with_concurrency_key("collector"),
+            )
+            .expect("register first task");
+        supervisor
+            .register(
+                TaskSpec::new("collector-b", "station-collector", |_| {
+                    Box::pin(async { Ok(()) })
+                })
+                .with_concurrency_key("collector"),
+            )
+            .expect("register second task");
+        supervisor.start(&"collector-a".into()).expect("start task");
+        assert_eq!(
+            supervisor
+                .start(&"collector-b".into())
+                .expect_err("task concurrency must reject predictably"),
+            TaskSupervisorError::ConcurrencyKeyRunning("collector".to_string())
+        );
+
+        let operation_release = Arc::new(tokio::sync::Notify::new());
+        let operation = OperationRegistry::new(OperationRegistryConfig {
+            max_running_global: 1,
+            max_running_per_concurrency_key: 1,
+            progress_ring_entries_per_operation: 2,
+            progress_entry_max_bytes: 64,
+            terminal_ttl: Duration::from_secs(60),
+            terminal_max_entries: 2,
+            expired_tombstone_ttl: Duration::from_secs(60),
+            default_deadline: Duration::from_secs(30),
+        });
+        let operation_id = operation
+            .start(OperationStartRequest::new(
+                "connectivity",
+                OperationOwner::new("key-pool"),
+                {
+                    let operation_release = Arc::clone(&operation_release);
+                    move |_| {
+                        let operation_release = Arc::clone(&operation_release);
+                        Box::pin(async move {
+                            operation_release.notified().await;
+                            OperationTerminal::Completed
+                        })
+                    }
+                },
+            ))
+            .expect("first operation starts");
+        assert_eq!(
+            operation
+                .start(OperationStartRequest::new(
+                    "connectivity",
+                    OperationOwner::new("key-pool"),
+                    |_| Box::pin(async { OperationTerminal::Completed }),
+                ))
+                .expect_err("operation capacity must reject predictably"),
+            OperationRegistryError::Overloaded
+        );
+
+        let blocking = BlockingExecutor::new(BlockingExecutorConfig {
+            max_running: 1,
+            queue_capacity: 1,
+            queue_timeout: Duration::from_secs(30),
+            default_execution_timeout: Duration::from_secs(30),
+        });
+        let (release_blocking_tx, release_blocking_rx) = mpsc::channel::<()>();
+        let running = blocking
+            .submit("filesystem", None, None, None, move |_| {
+                release_blocking_rx.recv().expect("release blocking job");
+                Ok("running")
+            })
+            .expect("first blocking job runs");
+        wait_for_blocking_metrics(&blocking, 1, 0).await;
+        let queued = blocking
+            .submit("filesystem", None, None, None, |_| Ok("queued"))
+            .expect("second blocking job queues");
+        assert_eq!(
+            blocking
+                .submit("filesystem", None, None, None, |_| Ok("rejected"))
+                .expect_err("blocking queue must reject predictably"),
+            BlockingExecutorError::QueueFull
+        );
+        wait_for_blocking_metrics(&blocking, 1, 1).await;
+
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let snapshot = diagnostics.snapshot_runtime(&supervisor, &blocking, &outbound, &operation);
+
+        assert_eq!(snapshot.blocking.running, 1);
+        assert_eq!(snapshot.blocking.queued, 1);
+        assert_eq!(snapshot.operations.running, 1);
+        assert_eq!(snapshot.tasks.len(), 2);
+        assert_eq!(
+            metric_value(&snapshot, RuntimeMetricLabel::BlockingRunning),
+            Some(1)
+        );
+        assert_eq!(
+            metric_value(&snapshot, RuntimeMetricLabel::BlockingQueued),
+            Some(1)
+        );
+        assert_eq!(
+            metric_value(&snapshot, RuntimeMetricLabel::OperationRunning),
+            Some(1)
+        );
+        assert_eq!(
+            metric_value(&snapshot, RuntimeMetricLabel::TaskActive),
+            Some(1)
+        );
+        assert_eq!(
+            metric_value(&snapshot, RuntimeMetricLabel::TaskRegistered),
+            Some(1)
+        );
+
+        task_release.notify_waiters();
+        operation_release.notify_waiters();
+        release_blocking_tx.send(()).expect("release blocking");
+        assert_eq!(running.result().await.unwrap(), "running");
+        assert_eq!(queued.result().await.unwrap(), "queued");
+        assert_eq!(
+            supervisor
+                .join_finished(&"collector-a".into())
+                .await
+                .unwrap(),
+            TaskState::Succeeded
+        );
+        wait_for_operation_terminal(&operation, operation_id).await;
+    }
 
     #[tokio::test]
     async fn runtime_diagnostics_are_local_bounded_and_actionable() {
@@ -319,5 +465,41 @@ mod tests {
 
         assert_eq!(summary.status, RuntimeTaskStatus::Failed);
         assert_eq!(summary.last_failure_code.as_deref(), Some("[REDACTED]"));
+    }
+
+    async fn wait_for_blocking_metrics(blocking: &BlockingExecutor, running: usize, queued: usize) {
+        for _ in 0..100 {
+            let metrics = blocking.metrics();
+            if metrics.running == running && metrics.queued == queued {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("blocking executor did not reach running={running}, queued={queued}");
+    }
+
+    async fn wait_for_operation_terminal(
+        operation: &OperationRegistry,
+        id: crate::background_tasks::OperationId,
+    ) {
+        for _ in 0..100 {
+            if operation.status(id).unwrap().terminal.is_some() {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("operation did not reach terminal");
+    }
+
+    fn metric_value(
+        snapshot: &super::RuntimeDiagnosticsSnapshot,
+        label: RuntimeMetricLabel,
+    ) -> Option<u64> {
+        snapshot.metrics.events.iter().find_map(|event| {
+            event
+                .labels
+                .contains(&MetricLabel::Runtime(label))
+                .then_some(event.value)
+        })
     }
 }

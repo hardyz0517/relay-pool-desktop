@@ -861,6 +861,8 @@ Task 17 必须拆成三个互不混合的 production cutover。
 
 **Checkpoint addendum:** `S4-T18E-frontend-runtime-status-adapter` wires the generated `get_runtime_status` read into `BackendClient.runtime`, `DesktopBackend`, explicit demo unsupported behavior, and a narrow `src/lib/api/runtimeStatus.ts` frontend adapter. It also tightens generated binding coverage so the Rust registry TypeScript renderer must emit the runtime status wrapper. This does not close the full Stage 4 gate; proxy-request correlation and mixed saturation evidence remain open.
 
+**Checkpoint addendum:** `S4-T18F-mixed-saturation-diagnostics-contract` adds focused local diagnostics evidence for simultaneous TaskSupervisor concurrency rejection, OperationRegistry overload, and BlockingExecutor running/queued/full capacity. The test asserts stable typed rejection results and visible low-cardinality runtime gauges without introducing new production runtime paths. This still does not close Stage 4; proxy-request correlation and remaining allowlist disposition remain open.
+
 **当前 checkpoint：** `S4-T18A-observability-contract-kernel` 新增 `observability::redaction` 与 `observability::metrics` 中立合同内核，以及 `observability_contract` focused tests。redaction contract 会移除 secret canary、URL credential/query/fragment/path 等无界或敏感部分，并限制文本 preview；metrics contract 使用封闭 enum kind/outcome 与 typed labels、有界 label 数量和固定容量 ring buffer，超容量只丢弃最旧诊断事件。`S4-T18B-runtime-diagnostics-read-model` 新增 `observability::diagnostics` 本地 runtime read model，从 `TaskSupervisor`、`BlockingExecutor`、`AsyncOutboundClient` 和 `OperationRegistry` 采样用户可行动状态并写入同一个 bounded low-cardinality metric buffer；task failure code 仍经过 redaction contract，快照不包含 secret、数据库路径或内部 error chain。`S4-T18C-work-correlation-continuity` 将 correlation 显式带入 `TaskRunContext`、`OperationContext` 和 `OutboundRequest`，supervisor/operation spawned work 使用继承或新建的 bounded id 重新进入 observability scope，scheduled collector blocking prepare、channel monitor async outbound 和 key-pool connectivity operation outbound 均不再依赖丢失的 task-local。`S4-T18D-runtime-status-command` 把 `RuntimeTaskSummary` owner 收敛到 `background_tasks/status.rs`，由 supervisor 维护 last started/succeeded/failure/retry 字段，并新增 generated read command `get_runtime_status` 只暴露 task id/kind/run/status/timing/failure-code/consecutive-failure/next-retry 投影；main-window ACL、compiled ACL manifest、generated TS bindings 和 command registry 同步。该片不开放云遥测，也不让日志/指标成为业务状态 owner。
 
 **文件：**
@@ -879,7 +881,7 @@ Task 17 必须拆成三个互不混合的 production cutover。
 - [ ] runtime status/read model 只暴露用户可行动状态；完整本地诊断仅开发者模式可读，仍经过同一 redaction contract。本升级不引入云遥测。
 - [ ] production 永久 runner 中 `thread::spawn + block_on` 为零；fire-and-forget spawn 只有带 owner/理由/删除期限的最小 allowlist。
 - [ ] production network I/O 不允许进入 BlockingExecutor；operation event 必须带 id/version/terminal contract，cancel command 必须有 registry owner。
-- [ ] 运行混合 saturation：periodic task、manual operation、blocking jobs 同时达到容量时，拒绝/排队可预测、指标可见且 UI 不假成功。
+- [x] 运行混合 saturation：periodic task、manual operation、blocking jobs 同时达到容量时，拒绝/排队可预测、指标可见且 UI 不假成功。
 
 **退出：** redaction canary、bounded-cardinality、correlation continuity、runtime status 和 architecture gates 全部通过；日志/指标不承担业务决策或状态 owner。
 
