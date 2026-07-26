@@ -859,6 +859,8 @@ Task 17 必须拆成三个互不混合的 production cutover。
 
 ### Task 18：建立 structured observability 并收紧 work/outbound gates
 
+**当前 checkpoint：** `S4-T18A-observability-contract-kernel` 新增 `observability::redaction` 与 `observability::metrics` 中立合同内核，以及 `observability_contract` focused tests。redaction contract 会移除 secret canary、URL credential/query/fragment/path 等无界或敏感部分，并限制文本 preview；metrics contract 使用封闭 enum kind/outcome 与 typed labels、有界 label 数量和固定容量 ring buffer，超容量只丢弃最旧诊断事件。该片只冻结诊断合同，不接入生产 recorder、不引入云遥测，也不让日志/指标成为业务状态 owner。
+
 **文件：**
 
 - Create: `src-tauri/src/observability/{mod,correlation,metrics,redaction}.rs`
