@@ -18,6 +18,7 @@ use super::{invalid_input, TypeDescriptor};
 const MAX_OPERATION_ID_DIGITS: usize = 20;
 const DEFAULT_CANCEL_WAIT_MS: u64 = 250;
 const MAX_CANCEL_WAIT_MS: u64 = 5_000;
+pub(crate) const OPERATION_EVENT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -165,6 +166,54 @@ impl From<OperationProgress> for OperationProgressDto {
             message: progress.message,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationEventDto {
+    pub schema_version: u32,
+    pub event_id: String,
+    pub operation_id: String,
+    pub sequence: u64,
+    pub event: OperationEventKindDto,
+}
+
+impl OperationEventDto {
+    pub(crate) fn progress(operation_id: OperationId, progress: OperationProgress) -> Self {
+        let sequence = progress.sequence;
+        Self {
+            schema_version: OPERATION_EVENT_SCHEMA_VERSION,
+            event_id: format!("{}:progress:{sequence}", operation_id.as_u64()),
+            operation_id: operation_id.as_u64().to_string(),
+            sequence,
+            event: OperationEventKindDto::Progress {
+                progress: progress.into(),
+            },
+        }
+    }
+
+    pub(crate) fn terminal(
+        operation_id: OperationId,
+        sequence: u64,
+        terminal: OperationTerminal,
+    ) -> Self {
+        Self {
+            schema_version: OPERATION_EVENT_SCHEMA_VERSION,
+            event_id: format!("{}:terminal:{sequence}", operation_id.as_u64()),
+            operation_id: operation_id.as_u64().to_string(),
+            sequence,
+            event: OperationEventKindDto::Terminal {
+                terminal: terminal.into(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum OperationEventKindDto {
+    Progress { progress: OperationProgressDto },
+    Terminal { terminal: OperationTerminalDto },
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -361,6 +410,52 @@ mod tests {
             assert!(progress.get(forbidden).is_none(), "{forbidden}");
             assert!(terminal.get(forbidden).is_none(), "{forbidden}");
         }
+    }
+
+    #[test]
+    fn operation_event_envelope_has_version_id_sequence_and_explicit_terminal() {
+        let operation_id = OperationId::from_u64(9).expect("valid operation id");
+        let progress = OperationEventDto::progress(
+            operation_id,
+            OperationProgress {
+                id: operation_id,
+                sequence: 4,
+                message: "probing".to_string(),
+            },
+        );
+        let progress = serde_json::to_value(progress).expect("progress event serializes");
+
+        assert_eq!(progress["schemaVersion"], OPERATION_EVENT_SCHEMA_VERSION);
+        assert_eq!(progress["eventId"], "9:progress:4");
+        assert_eq!(progress["operationId"], "9");
+        assert_eq!(progress["sequence"], 4);
+        assert_eq!(progress["event"]["event"], "progress");
+        assert_eq!(progress["event"]["progress"]["sequence"], 4);
+        assert!(progress["event"].get("terminal").is_none());
+
+        let terminal =
+            OperationEventDto::terminal(operation_id, 5, OperationTerminal::ResultUnknown);
+        let terminal = serde_json::to_value(terminal).expect("terminal event serializes");
+
+        assert_eq!(terminal["schemaVersion"], OPERATION_EVENT_SCHEMA_VERSION);
+        assert_eq!(terminal["eventId"], "9:terminal:5");
+        assert_eq!(terminal["operationId"], "9");
+        assert_eq!(terminal["sequence"], 5);
+        assert_eq!(terminal["event"]["event"], "terminal");
+        assert_eq!(terminal["event"]["terminal"]["terminal"], "result_unknown");
+        assert!(terminal["event"].get("progress").is_none());
+
+        let root = terminal.as_object().expect("operation event object");
+        assert_eq!(
+            root.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "event",
+                "eventId",
+                "operationId",
+                "schemaVersion",
+                "sequence",
+            ])
+        );
     }
 
     #[test]

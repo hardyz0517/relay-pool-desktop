@@ -13,7 +13,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "dddf8ae28cb0fd1c430e94c34397fcabd8f8bb5b8953b7a49c0481ba1b963a86";
+    "51309a9ca7e305d0940ea679d4907970b0a0cc025f2f9e536187cdd240709571";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -1926,6 +1926,7 @@ mod tests {
         assert!(source.contains(
             r#"function getRuntimeStatus(input: EmptyInputDto = {}): Promise<RuntimeStatusDto>"#
         ));
+        assert!(source.contains("export type OperationEventDto = {"));
         for wrapper in [
             "updateSettings",
             "createStation",
