@@ -118,8 +118,10 @@ for (const page of pages) {
 
 const monitoringSource = await readFile("src/features/channels/ChannelMonitoringTab.tsx", "utf8");
 assert.ok(
-  /usePageActivation\(\(\{ isInitial \}\) => \{[\s\S]*refresh\(false, isInitial\)/.test(monitoringSource),
-  "monitoring should refresh silently when revisited while preserving first-load feedback",
+  monitoringSource.includes("useActivityQuery(channelMonitoringQueryOptions())") &&
+    monitoringSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring })") &&
+    !monitoringSource.includes("usePageActivation"),
+  "monitoring should use the channel monitoring query owner instead of an activation loader",
 );
 
 const changeCenterSource = await readFile("src/features/changes/ChangeCenterPage.tsx", "utf8");
