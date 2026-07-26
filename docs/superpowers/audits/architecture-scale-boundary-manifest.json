@@ -108,7 +108,6 @@
     "crate::commands::start_capture_session::tauri::async_runtime::spawn_blocking",
     "crate::commands::test_station_key_connectivity::tauri::async_runtime::spawn_blocking",
     "crate::services::channel_monitors::<impl>::probe::tauri::async_runtime::spawn_blocking",
-    "crate::services::channel_monitors::<impl>::start_v2::thread::spawn",
     "crate::services::proxy::lifecycle::writer::<impl>::start::tokio::spawn",
     "crate::services::proxy::server::spawn_server::tokio::spawn",
     "crate::services::proxy::startup_auto_start::schedule::tauri::async_runtime::spawn"

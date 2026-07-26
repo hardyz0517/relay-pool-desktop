@@ -463,8 +463,12 @@ pub fn run() {
                     .map_err(|error| format!("failed to register work runtime: {error}"))?;
                     let channel_monitor_runner =
                         services::channel_monitors::ChannelMonitorRunnerState::start_v2(
+                            supervisor_handle.clone(),
                             channel_monitor_runner_port,
-                        );
+                        )
+                        .map_err(|error| {
+                            format!("failed to start channel monitor runner: {error}")
+                        })?;
                     let station_collector_runner =
                         services::station_collectors::StationCollectorRunnerState::start_v2(
                             supervisor_handle,
