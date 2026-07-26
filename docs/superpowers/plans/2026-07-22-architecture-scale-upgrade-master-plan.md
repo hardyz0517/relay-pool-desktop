@@ -716,6 +716,8 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 **当前 checkpoint：** `S4-T15A-operation-registry-kernel` 已新增独立 `background_tasks::operation` 内核和 `operation_registry` focused tests，覆盖 start/id、atomic global capacity/concurrency-key admission、bounded progress ring、progress byte limit、`Completed`/`Failed`/`Cancelled`/`TimedOut`/`ResultUnknown` terminal、cancel wait/still-stopping、fixed detach policy、commit barrier、terminal capacity、GC 与 typed `Expired` tombstone。该片只建立 foreground operation lifecycle primitive；尚未迁移 connectivity production command、frontend controller 或 protocol probe。
 
+**当前 checkpoint：** `S4-T15B-connectivity-protocol-kernel` 将 connectivity protocol selection、model candidate policy、request body construction、SSE terminal decode、reply/error redaction 和 attempt orchestration 从 `commands/mod.rs` 抽入 `application::connectivity_probe`。该片保持现有 Tauri command 和 legacy blocking `ureq` transport adapter 作为唯一生产路径；尚未迁移 OperationRegistry start/cancel/status command、frontend operation controller 或 AsyncOutboundClient。
+
 **文件：**
 
 - Create: `src-tauri/src/background_tasks/operation.rs`
