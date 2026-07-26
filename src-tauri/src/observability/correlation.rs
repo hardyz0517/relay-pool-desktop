@@ -1,5 +1,6 @@
 use std::future::Future;
 
+use sha2::{Digest, Sha256};
 use tracing::Instrument;
 
 pub(crate) const CORRELATION_ID_BYTES: usize = 32;
@@ -14,6 +15,18 @@ tokio::task_local! {
 impl CorrelationId {
     pub(crate) fn new() -> Self {
         let value = uuid::Uuid::now_v7().simple().to_string();
+        debug_assert_eq!(value.len(), CORRELATION_ID_BYTES);
+        Self(value)
+    }
+
+    pub(crate) fn for_proxy_request(request_id: &str) -> Self {
+        Self::from_stable_parts("proxy.request", request_id)
+    }
+
+    fn from_stable_parts(scope: &str, value: &str) -> Self {
+        let digest = Sha256::digest([scope.as_bytes(), b"\0", value.as_bytes()].concat());
+        let value = format!("{digest:x}");
+        let value = value[..CORRELATION_ID_BYTES].to_string();
         debug_assert_eq!(value.len(), CORRELATION_ID_BYTES);
         Self(value)
     }
@@ -48,6 +61,20 @@ pub(crate) async fn in_scope<T>(
     CURRENT_CORRELATION_ID
         .scope(correlation_id, future.instrument(span))
         .await
+}
+
+pub(crate) fn with_scope<T>(
+    span_name: &'static str,
+    correlation_id: CorrelationId,
+    operation: impl FnOnce() -> T,
+) -> T {
+    let span = tracing::info_span!(
+        "work.scope",
+        scope = span_name,
+        correlation_id = correlation_id.as_str()
+    );
+    let _entered = span.enter();
+    CURRENT_CORRELATION_ID.sync_scope(correlation_id, operation)
 }
 
 pub(crate) async fn in_command_scope<T>(
@@ -115,5 +142,33 @@ mod tests {
 
         assert_eq!(parent_id, child_id);
         assert!(current().is_none(), "work scope must not leak");
+    }
+
+    #[test]
+    fn proxy_request_correlation_is_deterministic_bounded_and_redacted() {
+        let request_id = "req_0198108c8411_00003039_0000000000000001";
+        let first = CorrelationId::for_proxy_request(request_id);
+        let second = CorrelationId::for_proxy_request(request_id);
+
+        assert_eq!(first, second);
+        assert_eq!(first.as_str().len(), CORRELATION_ID_BYTES);
+        assert!(first.as_str().bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_ne!(first.as_str(), request_id);
+        assert!(
+            !first.as_str().contains("req_"),
+            "public request ids must not be copied into correlation labels"
+        );
+    }
+
+    #[test]
+    fn synchronous_scope_sets_correlation_without_leaking() {
+        let correlation_id = CorrelationId::for_proxy_request("req_fixture");
+
+        let observed = with_scope("proxy.request.body", correlation_id.clone(), || {
+            current().expect("synchronous body poll receives correlation")
+        });
+
+        assert_eq!(observed, correlation_id);
+        assert!(current().is_none(), "synchronous scope must not leak");
     }
 }

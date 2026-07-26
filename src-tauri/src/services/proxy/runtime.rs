@@ -8,6 +8,7 @@ use std::{
 
 use crate::{
     models::proxy::{ProxyLifecycle, ProxyStatus},
+    observability::correlation,
     services::{
         proxy::{
             execution::{ExecutionEngine, UpstreamAttemptExecutor},
@@ -21,8 +22,8 @@ use crate::{
             limits::ProxyServerLimits,
             request::{ProxyHttpResponse, ProxyResponsePayload},
             response_body::{
-                buffered_lifecycle_finalizing_stream,
-                lifecycle_finalizing_stream_with_idle_timeout, FinalizationOutcome,
+                correlated_buffered_lifecycle_finalizing_stream,
+                correlated_lifecycle_finalizing_stream_with_idle_timeout, FinalizationOutcome,
                 LifecycleFinalizationLease, SelectedAttemptFinalization,
             },
             routing_repository::RoutingRepository,
@@ -399,142 +400,164 @@ impl IngressExecutor for V2ProxyExecutor {
         &self,
         mut request: super::request::CanonicalProxyRequest,
     ) -> BoxFuture<'static, Result<ProxyHttpResponse, super::error::ProxyFailure>> {
+        let proxy_correlation = correlation::CorrelationId::for_proxy_request(&request.request_id);
         let lifecycle_writer = self.lifecycle_writer.clone();
         let engine = self.engine.clone();
         let stream_idle_timeout = self.stream_idle_timeout;
         let Some(admission) = request.take_lifecycle_admission() else {
-            return Box::pin(async move {
-                Err(lifecycle_unavailable_failure(
-                    "missing lifecycle admission for v2 request",
-                ))
-            });
+            return Box::pin(correlation::in_scope(
+                "proxy.request",
+                proxy_correlation,
+                async move {
+                    Err(lifecycle_unavailable_failure(
+                        "missing lifecycle admission for v2 request",
+                    ))
+                },
+            ));
         };
         let Some(request_lease) = request.take_request_lease() else {
-            return Box::pin(async move {
-                Err(lifecycle_unavailable_failure(
-                    "missing request lease for v2 request",
-                ))
-            });
+            return Box::pin(correlation::in_scope(
+                "proxy.request",
+                proxy_correlation,
+                async move {
+                    Err(lifecycle_unavailable_failure(
+                        "missing request lease for v2 request",
+                    ))
+                },
+            ));
         };
+        let body_correlation = proxy_correlation.clone();
         let request_context = admission.context;
         let request_model = request.model.clone();
         let request_stream = request.stream;
         let request_reasoning_effort = request.reasoning_effort.clone();
-        Box::pin(async move {
-            let response = match engine.execute(request).await {
-                Ok(response) => response,
-                Err(failure) => {
-                    let finalization_lease =
-                        LifecycleFinalizationLease::new(admission.terminal, None);
-                    let request_id = request_context.request_id.clone();
-                    let attempt_count = failure.attempt_count().unwrap_or_else(|| {
-                        if failure.candidate_id().is_some() {
-                            1
-                        } else {
-                            0
-                        }
-                    }) as u16;
-                    let fallback_count = attempt_count.saturating_sub(1);
-                    let annotations =
-                        crate::services::proxy::lifecycle::request::RequestLogAnnotations {
-                            model: request_model.clone(),
-                            stream: request_stream,
-                            selected_station_key_id: failure.candidate_id().map(str::to_owned),
-                            selected_station_id: failure.candidate_station_id().map(str::to_owned),
-                            upstream_base_url: failure
-                                .candidate_upstream_base_url()
-                                .map(str::to_owned),
-                            route_policy: failure.route_policy().map(str::to_owned),
-                            route_reason: None,
-                            rejected_candidates_json: None,
-                            body_bytes: None,
-                            route_wait_ms: Some(0),
-                            upstream_headers_ms: None,
-                            failure_source: Some(failure.source.as_str().to_string()),
-                            attempts_json: None,
-                            completion_source: Some("precommit_failure".to_string()),
-                            prompt_tokens: None,
-                            completion_tokens: None,
-                            total_tokens: None,
-                            cache_creation_tokens: None,
-                            cache_read_tokens: None,
-                            reasoning_effort: request_reasoning_effort.clone(),
-                            first_token_ms: None,
-                        };
-                    finalization_lease.finalize(
-                        PendingFinalRequestRecord::new(
-                            request_context.clone(),
-                            failure.candidate_id().map(|_| {
-                                crate::services::proxy::lifecycle::request::AttemptId::new(
-                                    request_id,
-                                    fallback_count,
-                                )
-                            }),
-                            attempt_count,
-                            fallback_count,
-                            annotations,
-                        ),
-                        DeliveryTerminal::NotStarted,
-                        FinalizationOutcome::Failed {
-                            code: failure.code.as_str().to_string(),
-                            detail: Some(failure.public_message.clone()),
-                        },
-                        None,
-                    );
-                    return Err(failure);
-                }
-            };
-            let status = response.status;
-            let headers = response.headers;
-            let lifecycle = response.lifecycle;
-            let selected_attempt =
-                if let Some(selected_attempt) = lifecycle.selected_attempt.as_ref() {
-                    Some(SelectedAttemptFinalization::new(
-                        lifecycle_writer
-                            .try_reserve_attempt()
-                            .map_err(lifecycle_admission_failure)?,
-                        selected_attempt.clone(),
-                    ))
-                } else {
-                    None
+        Box::pin(correlation::in_scope(
+            "proxy.request",
+            proxy_correlation,
+            async move {
+                let response = match engine.execute(request).await {
+                    Ok(response) => response,
+                    Err(failure) => {
+                        let finalization_lease =
+                            LifecycleFinalizationLease::new(admission.terminal, None);
+                        let request_id = request_context.request_id.clone();
+                        let attempt_count = failure.attempt_count().unwrap_or_else(|| {
+                            if failure.candidate_id().is_some() {
+                                1
+                            } else {
+                                0
+                            }
+                        }) as u16;
+                        let fallback_count = attempt_count.saturating_sub(1);
+                        let annotations =
+                            crate::services::proxy::lifecycle::request::RequestLogAnnotations {
+                                model: request_model.clone(),
+                                stream: request_stream,
+                                selected_station_key_id: failure.candidate_id().map(str::to_owned),
+                                selected_station_id: failure
+                                    .candidate_station_id()
+                                    .map(str::to_owned),
+                                upstream_base_url: failure
+                                    .candidate_upstream_base_url()
+                                    .map(str::to_owned),
+                                route_policy: failure.route_policy().map(str::to_owned),
+                                route_reason: None,
+                                rejected_candidates_json: None,
+                                body_bytes: None,
+                                route_wait_ms: Some(0),
+                                upstream_headers_ms: None,
+                                failure_source: Some(failure.source.as_str().to_string()),
+                                attempts_json: None,
+                                completion_source: Some("precommit_failure".to_string()),
+                                prompt_tokens: None,
+                                completion_tokens: None,
+                                total_tokens: None,
+                                cache_creation_tokens: None,
+                                cache_read_tokens: None,
+                                reasoning_effort: request_reasoning_effort.clone(),
+                                first_token_ms: None,
+                            };
+                        finalization_lease.finalize(
+                            PendingFinalRequestRecord::new(
+                                request_context.clone(),
+                                failure.candidate_id().map(|_| {
+                                    crate::services::proxy::lifecycle::request::AttemptId::new(
+                                        request_id,
+                                        fallback_count,
+                                    )
+                                }),
+                                attempt_count,
+                                fallback_count,
+                                annotations,
+                            ),
+                            DeliveryTerminal::NotStarted,
+                            FinalizationOutcome::Failed {
+                                code: failure.code.as_str().to_string(),
+                                detail: Some(failure.public_message.clone()),
+                            },
+                            None,
+                        );
+                        return Err(failure);
+                    }
                 };
-            let finalization_lease =
-                LifecycleFinalizationLease::new(admission.terminal, selected_attempt);
-            let pending_record = PendingFinalRequestRecord::new(
-                request_context.clone(),
-                lifecycle
-                    .selected_attempt
-                    .as_ref()
-                    .map(|attempt| attempt.attempt_id.clone()),
-                lifecycle.attempt_count,
-                lifecycle.fallback_count,
-                lifecycle.annotations,
-            );
-            let payload = match response.body {
-                super::execution::ProxyExecutionBody::Buffered(body) => {
-                    ProxyResponsePayload::Stream(buffered_lifecycle_finalizing_stream(
-                        body,
-                        pending_record,
-                        finalization_lease,
-                        request_lease,
-                    ))
-                }
-                super::execution::ProxyExecutionBody::Stream(chunks) => {
-                    ProxyResponsePayload::Stream(lifecycle_finalizing_stream_with_idle_timeout(
-                        chunks,
-                        pending_record,
-                        finalization_lease,
-                        request_lease,
-                        stream_idle_timeout,
-                    ))
-                }
-            };
-            Ok(ProxyHttpResponse {
-                status,
-                headers,
-                payload,
-            })
-        })
+                let status = response.status;
+                let headers = response.headers;
+                let lifecycle = response.lifecycle;
+                let selected_attempt =
+                    if let Some(selected_attempt) = lifecycle.selected_attempt.as_ref() {
+                        Some(SelectedAttemptFinalization::new(
+                            lifecycle_writer
+                                .try_reserve_attempt()
+                                .map_err(lifecycle_admission_failure)?,
+                            selected_attempt.clone(),
+                        ))
+                    } else {
+                        None
+                    };
+                let finalization_lease =
+                    LifecycleFinalizationLease::new(admission.terminal, selected_attempt);
+                let pending_record = PendingFinalRequestRecord::new(
+                    request_context.clone(),
+                    lifecycle
+                        .selected_attempt
+                        .as_ref()
+                        .map(|attempt| attempt.attempt_id.clone()),
+                    lifecycle.attempt_count,
+                    lifecycle.fallback_count,
+                    lifecycle.annotations,
+                );
+                let payload = match response.body {
+                    super::execution::ProxyExecutionBody::Buffered(body) => {
+                        ProxyResponsePayload::Stream(
+                            correlated_buffered_lifecycle_finalizing_stream(
+                                body,
+                                pending_record,
+                                finalization_lease,
+                                request_lease,
+                                body_correlation,
+                            ),
+                        )
+                    }
+                    super::execution::ProxyExecutionBody::Stream(chunks) => {
+                        ProxyResponsePayload::Stream(
+                            correlated_lifecycle_finalizing_stream_with_idle_timeout(
+                                chunks,
+                                pending_record,
+                                finalization_lease,
+                                request_lease,
+                                stream_idle_timeout,
+                                body_correlation,
+                            ),
+                        )
+                    }
+                };
+                Ok(ProxyHttpResponse {
+                    status,
+                    headers,
+                    payload,
+                })
+            },
+        ))
     }
 }
 
@@ -609,7 +632,7 @@ mod tests {
     use std::{
         sync::{
             atomic::{AtomicBool, Ordering as AtomicOrdering},
-            Arc,
+            Arc, Mutex,
         },
         time::Duration,
     };
@@ -618,13 +641,19 @@ mod tests {
     use http::StatusCode;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    use crate::services::proxy::{
-        lifecycle::{
-            attempt::AttemptTerminalRecord,
-            ports::{AttemptCommitAck, LifecycleWriteError, RequestCommitAck, RequestStartAck},
-            request::{FinalRequestRecord, RequestStartRecord},
+    use crate::{
+        models::routing::RouteEndpointKind,
+        services::proxy::{
+            lifecycle::{
+                attempt::AttemptTerminalRecord,
+                ports::{AttemptCommitAck, LifecycleWriteError, RequestCommitAck, RequestStartAck},
+                request::{FinalRequestRecord, RequestContextSnapshot, RequestStartRecord},
+            },
+            limits::{BodyBudget, RequestLease},
+            request::{CanonicalProxyRequest, RequestLifecycleAdmission, RequestRequirements},
+            routing_types::RichRouteCandidate,
+            test_support::{LoopbackUpstream, ScriptedResponse, V2ProxyTestFixture},
         },
-        test_support::{LoopbackUpstream, ScriptedResponse, V2ProxyTestFixture},
     };
 
     use super::*;
@@ -690,6 +719,106 @@ mod tests {
         ) -> BoxFuture<'static, Result<RequestCommitAck, LifecycleWriteError>> {
             Box::pin(async { panic!("unexpected terminal write") })
         }
+    }
+
+    struct CorrelationCapturingRepository {
+        captured: Arc<Mutex<Option<String>>>,
+    }
+
+    impl RoutingRepository for CorrelationCapturingRepository {
+        fn load_runtime_candidates(
+            &self,
+        ) -> BoxFuture<'static, Result<Vec<RichRouteCandidate>, String>> {
+            let captured = Arc::clone(&self.captured);
+            Box::pin(async move {
+                *captured.lock().expect("captured correlation lock") =
+                    correlation::current_id_string();
+                Ok(Vec::new())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn v2_executor_enters_proxy_request_correlation_scope() {
+        let captured = Arc::new(Mutex::new(None));
+        let repository = Arc::new(CorrelationCapturingRepository {
+            captured: Arc::clone(&captured),
+        });
+        let limits = ProxyServerLimits::default();
+        let upstream_pool = UpstreamClientPool::new(limits.clone()).expect("upstream pool");
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (writer, worker) = LifecycleWriter::start(
+            8,
+            Arc::new(DropObservedStore {
+                dropped: Arc::clone(&dropped),
+            }),
+        )
+        .expect("lifecycle writer");
+        let executor = V2ProxyExecutor::new(repository, upstream_pool, limits, writer.clone());
+        let request_id = "req_0198108c8411_00003039_0000000000000001".to_string();
+        let expected = correlation::CorrelationId::for_proxy_request(&request_id);
+        let context = RequestContextSnapshot {
+            request_id: request_id.clone(),
+            method: "POST".to_string(),
+            local_path: "/v1/responses".to_string(),
+            endpoint: "responses".to_string(),
+            received_at_ms: now_millis_for_services() as i64,
+        };
+        let reservation = writer.try_reserve_request().expect("request reservation");
+        let (terminal, start_ack) = reservation.send_start(RequestStartRecord {
+            context: context.clone(),
+        });
+        start_ack
+            .await
+            .expect("request start ack channel")
+            .expect("request start ack");
+        let body_budget = BodyBudget::new(1024);
+        let body_lease = body_budget.acquire(2).await.expect("body lease");
+        let request_permit = Arc::new(tokio::sync::Semaphore::new(1))
+            .try_acquire_owned()
+            .expect("request permit");
+        let request = CanonicalProxyRequest::new(
+            request_id,
+            "/v1/responses".to_string(),
+            RouteEndpointKind::Responses,
+            Some("gpt-test".to_string()),
+            false,
+            None,
+            RequestRequirements::default(),
+            bytes::Bytes::from_static(br#"{}"#),
+            http::HeaderMap::new(),
+            None,
+            None,
+            None,
+            Some(RequestLifecycleAdmission { context, terminal }),
+            body_lease,
+            RequestLease::new(
+                request_permit,
+                Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            ),
+        );
+
+        let failure = match executor.execute(request).await {
+            Ok(_) => panic!("empty repository should reject routing"),
+            Err(failure) => failure,
+        };
+
+        assert_eq!(failure.code.as_str(), "route_no_candidate");
+        assert_eq!(
+            captured
+                .lock()
+                .expect("captured correlation lock")
+                .as_deref(),
+            Some(expected.as_str())
+        );
+        assert!(
+            correlation::current_id_string().is_none(),
+            "proxy request correlation must not leak after execute returns"
+        );
+        drop(executor);
+        drop(writer);
+        worker.join().await.expect("lifecycle writer joins");
+        assert!(dropped.load(AtomicOrdering::Acquire));
     }
 
     #[tokio::test]

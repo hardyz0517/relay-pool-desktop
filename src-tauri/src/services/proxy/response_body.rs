@@ -25,7 +25,7 @@ use super::{
     request::ByteStream,
 };
 
-use crate::services::time::now_millis_for_services;
+use crate::{observability::correlation, services::time::now_millis_for_services};
 
 const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -130,6 +130,7 @@ impl FinalizationTarget {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn buffered_lifecycle_finalizing_stream(
     body: Bytes,
     record: PendingFinalRequestRecord,
@@ -144,6 +145,24 @@ pub(crate) fn buffered_lifecycle_finalizing_stream(
     )
 }
 
+pub(crate) fn correlated_buffered_lifecycle_finalizing_stream(
+    body: Bytes,
+    record: PendingFinalRequestRecord,
+    lease: LifecycleFinalizationLease,
+    request_lease: RequestLease,
+    correlation_id: correlation::CorrelationId,
+) -> ByteStream {
+    correlated_lifecycle_finalizing_stream_with_idle_timeout(
+        Box::pin(futures_util::stream::once(async move { Ok(body) })),
+        record,
+        lease,
+        request_lease,
+        DEFAULT_STREAM_IDLE_TIMEOUT,
+        correlation_id,
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn lifecycle_finalizing_stream(
     stream: ByteStream,
     record: PendingFinalRequestRecord,
@@ -159,6 +178,7 @@ pub(crate) fn lifecycle_finalizing_stream(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn lifecycle_finalizing_stream_with_idle_timeout(
     stream: ByteStream,
     record: PendingFinalRequestRecord,
@@ -172,6 +192,25 @@ pub(crate) fn lifecycle_finalizing_stream_with_idle_timeout(
         FinalizationTarget::Lifecycle(lease),
         Some(request_lease),
         idle_timeout,
+        None,
+    )
+}
+
+pub(crate) fn correlated_lifecycle_finalizing_stream_with_idle_timeout(
+    stream: ByteStream,
+    record: PendingFinalRequestRecord,
+    lease: LifecycleFinalizationLease,
+    request_lease: RequestLease,
+    idle_timeout: Duration,
+    correlation_id: correlation::CorrelationId,
+) -> ByteStream {
+    finalizing_stream_with_target(
+        stream,
+        FinalizationState::Lifecycle(record),
+        FinalizationTarget::Lifecycle(lease),
+        Some(request_lease),
+        idle_timeout,
+        Some(correlation_id),
     )
 }
 
@@ -181,6 +220,7 @@ fn finalizing_stream_with_target(
     target: FinalizationTarget,
     request_lease: Option<RequestLease>,
     idle_timeout: Duration,
+    correlation_id: Option<correlation::CorrelationId>,
 ) -> ByteStream {
     let now_ms = now_millis_for_services() as i64;
     let started_at_ms = match &state {
@@ -198,6 +238,7 @@ fn finalizing_stream_with_target(
         body_bytes: 0,
         first_token_ms: None,
         started_at_ms,
+        correlation_id,
     })
 }
 
@@ -213,12 +254,28 @@ struct LifecycleBody {
     body_bytes: i64,
     first_token_ms: Option<i64>,
     started_at_ms: i64,
+    correlation_id: Option<correlation::CorrelationId>,
 }
 
 impl Stream for LifecycleBody {
     type Item = Result<Bytes, ProxyFailure>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let correlation_id = self.correlation_id.clone();
+        if let Some(correlation_id) = correlation_id {
+            return correlation::with_scope("proxy.request.body", correlation_id, || {
+                self.as_mut().poll_next_inner(cx)
+            });
+        }
+        self.poll_next_inner(cx)
+    }
+}
+
+impl LifecycleBody {
+    fn poll_next_inner(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Bytes, ProxyFailure>>> {
         if self.sleep.is_none() {
             self.reset_idle_sleep();
         }
@@ -262,9 +319,7 @@ impl Stream for LifecycleBody {
             }
         }
     }
-}
 
-impl LifecycleBody {
     fn responses_stream_ended_incomplete(&self) -> bool {
         match self.state.as_ref() {
             Some(FinalizationState::Lifecycle(record)) => {
@@ -472,8 +527,10 @@ mod tests {
     };
 
     use super::{
-        buffered_lifecycle_finalizing_stream, lifecycle_finalizing_stream_with_idle_timeout,
-        LifecycleFinalizationLease, SelectedAttemptFinalization,
+        buffered_lifecycle_finalizing_stream,
+        correlated_lifecycle_finalizing_stream_with_idle_timeout,
+        lifecycle_finalizing_stream_with_idle_timeout, LifecycleFinalizationLease,
+        SelectedAttemptFinalization,
     };
 
     #[tokio::test]
@@ -518,6 +575,62 @@ mod tests {
         );
         assert_eq!(record.annotations.body_bytes, Some(2));
         assert_eq!(active_requests.load(Ordering::SeqCst), 0);
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
+    #[tokio::test]
+    async fn correlated_response_body_polls_inner_stream_under_request_scope() {
+        let fixture =
+            LifecycleBodyFixture::new("response-body-correlated", "/v1/chat/completions").await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            lease,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+        let correlation_id = crate::observability::correlation::CorrelationId::for_proxy_request(
+            "response-body-correlated",
+        );
+        let observed = Arc::new(Mutex::new(None));
+        let observed_in_stream = Arc::clone(&observed);
+        let inner = stream::once(async move {
+            *observed_in_stream
+                .lock()
+                .expect("observed correlation lock") =
+                crate::observability::correlation::current_id_string();
+            Ok(Bytes::from_static(b"ok"))
+        });
+        let mut body = correlated_lifecycle_finalizing_stream_with_idle_timeout(
+            Box::pin(inner),
+            record,
+            lease,
+            request_lease,
+            std::time::Duration::from_secs(1),
+            correlation_id.clone(),
+        );
+
+        assert_eq!(
+            body.next().await.unwrap().unwrap(),
+            Bytes::from_static(b"ok")
+        );
+        assert_eq!(
+            observed
+                .lock()
+                .expect("observed correlation lock")
+                .as_deref(),
+            Some(correlation_id.as_str())
+        );
+        assert!(body.next().await.is_none());
+        store.wait_for_calls(1).await;
+        assert!(
+            crate::observability::correlation::current_id_string().is_none(),
+            "body correlation must not leak after stream polling"
+        );
 
         drop(writer);
         worker.join().await.expect("worker join");
