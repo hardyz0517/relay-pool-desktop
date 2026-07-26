@@ -46,10 +46,10 @@ assert.ok(
 );
 
 assert.ok(
-  activitySource.includes("wasActiveRef") &&
-    activitySource.includes("active && !wasActiveRef.current") &&
-    activitySource.includes("isInitial"),
-  "page activation should fire once on first entry and again only after an inactive-to-active transition",
+  !activitySource.includes("export function usePageActivation") &&
+    !activitySource.includes("wasActiveRef") &&
+    !activitySource.includes("useInteractionActivity"),
+  "page activity should delete the legacy activation callback adapter once page reads move to query owners",
 );
 
 assert.ok(
