@@ -624,6 +624,50 @@ fn validate_temporary_rust_entries(
     Ok(())
 }
 
+fn owned_allowlist_entries(
+    manifest: &Value,
+    key: &str,
+    current_stage: u64,
+) -> Result<BTreeSet<String>, String> {
+    let entries = manifest
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{key} must be an array"))?;
+    let mut identities = BTreeSet::new();
+    for (index, entry) in entries.iter().enumerate() {
+        let Some(object) = entry.as_object() else {
+            return Err(format!("{key}[{index}] must be an owned object"));
+        };
+        let Some(identity) = object.get("identity").and_then(Value::as_str) else {
+            return Err(format!("{key}[{index}].identity is required"));
+        };
+        if identity.trim().is_empty() {
+            return Err(format!("{key}[{index}].identity must not be empty"));
+        }
+        for field in ["owner", "reason", "introduced_shard", "delete_shard"] {
+            if object
+                .get(field)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .is_empty()
+            {
+                return Err(format!("{key}[{index}].{field} is required"));
+            }
+        }
+        let Some(expiry) = object.get("expiry_stage").and_then(Value::as_u64) else {
+            return Err(format!("{key}[{index}].expiry_stage is required"));
+        };
+        if current_stage >= expiry {
+            return Err(format!("{key}[{index}] expired at stage {expiry}"));
+        }
+        if !identities.insert(identity.to_string()) {
+            return Err(format!("{key}[{index}] duplicates identity {identity}"));
+        }
+    }
+    Ok(identities)
+}
+
 #[test]
 fn parser_handles_qualified_grouped_alias_glob_inline_out_of_line_and_cfg_attr_modules() {
     let graph = analyze_crate(&fixture("pass")).expect("fixture must parse");
@@ -676,6 +720,19 @@ fn manifest_gate_rejects_stale_expired_and_empty_allowlists() {
     assert!(validate_temporary_rust_entries(&stale, &actual, 0).is_err());
     let expired = serde_json::json!({"temporary_edges":[{"ecosystem":"rust","from":"crate::a","to":"crate::b","kind":"use","owner":"Task 1","reason":"fixture","expiry_stage":1}]});
     assert!(validate_temporary_rust_entries(&expired, &actual, 1).is_err());
+    let bare_allowlist = serde_json::json!({"spawn_allowlist":["crate::legacy::tokio::spawn"]});
+    assert!(owned_allowlist_entries(&bare_allowlist, "spawn_allowlist", 0).is_err());
+    let owned_allowlist = serde_json::json!({"http_client_construction_allowlist":[{
+        "identity":"crate::outbound::client::<impl>::client_for_policy::reqwest::Client::builder",
+        "owner":"Task 14",
+        "reason":"fixture",
+        "introduced_shard":"fixture",
+        "delete_shard":"fixture",
+        "expiry_stage":2
+    }]});
+    assert!(
+        owned_allowlist_entries(&owned_allowlist, "http_client_construction_allowlist", 0).is_ok()
+    );
     let empty = serde_json::json!({"fan_in_baseline":{},"fan_out_baseline":{}});
     assert!(empty["fan_in_baseline"]
         .as_object()
@@ -795,12 +852,8 @@ fn production_boundaries_match_manifest() {
         );
     }
 
-    let spawn_allowlist = manifest["spawn_allowlist"]
-        .as_array()
-        .expect("spawn_allowlist must be an array")
-        .iter()
-        .filter_map(Value::as_str)
-        .collect::<BTreeSet<_>>();
+    let spawn_allowlist = owned_allowlist_entries(&manifest, "spawn_allowlist", current_stage)
+        .expect("spawn_allowlist entries must be owned, exact and unexpired");
     for site in &graph.spawn_sites {
         assert!(
             spawn_allowlist.contains(site.as_str()),
@@ -809,16 +862,16 @@ fn production_boundaries_match_manifest() {
     }
     for site in &spawn_allowlist {
         assert!(
-            graph.spawn_sites.contains(*site),
+            graph.spawn_sites.contains(site),
             "stale spawn allowlist entry: {site}"
         );
     }
-    let client_allowlist = manifest["http_client_construction_allowlist"]
-        .as_array()
-        .expect("http_client_construction_allowlist must be an array")
-        .iter()
-        .filter_map(Value::as_str)
-        .collect::<BTreeSet<_>>();
+    let client_allowlist = owned_allowlist_entries(
+        &manifest,
+        "http_client_construction_allowlist",
+        current_stage,
+    )
+    .expect("http_client_construction_allowlist entries must be owned, exact and unexpired");
     for site in &graph.http_client_sites {
         assert!(
             client_allowlist.contains(site.as_str()),
@@ -827,7 +880,7 @@ fn production_boundaries_match_manifest() {
     }
     for site in &client_allowlist {
         assert!(
-            graph.http_client_sites.contains(*site),
+            graph.http_client_sites.contains(site),
             "stale HTTP client allowlist entry: {site}"
         );
     }

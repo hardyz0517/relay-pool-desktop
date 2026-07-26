@@ -91,27 +91,27 @@
   ],
   "command_state_allowlist": [],
   "spawn_allowlist": [
-    "crate::application::command_facades::remote_keys::<impl>::prepare_remote_key_save::tokio::task::spawn_blocking",
-    "crate::application::command_facades::remote_keys::<impl>::scan_remote_station_keys::tokio::task::spawn_blocking",
-    "crate::application::command_facades::routing::<impl>::ping_station_endpoint::tokio::task::spawn_blocking",
-    "crate::background_tasks::blocking::<impl>::submit::tokio::spawn",
-    "crate::background_tasks::blocking::<impl>::submit::tokio::task::spawn_blocking",
-    "crate::background_tasks::exit::<impl>::handle_exit_requested::tauri::async_runtime::spawn",
-    "crate::background_tasks::operation::<impl>::start::tokio::spawn",
-    "crate::background_tasks::supervisor::<impl>::start_locked::<method>::spawn",
-    "crate::commands::inspect_latest_update_manifest::tauri::async_runtime::spawn_blocking",
-    "crate::commands::open_path_with_system::<method>::spawn",
-    "crate::commands::open_url_with_system::<method>::spawn",
-    "crate::commands::test_station_key_connectivity::tauri::async_runtime::spawn_blocking",
-    "crate::services::proxy::lifecycle::writer::<impl>::start::tokio::spawn",
-    "crate::services::proxy::server::spawn_server::tokio::spawn",
-    "crate::services::proxy::startup_auto_start::schedule::tauri::async_runtime::spawn"
+    {"identity":"crate::application::command_facades::remote_keys::<impl>::prepare_remote_key_save::tokio::task::spawn_blocking","owner":"Tasks 20-21","introduced_shard":"legacy-baseline","delete_shard":"S5-T20-21-provider-remote-key-capabilities","expiry_stage":6,"reason":"Remote-key provider preparation still calls legacy synchronous provider adapters. Stage 5 moves remote-key capabilities behind provider drivers and removes this direct blocking site."},
+    {"identity":"crate::application::command_facades::remote_keys::<impl>::scan_remote_station_keys::tokio::task::spawn_blocking","owner":"Tasks 20-21","introduced_shard":"legacy-baseline","delete_shard":"S5-T20-21-provider-remote-key-capabilities","expiry_stage":6,"reason":"Remote-key scan still calls legacy synchronous provider adapters. Stage 5 moves remote-key capabilities behind provider drivers and removes this direct blocking site."},
+    {"identity":"crate::application::command_facades::routing::<impl>::ping_station_endpoint::tokio::task::spawn_blocking","owner":"Task 22","introduced_shard":"legacy-baseline","delete_shard":"S5-T22-management-probe-http","expiry_stage":6,"reason":"Endpoint ping still uses legacy synchronous probe transport. Task 22 migrates management/probe HTTP to the shared async outbound path."},
+    {"identity":"crate::background_tasks::blocking::<impl>::submit::tokio::spawn","owner":"Task 14","introduced_shard":"S4-T14B-blocking-executor-kernel","delete_shard":"permanent-managed-work-runtime","expiry_stage":8,"reason":"BlockingExecutor owns a supervised async waiter for each admitted blocking job; this is the managed owner rather than an unowned caller spawn."},
+    {"identity":"crate::background_tasks::blocking::<impl>::submit::tokio::task::spawn_blocking","owner":"Task 14","introduced_shard":"S4-T14B-blocking-executor-kernel","delete_shard":"permanent-managed-work-runtime","expiry_stage":8,"reason":"BlockingExecutor is the bounded capacity owner for unavoidable blocking work; production callers must enter through this executor instead of direct spawn_blocking."},
+    {"identity":"crate::background_tasks::exit::<impl>::handle_exit_requested::tauri::async_runtime::spawn","owner":"Task 17.C2","introduced_shard":"S4-T17C2-exit-coordinator-cutover","delete_shard":"permanent-exit-coordinator","expiry_stage":8,"reason":"ExitCoordinator owns the one async drain spawned from Tauri ExitRequested after preventing immediate exit."},
+    {"identity":"crate::background_tasks::operation::<impl>::start::tokio::spawn","owner":"Task 15","introduced_shard":"S4-T15C-operation-registry-kernel","delete_shard":"permanent-operation-registry","expiry_stage":8,"reason":"OperationRegistry owns foreground operation join handles, cancellation and terminal events through this managed spawn."},
+    {"identity":"crate::background_tasks::supervisor::<impl>::start_locked::<method>::spawn","owner":"Task 14","introduced_shard":"S4-T14A-task-supervisor-kernel","delete_shard":"permanent-task-supervisor","expiry_stage":8,"reason":"TaskSupervisor owns scheduled task run handles and cancellation; permanent runner callers must register with it instead of spawning directly."},
+    {"identity":"crate::commands::inspect_latest_update_manifest::tauri::async_runtime::spawn_blocking","owner":"Task 22","introduced_shard":"legacy-baseline","delete_shard":"S5-T22-management-probe-http","expiry_stage":6,"reason":"Updater manifest inspection still uses legacy blocking HTTP inspection. Task 22 migrates remaining management HTTP or keeps a separately justified updater transport."},
+    {"identity":"crate::commands::open_path_with_system::<method>::spawn","owner":"Task 18","introduced_shard":"legacy-baseline","delete_shard":"S4-T18-shell-open-disposition","expiry_stage":5,"reason":"OS shell open is a short detached platform call without business state ownership; Task 18 keeps it explicitly bounded in the allowlist until a shell-open port disposition is closed."},
+    {"identity":"crate::commands::open_url_with_system::<method>::spawn","owner":"Task 18","introduced_shard":"legacy-baseline","delete_shard":"S4-T18-shell-open-disposition","expiry_stage":5,"reason":"OS shell open is a short detached platform call without business state ownership; Task 18 keeps it explicitly bounded in the allowlist until a shell-open port disposition is closed."},
+    {"identity":"crate::commands::test_station_key_connectivity::tauri::async_runtime::spawn_blocking","owner":"Task 22","introduced_shard":"legacy-baseline","delete_shard":"S5-T22-management-probe-http","expiry_stage":6,"reason":"Station key connectivity command still uses legacy synchronous probe transport. Task 22 migrates management/probe HTTP to shared async outbound."},
+    {"identity":"crate::services::proxy::lifecycle::writer::<impl>::start::tokio::spawn","owner":"Task 17","introduced_shard":"S4-T17-proxy-lifecycle-writer","delete_shard":"permanent-proxy-lifecycle-writer","expiry_stage":8,"reason":"The proxy lifecycle writer owns a bounded channel worker for request/attempt finalization and is not a business-state bypass."},
+    {"identity":"crate::services::proxy::server::spawn_server::tokio::spawn","owner":"Task 17","introduced_shard":"S4-T17-proxy-runtime-coordination","delete_shard":"permanent-proxy-runtime-facade","expiry_stage":8,"reason":"The proxy runtime facade owns the listener task and drains it through the public runtime lifecycle."},
+    {"identity":"crate::services::proxy::startup_auto_start::schedule::tauri::async_runtime::spawn","owner":"Task 17","introduced_shard":"S4-T17-proxy-runtime-coordination","delete_shard":"permanent-proxy-startup-scheduler","expiry_stage":8,"reason":"Startup auto-start schedules one owned proxy runtime start after setup without taking over request lifecycle."}
   ],
   "http_client_construction_allowlist": [
-    "crate::services::endpoint_ping::ping_station_endpoint::ureq::AgentBuilder::new",
-    "crate::services::outbound::agent_builder_for_proxy::ureq::AgentBuilder::new",
-    "crate::outbound::client::<impl>::client_for_policy::reqwest::Client::builder",
-    "crate::services::proxy::upstream::build_client::reqwest::Client::builder"
+    {"identity":"crate::services::endpoint_ping::ping_station_endpoint::ureq::AgentBuilder::new","owner":"Task 22","introduced_shard":"legacy-baseline","delete_shard":"S5-T22-management-probe-http","expiry_stage":6,"reason":"Endpoint ping still uses legacy ureq construction until Task 22 moves management/probe HTTP to shared async outbound."},
+    {"identity":"crate::services::outbound::agent_builder_for_proxy::ureq::AgentBuilder::new","owner":"Task 22","introduced_shard":"legacy-baseline","delete_shard":"S5-T22-production-ureq-removal","expiry_stage":6,"reason":"Legacy services::outbound is retained only for provider paths scheduled for Task 22 deletion after capability drivers own transport."},
+    {"identity":"crate::outbound::client::<impl>::client_for_policy::reqwest::Client::builder","owner":"Task 14","introduced_shard":"S4-T14C-async-outbound-client-kernel","delete_shard":"permanent-async-outbound-client","expiry_stage":8,"reason":"AsyncOutboundClient owns shared reqwest client construction and policy-keyed pooling for provider and management migrations."},
+    {"identity":"crate::services::proxy::upstream::build_client::reqwest::Client::builder","owner":"Task 17","introduced_shard":"S4-T17-proxy-runtime-coordination","delete_shard":"permanent-proxy-upstream-pool","expiry_stage":8,"reason":"Proxy request forwarding keeps its verified upstream client pool and lifecycle owner; Stage 4 only coordinates it through the runtime facade."}
   ],
   "fan_in_baseline": {
     "src-tauri/src/application/app_services.rs::AppServices": {
