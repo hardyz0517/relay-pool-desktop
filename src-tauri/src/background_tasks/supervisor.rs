@@ -97,6 +97,11 @@ impl TaskSupervisor {
         Ok(slot.snapshot())
     }
 
+    pub fn statuses(&self) -> Vec<TaskStatusSnapshot> {
+        let inner = self.inner.lock().expect("task supervisor mutex poisoned");
+        inner.tasks.values().map(TaskSlot::snapshot).collect()
+    }
+
     pub async fn join_finished(&self, id: &TaskId) -> Result<TaskState, TaskSupervisorError> {
         let (join, run_id) = {
             let mut inner = self.inner.lock().expect("task supervisor mutex poisoned");

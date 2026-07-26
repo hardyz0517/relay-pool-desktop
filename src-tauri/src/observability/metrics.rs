@@ -14,6 +14,7 @@ pub(crate) enum MetricKind {
     CommandError,
     CommandLatency,
     OperationTerminal,
+    RuntimeStatus,
     TaskShutdownTimeout,
     WorkspaceLatency,
 }
@@ -22,8 +23,25 @@ pub(crate) enum MetricKind {
 pub(crate) enum MetricLabel {
     Command(&'static str),
     Outcome(MetricOutcome),
+    Runtime(RuntimeMetricLabel),
     Task(&'static str),
     WorkKind(&'static str),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeMetricLabel {
+    BlockingOrphaned,
+    BlockingQueued,
+    BlockingRunning,
+    OperationExpiredTombstones,
+    OperationRunning,
+    OperationStored,
+    OperationTerminal,
+    OutboundClientInstancesCreated,
+    OutboundPoolSize,
+    TaskActive,
+    TaskRegistered,
+    TaskTerminal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
