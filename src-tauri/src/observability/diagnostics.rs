@@ -17,7 +17,8 @@ use crate::{
     outbound::{AsyncOutboundClient, OutboundClientMetrics},
 };
 
-const DEFAULT_DIAGNOSTIC_METRIC_CAPACITY: usize = 512;
+const DEFAULT_DIAGNOSTIC_METRIC_CAPACITY: usize = 4096;
+const DEFAULT_DIAGNOSTIC_METRIC_TTL_MS: u64 = 600_000;
 
 #[derive(Clone)]
 pub(crate) struct RuntimeDiagnostics {
@@ -27,7 +28,10 @@ pub(crate) struct RuntimeDiagnostics {
 impl RuntimeDiagnostics {
     pub(crate) fn new(capacity: usize) -> Result<Self, MetricError> {
         Ok(Self {
-            metrics: Arc::new(Mutex::new(LocalMetricBuffer::new(capacity)?)),
+            metrics: Arc::new(Mutex::new(LocalMetricBuffer::with_ttl(
+                capacity,
+                DEFAULT_DIAGNOSTIC_METRIC_TTL_MS,
+            )?)),
         })
     }
 

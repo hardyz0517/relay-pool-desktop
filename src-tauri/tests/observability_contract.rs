@@ -46,3 +46,54 @@ fn metrics_contract_uses_bounded_low_cardinality_events() {
     assert_eq!(snapshot.events.len(), 1);
     assert_eq!(snapshot.events[0].kind, MetricKind::TaskShutdownTimeout);
 }
+
+#[test]
+fn metrics_contract_freezes_stage4_kind_coverage_and_gc() {
+    for required in [
+        MetricKind::CommandLatency,
+        MetricKind::CommandError,
+        MetricKind::WorkspaceLatency,
+        MetricKind::WorkspacePayloadBytes,
+        MetricKind::WorkspaceIpcCount,
+        MetricKind::TaskStatus,
+        MetricKind::TaskBackoff,
+        MetricKind::TaskShutdownTimeout,
+        MetricKind::OperationTerminal,
+        MetricKind::OperationCancelLatency,
+        MetricKind::BlockingSaturation,
+        MetricKind::BlockingOrphan,
+        MetricKind::CollectorFailure,
+        MetricKind::HiddenQueryStart,
+        MetricKind::BindingDrift,
+    ] {
+        assert!(MetricKind::stage4_required().contains(&required));
+    }
+
+    let mut buffer = LocalMetricBuffer::with_ttl(2, 10).expect("metric buffer");
+    buffer.record(
+        MetricEvent::new_at(
+            MetricKind::CommandLatency,
+            1,
+            vec![MetricLabel::Command("get_settings")],
+            100,
+        )
+        .expect("metric event"),
+    );
+    buffer.collect_garbage_at(111);
+
+    let snapshot = buffer.snapshot();
+    assert_eq!(snapshot.dropped, 1);
+    assert!(snapshot.events.is_empty());
+}
+
+#[test]
+fn metrics_contract_rejects_secret_or_url_labels() {
+    assert!(MetricEvent::new(
+        MetricKind::WorkspaceLatency,
+        1,
+        vec![MetricLabel::WorkKind(
+            "https://example.test/path?token=secret"
+        )],
+    )
+    .is_err());
+}

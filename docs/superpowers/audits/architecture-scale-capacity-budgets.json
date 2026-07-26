@@ -87,6 +87,7 @@
   },
   "diagnostics": {
     "in_memory_event_capacity": 4096,
+    "in_memory_event_ttl_ms": 600000,
     "in_memory_max_bytes": 8388608,
     "metric_series_max": 1024,
     "log_file_max_bytes": 5242880,
