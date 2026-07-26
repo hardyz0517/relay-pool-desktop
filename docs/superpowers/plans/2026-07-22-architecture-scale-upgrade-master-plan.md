@@ -666,6 +666,8 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 #### Task 14.B：有界 BlockingExecutor
 
+**当前 checkpoint：** `S4-T14B-blocking-executor-kernel` 已新增 `background_tasks::blocking` 内核和 `blocking_executor` focused tests，按 Task 1 budget 固定 `max_running=4`、`queue_capacity=16`、`queue_timeout=2000ms`、`default_execution_timeout=30000ms`。测试覆盖 queue full、queue timeout、cancel-before-start、cancel-during-uncancellable-call 的 late result discard、execution timeout/orphan metric、panic typed failure 和 parent deadline cap；architecture boundary manifest 登记 BlockingExecutor 自身的受控 `tokio::spawn` 与 `spawn_blocking` site。该片不迁移任何现有 blocking caller，旧 `spawn_blocking` allowlist 留给 Task 17.B/18 删除。
+
 **文件：**
 
 - Create: `src-tauri/src/background_tasks/blocking.rs`
