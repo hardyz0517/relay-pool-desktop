@@ -19,7 +19,6 @@ import {
   Wallet,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageRefreshEnabled } from "@/components/shell/PageActivity";
 import {
   Button,
   IconButton,
@@ -86,7 +85,6 @@ export function DashboardPage() {
   const toast = useToast();
   const { state: updaterState, showUpdateDialog } = useUpdater();
   const queryClient = useQueryClient();
-  const refreshEnabled = usePageRefreshEnabled();
   const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions(false));
   const requestLogsQuery = useActivityQuery(
     requestLogsQueryOptions(proxyStatusQuery.data?.running ? 2_000 : false),

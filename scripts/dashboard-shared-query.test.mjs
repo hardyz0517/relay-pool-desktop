@@ -14,8 +14,9 @@ for (const option of [
 ]) {
   assert.ok(source.includes(option), `Dashboard should consume ${option}`);
 }
-assert.match(source, /usePageRefreshEnabled\(\)/);
 assert.match(source, /useActivityQuery/);
+assert.ok(!source.includes("usePageRefreshEnabled"));
+assert.ok(!source.includes("usePageActivation"));
 assert.ok(!source.includes("loadDashboardWorkspace"));
 assert.ok(!source.includes("window.setInterval"));
 assert.ok(!source.includes("setProxyStatus"));

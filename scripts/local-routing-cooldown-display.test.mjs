@@ -13,7 +13,8 @@ const clockSource = await readFile("src/features/routing/useCooldownClock.ts", "
 );
 
 assert.match(routingPageSource, /useCooldownClock/);
-assert.match(routingPageSource, /refreshEnabled\s*&&\s*activeTab\s*===\s*"status"/);
+assert.match(routingPageSource, /queryEnabled\s*&&\s*activeTab\s*===\s*"status"/);
+assert.match(routingPageSource, /usePageQueryEnabled/);
 assert.match(statusTabSource, /nowMs=\{nowMs\}/);
 assert.match(statusRowSource, /buildCooldownDisplay/);
 assert.doesNotMatch(statusRowSource + editRowSource, /setInterval|setTimeout/);

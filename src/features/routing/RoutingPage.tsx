@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCcw } from "lucide-react";
+import { usePageQueryEnabled } from "@/app/navigation/PageVisibility";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageRefreshEnabled } from "@/components/shell/PageActivity";
 import { startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
 import { Button, SegmentedControl, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
@@ -19,7 +19,7 @@ type LocalRoutingTab = "status" | "edit";
 export function RoutingPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const refreshEnabled = usePageRefreshEnabled();
+  const queryEnabled = usePageQueryEnabled();
   const [activeTab, setActiveTab] = useState<LocalRoutingTab>("status");
   const [proxyActionPending, setProxyActionPending] = useState(false);
   const workspaceQuery = useActivityQuery(localRoutingWorkspaceQueryOptions());
@@ -41,7 +41,7 @@ export function RoutingPage() {
   }, [queryClient]);
 
   const nowMs = useCooldownClock({
-    active: refreshEnabled && activeTab === "status" && cooldownDeadlines.length > 0,
+    active: queryEnabled && activeTab === "status" && cooldownDeadlines.length > 0,
     deadlines: cooldownDeadlines,
     onExpired: handleCooldownExpired,
   });
