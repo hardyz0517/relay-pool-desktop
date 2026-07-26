@@ -1,0 +1,33 @@
+export type OperationIdInputDto = { operationId: string };
+export type CancelOperationInputDto = { operationId: string; waitMs?: number | null };
+
+export type OperationProgressDto = {
+  sequence: number;
+  message: string;
+};
+
+export type OperationTerminalDto =
+  | { terminal: "completed" }
+  | { terminal: "failed"; code: string }
+  | { terminal: "cancelled" }
+  | { terminal: "timed_out" }
+  | { terminal: "result_unknown" };
+
+export type OperationStateDto =
+  | { state: "running" }
+  | { state: "stopping" }
+  | { state: "terminal"; terminal: OperationTerminalDto };
+
+export type OperationSnapshotDto = {
+  operationId: string;
+  kind: string;
+  ownerFeature: string;
+  state: OperationStateDto;
+  progress: OperationProgressDto[];
+  terminal: OperationTerminalDto | null;
+};
+
+export type CancelOperationOutcomeDto =
+  | { outcome: "stopped"; terminal: OperationTerminalDto }
+  | { outcome: "still_stopping" }
+  | { outcome: "already_terminal"; terminal: OperationTerminalDto };

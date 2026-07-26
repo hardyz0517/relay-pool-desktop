@@ -3,6 +3,7 @@ pub(crate) mod channel_monitor_mutations;
 pub(crate) mod channel_monitor_operations;
 pub(crate) mod channel_monitor_reads;
 pub(crate) mod collector_facts;
+pub(crate) mod operations;
 pub(crate) mod pricing_mutations;
 pub(crate) mod pricing_reads;
 pub(crate) mod proxy_workspace_reads;
@@ -83,6 +84,7 @@ pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     channel_monitor_operations::CHANNEL_MONITOR_OPERATIONS_TYPE,
     channel_monitor_reads::CHANNEL_MONITOR_READS_TYPE,
     collector_facts::COLLECTOR_FACTS_TYPE,
+    operations::OPERATIONS_TYPE,
     pricing_reads::PRICING_READS_TYPE,
     pricing_mutations::PRICING_MUTATIONS_TYPE,
     proxy_workspace_reads::PROXY_WORKSPACE_READS_TYPE,

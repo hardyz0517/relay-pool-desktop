@@ -473,6 +473,10 @@ impl OperationContext {
 pub struct OperationId(u64);
 
 impl OperationId {
+    pub fn from_u64(value: u64) -> Option<Self> {
+        (value > 0).then_some(Self(value))
+    }
+
     pub fn as_u64(self) -> u64 {
         self.0
     }

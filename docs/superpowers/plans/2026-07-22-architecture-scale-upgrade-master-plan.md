@@ -720,6 +720,8 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 **当前 checkpoint：** `S4-T15C-operation-runtime-registration` 将 `OperationRegistry` 纳入单一 `WorkRuntimeBundle`，随 `TaskSupervisor`、`BlockingExecutor` 和 `AsyncOutboundClient` 一起按 architecture budgets 构造并原子注册。该片只建立 managed runtime owner；尚未新增 operation start/cancel/status command、frontend controller 或 connectivity AsyncOutboundClient cutover。
 
+**当前 checkpoint：** `S4-T15D-operation-dto-contract` 新增 operation id、cancel wait、snapshot/progress/terminal 和 cancel outcome 的稳定 IPC DTO，并通过 `pnpm generate:bindings` 同步 generated TypeScript、contract hash 与 command registry artifact。该片只建立公开 contract 投影；尚未新增 production operation command、frontend controller 或 connectivity AsyncOutboundClient cutover。
+
 **文件：**
 
 - Create: `src-tauri/src/background_tasks/operation.rs`
