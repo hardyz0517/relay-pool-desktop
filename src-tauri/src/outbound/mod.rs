@@ -5,7 +5,7 @@ pub mod proxy;
 
 pub use client::{
     AsyncOutboundClient, AsyncOutboundClientConfig, OutboundClientMetrics, OutboundEvidence,
-    OutboundRequest, OutboundResponse,
+    OutboundRequest, OutboundResponse, OutboundStreamResponse,
 };
 pub use error::{OutboundFailure, OutboundFailureKind};
 pub use policy::{

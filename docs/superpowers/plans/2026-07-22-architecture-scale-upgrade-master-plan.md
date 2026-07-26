@@ -724,6 +724,8 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 **当前 checkpoint：** `S4-T15E-operation-status-cancel-commands` 新增 `get_operation_status` 与 `cancel_operation`，通过 managed `WorkRuntimeBundle.operation` 读取和取消真实 `OperationRegistry` entries，并在 compiled IPC registry/generated bindings 中声明 read/idempotent mutation semantics。该片尚未把 connectivity start/UI 从 legacy streaming command 切到 OperationRegistry。
 
+**当前 checkpoint：** `S4-T15F-async-outbound-streaming` 扩展 `AsyncOutboundClient` 的有界 streaming body read 能力，复用既有 client pool、proxy/redirect、budget、cancellation、body limit 和 redacted evidence 合同，并用本地 TCP fixture 覆盖 chunk delivery、cancel 和 body-limit。该片只补齐 connectivity operation 迁移到 async outbound 所需的 transport primitive；尚未新增 connectivity start command、operation-specific result projection 或 UI controller cutover。
+
 **文件：**
 
 - Create: `src-tauri/src/background_tasks/operation.rs`

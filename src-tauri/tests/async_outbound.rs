@@ -28,6 +28,7 @@ struct TestServer {
 enum ServerAction {
     Respond(String),
     DelayThenRespond(Duration, String),
+    StreamChunks(Vec<(Duration, String)>),
     Hang,
     HeadersThenHang(String),
 }
@@ -62,6 +63,12 @@ async fn spawn_server(
                     ServerAction::DelayThenRespond(delay, response) => {
                         tokio::time::sleep(delay).await;
                         let _ = stream.write_all(response.as_bytes()).await;
+                    }
+                    ServerAction::StreamChunks(chunks) => {
+                        for (delay, chunk) in chunks {
+                            tokio::time::sleep(delay).await;
+                            let _ = stream.write_all(chunk.as_bytes()).await;
+                        }
                     }
                     ServerAction::Hang => {
                         std::future::pending::<()>().await;
@@ -539,4 +546,132 @@ async fn first_byte_body_total_timeout_and_cancel_are_distinct() {
         .await
         .expect_err("expired parent budget");
     assert_eq!(expired.kind, OutboundFailureKind::BudgetExhausted);
+}
+
+#[tokio::test]
+async fn streaming_requests_deliver_chunks_and_keep_redacted_evidence() {
+    let server = spawn_server(|_| {
+        Box::pin(async {
+            ServerAction::StreamChunks(vec![
+                (
+                    Duration::ZERO,
+                    "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+                        .to_string(),
+                ),
+                (Duration::from_millis(5), "hello ".to_string()),
+                (Duration::from_millis(5), "world".to_string()),
+            ])
+        })
+    })
+    .await;
+    let client = test_client(
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+        1024,
+        1024,
+    );
+    let mut chunks = Vec::new();
+    let result = client
+        .execute_stream(
+            OutboundRequest::get(
+                format!("{}/stream?api_key=secret", server.url),
+                RequestBudget::from_now(Duration::from_secs(2)),
+            ),
+            CancellationToken::new(),
+            |chunk| {
+                chunks.push(String::from_utf8_lossy(chunk).to_string());
+                Ok(())
+            },
+        )
+        .await
+        .expect("streaming request succeeds");
+
+    assert_eq!(result.status, StatusCode::OK);
+    assert_eq!(result.body_bytes, 11);
+    assert_eq!(chunks.concat(), "hello world");
+    assert_eq!(result.evidence.start_url, format!("{}/stream", server.url));
+    assert_eq!(result.evidence.body_redaction, "<body redacted: 11 bytes>");
+    assert!(!format!("{:?}", result.evidence).contains("api_key=secret"));
+}
+
+#[tokio::test]
+async fn streaming_body_limit_and_cancel_are_typed_without_late_chunks() {
+    let large_body = spawn_server(|_| {
+        Box::pin(async { ServerAction::Respond(response("200 OK", &[], "abcdef")) })
+    })
+    .await;
+    let client = test_client(
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+        3,
+        1024,
+    );
+    let mut chunks = Vec::new();
+    let error = client
+        .execute_stream(
+            OutboundRequest::get(
+                format!("{}/large-stream", large_body.url),
+                RequestBudget::from_now(Duration::from_secs(2)),
+            ),
+            CancellationToken::new(),
+            |chunk| {
+                chunks.push(chunk.len());
+                Ok(())
+            },
+        )
+        .await
+        .expect_err("streaming body exceeds configured limit");
+    assert_eq!(
+        error.kind,
+        OutboundFailureKind::BodyLimitExceeded { limit_bytes: 3 }
+    );
+    assert!(
+        chunks.is_empty(),
+        "oversized chunk is rejected before delivery"
+    );
+
+    let slow_body = spawn_server(|_| {
+        Box::pin(async {
+            ServerAction::StreamChunks(vec![
+                (
+                    Duration::ZERO,
+                    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: keep-alive\r\n\r\n"
+                        .to_string(),
+                ),
+                (Duration::ZERO, "first".to_string()),
+                (Duration::from_secs(1), "later".to_string()),
+            ])
+        })
+    })
+    .await;
+    let client = test_client(
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+        Duration::from_secs(3),
+        1024,
+        1024,
+    );
+    let token = CancellationToken::new();
+    let token_for_chunk = token.clone();
+    let mut chunks = Vec::new();
+    let error = client
+        .execute_stream(
+            OutboundRequest::get(
+                format!("{}/cancel-stream", slow_body.url),
+                RequestBudget::from_now(Duration::from_secs(3)),
+            ),
+            token,
+            |chunk| {
+                chunks.push(String::from_utf8_lossy(chunk).to_string());
+                token_for_chunk.cancel();
+                Ok(())
+            },
+        )
+        .await
+        .expect_err("streaming cancellation is typed");
+
+    assert_eq!(error.kind, OutboundFailureKind::Cancelled);
+    assert_eq!(chunks.concat(), "first");
 }
