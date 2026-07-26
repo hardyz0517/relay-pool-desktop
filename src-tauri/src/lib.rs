@@ -639,4 +639,35 @@ mod tests {
             .release()
             .expect("release verification lease");
     }
+
+    #[tokio::test]
+    async fn recovery_data_store_owner_releases_lease_without_runtime() {
+        let root = tempfile::tempdir().expect("temp directory");
+        let config_dir = root.path().join("config");
+        let lease = InstallationLease::try_acquire(&config_dir).expect("acquire lease");
+        let owner = DataStoreRuntimeOwner::new(None, lease);
+
+        owner.shutdown().await.expect("shutdown recovery owner");
+
+        InstallationLease::try_acquire(&config_dir)
+            .expect("recovery shutdown releases lease")
+            .release()
+            .expect("release verification lease");
+    }
+
+    #[tokio::test]
+    async fn data_store_owner_shutdown_is_idempotent_after_lease_release() {
+        let root = tempfile::tempdir().expect("temp directory");
+        let config_dir = root.path().join("config");
+        let lease = InstallationLease::try_acquire(&config_dir).expect("acquire lease");
+        let owner = DataStoreRuntimeOwner::new(None, lease);
+
+        owner.shutdown().await.expect("first shutdown");
+        owner.shutdown().await.expect("second shutdown");
+
+        InstallationLease::try_acquire(&config_dir)
+            .expect("lease remains released")
+            .release()
+            .expect("release verification lease");
+    }
 }
