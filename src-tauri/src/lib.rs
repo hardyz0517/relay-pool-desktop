@@ -5,6 +5,7 @@ mod commands;
 mod ipc;
 mod models;
 mod observability;
+pub mod outbound;
 mod persistence;
 mod runtime_composition;
 mod services;

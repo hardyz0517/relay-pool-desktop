@@ -121,6 +121,7 @@
     "crate::services::channel_monitors::probe::run_monitor_probe::ureq::AgentBuilder::new",
     "crate::services::endpoint_ping::ping_station_endpoint::ureq::AgentBuilder::new",
     "crate::services::outbound::agent_builder_for_proxy::ureq::AgentBuilder::new",
+    "crate::outbound::client::<impl>::client_for_policy::reqwest::Client::builder",
     "crate::services::proxy::upstream::build_client::reqwest::Client::builder"
   ],
   "fan_in_baseline": {

@@ -680,6 +680,8 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 #### Task 14.C：共享 AsyncOutboundClient
 
+**当前 checkpoint：** `S4-T14C-async-outbound-client-kernel` 已新增独立 `outbound::{client,policy,proxy,error}` 内核和 `async_outbound` focused tests，覆盖 direct/system/manual HTTP/SOCKS policy values、stable non-secret pool key、manual redirect、cross-origin sensitive-header stripping、URL/header/body redaction、body limit、Retry-After budget、remaining budget、cancel、first-byte/body/total timeout 与 typed failure。该片只建立中立 reqwest async transport primitive，并登记唯一新 `reqwest::Client::builder` site；尚未接入 app composition、OperationRegistry、provider driver 或删除旧 `services::outbound.rs`/`ureq` 路径。
+
 **文件：**
 
 - Create: `src-tauri/src/outbound/{mod,client,policy,proxy,error}.rs`
