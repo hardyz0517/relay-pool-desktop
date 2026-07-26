@@ -94,6 +94,7 @@ use crate::{
             DeleteModelAliasInputDto, EndpointPingResultDto, ReorderLocalRoutingKeysInputDto,
             UpdateStationKeyCapabilitiesInputDto, UpsertModelAliasInputDto,
         },
+        runtime_status::RuntimeStatusDto,
         settings::{
             AppStatusDto, CcswitchImportResultDto, OpenExternalUrlInputDto, SettingsDto,
             UpdateLocalAccessKeyInputDto, UpdateSettingsInputDto,
@@ -288,6 +289,25 @@ pub async fn get_runtime_contract_info(
     correlation::in_command_scope("get_runtime_contract_info", async {
         EmptyInputDto::parse(input)?;
         Ok(current_runtime_contract())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_runtime_status(
+    runtime: State<'_, ManagedWorkRuntime>,
+    input: Value,
+) -> Result<RuntimeStatusDto, error::CommandError> {
+    correlation::in_command_scope("get_runtime_status", async {
+        EmptyInputDto::parse(input)?;
+        Ok(RuntimeStatusDto::from(
+            runtime
+                .supervisor
+                .statuses()
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>(),
+        ))
     })
     .await
 }

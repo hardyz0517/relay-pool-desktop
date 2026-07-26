@@ -7,8 +7,8 @@ use std::{
 };
 
 use relay_pool_desktop_lib::background_tasks::{
-    BoxTaskFuture, RestartPolicy, TaskFailure, TaskId, TaskRunContext, TaskSpec, TaskState,
-    TaskSupervisor, TaskSupervisorError,
+    BoxTaskFuture, RestartPolicy, RuntimeTaskStatus, RuntimeTaskSummary, TaskFailure, TaskId,
+    TaskRunContext, TaskSpec, TaskState, TaskSupervisor, TaskSupervisorError,
 };
 
 fn immediate_task(
@@ -204,6 +204,46 @@ async fn transient_failure_schedules_deterministic_capped_retry() {
         TaskState::Succeeded
     );
     assert_eq!(attempts.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn runtime_task_summary_projects_supervisor_timestamps_and_retry_fields() {
+    let supervisor = TaskSupervisor::new();
+    supervisor
+        .register(
+            TaskSpec::new(
+                "status",
+                "runner",
+                immediate_task(Err(TaskFailure::transient(
+                    "authorization bearer sk-secret",
+                ))),
+            )
+            .with_restart_policy(RestartPolicy::transient(
+                1,
+                Duration::from_millis(10),
+                Duration::from_millis(10),
+            )),
+        )
+        .expect("register task");
+
+    supervisor
+        .start(&TaskId::from("status"))
+        .expect("start task");
+    assert_eq!(
+        supervisor
+            .join_finished(&TaskId::from("status"))
+            .await
+            .unwrap(),
+        TaskState::BackingOff { retry_at_ms: 10 }
+    );
+    let summary = RuntimeTaskSummary::from(supervisor.status(&TaskId::from("status")).unwrap());
+
+    assert_eq!(summary.status, RuntimeTaskStatus::BackingOff);
+    assert!(summary.last_started_at_ms.is_some());
+    assert!(summary.last_succeeded_at_ms.is_none());
+    assert_eq!(summary.last_failure_code.as_deref(), Some("[REDACTED]"));
+    assert_eq!(summary.consecutive_failures, 1);
+    assert!(summary.next_retry_at_ms.is_some());
 }
 
 #[tokio::test]

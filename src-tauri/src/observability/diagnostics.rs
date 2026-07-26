@@ -3,28 +3,21 @@
     reason = "Task 18B freezes the local runtime diagnostics read model before command/UI access is wired"
 )]
 
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::sync::{Arc, Mutex};
 
 use crate::{
     background_tasks::{
         BlockingExecutor, BlockingJobMetrics, OperationRegistry, OperationRegistryMetrics,
-        TaskRunId, TaskState, TaskStatusSnapshot, TaskSupervisor,
+        RuntimeTaskStatus, RuntimeTaskSummary, TaskSupervisor,
     },
-    observability::{
-        metrics::{
-            LocalMetricBuffer, MetricError, MetricEvent, MetricKind, MetricLabel, MetricOutcome,
-            MetricSnapshot, RuntimeMetricLabel,
-        },
-        redaction::redact_text_preview_with_limit,
+    observability::metrics::{
+        LocalMetricBuffer, MetricError, MetricEvent, MetricKind, MetricLabel, MetricOutcome,
+        MetricSnapshot, RuntimeMetricLabel,
     },
     outbound::{AsyncOutboundClient, OutboundClientMetrics},
 };
 
 const DEFAULT_DIAGNOSTIC_METRIC_CAPACITY: usize = 512;
-const MAX_TASK_FAILURE_CODE_BYTES: usize = 96;
 
 #[derive(Clone)]
 pub(crate) struct RuntimeDiagnostics {
@@ -121,16 +114,19 @@ impl RuntimeDiagnostics {
                 RuntimeMetricLabel::TaskRegistered,
                 tasks
                     .iter()
-                    .filter(|task| task.state == RuntimeTaskState::Registered)
+                    .filter(|task| task.status == RuntimeTaskStatus::Registered)
                     .count() as u64,
             ),
             (
                 RuntimeMetricLabel::TaskActive,
-                tasks.iter().filter(|task| task.state.is_active()).count() as u64,
+                tasks.iter().filter(|task| task.status.is_active()).count() as u64,
             ),
             (
                 RuntimeMetricLabel::TaskTerminal,
-                tasks.iter().filter(|task| task.state.is_terminal()).count() as u64,
+                tasks
+                    .iter()
+                    .filter(|task| task.status.is_terminal())
+                    .count() as u64,
             ),
         ] {
             self.record(
@@ -155,57 +151,6 @@ pub(crate) struct RuntimeDiagnosticsSnapshot {
     pub(crate) outbound: OutboundRuntimeSummary,
     pub(crate) operations: OperationRuntimeSummary,
     pub(crate) metrics: MetricSnapshot,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RuntimeTaskSummary {
-    pub(crate) id: String,
-    pub(crate) kind: String,
-    pub(crate) run_id: Option<u64>,
-    pub(crate) state: RuntimeTaskState,
-    pub(crate) failure_code: Option<String>,
-    pub(crate) consecutive_failures: u32,
-    pub(crate) last_delay_ms: Option<u64>,
-}
-
-impl From<TaskStatusSnapshot> for RuntimeTaskSummary {
-    fn from(snapshot: TaskStatusSnapshot) -> Self {
-        let (state, failure_code) = runtime_task_state(snapshot.state);
-        Self {
-            id: snapshot.id.as_str().to_string(),
-            kind: snapshot.kind,
-            run_id: snapshot.run_id.map(TaskRunId::into_u64),
-            state,
-            failure_code,
-            consecutive_failures: snapshot.consecutive_failures,
-            last_delay_ms: snapshot.last_delay.map(duration_millis_u64),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RuntimeTaskState {
-    Registered,
-    Running,
-    Stopping,
-    BackingOff,
-    Succeeded,
-    Failed,
-    Cancelled,
-    Panicked,
-}
-
-impl RuntimeTaskState {
-    fn is_active(self) -> bool {
-        matches!(self, Self::Running | Self::Stopping)
-    }
-
-    fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Succeeded | Self::Failed | Self::Cancelled | Self::Panicked
-        )
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -259,35 +204,6 @@ impl From<OperationRegistryMetrics> for OperationRuntimeSummary {
     }
 }
 
-fn runtime_task_state(state: TaskState) -> (RuntimeTaskState, Option<String>) {
-    match state {
-        TaskState::Registered => (RuntimeTaskState::Registered, None),
-        TaskState::Running => (RuntimeTaskState::Running, None),
-        TaskState::Stopping => (RuntimeTaskState::Stopping, None),
-        TaskState::BackingOff { .. } => (RuntimeTaskState::BackingOff, None),
-        TaskState::Succeeded => (RuntimeTaskState::Succeeded, None),
-        TaskState::Failed { code } => (
-            RuntimeTaskState::Failed,
-            Some(redact_text_preview_with_limit(
-                &code,
-                MAX_TASK_FAILURE_CODE_BYTES,
-            )),
-        ),
-        TaskState::Cancelled => (RuntimeTaskState::Cancelled, None),
-        TaskState::Panicked => (RuntimeTaskState::Panicked, None),
-    }
-}
-
-fn duration_millis_u64(duration: Duration) -> u64 {
-    duration.as_millis().min(u128::from(u64::MAX)) as u64
-}
-
-impl TaskRunId {
-    fn into_u64(self) -> u64 {
-        self.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -296,10 +212,10 @@ mod tests {
         background_tasks::{
             BlockingExecutor, BlockingExecutorConfig, OperationOwner, OperationRegistry,
             OperationRegistryConfig, OperationStartRequest, OperationTerminal, RestartPolicy,
-            TaskFailure, TaskSpec, TaskState, TaskSupervisor,
+            RuntimeTaskStatus, TaskFailure, TaskSpec, TaskState, TaskSupervisor,
         },
         observability::{
-            diagnostics::{RuntimeDiagnostics, RuntimeTaskState},
+            diagnostics::RuntimeDiagnostics,
             metrics::{MetricKind, MetricLabel, RuntimeMetricLabel},
         },
         outbound::{AsyncOutboundClient, AsyncOutboundClientConfig},
@@ -361,8 +277,11 @@ mod tests {
         let snapshot = diagnostics.snapshot_runtime(&supervisor, &blocking, &outbound, &operation);
 
         assert_eq!(snapshot.tasks.len(), 1);
-        assert_eq!(snapshot.tasks[0].state, RuntimeTaskState::BackingOff);
-        assert_eq!(snapshot.tasks[0].failure_code, None);
+        assert_eq!(snapshot.tasks[0].status, RuntimeTaskStatus::BackingOff);
+        assert_eq!(
+            snapshot.tasks[0].last_failure_code.as_deref(),
+            Some("[REDACTED]")
+        );
         assert_eq!(snapshot.blocking.running, 0);
         assert_eq!(snapshot.operations.terminal, 1);
         assert_eq!(snapshot.metrics.events.len(), 8);
@@ -392,9 +311,13 @@ mod tests {
                 },
                 consecutive_failures: 1,
                 last_delay: None,
+                last_started_at_ms: None,
+                last_succeeded_at_ms: None,
+                last_failure_code: None,
+                next_retry_at_ms: None,
             });
 
-        assert_eq!(summary.state, RuntimeTaskState::Failed);
-        assert_eq!(summary.failure_code.as_deref(), Some("[REDACTED]"));
+        assert_eq!(summary.status, RuntimeTaskStatus::Failed);
+        assert_eq!(summary.last_failure_code.as_deref(), Some("[REDACTED]"));
     }
 }

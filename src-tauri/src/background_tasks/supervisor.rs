@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use futures_util::FutureExt;
@@ -38,6 +38,10 @@ struct TaskSlot {
     join: Option<JoinHandle<TaskJoinResult>>,
     consecutive_failures: u32,
     last_delay: Option<Duration>,
+    last_started_at_ms: Option<u64>,
+    last_succeeded_at_ms: Option<u64>,
+    last_failure_code: Option<String>,
+    next_retry_at_ms: Option<u64>,
 }
 
 impl TaskSupervisor {
@@ -63,6 +67,10 @@ impl TaskSupervisor {
                 join: None,
                 consecutive_failures: 0,
                 last_delay: None,
+                last_started_at_ms: None,
+                last_succeeded_at_ms: None,
+                last_failure_code: None,
+                next_retry_at_ms: None,
             },
         );
         Ok(())
@@ -236,6 +244,8 @@ impl TaskSupervisor {
         slot.run_id = Some(run_id);
         slot.token = Some(token);
         slot.join = Some(join);
+        slot.last_started_at_ms = Some(now_epoch_millis());
+        slot.next_retry_at_ms = None;
         Ok(run_id)
     }
 
@@ -259,9 +269,15 @@ impl TaskSupervisor {
             Ok(Ok(())) => {
                 slot.consecutive_failures = 0;
                 slot.last_delay = None;
+                slot.last_failure_code = None;
+                slot.next_retry_at_ms = None;
+                slot.last_succeeded_at_ms = Some(now_epoch_millis());
                 TaskState::Succeeded
             }
-            Ok(Err(error)) if error.class == RestartClass::Cancelled => TaskState::Cancelled,
+            Ok(Err(error)) if error.class == RestartClass::Cancelled => {
+                slot.next_retry_at_ms = None;
+                TaskState::Cancelled
+            }
             Ok(Err(error))
                 if error.class == RestartClass::Transient
                     && slot.consecutive_failures < slot.spec.restart_policy.max_retries =>
@@ -272,15 +288,24 @@ impl TaskSupervisor {
                     .restart_policy
                     .delay_for_attempt(slot.consecutive_failures);
                 slot.last_delay = Some(delay);
+                slot.last_failure_code = Some(error.code);
+                slot.next_retry_at_ms =
+                    Some(now_epoch_millis().saturating_add(duration_millis_u64(delay)));
                 TaskState::BackingOff {
                     retry_at_ms: delay.as_millis() as u64,
                 }
             }
             Ok(Err(error)) => {
                 slot.consecutive_failures = slot.consecutive_failures.saturating_add(1);
+                slot.last_failure_code = Some(error.code.clone());
+                slot.next_retry_at_ms = None;
                 TaskState::Failed { code: error.code }
             }
-            Err(()) => TaskState::Panicked,
+            Err(()) => {
+                slot.last_failure_code = Some("panic".to_string());
+                slot.next_retry_at_ms = None;
+                TaskState::Panicked
+            }
         };
         slot.state = next_state.clone();
         Ok(next_state)
@@ -302,8 +327,24 @@ impl TaskSlot {
             state: self.state.clone(),
             consecutive_failures: self.consecutive_failures,
             last_delay: self.last_delay,
+            last_started_at_ms: self.last_started_at_ms,
+            last_succeeded_at_ms: self.last_succeeded_at_ms,
+            last_failure_code: self.last_failure_code.clone(),
+            next_retry_at_ms: self.next_retry_at_ms,
         }
     }
+}
+
+fn now_epoch_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
+}
+
+fn duration_millis_u64(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 #[derive(Debug, PartialEq, Eq)]

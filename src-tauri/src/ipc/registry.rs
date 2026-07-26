@@ -52,6 +52,7 @@ macro_rules! ipc_command_registry {
         $consumer! {
             app_status => $crate::commands::app_status,
             get_runtime_contract_info => $crate::commands::get_runtime_contract_info,
+            get_runtime_status => $crate::commands::get_runtime_status,
             get_data_store_startup_state => $crate::commands::get_data_store_startup_state,
             refresh_data_store_candidates => $crate::commands::refresh_data_store_candidates,
             locate_data_store_candidate => $crate::commands::locate_data_store_candidate,
@@ -238,6 +239,7 @@ struct CommandContract {
 fn command_contract(name: &str) -> CommandContract {
     match name {
         "app_status" => migrated_read("EmptyInputDto", "AppStatusDto"),
+        "get_runtime_status" => migrated_read("EmptyInputDto", "RuntimeStatusDto"),
         "get_settings" => migrated_read("EmptyInputDto", "SettingsDto"),
         "get_local_access_key" => migrated_read("EmptyInputDto", "String"),
         "update_local_access_key" => migrated_mutation(
