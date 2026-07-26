@@ -3,15 +3,16 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import { QueryClient, QueryClientProvider, useQueries, useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Profiler, useEffect, type ProfilerOnRenderCallback } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, test } from "vitest";
+import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
+import type { BackendClient } from "@/lib/bridge/BackendClient";
 import {
   changeEventsQueryOptions,
   currentStationBalanceSnapshotsQueryOptions,
-  stationAssetQueryOptions,
+  stationAssetsQueryOptions,
   stationsQueryOptions,
 } from "@/lib/query/resourceQueries";
 import { canonicalJson, DATASET_SIZES, generateDataset, sha256 } from "./dataset.mjs";
@@ -28,7 +29,7 @@ type CommandCall = { command: string; projected_response_json_bytes: number };
 const mounted: Array<ReturnType<typeof createRoot>> = [];
 afterEach(() => {
   while (mounted.length) mounted.pop()?.unmount();
-  clearMocks();
+  setActiveBackendClient(null);
   document.body.replaceChildren();
 });
 
@@ -37,10 +38,9 @@ function CurrentStationsQueryTopology({ enabled, onReady }: { enabled: boolean; 
   const balancesQuery = useQuery({ ...currentStationBalanceSnapshotsQueryOptions(), enabled, subscribed: enabled });
   const changesQuery = useQuery({ ...changeEventsQueryOptions(false), enabled, subscribed: enabled });
   const stations = stationsQuery.data ?? [];
-  const stationAssetQueries = useQueries({
-    queries: stations.map((station) => ({ ...stationAssetQueryOptions(station.id), enabled, subscribed: enabled })),
-  });
-  const ready = enabled && stationsQuery.isSuccess && balancesQuery.isSuccess && changesQuery.isSuccess && stationAssetQueries.length === stations.length && stationAssetQueries.every((query) => query.isSuccess);
+  const stationIds = stations.map((station) => station.id);
+  const stationAssetsQuery = useQuery({ ...stationAssetsQueryOptions(stationIds), subscribed: enabled });
+  const ready = enabled && stationsQuery.isSuccess && balancesQuery.isSuccess && changesQuery.isSuccess && stationAssetsQuery.isSuccess;
   useEffect(() => {
     if (ready) onReady();
   }, [onReady, ready]);
@@ -49,25 +49,37 @@ function CurrentStationsQueryTopology({ enabled, onReady }: { enabled: boolean; 
 }
 
 function installCurrentBackendMock(dataset: Dataset, calls: CommandCall[]) {
-  mockIPC((command) => {
-    let response: unknown;
-    switch (command) {
-      case "list_stations":
-        response = dataset.stations;
-        break;
-      case "list_current_station_balance_snapshots":
-      case "list_change_events":
-        response = [];
-        break;
-      case "get_latest_collector_snapshot":
-        response = null;
-        break;
-      default:
-        throw new Error(`unexpected command in scale baseline: ${command}`);
-    }
+  function record<T>(command: string, response: T): T {
     calls.push({ command, projected_response_json_bytes: Buffer.byteLength(JSON.stringify(response)) });
     return JSON.parse(JSON.stringify(response));
-  });
+  }
+  setActiveBackendClient({
+    mode: "desktop",
+    stations: {
+      listStations: async () => record("list_stations", dataset.stations) as never,
+    },
+    economics: {
+      listCurrentStationBalanceSnapshots: async () => record("list_current_station_balance_snapshots", []) as never,
+    },
+    changeEvents: {
+      listChangeEvents: async () => record("list_change_events", []) as never,
+    },
+    collectors: {
+      listLatestCollectorSnapshots: async () => record("list_latest_collector_snapshots", []) as never,
+    },
+    settings: {} as BackendClient["settings"],
+    stationKeys: {} as BackendClient["stationKeys"],
+    collectorRuns: {} as BackendClient["collectorRuns"],
+    proxy: {} as BackendClient["proxy"],
+    localRouting: {} as BackendClient["localRouting"],
+    dataRecovery: {} as BackendClient["dataRecovery"],
+    groupFacts: {} as BackendClient["groupFacts"],
+    pricing: {} as BackendClient["pricing"],
+    routing: {} as BackendClient["routing"],
+    channels: {} as BackendClient["channels"],
+    updater: {} as BackendClient["updater"],
+    handshake: async () => ({}) as never,
+  } as BackendClient);
 }
 
 async function oneRun(dataset: Dataset, enabled: boolean) {
@@ -108,7 +120,7 @@ async function oneRun(dataset: Dataset, enabled: boolean) {
   mounted.pop();
   queryClient.clear();
   host.remove();
-  clearMocks();
+  setActiveBackendClient(null);
   return {
     invoke_count: commandCalls.length,
     commands: commandCalls,
@@ -182,7 +194,6 @@ describe("deterministic current frontend scale baseline", () => {
         backend_read_port_round_trips: blockedMetric(11, "backend read-port instrumentation is introduced by the aggregate read shard"),
         backend_sql_statement_count_runtime: blockedMetric(11, "runtime SQL instrumentation is not owned by Stage 0"),
         backend_query_duration_ms: blockedMetric(11, "backend query timing requires the aggregate query owner"),
-        sqlite_query_plan: blockedMetric(11, "query plan evidence requires the final aggregate SQL"),
         real_tauri_ipc_payload_bytes: blockedMetric(26, "real packaged Tauri IPC qualification is a release gate"),
         real_tauri_command_duration_ms: blockedMetric(26, "real packaged Tauri command timing is a release gate"),
         webview2_page_commit_ms: blockedMetric(26, "WebView2 timeline evidence requires the packaged release runtime"),

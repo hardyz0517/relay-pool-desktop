@@ -48,8 +48,9 @@ use crate::{
         },
         collector_facts::{
             BalanceSnapshotDto, CollectorRunDto, CollectorSnapshotDto, CollectorStationIdInputDto,
-            GroupRateRecordDto, StationGroupBindingDto, StationGroupOptionDto,
-            UpsertBalanceSnapshotInputDto, UpsertStationGroupBindingInputDto,
+            CollectorStationIdsInputDto, GroupRateRecordDto, StationGroupBindingDto,
+            StationGroupOptionDto, UpsertBalanceSnapshotInputDto,
+            UpsertStationGroupBindingInputDto,
         },
         pricing_mutations::{
             PricingRuleIdInputDto, UpsertModelBasePriceInputDto, UpsertPricingRuleInputDto,
@@ -2390,6 +2391,21 @@ pub async fn get_latest_collector_snapshot(
         let input = CollectorStationIdInputDto::parse(input)?;
         facade
             .get_latest_collector_snapshot(&input.station_id)
+            .await
+            .map_err(public_command_application_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_latest_collector_snapshots(
+    facade: State<'_, CollectorMetadataCommandFacade>,
+    input: Value,
+) -> Result<Vec<CollectorSnapshotDto>, error::CommandError> {
+    correlation::in_command_scope("list_latest_collector_snapshots", async {
+        let input = CollectorStationIdsInputDto::parse(input)?;
+        facade
+            .list_latest_collector_snapshots(input.station_ids)
             .await
             .map_err(public_command_application_error)
     })

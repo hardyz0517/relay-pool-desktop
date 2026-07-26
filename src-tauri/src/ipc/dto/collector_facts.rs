@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -16,6 +18,7 @@ const MAX_TEXT_BYTES: usize = 512;
 const MAX_JSON_BYTES: usize = 65_536;
 const MAX_ABSOLUTE_VALUE: f64 = 1.0e18;
 const MAX_RATE_MULTIPLIER: f64 = 1.0e6;
+const MAX_STATION_ID_LIST: usize = 500;
 
 pub type BalanceSnapshotDto = BalanceSnapshot;
 pub type CollectorRunDto = CollectorRun;
@@ -34,6 +37,37 @@ impl CollectorStationIdInputDto {
     pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
         let input: Self = parse_value(value)?;
         validate_id("stationId", &input.station_id)?;
+        Ok(input)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CollectorStationIdsInputDto {
+    pub station_ids: Vec<String>,
+}
+
+impl CollectorStationIdsInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value)?;
+        if input.station_ids.len() > MAX_STATION_ID_LIST {
+            return Err(invalid_input(
+                "stationIds",
+                "too_many",
+                "The station ID list exceeds the allowed size.",
+            ));
+        }
+        let mut unique = HashSet::with_capacity(input.station_ids.len());
+        for station_id in &input.station_ids {
+            validate_id("stationIds", station_id)?;
+            if !unique.insert(station_id) {
+                return Err(invalid_input(
+                    "stationIds",
+                    "duplicate",
+                    "The station ID list must not contain duplicates.",
+                ));
+            }
+        }
         Ok(input)
     }
 }
@@ -470,6 +504,7 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
     }))
     .expect("binding fixture input");
     let station_input = serde_json::json!({"stationId": "station-1"});
+    let station_ids_input = serde_json::json!({"stationIds": ["station-1"]});
     vec![
         serde_json::json!({"command":"list_balance_snapshots","input":{},"output":[balance.clone()]}),
         serde_json::json!({"command":"list_current_station_balance_snapshots","input":{},"output":[balance.clone()]}),
@@ -482,6 +517,7 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
         serde_json::json!({"command":"list_collector_runs","input":station_input.clone(),"output":[fixture_collector_run()]}),
         serde_json::json!({"command":"list_collector_snapshots","input":station_input.clone(),"output":[fixture_collector_snapshot()]}),
         serde_json::json!({"command":"get_latest_collector_snapshot","input":station_input,"output":fixture_collector_snapshot()}),
+        serde_json::json!({"command":"list_latest_collector_snapshots","input":station_ids_input,"output":[fixture_collector_snapshot()]}),
     ]
 }
 
@@ -637,13 +673,15 @@ mod tests {
         for value in [
             serde_json::json!({"stationId":"station-1","unexpected":true}),
             serde_json::json!({"stationId":"bad id"}),
+            serde_json::json!({"stationIds":["station-1","station-1"]}),
+            serde_json::json!({"stationIds":["bad id"]}),
         ] {
-            assert_eq!(
-                CollectorStationIdInputDto::parse(value)
-                    .expect_err("invalid station input")
-                    .code,
-                CommandErrorCode::InvalidInput
-            );
+            let error = if value.get("stationIds").is_some() {
+                CollectorStationIdsInputDto::parse(value).expect_err("invalid station input")
+            } else {
+                CollectorStationIdInputDto::parse(value).expect_err("invalid station input")
+            };
+            assert_eq!(error.code, CommandErrorCode::InvalidInput);
         }
 
         let mut balance = serde_json::to_value(

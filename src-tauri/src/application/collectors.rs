@@ -6,6 +6,7 @@ use std::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use sqlx::Row;
 
 use crate::{
     application::{
@@ -15,7 +16,7 @@ use crate::{
         pagination::{PageLimit, MAX_PAGE_LIMIT},
     },
     models::{
-        collector::{CollectorEvent, CollectorRunResult},
+        collector::{CollectorEvent, CollectorRunResult, CollectorSnapshot},
         collector_runs::CollectorRun,
         group_facts::{
             GroupRateRecord, StationGroupBinding, UpsertStationGroupBindingInput,
@@ -371,6 +372,63 @@ impl CollectorService {
             .latest_station_snapshot(&mut read, station_id)
             .await
             .map_err(Into::into)
+    }
+
+    pub(crate) async fn list_latest_station_snapshots(
+        &self,
+        station_ids: Vec<String>,
+    ) -> Result<Vec<CollectorSnapshot>, ApplicationError> {
+        if station_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        if station_ids.len() > MAX_PAGE_LIMIT as usize {
+            return Err(ApplicationError::ConstraintViolation);
+        }
+        let mut unique = HashSet::with_capacity(station_ids.len());
+        for station_id in &station_ids {
+            validate_station_id(station_id)?;
+            if !unique.insert(station_id.as_str()) {
+                return Err(ApplicationError::ConstraintViolation);
+            }
+        }
+
+        let mut read = self.runtime.begin_read().await?;
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            r#"
+            WITH ranked AS (
+                SELECT id, station_id, endpoint_revision, source, status, fetched_at,
+                       summary_json, normalized_json, raw_json_redacted, error_message, created_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY station_id
+                           ORDER BY created_at DESC, id DESC
+                       ) AS station_snapshot_rank
+                FROM collector_snapshots
+                WHERE station_id IN (
+            "#,
+        );
+        {
+            let mut separated = query.separated(", ");
+            for station_id in &station_ids {
+                separated.push_bind(station_id);
+            }
+        }
+        query.push(
+            r#"
+                )
+            )
+            SELECT id, station_id, endpoint_revision, source, status, fetched_at,
+                   summary_json, normalized_json, raw_json_redacted, error_message, created_at
+            FROM ranked
+            WHERE station_snapshot_rank = 1
+            ORDER BY station_id ASC
+            "#,
+        );
+        let rows = query
+            .build()
+            .fetch_all(read.connection())
+            .await
+            .map_err(|_| ApplicationError::Internal)?;
+        rows.into_iter().map(row_to_collector_snapshot).collect()
     }
 
     pub(crate) async fn record_capture_snapshot(
@@ -874,6 +932,31 @@ fn validate_station_id(station_id: &str) -> Result<(), ApplicationError> {
         return Err(ApplicationError::ConstraintViolation);
     }
     Ok(())
+}
+
+fn row_to_collector_snapshot(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<CollectorSnapshot, ApplicationError> {
+    let parse_json = |column: &str| -> Result<Value, ApplicationError> {
+        serde_json::from_str(&row.get::<String, _>(column)).map_err(|_| ApplicationError::Internal)
+    };
+    let raw_json_redacted = row
+        .get::<Option<String>, _>("raw_json_redacted")
+        .map(|value| serde_json::from_str(&value).map_err(|_| ApplicationError::Internal))
+        .transpose()?;
+    Ok(CollectorSnapshot {
+        id: row.get("id"),
+        station_id: row.get("station_id"),
+        endpoint_revision: row.get("endpoint_revision"),
+        source: row.get("source"),
+        status: row.get("status"),
+        fetched_at: row.get("fetched_at"),
+        summary_json: parse_json("summary_json")?,
+        normalized_json: parse_json("normalized_json")?,
+        raw_json_redacted,
+        error_message: row.get("error_message"),
+        created_at: row.get("created_at"),
+    })
 }
 
 fn normalize_station_group_binding(
@@ -1448,6 +1531,161 @@ mod tests {
             .await
             .expect_err("stale capture must fail closed");
         assert!(matches!(error, ApplicationError::StaleRevision));
+        runtime.close().await.expect("close persistence runtime");
+    }
+
+    #[tokio::test]
+    async fn list_latest_station_snapshots_returns_one_latest_row_per_requested_station() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("latest-snapshots.sqlite3"))
+                .await
+                .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(FixedClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequenceIds::default());
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = CollectorService::new(runtime.handle(), clock, ids);
+        let first_station = stations
+            .create(CreateStationInput {
+                name: "Latest Snapshot A".to_string(),
+                station_type: "newapi".to_string(),
+                website_url: "https://latest-a.example.test".to_string(),
+                api_base_url: "https://latest-a.example.test/v1".to_string(),
+                api_key: String::new(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .await
+            .expect("first station");
+        let second_station = stations
+            .create(CreateStationInput {
+                name: "Latest Snapshot B".to_string(),
+                station_type: "newapi".to_string(),
+                website_url: "https://latest-b.example.test".to_string(),
+                api_base_url: "https://latest-b.example.test/v1".to_string(),
+                api_key: String::new(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .await
+            .expect("second station");
+
+        let mut first_old = capture_request(&first_station.id, first_station.endpoint_revision);
+        first_old.summary_json = json!({ "attempt": "old" });
+        collectors
+            .record_capture_snapshot(first_old)
+            .await
+            .expect("first old snapshot");
+        let mut first_new = capture_request(&first_station.id, first_station.endpoint_revision);
+        first_new.status = "manual_required".to_string();
+        first_new.summary_json = json!({ "attempt": "new", "loginRequired": true });
+        collectors
+            .record_capture_snapshot(first_new)
+            .await
+            .expect("first new snapshot");
+        let mut second = capture_request(&second_station.id, second_station.endpoint_revision);
+        second.summary_json = json!({ "attempt": "second" });
+        collectors
+            .record_capture_snapshot(second)
+            .await
+            .expect("second snapshot");
+
+        assert!(collectors
+            .list_latest_station_snapshots(Vec::new())
+            .await
+            .expect("empty list")
+            .is_empty());
+        let latest = collectors
+            .list_latest_station_snapshots(vec![
+                second_station.id.clone(),
+                first_station.id.clone(),
+                "missing-station".to_string(),
+            ])
+            .await
+            .expect("latest snapshots");
+        assert_eq!(latest.len(), 2);
+        let by_station = latest
+            .into_iter()
+            .map(|snapshot| (snapshot.station_id.clone(), snapshot))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            by_station
+                .get(&first_station.id)
+                .expect("first latest")
+                .summary_json,
+            json!({ "attempt": "new", "loginRequired": true })
+        );
+        assert_eq!(
+            by_station
+                .get(&second_station.id)
+                .expect("second latest")
+                .summary_json,
+            json!({ "attempt": "second" })
+        );
+        let duplicate_error = collectors
+            .list_latest_station_snapshots(vec![first_station.id.clone(), first_station.id.clone()])
+            .await
+            .expect_err("duplicates should fail closed");
+        assert!(matches!(
+            duplicate_error,
+            ApplicationError::ConstraintViolation
+        ));
+        runtime.close().await.expect("close persistence runtime");
+    }
+
+    #[tokio::test]
+    async fn latest_station_snapshots_query_plan_uses_station_created_index() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("latest-snapshot-plan.sqlite3"))
+                .await
+                .expect("runtime");
+        let mut read = runtime.begin_read().await.expect("read session");
+        let rows = sqlx::query(
+            r#"
+            EXPLAIN QUERY PLAN
+            WITH ranked AS (
+                SELECT id, station_id, endpoint_revision, source, status, fetched_at,
+                       summary_json, normalized_json, raw_json_redacted, error_message, created_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY station_id
+                           ORDER BY created_at DESC, id DESC
+                       ) AS station_snapshot_rank
+                FROM collector_snapshots
+                WHERE station_id IN (?1, ?2)
+            )
+            SELECT id, station_id, endpoint_revision, source, status, fetched_at,
+                   summary_json, normalized_json, raw_json_redacted, error_message, created_at
+            FROM ranked
+            WHERE station_snapshot_rank = 1
+            ORDER BY station_id ASC
+            "#,
+        )
+        .bind("station-1")
+        .bind("station-2")
+        .fetch_all(read.connection())
+        .await
+        .expect("query plan");
+        let details = rows
+            .into_iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            details.contains("idx_collector_snapshots_station_created"),
+            "latest snapshot aggregate should use station/created index, got:\n{details}"
+        );
+        drop(read);
         runtime.close().await.expect("close persistence runtime");
     }
 

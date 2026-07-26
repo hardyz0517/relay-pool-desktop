@@ -55,6 +55,7 @@ export class DemoBackend implements BackendClient {
     testStationLoginInput: () => this.rejectUnsupported("collectors"),
     listCollectorSnapshots: (_stationId: string) => this.rejectUnsupported("collectors"),
     getLatestCollectorSnapshot: (_stationId: string) => this.rejectUnsupported("collectors"),
+    listLatestCollectorSnapshots: (_stationIds: string[]) => this.rejectUnsupported("collectors"),
     startCaptureSession: (_stationId: string) => this.rejectUnsupported("collectors"),
     getCaptureSessionStatus: (_stationId: string) => this.rejectUnsupported("collectors"),
     finishCaptureSession: (_stationId: string) => this.rejectUnsupported("collectors"),

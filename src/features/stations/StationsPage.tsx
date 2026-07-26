@@ -17,10 +17,9 @@ import {
   type AnimateLayoutChanges,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Clock3, Edit3, GripVertical, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageRefreshEnabled } from "@/components/shell/PageActivity";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
@@ -47,7 +46,7 @@ import { queryKeys } from "@/lib/query/queryKeys";
 import {
   currentStationBalanceSnapshotsQueryOptions,
   changeEventsQueryOptions,
-  stationAssetQueryOptions,
+  stationAssetsQueryOptions,
   stationsQueryOptions,
 } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
@@ -154,7 +153,6 @@ type StationsPageProps = {
 export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: StationsPageProps) {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const refreshEnabled = usePageRefreshEnabled();
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
@@ -191,28 +189,24 @@ export function StationsPage({ onAddProvider, onEditProvider, onOpenStation }: S
   );
   const changesQuery = useActivityQuery(changeEventsQueryOptions(false));
   const stations = stationsQuery.data ?? [];
+  const stationIds = useMemo(() => stations.map((station) => station.id), [stations]);
   const balanceSnapshots = balancesQuery.data ?? [];
   const changeEvents = changesQuery.data ?? [];
   const loading = stationsQuery.isPending && stationsQuery.data === undefined;
   const queryError = stationsQuery.error ? readError(stationsQuery.error) : null;
   const loadError = queryError ?? error;
   const balanceFactsReady = balancesQuery.data !== undefined;
-  const stationAssetQueries = useQueries({
-    queries: stations.map((station) => ({
-      ...stationAssetQueryOptions(station.id),
-      enabled: refreshEnabled,
-      subscribed: refreshEnabled,
-    })),
-  });
+  const stationAssetsQuery = useActivityQuery(stationAssetsQueryOptions(stationIds));
   const assetSnapshotsByStation = useMemo(
-    () =>
-      new Map(
-        stations.map((station, index) => [
-          station.id,
-          stationAssetQueries[index]?.data ?? null,
-        ]),
-      ),
-    [stationAssetQueries, stations],
+    () => {
+      const latestSnapshotsByStation = new Map(
+        (stationAssetsQuery.data ?? []).map((snapshot) => [snapshot.stationId, snapshot]),
+      );
+      return new Map(
+        stations.map((station) => [station.id, latestSnapshotsByStation.get(station.id) ?? null]),
+      );
+    },
+    [stationAssetsQuery.data, stations],
   );
 
   useEffect(() => {

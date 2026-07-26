@@ -38,11 +38,11 @@ assert.ok(
   activitySource.includes("export function usePageRefreshEnabled()") &&
     dashboardSource.includes("useActivityQuery") &&
     stationsSource.includes("useActivityQuery") &&
-    stationsSource.includes("useQueries({") &&
-    stationsSource.includes("enabled: refreshEnabled") &&
+    stationsSource.includes("stationAssetsQueryOptions(stationIds)") &&
+    !stationsSource.includes("useQueries({") &&
     !dashboardSource.includes("usePageActivity") &&
     !stationsSource.includes("usePageActivity"),
-  "query-heavy pages should use activity-bound queries while Stations keeps its registered per-row query blocker guarded",
+  "query-heavy pages should use activity-bound queries without the legacy Stations per-row query blocker",
 );
 
 assert.ok(

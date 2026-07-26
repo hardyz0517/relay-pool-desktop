@@ -27,9 +27,10 @@ runMain(() => {
     assert(measured?.fixture_sha256 === expectedHash, `report fixture hash mismatch for ${size}`);
     assert(measured.sample_runs === 30 && measured.samples?.length === 30, `dataset ${size} requires 30 raw samples`);
     for (const [index, sample] of measured.samples.entries()) {
-      assert(sample.invoke_count === size + 3, `dataset ${size} sample ${index} must preserve the current N+3 command topology`);
+      assert(sample.invoke_count === 4, `dataset ${size} sample ${index} must preserve the current bounded 4-command topology`);
       assert(sample.commands?.filter((call) => call.command === "list_stations").length === 1, `dataset ${size} sample ${index} lacks one station list command`);
-      assert(sample.commands?.filter((call) => call.command === "get_latest_collector_snapshot").length === size, `dataset ${size} sample ${index} does not expose the current per-station fan-out`);
+      assert(sample.commands?.filter((call) => call.command === "list_latest_collector_snapshots").length === 1, `dataset ${size} sample ${index} lacks the aggregate latest-snapshot command`);
+      assert(sample.commands?.filter((call) => call.command === "get_latest_collector_snapshot").length === 0, `dataset ${size} sample ${index} must not use the legacy per-station snapshot command`);
       assert(sample.projected_response_json_bytes > 0, `dataset ${size} sample ${index} projected bytes must be measured`);
       assert(sample.query_lifecycle?.some((event) => event.status === "success"), `dataset ${size} sample ${index} lacks Query success lifecycle`);
       assert(sample.react_profiler_commits?.length > 0, `dataset ${size} sample ${index} lacks React Profiler commits`);
@@ -37,14 +38,13 @@ runMain(() => {
       assert(Number.isFinite(sample.data_ready_commit_ms) && sample.data_ready_commit_ms >= 0, `dataset ${size} sample ${index} has invalid data-ready time`);
     }
     assert(measured.hidden_query_start_count === 0, `dataset ${size} hidden topology started work`);
-    assert(measured.summary?.invoke_count?.min === size + 3 && measured.summary?.invoke_count?.max === size + 3, `dataset ${size} invoke summary drifted`);
+    assert(measured.summary?.invoke_count?.min === 4 && measured.summary?.invoke_count?.max === 4, `dataset ${size} invoke summary drifted`);
     assert(Number.isFinite(measured.summary?.data_ready_commit_ms?.p50) && Number.isFinite(measured.summary?.data_ready_commit_ms?.p95), `dataset ${size} requires p50/p95 commit statistics`);
   }
   const expectedOwners = {
     backend_read_port_round_trips: "Task 11",
     backend_sql_statement_count_runtime: "Task 11",
     backend_query_duration_ms: "Task 11",
-    sqlite_query_plan: "Task 11",
     real_tauri_ipc_payload_bytes: "Task 26",
     real_tauri_command_duration_ms: "Task 26",
     webview2_page_commit_ms: "Task 26",

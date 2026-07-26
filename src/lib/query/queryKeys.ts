@@ -4,6 +4,8 @@ export const queryKeys = {
   requestLogs: ["requestLogs"] as const,
   stations: ["stations"] as const,
   stationAssets: ["stationAssets"] as const,
+  stationAssetsForStations: (stationIds: readonly string[]) =>
+    ["stationAssets", "stations", stationIds] as const,
   stationAsset: (stationId: string) => ["stationAssets", stationId] as const,
   collectorSnapshots: (stationId: string) => ["collectorSnapshots", stationId] as const,
   collectorRuns: (stationId: string) => ["collectorRuns", stationId] as const,

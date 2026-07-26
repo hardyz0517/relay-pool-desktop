@@ -115,6 +115,7 @@ commands.allow = [
   "collect_sub2api_station",
   "list_collector_snapshots",
   "get_latest_collector_snapshot",
+  "list_latest_collector_snapshots",
   "start_capture_session",
   "get_capture_session_status",
   "finish_capture_session",

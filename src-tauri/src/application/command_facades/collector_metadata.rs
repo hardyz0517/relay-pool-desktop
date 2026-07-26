@@ -80,4 +80,13 @@ impl CollectorMetadataCommandFacade {
     ) -> Result<Option<CollectorSnapshot>, ApplicationError> {
         self.collectors.latest_station_snapshot(station_id).await
     }
+
+    pub(crate) async fn list_latest_collector_snapshots(
+        &self,
+        station_ids: Vec<String>,
+    ) -> Result<Vec<CollectorSnapshot>, ApplicationError> {
+        self.collectors
+            .list_latest_station_snapshots(station_ids)
+            .await
+    }
 }

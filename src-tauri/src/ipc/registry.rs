@@ -163,6 +163,7 @@ macro_rules! ipc_command_registry {
             collect_sub2api_station => $crate::commands::collect_sub2api_station,
             list_collector_snapshots => $crate::commands::list_collector_snapshots,
             get_latest_collector_snapshot => $crate::commands::get_latest_collector_snapshot,
+            list_latest_collector_snapshots => $crate::commands::list_latest_collector_snapshots,
             start_capture_session => $crate::commands::start_capture_session,
             get_capture_session_status => $crate::commands::get_capture_session_status,
             record_capture_event => $crate::commands::record_capture_event,
@@ -427,6 +428,9 @@ fn command_contract(name: &str) -> CommandContract {
         }
         "get_latest_collector_snapshot" => {
             migrated_read("CollectorStationIdInputDto", "Option<CollectorSnapshotDto>")
+        }
+        "list_latest_collector_snapshots" => {
+            migrated_read("CollectorStationIdsInputDto", "Vec<CollectorSnapshotDto>")
         }
         "list_channel_monitors" => migrated_read("EmptyInputDto", "Vec<ChannelMonitorDto>"),
         "list_channel_monitor_summaries" => migrated_read(
@@ -980,6 +984,10 @@ export function listCollectorSnapshots(input: CollectorStationIdInputDto): Promi
 
 export function getLatestCollectorSnapshot(input: CollectorStationIdInputDto): Promise<CollectorSnapshotDto | null> {
   return invokeCommand<CollectorSnapshotDto | null>("get_latest_collector_snapshot", { input });
+}
+
+export function listLatestCollectorSnapshots(input: CollectorStationIdsInputDto): Promise<CollectorSnapshotDto[]> {
+  return invokeCommand<CollectorSnapshotDto[]>("list_latest_collector_snapshots", { input });
 }
 
 export function listChannelMonitors(input: EmptyInputDto = {}): Promise<ChannelMonitorDto[]> {

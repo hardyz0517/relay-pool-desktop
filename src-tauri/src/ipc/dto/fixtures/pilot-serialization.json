@@ -1730,6 +1730,31 @@
       }
     },
     {
+      "command": "list_latest_collector_snapshots",
+      "input": {
+        "stationIds": [
+          "station-1"
+        ]
+      },
+      "output": [
+        {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "success",
+          "summaryJson": {
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
       "command": "list_channel_monitors",
       "input": {},
       "output": [

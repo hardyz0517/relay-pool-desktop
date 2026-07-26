@@ -16,6 +16,7 @@ import {
   getCaptureSessionStatus,
   getLatestCollectorSnapshot,
   listCollectorSnapshots,
+  listLatestCollectorSnapshots,
   startCaptureSession,
   startManualAuthorization,
   testStationLogin,
@@ -38,6 +39,7 @@ describe("collector backend cutover", () => {
     })),
     listCollectorSnapshots: vi.fn(async () => []),
     getLatestCollectorSnapshot: vi.fn(async () => null),
+    listLatestCollectorSnapshots: vi.fn(async () => []),
     startCaptureSession: vi.fn(async () => captureStatus("capturing")),
     getCaptureSessionStatus: vi.fn(async () => captureStatus("idle")),
     finishCaptureSession: vi.fn(async () => runResult()),
@@ -74,6 +76,7 @@ describe("collector backend cutover", () => {
     await testStationLoginInput(loginInput);
     await listCollectorSnapshots("station-1");
     await getLatestCollectorSnapshot("station-1");
+    await listLatestCollectorSnapshots(["station-1", "station-2"]);
     await startCaptureSession("station-1");
     await startManualAuthorization("station-1");
     await getCaptureSessionStatus("station-1");
@@ -91,6 +94,7 @@ describe("collector backend cutover", () => {
     expect(collectors.testStationLoginInput).toHaveBeenCalledWith(loginInput);
     expect(collectors.listCollectorSnapshots).toHaveBeenCalledWith("station-1");
     expect(collectors.getLatestCollectorSnapshot).toHaveBeenCalledWith("station-1");
+    expect(collectors.listLatestCollectorSnapshots).toHaveBeenCalledWith(["station-1", "station-2"]);
     expect(collectors.startCaptureSession).toHaveBeenCalledTimes(2);
     expect(collectors.getCaptureSessionStatus).toHaveBeenCalledWith("station-1");
     expect(collectors.finishCaptureSession).toHaveBeenCalledWith("station-1");

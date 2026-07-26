@@ -3,6 +3,7 @@ import { listChangeEvents } from "@/lib/api/changeEvents";
 import {
   getCaptureSessionStatus,
   getLatestCollectorSnapshot,
+  listLatestCollectorSnapshots,
   listCollectorSnapshots,
 } from "@/lib/api/collector";
 import { listCollectorRuns } from "@/lib/api/collectorRuns";
@@ -55,6 +56,19 @@ export const stationAssetQueryOptions = (stationId: string) =>
       withQueryTimeout(
         getLatestCollectorSnapshot(stationId),
         `station asset snapshot ${stationId}`,
+        6_000,
+      ),
+    staleTime: 30_000,
+  });
+
+export const stationAssetsQueryOptions = (stationIds: readonly string[]) =>
+  queryOptions({
+    queryKey: queryKeys.stationAssetsForStations(stationIds),
+    enabled: stationIds.length > 0,
+    queryFn: () =>
+      withQueryTimeout(
+        listLatestCollectorSnapshots([...stationIds]),
+        "station asset snapshots",
         6_000,
       ),
     staleTime: 30_000,

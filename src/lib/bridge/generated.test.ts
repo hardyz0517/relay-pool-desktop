@@ -62,6 +62,7 @@ import {
   listBalanceSnapshotsForStation,
   listCollectorRuns,
   listCollectorSnapshots,
+  listLatestCollectorSnapshots,
   listCurrentStationBalanceSnapshots,
   listGroupRateRecords,
   loadChannelStatusWorkspace,
@@ -409,8 +410,9 @@ describe("generated settings/stations transport envelopes", () => {
     await listCollectorRuns({ stationId });
     await listCollectorSnapshots({ stationId });
     await getLatestCollectorSnapshot({ stationId });
+    await listLatestCollectorSnapshots({ stationIds: [stationId] });
 
-    expect(transport.invoke.mock.calls.slice(-11)).toEqual([
+    expect(transport.invoke.mock.calls.slice(-12)).toEqual([
       ["list_balance_snapshots", { input: {} }],
       ["list_current_station_balance_snapshots", { input: {} }],
       ["list_balance_snapshots_for_station", { input: { stationId } }],
@@ -422,6 +424,7 @@ describe("generated settings/stations transport envelopes", () => {
       ["list_collector_runs", { input: { stationId } }],
       ["list_collector_snapshots", { input: { stationId } }],
       ["get_latest_collector_snapshot", { input: { stationId } }],
+      ["list_latest_collector_snapshots", { input: { stationIds: [stationId] } }],
     ]);
   });
 

@@ -7,38 +7,48 @@ const resources = await readFile("src/lib/query/resourceQueries.ts", "utf8");
 assert.match(
   resources,
   /export const stationAssetQueryOptions = \(stationId: string\) =>/,
-  "station asset snapshots should be shared resource queries instead of page-local enrichment state",
+  "station detail snapshot reads should keep a shared single-station resource query",
 );
 
 assert.match(
   resources,
   /withQueryTimeout\(\s*getLatestCollectorSnapshot\(stationId\),\s*`station asset snapshot \$\{stationId\}`,\s*6_000,\s*\)/,
-  "station asset snapshot queries should keep a bounded timeout",
+  "single-station detail snapshot queries should keep a bounded timeout",
 );
 
 assert.match(
   source,
-  /useActivityQuery\(refreshEnabled,\s*stationsQueryOptions\(\)\)/,
-  "station list reads should be gated by page refresh activity",
+  /useActivityQuery\(stationsQueryOptions\(\)\)/,
+  "station list reads should be gated by canonical page query activity",
 );
 
 assert.match(
   source,
-  /useActivityQuery\(\s*refreshEnabled,\s*currentStationBalanceSnapshotsQueryOptions\(\),\s*\)/,
-  "balance snapshot reads should be gated by page refresh activity",
+  /useActivityQuery\(\s*currentStationBalanceSnapshotsQueryOptions\(\),\s*\)/,
+  "balance snapshot reads should be gated by canonical page query activity",
 );
 
 assert.match(
   source,
-  /useActivityQuery\(refreshEnabled,\s*changeEventsQueryOptions\(false\)\)/,
-  "change-event reads should be gated by page refresh activity",
+  /useActivityQuery\(changeEventsQueryOptions\(false\)\)/,
+  "change-event reads should be gated by canonical page query activity",
 );
 
 assert.ok(
-  source.includes("useQueries") &&
-    source.includes("stationAssetQueryOptions(station.id)") &&
-    source.includes("subscribed: refreshEnabled"),
-  "station asset snapshot reads should unsubscribe when the page is hidden",
+  source.includes("stationAssetsQueryOptions(stationIds)") &&
+    source.includes("new Map(") &&
+    !source.includes("stationAssetQueryOptions(station.id)") &&
+    !source.includes("useQueries"),
+  "station list asset snapshots should read one bounded aggregate query instead of per-row queries",
+);
+
+assert.ok(
+  resources.includes("export const stationAssetsQueryOptions = (stationIds: readonly string[]) =>") &&
+    resources.includes("listLatestCollectorSnapshots([...stationIds])") &&
+    resources.includes("enabled: stationIds.length > 0") &&
+    resources.includes('queryKey: queryKeys.stationAssetsForStations(stationIds)') &&
+    resources.includes('"station asset snapshots"'),
+  "station list aggregate snapshots should use a canonical bounded query option",
 );
 
 assert.ok(

@@ -592,6 +592,11 @@
           "command": "get_latest_collector_snapshot",
           "use_case": "get_latest_collector_snapshot",
           "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "list_latest_collector_snapshots",
+          "use_case": "list_latest_collector_snapshots",
+          "dependencies": ["CollectorService"]
         }
       ],
       "non_goals": [

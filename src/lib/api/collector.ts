@@ -37,6 +37,10 @@ export function getLatestCollectorSnapshot(stationId: string) {
   return getActiveBackendClient().collectors.getLatestCollectorSnapshot(stationId);
 }
 
+export function listLatestCollectorSnapshots(stationIds: string[]) {
+  return getActiveBackendClient().collectors.listLatestCollectorSnapshots(stationIds);
+}
+
 export function startCaptureSession(stationId: string) {
   return getActiveBackendClient().collectors.startCaptureSession(stationId);
 }

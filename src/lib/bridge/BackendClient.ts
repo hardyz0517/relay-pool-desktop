@@ -272,6 +272,7 @@ export type CollectorsDomainClient = {
   testStationLoginInput(input: StationLoginTestInput): Promise<StationLoginTestResult>;
   listCollectorSnapshots(stationId: string): Promise<CollectorSnapshot[]>;
   getLatestCollectorSnapshot(stationId: string): Promise<CollectorSnapshot | null>;
+  listLatestCollectorSnapshots(stationIds: string[]): Promise<CollectorSnapshot[]>;
   startCaptureSession(stationId: string): Promise<CaptureSessionStatus>;
   getCaptureSessionStatus(stationId: string): Promise<CaptureSessionStatus>;
   finishCaptureSession(stationId: string): Promise<CollectorRunResult>;
