@@ -16,7 +16,7 @@ vi.mock("@/lib/api/dataRecovery", () => ({
   getDataStoreStartupState: mocks.getDataStoreStartupState,
 }));
 
-vi.mock("@/features/updater/UpdaterProvider", () => ({
+vi.mock("@/lib/updater/UpdaterProvider", () => ({
   useUpdater: () => ({
     state: { phase: "idle" },
     checkNow: vi.fn(),

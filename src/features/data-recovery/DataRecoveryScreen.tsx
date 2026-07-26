@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/Card";
-import { useUpdater } from "@/features/updater/UpdaterProvider";
-import { isUpdaterBusyPhase } from "@/features/updater/updateState";
+import { useUpdater } from "@/lib/updater/UpdaterProvider";
+import { isUpdaterBusyPhase } from "@/lib/updater/updateState";
 import {
   activateDataStoreCandidate,
   createNewDataStore,

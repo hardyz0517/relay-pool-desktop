@@ -1,0 +1,629 @@
+import type { ChangeEvent, ChangeEventStatus, ChangeSeverity } from "@/lib/types/changeEvents";
+import type { StatusTone } from "@/components/ui";
+import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
+import { parseTimestampLikeDate } from "@/lib/time";
+
+export type ChangeFilter = {
+  severity: "all" | ChangeSeverity;
+  status: "active" | "all" | ChangeEventStatus;
+  objectType: "all" | string;
+  query: string;
+};
+
+export const severityLabels: Record<ChangeSeverity, string> = {
+  critical: "严重",
+  warning: "警告",
+  info: "信息",
+};
+
+export const severityTone: Record<ChangeSeverity, StatusTone> = {
+  critical: "error",
+  warning: "warning",
+  info: "info",
+};
+
+export const statusLabels: Record<ChangeEventStatus, string> = {
+  unread: "未读",
+  read: "已读",
+  dismissed: "已忽略",
+  resolved: "已解决",
+};
+
+export const eventTypeLabels: Record<string, string> = {
+  balance_low: "余额偏低",
+  balance_depleted: "余额耗尽",
+  group_added: "分组新增",
+  group_missing: "分组不可见",
+  rate_changed: "倍率变化",
+  price_changed: "价格变化",
+  price_expired: "价格过期",
+  model_added: "模型新增",
+  model_removed: "模型下架",
+  key_invalid: "密钥异常",
+  key_group_bound: "密钥分组已绑定",
+  key_group_unresolved: "密钥分组无法识别",
+  collector_failed: "采集失败",
+  collector_recovered: "采集恢复",
+  route_impacted: "路由受影响",
+  station_down: "站点异常",
+  station_recovered: "站点恢复",
+};
+
+export const objectTypeLabels: Record<string, string> = {
+  station: "中转站",
+  station_key: "密钥",
+  group_binding: "分组",
+  pricing_rule: "价格",
+  routing_rule: "路由规则",
+  request_log: "请求",
+  channel: "渠道状态",
+  collector: "采集",
+  collector_run: "采集",
+  route: "路由",
+};
+
+export const sourceLabels: Record<string, string> = {
+  balance: "余额",
+  collector: "采集",
+  health: "密钥",
+  pricing: "价格",
+  routing: "路由",
+};
+
+export type ChangeEventListDiff = {
+  label: string;
+  before: string | null;
+  after: string | null;
+};
+
+export type ChangeEventListItem = {
+  title: string;
+  description: string;
+  metaLabel: string;
+  kindLabel: string;
+  objectLabel: string;
+  sourceLabel: string;
+  statusLabel: string;
+  severityLabel: string;
+  diff: ChangeEventListDiff | null;
+};
+
+export type ChangeEventListOptions = {
+  stationNamesById?: Map<string, string> | Record<string, string>;
+  stationCreditPerCnyById?: Map<string, number> | Record<string, number>;
+  deferStationIdentifierFallback?: boolean;
+};
+
+export function filterChangeEvents(events: ChangeEvent[], filter: ChangeFilter, options: ChangeEventListOptions = {}) {
+  const query = filter.query.trim().toLowerCase();
+  return events.filter((event) => {
+    if (filter.severity !== "all" && event.severity !== filter.severity) {
+      return false;
+    }
+    if (filter.status === "active") {
+      if (event.status === "dismissed" || event.status === "resolved") {
+        return false;
+      }
+    } else if (filter.status !== "all" && event.status !== filter.status) {
+      return false;
+    }
+    if (filter.objectType !== "all" && event.objectType !== filter.objectType) {
+      return false;
+    }
+    if (!query) {
+      return true;
+    }
+    const item = buildChangeEventListItem(event, options);
+    return `${event.title} ${event.message} ${event.eventType} ${event.source} ${event.objectType} ${item.title} ${item.description} ${item.metaLabel} ${item.objectLabel} ${item.diff?.before ?? ""} ${item.diff?.after ?? ""}`
+      .toLowerCase()
+      .includes(query);
+  });
+}
+
+export function paginateChangeEvents(events: ChangeEvent[], page: number, pageSize: number) {
+  const safePageSize = Math.max(1, pageSize);
+  const totalPages = Math.max(1, Math.ceil(events.length / safePageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const startOffset = (safePage - 1) * safePageSize;
+  const pageEvents = events.slice(startOffset, startOffset + safePageSize);
+
+  return {
+    events: pageEvents,
+    page: safePage,
+    pageSize: safePageSize,
+    totalPages,
+    startIndex: pageEvents.length === 0 ? 0 : startOffset + 1,
+    endIndex: startOffset + pageEvents.length,
+    totalCount: events.length,
+  };
+}
+
+export function unreadRiskCount(events: ChangeEvent[]) {
+  return events.filter(
+    (event) => event.status === "unread" && (event.severity === "critical" || event.severity === "warning"),
+  ).length;
+}
+
+export function unreadChangeCount(events: ChangeEvent[]) {
+  return events.filter((event) => event.status === "unread").length;
+}
+
+export function markUnreadChangeEventsReadLocally(events: ChangeEvent[]) {
+  const unreadIds = new Set(events.filter((event) => event.status === "unread").map((event) => event.id));
+
+  if (unreadIds.size === 0) {
+    return {
+      changedCount: 0,
+      events,
+    };
+  }
+
+  return {
+    changedCount: unreadIds.size,
+    events: events.map((event) => (unreadIds.has(event.id) ? { ...event, status: "read" as const } : event)),
+  };
+}
+
+export function markCapturedChangeEventsReadLocally(events: ChangeEvent[], capturedIds: string[]) {
+  const captured = new Set(capturedIds);
+  let changedCount = 0;
+  const updatedEvents = events.map((event) => {
+    if (!captured.has(event.id) || event.status !== "unread") {
+      return event;
+    }
+    changedCount += 1;
+    return { ...event, status: "read" as const };
+  });
+
+  return { changedCount, events: changedCount === 0 ? events : updatedEvents };
+}
+
+export function activeSeverityCount(events: ChangeEvent[], severity: ChangeSeverity) {
+  return events.filter((event) => event.severity === severity && event.status !== "dismissed" && event.status !== "resolved").length;
+}
+
+export async function markUnreadChangeEventsRead(
+  events: ChangeEvent[],
+  markRead: (ids: string[]) => Promise<ChangeEvent[]>,
+) {
+  const unreadIds = events.filter((event) => event.status === "unread").map((event) => event.id);
+  if (unreadIds.length === 0) {
+    return { changedCount: 0, events, updatedEvents: [] };
+  }
+
+  const updatedEvents = await markRead(unreadIds);
+  const updatedById = new Map(updatedEvents.map((event) => [event.id, event]));
+
+  return {
+    changedCount: updatedEvents.filter((event) => event.status === "read").length,
+    events: events.map((event) => updatedById.get(event.id) ?? event),
+    updatedEvents,
+  };
+}
+
+export function mergeChangeEventUpdates(events: ChangeEvent[], updates: ChangeEvent[]) {
+  if (updates.length === 0) {
+    return events;
+  }
+  const updatesById = new Map(updates.map((event) => [event.id, event]));
+  return events.map((event) => updatesById.get(event.id) ?? event);
+}
+
+export function buildChangeEventListItem(
+  event: ChangeEvent,
+  options: ChangeEventListOptions = {},
+): ChangeEventListItem {
+  const oldValue = parseJsonRecord(event.oldValueJson);
+  const newValue = parseJsonRecord(event.newValueJson);
+  const impact = parseJsonRecord(event.impactJson);
+  const stationSubject = formatStationSubject(event, oldValue, newValue, impact, options);
+  const baseItem: ChangeEventListItem = {
+    title: event.title,
+    description: event.message,
+    metaLabel: `${sourceLabels[event.source] ?? event.source} / ${objectTypeLabels[event.objectType] ?? event.objectType}`,
+    kindLabel: eventTypeLabels[event.eventType] ?? event.eventType,
+    objectLabel: objectTypeLabels[event.objectType] ?? event.objectType,
+    sourceLabel: sourceLabels[event.source] ?? event.source,
+    statusLabel: statusLabels[event.status] ?? event.status,
+    severityLabel: severityLabels[event.severity] ?? event.severity,
+    diff: buildGenericDiff(oldValue, newValue),
+  };
+
+  if (event.eventType === "rate_changed") {
+    const groupName = readString(newValue, "groupName") ?? readString(oldValue, "groupName") ?? extractGroupName(event.message);
+    const before = effectiveChangeMultiplier(event, readMultiplier(oldValue), options);
+    const after = effectiveChangeMultiplier(event, readMultiplier(newValue), options);
+    return {
+      ...baseItem,
+      title:
+        groupName && (before != null || after != null)
+          ? `${stationSubject} 的分组 ${groupName} 倍率${formatValueChange(
+              before == null ? null : formatMultiplierLabel(before),
+              after == null ? null : formatMultiplierLabel(after),
+            )}`
+          : groupName
+            ? `${stationSubject} 的分组 ${groupName} 倍率未知`
+            : `${stationSubject} 的分组倍率发生变化`,
+      diff: {
+        label: "倍率",
+        before: before == null ? null : `${formatCompactNumber(before)} 倍`,
+        after: after == null ? null : `${formatCompactNumber(after)} 倍`,
+      },
+    };
+  }
+
+  if (event.eventType === "group_added") {
+    const groupName = readString(newValue, "groupName") ?? extractGroupName(event.message);
+    const multiplier = effectiveChangeMultiplier(event, readMultiplier(newValue), options);
+    return {
+      ...baseItem,
+      title: `${stationSubject} 新增分组 ${groupName ?? "未知分组"}，倍率${formatMultiplierLabel(multiplier)}`,
+      metaLabel: `${baseItem.sourceLabel} / 分组`,
+      diff: null,
+    };
+  }
+
+  if (event.eventType === "group_missing") {
+    const groupName = readString(newValue, "groupName") ?? readString(oldValue, "groupName") ?? extractGroupName(event.message);
+    const multiplier = effectiveChangeMultiplier(
+      event,
+      readMultiplier(newValue) ?? readMultiplier(oldValue),
+      options,
+    );
+    return {
+      ...baseItem,
+      title: `${stationSubject} 的分组 ${groupName ?? "未知分组"} 不可见，倍率${formatMultiplierLabel(multiplier)}`,
+      diff: {
+        label: "状态",
+        before: formatBindingStatus(readString(oldValue, "bindingStatus")),
+        after: formatBindingStatus(readString(newValue, "bindingStatus")),
+      },
+    };
+  }
+
+  if (event.eventType === "price_changed") {
+    const model = extractModelName(event.message);
+    const currency = readString(newValue, "currency") ?? readString(oldValue, "currency");
+    const before = formatPrice(readNumber(oldValue, "outputPrice"), currency);
+    const after = formatPrice(readNumber(newValue, "outputPrice"), currency);
+    return {
+      ...baseItem,
+      title: model
+        ? `${stationSubject} 的模型 ${model} 输出价格${formatValueChange(before, after)}`
+        : `${stationSubject} 的模型输出价格发生变化`,
+      diff: {
+        label: "输出价格",
+        before,
+        after,
+      },
+    };
+  }
+
+  if (event.eventType === "model_added" || event.eventType === "model_removed") {
+    const model = readString(newValue, "model") ?? readString(oldValue, "model") ?? extractModelName(event.message);
+    return {
+      ...baseItem,
+      title: model
+        ? `${stationSubject} ${event.eventType === "model_added" ? "新增模型" : "下架模型"} ${model}`
+        : `${stationSubject} ${event.eventType === "model_added" ? "新增模型" : "下架模型"}`,
+      diff: {
+        label: "模型",
+        before: event.eventType === "model_removed" ? model : null,
+        after: event.eventType === "model_added" ? model : null,
+      },
+    };
+  }
+
+  if (event.eventType === "balance_low" || event.eventType === "balance_depleted") {
+    const value = readNumber(newValue, "value");
+    const threshold = readNumber(newValue, "threshold");
+    const statusLabel = event.eventType === "balance_depleted" ? "余额耗尽" : "余额偏低";
+    const valueLabel = value == null ? "未知" : formatCompactNumber(value);
+    const thresholdLabel = threshold == null ? null : formatCompactNumber(threshold);
+    return {
+      ...baseItem,
+      title: thresholdLabel
+        ? `${stationSubject} ${statusLabel}：当前 ${valueLabel}，阈值 ${thresholdLabel}`
+        : `${stationSubject} ${statusLabel}：当前 ${valueLabel}`,
+      diff: {
+        label: "余额",
+        before: threshold == null ? null : `阈值 ${formatCompactNumber(threshold)}`,
+        after: value == null ? null : formatCompactNumber(value),
+      },
+    };
+  }
+
+  if (event.eventType === "key_invalid") {
+    const failures = readNumber(newValue, "consecutiveFailures");
+    const stationKeyName = readString(newValue, "stationKeyName");
+    const apiKeyMasked = readString(newValue, "apiKeyMasked");
+    const stationKeyLabel =
+      stationKeyName ?? apiKeyMasked ?? shortenIdentifier(event.stationKeyId ?? event.objectId ?? null) ?? baseItem.objectLabel;
+    const title = `${stationSubject} 的 Key ${stationKeyLabel} 健康异常${failures == null ? "" : `：连续失败 ${formatCompactNumber(failures)} 次`}`;
+    const failureReason = extractKeyFailureReason(event.message);
+    return {
+      ...baseItem,
+      title,
+      description: failureReason ? `${title}；${failureReason}` : title,
+      metaLabel: `${baseItem.sourceLabel} / ${stationKeyLabel}`,
+      objectLabel: stationKeyLabel,
+      diff: {
+        label: "失败次数",
+        before: null,
+        after: failures == null ? null : `${formatCompactNumber(failures)} 次`,
+      },
+    };
+  }
+
+  if (event.eventType === "key_group_bound" || event.eventType === "key_group_unresolved") {
+    const groupName = readString(newValue, "groupName") ?? readString(oldValue, "groupName") ?? extractGroupName(event.message);
+    const stationKeyLabel = shortenIdentifier(event.stationKeyId ?? event.objectId ?? null) ?? baseItem.objectLabel;
+    return {
+      ...baseItem,
+      title:
+        event.eventType === "key_group_bound"
+          ? `${stationSubject} 的 Key ${stationKeyLabel} 已绑定分组 ${groupName ?? "未知分组"}`
+          : `${stationSubject} 的 Key ${stationKeyLabel} 分组无法识别`,
+    };
+  }
+
+  if (event.eventType === "collector_failed" || event.eventType === "collector_recovered") {
+    const taskType = readString(newValue, "taskType") ?? readString(oldValue, "taskType");
+    const taskLabel = formatCollectorTaskLabel(taskType);
+    return {
+      ...baseItem,
+      title: `${stationSubject} ${taskLabel}${event.eventType === "collector_failed" ? "失败" : "恢复"}`,
+    };
+  }
+
+  if (event.eventType === "route_impacted") {
+    const scope = event.objectId ?? readString(newValue, "routeScope") ?? "默认路由";
+    return {
+      ...baseItem,
+      title: `${stationSubject} 的${scope}路由受影响`,
+    };
+  }
+
+  if (event.eventType === "station_down" || event.eventType === "station_recovered") {
+    return {
+      ...baseItem,
+      title: `${stationSubject} ${event.eventType === "station_down" ? "状态异常" : "状态恢复"}`,
+    };
+  }
+
+  return {
+    ...baseItem,
+    title: `${stationSubject} 的${baseItem.objectLabel}${baseItem.kindLabel}`,
+  };
+}
+
+export function formatChangeTime(value: string) {
+  const date = parseTimestampLikeDate(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function buildGenericDiff(
+  oldValue: Record<string, unknown> | null,
+  newValue: Record<string, unknown> | null,
+): ChangeEventListDiff | null {
+  if (!oldValue && !newValue) {
+    return null;
+  }
+  return {
+    label: "变化",
+    before: formatRecordSummary(oldValue),
+    after: formatRecordSummary(newValue),
+  };
+}
+
+function parseJsonRecord(value: string | null) {
+  const parsed = parseJsonObject(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function readString(value: Record<string, unknown> | null, key: string) {
+  const item = value?.[key];
+  return typeof item === "string" && item.trim() ? item.trim() : null;
+}
+
+function readNumber(value: Record<string, unknown> | null, key: string) {
+  const item = value?.[key];
+  return typeof item === "number" && Number.isFinite(item) ? item : null;
+}
+
+function readMultiplier(value: Record<string, unknown> | null) {
+  return (
+    readNumber(value, "effectiveRateMultiplier") ??
+    readNumber(value, "effective_rate_multiplier") ??
+    readNumber(value, "multiplier") ??
+    readNumber(value, "rateMultiplier") ??
+    readNumber(value, "rate_multiplier") ??
+    readNumber(value, "userRateMultiplier") ??
+    readNumber(value, "user_rate_multiplier") ??
+    readNumber(value, "defaultRateMultiplier") ??
+    readNumber(value, "default_rate_multiplier")
+  );
+}
+
+function formatCompactNumber(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function formatMultiplierLabel(value: number | null) {
+  return value == null ? "未知" : `${formatCompactNumber(value)} 倍`;
+}
+
+function formatValueChange(before: string | null, after: string | null) {
+  if (before && after) {
+    return `从 ${before}变为 ${after}`;
+  }
+  if (after) {
+    return `变为 ${after}`;
+  }
+  if (before) {
+    return `从 ${before} 变为未知`;
+  }
+  return "发生变化";
+}
+
+function formatPrice(value: number | null, currency: string | null) {
+  if (value == null) {
+    return null;
+  }
+  return `${currency ?? ""} ${formatCompactNumber(value)}`.trim();
+}
+
+function formatBindingStatus(value: string | null) {
+  if (value === "available") {
+    return "可用";
+  }
+  if (value === "missing") {
+    return "不可见";
+  }
+  return value;
+}
+
+function formatCollectorTaskLabel(value: string | null) {
+  if (value === "balance") return "余额采集";
+  if (value === "groups") return "分组采集";
+  if (value === "models") return "模型采集";
+  if (value === "full") return "完整采集";
+  return "采集";
+}
+
+function formatRecordSummary(value: Record<string, unknown> | null) {
+  if (!value) {
+    return null;
+  }
+  const firstEntry = Object.entries(value).find(([, item]) => item != null);
+  if (!firstEntry) {
+    return null;
+  }
+  const [, item] = firstEntry;
+  return typeof item === "number" ? formatCompactNumber(item) : String(item);
+}
+
+function shortenIdentifier(value: string | null) {
+  if (!value) {
+    return null;
+  }
+  return value.length > 18 ? `${value.slice(0, 15)}...` : value;
+}
+
+function formatStationSubject(
+  event: ChangeEvent,
+  oldValue: Record<string, unknown> | null,
+  newValue: Record<string, unknown> | null,
+  impact: Record<string, unknown> | null,
+  options: ChangeEventListOptions,
+) {
+  const stationLabel = resolveStationLabel(event, oldValue, newValue, impact, options);
+  return stationLabel ? `中转站 ${stationLabel}` : "中转站";
+}
+
+function resolveStationLabel(
+  event: ChangeEvent,
+  oldValue: Record<string, unknown> | null,
+  newValue: Record<string, unknown> | null,
+  impact: Record<string, unknown> | null,
+  options: ChangeEventListOptions,
+) {
+  const stationNameFromEvent = event.stationName?.trim() || null;
+  return (
+    stationNameFromEvent ??
+    readStationNameById(options.stationNamesById, event.stationId) ??
+    readStationName(newValue) ??
+    readStationName(oldValue) ??
+    readStationName(impact) ??
+    extractStationName(event.message) ??
+    (options.deferStationIdentifierFallback
+      ? null
+      : shortenIdentifier(event.stationId ?? (event.objectType === "station" ? event.objectId : null)) ?? "未知")
+  );
+}
+
+function effectiveChangeMultiplier(
+  event: ChangeEvent,
+  rawMultiplier: number | null,
+  options: ChangeEventListOptions,
+) {
+  const stationId = event.stationId;
+  if (!stationId) {
+    return effectiveRateMultiplierForCredit(rawMultiplier, null);
+  }
+  const ratios = options.stationCreditPerCnyById;
+  const creditPerCny = ratios instanceof Map ? ratios.get(stationId) : ratios?.[stationId];
+  return effectiveRateMultiplierForCredit(rawMultiplier, creditPerCny);
+}
+
+function readStationNameById(
+  stationNamesById: ChangeEventListOptions["stationNamesById"],
+  stationId: string | null,
+) {
+  if (!stationNamesById || !stationId) {
+    return null;
+  }
+  if (stationNamesById instanceof Map) {
+    return stationNamesById.get(stationId) ?? null;
+  }
+  return stationNamesById[stationId] ?? null;
+}
+
+function readStationName(value: Record<string, unknown> | null) {
+  return (
+    readString(value, "stationName") ??
+    readString(value, "station_name") ??
+    readString(value, "stationLabel") ??
+    readString(value, "station_label")
+  );
+}
+
+function extractStationName(message: string) {
+  const match = message.match(/^(.+?)\s+(?:余额低于阈值|余额已耗尽|新增模型|下架模型)/);
+  return match?.[1]?.trim() ?? null;
+}
+
+function extractGroupName(message: string) {
+  const missingMatch = message.match(/^分组\s+(.+?)\s+在最新采集中不可见/);
+  if (missingMatch?.[1]) {
+    return missingMatch[1].trim();
+  }
+  const rateMatch = message.match(/^分组\s+(.+?)\s+倍率发生变化/);
+  if (rateMatch?.[1]) {
+    return rateMatch[1].trim();
+  }
+  const addedMatch = message.match(/分组\s+(.+)$/);
+  return addedMatch?.[1]?.trim() ?? null;
+}
+
+function extractModelName(message: string) {
+  const match = message.match(/^模型\s+(.+?)\s+(?:输出价格发生变化|的价格规则已过期|新增|下架)/);
+  return match?.[1]?.trim() ?? null;
+}
+
+function extractKeyFailureReason(message: string) {
+  const match = message.match(/^Key\s+连续失败\s+\d+\s+次[：:]?\s*(.+)?$/);
+  return match?.[1]?.trim() ?? null;
+}
+
+export function parseJsonObject(value: string | null) {
+  if (!value) {
+    return null;
+  }
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}

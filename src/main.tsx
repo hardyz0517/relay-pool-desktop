@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ToastProvider } from "@/components/ui";
 import { installDesktopWebViewGuards } from "@/lib/desktopGuards";
-import { UpdaterProvider } from "@/features/updater/UpdaterProvider";
+import { UpdaterProvider } from "@/lib/updater/UpdaterProvider";
 import { QueryErrorNotifier } from "@/lib/query/QueryErrorNotifier";
 import { queryClient } from "@/lib/query/queryClient";
 import { ThemeProvider } from "@/theme/ThemeProvider";

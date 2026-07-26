@@ -48,10 +48,15 @@
     }
   },
   "application_exact_origin_validator": {
-    "path": "src-tauri/src/services/capture/web_authorization.rs::validate_capture_event_origin",
+    "path": "src-tauri/src/application/command_facades/capture.rs::record_capture_event + src-tauri/src/services/capture/session.rs::push_event",
     "owner": "Task 17",
-    "status": "missing-at-stage-0",
-    "required_bindings": ["window_label", "station_id", "session_id", "session_revision", "exact_origin"]
+    "status": "implemented-stage-4",
+    "required_bindings": ["window_label", "station_id", "endpoint_revision", "exact_origin"],
+    "evidence": [
+      "record_capture_event rejects request_url outside the current station website_url/api_base_url",
+      "CaptureSessionStore::push_event rejects source_window_id that does not match the active capture window label",
+      "capture session receipts carry endpoint_revision into credential/session persistence barriers"
+    ]
   },
   "external_navigation": {
     "owner": "Task 8",
@@ -65,30 +70,5 @@
     "owner": "Task 8",
     "qualification": "Task 8 build-entry gate proves production graph cannot reach DemoBackend and demo graph cannot reach DesktopBackend/generated invoke/Tauri/data recovery"
   },
-  "temporary_entries": [
-    {
-      "id": "capture-remote-wildcard-url-shell",
-      "owner": "Task 17",
-      "introduced_shard": "legacy-baseline",
-      "delete_shard": "S4-T17-blocking-capture-shutdown",
-      "expiry_stage": 4,
-      "reason": "Capture must navigate provider-owned origins, but the shell is too broad without per-invoke station/session/revision/exact-origin validation."
-    },
-    {
-      "id": "capture-exact-origin-validator-missing",
-      "owner": "Task 17",
-      "introduced_shard": "legacy-baseline",
-      "delete_shard": "S4-T17-blocking-capture-shutdown",
-      "expiry_stage": 4,
-      "reason": "Stage 0 found no application validator binding each remote invoke to the expected normalized exact origin."
-    },
-    {
-      "id": "direct-exit-and-late-shutdown-drain",
-      "owner": "Task 17",
-      "introduced_shard": "legacy-baseline",
-      "delete_shard": "S4-T17-blocking-capture-shutdown",
-      "expiry_stage": 4,
-      "reason": "Tray exit is direct and the principal async drain occurs after RunEvent::Exit rather than in an idempotent ExitRequested coordinator."
-    }
-  ]
+  "temporary_entries": []
 }

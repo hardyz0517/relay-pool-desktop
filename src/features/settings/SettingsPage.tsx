@@ -17,8 +17,8 @@ import { queryKeys } from "@/lib/query/queryKeys";
 import { proxyStatusQueryOptions, settingsQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { ProxyStatus } from "@/lib/types/proxy";
-import { useUpdater } from "@/features/updater/UpdaterProvider";
-import { isUpdaterBusyPhase } from "@/features/updater/updateState";
+import { useUpdater } from "@/lib/updater/UpdaterProvider";
+import { isUpdaterBusyPhase } from "@/lib/updater/updateState";
 import { ThemeSettings } from "@/features/settings/ThemeSettings";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import {

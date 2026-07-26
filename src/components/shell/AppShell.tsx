@@ -20,7 +20,7 @@ import {
   markUnreadChangeEventsRead,
   markUnreadChangeEventsReadLocally,
   unreadChangeCount,
-} from "@/features/changes/changeEventViewModels";
+} from "@/lib/changeEvents/changeEventViewModels";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { AppRouteId } from "@/lib/types/navigation";
 

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_revision": "6a204908e2b3697e4c80951771950e29872942d9",
-  "current_stage": 1,
+  "current_stage": 4,
   "allowed_exports": [],
   "allowed_edges": [],
   "forbidden_edges": [],
@@ -31,32 +31,6 @@
       "delete_shard": "Task 24",
       "expiry_stage": 6,
       "reason": "The composition root legitimately registers features but currently imports private page descendants because feature public entries do not yet exist. Task 24 replaces these with explicit feature exports."
-    },
-    {
-      "id": "legacy-query-updater-change-owner-edges",
-      "ecosystem": "typescript",
-      "identities": [
-        "src/components/shell/AppShell.tsx -> src/features/changes/changeEventViewModels.ts [static]",
-        "src/features/dashboard/DashboardPage.tsx -> src/features/changes/changeEventViewModels.ts [static]",
-        "src/features/dashboard/DashboardPage.tsx -> src/features/updater/UpdaterProvider.tsx [static]",
-        "src/features/data-recovery/DataRecoveryScreen.tsx -> src/features/updater/UpdaterProvider.tsx [static]",
-        "src/features/data-recovery/DataRecoveryScreen.tsx -> src/features/updater/updateState.ts [static]",
-        "src/features/settings/SettingsPage.tsx -> src/features/updater/UpdaterProvider.tsx [static]",
-        "src/features/settings/SettingsPage.tsx -> src/features/updater/updateState.ts [static]",
-        "transitive:src/features/dashboard/DashboardPage.tsx => src/features/updater/UpdateDialog.tsx [via src/features/updater/UpdaterProvider.tsx]",
-        "transitive:src/features/dashboard/DashboardPage.tsx => src/features/updater/updateState.ts [via src/features/updater/UpdaterProvider.tsx]",
-        "transitive:src/features/data-recovery/DataRecoveryScreen.tsx => src/features/updater/UpdateDialog.tsx [via src/features/updater/UpdaterProvider.tsx]",
-        "transitive:src/features/data-recovery/DataRecoveryScreen.tsx => src/features/updater/updateState.ts [via src/features/updater/UpdaterProvider.tsx]",
-        "transitive:src/features/data-recovery/DataStoreBootstrap.tsx => src/features/updater/UpdaterProvider.tsx [via src/features/data-recovery/DataRecoveryScreen.tsx]",
-        "transitive:src/features/data-recovery/DataStoreBootstrap.tsx => src/features/updater/updateState.ts [via src/features/data-recovery/DataRecoveryScreen.tsx]",
-        "transitive:src/features/settings/SettingsPage.tsx => src/features/updater/UpdateDialog.tsx [via src/features/updater/UpdaterProvider.tsx]",
-        "transitive:src/features/settings/SettingsPage.tsx => src/features/updater/updateState.ts [via src/features/updater/UpdaterProvider.tsx]"
-      ],
-      "owner": "Tasks 12-13",
-      "introduced_shard": "legacy-baseline",
-      "delete_shard": "Task 13",
-      "expiry_stage": 3,
-      "reason": "Shell and resource pages reach feature-private updater/change state. Query/page-owner cutover must replace these edges with narrow application or feature public contracts."
     },
     {
       "id": "legacy-cross-feature-visual-and-view-model-edges",

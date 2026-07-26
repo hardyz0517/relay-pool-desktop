@@ -47,10 +47,10 @@ import {
   stationsQueryOptions,
 } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
-import { formatChangeTime, severityLabels, severityTone, unreadRiskCount } from "@/features/changes/changeEventViewModels";
+import { formatChangeTime, severityLabels, severityTone, unreadRiskCount } from "@/lib/changeEvents/changeEventViewModels";
 import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
 import { formatRecentRequestCost, formatRequestCost, requestBaseCostValue } from "@/features/dashboard/requestCostFormat";
-import { useUpdater } from "@/features/updater/UpdaterProvider";
+import { useUpdater } from "@/lib/updater/UpdaterProvider";
 import {
   summarizeDashboardRequestCosts,
   type DashboardCostTotal,

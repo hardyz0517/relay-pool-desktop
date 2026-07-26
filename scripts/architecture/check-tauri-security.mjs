@@ -36,6 +36,18 @@ function permissionCommands() {
   }));
 }
 
+function exactOriginValidatorImplemented(exactOrigin) {
+  if (!exactOrigin || typeof exactOrigin !== "object") return false;
+  if (/missing/i.test(String(exactOrigin.status ?? ""))) return false;
+  const required = new Set(exactOrigin.required_bindings ?? []);
+  return [
+    "window_label",
+    "station_id",
+    "endpoint_revision",
+    "exact_origin",
+  ].every((binding) => required.has(binding));
+}
+
 runMain(() => {
   const manifest = readRequiredManifest("docs/superpowers/audits/architecture-scale-tauri-security-manifest.json", [
     "schema_version",
@@ -56,6 +68,10 @@ runMain(() => {
   assert(/\bscript-src\s+'self'(?:;|$)/.test(csp), "production CSP must pin script-src to 'self'");
   assert(!/\bunsafe-eval\b/.test(csp), "production CSP must not allow unsafe-eval");
   assert(!/\bscript-src[^;]*(?:https?:|data:|blob:|\*)/.test(csp), "production CSP must not allow remote script sources");
+  const exactOrigin = manifest.application_exact_origin_validator;
+  assert(exactOrigin && typeof exactOrigin === "object", "application_exact_origin_validator must be an object");
+  assert(typeof exactOrigin.owner === "string" && exactOrigin.owner.trim(), "application exact-origin validator owner is required");
+  assert(typeof (exactOrigin.symbol ?? exactOrigin.path) === "string", "application exact-origin validator symbol/path is required");
 
   const capabilityFiles = listFiles(path.join(repoRoot, "src-tauri/capabilities"), (file) => file.endsWith(".json"));
   assert(capabilityFiles.length > 0, "no Tauri capability manifests found");
@@ -67,13 +83,11 @@ runMain(() => {
     for (const label of capability.windows) labels.add(label);
     const urls = capability.remote?.urls ?? [];
     if (urls.some((url) => /^(?:https?|\*):\/\/\*$/.test(url))) {
-      requireDebt(manifest, /capture.*remote|remote.*shell|wildcard.*url/i, `${capability.identifier} wildcard remote URL`, currentStage);
+      if (!exactOriginValidatorImplemented(exactOrigin)) {
+        requireDebt(manifest, /capture.*remote|remote.*shell|wildcard.*url/i, `${capability.identifier} wildcard remote URL`, currentStage);
+      }
     }
   }
-  const exactOrigin = manifest.application_exact_origin_validator;
-  assert(exactOrigin && typeof exactOrigin === "object", "application_exact_origin_validator must be an object");
-  assert(typeof exactOrigin.owner === "string" && exactOrigin.owner.trim(), "application exact-origin validator owner is required");
-  assert(typeof (exactOrigin.symbol ?? exactOrigin.path) === "string", "application exact-origin validator symbol/path is required");
   if (/missing/i.test(String(exactOrigin.status ?? ""))) requireDebt(manifest, /exact.*origin|origin.*validator/i, "missing exact-origin validator", currentStage);
 
   const compiled = permissionCommands();
