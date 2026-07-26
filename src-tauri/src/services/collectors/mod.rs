@@ -1,6 +1,11 @@
 pub mod adapters;
 pub(crate) mod collector_apply;
+pub mod contract;
+pub mod drivers;
+pub mod evidence;
 pub mod facts;
+pub mod failure;
+pub mod orchestration;
 pub mod sub2api;
 
 // Preserve the crate-local composition path while the V2 apply boundary is

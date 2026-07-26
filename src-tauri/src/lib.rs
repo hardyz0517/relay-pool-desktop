@@ -362,6 +362,8 @@ pub fn run() {
                 app_composition::WorkRuntimeConfig::architecture_budget(),
             )
             .map_err(|error| format!("failed to compose work runtime: {error}"))?;
+            let _provider_registry = app_composition::compose_provider_registry()
+                .map_err(|error| format!("failed to compose provider registry: {error}"))?;
             let blocking_executor = work_runtime.blocking.clone();
             let secret_manager = tauri::async_runtime::block_on(
                 services::secrets::SecretManager::initialize(blocking_executor.clone()),

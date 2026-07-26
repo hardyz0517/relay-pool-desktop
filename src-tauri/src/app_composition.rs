@@ -22,7 +22,12 @@ use crate::{
     runtime_composition::{RuntimeCompositionError, WorkRuntimeBundle},
     services::{
         channel_monitors::ChannelMonitorRunnerPort,
-        pricing_catalog::StaticBuiltinModelBasePriceCatalog, proxy::runtime::ProxyRuntimeState,
+        collectors::{
+            drivers::{stage19a_static_entries, REQUIRED_PROVIDER_KINDS},
+            orchestration::{ProviderRegistry, ProviderRegistryError},
+        },
+        pricing_catalog::StaticBuiltinModelBasePriceCatalog,
+        proxy::runtime::ProxyRuntimeState,
         secrets::vault::DataKeyVault,
     },
     TrayBehaviorState,
@@ -82,6 +87,10 @@ fn validate_work_runtime_config(config: &WorkRuntimeConfig) -> Result<(), Runtim
         return Err(RuntimeCompositionError::WorkRuntimeConfiguration);
     }
     Ok(())
+}
+
+pub(crate) fn compose_provider_registry() -> Result<ProviderRegistry, ProviderRegistryError> {
+    ProviderRegistry::new(stage19a_static_entries(), REQUIRED_PROVIDER_KINDS)
 }
 
 pub(crate) fn compose_app_services(
@@ -176,10 +185,11 @@ mod tests {
     use std::time::Duration;
 
     use crate::{
-        app_composition::{compose_work_runtime, WorkRuntimeConfig},
+        app_composition::{compose_provider_registry, compose_work_runtime, WorkRuntimeConfig},
         background_tasks::{BlockingExecutorConfig, OperationRegistryConfig, TaskId},
         outbound::{AsyncOutboundClientConfig, OutboundHeaderPolicy, TimeoutPolicy},
         runtime_composition::RuntimeCompositionError,
+        services::collectors::{contract::ProviderKind, failure::DriverFailureKind},
     };
 
     #[test]
@@ -237,6 +247,46 @@ mod tests {
             Err(error) => error,
         };
         assert_eq!(error, RuntimeCompositionError::WorkRuntimeConfiguration);
+    }
+
+    #[test]
+    fn provider_registry_composition_registers_every_known_provider() {
+        let registry = compose_provider_registry().expect("provider registry");
+
+        assert_eq!(registry.len(), 3);
+        assert_eq!(
+            registry
+                .descriptor(ProviderKind::Sub2Api)
+                .expect("sub2api descriptor")
+                .display_name,
+            "Sub2API"
+        );
+        assert_eq!(
+            registry
+                .descriptor(ProviderKind::NewApi)
+                .expect("newapi descriptor")
+                .display_name,
+            "NewAPI"
+        );
+        assert_eq!(
+            registry
+                .descriptor(ProviderKind::OpenAiCompatible)
+                .expect("openai-compatible descriptor")
+                .display_name,
+            "OpenAI-compatible"
+        );
+    }
+
+    #[test]
+    fn provider_registry_composition_keeps_capabilities_unsupported_until_cutover() {
+        let registry = compose_provider_registry().expect("provider registry");
+
+        let failure = match registry.collector(ProviderKind::OpenAiCompatible) {
+            Ok(_) => panic!("Task 19.C owns the reference collector driver cutover"),
+            Err(failure) => failure,
+        };
+
+        assert_eq!(failure.kind, DriverFailureKind::Unsupported);
     }
 }
 
