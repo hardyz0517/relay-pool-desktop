@@ -5,7 +5,9 @@ use crate::{
         collectors::CollectorService, credentials::CredentialService, error::ApplicationError,
         settings::SettingsService,
     },
+    background_tasks::{BlockingExecutor, BlockingExecutorError},
     models::collector::CollectorRunResult,
+    observability::correlation,
     services::collectors::{self, adapters::CollectorTask, V2CollectorSourceAdapter},
 };
 
@@ -13,7 +15,7 @@ use crate::{
 pub(crate) enum StationCollectionCommandError {
     Prepare(ApplicationError),
     Apply(ApplicationError),
-    Internal,
+    Blocking(BlockingExecutorError),
 }
 
 #[derive(Clone)]
@@ -21,6 +23,7 @@ pub(crate) struct StationCollectionCommandFacade {
     collectors: Arc<CollectorService>,
     credentials: Arc<CredentialService>,
     settings: Arc<SettingsService>,
+    blocking: BlockingExecutor,
     data_key: [u8; 32],
 }
 
@@ -29,12 +32,14 @@ impl StationCollectionCommandFacade {
         collectors: Arc<CollectorService>,
         credentials: Arc<CredentialService>,
         settings: Arc<SettingsService>,
+        blocking: BlockingExecutor,
         data_key: [u8; 32],
     ) -> Self {
         Self {
             collectors,
             credentials,
             settings,
+            blocking,
             data_key,
         }
     }
@@ -46,12 +51,24 @@ impl StationCollectionCommandFacade {
     ) -> Result<CollectorRunResult, StationCollectionCommandError> {
         let source = self.source();
         let data_key = self.data_key;
-        let prepared = tokio::task::spawn_blocking(move || {
-            collectors::prepare_station_collection_v2(&source, &data_key, station_id, task)
-        })
-        .await
-        .map_err(|_| StationCollectionCommandError::Internal)?
-        .map_err(StationCollectionCommandError::Prepare)?;
+        let prepared = self
+            .blocking
+            .submit(
+                "station_collection_prepare",
+                None,
+                current_correlation_id(),
+                None,
+                move |_| {
+                    Ok(collectors::prepare_station_collection_v2(
+                        &source, &data_key, station_id, task,
+                    ))
+                },
+            )
+            .map_err(StationCollectionCommandError::Blocking)?
+            .result()
+            .await
+            .map_err(StationCollectionCommandError::Blocking)?
+            .map_err(StationCollectionCommandError::Prepare)?;
         self.apply_prepared_collection(prepared).await
     }
 
@@ -61,12 +78,24 @@ impl StationCollectionCommandFacade {
     ) -> Result<CollectorRunResult, StationCollectionCommandError> {
         let source = self.source();
         let data_key = self.data_key;
-        let prepared = tokio::task::spawn_blocking(move || {
-            collectors::prepare_station_login_test_v2(&source, &data_key, station_id)
-        })
-        .await
-        .map_err(|_| StationCollectionCommandError::Internal)?
-        .map_err(StationCollectionCommandError::Prepare)?;
+        let prepared = self
+            .blocking
+            .submit(
+                "station_login_prepare",
+                None,
+                current_correlation_id(),
+                None,
+                move |_| {
+                    Ok(collectors::prepare_station_login_test_v2(
+                        &source, &data_key, station_id,
+                    ))
+                },
+            )
+            .map_err(StationCollectionCommandError::Blocking)?
+            .result()
+            .await
+            .map_err(StationCollectionCommandError::Blocking)?
+            .map_err(StationCollectionCommandError::Prepare)?;
         self.apply_prepared_collection(prepared).await
     }
 
@@ -87,4 +116,8 @@ impl StationCollectionCommandFacade {
             .await
             .map_err(StationCollectionCommandError::Apply)
     }
+}
+
+fn current_correlation_id() -> Option<String> {
+    correlation::current().map(|id| id.as_str().to_string())
 }

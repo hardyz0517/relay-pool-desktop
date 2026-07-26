@@ -379,6 +379,12 @@ pub fn run() {
                         None,
                         data_directory_port,
                     );
+                    let work_runtime = app_composition::compose_work_runtime(
+                        app_composition::WorkRuntimeConfig::architecture_budget(),
+                    )
+                    .map_err(|error| format!("failed to compose work runtime: {error}"))?;
+                    let blocking_executor = work_runtime.blocking.clone();
+                    let supervisor_handle = work_runtime.supervisor.clone();
                     let settings_stations_command_facade =
                         app_composition::compose_settings_stations_command_facade(
                             &app_services,
@@ -406,6 +412,7 @@ pub fn run() {
                     let station_collection_command_facade =
                         app_composition::compose_station_collection_command_facade(
                             &app_services,
+                            blocking_executor,
                             data_key,
                         );
                     let station_key_connectivity_command_facade =
@@ -448,11 +455,6 @@ pub fn run() {
                         .map_err(|error| format!("failed to load application settings: {error}"))?;
                     app.state::<Arc<TrayBehaviorState>>()
                         .set(TrayBehavior::from_setting(&settings.tray_behavior));
-                    let work_runtime = app_composition::compose_work_runtime(
-                        app_composition::WorkRuntimeConfig::architecture_budget(),
-                    )
-                    .map_err(|error| format!("failed to compose work runtime: {error}"))?;
-                    let supervisor_handle = work_runtime.supervisor.clone();
                     runtime_composition::register_work_runtime(
                         &persistence::upgrade_fault::NoUpgradeFaults,
                         app,

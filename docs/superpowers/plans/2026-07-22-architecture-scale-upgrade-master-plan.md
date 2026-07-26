@@ -766,16 +766,18 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 **当前 checkpoint：** `S4-T16B-station-collector-supervised-runner` 将 station collector scheduled runner 从自有 OS thread、atomic stop flag 和 `block_on` loop 切到共享 `TaskSupervisor`：startup 克隆 managed supervisor 作为 runner handle，注册单一 `station-collector-runner` task/concurrency key，runner loop 使用 Tokio interval/select cancellation，`StationCollectorRunnerState` 的 stop/drop 只请求 cancel，join handle 由 supervisor 统一持有。该片尚未把 manual collection commands 切成 operation 或迁移 collector prepare 的 blocking port。
 
+**当前 checkpoint：** `S4-T16C-manual-station-collection-blocking-executor` 将手动 station collection prepare 和 `test_station_login_input` 的阻塞探测接入共享 `BlockingExecutor`。`StationCollectionCommandFacade` 通过 composition 显式接收同一个 managed blocking executor；manual collection / login prepare 由 bounded queue、queue timeout、execution timeout 和 orphan diagnostics 治理，命令层将 blocking 失败映射为稳定 public work errors，并删除对应 direct `spawn_blocking` allowlist 项。该片尚未把 scheduled collector `collect_task` 的内部 prepare blocking port 迁移，也尚未把 manual collection 提升为 OperationRegistry foreground operation。
+
 **文件：**
 
 - Modify: `src-tauri/src/services/station_collectors.rs`
 - Modify/Create: collector task adapter and status projection
 - Modify: startup/shutdown composition
 
-- [ ] Characterize current schedule、single-instance、manual trigger、failure effect 和 persistence side effect。
+- [x] Characterize current schedule、single-instance、manual trigger、failure effect 和 persistence side effect。
 - [ ] runner 改为 Tokio interval/select cancellation；每 tick 独立 run id、budget、processed count 和 duration。
 - [ ] 同 concurrency key 不重入；transient only backoff，auth/config/invariant/panic 可见且不无限重启。
-- [ ] supervisor 统一持有 join handle；删除自有 OS thread、atomic stop flag 和 block_on loop。
+- [x] supervisor 统一持有 join handle；删除自有 OS thread、atomic stop flag 和 block_on loop。
 - [ ] manual collection 是 operation 或受监督 one-shot，不绕过 capacity。
 - [ ] shutdown 在预算内等待 in-flight run，timeout 写入 final report。
 

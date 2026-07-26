@@ -157,12 +157,14 @@ pub(crate) fn compose_collector_metadata_command_facade(
 
 pub(crate) fn compose_station_collection_command_facade(
     services: &AppServices,
+    blocking: BlockingExecutor,
     data_key: [u8; 32],
 ) -> StationCollectionCommandFacade {
     StationCollectionCommandFacade::new(
         Arc::clone(&services.collectors),
         Arc::clone(&services.credentials),
         Arc::clone(&services.settings),
+        blocking,
         data_key,
     )
 }

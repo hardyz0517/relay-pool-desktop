@@ -48,8 +48,8 @@ use crate::{
         pagination::PageLimit,
     },
     background_tasks::{
-        OperationContext, OperationFailureCode, OperationOwner, OperationRegistryError,
-        OperationStartRequest, OperationTerminal,
+        BlockingExecutorError, OperationContext, OperationFailureCode, OperationOwner,
+        OperationRegistryError, OperationStartRequest, OperationTerminal,
     },
     ipc::dto::{
         change_logs::{
@@ -2419,13 +2419,24 @@ pub async fn test_station_login(
 
 #[tauri::command]
 pub async fn test_station_login_input(
+    runtime: State<'_, ManagedWorkRuntime>,
     input: Value,
 ) -> Result<StationLoginTestResultDto, error::CommandError> {
     correlation::in_command_scope("test_station_login_input", async {
         let input = StationLoginTestInputDto::parse(input)?.into_domain();
-        tauri::async_runtime::spawn_blocking(move || collectors::test_station_login_input(input))
+        runtime
+            .blocking
+            .submit(
+                "station_login_probe_input",
+                None,
+                current_correlation_id(),
+                None,
+                move |_| Ok(collectors::test_station_login_input(input)),
+            )
+            .map_err(public_blocking_executor_error)?
+            .result()
             .await
-            .map_err(|_| error::CommandError::internal(None))?
+            .map_err(public_blocking_executor_error)?
             .map_err(public_station_login_probe_error)
     })
     .await
@@ -2442,8 +2453,33 @@ fn public_station_collection_error(error: StationCollectionCommandError) -> erro
     match error {
         StationCollectionCommandError::Prepare(error) => public_command_application_error(error),
         StationCollectionCommandError::Apply(error) => command_application_error(error),
-        StationCollectionCommandError::Internal => error::CommandError::internal(None),
+        StationCollectionCommandError::Blocking(error) => public_blocking_executor_error(error),
     }
+}
+
+fn public_blocking_executor_error(error: BlockingExecutorError) -> error::CommandError {
+    match error {
+        BlockingExecutorError::QueueFull | BlockingExecutorError::QueueTimeout => {
+            error::CommandError::from_work(error::WorkFailure::Overloaded)
+        }
+        BlockingExecutorError::ExecutionTimeout => {
+            error::CommandError::from_work(error::WorkFailure::Timeout)
+        }
+        BlockingExecutorError::CancelledBeforeStart
+        | BlockingExecutorError::CancelledLateResultDiscarded => {
+            error::CommandError::from_work(error::WorkFailure::ResultUnknown)
+        }
+        BlockingExecutorError::Closed
+        | BlockingExecutorError::Panicked
+        | BlockingExecutorError::JobFailed { .. }
+        | BlockingExecutorError::ShutdownTimeout { .. } => {
+            error::CommandError::from_work(error::WorkFailure::Internal)
+        }
+    }
+}
+
+fn current_correlation_id() -> Option<String> {
+    correlation::current().map(|id| id.as_str().to_string())
 }
 
 #[tauri::command]
@@ -3855,6 +3891,26 @@ mod tests {
         assert!(!error.retryable);
         assert!(!error.message.contains("sk-secret"));
         assert!(!error.message.contains("data.db"));
+    }
+
+    #[test]
+    fn blocking_executor_failures_keep_public_work_classification() {
+        let overloaded = public_blocking_executor_error(BlockingExecutorError::QueueFull);
+        assert_eq!(overloaded.code, error::CommandErrorCode::Overloaded);
+        assert!(overloaded.retryable);
+
+        let timeout = public_blocking_executor_error(BlockingExecutorError::ExecutionTimeout);
+        assert_eq!(timeout.code, error::CommandErrorCode::Timeout);
+        assert!(timeout.retryable);
+
+        let cancelled =
+            public_blocking_executor_error(BlockingExecutorError::CancelledLateResultDiscarded);
+        assert_eq!(cancelled.code, error::CommandErrorCode::Conflict);
+        assert!(!cancelled.retryable);
+
+        let internal = public_blocking_executor_error(BlockingExecutorError::Panicked);
+        assert_eq!(internal.code, error::CommandErrorCode::Internal);
+        assert!(!internal.retryable);
     }
 
     #[test]
