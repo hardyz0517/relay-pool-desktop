@@ -252,12 +252,14 @@ pub(crate) fn compose_station_key_connectivity_command_facade(
 pub(crate) fn compose_capture_command_facade(
     services: &AppServices,
     sessions: crate::services::capture::session::CaptureSessionStore,
+    blocking: crate::background_tasks::BlockingExecutor,
 ) -> CaptureCommandFacade {
     CaptureCommandFacade::new(
         Arc::clone(&services.stations),
         Arc::clone(&services.credentials),
         Arc::clone(&services.collectors),
         sessions,
+        blocking,
     )
 }
 

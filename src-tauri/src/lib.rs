@@ -424,6 +424,7 @@ pub fn run() {
                     let capture_command_facade = app_composition::compose_capture_command_facade(
                         &app_services,
                         capture_session_store.clone(),
+                        blocking_executor.clone(),
                     );
                     let pricing_command_facade =
                         app_composition::compose_pricing_command_facade(&app_services);

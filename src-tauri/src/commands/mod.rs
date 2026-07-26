@@ -797,6 +797,7 @@ fn station_key_connectivity_command_error(
 fn capture_command_error(error: CaptureCommandError) -> error::CommandError {
     match error {
         CaptureCommandError::Application(error) => command_application_error(error),
+        CaptureCommandError::Blocking(error) => public_blocking_executor_error(error),
         CaptureCommandError::Message(message) => message.into(),
     }
 }
@@ -2539,59 +2540,10 @@ pub async fn start_capture_session(
 ) -> Result<CaptureSessionStatusDto, error::CommandError> {
     correlation::in_command_scope("start_capture_session", async {
         let input = CaptureStationIdInputDto::parse(input)?;
-        let station_id = input.station_id;
-        let target = facade
-            .start_capture_session(station_id.clone())
+        facade
+            .start_capture_session(app, input.station_id)
             .await
-            .map_err(capture_command_error)?;
-        let label = capture_window_label(&station_id);
-        let endpoint_revision = target.station.endpoint_revision;
-        let script = capture_script(
-            &station_id,
-            &label,
-            target.login_username.as_deref(),
-            target.login_password.as_ref().map(|value| value.as_str()),
-        );
-        let app_handle = app.clone();
-        let label_for_start = label.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            if let Some(window) = app_handle.get_webview_window(&label_for_start) {
-                window
-                    .set_focus()
-                    .map_err(|error| format!("聚焦捕获窗口失败: {error}"))?;
-            } else {
-                tauri::WebviewWindowBuilder::new(
-                    &app_handle,
-                    label_for_start.clone(),
-                    tauri::WebviewUrl::External(
-                        "about:blank"
-                            .parse()
-                            .map_err(|error| format!("捕获窗口初始化失败: {error}"))?,
-                    ),
-                )
-                .title(format!("网页登录 / 捕获 - {}", target.station.name))
-                .inner_size(1100.0, 760.0)
-                .initialization_script(&script)
-                .build()
-                .map_err(|error| format!("打开网页登录窗口失败: {error}"))?;
-                if let Some(window) = app_handle.get_webview_window(&label_for_start) {
-                    let target_url = target.station.website_url.clone();
-                    let target = target_url
-                        .parse()
-                        .map_err(|error| format!("Base URL 无法作为网页登录地址打开: {error}"))?;
-                    let navigator = window.clone();
-                    window
-                        .run_on_main_thread(move || {
-                            let _ = navigator.navigate(target);
-                        })
-                        .map_err(|error| format!("安排捕获窗口导航失败: {error}"))?;
-                }
-            }
-            Ok::<(), error::CommandError>(())
-        })
-        .await
-        .map_err(|error| format!("打开网页登录窗口失败: {error}"))??;
-        Ok(facade.start_prepared_session(station_id, label, endpoint_revision)?)
+            .map_err(capture_command_error)
     })
     .await
 }
@@ -2738,6 +2690,7 @@ fn path_from_request_url(url: &str) -> String {
     path.split(['?', '#']).next().unwrap_or("/").to_string()
 }
 
+#[cfg(test)]
 fn capture_script(
     station_id: &str,
     window_label: &str,

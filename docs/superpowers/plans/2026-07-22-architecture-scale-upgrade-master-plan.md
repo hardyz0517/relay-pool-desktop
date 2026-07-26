@@ -811,6 +811,8 @@ Task 17 必须拆成三个互不混合的 production cutover。
 
 **当前 checkpoint：** `S4-T17B1-data-directory-blocking-executor` 将 data directory selection/reset 的同步 filesystem compatibility port 和 `choose_data_dir` folder dialog 从 direct `spawn_blocking` 切到共享 `BlockingExecutor`。启动 composition 先构造 managed WorkRuntime，再把同一个 executor 注入 `AppServices/DataDirectoryService` 和 `DataDirectoryCommandFacade`；`choose_data_dir` 保持单 facade State command，dialog job 由 facade 提交有界 blocking job；原有 `InvalidTarget`/`Io` port error 映射保持不变，blocking queue full/timeout 有稳定 work/application 分类。旧 data-directory 和 choose-data-dir direct `spawn_blocking` allowlist 项已删除。该片不迁移 capture window/cookie、keyring、updater 或 shutdown。
 
+**当前 checkpoint：** `S4-T17B2-capture-window-blocking-executor` 将 capture window create/focus/navigate 和 WebView cookie read 从 direct `tauri::async_runtime::spawn_blocking` 切到共享 `BlockingExecutor`。`CaptureCommandFacade` 通过启动 composition 接收同一个 managed blocking executor；`start_capture_session` 收敛为单 facade-owned command path，`finish_web_authorization_session` 的 cookie 读取进入有界 blocking job，blocking 饱和/超时映射到稳定 public work failure。该片不改变 capture capability shell、window/station/revision/origin 校验、credential/vault 持久化或 Persistence V2。
+
 **文件：**
 
 - Modify: `src-tauri/src/services/capture/**`
